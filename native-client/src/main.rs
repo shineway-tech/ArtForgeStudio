@@ -74,10 +74,12 @@ struct Store {
 
 fn main() -> Result<()> {
     std::env::set_var("SLINT_BACKEND", "winit-software");
+    std::env::set_var("SLINT_SCALE_FACTOR", "1");
     let app = AppWindow::new()?;
     app.window().set_size(slint::PhysicalSize::new(1440, 900));
     apply_sprite_theme(&app);
     init_portable_dirs(&app)?;
+    load_showcase_images(&app);
 
     let store = Rc::new(RefCell::new(Store::default()));
     seed_inspiration(&app, &store)?;
@@ -1004,6 +1006,43 @@ fn init_portable_dirs(app: &AppWindow) -> Result<()> {
     Ok(())
 }
 
+fn load_showcase_images(app: &AppWindow) {
+    let state = app.global::<AppState>();
+    if let Some(path) = asset_path("showcase/character.png") {
+        if let Ok(image) = load_image(&path) {
+            state.set_showcase_character(image);
+        }
+    }
+    if let Some(path) = asset_path("showcase/scene.png") {
+        if let Ok(image) = load_image(&path) {
+            state.set_showcase_scene(image);
+        }
+    }
+    if let Some(path) = asset_path("showcase/ui.png") {
+        if let Ok(image) = load_image(&path) {
+            state.set_showcase_ui(image);
+        }
+    }
+    if let Some(path) = asset_path("showcase/vfx.png") {
+        if let Ok(image) = load_image(&path) {
+            state.set_showcase_vfx(image);
+        }
+    }
+}
+
+fn asset_path(relative: &str) -> Option<PathBuf> {
+    let mut bases = vec![app_dir()];
+    if let Ok(current_dir) = std::env::current_dir() {
+        if !bases.iter().any(|dir| dir == &current_dir) {
+            bases.push(current_dir);
+        }
+    }
+    bases
+        .into_iter()
+        .map(|base| base.join("assets").join(relative))
+        .find(|path| path.exists())
+}
+
 fn seed_inspiration(app: &AppWindow, store: &Rc<RefCell<Store>>) -> Result<()> {
     let dirs = inspiration_dirs();
     let mut items = Vec::new();
@@ -1019,18 +1058,22 @@ fn seed_inspiration(app: &AppWindow, store: &Rc<RefCell<Store>>) -> Result<()> {
             }
             if let Ok(image) = load_image(&path) {
                 let index = items.len() + 1;
+                let (title, category, kind) = inspiration_meta(index);
+                let (width, height) = image::image_dimensions(&path)
+                    .map(|(w, h)| (w as i32, h as i32))
+                    .unwrap_or((1254, 1254));
                 items.push(AssetData {
                     id: format!("inspiration-{index}"),
-                    title: inspiration_title(index),
-                    category: infer_category_from_name(&path),
-                    kind: "game".to_string(),
+                    title: title.to_string(),
+                    category: category.to_string(),
+                    kind: kind.to_string(),
                     time: "官方示例".to_string(),
                     prompt: "官方灵感示例，可用于做同款或作为参考图继续创作。".to_string(),
                     ratio: "1:1".to_string(),
                     quality: "1K".to_string(),
                     model: "官方示例".to_string(),
-                    width: 1254,
-                    height: 1254,
+                    width,
+                    height,
                     image,
                     source_path: path.display().to_string(),
                 });
@@ -1053,30 +1096,36 @@ fn inspiration_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-fn inspiration_title(index: usize) -> String {
+fn inspiration_meta(index: usize) -> (&'static str, &'static str, &'static str) {
     [
-        "东方巨像", "游戏 UI 套件", "奇幻角色图标", "村庄场景地图", "角色设计图", "迷你角色图标",
-        "沙漠场景", "战略游戏画面", "Q 版图标 UI", "RPG 贴图集", "技能特效", "奇幻角色集",
+        ("东方巨像", "scene", "game"),
+        ("游戏 UI 套件", "ui", "game"),
+        ("奇幻角色图标", "character", "game"),
+        ("村庄场景地图", "scene", "game"),
+        ("角色设计图", "character", "game"),
+        ("迷你角色图标", "character", "game"),
+        ("沙漠场景", "scene", "game"),
+        ("战略游戏画面", "scene", "film"),
+        ("Q 版图标 UI", "ui", "game"),
+        ("RPG 贴图集", "ui", "game"),
+        ("技能特效", "effect", "game"),
+        ("奇幻角色集", "character", "game"),
+        ("怪物图标", "character", "game"),
+        ("装备栏 UI", "ui", "game"),
+        ("像素 BOSS 战", "scene", "film"),
+        ("魔法森林", "scene", "game"),
+        ("城市战场", "scene", "film"),
+        ("丧尸角色", "character", "game"),
+        ("像素魔女", "character", "game"),
+        ("重甲骑士", "character", "game"),
+        ("日式 RPG UI", "ui", "game"),
+        ("复古游戏 UI", "ui", "game"),
+        ("特效设计", "effect", "game"),
+        ("游戏 CG 角色", "character", "game"),
     ]
-    .get(index.saturating_sub(1) % 12)
-    .unwrap_or(&"官方示例")
-    .to_string()
-}
-
-fn infer_category_from_name(path: &Path) -> String {
-    let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
-    if name.contains("ui") {
-        "ui"
-    } else if name.contains("effect") || name.contains("vfx") {
-        "effect"
-    } else if name.contains("scene") || name.contains("map") {
-        "scene"
-    } else if name.contains("character") || name.contains("role") {
-        "character"
-    } else {
-        "other"
-    }
-    .to_string()
+    .get(index.saturating_sub(1))
+    .copied()
+    .unwrap_or(("官方示例", "other", "game"))
 }
 
 fn open_provider_editor(app: &AppWindow, store: &Store, id: &str) {
@@ -1165,9 +1214,19 @@ fn push_generations(app: &AppWindow, store: &Store) {
 }
 
 fn push_inspiration(app: &AppWindow, store: &Store) {
-    app.global::<AppState>().set_inspiration(ModelRc::new(VecModel::from(
+    let state = app.global::<AppState>();
+    state.set_inspiration(ModelRc::new(VecModel::from(
         store.inspiration.iter().map(to_asset_view).collect::<Vec<_>>(),
     )));
+    let mut cols: [Vec<AssetItem>; 5] = [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    for (index, item) in store.inspiration.iter().enumerate() {
+        cols[index % 5].push(to_asset_view(item));
+    }
+    state.set_inspiration_col_0(ModelRc::new(VecModel::from(cols[0].clone())));
+    state.set_inspiration_col_1(ModelRc::new(VecModel::from(cols[1].clone())));
+    state.set_inspiration_col_2(ModelRc::new(VecModel::from(cols[2].clone())));
+    state.set_inspiration_col_3(ModelRc::new(VecModel::from(cols[3].clone())));
+    state.set_inspiration_col_4(ModelRc::new(VecModel::from(cols[4].clone())));
 }
 
 fn push_references(app: &AppWindow, store: &Store) {

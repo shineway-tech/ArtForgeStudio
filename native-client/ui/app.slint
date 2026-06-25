@@ -82,8 +82,17 @@ export global AppState {
     in-out property <[AssetItem]> generations: [];
     in-out property <[AssetItem]> assets: [];
     in-out property <[AssetItem]> inspiration: [];
+    in-out property <[AssetItem]> inspiration-col-0: [];
+    in-out property <[AssetItem]> inspiration-col-1: [];
+    in-out property <[AssetItem]> inspiration-col-2: [];
+    in-out property <[AssetItem]> inspiration-col-3: [];
+    in-out property <[AssetItem]> inspiration-col-4: [];
     in-out property <[NotificationItem]> notifications: [];
     in-out property <bool> has-unread: false;
+    in-out property <image> showcase-character;
+    in-out property <image> showcase-scene;
+    in-out property <image> showcase-ui;
+    in-out property <image> showcase-vfx;
 
     in-out property <string> asset-kind-filter: "game";
     in-out property <string> asset-category-filter: "all";
@@ -408,30 +417,26 @@ component NavItem {
     }
 }
 
-component AssetImageCard {
-    in property <AssetItem> item;
+component ShowcaseTile inherits Rectangle {
+    in property <image> source;
     in property <string> title;
     in property <string> subtitle;
-    Rectangle {
-        border-radius: 16px;
-        clip: true;
-        background: AppTheme.panel-soft;
-        border-width: 1px;
-        border-color: AppTheme.border;
-        Image {
-            x: hover.has-hover ? -8px : 0px;
-            y: hover.has-hover ? -8px : 0px;
-            width: parent.width + (hover.has-hover ? 16px : 0px);
-            height: parent.height + (hover.has-hover ? 16px : 0px);
-            source: root.item.image;
-            image-fit: cover;
-            animate x, y, width, height { duration: 140ms; }
-        }
-        Rectangle { y: parent.height - 78px; height: 78px; background: @linear-gradient(0deg, #000000aa, #00000000); }
-        Text { x: 18px; y: parent.height - 58px; text: root.title; color: #ffffff; font-size: 24px; font-weight: 600; }
-        Text { x: 18px; y: parent.height - 30px; text: root.subtitle; color: #ffffffe0; font-size: 16px; font-weight: 400; }
-        hover := TouchArea { mouse-cursor: pointer; }
+    border-radius: 20px;
+    clip: true;
+    background: #1d1d1f;
+    Image {
+        x: hover.has-hover ? -12px : 0px;
+        y: hover.has-hover ? -12px : 0px;
+        width: parent.width + (hover.has-hover ? 24px : 0px);
+        height: parent.height + (hover.has-hover ? 24px : 0px);
+        source: root.source;
+        image-fit: cover;
+        animate x, y, width, height { duration: 180ms; }
     }
+    Rectangle { y: parent.height - 92px; height: 92px; background: @linear-gradient(0deg, #000000b8, #00000000); }
+    Text { x: 20px; y: parent.height - 62px; text: root.title; color: #ffffff; font-size: 24px; font-weight: 600; }
+    Text { x: 20px; y: parent.height - 32px; text: root.subtitle; color: #ffffffe0; font-size: 16px; font-weight: 400; }
+    hover := TouchArea { mouse-cursor: pointer; }
 }
 
 component UploadCard {
@@ -589,16 +594,59 @@ component GenerationRecord {
 
 component InspirationCard {
     in property <AssetItem> item;
+    in property <length> card-width: 220px;
+    width: root.card-width;
+    height: image-height() + 0px;
     Rectangle {
-        background: AppTheme.panel;
-        border-radius: 8px;
-        border-width: 1px;
-        border-color: AppTheme.border;
+        background: #1d1d1f;
+        border-radius: 18px;
+        border-width: 0px;
         clip: true;
-        Image { width: parent.width; height: parent.height - 52px; source: root.item.image; image-fit: cover; }
-        Text { x: 12px; y: parent.height - 42px; width: parent.width - 24px; text: root.item.title; color: AppTheme.text; font-size: 14px; font-weight: 400; overflow: elide; }
-        Text { x: 12px; y: parent.height - 22px; width: parent.width - 24px; text: root.item.category; color: AppTheme.muted; font-size: 12px; font-weight: 400; overflow: elide; }
+        Image {
+            width: parent.width;
+            height: parent.height;
+            source: root.item.image;
+            image-fit: cover;
+        }
+        Rectangle { y: parent.height - 86px; height: 86px; background: @linear-gradient(0deg, #000000b8, #00000000); }
+        Text { x: 13px; y: parent.height - 46px; width: parent.width - 26px; text: root.item.title; color: #ffffff; font-size: 14px; font-weight: 500; overflow: elide; }
+        Text { x: 13px; y: parent.height - 24px; width: parent.width - 26px; text: category-label(root.item.category); color: #ffffffc8; font-size: 12px; font-weight: 400; overflow: elide; }
         TouchArea { mouse-cursor: pointer; clicked => { AppState.open-viewer(root.item.id, "inspiration"); } }
+    }
+    function image-height() -> length {
+        if root.item.width <= 0 || root.item.height <= 0 { return 248px; }
+        return max(148px, min(360px, root.card-width * root.item.height / root.item.width));
+    }
+    function category-label(id: string) -> string {
+        if id == "character" { return "角色"; }
+        if id == "scene" { return "场景"; }
+        if id == "ui" { return "界面"; }
+        if id == "effect" { return "特效"; }
+        return "其他";
+    }
+}
+
+component WaterfallColumn {
+    in property <[AssetItem]> items;
+    in property <length> card-width: 220px;
+    VerticalLayout {
+        spacing: 18px;
+        for item in root.items: InspirationCard {
+            item: item;
+            card-width: root.card-width;
+        }
+    }
+}
+
+component InspirationWaterfall {
+    in property <length> card-width: 220px;
+    HorizontalLayout {
+        spacing: 18px;
+        WaterfallColumn { items: AppState.inspiration-col-0; card-width: root.card-width; }
+        WaterfallColumn { items: AppState.inspiration-col-1; card-width: root.card-width; }
+        WaterfallColumn { items: AppState.inspiration-col-2; card-width: root.card-width; }
+        WaterfallColumn { items: AppState.inspiration-col-3; card-width: root.card-width; }
+        WaterfallColumn { items: AppState.inspiration-col-4; card-width: root.card-width; }
     }
 }
 
@@ -623,7 +671,7 @@ component AssetGallery {
         height: 660px;
         GridLayout {
             spacing: 16px;
-            for item in root.items: InspirationCard { item: item; width: 250px; height: 250px; }
+            for item in root.items: InspirationCard { item: item; card-width: 250px; }
         }
     }
 }
@@ -926,18 +974,26 @@ component Sidebar {
     }
 }
 
-component ShowcaseMosaic {
-    property <[AssetItem]> shown: AppState.inspiration;
-    Rectangle {
-        background: transparent;
-        AssetImageCard { x: 0px; y: 18px; width: 280px; height: 330px; item: root.shown.length > 0 ? root.shown[0] : empty-asset(); title: "角色设定"; subtitle: "完整立绘"; }
-        AssetImageCard { x: 300px; y: 18px; width: 220px; height: 150px; item: root.shown.length > 1 ? root.shown[1] : empty-asset(); title: "场景概念"; subtitle: "环境参考"; }
-        AssetImageCard { x: 300px; y: 188px; width: 220px; height: 150px; item: root.shown.length > 2 ? root.shown[2] : empty-asset(); title: "游戏 UI"; subtitle: "界面方案"; }
-        AssetImageCard { x: 0px; y: 368px; width: 300px; height: 126px; item: root.shown.length > 3 ? root.shown[3] : empty-asset(); title: "特效设计"; subtitle: "技能表现"; }
+component ShowcaseMosaic inherits Rectangle {
+    background: transparent;
+    clip: false;
+
+    function tile-x(n: int) -> length {
+        if n == 0 { return 0px; }
+        return root.width * 346 / 606;
     }
-    function empty-asset() -> AssetItem {
-        return { id: "", title: "", category: "", kind: "", time: "", prompt: "", ratio: "", quality: "", model: "", width: 0, height: 0, image: @image-url(""), source-path: "" };
+
+    function tile-y(n: int) -> length {
+        if n == 0 { return 0px; }
+        if n == 1 { return 0px; }
+        if n == 2 { return root.width * 188 / 606; }
+        return root.width * 384 / 606;
     }
+
+    ShowcaseTile { x: root.tile-x(0); y: root.tile-y(0); width: root.width * 322 / 606; height: root.width * 360 / 606; source: AppState.showcase-character; title: "角色设定"; subtitle: "完整立绘"; }
+    ShowcaseTile { x: root.tile-x(1); y: root.tile-y(1); width: root.width * 260 / 606; height: root.width * 172 / 606; source: AppState.showcase-scene; title: "场景概念"; subtitle: "环境参考"; }
+    ShowcaseTile { x: root.tile-x(1); y: root.tile-y(2); width: root.width * 260 / 606; height: root.width * 172 / 606; source: AppState.showcase-ui; title: "游戏 UI"; subtitle: "界面方案"; }
+    ShowcaseTile { x: root.tile-x(0); y: root.tile-y(3); width: root.width * 346 / 606; height: root.width * 142 / 606; source: AppState.showcase-vfx; title: "特效设计"; subtitle: "技能表现"; }
 }
 
 component SelectChip {
@@ -1041,22 +1097,6 @@ component CanvasChip {
     function ratio-label() -> string { return AppState.ratio == "smart" ? "智能" : AppState.ratio; }
 }
 
-component InspirationGrid {
-    in property <[AssetItem]> items;
-    in property <int> columns: 4;
-    in property <length> card-width: 230px;
-    property <length> gap: 16px;
-    property <length> card-height: 260px;
-    GridLayout {
-        spacing: gap;
-        for item[i] in root.items: InspirationCard {
-            item: item;
-            width: root.card-width;
-            height: root.card-height;
-        }
-    }
-}
-
 component AssetsPage {
     Rectangle {
         background: AppTheme.bg;
@@ -1079,6 +1119,45 @@ component InspirationPage {
             CategoryTabs { for-assets: false; }
             AssetGallery { items: AppState.inspiration; source: "inspiration"; }
         }
+    }
+}
+
+component MarketingNavButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    callback clicked();
+    height: 32px;
+    background: root.primary ? AppTheme.accent : #ffffffcc;
+    border-radius: 16px;
+    border-width: root.primary ? 0px : 1px;
+    border-color: #d5dce3;
+    Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        color: root.primary ? #ffffff : #11151c;
+        font-size: 14px;
+        font-weight: root.primary ? 500 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+component WelcomeMarketingNav {
+    height: 48px;
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #f8fafcd8;
+        border-width: 1px;
+        border-color: #00000010;
+        Rectangle { x: 56px; y: 15px; width: 18px; height: 18px; border-radius: 5px; background: @linear-gradient(135deg, AppTheme.accent, AppTheme.accent-dark); }
+        Text { x: 82px; y: 0px; width: 190px; height: root.height; text: "ArtForgeStudio"; color: #1d1d1f; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+        MarketingNavButton { x: 948px; y: 8px; width: 96px; text: AppState.language == "zh" ? "中文" : "English"; clicked => { AppState.set-language(AppState.language == "zh" ? "en" : "zh"); } }
+        MarketingNavButton { x: 1060px; y: 8px; width: 110px; text: "● 主题"; clicked => { AppState.set-theme(AppState.theme-id == "sprite" ? "deep" : "sprite"); } }
+        MarketingNavButton { x: 1186px; y: 8px; width: 126px; text: "登录/注册"; primary: true; clicked => { AppState.auth-open = true; } }
     }
 }
 
@@ -1194,54 +1273,117 @@ component ViewerOverlay {
 }
 
 component WelcomePage {
+    in-out property <length> scroll-y: 0px;
+
+    function hero-width() -> length {
+        return 1180px;
+    }
+
+    function inspiration-width() -> length {
+        return 1328px;
+    }
+
+    function inspiration-card-width() -> length {
+        return max(200px, (root.inspiration-width() - 72px) / 5);
+    }
+
+    function hero-height() -> length {
+        return 600px;
+    }
+
+    function content-height() -> length {
+        return root.hero-height() + 1160px;
+    }
+
     Rectangle {
+        width: root.width;
+        height: root.height;
         background: AppTheme.bg;
-        ScrollView {
+        Flickable {
+            x: 0px;
+            y: 48px;
             width: parent.width;
-            height: parent.height;
-            VerticalLayout {
-                padding: 48px;
-                spacing: 34px;
-                HorizontalLayout {
-                    spacing: 46px;
+            height: parent.height - 48px;
+            viewport-width: parent.width;
+            viewport-height: root.content-height();
+            viewport-y <=> root.scroll-y;
+            interactive: true;
+            Rectangle {
+                width: root.width;
+                height: root.content-height();
+                background: transparent;
+
+                Rectangle {
+                    x: 56px;
+                    y: 0px;
+                    width: root.hero-width();
+                    height: root.hero-height();
+                    background: transparent;
                     Rectangle {
-                        horizontal-stretch: 1;
-                        height: 510px;
+                        y: 58px;
+                        width: 1180px;
+                        height: 540px;
                         background: transparent;
-                        VerticalLayout {
-                            alignment: center;
-                            spacing: 22px;
-                            Text { text: "ArtForgeStudio"; color: AppTheme.text; font-size: 68px; font-weight: 600; }
+                        Rectangle {
+                            x: 0px;
+                            y: 0px;
+                            width: 522px;
+                            height: 540px;
+                            background: transparent;
+                            Text { x: 0px; y: 64px; width: 522px; height: 80px; text: "ArtForgeStudio"; color: #1d1d1f; font-size: 60px; font-weight: 600; }
                             Text {
+                                x: 0px;
+                                y: 170px;
+                                width: 522px;
+                                height: 150px;
                                 text: "利用 ArtForgeStudio，为您的游戏生成：角色、特效、UI、场景、精灵图、影视创作等。";
-                                color: AppTheme.muted;
-                                font-size: 31px;
+                                color: #515154;
+                                font-size: 24px;
                                 font-weight: 400;
                                 wrap: word-wrap;
                             }
-                            HorizontalLayout {
-                                spacing: 14px;
-                                PillButton { width: 168px; height: 50px; text: "立即使用"; primary: true; clicked => { AppState.use-now(); } }
-                            }
+                            PillButton { x: 0px; y: 346px; width: 168px; height: 50px; text: "立即使用"; primary: true; clicked => { AppState.use-now(); } }
                         }
+                        ShowcaseMosaic { x: 574px; y: 10px; width: 606px; height: 540px; }
                     }
-                    ShowcaseMosaic { width: 520px; height: 510px; }
                 }
-                SectionTitle { text: "作品灵感"; }
-                InspirationGrid { items: AppState.inspiration; columns: 5; card-width: 206px; }
+
+                SectionTitle {
+                    x: 56px;
+                    y: root.hero-height() + 28px;
+                    width: root.inspiration-width();
+                    text: "作品灵感";
+                }
+                InspirationWaterfall {
+                    x: 56px;
+                    y: root.hero-height() + 82px;
+                    width: root.inspiration-width();
+                    card-width: root.inspiration-card-width();
+                }
                 Rectangle {
-                    height: 190px;
+                    x: 56px;
+                    y: root.content-height() - 340px;
+                    width: root.inspiration-width();
+                    height: 250px;
                     background: AppTheme.panel-soft;
-                    border-radius: 18px;
+                    border-radius: 28px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
                     VerticalLayout {
                         alignment: center;
-                        spacing: 12px;
-                        Text { text: "登录查看全部灵感"; color: AppTheme.text; font-size: 36px; font-weight: 600; }
-                        Text { text: "与 AI 一起创作不可思议的作品"; color: AppTheme.muted; font-size: 18px; font-weight: 400; }
-                        PillButton { width: 144px; text: "立即创作"; primary: true; clicked => { AppState.use-now(); } }
+                        spacing: 16px;
+                        Text { text: "登录查看全部灵感"; color: #1d1d1f; font-size: 44px; font-weight: 600; }
+                        Text { text: "与 AI 一起创作不可思议的作品"; color: #6e6e73; font-size: 18px; font-weight: 400; letter-spacing: 8px; }
+                        PillButton { width: 180px; height: 54px; text: "立即创作"; primary: true; clicked => { AppState.use-now(); } }
                     }
                 }
             }
+        }
+        WelcomeMarketingNav {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: 48px;
         }
     }
 }
@@ -1379,14 +1521,20 @@ export component AppWindow inherits Window {
     default-font-family: AppState.settings-font-family;
     default-font-size: AppState.settings-font-size * 1px;
 
-    HorizontalLayout {
-        if AppState.logged-in && AppState.page != "welcome": Sidebar {}
+    if AppState.page == "welcome": WelcomePage {
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: root.height;
+    }
+
+    if AppState.page != "welcome": HorizontalLayout {
+        if AppState.logged-in: Sidebar {}
         VerticalLayout {
-            if AppState.page != "welcome": TopBar {}
+            TopBar {}
             Rectangle {
                 horizontal-stretch: 1;
                 vertical-stretch: 1;
-                if AppState.page == "welcome": WelcomePage { width: parent.width; height: parent.height; }
                 if AppState.page == "workspace": WorkspacePage { width: parent.width; height: parent.height; }
                 if AppState.page == "generation": GenerationPage { width: parent.width; height: parent.height; }
                 if AppState.page == "assets": AssetsPage { width: parent.width; height: parent.height; }
