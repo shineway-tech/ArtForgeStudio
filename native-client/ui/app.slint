@@ -1,0 +1,1406 @@
+import { ScrollView } from "std-widgets.slint";
+
+export struct ModelProvider {
+    id: string,
+    name: string,
+    endpoint: string,
+    remark: string,
+    website: string,
+    api-key: string,
+    models: [string],
+    selected-model: string,
+}
+
+export struct AssetItem {
+    id: string,
+    title: string,
+    category: string,
+    kind: string,
+    time: string,
+    prompt: string,
+    ratio: string,
+    quality: string,
+    model: string,
+    width: int,
+    height: int,
+    image: image,
+    source-path: string,
+}
+
+export struct ConversationItem {
+    id: string,
+    title: string,
+    image: image,
+    loading: bool,
+}
+
+export struct NotificationItem {
+    id: string,
+    title: string,
+    model: string,
+    time: string,
+    reason: string,
+    success: bool,
+    read: bool,
+}
+
+export struct ReferenceItem {
+    id: string,
+    image: image,
+    source-path: string,
+}
+
+export global AppState {
+    in-out property <string> page: "welcome";
+    in-out property <string> language: "zh";
+    in-out property <string> theme-id: "sprite";
+    in-out property <bool> logged-in: false;
+    in-out property <string> phone-mask: "";
+    in-out property <string> nickname: "";
+
+    in-out property <[ModelProvider]> providers: [];
+    in-out property <string> image-provider-id: "";
+    in-out property <string> image-model: "";
+    in-out property <string> reasoning-provider-id: "";
+    in-out property <string> reasoning-model: "";
+
+    in-out property <string> prompt: "";
+    in-out property <string> asset-type: "smart";
+    in-out property <string> ratio: "smart";
+    in-out property <string> quality: "1K";
+    in-out property <int> count: 1;
+    in-out property <string> mode: "game";
+    in-out property <string> generation-status: "";
+    in-out property <bool> generating: false;
+    in-out property <[ReferenceItem]> references: [];
+    in-out property <string> quote-title: "";
+    in-out property <string> quote-prompt: "";
+    in-out property <string> quote-ratio: "";
+    in-out property <string> quote-quality: "";
+
+    in-out property <[ConversationItem]> conversations: [];
+    in-out property <[AssetItem]> generations: [];
+    in-out property <[AssetItem]> assets: [];
+    in-out property <[AssetItem]> inspiration: [];
+    in-out property <[NotificationItem]> notifications: [];
+    in-out property <bool> has-unread: false;
+
+    in-out property <string> asset-kind-filter: "game";
+    in-out property <string> asset-category-filter: "all";
+    in-out property <string> inspiration-kind-filter: "game";
+    in-out property <string> inspiration-category-filter: "all";
+
+    in-out property <bool> auth-open: false;
+    in-out property <string> auth-phone: "";
+    in-out property <string> auth-code: "";
+    in-out property <int> auth-countdown: 0;
+    in-out property <string> auth-error: "";
+
+    in-out property <bool> profile-open: false;
+    in-out property <string> profile-name: "";
+
+    in-out property <bool> provider-editor-open: false;
+    in-out property <string> edit-provider-id: "";
+    in-out property <string> provider-name: "";
+    in-out property <string> provider-remark: "";
+    in-out property <string> provider-website: "";
+    in-out property <string> provider-endpoint: "";
+    in-out property <string> provider-api-key: "";
+    in-out property <[string]> fetched-models: [];
+    in-out property <string> provider-model-name: "";
+    in-out property <string> provider-message: "";
+
+    in-out property <bool> viewer-open: false;
+    in-out property <string> viewer-source: "";
+    in-out property <string> viewer-id: "";
+    in-out property <image> viewer-image;
+    in-out property <string> viewer-title: "";
+    in-out property <string> viewer-prompt: "";
+    in-out property <string> viewer-time: "";
+    in-out property <string> viewer-ratio: "";
+    in-out property <string> viewer-quality: "";
+    in-out property <string> viewer-model: "";
+    in-out property <int> viewer-width: 0;
+    in-out property <int> viewer-height: 0;
+    in-out property <bool> viewer-in-assets: false;
+
+    in-out property <bool> delete-confirm-open: false;
+    in-out property <string> pending-delete-id: "";
+
+    in-out property <string> settings-font-family: "Microsoft YaHei UI";
+    in-out property <int> settings-font-size: 14;
+    in-out property <[string]> font-list: [];
+    in-out property <string> input-dir: ".\\data\\input";
+    in-out property <string> output-dir: ".\\data\\out";
+    in-out property <string> prompt-dir: ".\\data\\prompt";
+
+    callback use-now();
+    callback login-or-register();
+    callback request-code();
+    callback logout();
+    callback save-profile();
+    callback navigate(string);
+    callback back();
+    callback set-theme(string);
+    callback set-language(string);
+    callback pick-dir(string);
+    callback load-fonts();
+    callback open-provider-editor(string);
+    callback close-provider-editor();
+    callback save-provider();
+    callback fetch-models();
+    callback test-provider(string);
+    callback edit-provider(string);
+    callback select-image-model(string, string);
+    callback select-reasoning-model(string, string);
+    callback add-reference();
+    callback paste-reference();
+    callback remove-reference(string);
+    callback open-reference(string);
+    callback generate();
+    callback regenerate(string);
+    callback quote-generation(string);
+    callback add-asset(string);
+    callback open-viewer(string, string);
+    callback close-viewer();
+    callback viewer-add-asset();
+    callback viewer-regenerate();
+    callback viewer-edit();
+    callback viewer-use-same();
+    callback viewer-use-reference();
+    callback request-delete-asset(string);
+    callback confirm-delete();
+    callback mark-notification-read(string);
+}
+
+export global AppTheme {
+    in-out property <color> bg: #ecfbf4;
+    in-out property <color> panel: #ffffff;
+    in-out property <color> panel-soft: #e9f8f0;
+    in-out property <color> border: #ccebdd;
+    in-out property <color> text: #07130f;
+    in-out property <color> muted: #50625b;
+    in-out property <color> weak: #8da096;
+    in-out property <color> accent: #00d982;
+    in-out property <color> accent-dark: #06b96f;
+    in-out property <color> danger: #ef6969;
+    in-out property <color> warning: #f5a524;
+    in-out property <color> success: #00c878;
+}
+
+component IconButton {
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> danger: false;
+    callback clicked();
+    height: 38px;
+    Rectangle {
+        background: root.active ? AppTheme.accent : (touch.has-hover ? AppTheme.panel-soft : transparent);
+        border-radius: 8px;
+        border-width: root.active ? 0px : 1px;
+        border-color: AppTheme.border;
+        Text {
+            x: 12px;
+            width: parent.width - 24px;
+            height: parent.height;
+            text: root.text;
+            color: root.active ? #ffffff : (root.danger ? AppTheme.danger : AppTheme.text);
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    }
+}
+
+component PillButton {
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    callback clicked();
+    min-width: 72px;
+    height: 36px;
+    Rectangle {
+        background: root.primary || root.active ? AppTheme.accent : (touch.has-hover ? AppTheme.panel-soft : AppTheme.panel);
+        border-radius: 18px;
+        border-width: root.primary || root.active ? 0px : 1px;
+        border-color: root.danger ? AppTheme.danger : AppTheme.border;
+        Text {
+            x: 14px;
+            width: parent.width - 28px;
+            height: parent.height;
+            text: root.text;
+            color: root.primary || root.active ? #ffffff : (root.danger ? AppTheme.danger : AppTheme.text);
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: root.primary ? 500 : 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    }
+}
+
+component Field {
+    in property <string> label;
+    in property <string> placeholder;
+    in-out property <string> value;
+    in property <bool> secret: false;
+    height: 78px;
+    VerticalLayout {
+        spacing: 7px;
+        Text { text: root.label; color: AppTheme.text; font-size: AppState.settings-font-size * 1px; font-weight: 400; }
+        Rectangle {
+            height: 46px;
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: input.has-focus ? AppTheme.accent : AppTheme.border;
+            input := TextInput {
+                x: 14px;
+                width: parent.width - 28px;
+                height: parent.height;
+                text <=> root.value;
+                input-type: root.secret ? password : text;
+                single-line: true;
+                color: AppTheme.text;
+                font-size: AppState.settings-font-size * 1px;
+                font-weight: 400;
+                vertical-alignment: center;
+            }
+            if root.value == "" && !input.has-focus: Text {
+                x: 14px;
+                width: parent.width - 28px;
+                height: parent.height;
+                text: root.placeholder;
+                color: AppTheme.weak;
+                font-size: AppState.settings-font-size * 1px;
+                font-weight: 400;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+component SectionTitle {
+    in property <string> text;
+    height: 36px;
+    Text {
+        text: root.text;
+        color: AppTheme.text;
+        font-size: (AppState.settings-font-size + 8) * 1px;
+        font-weight: 600;
+        vertical-alignment: center;
+    }
+}
+
+component ModelPicker {
+    in property <string> kind;
+    in property <string> label;
+    property <bool> open: false;
+    width: 330px;
+    height: 46px;
+    Rectangle {
+        background: AppTheme.panel;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: open ? AppTheme.accent : AppTheme.border;
+        Text {
+            x: 14px;
+            width: parent.width - 50px;
+            height: parent.height;
+            text: root.label + "  ●  " + display-text();
+            color: AppTheme.text;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text { x: parent.width - 34px; width: 20px; height: parent.height; text: "⌄"; color: AppTheme.muted; vertical-alignment: center; horizontal-alignment: center; }
+        TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
+    }
+    popup := PopupWindow {
+        x: 0px;
+        y: 50px;
+        width: root.width;
+        height: root.open ? max(54px, AppState.providers.length * 42px + 12px) : 0px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            visible: root.open;
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.accent;
+            VerticalLayout {
+                padding: 6px;
+                spacing: 4px;
+                if AppState.providers.length == 0: IconButton {
+                    text: "请先添加模型";
+                    clicked => { root.open = false; AppState.navigate("models"); }
+                }
+                for provider in AppState.providers: IconButton {
+                    text: provider.name + " / " + (provider.selected-model == "" ? "未获取模型" : provider.selected-model);
+                    active: root.kind == "image"
+                        ? AppState.image-provider-id == provider.id && AppState.image-model == provider.selected-model
+                        : AppState.reasoning-provider-id == provider.id && AppState.reasoning-model == provider.selected-model;
+                    clicked => {
+                        root.open = false;
+                        if root.kind == "image" {
+                            AppState.select-image-model(provider.id, provider.selected-model);
+                        } else {
+                            AppState.select-reasoning-model(provider.id, provider.selected-model);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    function display-text() -> string {
+        if root.kind == "image" {
+            return AppState.image-model == "" ? "未选择" : AppState.image-model;
+        }
+        return AppState.reasoning-model == "" ? "未选择" : AppState.reasoning-model;
+    }
+}
+
+component NavItem {
+    in property <string> icon;
+    in property <string> label;
+    in property <string> page;
+    in property <bool> show-dot: false;
+    height: 38px;
+    Rectangle {
+        background: AppState.page == root.page ? AppTheme.panel-soft : (touch.has-hover ? AppTheme.panel-soft : transparent);
+        border-radius: 7px;
+        border-width: AppState.page == root.page ? 1px : 0px;
+        border-color: AppTheme.accent;
+        Rectangle {
+            x: 9px;
+            y: 8px;
+            width: 22px;
+            height: 22px;
+            border-radius: 6px;
+            background: AppState.page == root.page ? AppTheme.accent : AppTheme.panel-soft;
+            Text { width: parent.width; height: parent.height; text: root.icon; color: AppState.page == root.page ? #ffffff : AppTheme.accent-dark; horizontal-alignment: center; vertical-alignment: center; font-size: 13px; font-weight: 500; }
+        }
+        if AppState.page != "generation": Text {
+            x: 42px;
+            width: parent.width - 52px;
+            height: parent.height;
+            text: root.label;
+            color: AppTheme.text;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 400;
+            vertical-alignment: center;
+        }
+        if root.show-dot: Rectangle {
+            x: AppState.page == "generation" ? 44px : parent.width - 18px;
+            y: 7px;
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            background: AppTheme.danger;
+        }
+        touch := TouchArea { mouse-cursor: pointer; clicked => { AppState.navigate(root.page); } }
+    }
+}
+
+component AssetImageCard {
+    in property <AssetItem> item;
+    in property <string> title;
+    in property <string> subtitle;
+    Rectangle {
+        border-radius: 16px;
+        clip: true;
+        background: AppTheme.panel-soft;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        Image {
+            x: hover.has-hover ? -8px : 0px;
+            y: hover.has-hover ? -8px : 0px;
+            width: parent.width + (hover.has-hover ? 16px : 0px);
+            height: parent.height + (hover.has-hover ? 16px : 0px);
+            source: root.item.image;
+            image-fit: cover;
+            animate x, y, width, height { duration: 140ms; }
+        }
+        Rectangle { y: parent.height - 78px; height: 78px; background: @linear-gradient(0deg, #000000aa, #00000000); }
+        Text { x: 18px; y: parent.height - 58px; text: root.title; color: #ffffff; font-size: 24px; font-weight: 600; }
+        Text { x: 18px; y: parent.height - 30px; text: root.subtitle; color: #ffffffe0; font-size: 16px; font-weight: 400; }
+        hover := TouchArea { mouse-cursor: pointer; }
+    }
+}
+
+component UploadCard {
+    callback clicked();
+    Rectangle {
+        background: AppTheme.panel-soft;
+        border-radius: 3px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        Text { width: parent.width; height: parent.height; text: "+"; color: AppTheme.muted; font-size: 22px; font-weight: 300; horizontal-alignment: center; vertical-alignment: center; }
+        TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    }
+}
+
+component ReferenceThumb {
+    in property <ReferenceItem> item;
+    width: 54px;
+    height: 64px;
+    Rectangle {
+        background: transparent;
+        clip: false;
+        Image { x: 4px; y: 4px; width: 44px; height: 56px; source: root.item.image; image-fit: contain; }
+        Rectangle {
+            x: 36px; y: 0px; width: 18px; height: 18px; border-radius: 9px; background: AppTheme.danger;
+            Text { width: parent.width; height: parent.height; text: "×"; color: #ffffff; horizontal-alignment: center; vertical-alignment: center; font-size: 12px; }
+            TouchArea { clicked => { AppState.remove-reference(root.item.id); } }
+        }
+        TouchArea { double-clicked => { AppState.open-reference(root.item.id); } }
+    }
+}
+
+component TypeOption {
+    in property <string> id;
+    in property <string> label;
+    callback close();
+    IconButton { text: root.label; active: AppState.asset-type == root.id; clicked => { AppState.asset-type = root.id; root.close(); } }
+}
+
+component CountOption {
+    in property <int> count;
+    callback close();
+    IconButton { text: root.count + " 张"; active: AppState.count == root.count; clicked => { AppState.count = root.count; root.close(); } }
+}
+
+component RatioButton {
+    in property <string> id;
+    in property <string> label;
+    width: 60px;
+    height: 40px;
+    PillButton { text: root.label; active: AppState.ratio == root.id; clicked => { AppState.ratio = root.id; } }
+}
+
+component QualityButton {
+    in property <string> label;
+    in property <string> value: label;
+    width: 126px;
+    PillButton { text: root.label; active: AppState.quality == root.value; clicked => { AppState.quality = root.value; } }
+}
+
+component ConversationSide {
+    width: 228px;
+    Rectangle {
+        background: AppTheme.panel;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        VerticalLayout {
+            padding: 14px;
+            spacing: 12px;
+            Text { text: "对话记录"; color: AppTheme.text; font-size: 15px; font-weight: 400; }
+            Rectangle { height: 1px; background: AppTheme.border; }
+            for item in AppState.conversations: Rectangle {
+                height: 58px;
+                background: AppTheme.panel-soft;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+                HorizontalLayout {
+                    padding: 8px;
+                    spacing: 10px;
+                    Rectangle {
+                        width: 42px; height: 42px; border-radius: 8px; background: AppTheme.panel; clip: true;
+                        if item.loading: Text { width: parent.width; height: parent.height; text: "…"; color: AppTheme.accent; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+                        if !item.loading: Image { source: item.image; width: parent.width; height: parent.height; image-fit: cover; }
+                    }
+                    Text { text: item.title; color: AppTheme.text; font-size: 13px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+                }
+            }
+        }
+    }
+}
+
+component GenerationRecord {
+    in property <AssetItem> item;
+    VerticalLayout {
+        spacing: 12px;
+        HorizontalLayout {
+            Rectangle { horizontal-stretch: 1; }
+            Rectangle {
+                min-width: 160px;
+                height: 48px;
+                background: AppTheme.panel-soft;
+                border-radius: 16px;
+                Text { x: 16px; width: parent.width - 32px; height: parent.height; text: root.item.prompt; color: AppTheme.text; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+            }
+        }
+        HorizontalLayout {
+            spacing: 16px;
+            Image {
+                width: thumb-width(root.item.ratio) * 1px;
+                height: thumb-height(root.item.ratio) * 1px;
+                source: root.item.image;
+                image-fit: contain;
+                TouchArea { mouse-cursor: pointer; clicked => { AppState.open-viewer(root.item.id, "generation"); } }
+            }
+        }
+        Text { text: root.item.time; color: AppTheme.muted; font-size: 13px; font-weight: 400; }
+        HorizontalLayout {
+            spacing: 8px;
+            PillButton { width: 104px; text: "↻ 重新生成"; primary: true; clicked => { AppState.regenerate(root.item.id); } }
+            PillButton { width: 86px; text: root.item.source-path == "asset" ? "已加入" : "加入资产"; primary: true; clicked => { AppState.add-asset(root.item.id); } }
+            PillButton { width: 44px; text: "“"; primary: true; clicked => { AppState.quote-generation(root.item.id); } }
+        }
+    }
+    function thumb-width(ratio: string) -> int {
+        if ratio == "9:16" { return 205; }
+        if ratio == "3:4" { return 250; }
+        if ratio == "2:3" { return 240; }
+        if ratio == "4:5" { return 250; }
+        if ratio == "1:2" { return 205; }
+        if ratio == "9:21" { return 190; }
+        if ratio == "16:9" { return 360; }
+        if ratio == "21:9" { return 400; }
+        if ratio == "2:1" { return 380; }
+        if ratio == "3:2" { return 330; }
+        if ratio == "4:3" { return 320; }
+        if ratio == "5:4" { return 300; }
+        return 250;
+    }
+    function thumb-height(ratio: string) -> int {
+        if ratio == "9:16" { return 450; }
+        if ratio == "3:4" { return 336; }
+        if ratio == "2:3" { return 360; }
+        if ratio == "4:5" { return 312; }
+        if ratio == "1:2" { return 410; }
+        if ratio == "9:21" { return 444; }
+        if ratio == "16:9" { return 203; }
+        if ratio == "21:9" { return 171; }
+        if ratio == "2:1" { return 190; }
+        if ratio == "3:2" { return 220; }
+        if ratio == "4:3" { return 240; }
+        if ratio == "5:4" { return 240; }
+        return 250;
+    }
+}
+
+component InspirationCard {
+    in property <AssetItem> item;
+    Rectangle {
+        background: AppTheme.panel;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        clip: true;
+        Image { width: parent.width; height: parent.height - 52px; source: root.item.image; image-fit: cover; }
+        Text { x: 12px; y: parent.height - 42px; width: parent.width - 24px; text: root.item.title; color: AppTheme.text; font-size: 14px; font-weight: 400; overflow: elide; }
+        Text { x: 12px; y: parent.height - 22px; width: parent.width - 24px; text: root.item.category; color: AppTheme.muted; font-size: 12px; font-weight: 400; overflow: elide; }
+        TouchArea { mouse-cursor: pointer; clicked => { AppState.open-viewer(root.item.id, "inspiration"); } }
+    }
+}
+
+component CategoryTabs {
+    in property <bool> for-assets: true;
+    HorizontalLayout {
+        spacing: 10px;
+        PillButton { width: 98px; text: "游戏美术"; active: root.for-assets ? AppState.asset-kind-filter == "game" : AppState.inspiration-kind-filter == "game"; clicked => { if root.for-assets { AppState.asset-kind-filter = "game"; } else { AppState.inspiration-kind-filter = "game"; } } }
+        PillButton { width: 98px; text: "影视创作"; active: root.for-assets ? AppState.asset-kind-filter == "film" : AppState.inspiration-kind-filter == "film"; clicked => { if root.for-assets { AppState.asset-kind-filter = "film"; } else { AppState.inspiration-kind-filter = "film"; } } }
+        PillButton { width: 80px; text: "角色"; clicked => { if root.for-assets { AppState.asset-category-filter = "character"; } else { AppState.inspiration-category-filter = "character"; } } }
+        PillButton { width: 80px; text: "场景"; clicked => { if root.for-assets { AppState.asset-category-filter = "scene"; } else { AppState.inspiration-category-filter = "scene"; } } }
+        PillButton { width: 68px; text: "UI"; clicked => { if root.for-assets { AppState.asset-category-filter = "ui"; } else { AppState.inspiration-category-filter = "ui"; } } }
+        PillButton { width: 80px; text: "特效"; clicked => { if root.for-assets { AppState.asset-category-filter = "effect"; } else { AppState.inspiration-category-filter = "effect"; } } }
+        PillButton { width: 80px; text: "其他"; clicked => { if root.for-assets { AppState.asset-category-filter = "other"; } else { AppState.inspiration-category-filter = "other"; } } }
+    }
+}
+
+component AssetGallery {
+    in property <[AssetItem]> items;
+    in property <string> source;
+    ScrollView {
+        height: 660px;
+        GridLayout {
+            spacing: 16px;
+            for item in root.items: InspirationCard { item: item; width: 250px; height: 250px; }
+        }
+    }
+}
+
+component ModelsPage {
+    Rectangle {
+        background: AppTheme.bg;
+        ScrollView {
+            width: parent.width;
+            height: parent.height;
+            VerticalLayout {
+                padding: 28px;
+                spacing: 18px;
+                PillButton { width: 88px; text: "← 返回"; clicked => { AppState.back(); } }
+                SectionTitle { text: "模型列表"; }
+                PillButton { width: 112px; text: "添加模型"; primary: true; clicked => { AppState.open-provider-editor(""); } }
+                for provider in AppState.providers: Rectangle {
+                    height: 92px;
+                    background: AppTheme.panel-soft;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: AppTheme.accent;
+                    HorizontalLayout {
+                        padding: 16px;
+                        spacing: 16px;
+                        Rectangle { width: 46px; height: 46px; border-radius: 10px; background: AppTheme.panel; Text { width: parent.width; height: parent.height; text: "M"; color: AppTheme.text; horizontal-alignment: center; vertical-alignment: center; font-weight: 500; } }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            Text { text: provider.name; color: AppTheme.text; font-size: 17px; font-weight: 500; }
+                            Text { text: provider.endpoint; color: AppTheme.accent-dark; font-size: 14px; font-weight: 400; }
+                            Text { text: provider.models.length + " 个模型"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
+                        }
+                        PillButton { width: 82px; text: "测速"; clicked => { AppState.test-provider(provider.id); } }
+                        PillButton { width: 82px; text: "编辑"; clicked => { AppState.edit-provider(provider.id); } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component NotificationsPage {
+    Rectangle {
+        background: AppTheme.bg;
+        VerticalLayout {
+            padding: 54px;
+            spacing: 12px;
+            SectionTitle { text: "通知"; }
+            ScrollView {
+                height: 650px;
+                VerticalLayout {
+                    spacing: 10px;
+                    for item in AppState.notifications: Rectangle {
+                        height: item.reason == "" ? 68px : 92px;
+                        background: AppTheme.panel;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: AppTheme.border;
+                        Rectangle { x: 12px; y: 20px; width: 10px; height: 10px; border-radius: 5px; background: item.read ? transparent : (item.success ? AppTheme.success : AppTheme.danger); }
+                        Text { x: 38px; y: 14px; width: parent.width - 60px; text: item.title; color: item.success ? AppTheme.text : AppTheme.danger; font-size: 14px; font-weight: 400; overflow: elide; }
+                        Text { x: 38px; y: 36px; width: parent.width - 60px; text: "模型：" + item.model + " · " + item.time; color: AppTheme.muted; font-size: 12px; font-weight: 400; overflow: elide; }
+                        if item.reason != "": Text { x: 38px; y: 60px; width: parent.width - 60px; text: "失败原因：" + item.reason; color: AppTheme.danger; font-size: 12px; font-weight: 400; overflow: elide; }
+                        TouchArea { mouse-cursor: pointer; clicked => { AppState.mark-notification-read(item.id); } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component ThemeTile {
+    in property <string> id;
+    in property <string> label;
+    in property <color> color;
+    width: 130px;
+    height: 56px;
+    Rectangle {
+        background: AppState.theme-id == root.id ? AppTheme.panel-soft : AppTheme.panel;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: AppState.theme-id == root.id ? AppTheme.accent : AppTheme.border;
+        Rectangle { x: 16px; y: 18px; width: 16px; height: 16px; border-radius: 8px; background: root.color; }
+        Text { x: 42px; width: parent.width - 52px; height: parent.height; text: root.label; color: AppTheme.text; font-size: 14px; font-weight: 400; vertical-alignment: center; }
+        TouchArea { mouse-cursor: pointer; clicked => { AppState.set-theme(root.id); } }
+    }
+}
+
+component DirRow {
+    in property <string> label;
+    in property <string> value;
+    in property <string> kind;
+    height: 74px;
+    Rectangle {
+        background: AppTheme.panel;
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        Text { x: 18px; y: 15px; text: root.label; color: AppTheme.text; font-size: 14px; font-weight: 400; }
+        Text { x: 18px; y: 38px; width: parent.width - 130px; text: root.value; color: AppTheme.muted; font-size: 13px; font-weight: 400; overflow: elide; }
+        PillButton { x: parent.width - 92px; y: 19px; width: 72px; text: "选择"; clicked => { AppState.pick-dir(root.kind); } }
+    }
+}
+
+component AuthDialog {
+    if AppState.auth-open: Rectangle {
+        background: #00000055;
+        TouchArea {}
+        Rectangle {
+            x: (parent.width - 420px) / 2;
+            y: (parent.height - 330px) / 2;
+            width: 420px;
+            height: 330px;
+            background: AppTheme.panel;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            VerticalLayout {
+                padding: 24px;
+                spacing: 12px;
+                SectionTitle { text: "登录/注册"; }
+                Field { label: "手机号"; placeholder: "请输入手机号"; value <=> AppState.auth-phone; }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Field { horizontal-stretch: 1; label: "验证码"; placeholder: "请输入验证码"; value <=> AppState.auth-code; }
+                    PillButton { width: 120px; y: 28px; text: AppState.auth-countdown > 0 ? AppState.auth-countdown + "秒" : "获取验证码"; clicked => { AppState.request-code(); } }
+                }
+                if AppState.auth-error != "": Text { text: AppState.auth-error; color: AppTheme.danger; font-size: 13px; font-weight: 400; }
+                HorizontalLayout {
+                    spacing: 10px;
+                    PillButton { horizontal-stretch: 1; text: "取消"; clicked => { AppState.auth-open = false; } }
+                    PillButton { horizontal-stretch: 1; text: "登录/注册"; primary: true; clicked => { AppState.login-or-register(); } }
+                }
+            }
+        }
+    }
+}
+
+component ProviderEditorDialog {
+    if AppState.provider-editor-open: Rectangle {
+        background: #00000055;
+        TouchArea {}
+        Rectangle {
+            x: (parent.width - 760px) / 2;
+            y: 76px;
+            width: 760px;
+            height: 690px;
+            background: AppTheme.panel;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            ScrollView {
+                width: parent.width;
+                height: parent.height;
+                VerticalLayout {
+                    padding: 24px;
+                    spacing: 12px;
+                    SectionTitle { text: AppState.edit-provider-id == "" ? "添加模型" : "编辑模型"; }
+                    Field { label: "供应商名称"; placeholder: "例如：deepseek"; value <=> AppState.provider-name; }
+                    Field { label: "备注"; placeholder: "例如：公司专用账号"; value <=> AppState.provider-remark; }
+                    Field { label: "官网链接"; placeholder: "https://example.com（可选）"; value <=> AppState.provider-website; }
+                    Field { label: "API Key"; placeholder: "请输入APIkey"; value <=> AppState.provider-api-key; secret: true; }
+                    Field { label: "API 请求地址"; placeholder: "https://api.example.com/v1"; value <=> AppState.provider-endpoint; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Field { horizontal-stretch: 1; label: "模型名称"; placeholder: "点击获取模型或手动填写"; value <=> AppState.provider-model-name; }
+                        PillButton { width: 112px; y: 28px; text: "获取模型"; clicked => { AppState.fetch-models(); } }
+                        PillButton { width: 82px; y: 28px; text: "测速"; clicked => { AppState.test-provider(AppState.edit-provider-id); } }
+                    }
+                    if AppState.provider-message != "": Text { text: AppState.provider-message; color: AppTheme.muted; font-size: 13px; font-weight: 400; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        PillButton { horizontal-stretch: 1; text: "取消"; clicked => { AppState.close-provider-editor(); } }
+                        PillButton { horizontal-stretch: 1; text: "保存模型"; primary: true; clicked => { AppState.save-provider(); } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component ProfileDialog {
+    if AppState.profile-open: Rectangle {
+        background: #00000055;
+        TouchArea {}
+        Rectangle {
+            x: (parent.width - 380px) / 2;
+            y: (parent.height - 260px) / 2;
+            width: 380px;
+            height: 260px;
+            background: AppTheme.panel;
+            border-radius: 16px;
+            VerticalLayout {
+                padding: 24px;
+                spacing: 12px;
+                SectionTitle { text: "修改资料"; }
+                Field { label: "昵称"; placeholder: AppState.phone-mask; value <=> AppState.profile-name; }
+                HorizontalLayout {
+                    spacing: 10px;
+                    PillButton { horizontal-stretch: 1; text: "退出登录"; danger: true; clicked => { AppState.logout(); } }
+                    PillButton { horizontal-stretch: 1; text: "保存"; primary: true; clicked => { AppState.save-profile(); } }
+                }
+            }
+        }
+    }
+}
+
+component InfoCard {
+    in property <string> label;
+    in property <string> value;
+    height: 70px;
+    Rectangle {
+        background: AppTheme.panel-soft;
+        border-radius: 8px;
+        Text { x: 12px; y: 10px; text: root.label; color: AppTheme.muted; font-size: 14px; font-weight: 400; }
+        Text { x: 12px; y: 36px; width: parent.width - 24px; text: root.value; color: AppTheme.text; font-size: 16px; font-weight: 400; overflow: elide; }
+    }
+}
+
+component DeleteConfirm {
+    if AppState.delete-confirm-open: Rectangle {
+        background: #00000055;
+        TouchArea {}
+        Rectangle {
+            x: (parent.width - 330px) / 2;
+            y: (parent.height - 180px) / 2;
+            width: 330px;
+            height: 180px;
+            background: AppTheme.panel;
+            border-radius: 14px;
+            VerticalLayout {
+                padding: 22px;
+                spacing: 18px;
+                Text { text: "确认删除这个资产？"; color: AppTheme.text; font-size: 18px; font-weight: 600; }
+                Text { text: "删除后将从我的资产中移除。"; color: AppTheme.muted; font-size: 13px; font-weight: 400; }
+                HorizontalLayout {
+                    spacing: 10px;
+                    PillButton { horizontal-stretch: 1; text: "取消"; clicked => { AppState.delete-confirm-open = false; } }
+                    PillButton { horizontal-stretch: 1; text: "删除"; danger: true; clicked => { AppState.confirm-delete(); } }
+                }
+            }
+        }
+    }
+}
+
+component TopBar {
+    height: 78px;
+    Rectangle {
+        background: AppTheme.bg;
+        HorizontalLayout {
+            padding-left: 28px;
+            padding-right: 28px;
+            spacing: 12px;
+            alignment: center;
+            if AppState.page != "welcome" && AppState.page != "workspace": PillButton {
+                width: 88px;
+                text: "← 返回";
+                clicked => { AppState.back(); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            if AppState.page == "workspace" || AppState.page == "generation": ModelPicker { kind: "image"; label: "生图模型"; }
+            if AppState.page == "workspace" || AppState.page == "generation": ModelPicker { kind: "reasoning"; label: "推理模型"; }
+            Rectangle { horizontal-stretch: 1; }
+            PillButton { width: 94px; text: AppState.language == "zh" ? "中文" : "English"; clicked => { AppState.set-language(AppState.language == "zh" ? "en" : "zh"); } }
+            PillButton { width: 94px; text: "● 主题"; clicked => { AppState.set-theme(AppState.theme-id == "sprite" ? "deep" : "sprite"); } }
+            PillButton { width: 104px; text: "模型管理"; clicked => { AppState.navigate("models"); } }
+            if AppState.logged-in: PillButton { width: 128px; text: AppState.nickname != "" ? AppState.nickname : AppState.phone-mask; clicked => { AppState.profile-open = true; AppState.profile-name = AppState.nickname; } }
+            if !AppState.logged-in && AppState.page != "welcome": PillButton { width: 112px; text: "登录/注册"; primary: true; clicked => { AppState.auth-open = true; } }
+        }
+    }
+}
+
+component Sidebar {
+    width: AppState.page == "generation" ? 76px : 236px;
+    Rectangle {
+        background: AppTheme.panel;
+        border-color: AppTheme.border;
+        border-width: 1px;
+        VerticalLayout {
+            padding: 14px;
+            spacing: 10px;
+            Rectangle {
+                height: 58px;
+                HorizontalLayout {
+                    spacing: 10px;
+                    Rectangle { width: 36px; height: 36px; border-radius: 8px; background: @linear-gradient(135deg, AppTheme.accent, AppTheme.accent-dark); }
+                    if AppState.page != "generation": VerticalLayout {
+                        Text { text: "ArtForgeStudio"; color: AppTheme.text; font-size: 18px; font-weight: 600; }
+                        Text { text: "AI Art Studio"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
+                    }
+                }
+            }
+            Rectangle { height: 1px; background: AppTheme.border; }
+            NavItem { icon: "□"; label: "我的资产"; page: "assets"; }
+            NavItem { icon: "◴"; label: "生成记录"; page: "generation"; }
+            NavItem { icon: "✦"; label: "灵感广场"; page: "inspiration"; }
+            NavItem { icon: "!"; label: "通知"; page: "notifications"; show-dot: AppState.has-unread; }
+            Rectangle { vertical-stretch: 1; }
+            NavItem { icon: "⚙"; label: "设置"; page: "settings"; }
+        }
+    }
+}
+
+component ShowcaseMosaic {
+    property <[AssetItem]> shown: AppState.inspiration;
+    Rectangle {
+        background: transparent;
+        AssetImageCard { x: 0px; y: 18px; width: 280px; height: 330px; item: root.shown.length > 0 ? root.shown[0] : empty-asset(); title: "角色设定"; subtitle: "完整立绘"; }
+        AssetImageCard { x: 300px; y: 18px; width: 220px; height: 150px; item: root.shown.length > 1 ? root.shown[1] : empty-asset(); title: "场景概念"; subtitle: "环境参考"; }
+        AssetImageCard { x: 300px; y: 188px; width: 220px; height: 150px; item: root.shown.length > 2 ? root.shown[2] : empty-asset(); title: "游戏 UI"; subtitle: "界面方案"; }
+        AssetImageCard { x: 0px; y: 368px; width: 300px; height: 126px; item: root.shown.length > 3 ? root.shown[3] : empty-asset(); title: "特效设计"; subtitle: "技能表现"; }
+    }
+    function empty-asset() -> AssetItem {
+        return { id: "", title: "", category: "", kind: "", time: "", prompt: "", ratio: "", quality: "", model: "", width: 0, height: 0, image: @image-url(""), source-path: "" };
+    }
+}
+
+component SelectChip {
+    in property <string> kind;
+    property <bool> open: false;
+    height: 36px;
+    Rectangle {
+        background: AppTheme.panel-soft;
+        border-radius: 18px;
+        border-width: 1px;
+        border-color: open ? AppTheme.accent : AppTheme.border;
+        Text { x: 12px; width: parent.width - 34px; height: parent.height; text: label(); color: AppTheme.text; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+        Text { x: parent.width - 27px; width: 18px; height: parent.height; text: "⌄"; color: AppTheme.muted; vertical-alignment: center; horizontal-alignment: center; }
+        TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
+    }
+    popup := PopupWindow {
+        x: 0px;
+        y: -options-height() - 6px;
+        width: root.width;
+        height: root.open ? options-height() : 0px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            visible: root.open;
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.accent;
+            VerticalLayout {
+                padding: 6px;
+                spacing: 4px;
+                if root.kind == "type": TypeOption { id: "smart"; label: "智能分类"; close => { root.open = false; } }
+                if root.kind == "type": TypeOption { id: "character"; label: "角色"; close => { root.open = false; } }
+                if root.kind == "type": TypeOption { id: "scene"; label: "场景"; close => { root.open = false; } }
+                if root.kind == "type": TypeOption { id: "ui"; label: "UI"; close => { root.open = false; } }
+                if root.kind == "type": TypeOption { id: "effect"; label: "特效"; close => { root.open = false; } }
+                if root.kind == "type": TypeOption { id: "other"; label: "其他"; close => { root.open = false; } }
+                if root.kind == "count": CountOption { count: 1; close => { root.open = false; } }
+                if root.kind == "count": CountOption { count: 2; close => { root.open = false; } }
+                if root.kind == "count": CountOption { count: 4; close => { root.open = false; } }
+            }
+        }
+    }
+    function label() -> string {
+        if root.kind == "count" { return AppState.count + " 张"; }
+        if AppState.asset-type == "smart" { return "智能分类"; }
+        if AppState.asset-type == "character" { return "角色"; }
+        if AppState.asset-type == "scene" { return "场景"; }
+        if AppState.asset-type == "ui" { return "UI"; }
+        if AppState.asset-type == "effect" { return "特效"; }
+        return "其他";
+    }
+    function options-height() -> length {
+        return root.kind == "count" ? 138px : 258px;
+    }
+}
+
+component CanvasChip {
+    property <bool> open: false;
+    height: 36px;
+    Rectangle {
+        background: AppTheme.panel-soft;
+        border-radius: 18px;
+        border-width: 1px;
+        border-color: open ? AppTheme.accent : AppTheme.border;
+        Text { x: 12px; width: parent.width - 34px; height: parent.height; text: ratio-label() + " · " + AppState.quality; color: AppTheme.text; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+        Text { x: parent.width - 27px; width: 18px; height: parent.height; text: "⌄"; color: AppTheme.muted; vertical-alignment: center; horizontal-alignment: center; }
+        TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
+    }
+    popup := PopupWindow {
+        x: 0px;
+        y: -286px;
+        width: 430px;
+        height: root.open ? 278px : 0px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            visible: root.open;
+            background: AppTheme.panel;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: AppTheme.accent;
+            VerticalLayout {
+                padding: 12px;
+                spacing: 12px;
+                Text { text: "选择比例"; color: AppTheme.muted; font-size: 13px; font-weight: 400; }
+                GridLayout {
+                    spacing: 8px;
+                    Row { RatioButton { id: "smart"; label: "智能"; } RatioButton { id: "21:9"; label: "21:9"; } RatioButton { id: "16:9"; label: "16:9"; } RatioButton { id: "3:2"; label: "3:2"; } RatioButton { id: "4:3"; label: "4:3"; } RatioButton { id: "1:1"; label: "1:1"; } }
+                    Row { RatioButton { id: "3:4"; label: "3:4"; } RatioButton { id: "2:3"; label: "2:3"; } RatioButton { id: "9:16"; label: "9:16"; } RatioButton { id: "5:4"; label: "5:4"; } RatioButton { id: "4:5"; label: "4:5"; } RatioButton { id: "2:1"; label: "2:1"; } }
+                    Row { RatioButton { id: "1:2"; label: "1:2"; } RatioButton { id: "9:21"; label: "9:21"; } }
+                }
+                Text { text: "选择分辨率"; color: AppTheme.muted; font-size: 13px; font-weight: 400; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    QualityButton { label: "1K"; }
+                    QualityButton { label: "高清 2K"; value: "2K"; }
+                    QualityButton { label: "超清 4K"; value: "4K"; }
+                }
+            }
+        }
+    }
+    function ratio-label() -> string { return AppState.ratio == "smart" ? "智能" : AppState.ratio; }
+}
+
+component InspirationGrid {
+    in property <[AssetItem]> items;
+    in property <int> columns: 4;
+    in property <length> card-width: 230px;
+    property <length> gap: 16px;
+    property <length> card-height: 260px;
+    GridLayout {
+        spacing: gap;
+        for item[i] in root.items: InspirationCard {
+            item: item;
+            width: root.card-width;
+            height: root.card-height;
+        }
+    }
+}
+
+component AssetsPage {
+    Rectangle {
+        background: AppTheme.bg;
+        VerticalLayout {
+            padding: 28px;
+            spacing: 16px;
+            PillButton { width: 88px; text: "← 返回"; clicked => { AppState.back(); } }
+            CategoryTabs { for-assets: true; }
+            AssetGallery { items: AppState.assets; source: "asset"; }
+        }
+    }
+}
+
+component InspirationPage {
+    Rectangle {
+        background: AppTheme.bg;
+        VerticalLayout {
+            padding: 28px;
+            spacing: 16px;
+            CategoryTabs { for-assets: false; }
+            AssetGallery { items: AppState.inspiration; source: "inspiration"; }
+        }
+    }
+}
+
+component SettingsPage {
+    Rectangle {
+        background: AppTheme.bg;
+        ScrollView {
+            width: parent.width;
+            height: parent.height;
+            VerticalLayout {
+                padding: 36px;
+                spacing: 16px;
+                PillButton { width: 88px; text: "← 返回"; clicked => { AppState.back(); } }
+                SectionTitle { text: "基础设置"; }
+                Rectangle {
+                    height: 134px;
+                    background: AppTheme.panel;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 12px;
+                        Text { text: "主题颜色"; color: AppTheme.text; font-size: 14px; font-weight: 400; }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            ThemeTile { id: "sprite"; label: "精灵绿"; color: #00d982; }
+                            ThemeTile { id: "deep"; label: "深色"; color: #4f46e5; }
+                            ThemeTile { id: "blue"; label: "深海蓝"; color: #38a8e8; }
+                            ThemeTile { id: "forest"; label: "森林绿"; color: #38c172; }
+                            ThemeTile { id: "rose"; label: "暗玫瑰"; color: #e11d48; }
+                        }
+                    }
+                }
+                Rectangle {
+                    height: 130px;
+                    background: AppTheme.panel;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 10px;
+                        Text { text: "字体"; color: AppTheme.text; font-size: 14px; font-weight: 400; }
+                        PillButton { width: 240px; text: AppState.settings-font-family; clicked => { AppState.load-fonts(); } }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            PillButton { width: 40px; text: "-"; clicked => { AppState.settings-font-size = max(11, AppState.settings-font-size - 1); } }
+                            Text { text: AppState.settings-font-size; color: AppTheme.accent-dark; font-size: 16px; font-weight: 400; vertical-alignment: center; }
+                            PillButton { width: 40px; text: "+"; clicked => { AppState.settings-font-size = min(22, AppState.settings-font-size + 1); } }
+                            Text { text: "11 - 22"; color: AppTheme.muted; font-size: 13px; font-weight: 400; vertical-alignment: center; }
+                        }
+                    }
+                }
+                DirRow { label: "输入素材目录"; value: AppState.input-dir; kind: "input"; }
+                DirRow { label: "输出目录"; value: AppState.output-dir; kind: "output"; }
+                DirRow { label: "提示词模板目录"; value: AppState.prompt-dir; kind: "prompt"; }
+            }
+        }
+    }
+}
+
+component ViewerOverlay {
+    if AppState.viewer-open: Rectangle {
+        background: AppTheme.bg;
+        HorizontalLayout {
+            spacing: 0px;
+            Rectangle {
+                horizontal-stretch: 1;
+                VerticalLayout {
+                    padding: 24px;
+                    spacing: 10px;
+                    PillButton { width: 88px; text: "← 返回"; clicked => { AppState.close-viewer(); } }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        vertical-stretch: 1;
+                        Image { x: 40px; y: 20px; width: parent.width - 80px; height: parent.height - 40px; source: AppState.viewer-image; image-fit: contain; }
+                    }
+                }
+            }
+            Rectangle {
+                width: 360px;
+                background: AppTheme.panel;
+                border-width: 1px;
+                border-color: AppTheme.border;
+                VerticalLayout {
+                    padding: 24px;
+                    spacing: 16px;
+                    if AppState.viewer-source == "asset": PillButton { width: 44px; text: "⌫"; danger: true; clicked => { AppState.request-delete-asset(AppState.viewer-id); } }
+                    if AppState.viewer-source == "generation": PillButton { width: 118px; text: AppState.viewer-in-assets ? "已加入" : "加入资产"; primary: true; clicked => { AppState.viewer-add-asset(); } }
+                    if AppState.viewer-source == "inspiration": PillButton { width: 118px; text: "做同款"; primary: true; clicked => { AppState.viewer-use-same(); } }
+                    if AppState.viewer-source == "inspiration": PillButton { width: 118px; text: "用作参考图"; primary: true; clicked => { AppState.viewer-use-reference(); } }
+                    Text { text: "图片提示词"; color: AppTheme.muted; font-size: 14px; font-weight: 400; }
+                    Text { text: AppState.viewer-prompt; color: AppTheme.text; font-size: 13px; font-weight: 400; wrap: word-wrap; }
+                    Text { text: AppState.viewer-time + " · " + AppState.viewer-ratio + " · " + AppState.viewer-quality; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
+                    Rectangle { height: 1px; background: AppTheme.border; }
+                    SectionTitle { text: "图像信息"; }
+                    GridLayout {
+                        spacing: 10px;
+                        Row { InfoCard { label: "尺寸"; value: AppState.viewer-width + " x " + AppState.viewer-height; } InfoCard { label: "宽高比"; value: AppState.viewer-ratio; } }
+                        Row { InfoCard { label: "品质"; value: AppState.viewer-quality; } InfoCard { label: "模型"; value: AppState.viewer-model; } }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        PillButton { horizontal-stretch: 1; text: "重新编辑"; primary: true; clicked => { AppState.viewer-edit(); } }
+                        PillButton { horizontal-stretch: 1; text: "再次生成"; primary: true; clicked => { AppState.viewer-regenerate(); } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component WelcomePage {
+    Rectangle {
+        background: AppTheme.bg;
+        ScrollView {
+            width: parent.width;
+            height: parent.height;
+            VerticalLayout {
+                padding: 48px;
+                spacing: 34px;
+                HorizontalLayout {
+                    spacing: 46px;
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        height: 510px;
+                        background: transparent;
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 22px;
+                            Text { text: "ArtForgeStudio"; color: AppTheme.text; font-size: 68px; font-weight: 600; }
+                            Text {
+                                text: "利用 ArtForgeStudio，为您的游戏生成：角色、特效、UI、场景、精灵图、影视创作等。";
+                                color: AppTheme.muted;
+                                font-size: 31px;
+                                font-weight: 400;
+                                wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                spacing: 14px;
+                                PillButton { width: 168px; height: 50px; text: "立即使用"; primary: true; clicked => { AppState.use-now(); } }
+                            }
+                        }
+                    }
+                    ShowcaseMosaic { width: 520px; height: 510px; }
+                }
+                SectionTitle { text: "作品灵感"; }
+                InspirationGrid { items: AppState.inspiration; columns: 5; card-width: 206px; }
+                Rectangle {
+                    height: 190px;
+                    background: AppTheme.panel-soft;
+                    border-radius: 18px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 12px;
+                        Text { text: "登录查看全部灵感"; color: AppTheme.text; font-size: 36px; font-weight: 600; }
+                        Text { text: "与 AI 一起创作不可思议的作品"; color: AppTheme.muted; font-size: 18px; font-weight: 400; }
+                        PillButton { width: 144px; text: "立即创作"; primary: true; clicked => { AppState.use-now(); } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component PromptComposer {
+    in property <bool> generation: false;
+    height: AppState.references.length > 0 || AppState.quote-title != "" ? 250px : 190px;
+    Rectangle {
+        background: AppTheme.panel;
+        border-radius: 18px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        clip: false;
+        if AppState.quote-title != "": Rectangle {
+            x: 24px;
+            y: 14px;
+            height: 32px;
+            width: parent.width - 48px;
+            background: AppTheme.panel-soft;
+            border-radius: 8px;
+            Text { x: 12px; width: parent.width - 54px; height: parent.height; text: "引用图片：" + AppState.quote-title; color: AppTheme.muted; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+            Text { x: parent.width - 34px; width: 24px; height: parent.height; text: "×"; color: AppTheme.muted; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => { AppState.quote-title = ""; AppState.quote-prompt = ""; } }
+        }
+        if AppState.references.length > 0: HorizontalLayout {
+            x: 24px;
+            y: AppState.quote-title != "" ? 58px : 20px;
+            height: 64px;
+            spacing: 10px;
+            for ref in AppState.references: ReferenceThumb { item: ref; }
+            UploadCard { width: 48px; height: 58px; clicked => { AppState.add-reference(); } }
+        }
+        UploadCard {
+            x: 24px;
+            y: (AppState.references.length > 0 ? 96px : 36px) + (AppState.quote-title != "" ? 36px : 0px);
+            width: 48px;
+            height: 58px;
+            visible: AppState.references.length == 0;
+            clicked => { AppState.add-reference(); }
+        }
+        TextInput {
+            x: 92px;
+            y: (AppState.references.length > 0 ? 94px : 36px) + (AppState.quote-title != "" ? 36px : 0px);
+            width: parent.width - 122px;
+            height: 84px;
+            text <=> AppState.prompt;
+            single-line: false;
+            color: AppTheme.text;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 400;
+            wrap: word-wrap;
+        }
+        if AppState.prompt == "": Text {
+            x: 92px;
+            y: (AppState.references.length > 0 ? 94px : 36px) + (AppState.quote-title != "" ? 36px : 0px);
+            width: parent.width - 122px;
+            text: AppState.mode == "film" ? "描述你想创作的剧本、角色、场景、分镜或视频" : "描述你想生成的角色、场景、UI 或特效";
+            color: AppTheme.weak;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 400;
+        }
+        HorizontalLayout {
+            x: 24px;
+            y: parent.height - 52px;
+            spacing: 10px;
+            SelectChip { width: 118px; kind: "type"; }
+            CanvasChip { width: 132px; }
+            SelectChip { width: 90px; kind: "count"; }
+        }
+        PillButton {
+            x: parent.width - 112px;
+            y: parent.height - 52px;
+            width: 88px;
+            text: AppState.generating ? "生成中" : "生成";
+            primary: true;
+            clicked => { AppState.generate(); }
+        }
+    }
+}
+
+component GenerationPage {
+    Rectangle {
+        background: AppTheme.bg;
+        HorizontalLayout {
+            spacing: 0px;
+            ConversationSide {}
+            Rectangle {
+                horizontal-stretch: 1;
+                VerticalLayout {
+                    padding-left: 72px;
+                    padding-right: 72px;
+                    padding-top: 22px;
+                    spacing: 34px;
+                    ScrollView {
+                        height: 560px;
+                        VerticalLayout {
+                            spacing: 28px;
+                            for item in AppState.generations: GenerationRecord { item: item; }
+                            if AppState.generating: Text { text: AppState.generation-status; color: AppTheme.muted; font-size: AppState.settings-font-size * 1px; font-weight: 400; }
+                        }
+                    }
+                    PromptComposer { generation: true; }
+                }
+            }
+        }
+    }
+}
+
+component WorkspacePage {
+    Rectangle {
+        background: AppTheme.bg;
+        VerticalLayout {
+            padding-left: 64px;
+            padding-right: 64px;
+            padding-top: 72px;
+            spacing: 22px;
+            HorizontalLayout {
+                alignment: center;
+                spacing: 10px;
+                PillButton { width: 108px; text: "游戏美术"; active: AppState.mode == "game"; clicked => { AppState.mode = "game"; } }
+                PillButton { width: 108px; text: "影视创作"; active: AppState.mode == "film"; clicked => { AppState.mode = "film"; } }
+            }
+            PromptComposer { generation: false; }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "ArtForgeStudio";
+    preferred-width: 1440px;
+    preferred-height: 900px;
+    min-width: 1180px;
+    min-height: 760px;
+    background: AppTheme.bg;
+    default-font-family: AppState.settings-font-family;
+    default-font-size: AppState.settings-font-size * 1px;
+
+    HorizontalLayout {
+        if AppState.logged-in && AppState.page != "welcome": Sidebar {}
+        VerticalLayout {
+            if AppState.page != "welcome": TopBar {}
+            Rectangle {
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                if AppState.page == "welcome": WelcomePage { width: parent.width; height: parent.height; }
+                if AppState.page == "workspace": WorkspacePage { width: parent.width; height: parent.height; }
+                if AppState.page == "generation": GenerationPage { width: parent.width; height: parent.height; }
+                if AppState.page == "assets": AssetsPage { width: parent.width; height: parent.height; }
+                if AppState.page == "inspiration": InspirationPage { width: parent.width; height: parent.height; }
+                if AppState.page == "notifications": NotificationsPage { width: parent.width; height: parent.height; }
+                if AppState.page == "models": ModelsPage { width: parent.width; height: parent.height; }
+                if AppState.page == "settings": SettingsPage { width: parent.width; height: parent.height; }
+            }
+        }
+    }
+
+    AuthDialog { width: root.width; height: root.height; }
+    ProviderEditorDialog { width: root.width; height: root.height; }
+    ProfileDialog { width: root.width; height: root.height; }
+    ViewerOverlay { width: root.width; height: root.height; }
+    DeleteConfirm { width: root.width; height: root.height; }
+}
