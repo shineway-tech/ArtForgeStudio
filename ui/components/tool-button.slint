@@ -1,0 +1,42 @@
+import { Theme } from "../theme.slint";
+
+export component ToolButton {
+    in property <string> text;
+    in property <bool> accent: false;
+    in property <bool> danger: false;
+    callback clicked();
+
+    height: 28px;
+    min-width: 54px;
+    horizontal-stretch: 0;
+
+    Rectangle {
+        background: touch.has-hover
+            ? (root.danger ? #2a121a : Theme.palette.bg-hover)
+            : Theme.palette.bg-elevated;
+        border-radius: 7px;
+        border-width: 1px;
+        border-color: root.danger ? Theme.palette.error : (root.accent ? Theme.palette.accent : Theme.palette.border);
+        animate background, border-color { duration: 120ms; }
+
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            alignment: center;
+
+            Text {
+                text: root.text;
+                color: root.danger ? Theme.palette.error : (root.accent ? Theme.palette.accent-hover : Theme.palette.fg-muted);
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                font-weight: Theme.typo.weight-medium;
+                vertical-alignment: center;
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}

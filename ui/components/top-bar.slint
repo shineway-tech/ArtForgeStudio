@@ -1,0 +1,344 @@
+import { Theme } from "../theme.slint";
+import { AppState, ProviderInfo, ProviderModelOption, WorkspaceSelectOption } from "../app-state.slint";
+
+component ProviderMenuButton {
+    in property <WorkspaceSelectOption> item;
+    in property <string> selected-id;
+    callback selected(string);
+
+    height: 30px;
+
+    Rectangle {
+        background: root.item.id == root.selected-id || touch.has-hover
+            ? Theme.palette.bg-hover
+            : transparent;
+        border-radius: 6px;
+        animate background { duration: 120ms; }
+
+        Text {
+            x: 10px;
+            width: parent.width - 78px;
+            height: parent.height;
+            text: root.item.label;
+            color: root.item.id == root.selected-id ? Theme.palette.accent-hover : Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            font-weight: root.item.id == root.selected-id ? Theme.typo.weight-bold : Theme.typo.weight-regular;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            x: parent.width - 64px;
+            width: 54px;
+            height: parent.height;
+            text: root.item.hint;
+            color: Theme.palette.fg-disabled;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.selected(root.item.id); }
+        }
+    }
+}
+
+component ModelMenuButton {
+    in property <ProviderModelOption> item;
+    in property <string> selected-provider-id;
+    in property <string> selected-model;
+    callback selected(string);
+
+    height: 30px;
+
+    Rectangle {
+        background: (root.item.provider-id == root.selected-provider-id && root.item.model == root.selected-model) || touch.has-hover
+            ? Theme.palette.bg-hover
+            : transparent;
+        border-radius: 6px;
+        animate background { duration: 120ms; }
+
+        Text {
+            x: 10px;
+            width: parent.width - 78px;
+            height: parent.height;
+            text: root.item.label;
+            color: root.item.model == root.selected-model ? Theme.palette.accent-hover : Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            font-weight: root.item.model == root.selected-model ? Theme.typo.weight-bold : Theme.typo.weight-regular;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            x: parent.width - 64px;
+            width: 54px;
+            height: parent.height;
+            text: root.item.hint;
+            color: Theme.palette.fg-disabled;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.selected(root.item.model); }
+        }
+    }
+}
+
+component ProviderChip {
+    in property <string> label;
+    in property <ProviderInfo> info;
+    in property <string> menu-title;
+    in property <string> provider-id;
+    in property <string> model;
+    in property <[WorkspaceSelectOption]> provider-options;
+    in property <[ProviderModelOption]> model-options;
+    callback provider-selected(string);
+    callback model-selected(string);
+
+    height: 30px;
+    min-width: 250px;
+    horizontal-stretch: 0;
+
+    Rectangle {
+        background: touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg;
+        border-radius: 7px;
+        border-width: 1px;
+        border-color: touch.has-hover ? Theme.palette.border-strong : Theme.palette.border;
+        animate background, border-color { duration: 120ms; }
+
+        Text {
+            x: 10px;
+            y: 0px;
+            width: label-text.preferred-width;
+            height: parent.height;
+            text: root.label + "模型:";
+            color: Theme.palette.fg-disabled;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            vertical-alignment: center;
+        }
+
+        label-text := Text {
+            text: root.label + "模型:";
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            visible: false;
+        }
+
+        Rectangle {
+            x: 16px + label-text.preferred-width;
+            y: (parent.height - self.height) / 2;
+            width: 6px;
+            height: 6px;
+            border-radius: 3px;
+            background: root.info.has-provider
+                ? Theme.palette.success
+                : Theme.palette.fg-disabled;
+        }
+
+        Text {
+            x: 28px + label-text.preferred-width;
+            y: 0px;
+            width: parent.width - self.x - 32px;
+            height: parent.height;
+            text: root.info.instance-name + " / " + root.info.model;
+            color: root.info.has-provider ? Theme.palette.fg-muted : Theme.palette.error;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Image {
+            x: parent.width - 24px;
+            y: (parent.height - self.height) / 2;
+            width: 14px;
+            height: 14px;
+            source: @image-url("../assets/icons/chevron-down.svg");
+            colorize: Theme.palette.fg-disabled;
+        }
+
+        touch := TouchArea {
+            enabled: root.provider-options.length > 0 || root.model-options.length > 0;
+            mouse-cursor: touch.enabled ? pointer : default;
+            clicked => { menu.show(); }
+        }
+    }
+
+    menu := PopupWindow {
+        x: 0;
+        y: root.height + 4px;
+        width: 310px;
+        height: 72px + root.provider-options.length * 30px + root.model-options.length * 30px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.palette.border-strong;
+            clip: true;
+
+            VerticalLayout {
+                padding: 8px;
+                spacing: 4px;
+
+                Text {
+                    text: root.menu-title;
+                    color: Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    font-weight: Theme.typo.weight-medium;
+                }
+
+                for provider[i] in root.provider-options: ProviderMenuButton {
+                    item: provider;
+                    selected-id: root.provider-id;
+                    selected(id) => {
+                        root.provider-selected(id);
+                        menu.close();
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Theme.palette.border;
+                    visible: root.provider-options.length > 0 && root.model-options.length > 0;
+                }
+
+                for model[i] in root.model-options: ModelMenuButton {
+                    item: model;
+                    selected-provider-id: root.provider-id;
+                    selected-model: root.model;
+                    selected(value) => {
+                        root.model-selected(value);
+                        menu.close();
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component TopBar {
+    height: 48px;
+
+    Rectangle {
+        background: Theme.palette.bg-elevated;
+        border-color: Theme.palette.border;
+        border-width: 0px;
+
+        Rectangle {
+            x: 0;
+            y: parent.height - 1px;
+            width: parent.width;
+            height: 1px;
+            background: Theme.palette.border;
+        }
+
+        HorizontalLayout {
+            height: 48px;
+            padding-left: 18px;
+            padding-right: 18px;
+            padding-top: 9px;
+            padding-bottom: 9px;
+            spacing: Theme.spacing.lg;
+            alignment: space-between;
+
+            HorizontalLayout {
+                spacing: Theme.spacing.lg;
+                alignment: center;
+
+                // 模式切换
+                workspace-mode-switcher := Rectangle {
+                    min-width: 180px;
+                    min-height: 30px;
+
+                    HorizontalLayout {
+                        spacing: 2px;
+
+                        // 美术创作
+                        art-btn := Rectangle {
+                            background: AppState.workspace-mode == "art" ? Theme.palette.accent : Theme.palette.bg-hover;
+                            border-radius: Theme.shape.radius-sm;
+                            min-height: 28px;
+
+                            Text {
+                                text: "美术创作";
+                                color: AppState.workspace-mode == "art" ? #ffffff : Theme.palette.fg-muted;
+                                font-size: Theme.typo.size-xs;
+                                font-weight: Theme.typo.weight-medium;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            art-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { AppState.switch-workspace-mode("art"); }
+                            }
+                        }
+
+                        // 影视创作
+                        film-btn := Rectangle {
+                            background: AppState.workspace-mode == "film" ? Theme.palette.accent : Theme.palette.bg-hover;
+                            border-radius: Theme.shape.radius-sm;
+                            min-height: 28px;
+
+                            Text {
+                                text: "影视创作";
+                                color: AppState.workspace-mode == "film" ? #ffffff : Theme.palette.fg-muted;
+                                font-size: Theme.typo.size-xs;
+                                font-weight: Theme.typo.weight-medium;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            film-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { AppState.switch-workspace-mode("film"); }
+                            }
+                        }
+                    }
+                }
+
+                ProviderChip {
+                    label: "生图";
+                    menu-title: "选择生图接口和模型";
+                    info: AppState.generation;
+                    provider-id: AppState.ws-generation-provider-id;
+                    model: AppState.ws-generation-model;
+                    provider-options: AppState.ws-generation-provider-options;
+                    model-options: AppState.ws-generation-model-options;
+                    provider-selected(id) => { AppState.select-generation-provider(id); }
+                    model-selected(model) => { AppState.select-generation-model(model); }
+                }
+
+                ProviderChip {
+                    label: "推理";
+                    menu-title: "选择推理接口和模型";
+                    info: AppState.analysis;
+                    provider-id: AppState.ws-analysis-provider-id;
+                    model: AppState.ws-analysis-model;
+                    provider-options: AppState.ws-analysis-provider-options;
+                    model-options: AppState.ws-analysis-model-options;
+                    provider-selected(id) => { AppState.select-analysis-provider(id); }
+                    model-selected(model) => { AppState.select-analysis-model(model); }
+                }
+            }
+
+            Rectangle { width: 1px; }
+        }
+    }
+}

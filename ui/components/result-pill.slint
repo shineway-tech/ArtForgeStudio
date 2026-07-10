@@ -1,0 +1,29 @@
+import { Theme } from "../theme.slint";
+
+export component ResultPill {
+    in property <string> text;
+
+    height: 28px;
+    min-width: 64px;
+    horizontal-stretch: 0;
+
+    Rectangle {
+        background: Theme.palette.bg;
+        border-radius: 7px;
+        border-width: 1px;
+        border-color: Theme.palette.border;
+
+        Text {
+            x: 10px;
+            width: parent.width - 20px;
+            height: parent.height;
+            text: root.text;
+            color: Theme.palette.fg-disabled;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}

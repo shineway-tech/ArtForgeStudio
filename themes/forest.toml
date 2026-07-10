@@ -1,0 +1,53 @@
+id = "forest"
+display_name = "森林绿"
+is_dark = true
+
+[palette]
+bg            = "#060e0a"
+bg_elevated   = "#0c1610"
+bg_hover      = "#18241a"
+bg_active     = "#101a12"
+fg            = "#e4f4ec"
+fg_muted      = "#b8d8c4"
+fg_disabled   = "#789c84"
+border        = "#182a1e"
+border_strong = "#2c402e"
+accent        = "#22c55e"
+accent_hover  = "#4ade80"
+accent_active = "#16a34a"
+success       = "#34d399"
+warning       = "#f59e0b"
+error         = "#ef4444"
+overlay       = "#000000aa"
+
+[shape]
+radius_sm    = 4
+radius_md    = 8
+radius_lg    = 12
+border_width = 1
+
+[typography]
+family         = "Sarasa UI SC"
+family_mono    = "Sarasa Mono SC"
+size_xs        = 11
+size_sm        = 12
+size_md        = 14
+size_lg        = 16
+size_xl        = 20
+weight_regular = 400
+weight_medium  = 500
+weight_bold    = 700
+line_height    = 1.5
+
+[spacing]
+xs  = 4
+sm  = 8
+md  = 12
+lg  = 16
+xl  = 24
+xxl = 32
+
+[motion]
+duration_fast   = "120ms"
+duration_normal = "200ms"
+duration_slow   = "300ms"

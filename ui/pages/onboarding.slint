@@ -1,0 +1,153 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+import { Button } from "../components/button.slint";
+import { StepFeatures } from "onboarding-step1.slint";
+import { StepDirectories } from "onboarding-step2.slint";
+import { StepProvider } from "onboarding-step4.slint";
+
+component StepDot {
+    in property <int> step;
+    in property <int> active-step;
+
+    width: 28px;
+    height: 28px;
+
+    Rectangle {
+        background: root.step <= root.active-step ? Theme.palette.accent : Theme.palette.bg-hover;
+        border-radius: 14px;
+        animate background { duration: 200ms; }
+
+        Text {
+            text: root.step;
+            color: root.step <= root.active-step ? #ffffff : Theme.palette.fg-muted;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-sm;
+            font-weight: Theme.typo.weight-bold;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component StepDivider {
+    in property <bool> filled;
+    height: 2px;
+    horizontal-stretch: 1;
+
+    Rectangle {
+        background: root.filled ? Theme.palette.accent : Theme.palette.bg-hover;
+        border-radius: 1px;
+        animate background { duration: 200ms; }
+    }
+}
+
+export component OnboardingPage {
+    Rectangle {
+        background: Theme.palette.bg;
+
+        VerticalLayout {
+            padding-left: Theme.spacing.xxl;
+            padding-right: Theme.spacing.xxl;
+            padding-top: Theme.spacing.xl;
+            padding-bottom: Theme.spacing.xl;
+            spacing: Theme.spacing.lg;
+
+            // 顶部
+            HorizontalLayout {
+                spacing: Theme.spacing.md;
+                alignment: space-between;
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.sm;
+
+                    Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        background: Theme.palette.accent;
+                        border-radius: Theme.shape.radius-md;
+
+                        Text {
+                            text: "A";
+                            color: #ffffff;
+                            font-size: 16px;
+                            font-weight: Theme.typo.weight-bold;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Text {
+                        text: "ArtForge Studio 初次设置";
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-lg;
+                        font-weight: Theme.typo.weight-bold;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    text: "第 " + AppState.onboarding.step + " / 3 步";
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-sm;
+                    vertical-alignment: center;
+                }
+            }
+
+            // 步骤进度条
+            HorizontalLayout {
+                spacing: 4px;
+                alignment: stretch;
+
+                StepDot { step: 1; active-step: AppState.onboarding.step; }
+                StepDivider { filled: AppState.onboarding.step >= 2; }
+                StepDot { step: 2; active-step: AppState.onboarding.step; }
+                StepDivider { filled: AppState.onboarding.step >= 3; }
+                StepDot { step: 3; active-step: AppState.onboarding.step; }
+            }
+
+            // 内容区
+            Rectangle {
+                vertical-stretch: 1;
+
+                if AppState.onboarding.step == 1: StepFeatures {}
+                if AppState.onboarding.step == 2: StepDirectories {}
+                if AppState.onboarding.step == 3: StepProvider {}
+            }
+
+            // 底部操作栏
+            HorizontalLayout {
+                spacing: Theme.spacing.sm;
+                alignment: space-between;
+
+                Button {
+                    text: "上一步";
+                    disabled: AppState.onboarding.step <= 1;
+                    clicked => { AppState.onboarding-prev(); }
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.sm;
+
+                    if AppState.onboarding.step == 3: Button {
+                        text: "跳过";
+                        clicked => { AppState.onboarding-skip-provider(); }
+                    }
+
+                    if AppState.onboarding.step < 3: Button {
+                        text: "下一步";
+                        primary: true;
+                        clicked => { AppState.onboarding-next(); }
+                    }
+
+                    if AppState.onboarding.step == 3: Button {
+                        text: "完成 →";
+                        primary: true;
+                        clicked => { AppState.onboarding-finish(); }
+                    }
+                }
+            }
+        }
+    }
+}

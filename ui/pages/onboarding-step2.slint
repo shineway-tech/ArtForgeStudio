@@ -1,0 +1,292 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+import { Button } from "../components/button.slint";
+
+// ── 目录 ──────────────────────────────────────────────────────────────────
+
+component DirRow {
+    in property <string> id;
+    in property <string> label;
+    in property <string> value;
+    in property <string> hint;
+
+    Rectangle {
+        background: Theme.palette.bg-elevated;
+        border-radius: Theme.shape.radius-md;
+        border-width: Theme.shape.border-width;
+        border-color: Theme.palette.border;
+
+        HorizontalLayout {
+            padding: 10px;
+            spacing: Theme.spacing.sm;
+
+            VerticalLayout {
+                spacing: 1px;
+                horizontal-stretch: 1;
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.sm;
+
+                    Text {
+                        text: root.label;
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-sm;
+                        font-weight: Theme.typo.weight-medium;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: root.hint;
+                        color: Theme.palette.fg-disabled;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    text: root.value != "" ? root.value : "（使用默认）";
+                    color: root.value != "" ? Theme.palette.fg-muted : Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family-mono;
+                    font-size: 11px;
+                    overflow: elide;
+                }
+            }
+
+            Button {
+                text: "选择…";
+                clicked => { AppState.onboarding-pick-dir(root.id); }
+            }
+        }
+    }
+}
+
+// ── 主题卡片 ──────────────────────────────────────────────────────────────
+
+component ThemeCard {
+    in property <string> id;
+    in property <string> title;
+    in property <string> subtitle;
+    in property <color> bg-preview;
+    in property <color> fg-preview;
+    in property <color> accent-preview;
+
+    height: 80px;
+
+    Rectangle {
+        background: AppState.onboarding.theme-id == root.id
+            ? Theme.palette.bg-active
+            : (touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated);
+        border-radius: Theme.shape.radius-md;
+        border-width: AppState.onboarding.theme-id == root.id ? 2px : Theme.shape.border-width;
+        border-color: AppState.onboarding.theme-id == root.id
+            ? Theme.palette.accent
+            : Theme.palette.border;
+        animate background, border-color { duration: 150ms; }
+
+        HorizontalLayout {
+            padding: 10px;
+            spacing: Theme.spacing.sm;
+
+            // 缩略色块
+            Rectangle {
+                background: root.bg-preview;
+                border-radius: Theme.shape.radius-sm;
+                width: 48px;
+                min-height: 60px;
+                border-width: 1px;
+                border-color: Theme.palette.border;
+                vertical-stretch: 1;
+
+                Rectangle {
+                    background: root.accent-preview;
+                    border-radius: 3px;
+                    width: 20px;
+                    height: 8px;
+                    x: 10px;
+                    y: 14px;
+                }
+            }
+
+            VerticalLayout {
+                spacing: 4px;
+                horizontal-stretch: 1;
+
+                Text {
+                    text: root.title;
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-md;
+                    font-weight: Theme.typo.weight-bold;
+                }
+
+                Text {
+                    text: root.subtitle;
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { AppState.onboarding-pick-theme(root.id); }
+        }
+    }
+}
+
+// ── 步骤页面 ──────────────────────────────────────────────────────────────
+
+export component StepDirectories {
+    VerticalLayout {
+        spacing: Theme.spacing.lg;
+
+        // ── 目录区 ──────────────────────────────────
+
+        Text {
+            text: "工作目录";
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: 18px;
+            font-weight: Theme.typo.weight-bold;
+        }
+
+        if AppState.onboarding.legacy-detected: Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-md;
+            border-width: 1px;
+            border-color: Theme.palette.accent;
+            height: 40px;
+
+            HorizontalLayout {
+                padding-left: Theme.spacing.md;
+                padding-right: Theme.spacing.md;
+                spacing: Theme.spacing.md;
+                alignment: space-between;
+
+                Text {
+                    text: AppState.onboarding.legacy-hint;
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+
+                Button {
+                    text: "使用旧目录";
+                    clicked => { AppState.onboarding-use-legacy-paths(); }
+                }
+            }
+        }
+
+        DirRow {
+            id: "output";
+            label: "输出目录";
+            hint: "生成结果";
+            value: AppState.onboarding.output-dir;
+        }
+
+        DirRow {
+            id: "input";
+            label: "素材目录";
+            hint: "参考图片";
+            value: AppState.onboarding.input-dir;
+        }
+
+        DirRow {
+            id: "prompt";
+            label: "提示词模板";
+            hint: "内置 + 自定义";
+            value: AppState.onboarding.prompt-dir;
+        }
+
+        // ── 主题区 ──────────────────────────────────
+
+        Rectangle { height: Theme.spacing.md; }
+
+        Text {
+            text: "界面外观";
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: 18px;
+            font-weight: Theme.typo.weight-bold;
+        }
+
+        GridLayout {
+            spacing: Theme.spacing.md;
+
+            ThemeCard {
+                id: "dark";
+                title: "深紫";
+                subtitle: "推荐 · 旧版默认";
+                bg-preview: #06060e;
+                fg-preview: #e4e4f4;
+                accent-preview: #4f46e5;
+                horizontal-stretch: 1;
+            }
+
+            ThemeCard {
+                id: "light";
+                title: "素白";
+                subtitle: "高对比浅色";
+                bg-preview: #fafafc;
+                fg-preview: #1f2030;
+                accent-preview: #4f46e5;
+                horizontal-stretch: 1;
+            }
+
+            ThemeCard {
+                id: "ocean";
+                title: "深海蓝";
+                subtitle: "冷色低饱和";
+                bg-preview: #060b14;
+                fg-preview: #e4ecf8;
+                accent-preview: #0ea5e9;
+                horizontal-stretch: 1;
+            }
+
+            ThemeCard {
+                id: "system";
+                title: "跟随系统";
+                subtitle: "自动切换深浅色";
+                bg-preview: #fafafc;
+                fg-preview: #1f2030;
+                accent-preview: #4f46e5;
+                horizontal-stretch: 1;
+            }
+        }
+
+        Text {
+            text: "更多主题在设置 → 外观 → 切换";
+            color: Theme.palette.fg-disabled;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+        }
+
+        if AppState.onboarding.last-error != "": Rectangle {
+            background: #ff4d4f22;
+            border-radius: Theme.shape.radius-sm;
+            border-width: 1px;
+            border-color: Theme.palette.error;
+            height: 32px;
+
+            HorizontalLayout {
+                padding-left: Theme.spacing.sm;
+                padding-right: Theme.spacing.sm;
+
+                Text {
+                    text: "✗ " + AppState.onboarding.last-error;
+                    color: Theme.palette.error;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-sm;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}

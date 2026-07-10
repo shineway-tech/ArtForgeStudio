@@ -1,0 +1,22 @@
+import { Theme } from "../theme.slint";
+
+export component MarkdownView {
+    in property <string> text;
+    in property <length> font-size: Theme.typo.size-sm;
+
+    Flickable {
+        width: root.width;
+        height: root.height;
+        viewport-height: content.preferred-height;
+
+        content := Text {
+            width: root.width;
+            text: root.text;
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family-mono;
+            font-size: root.font-size;
+            wrap: word-wrap;
+            horizontal-alignment: left;
+        }
+    }
+}

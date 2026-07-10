@@ -1,0 +1,53 @@
+id = "cream"
+display_name = "奶白"
+is_dark = false
+
+[palette]
+bg            = "#f2ebe0"
+bg_elevated   = "#f7f0e6"
+bg_hover      = "#f7f0e6"
+bg_active     = "#ebe3d5"
+fg            = "#3a3025"
+fg_muted      = "#665a4e"
+fg_disabled   = "#9e9286"
+border        = "#d8cfc2"
+border_strong = "#b8ad9f"
+accent        = "#c96b73"
+accent_hover  = "#d68189"
+accent_active = "#a34e58"
+success       = "#22c55e"
+warning       = "#f59e0b"
+error         = "#ef4444"
+overlay       = "#00000066"
+
+[shape]
+radius_sm    = 4
+radius_md    = 8
+radius_lg    = 12
+border_width = 1
+
+[typography]
+family         = "Sarasa UI SC"
+family_mono    = "Sarasa Mono SC"
+size_xs        = 11
+size_sm        = 12
+size_md        = 14
+size_lg        = 16
+size_xl        = 20
+weight_regular = 400
+weight_medium  = 500
+weight_bold    = 700
+line_height    = 1.5
+
+[spacing]
+xs  = 4
+sm  = 8
+md  = 12
+lg  = 16
+xl  = 24
+xxl = 32
+
+[motion]
+duration_fast   = "120ms"
+duration_normal = "200ms"
+duration_slow   = "300ms"

@@ -1,0 +1,80 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+
+export component StatusBar {
+    height: 24px;
+
+    Rectangle {
+        background: Theme.palette.bg;
+
+        // 顶部分隔线
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: 1px;
+            background: Theme.palette.border;
+        }
+
+        HorizontalLayout {
+            padding-left: Theme.spacing.md;
+            padding-right: Theme.spacing.md;
+            spacing: Theme.spacing.lg;
+            alignment: space-between;
+
+            // 左：状态指示
+            HorizontalLayout {
+                spacing: Theme.spacing.sm;
+                alignment: start;
+
+                Rectangle {
+                    width: 6px;
+                    height: 6px;
+                    border-radius: 3px;
+                    background: Theme.palette.success;
+                    y: parent.height / 2 - 3px;
+                }
+
+                Text {
+                    text: AppState.status-text;
+                    color: Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+
+            // 右：信息汇总
+            HorizontalLayout {
+                spacing: Theme.spacing.lg;
+                alignment: end;
+
+                if AppState.assets-all.length > 0: Text {
+                    text: "资产 " + AppState.assets-all.length;
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    vertical-alignment: center;
+                }
+
+                if AppState.tasks.length > 0: Text {
+                    text: "任务 " + AppState.tasks.length;
+                    color: Theme.palette.accent;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    font-weight: Theme.typo.weight-medium;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: AppState.config-path != "" ? AppState.config-path : "（未加载配置）";
+                    color: Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family-mono;
+                    font-size: Theme.typo.size-xs;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}

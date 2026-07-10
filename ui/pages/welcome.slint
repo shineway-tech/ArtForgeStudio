@@ -1,0 +1,474 @@
+import { Theme } from "../theme.slint";
+import { AppState, AssetItem } from "../app-state.slint";
+import { Button } from "../components/button.slint";
+
+component MiniThumb {
+    in property <AssetItem> data;
+
+    width: 128px;
+    height: 92px;
+
+    Rectangle {
+        background: Theme.palette.bg-elevated;
+        border-radius: Theme.shape.radius-sm;
+        border-width: 1px;
+        border-color: thumb-touch.has-hover ? Theme.palette.accent : Theme.palette.border;
+        clip: true;
+        animate border-color { duration: 120ms; }
+
+        Image {
+            x: thumb-touch.has-hover ? -4px : 0px;
+            y: thumb-touch.has-hover ? -4px : 0px;
+            width: parent.width + (thumb-touch.has-hover ? 8px : 0px);
+            height: parent.height + (thumb-touch.has-hover ? 8px : 0px);
+            source: root.data.thumb;
+            image-fit: cover;
+            animate x, y, width, height { duration: 140ms; easing: ease-out; }
+        }
+
+        Rectangle {
+            y: parent.height - 24px;
+            width: parent.width;
+            height: 24px;
+            background: #000000aa;
+
+            Text {
+                x: 6px;
+                width: parent.width - 12px;
+                height: parent.height;
+                text: root.data.name;
+                color: #ffffff;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        thumb-touch := TouchArea {
+            mouse-cursor: pointer;
+            double-clicked => { AppState.asset-open-preview(root.data.path, root.data.name); }
+        }
+    }
+}
+
+component MetricCard {
+    in property <string> label;
+    in property <string> value;
+    in property <string> hint;
+    in property <bool> active: false;
+
+    height: 78px;
+    horizontal-stretch: 1;
+
+    Rectangle {
+        background: Theme.palette.bg-elevated;
+        border-radius: Theme.shape.radius-md;
+        border-width: Theme.shape.border-width;
+        border-color: root.active ? Theme.palette.accent : Theme.palette.border;
+
+        VerticalLayout {
+            padding: Theme.spacing.md;
+            spacing: 2px;
+
+            Text {
+                text: root.label;
+                color: Theme.palette.fg-disabled;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                font-weight: Theme.typo.weight-medium;
+            }
+
+            Text {
+                text: root.value;
+                color: root.active ? Theme.palette.accent-hover : Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-md;
+                font-weight: Theme.typo.weight-bold;
+                overflow: elide;
+            }
+
+            Text {
+                text: root.hint;
+                color: Theme.palette.fg-muted;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+component EntryCard {
+    in property <string> title;
+    in property <string> body;
+    in property <string> target;
+    in property <string> stat;
+
+    height: 118px;
+    horizontal-stretch: 1;
+
+    Rectangle {
+        background: touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated;
+        border-radius: Theme.shape.radius-md;
+        border-width: Theme.shape.border-width;
+        border-color: touch.has-hover ? Theme.palette.accent : Theme.palette.border;
+        animate background, border-color { duration: 120ms; }
+
+        Rectangle {
+            x: 0px;
+            y: 12px;
+            width: 3px;
+            height: parent.height - 24px;
+            background: touch.has-hover ? Theme.palette.accent : Theme.palette.border-strong;
+            border-radius: 2px;
+        }
+
+        VerticalLayout {
+            padding: Theme.spacing.md;
+            spacing: 6px;
+
+            HorizontalLayout {
+                spacing: Theme.spacing.sm;
+
+                Text {
+                    text: root.title;
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-lg;
+                    font-weight: Theme.typo.weight-bold;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+
+                Text {
+                    text: root.stat;
+                    color: Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    vertical-alignment: center;
+                }
+            }
+
+            Text {
+                text: root.body;
+                color: Theme.palette.fg-muted;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                wrap: word-wrap;
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            Text {
+                text: "进入";
+                color: touch.has-hover ? Theme.palette.accent-hover : Theme.palette.accent;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                font-weight: Theme.typo.weight-medium;
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { AppState.navigate(root.target); }
+        }
+    }
+}
+
+export component WelcomePage {
+    width: 100%;
+    height: 100%;
+
+    property <int> recent-count: min(AppState.assets-all.length, 8);
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: Theme.palette.bg;
+
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+
+            VerticalLayout {
+                width: parent.width;
+                height: parent.height;
+                padding-left: Theme.spacing.lg;
+                padding-right: Theme.spacing.lg;
+                padding-top: Theme.spacing.xl;
+                padding-bottom: Theme.spacing.xl;
+                spacing: Theme.spacing.lg;
+
+                HorizontalLayout {
+                    width: parent.width;
+                    spacing: Theme.spacing.xl;
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        height: 168px;
+                        background: Theme.palette.bg-elevated;
+                        border-radius: Theme.shape.radius-lg;
+                        border-width: Theme.shape.border-width;
+                        border-color: Theme.palette.border;
+
+                        VerticalLayout {
+                            padding: Theme.spacing.xl;
+                            spacing: Theme.spacing.md;
+
+                            Text {
+                                text: "ArtForge";
+                                color: Theme.palette.fg;
+                                font-family: Theme.typo.family;
+                                font-size: 28px;
+                                font-weight: Theme.typo.weight-bold;
+                            }
+
+                            Text {
+                                text: "从提示词、参考图到素材图库的一体化工作台。先选择创作类型，再生成、预览和处理结果图。";
+                                color: Theme.palette.fg-muted;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-md;
+                                wrap: word-wrap;
+                            }
+
+                            HorizontalLayout {
+                                spacing: Theme.spacing.sm;
+
+                                Button {
+                                    width: 140px;
+                                    text: "创建场景";
+                                    primary: true;
+                                    clicked => { AppState.navigate("scene"); }
+                                }
+
+                                Button {
+                                    width: 140px;
+                                    text: "创建角色";
+                                    clicked => { AppState.navigate("character"); }
+                                }
+
+                                Button {
+                                    width: 128px;
+                                    text: "打开图库";
+                                    clicked => { AppState.navigate("asset_browser"); }
+                                }
+
+                                Button {
+                                    width: 128px;
+                                    text: "新建项目";
+                                    primary: true;
+                                    clicked => { AppState.navigate-to-project(); }
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 360px;
+                        height: 168px;
+                        background: Theme.palette.bg-elevated;
+                        border-radius: Theme.shape.radius-lg;
+                        border-width: Theme.shape.border-width;
+                        border-color: Theme.palette.border;
+
+                        VerticalLayout {
+                            padding: Theme.spacing.lg;
+                            spacing: Theme.spacing.sm;
+
+                            Text {
+                                text: "当前节点";
+                                color: Theme.palette.fg;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-md;
+                                font-weight: Theme.typo.weight-bold;
+                            }
+
+                            Text {
+                                text: AppState.generation.has-provider
+                                    ? "生图 · " + AppState.generation.instance-name + " / " + AppState.generation.model
+                                    : "生图 · 未配置";
+                                color: AppState.generation.has-provider ? Theme.palette.success : Theme.palette.warning;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-sm;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: AppState.analysis.has-provider
+                                    ? "推理 · " + AppState.analysis.instance-name + " / " + AppState.analysis.model
+                                    : "推理 · 未配置";
+                                color: AppState.analysis.has-provider ? Theme.palette.success : Theme.palette.warning;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-sm;
+                                overflow: elide;
+                            }
+
+                            Rectangle { vertical-stretch: 1; }
+
+                            Text {
+                                text: AppState.config-path;
+                                color: Theme.palette.fg-disabled;
+                                font-family: Theme.typo.family-mono;
+                                font-size: Theme.typo.size-xs;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    width: parent.width;
+                    spacing: Theme.spacing.md;
+
+                    MetricCard {
+                        label: "图库资产";
+                        value: AppState.assets-all.length + " 项";
+                        hint: "输出目录实时监听";
+                        active: AppState.assets-all.length > 0;
+                    }
+
+                    MetricCard {
+                        label: "场景";
+                        value: AppState.assets-scene.length + " 张";
+                        hint: "环境与背景素材";
+                    }
+
+                    MetricCard {
+                        label: "角色";
+                        value: AppState.assets-character.length + " 张";
+                        hint: "设定与角色素材";
+                    }
+
+                    MetricCard {
+                        label: "特效";
+                        value: AppState.assets-effect.length + " 张";
+                        hint: "技能与动效素材";
+                    }
+                }
+
+                HorizontalLayout {
+                    width: parent.width;
+                    spacing: Theme.spacing.md;
+
+                    EntryCard {
+                        title: "创建场景";
+                        body: "生成环境、背景、场景概念图。适合先确定整体美术方向。";
+                        target: "scene";
+                        stat: AppState.assets-scene.length + " 张";
+                    }
+
+                    EntryCard {
+                        title: "创建角色";
+                        body: "生成角色设定和角色图，作为动作、特效和动画流程基础素材。";
+                        target: "character";
+                        stat: AppState.assets-character.length + " 张";
+                    }
+
+                    EntryCard {
+                        title: "UI 概念";
+                        body: "生成 HUD、面板和视觉方向图，用于快速探索界面风格。";
+                        target: "ui_concept";
+                        stat: AppState.assets-ui.length + " 张";
+                    }
+
+                    EntryCard {
+                        title: "特效";
+                        body: "生成技能特效、附魔效果、精灵图或动画帧参考。";
+                        target: "effect";
+                        stat: AppState.assets-effect.length + " 张";
+                    }
+                }
+
+                Rectangle {
+                    width: parent.width;
+                    height: 168px;
+                    background: Theme.palette.bg-elevated;
+                    border-radius: Theme.shape.radius-lg;
+                    border-width: Theme.shape.border-width;
+                    border-color: Theme.palette.border;
+                    clip: true;
+
+                    VerticalLayout {
+                        padding: Theme.spacing.md;
+                        spacing: Theme.spacing.sm;
+
+                        HorizontalLayout {
+                            spacing: Theme.spacing.sm;
+
+                            Text {
+                                text: AppState.assets-all.length > 0 ? "最近生成 · " + recent-count + " 张" : "最近生成";
+                                color: Theme.palette.fg;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-md;
+                                font-weight: Theme.typo.weight-bold;
+                                vertical-alignment: center;
+                            }
+
+                            Text {
+                                text: "双击缩略图预览";
+                                color: Theme.palette.fg-disabled;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-xs;
+                                vertical-alignment: center;
+                            }
+
+                            Rectangle { horizontal-stretch: 1; }
+
+                            Button {
+                                text: "查看全部";
+                                clicked => { AppState.navigate("asset_browser"); }
+                            }
+                        }
+
+                        if AppState.assets-all.length > 0: Rectangle {
+                            height: 96px;
+                            clip: true;
+
+                            HorizontalLayout {
+                                spacing: 8px;
+
+                                for asset[i] in AppState.assets-all: MiniThumb {
+                                    data: asset;
+                                }
+                            }
+                        }
+
+                        if AppState.assets-all.length == 0: Rectangle {
+                            height: 96px;
+                            background: Theme.palette.bg;
+                            border-radius: Theme.shape.radius-md;
+                            border-width: 1px;
+                            border-color: Theme.palette.border;
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 4px;
+
+                                Text {
+                                    text: "还没有生成结果";
+                                    color: Theme.palette.fg-muted;
+                                    font-family: Theme.typo.family;
+                                    font-size: Theme.typo.size-md;
+                                    font-weight: Theme.typo.weight-medium;
+                                }
+
+                                Text {
+                                    text: "选择左侧创作类型，输入提示词后开始生成。";
+                                    color: Theme.palette.fg-disabled;
+                                    font-family: Theme.typo.family;
+                                    font-size: Theme.typo.size-sm;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle { vertical-stretch: 1; }
+            }
+        }
+    }
+}

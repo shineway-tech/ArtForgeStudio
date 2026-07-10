@@ -1,7 +1,61 @@
-﻿/target/
-/native-client/target/
-/dist/
-*.exe
-*.zip
-*.png
+/target
+/native-client/target
+/dist
+/Cargo.lock.bak
+
+# Packaged binaries and archives
+/*.exe
+/*.zip
+
+# Local screenshots / preview captures
+/artforge-*.png
+/native-client/artforge-*.png
+/native-client/screen-capture.png
+/native-client/window-capture.png
+
+# Build artifacts
+**/*.rs.bk
+*.bak-*
+**/*.pdb
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Local config
+.env
+.env.local
+*.local.toml
+.cargo/
+
+# User runtime data (do not commit)
+/input
+/out
+/apply_prompt
+/Back/data
+/Back/target
+
+# Agent/codegraph
+.codegraph/
+.reasonix/
+
+# Logs
 *.log
+/logs
+
+# Local experiment folders
+/analysis/
+/client-shell/
+/data/
+/local-preview/
+/promo-video/
+/tools/
+/assets/app.ico
+/assets/logo.png
+/assets/icons/
+/assets/showcase/

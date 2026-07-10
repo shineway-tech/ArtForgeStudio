@@ -1,0 +1,48 @@
+{
+  "current_generation_instance": "toapis-local",
+  "current_analysis_instance": "toapis-local",
+  "current_video_instance": "seedance-local",
+  "provider_instances": {
+    "toapis-local": {
+      "provider": "toapis",
+      "name": "ToAPI 示例",
+      "scope": "both",
+      "show_in_main_ui": true,
+      "config": {
+        "generation_api_url": "https://example.com/v1/images/generations",
+        "generation_api_key": "sk-your-generation-key",
+        "generation_model": "gpt-image-2",
+        "image_upload_api_url": "https://example.com/v1/uploads/images",
+        "image_upload_api_key": "sk-your-upload-key",
+        "analysis_api_url": "https://example.com/v1/chat/completions",
+        "analysis_api_key": "sk-your-analysis-key",
+        "analysis_model": "gpt-5.5"
+      }
+    },
+    "seedance-local": {
+      "provider": "volcengine_seedance",
+      "name": "Seedance 示例",
+      "scope": "video",
+      "show_in_main_ui": true,
+      "config": {
+        "video_api_url": "https://example.com/api/v3/contents/generations/tasks",
+        "video_api_key": "your-video-key",
+        "video_model": "seedance-1-0-pro"
+      }
+    }
+  },
+  "input_dir": "input",
+  "reference_dir": "reference_action",
+  "reference_prompt_dir": "prompt/reference_prompt",
+  "scene_prompt_dir": "prompt/scene_prompt",
+  "ui_prompt_dir": "prompt/ui_prompt",
+  "create_character_prompt_dir": "prompt/create_character_prompt",
+  "output_dir": "out",
+  "enable_image_generation": true,
+  "size": "auto",
+  "n": 1,
+  "max_retries": 3,
+  "retry_delay": 5,
+  "poll_interval": 3,
+  "poll_timeout": 300
+}

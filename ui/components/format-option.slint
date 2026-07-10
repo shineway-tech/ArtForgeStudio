@@ -1,0 +1,47 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+
+export component FormatOption {
+    in property <string> id;
+    in property <string> label;
+
+    width: 72px;
+    height: 36px;
+
+    Rectangle {
+        background: AppState.prompt-template-format == root.id
+            ? Theme.palette.accent
+            : (touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated);
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: AppState.prompt-template-format == root.id ? Theme.palette.accent : Theme.palette.border;
+        animate background, border-color { duration: 120ms; }
+
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 10px;
+            alignment: space-between;
+
+            Text {
+                text: root.label;
+                color: AppState.prompt-template-format == root.id ? #ffffff : Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                vertical-alignment: center;
+            }
+
+            Image {
+                width: 12px;
+                height: 12px;
+                source: @image-url("../assets/icons/square.svg");
+                colorize: AppState.prompt-template-format == root.id ? #ffffffaa : Theme.palette.fg-disabled;
+                vertical-alignment: center;
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { AppState.prompt-template-format = root.id; }
+        }
+    }
+}

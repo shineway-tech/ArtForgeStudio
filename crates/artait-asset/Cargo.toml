@@ -1,0 +1,24 @@
+[package]
+name = "artait-asset"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+description = "ArtAIT 本地资产懒索引、缩略图、文件监听"
+
+[dependencies]
+artait-model = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+notify = { workspace = true }
+chrono = { workspace = true }
+directories = { workspace = true }
+uuid = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+reqwest = { workspace = true }
+rusqlite = { workspace = true }

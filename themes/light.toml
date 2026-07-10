@@ -1,0 +1,53 @@
+id = "light"
+display_name = "素白"
+is_dark = false
+
+[palette]
+bg            = "#f6f6f9"
+bg_elevated   = "#ffffff"
+bg_hover      = "#eceef3"
+bg_active     = "#e3e6ec"
+fg            = "#1a1b26"
+fg_muted      = "#51545f"
+fg_disabled   = "#9a9da8"
+border        = "#dfe2e8"
+border_strong = "#b8bdc8"
+accent        = "#5e6ad2"
+accent_hover  = "#4f59c0"
+accent_active = "#434bb0"
+success       = "#16a37a"
+warning       = "#c2821a"
+error         = "#d23b3f"
+overlay       = "#00000099"
+
+[shape]
+radius_sm    = 6
+radius_md    = 10
+radius_lg    = 14
+border_width = 1
+
+[typography]
+family         = "Sarasa UI SC"
+family_mono    = "Sarasa Mono SC"
+size_xs        = 11
+size_sm        = 12
+size_md        = 14
+size_lg        = 16
+size_xl        = 22
+weight_regular = 400
+weight_medium  = 500
+weight_bold    = 600
+line_height    = 1.5
+
+[spacing]
+xs  = 4
+sm  = 8
+md  = 14
+lg  = 18
+xl  = 26
+xxl = 36
+
+[motion]
+duration_fast   = "120ms"
+duration_normal = "200ms"
+duration_slow   = "300ms"

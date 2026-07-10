@@ -1,0 +1,86 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "native-client"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.78"
+license = "Proprietary"
+authors = ["ArtAIT"]
+publish = false
+
+[workspace.dependencies]
+# UI
+slint = { version = "=1.16.1", default-features = false, features = ["compat-1-2", "std", "backend-winit", "renderer-femtovg", "unstable-winit-030"] }
+slint-build = "=1.16.1"
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs", "time", "io-util"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures = "0.3"
+
+# HTTP
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "multipart"] }
+
+# Serde
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Errors
+thiserror = "1"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+
+# Platform / system
+keyring = "3"
+notify = "6"
+single-instance = "0.3"
+directories = "5"
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+winreg = "0.52"
+rfd = "0.15"
+open = "5"
+winresource = "0.1"
+pulldown-cmark = { version = "0.12", default-features = false }
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Internal
+artait-model    = { path = "crates/artait-model" }
+artait-config   = { path = "crates/artait-config" }
+artait-provider = { path = "crates/artait-provider" }
+artait-providers = { path = "crates/artait-providers" }
+artait-task     = { path = "crates/artait-task" }
+artait-asset    = { path = "crates/artait-asset" }
+artait-service  = { path = "crates/artait-service" }
+[profile.release]
+opt-level = 2
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+incremental = false
+
+[profile.dev]
+opt-level = 0
+debug = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev-fast]
+inherits = "dev"
+opt-level = 0
+debug = 0
+split-debuginfo = "off"
+codegen-units = 256
+incremental = true
+
+# 依赖不做优化，加速首次编译
+[profile.dev-fast.package."*"]
+opt-level = 0

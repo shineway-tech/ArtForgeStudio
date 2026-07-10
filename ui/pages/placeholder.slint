@@ -1,0 +1,56 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+
+export component PlaceholderPage {
+    in property <string> title;
+    in property <string> hint;
+
+    Rectangle {
+        background: Theme.palette.bg;
+
+        VerticalLayout {
+            padding: Theme.spacing.xxl;
+            spacing: Theme.spacing.md;
+            alignment: start;
+
+            Text {
+                text: root.title;
+                color: Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: 24px;
+                font-weight: Theme.typo.weight-bold;
+            }
+
+            Text {
+                text: root.hint;
+                color: Theme.palette.fg-muted;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-md;
+                wrap: word-wrap;
+            }
+
+            Rectangle {
+                background: Theme.palette.bg-elevated;
+                border-radius: Theme.shape.radius-md;
+                border-width: Theme.shape.border-width;
+                border-color: Theme.palette.border;
+                height: 80px;
+
+                HorizontalLayout {
+                    padding: Theme.spacing.md;
+                    alignment: center;
+
+                    Text {
+                        text: "占位页面 · 后续阶段实现";
+                        color: Theme.palette.fg-muted;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-sm;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            Rectangle { vertical-stretch: 1; }
+        }
+    }
+}

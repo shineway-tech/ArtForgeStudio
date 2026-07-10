@@ -1,0 +1,28 @@
+[package]
+name = "artait-task"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+description = "ArtAIT 任务运行时 + 取消 + 事件总线"
+
+[dependencies]
+artait-model = { workspace = true }
+artait-provider = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+base64 = "0.22"
+
+[dev-dependencies]
+async-trait = "0.1"
+bytes = "1"

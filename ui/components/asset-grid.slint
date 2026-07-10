@@ -1,0 +1,640 @@
+import { Theme } from "../theme.slint";
+import { AppState, AssetItem } from "../app-state.slint";
+
+component MenuAction {
+    in property <string> label;
+    in property <bool> enabled: true;
+    in property <bool> danger: false;
+    callback clicked();
+
+    height: 28px;
+
+    Rectangle {
+        background: item-touch.has-hover && root.enabled
+            ? (root.danger ? Theme.palette.error : Theme.palette.bg-hover)
+            : transparent;
+        border-radius: 6px;
+        animate background { duration: 90ms; easing: ease-out; }
+
+        Text {
+            x: 10px;
+            width: parent.width - 20px;
+            height: parent.height;
+            text: root.label;
+            color: !root.enabled
+                ? Theme.palette.fg-disabled
+                : (root.danger && item-touch.has-hover ? #ffffff : (root.danger ? Theme.palette.error : Theme.palette.fg));
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-sm;
+            font-weight: Theme.typo.weight-medium;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        item-touch := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: root.enabled ? pointer : default;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+component LoadingDot {
+    in property <int> phase;
+    in property <int> offset: 0;
+
+    property <int> local-phase: mod(root.phase + root.offset, 18);
+    property <length> lift: local-phase < 3
+        ? -8px
+        : (local-phase < 6
+            ? -5px
+            : (local-phase < 9
+                ? 0px
+                : (local-phase < 12 ? 5px : (local-phase < 15 ? 2px : -4px))));
+    property <float> dot-opacity: local-phase < 3
+        ? 1.0
+        : (local-phase < 6
+            ? 0.86
+            : (local-phase < 9
+                ? 0.72
+                : (local-phase < 12 ? 0.52 : (local-phase < 15 ? 0.64 : 0.82))));
+
+    width: 7px;
+    height: 20px;
+
+    Rectangle {
+        x: 0px;
+        y: 8px + root.lift;
+        width: 7px;
+        height: 7px;
+        border-radius: 4px;
+        background: Theme.palette.accent;
+        opacity: root.dot-opacity;
+        animate y, opacity { duration: 58ms; easing: ease-in-out; }
+    }
+}
+
+component AssetCell {
+    in property <AssetItem> data;
+    in property <length> size: 156px;
+    property <bool> drag-armed: false;
+    property <bool> drag-started: false;
+    property <bool> visual-pressed: false;
+    property <bool> visual-dragging: AppState.active-asset-drag-path == root.data.path;
+    property <length> image-inset: root.visual-dragging ? 10px : (root.visual-pressed ? 4px : (hover.has-hover ? -6px : 0px));
+    property <bool> last-click-control: false;
+    property <length> drag-start-x: 0px;
+    property <length> drag-start-y: 0px;
+    property <bool> generating-turnaround: AppState.turnaround-source-path == root.data.path;
+    property <int> phase: 0;
+    callback context-menu(length, length);
+
+    width: root.size;
+    height: root.size;
+
+    drag-reset := Timer {
+        interval: 900ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            root.drag-armed = false;
+            root.drag-started = false;
+            root.visual-pressed = false;
+            if AppState.active-asset-drag-path == root.data.path {
+                AppState.active-asset-drag-path = "";
+            }
+        }
+    }
+
+    turnaround-phase-timer := Timer {
+        interval: 28ms;
+        running: root.generating-turnaround;
+        triggered => {
+            root.phase = mod(root.phase + 1, 18);
+            self.restart();
+        }
+    }
+
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.size;
+        height: root.size;
+        background: Theme.palette.bg-elevated;
+        border-radius: 8px;
+        border-width: root.data.selected ? 2px : 1px;
+        border-color: root.data.selected || root.visual-pressed || hover.has-hover ? Theme.palette.accent : Theme.palette.border;
+        clip: true;
+        animate border-color { duration: 120ms; }
+
+        Image {
+            x: root.image-inset;
+            y: root.image-inset;
+            width: parent.width - root.image-inset * 2;
+            height: parent.height - root.image-inset * 2;
+            source: root.data.thumb;
+            image-fit: cover;
+            opacity: root.generating-turnaround ? 0.34 : 1.0;
+            animate x, y, width, height { duration: 140ms; easing: ease-out; }
+            animate opacity { duration: 140ms; easing: ease-out; }
+        }
+
+        if root.data.is-video: Rectangle {
+            background: #00000088;
+
+            Image {
+                width: 34px;
+                height: 34px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                source: @image-url("../assets/icons/play.svg");
+                colorize: #ffffff;
+            }
+        }
+
+        Rectangle {
+            background: root.data.selected ? #4a90e22a : (root.visual-pressed ? #ffffff18 : transparent);
+            border-radius: 8px;
+            border-width: root.data.selected ? 2px : (root.visual-pressed ? 2px : 0px);
+            border-color: Theme.palette.accent;
+            animate background, border-width { duration: 120ms; easing: ease-out; }
+        }
+
+        if root.data.selected: Rectangle {
+            x: parent.width - 26px;
+            y: 6px;
+            width: 20px;
+            height: 20px;
+            background: Theme.palette.accent;
+            border-radius: 10px;
+
+            Image {
+                x: 4px;
+                y: 4px;
+                width: 12px;
+                height: 12px;
+                source: @image-url("../assets/icons/check.svg");
+                colorize: #ffffff;
+            }
+        }
+
+        if root.generating-turnaround: Rectangle {
+            background: Theme.palette.bg;
+            opacity: 0.56;
+        }
+
+        if root.generating-turnaround: HorizontalLayout {
+            x: 0px;
+            y: parent.height / 2 - 12px;
+            width: parent.width;
+            height: 24px;
+            spacing: 9px;
+            alignment: center;
+
+            LoadingDot { phase: root.phase; offset: 0; }
+            LoadingDot { phase: root.phase; offset: 6; }
+            LoadingDot { phase: root.phase; offset: 12; }
+        }
+
+        if root.generating-turnaround: Rectangle {
+            x: 8px;
+            y: parent.height - 30px;
+            width: parent.width - 16px;
+            height: 22px;
+            background: Theme.palette.bg-elevated;
+            border-radius: 11px;
+            border-width: 1px;
+            border-color: Theme.palette.border;
+            opacity: 0.92;
+
+            Text {
+                width: parent.width;
+                height: parent.height;
+                text: "生成三视图";
+                color: Theme.palette.fg-muted;
+                font-family: Theme.typo.family;
+                font-size: 10px;
+                font-weight: Theme.typo.weight-medium;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        // 悬停时显示生成参数，默认不遮挡缩略图。
+        Rectangle {
+            x: 0;
+            y: parent.height - 30px;
+            width: parent.width;
+            height: 30px;
+            background: #000000b8;
+            visible: hover.has-hover && !root.generating-turnaround;
+
+            Text {
+                x: 6px;
+                y: 0;
+                width: parent.width - quality-badge.width - 18px;
+                height: parent.height;
+                text: root.data.model == "" ? "未记录模型" : root.data.model;
+                color: #ffffff;
+                font-family: Theme.typo.family;
+                font-size: 10px;
+                font-weight: Theme.typo.weight-medium;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            quality-badge := Rectangle {
+                width: max(34px, quality-text.preferred-width + 12px);
+                height: 18px;
+                x: parent.width - self.width - 6px;
+                y: 6px;
+                background: #22c55e33;
+                border-radius: 9px;
+                border-width: 1px;
+                border-color: #22c55e66;
+
+                quality-text := Text {
+                    x: 6px;
+                    width: parent.width - 12px;
+                    height: parent.height;
+                    text: root.data.quality == "" ? "--" : root.data.quality;
+                    color: #b8f7cf;
+                    font-family: Theme.typo.family;
+                    font-size: 9px;
+                    font-weight: Theme.typo.weight-bold;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+
+        hover := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                if !root.drag-started {
+                    AppState.asset-clicked(root.data.path, root.last-click-control);
+                }
+                root.drag-started = false;
+                root.drag-armed = false;
+                root.visual-pressed = false;
+                drag-reset.running = false;
+            }
+
+            double-clicked => {
+                root.drag-started = false;
+                root.drag-armed = false;
+                root.visual-pressed = false;
+                drag-reset.running = false;
+                AppState.asset-open-preview(root.data.path, root.data.name);
+            }
+
+            pointer-event(event) => {
+                if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                    root.drag-armed = true;
+                    root.drag-started = false;
+                    root.visual-pressed = true;
+                    root.last-click-control = event.modifiers.control;
+                    root.drag-start-x = self.mouse-x;
+                    root.drag-start-y = self.mouse-y;
+                } else if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
+                    root.drag-armed = false;
+                    root.visual-pressed = false;
+                    root.context-menu(self.mouse-x, self.mouse-y);
+                } else if event.kind == PointerEventKind.move && root.drag-armed && !root.drag-started {
+                    if abs(self.mouse-x - root.drag-start-x) > 8px || abs(self.mouse-y - root.drag-start-y) > 8px {
+                        root.drag-started = true;
+                        root.drag-armed = false;
+                        root.visual-pressed = false;
+                        AppState.active-asset-drag-path = root.data.path;
+                        drag-reset.restart();
+                        AppState.start-asset-drag(root.data.path);
+                    }
+                } else if event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
+                    root.drag-armed = false;
+                    root.visual-pressed = false;
+                    if root.drag-started {
+                        root.drag-started = false;
+                        drag-reset.running = false;
+                    }
+                }
+            }
+        }
+
+    }
+}
+
+component GeneratingAssetCell {
+    in property <length> size: 156px;
+
+    property <int> phase: 0;
+    property <length> entry-y: 0px;
+
+    width: root.size;
+    height: root.size;
+
+    phase-timer := Timer {
+        interval: 28ms;
+        running: true;
+        triggered => {
+            root.phase = mod(root.phase + 1, 18);
+            self.restart();
+        }
+    }
+
+    entry-timer := Timer {
+        interval: 90ms;
+        running: true;
+        triggered => {
+            root.entry-y = root.entry-y == 0px ? -5px : 0px;
+            if root.entry-y == 0px {
+                self.running = false;
+            } else {
+                self.restart();
+            }
+        }
+    }
+
+    Rectangle {
+        x: 0px;
+        y: root.entry-y;
+        width: root.size;
+        height: root.size;
+        background: Theme.palette.bg-elevated;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.palette.accent;
+        clip: true;
+        animate y { duration: 90ms; easing: ease-out; }
+        animate border-color { duration: 120ms; }
+
+        Rectangle {
+            x: 1px;
+            y: 1px;
+            width: parent.width - 2px;
+            height: parent.height - 2px;
+            background: Theme.palette.bg;
+            border-radius: 7px;
+        }
+
+        HorizontalLayout {
+            x: 0px;
+            y: parent.height / 2 - 10px;
+            width: parent.width;
+            height: 20px;
+            spacing: 9px;
+            alignment: center;
+
+            LoadingDot { phase: root.phase; offset: 0; }
+            LoadingDot { phase: root.phase; offset: 6; }
+            LoadingDot { phase: root.phase; offset: 12; }
+        }
+
+        Rectangle {
+            x: 0px;
+            y: parent.height - 24px;
+            width: parent.width;
+            height: 24px;
+            background: #00000066;
+
+            Text {
+                x: 6px;
+                y: 0px;
+                width: parent.width - 12px;
+                height: parent.height;
+                text: "生成中";
+                color: Theme.palette.fg-muted;
+                font-family: Theme.typo.family;
+                font-size: 10px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        // 取消生成按钮（右上角 X）
+        Rectangle {
+            x: parent.width - 26px;
+            y: 6px;
+            width: 20px;
+            height: 20px;
+            background: cancel-touch.has-hover ? #00000099 : #00000066;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.palette.border-strong;
+            animate background { duration: 120ms; }
+
+            Image {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: 10px;
+                height: 10px;
+                source: @image-url("../assets/icons/close.svg");
+                colorize: #ffffff;
+            }
+
+            cancel-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    AppState.cancel-active-task();
+                }
+            }
+        }
+    }
+}
+
+export component AssetGrid {
+    in property <[AssetItem]> items;
+    in property <string> mode: "";
+    in property <int> columns: 4;
+    in property <length> cell-size: 156px;
+    in property <length> gap: 8px;
+    in property <bool> show-generating-placeholder: false;
+
+    property <int> placeholder-count: show-generating-placeholder ? 1 : 0;
+    property <int> count: items.length + placeholder-count;
+    property <int> rows: max(1, ceil(count / columns));
+    property <string> menu-path: "";
+    property <string> menu-name: "";
+    property <string> menu-domain: "";
+    property <string> menu-prompt: "";
+    property <string> menu-quality: "";
+    property <string> menu-aspect-ratio: "";
+    property <string> menu-model: "";
+    property <int> menu-image-width: 0;
+    property <int> menu-image-height: 0;
+    property <int> menu-bytes: 0;
+    property <bool> menu-is-video: false;
+    property <length> menu-x: 0px;
+    property <length> menu-y: 0px;
+    property <length> menu-width: 176px;
+    property <length> menu-height: root.mode == "character" && !root.menu-is-video ? 264px : 234px;
+
+    width: columns * cell-size + (columns - 1) * gap;
+    height: rows * cell-size + (rows - 1) * gap;
+
+    if show-generating-placeholder: GeneratingAssetCell {
+        x: 0px;
+        y: 0px;
+        size: root.cell-size;
+    }
+
+    for item[i] in items: AssetCell {
+        x: mod(i + root.placeholder-count, columns) * (cell-size + gap);
+        y: floor((i + root.placeholder-count) / columns) * (cell-size + gap);
+        data: item;
+        size: root.cell-size;
+
+        context-menu(local-x, local-y) => {
+            root.menu-path = item.path;
+            root.menu-name = item.name;
+            root.menu-domain = item.domain;
+            root.menu-prompt = item.prompt;
+            root.menu-quality = item.quality;
+            root.menu-aspect-ratio = item.aspect-ratio;
+            root.menu-model = item.model;
+            root.menu-image-width = item.width;
+            root.menu-image-height = item.height;
+            root.menu-bytes = item.bytes;
+            root.menu-is-video = item.is-video;
+            root.menu-x = mod(i + root.placeholder-count, columns) * (root.cell-size + root.gap) + local-x;
+            root.menu-y = floor((i + root.placeholder-count) / columns) * (root.cell-size + root.gap) + local-y;
+
+            if root.menu-x + root.menu-width > root.width {
+                root.menu-x = root.width - root.menu-width;
+            }
+
+            if root.menu-y + root.menu-height > root.height {
+                root.menu-y = root.height - root.menu-height;
+            }
+
+            if root.menu-x < 0px {
+                root.menu-x = 0px;
+            }
+
+            if root.menu-y < 0px {
+                root.menu-y = 0px;
+            }
+
+            context-menu-popup.show();
+        }
+    }
+
+    context-menu-popup := PopupWindow {
+        x: root.menu-x;
+        y: root.menu-y;
+        width: root.menu-width;
+        height: root.menu-height;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.palette.border-strong;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #00000070;
+            clip: true;
+
+            VerticalLayout {
+                padding: 6px;
+                spacing: 2px;
+
+                MenuAction {
+                    label: "打开所在位置";
+                    clicked => {
+                        context-menu-popup.close();
+                        AppState.reveal-asset(root.menu-path);
+                    }
+                }
+
+                MenuAction {
+                    label: "复制文件路径";
+                    clicked => {
+                        context-menu-popup.close();
+                        AppState.copy-asset-path(root.menu-path);
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Theme.palette.border;
+                }
+
+                MenuAction {
+                    label: "去黑";
+                    enabled: !root.menu-is-video;
+                    clicked => {
+                        context-menu-popup.close();
+                        AppState.unmult-asset(root.menu-path);
+                    }
+                }
+
+                MenuAction {
+                    label: "去除背景";
+                    enabled: !root.menu-is-video;
+                    clicked => {
+                        context-menu-popup.close();
+                        AppState.remove-bg-asset(root.menu-path);
+                    }
+                }
+
+                MenuAction {
+                    label: "高级去黑";
+                    enabled: !root.menu-is-video;
+                    clicked => {
+                        context-menu-popup.close();
+                        AppState.perfect-unmult-asset(root.menu-path);
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Theme.palette.border;
+                }
+
+                if root.mode == "character" && !root.menu-is-video: MenuAction {
+                    label: "生成三视图";
+                    clicked => {
+                        AppState.generate-character-turnaround-from-asset(root.menu-path);
+                        context-menu-popup.close();
+                    }
+                }
+
+                if root.mode == "character" && !root.menu-is-video: Rectangle {
+                    height: 1px;
+                    background: Theme.palette.border;
+                }
+
+                MenuAction {
+                    label: "查看元信息";
+                    clicked => {
+                        AppState.asset-meta-path = root.menu-path;
+                        AppState.asset-meta-name = root.menu-name;
+                        AppState.asset-meta-domain = root.menu-domain;
+                        AppState.asset-meta-prompt = root.menu-prompt;
+                        AppState.asset-meta-quality = root.menu-quality;
+                        AppState.asset-meta-aspect-ratio = root.menu-aspect-ratio;
+                        AppState.asset-meta-model = root.menu-model;
+                        AppState.asset-meta-width = root.menu-image-width;
+                        AppState.asset-meta-height = root.menu-image-height;
+                        AppState.asset-meta-bytes = root.menu-bytes;
+                        AppState.asset-meta-open = true;
+                        AppState.open-asset-metadata(root.menu-path);
+                        context-menu-popup.close();
+                    }
+                }
+
+                MenuAction {
+                    label: "删除";
+                    danger: true;
+                    clicked => {
+                        context-menu-popup.close();
+                        AppState.request-delete-asset(root.menu-path);
+                    }
+                }
+            }
+        }
+    }
+}

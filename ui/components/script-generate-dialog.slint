@@ -1,0 +1,423 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+import { Button } from "../components/button.slint";
+
+export component ScriptGenerateDialog {
+    width: 100%;
+    height: 100%;
+
+    property <length> dialog-width: 780px;
+    property <length> dialog-height: 560px;
+    property <bool> generating: AppState.script-generating-step != "";
+    property <bool> generating-story: AppState.script-generating-step == "story";
+    property <bool> generating-format: AppState.script-generating-step == "format";
+
+    if AppState.script-generate-dialog-open: Rectangle {
+        background: #00000088;
+
+        TouchArea {}
+
+        Rectangle {
+            width: root.dialog-width;
+            height: root.dialog-height;
+            x: (parent.width - root.dialog-width) / 2;
+            y: (parent.height - root.dialog-height) / 2;
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-lg;
+            border-width: 1px;
+            border-color: Theme.palette.border;
+
+            VerticalLayout {
+                padding: Theme.spacing.lg;
+                spacing: Theme.spacing.md;
+
+                // 标题
+                Text {
+                    text: "AI 创作剧本";
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-lg;
+                    font-weight: Theme.typo.weight-bold;
+                }
+
+                // 两栏主体
+                HorizontalLayout {
+                    vertical-stretch: 1;
+                    spacing: Theme.spacing.lg;
+
+                    // === 左栏：故事创作 ===
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        vertical-stretch: 1;
+                        background: transparent;
+
+                        VerticalLayout {
+                            spacing: Theme.spacing.sm;
+
+                            Text {
+                                text: "故事创作";
+                                color: Theme.palette.fg;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-md;
+                                font-weight: Theme.typo.weight-bold;
+                            }
+
+                            Text {
+                                text: "写下主题、人物关系和核心冲突，AI 先生成故事正文，确认后再生成标准剧本格式。";
+                                color: Theme.palette.fg-muted;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-xs;
+                                wrap: word-wrap;
+                            }
+
+                            // 输入框区域
+                            Rectangle {
+                                vertical-stretch: 1;
+                                background: Theme.palette.bg;
+                                border-radius: Theme.shape.radius-md;
+                                border-width: 1px;
+                                border-color: Theme.palette.border;
+
+                                // 正常输入
+                                if !root.generating-story: prompt := TextInput {
+                                    x: Theme.spacing.md;
+                                    y: Theme.spacing.md;
+                                    width: parent.width - 2 * Theme.spacing.md;
+                                    height: parent.height - 2 * Theme.spacing.md;
+                                    color: Theme.palette.fg;
+                                    font-family: Theme.typo.family;
+                                    font-size: Theme.typo.size-sm;
+                                    wrap: word-wrap;
+                                    single-line: false;
+                                    text <=> AppState.script-theme;
+                                    enabled: !root.generating;
+                                }
+
+                                // 生成中的加载状态
+                                if root.generating-story: VerticalLayout {
+                                    alignment: center;
+                                    spacing: Theme.spacing.md;
+
+                                    // 显示变灰的原文
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        height: (parent.height - 80px) / 2;
+
+                                        Text {
+                                            x: Theme.spacing.md;
+                                            y: Theme.spacing.md;
+                                            width: parent.width - 2 * Theme.spacing.md;
+                                            text: AppState.script-theme;
+                                            color: Theme.palette.fg-disabled;
+                                            font-family: Theme.typo.family;
+                                            font-size: Theme.typo.size-sm;
+                                            wrap: word-wrap;
+                                            overflow: elide;
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: 48px;
+                                        height: 48px;
+                                        background: Theme.palette.bg-active;
+                                        border-radius: 24px;
+                                        border-width: 3px;
+                                        border-color: Theme.palette.accent;
+                                    }
+
+                                    Text {
+                                        text: "故事正在创建中...";
+                                        color: Theme.palette.accent-hover;
+                                        font-family: Theme.typo.family;
+                                        font-size: Theme.typo.size-sm;
+                                        font-weight: Theme.typo.weight-bold;
+                                        horizontal-alignment: center;
+                                    }
+
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        height: (parent.height - 80px) / 2;
+                                    }
+                                }
+
+                                if AppState.script-theme == "" && !root.generating-story: Text {
+                                    x: Theme.spacing.md;
+                                    y: Theme.spacing.md;
+                                    width: parent.width - 2 * Theme.spacing.md;
+                                    text: "写下故事主题、人物关系、风格和核心冲突。\n\n例如：\n• 一个关于家庭和解的温暖小故事\n• 赛博朋克世界观下的悬疑短篇\n• 武侠背景的师徒恩怨情仇";
+                                    color: Theme.palette.fg-disabled;
+                                    font-family: Theme.typo.family;
+                                    font-size: Theme.typo.size-sm;
+                                    wrap: word-wrap;
+                                }
+                            }
+
+                            // 左栏底部按钮
+                            HorizontalLayout {
+                                alignment: end;
+
+                                Rectangle { horizontal-stretch: 1; }
+
+                                Button {
+                                    text: root.generating-story ? "创建中..." : "AI 创作故事";
+                                    height: 36px;
+                                    primary: true;
+                                    disabled: AppState.script-theme == ""
+                                        || !AppState.analysis.has-provider
+                                        || root.generating;
+                                    clicked => {
+                                        AppState.script-mode = "create";
+                                        AppState.script-generating-step = "story";
+                                        AppState.script-generate();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // === 右栏：剧本生成 ===
+                    Rectangle {
+                        width: 260px;
+                        vertical-stretch: 1;
+                        background: Theme.palette.bg;
+                        border-radius: Theme.shape.radius-md;
+                        border-width: 1px;
+                        border-color: Theme.palette.border;
+
+                        VerticalLayout {
+                            padding: Theme.spacing.md;
+                            spacing: Theme.spacing.md;
+
+                            Text {
+                                text: "剧本生成";
+                                color: Theme.palette.fg;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-md;
+                                font-weight: Theme.typo.weight-bold;
+                            }
+
+                            // 状态提示
+                            if root.generating-format: VerticalLayout {
+                                alignment: center;
+                                spacing: Theme.spacing.sm;
+
+                                Rectangle {
+                                    width: 40px;
+                                    height: 40px;
+                                    background: Theme.palette.bg-active;
+                                    border-radius: 20px;
+                                    border-width: 3px;
+                                    border-color: Theme.palette.accent;
+                                }
+
+                                Text {
+                                    text: "剧本正在生成中...";
+                                    color: Theme.palette.accent-hover;
+                                    font-family: Theme.typo.family;
+                                    font-size: Theme.typo.size-xs;
+                                    font-weight: Theme.typo.weight-bold;
+                                    horizontal-alignment: center;
+                                }
+                            }
+
+                            if !root.generating-format: Rectangle {
+                                if AppState.script-story-ready: Rectangle {
+                                    height: 32px;
+                                    background: Theme.palette.bg-elevated;
+                                    border-radius: Theme.shape.radius-sm;
+                                    border-width: 1px;
+                                    border-color: Theme.palette.border;
+
+                                    Text {
+                                        text: "✓ 故事已就绪";
+                                        color: Theme.palette.fg;
+                                        font-family: Theme.typo.family;
+                                        font-size: Theme.typo.size-xs;
+                                        font-weight: Theme.typo.weight-medium;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                if !AppState.script-story-ready: Text {
+                                    text: "先生成故事，确认内容后再生成标准剧本。";
+                                    color: Theme.palette.fg-disabled;
+                                    font-family: Theme.typo.family;
+                                    font-size: Theme.typo.size-xs;
+                                    wrap: word-wrap;
+                                }
+                            }
+
+                            Rectangle {
+                                height: 1px;
+                                background: Theme.palette.border;
+                            }
+
+                            // 生成参数
+                            Text {
+                                text: "生成参数";
+                                color: Theme.palette.fg-muted;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-xs;
+                                font-weight: Theme.typo.weight-bold;
+                            }
+
+                            // 语言
+                            Rectangle {
+                                height: 32px;
+                                background: touch-lang.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated;
+                                border-radius: Theme.shape.radius-sm;
+                                border-width: 1px;
+                                border-color: Theme.palette.border;
+
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    spacing: 6px;
+
+                                    Text {
+                                        text: "语言:";
+                                        color: Theme.palette.fg-muted;
+                                        font-family: Theme.typo.family;
+                                        font-size: Theme.typo.size-xs;
+                                        vertical-alignment: center;
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: AppState.script-language;
+                                        color: Theme.palette.fg;
+                                        font-family: Theme.typo.family;
+                                        font-size: Theme.typo.size-xs;
+                                        font-weight: Theme.typo.weight-medium;
+                                        vertical-alignment: center;
+                                    }
+
+                                    Image {
+                                        width: 10px;
+                                        height: 10px;
+                                        source: @image-url("../assets/icons/chevron-down.svg");
+                                        colorize: Theme.palette.fg-muted;
+                                    }
+                                }
+
+                                touch-lang := TouchArea {
+                                    mouse-cursor: pointer;
+                                    enabled: !root.generating;
+                                    clicked => {
+                                        if AppState.script-language == "中文" { AppState.script-language = "English"; }
+                                        else if AppState.script-language == "English" { AppState.script-language = "日本語"; }
+                                        else { AppState.script-language = "中文"; }
+                                    }
+                                }
+                            }
+
+                            // 视频比例
+                            Rectangle {
+                                height: 32px;
+                                background: touch-ratio.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated;
+                                border-radius: Theme.shape.radius-sm;
+                                border-width: 1px;
+                                border-color: Theme.palette.border;
+
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    spacing: 6px;
+
+                                    Text {
+                                        text: "比例:";
+                                        color: Theme.palette.fg-muted;
+                                        font-family: Theme.typo.family;
+                                        font-size: Theme.typo.size-xs;
+                                        vertical-alignment: center;
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: AppState.script-video-ratio;
+                                        color: Theme.palette.fg;
+                                        font-family: Theme.typo.family;
+                                        font-size: Theme.typo.size-xs;
+                                        font-weight: Theme.typo.weight-medium;
+                                        vertical-alignment: center;
+                                    }
+
+                                    Image {
+                                        width: 10px;
+                                        height: 10px;
+                                        source: @image-url("../assets/icons/chevron-down.svg");
+                                        colorize: Theme.palette.fg-muted;
+                                    }
+                                }
+
+                                touch-ratio := TouchArea {
+                                    mouse-cursor: pointer;
+                                    enabled: !root.generating;
+                                    clicked => {
+                                        if AppState.script-video-ratio == "16:9" { AppState.script-video-ratio = "9:16"; }
+                                        else { AppState.script-video-ratio = "16:9"; }
+                                    }
+                                }
+                            }
+
+                            // 参考文档
+                            Text {
+                                text: "参考文档 · " + AppState.script-docs.length;
+                                color: Theme.palette.fg-muted;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-xs;
+                                font-weight: Theme.typo.weight-bold;
+                            }
+
+                            Button {
+                                text: "添加";
+                                height: 28px;
+                                disabled: root.generating;
+                                clicked => { AppState.script-add-doc(); }
+                            }
+
+                            Rectangle { vertical-stretch: 1; }
+
+                            Rectangle {
+                                height: 1px;
+                                background: Theme.palette.border;
+                            }
+
+                            // 右栏底部按钮
+                            Button {
+                                text: root.generating-format ? "生成中..." : "AI 生成标准剧本";
+                                height: 36px;
+                                primary: true;
+                                disabled: !AppState.script-story-ready
+                                    || !AppState.analysis.has-provider
+                                    || root.generating;
+                                clicked => {
+                                    AppState.script-mode = "create";
+                                    AppState.script-generating-step = "format";
+                                    AppState.script-generate();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 底部取消
+                HorizontalLayout {
+                    alignment: end;
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    Button {
+                        text: "取消";
+                        disabled: root.generating;
+                        clicked => {
+                            AppState.script-generating-step = "";
+                            AppState.script-generate-dialog-open = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

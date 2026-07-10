@@ -1,0 +1,117 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+import { Button } from "../components/button.slint";
+
+export component DeleteConfirmDialog {
+    property <int> delete-count: AppState.pending-delete-paths.length > 0 ? AppState.pending-delete-paths.length : 1;
+
+    if AppState.pending-delete-path != "": Rectangle {
+        background: #00000088;
+
+        TouchArea {}
+
+        Rectangle {
+            width: 440px;
+            height: 220px;
+            x: parent.width / 2 - 220px;
+            y: parent.height / 2 - 110px;
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-lg;
+            border-width: 1px;
+            border-color: Theme.palette.border;
+
+            VerticalLayout {
+                padding: Theme.spacing.lg;
+                spacing: Theme.spacing.md;
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.md;
+
+                    Rectangle {
+                        width: 40px;
+                        height: 40px;
+                        background: #ff4d4f22;
+                        border-radius: 20px;
+
+                        Image {
+                            x: 10px;
+                            y: 10px;
+                            width: 20px;
+                            height: 20px;
+                            source: @image-url("../assets/icons/warning.svg");
+                            colorize: Theme.palette.error;
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 2px;
+
+                        Text {
+                            text: root.delete-count > 1 ? ("确认删除 " + root.delete-count + " 张图片？") : "确认删除？";
+                            color: Theme.palette.fg;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-md;
+                            font-weight: Theme.typo.weight-bold;
+                        }
+
+                        Text {
+                            text: "文件将从硬盘永久删除，不可撤销。";
+                            color: Theme.palette.fg-muted;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    background: Theme.palette.bg;
+                    border-radius: Theme.shape.radius-sm;
+                    border-width: 1px;
+                    border-color: Theme.palette.border;
+                    height: 36px;
+
+                    HorizontalLayout {
+                        padding-left: Theme.spacing.sm;
+                        padding-right: Theme.spacing.sm;
+
+                        Text {
+                            text: root.delete-count > 1
+                                ? (AppState.pending-delete-path + " 等 " + root.delete-count + " 个文件")
+                                : AppState.pending-delete-path;
+                            color: Theme.palette.fg-muted;
+                            font-family: Theme.typo.family-mono;
+                            font-size: Theme.typo.size-xs;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+
+                Rectangle { vertical-stretch: 1; }
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.sm;
+                    alignment: end;
+
+                    Button {
+                        text: "取消";
+                        clicked => {
+                            AppState.pending-delete-path = "";
+                            AppState.pending-delete-paths = [];
+                        }
+                    }
+
+                    Button {
+                        text: "删除";
+                        primary: true;
+                        clicked => {
+                            AppState.delete-asset(AppState.pending-delete-path);
+                            AppState.pending-delete-path = "";
+                            AppState.pending-delete-paths = [];
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,36 @@
+import { Theme } from "../theme.slint";
+
+export component Card {
+    in property <string> title;
+    in property <string> body;
+
+    Rectangle {
+        background: Theme.palette.bg-elevated;
+        border-radius: Theme.shape.radius-lg;
+        border-width: Theme.shape.border-width;
+        border-color: Theme.palette.border;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #00000018;
+
+        VerticalLayout {
+            padding: Theme.spacing.lg;
+            spacing: Theme.spacing.sm;
+
+            Text {
+                text: root.title;
+                color: Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-md;
+                font-weight: Theme.typo.weight-medium;
+            }
+
+            Text {
+                text: root.body;
+                color: Theme.palette.fg-muted;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                wrap: word-wrap;
+            }
+        }
+    }
+}

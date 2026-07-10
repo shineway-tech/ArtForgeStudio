@@ -1,0 +1,514 @@
+import { Theme } from "../theme.slint";
+import { AppState, TaskItem } from "../app-state.slint";
+import { Button } from "../components/button.slint";
+
+component FilterTab {
+    in property <string> id;
+    in property <string> label;
+    in property <int> count: 0;
+
+    width: 80px;
+    height: 32px;
+
+    touch-filter := TouchArea {
+        clicked => { AppState.tasks-filter = root.id; }
+    }
+
+    Rectangle {
+        background: AppState.tasks-filter == root.id
+            ? Theme.palette.accent
+            : (touch-filter.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated);
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: AppState.tasks-filter == root.id
+            ? Theme.palette.accent
+            : Theme.palette.border;
+        animate background, border-color { duration: 120ms; }
+
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            spacing: 4px;
+            alignment: center;
+
+            Text {
+                text: root.label;
+                color: AppState.tasks-filter == root.id ? #ffffff : Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                font-weight: Theme.typo.weight-medium;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: "(" + root.count + ")";
+                color: AppState.tasks-filter == root.id ? #ffffff : Theme.palette.fg-muted;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                vertical-alignment: center;
+                visible: root.count > 0;
+            }
+        }
+    }
+}
+
+component TaskRow {
+    in property <TaskItem> data;
+
+    Rectangle {
+        background: Theme.palette.bg-elevated;
+        border-radius: Theme.shape.radius-md;
+        border-width: Theme.shape.border-width;
+        border-color: status-color();
+        animate background, border-color { duration: 120ms; }
+
+        function status-color() -> color {
+            if (root.data.status == "failed") { return Theme.palette.error; }
+            if (root.data.status == "cancelled") { return Theme.palette.warning; }
+            if (root.data.status == "completed") { return Theme.palette.success; }
+            if (root.data.status == "running" || root.data.status == "validating") { return Theme.palette.accent; }
+            return Theme.palette.border;
+        }
+
+        VerticalLayout {
+            padding: Theme.spacing.sm;
+            spacing: 3px;
+
+            // 行1：标签 + 状态 + 操作按钮
+            HorizontalLayout {
+                spacing: Theme.spacing.sm;
+
+                Text {
+                    text: root.data.label;
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-sm;
+                    font-weight: Theme.typo.weight-medium;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                // 任务类型标签
+                Rectangle {
+                    background: Theme.palette.bg-hover;
+                    border-radius: 4px;
+                    border-width: 1px;
+                    border-color: Theme.palette.border;
+                    visible: root.data.kind != "";
+                    height: 22px;
+
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 6px;
+                        padding-top: 2px;
+                        padding-bottom: 2px;
+
+                        Text {
+                            text: {
+                                if (root.data.kind == "image") { return "生图"; }
+                                if (root.data.kind == "analysis") { return "分析"; }
+                                if (root.data.kind == "video") { return "视频"; }
+                                if (root.data.kind == "action_batch") { return "批量"; }
+                                if (root.data.kind == "script_gen") { return "脚本"; }
+                                return root.data.kind;
+                            };
+                            color: Theme.palette.fg-muted;
+                            font-family: Theme.typo.family-mono;
+                            font-size: Theme.typo.size-xs;
+                        }
+                    }
+                }
+
+                // 状态标签
+                Rectangle {
+                    background: status-color();
+                    border-radius: 4px;
+                    height: 22px;
+
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 6px;
+                        padding-top: 2px;
+                        padding-bottom: 2px;
+
+                        Text {
+                            text: {
+                                if (root.data.status == "running") { return "运行中"; }
+                                if (root.data.status == "completed") { return "完成"; }
+                                if (root.data.status == "failed") { return "失败"; }
+                                if (root.data.status == "cancelled") { return "已取消"; }
+                                if (root.data.status == "validating") { return "准备中"; }
+                                if (root.data.status == "uploading") { return "上传中"; }
+                                if (root.data.status == "polling") { return "轮询中"; }
+                                if (root.data.status == "saving") { return "保存中"; }
+                                return root.data.status;
+                            };
+                            color: #ffffff;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                        }
+                    }
+                }
+
+                // 取消按钮（运行中任务）
+                if root.data.status == "running" || root.data.status == "validating"
+                    || root.data.status == "uploading" || root.data.status == "polling"
+                    || root.data.status == "submitted" || root.data.status == "saving": Button {
+                    text: "取消";
+                    width: 56px;
+                    height: 28px;
+                    clicked => { AppState.cancel-task(root.data.id); }
+                }
+
+                // 重新获取/重试按钮（所有失败/取消任务）
+                if root.data.status == "failed" || root.data.status == "cancelled": Rectangle {
+                    background: Theme.palette.warning;
+                    border-radius: 4px;
+                    height: 24px;
+
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        padding-top: 2px;
+                        padding-bottom: 2px;
+
+                        Text {
+                            text: root.data.has-provider-task-id ? "↻ 重新获取" : "⟳ 重试";
+                            color: #ffffff;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                        }
+                    }
+
+                    btn-reacquire := TouchArea {
+                        clicked => { AppState.reacquire-task(root.data.id); }
+                    }
+                }
+
+                // 打开输出按钮（已完成任务有输出路径）
+                if root.data.status == "completed" && root.data.output-path != "": Rectangle {
+                    background: Theme.palette.success;
+                    border-radius: 4px;
+                    height: 24px;
+
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        padding-top: 2px;
+                        padding-bottom: 2px;
+
+                        Text {
+                            text: "📂 打开";
+                            color: #ffffff;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                        }
+                    }
+
+                    btn-open := TouchArea {
+                        clicked => { AppState.open-asset(root.data.output-path); }
+                    }
+                }
+            }
+
+            // 进度条
+            Rectangle {
+                height: 4px;
+                background: Theme.palette.bg-hover;
+                border-radius: 2px;
+
+                Rectangle {
+                    x: 0;
+                    y: 0;
+                    width: parent.width * root.data.progress;
+                    height: parent.height;
+                    background: root.data.error != "" ? Theme.palette.error
+                        : (root.data.status == "completed" ? Theme.palette.success
+                        : Theme.palette.accent);
+                    border-radius: 2px;
+                    animate width { duration: 300ms; easing: ease-out; }
+                }
+            }
+
+            // 行2：创建时间 / 完成时间
+            HorizontalLayout {
+                spacing: Theme.spacing.md;
+
+                Text {
+                    text: root.data.created-at;
+                    color: Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family-mono;
+                    font-size: Theme.typo.size-xs;
+                    visible: root.data.created-at != "";
+                }
+
+                Text {
+                    text: "→ " + root.data.finished-at;
+                    color: Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family-mono;
+                    font-size: Theme.typo.size-xs;
+                    visible: (root.data.status == "completed" || root.data.status == "failed"
+                        || root.data.status == "cancelled") && root.data.finished-at != "";
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            // 行3：provider / model
+            if root.data.provider-name != "":
+                HorizontalLayout {
+                    spacing: Theme.spacing.sm;
+
+                    Text {
+                        text: root.data.provider-name;
+                        color: Theme.palette.fg-muted;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                        overflow: elide;
+                    }
+
+                    if root.data.model != "":
+                        Rectangle { width: 1px; height: 12px; background: Theme.palette.border; }
+
+                        Text {
+                            text: root.data.model;
+                            color: Theme.palette.fg-muted;
+                            font-family: Theme.typo.family-mono;
+                            font-size: Theme.typo.size-xs;
+                            overflow: elide;
+                        }
+
+                    Rectangle { horizontal-stretch: 1; }
+                }
+
+            // 行4：错误信息或最后日志
+            Text {
+                text: root.data.error != "" ? "✗ " + root.data.error
+                    : (root.data.last-log != "" ? root.data.last-log : "");
+                color: root.data.error != "" ? Theme.palette.error : Theme.palette.fg-muted;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+export component TasksPage {
+    width: 100%;
+    height: 100%;
+    property <bool> delete-menu-open: false;
+
+    // 使用绝对定位，与 runtime-log / asset-browser 对齐
+    property <length> pad-x: Theme.spacing.lg;
+    property <length> pad-y: Theme.spacing.md;
+    property <length> header-h: 48px;
+    property <length> filter-h: 44px;
+    property <length> row-gap: 10px;
+    property <length> max-content-w: 980px;
+    property <length> content-x: pad-x;
+    property <length> content-w: min(max-content-w, max(360px, root.width - 2 * pad-x));
+    property <length> list-y: pad-y + header-h + row-gap + filter-h + row-gap;
+    property <length> list-h: max(120px, root.height - list-y - pad-y);
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: Theme.palette.bg;
+
+        // 标题行
+        Rectangle {
+            x: root.content-x;
+            y: root.pad-y;
+            width: root.content-w;
+            height: root.header-h;
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-lg;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border;
+
+            HorizontalLayout {
+                width: parent.width;
+                height: parent.height;
+                padding-left: 14px;
+                padding-right: 10px;
+                spacing: 8px;
+
+                Text {
+                    text: "任务面板";
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-md;
+                    font-weight: Theme.typo.weight-bold;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: "共 " + AppState.tasks.length + " 个";
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    vertical-alignment: center;
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                Text {
+                    text: "⏱ 历史模式 0.2";
+                    color: Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        if root.delete-menu-open: Rectangle {
+            x: root.content-x + root.content-w - 168px;
+            y: root.pad-y + root.header-h + root.row-gap + root.filter-h + 4px;
+            width: 168px;
+            height: 108px;
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-md;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border;
+            z: 10;
+
+            VerticalLayout {
+                padding: 6px;
+                spacing: 4px;
+
+                Button {
+                    text: "删除已完成";
+                    height: 28px;
+                    clicked => {
+                        root.delete-menu-open = false;
+                        AppState.clear-tasks("completed");
+                    }
+                }
+
+                Button {
+                    text: "删除失败";
+                    height: 28px;
+                    clicked => {
+                        root.delete-menu-open = false;
+                        AppState.clear-tasks("failed");
+                    }
+                }
+
+                Button {
+                    text: "全部删除";
+                    height: 28px;
+                    clicked => {
+                        root.delete-menu-open = false;
+                        AppState.clear-tasks("all");
+                    }
+                }
+            }
+        }
+
+        // 筛选栏
+        Rectangle {
+            x: root.content-x;
+            y: root.pad-y + root.header-h + root.row-gap;
+            width: root.content-w;
+            height: root.filter-h;
+
+            HorizontalLayout {
+                width: parent.width;
+                height: parent.height;
+                spacing: Theme.spacing.sm;
+
+                FilterTab { id: "all"; label: "全部"; count: AppState.tasks.length; }
+                FilterTab { id: "running"; label: "运行中"; count: AppState.tasks-count-running; }
+                FilterTab { id: "completed"; label: "已完成"; count: AppState.tasks-count-completed; }
+                FilterTab { id: "failed"; label: "失败/取消"; count: AppState.tasks-count-failed; }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                Button {
+                    text: root.delete-menu-open ? "删除 ^" : "删除 v";
+                    width: 78px;
+                    height: 30px;
+                    clicked => { root.delete-menu-open = !root.delete-menu-open; }
+                }
+            }
+        }
+
+        // 空状态
+        if visible-count() == 0: Rectangle {
+            x: root.content-x;
+            y: root.pad-y + root.header-h + root.row-gap + root.filter-h + root.row-gap;
+            width: root.content-w;
+            height: 120px;
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-lg;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border;
+
+            VerticalLayout {
+                width: parent.width;
+                height: parent.height;
+                alignment: center;
+                spacing: 4px;
+
+                Text {
+                    text: empty-hint();
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-md;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: "点击「全部」可查看所有任务记录";
+                    color: Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-sm;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        // 任务列表区域（可滚动）
+        if visible-count() > 0: Flickable {
+            x: root.content-x;
+            y: root.list-y;
+            width: root.content-w;
+            height: root.list-h;
+            viewport-height: content.preferred-height;
+            visible: visible-count() > 0;
+
+            content := VerticalLayout {
+                width: parent.width;
+                spacing: Theme.spacing.sm;
+
+                for t[i] in AppState.tasks: TaskRow {
+                    data: t;
+                    visible: (AppState.tasks-filter == "all")
+                        || (AppState.tasks-filter == "running" && (t.status == "running" || t.status == "validating"
+                            || t.status == "uploading" || t.status == "polling" || t.status == "submitted" || t.status == "saving"))
+                        || (AppState.tasks-filter == "completed" && t.status == "completed")
+                        || (AppState.tasks-filter == "failed" && (t.status == "failed" || t.status == "cancelled"));
+                }
+            }
+        }
+    }
+
+    function visible-count() -> int {
+        if (AppState.tasks-filter == "all") { return AppState.tasks.length; }
+        if (AppState.tasks-filter == "running") { return AppState.tasks-count-running; }
+        if (AppState.tasks-filter == "completed") { return AppState.tasks-count-completed; }
+        if (AppState.tasks-filter == "failed") { return AppState.tasks-count-failed; }
+        return 0;
+    }
+
+    function empty-hint() -> string {
+        if (AppState.tasks-filter == "all") { return "暂无任务记录"; }
+        if (AppState.tasks-filter == "running") { return "没有运行中的任务"; }
+        if (AppState.tasks-filter == "completed") { return "没有已完成的任务"; }
+        if (AppState.tasks-filter == "failed") { return "没有失败的任务"; }
+        return "暂无任务";
+    }
+}

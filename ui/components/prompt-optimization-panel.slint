@@ -1,0 +1,58 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+
+export component PromptOptimizationPanel {
+    height: AppState.ws-prompt-optimizing || AppState.ws-prompt-opt-summary != "" || AppState.ws-prompt-opt-changes != "" ? 74px : 0px;
+    visible: root.height > 0px;
+
+    Rectangle {
+        background: Theme.palette.bg-elevated;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: AppState.ws-prompt-optimizing ? Theme.palette.accent : Theme.palette.border;
+        clip: true;
+        animate border-color { duration: 120ms; }
+
+        Text {
+            x: 10px;
+            y: 7px;
+            width: parent.width - 20px;
+            height: 16px;
+            text: AppState.ws-prompt-optimizing
+                ? "正在优化 · " + AppState.ws-prompt-opt-title
+                : AppState.ws-prompt-opt-title;
+            color: AppState.ws-prompt-optimizing ? Theme.palette.accent-hover : Theme.palette.fg-muted;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            font-weight: Theme.typo.weight-bold;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            x: 10px;
+            y: 27px;
+            width: parent.width - 20px;
+            height: 18px;
+            text: AppState.ws-prompt-opt-summary;
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            x: 10px;
+            y: 48px;
+            width: parent.width - 20px;
+            height: 16px;
+            text: AppState.ws-prompt-opt-changes;
+            color: Theme.palette.fg-disabled;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}

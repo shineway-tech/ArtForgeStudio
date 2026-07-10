@@ -1,0 +1,469 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+import { Button } from "../components/button.slint";
+
+component MetricTile {
+    in property <string> label;
+    in property <string> value;
+    in property <string> hint;
+    in property <brush> accent: Theme.palette.accent;
+
+    Rectangle {
+        min-height: 88px;
+        background: Theme.palette.bg-elevated;
+        border-radius: Theme.shape.radius-md;
+        border-width: Theme.shape.border-width;
+        border-color: Theme.palette.border;
+
+        Rectangle {
+            width: 3px;
+            height: parent.height - 24px;
+            x: 12px;
+            y: 12px;
+            background: root.accent;
+            border-radius: 2px;
+        }
+
+        VerticalLayout {
+            padding-left: 28px;
+            padding-right: Theme.spacing.md;
+            padding-top: Theme.spacing.md;
+            padding-bottom: Theme.spacing.md;
+            spacing: 4px;
+
+            Text {
+                text: root.label;
+                color: Theme.palette.fg-muted;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                font-weight: Theme.typo.weight-medium;
+            }
+
+            Text {
+                text: root.value;
+                color: Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: 24px;
+                font-weight: Theme.typo.weight-bold;
+            }
+
+            Text {
+                text: root.hint;
+                color: Theme.palette.fg-disabled;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+component PipelineStep {
+    in property <string> index;
+    in property <string> title;
+    in property <string> body;
+    in property <string> status;
+    in property <bool> active: false;
+    callback clicked();
+
+    height: 96px;
+
+    Rectangle {
+        background: root.active
+            ? Theme.palette.bg-active
+            : (touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated);
+        border-radius: Theme.shape.radius-md;
+        border-width: root.active ? 2px : Theme.shape.border-width;
+        border-color: root.active ? Theme.palette.accent : Theme.palette.border;
+        animate background, border-color { duration: 120ms; }
+
+        HorizontalLayout {
+            padding: Theme.spacing.md;
+            spacing: Theme.spacing.md;
+
+            Rectangle {
+                width: 34px;
+                height: 34px;
+                y: 2px;
+                background: root.active ? Theme.palette.accent : Theme.palette.bg;
+                border-radius: 17px;
+                border-width: Theme.shape.border-width;
+                border-color: root.active ? Theme.palette.accent-hover : Theme.palette.border-strong;
+
+                Text {
+                    text: root.index;
+                    color: root.active ? #ffffff : Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-sm;
+                    font-weight: Theme.typo.weight-bold;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            VerticalLayout {
+                spacing: 4px;
+                horizontal-stretch: 1;
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.sm;
+
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.title;
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-md;
+                        font-weight: Theme.typo.weight-bold;
+                        overflow: elide;
+                    }
+
+                    Text {
+                        text: root.status;
+                        color: root.active ? Theme.palette.accent-hover : Theme.palette.fg-disabled;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    text: root.body;
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+component ActionRow {
+    in property <string> title;
+    in property <string> body;
+    in property <string> button-text;
+    in property <bool> primary: false;
+    callback clicked();
+
+    height: 76px;
+
+    Rectangle {
+        background: Theme.palette.bg-elevated;
+        border-radius: Theme.shape.radius-md;
+        border-width: Theme.shape.border-width;
+        border-color: Theme.palette.border;
+
+        HorizontalLayout {
+            padding: Theme.spacing.md;
+            spacing: Theme.spacing.md;
+            alignment: space-between;
+
+            VerticalLayout {
+                spacing: 4px;
+                horizontal-stretch: 1;
+
+                Text {
+                    text: root.title;
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-sm;
+                    font-weight: Theme.typo.weight-bold;
+                }
+
+                Text {
+                    text: root.body;
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    overflow: elide;
+                }
+            }
+
+            Button {
+                text: root.button-text;
+                primary: root.primary;
+                clicked => { root.clicked(); }
+            }
+        }
+    }
+}
+
+export component ProjectOverviewPage {
+    width: 100%;
+    height: 100%;
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: Theme.palette.bg;
+
+        Flickable {
+            x: 28px;
+            y: 24px;
+            width: parent.width - 56px;
+            height: parent.height - 48px;
+            viewport-height: content.preferred-height;
+
+            content := VerticalLayout {
+                width: parent.width;
+                spacing: Theme.spacing.lg;
+
+                Rectangle {
+                    height: 148px;
+                    background: Theme.palette.bg-elevated;
+                    border-radius: Theme.shape.radius-lg;
+                    border-width: Theme.shape.border-width;
+                    border-color: Theme.palette.border;
+
+                    HorizontalLayout {
+                        padding: Theme.spacing.xl;
+                        spacing: Theme.spacing.xl;
+                        alignment: space-between;
+
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: Theme.spacing.sm;
+
+                            Text {
+                                text: AppState.current-project-name == "" ? "未命名影视项目" : AppState.current-project-name;
+                                color: Theme.palette.fg;
+                                font-family: Theme.typo.family;
+                                font-size: 26px;
+                                font-weight: Theme.typo.weight-bold;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: "从剧本到角色、场景、分镜和视频的统一生产面板。";
+                                color: Theme.palette.fg-muted;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-sm;
+                                wrap: word-wrap;
+                            }
+
+                            HorizontalLayout {
+                                spacing: Theme.spacing.sm;
+
+                                Text {
+                                    text: AppState.analysis.has-provider ? "推理已配置" : "推理未配置";
+                                    color: AppState.analysis.has-provider ? Theme.palette.success : Theme.palette.error;
+                                    font-family: Theme.typo.family;
+                                    font-size: Theme.typo.size-xs;
+                                }
+
+                                Text {
+                                    text: "·";
+                                    color: Theme.palette.fg-disabled;
+                                    font-size: Theme.typo.size-xs;
+                                }
+
+                                Text {
+                                    text: AppState.generation.has-provider ? "生图已配置" : "生图未配置";
+                                    color: AppState.generation.has-provider ? Theme.palette.success : Theme.palette.warning;
+                                    font-family: Theme.typo.family;
+                                    font-size: Theme.typo.size-xs;
+                                }
+
+                                Text {
+                                    text: "· 运行任务 " + AppState.tasks-count-running;
+                                    color: Theme.palette.fg-disabled;
+                                    font-family: Theme.typo.family;
+                                    font-size: Theme.typo.size-xs;
+                                }
+                            }
+                        }
+
+                        Button {
+                            text: "进入剧本";
+                            primary: true;
+                            clicked => { AppState.navigate("project_script"); }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.md;
+                    height: 92px;
+
+                    MetricTile {
+                        horizontal-stretch: 1;
+                        label: "脚本文件";
+                        value: AppState.script-files.length;
+                        hint: AppState.script-selected == "" ? "尚未选择剧本" : "已选择当前剧本";
+                        accent: Theme.palette.accent;
+                    }
+
+                    MetricTile {
+                        horizontal-stretch: 1;
+                        label: "分镜包";
+                        value: AppState.sb-packages.length;
+                        hint: AppState.sb-packages.length > 0 ? "可进入分镜板继续生成" : "从剧本页发送到分镜板";
+                        accent: Theme.palette.warning;
+                    }
+
+                    MetricTile {
+                        horizontal-stretch: 1;
+                        label: "角色卡";
+                        value: AppState.character-library-items.length;
+                        hint: "统一管理角色设定";
+                        accent: Theme.palette.success;
+                    }
+
+                    MetricTile {
+                        horizontal-stretch: 1;
+                        label: "场景卡";
+                        value: AppState.scene-library-items.length;
+                        hint: "统一管理环境设定";
+                        accent: Theme.palette.error;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.lg;
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        min-width: 420px;
+                        background: transparent;
+
+                        VerticalLayout {
+                            spacing: Theme.spacing.sm;
+
+                            Text {
+                                text: "制作流水线";
+                                color: Theme.palette.fg;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-lg;
+                                font-weight: Theme.typo.weight-bold;
+                            }
+
+                            PipelineStep {
+                                index: "01";
+                                title: "剧本";
+                                body: "输入故事主题，生成结构化剧本，并拆分为可执行的镜头包。";
+                                status: AppState.script-files.length > 0 ? "有脚本" : "待开始";
+                                active: AppState.script-files.length == 0;
+                                clicked => { AppState.navigate("project_script"); }
+                            }
+
+                            PipelineStep {
+                                index: "02";
+                                title: "角色";
+                                body: "整理角色外形、性格、服装和一致性锚点，供分镜和视频复用。";
+                                status: AppState.character-library-items.length + " 项";
+                                clicked => { AppState.navigate("project_characters"); }
+                            }
+
+                            PipelineStep {
+                                index: "03";
+                                title: "场景";
+                                body: "沉淀核心地点、时间氛围、视角和环境关键词。";
+                                status: AppState.scene-library-items.length + " 项";
+                                clicked => { AppState.navigate("project_scenes"); }
+                            }
+
+                            PipelineStep {
+                                index: "04";
+                                title: "分镜";
+                                body: "检查镜头描述、构图、口型和视频比例，再批量生成画面。";
+                                status: AppState.sb-packages.length > 0 ? AppState.sb-packages.length + " 包" : "待拆分";
+                                active: AppState.script-files.length > 0 && AppState.sb-packages.length == 0;
+                                clicked => { AppState.navigate("project_storyboard"); }
+                            }
+
+                            PipelineStep {
+                                index: "05";
+                                title: "视频";
+                                body: "基于分镜图和镜头提示词生成短片片段。";
+                                status: AppState.gallery-generating-video-count > 0 ? "生成中" : "待生成";
+                                clicked => { AppState.navigate("project_video"); }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 360px;
+                        background: transparent;
+
+                        VerticalLayout {
+                            spacing: Theme.spacing.sm;
+
+                            Text {
+                                text: "下一步";
+                                color: Theme.palette.fg;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-lg;
+                                font-weight: Theme.typo.weight-bold;
+                            }
+
+                            ActionRow {
+                                title: AppState.script-files.length == 0 ? "先生成第一版剧本" : "继续完善剧本";
+                                body: AppState.script-files.length == 0 ? "没有剧本时，后续角色、场景和分镜都缺少源头。" : "查看已生成内容，继续拆分镜头或发送到分镜板。";
+                                button-text: "打开剧本";
+                                primary: true;
+                                clicked => { AppState.navigate("project_script"); }
+                            }
+
+                            ActionRow {
+                                title: "沉淀角色设定";
+                                body: "把主角、配角和反派整理为可复用角色卡。";
+                                button-text: "角色库";
+                                clicked => { AppState.navigate("project_characters"); }
+                            }
+
+                            ActionRow {
+                                title: "检查分镜产物";
+                                body: AppState.sb-packages.length > 0 ? "已有分镜包，可直接进入分镜板生成。" : "剧本页可一键拆分并发送到分镜板。";
+                                button-text: "分镜板";
+                                clicked => { AppState.navigate("project_storyboard"); }
+                            }
+
+                            Rectangle {
+                                height: 118px;
+                                background: Theme.palette.bg-elevated;
+                                border-radius: Theme.shape.radius-md;
+                                border-width: Theme.shape.border-width;
+                                border-color: Theme.palette.border;
+
+                                VerticalLayout {
+                                    padding: Theme.spacing.md;
+                                    spacing: 6px;
+
+                                    Text {
+                                        text: "Provider";
+                                        color: Theme.palette.fg;
+                                        font-family: Theme.typo.family;
+                                        font-size: Theme.typo.size-sm;
+                                        font-weight: Theme.typo.weight-bold;
+                                    }
+
+                                    Text {
+                                        text: "推理 · " + AppState.analysis.instance-name + " / " + AppState.analysis.model;
+                                        color: AppState.analysis.has-provider ? Theme.palette.fg-muted : Theme.palette.error;
+                                        font-family: Theme.typo.family;
+                                        font-size: Theme.typo.size-xs;
+                                        overflow: elide;
+                                    }
+
+                                    Text {
+                                        text: "生图 · " + AppState.generation.instance-name + " / " + AppState.generation.model;
+                                        color: AppState.generation.has-provider ? Theme.palette.fg-muted : Theme.palette.warning;
+                                        font-family: Theme.typo.family;
+                                        font-size: Theme.typo.size-xs;
+                                        overflow: elide;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

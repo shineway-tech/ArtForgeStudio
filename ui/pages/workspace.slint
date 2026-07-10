@@ -1,0 +1,89 @@
+import { Theme } from "../theme.slint";
+import { AppState, AssetItem } from "../app-state.slint";
+import { WorkspaceInputPanel } from "../components/workspace-input-panel.slint";
+import { WorkspaceGalleryPanel } from "../components/workspace-gallery-panel.slint";
+import { PromptTemplateDialog } from "../components/prompt-template-dialog.slint";
+import { RequestListDrawer } from "../components/request-list-drawer.slint";
+
+export component WorkspacePage {
+    width: 100%;
+    height: 100%;
+
+    in property <string> mode;
+    in property <string> title;
+    in property <string> hint;
+    in property <[AssetItem]> gallery;
+
+    property <int> current-generating-count: root.mode == "scene"
+        ? AppState.gallery-generating-scene-count
+        : root.mode == "character"
+            ? AppState.gallery-generating-character-count
+            : root.mode == "ui_concept"
+                ? AppState.gallery-generating-ui-count
+                : root.mode == "effect"
+                    ? AppState.gallery-generating-effect-count
+                    : root.mode == "animation_scene"
+                        ? AppState.gallery-generating-animation-scene-count
+                        : root.mode == "animation_character"
+                            ? AppState.gallery-generating-animation-character-count
+                            : root.mode == "character_turnaround"
+                                ? AppState.gallery-generating-character-turnaround-count
+                                : 0;
+
+    property <string> prompt-label: root.mode == "ui_concept"
+        ? "界面描述"
+        : root.mode == "effect"
+            ? "特效描述"
+            : (root.mode == "character" || root.mode == "animation_character" || root.mode == "character_turnaround")
+                ? "角色描述"
+                : "场景描述";
+    property <string> prompt-placeholder: root.mode == "ui_concept"
+        ? "描述你想要创建的 UI 界面...\n例如：暗黑风控制台首页，模块化卡片布局，蓝青色高亮，游戏 HUD + 数据看板混合风格"
+        : root.mode == "effect"
+            ? "描述你想生成的特效、附魔、技能释放或精灵图集动态效果...\n例如：蓝白雷电附魔环绕剑身，8方向连续闪烁，适合像素风 RPG 战斗技能特效精灵图集"
+            : (root.mode == "character" || root.mode == "animation_character" || root.mode == "character_turnaround")
+                ? "描述你想要创建的角色...\n例如：一位手持火焰长剑的女骑士，全身铠甲，暗黑奇幻风格，完整立绘设计"
+                : "描述你想要创作的场景...\n例如：黄昏中的废土集市，蒸汽机械摊位，电影感光影，游戏概念图风格";
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: Theme.palette.bg;
+
+        Rectangle {
+            x: 14px;
+            y: 14px;
+            width: parent.width - 28px;
+            height: parent.height - 28px;
+
+            HorizontalLayout {
+                width: parent.width;
+                height: parent.height;
+                spacing: 14px;
+
+                // ===== 左：输入区 =====
+                WorkspaceInputPanel {
+                    mode: root.mode;
+                    prompt-label: root.prompt-label;
+                    prompt-placeholder: root.prompt-placeholder;
+                }
+
+                // ===== 右：图库 =====
+                WorkspaceGalleryPanel {
+                    mode: root.mode;
+                    gallery: root.gallery;
+                    current-generating-count: root.current-generating-count;
+                }
+            }
+        }
+
+        RequestListDrawer {
+            x: 14px + 440px + 14px;
+            y: 14px;
+            height: parent.height - 28px;
+            mode: AppState.request-list-mode != "" ? AppState.request-list-mode : root.mode;
+        }
+
+        PromptTemplateDialog {}
+    }
+}

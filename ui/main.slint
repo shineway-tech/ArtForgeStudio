@@ -1,0 +1,204 @@
+import { Theme } from "theme.slint";
+import { AppState } from "app-state.slint";
+import { TopBar } from "components/top-bar.slint";
+import { Sidebar } from "components/sidebar.slint";
+import { StatusBar } from "components/status-bar.slint";
+import { WelcomePage } from "pages/welcome.slint";
+import { PlaceholderPage } from "pages/placeholder.slint";
+import { WorkspacePage } from "pages/workspace.slint";
+import { AssetBrowserPage } from "pages/asset-browser.slint";
+import { SettingsPage } from "pages/settings.slint";
+import { TasksPage } from "pages/tasks.slint";
+import { RuntimeLogPage } from "pages/runtime-log.slint";
+import { OnboardingPage } from "pages/onboarding.slint";
+import { ScriptPage } from "pages/script.slint";
+import { StoryboardPage } from "pages/storyboard.slint";
+import { ActionSequencePage } from "pages/action-sequence.slint";
+import { VideoWorkspacePage } from "pages/video-workspace.slint";
+import { ProjectPage } from "pages/project.slint";
+import { CreateProjectPage } from "pages/create-project.slint";
+import { ProjectOverviewPage } from "pages/project-overview.slint";
+import { CharacterLibraryPage, CharacterDetailPage } from "pages/character-library.slint";
+import { SceneLibraryPage } from "pages/scene-library.slint";
+import { ImagePreview } from "components/image-preview.slint";
+import { DeleteConfirmDialog } from "components/delete-confirm-dialog.slint";
+import { AssetMetadataDialog } from "components/asset-metadata-dialog.slint";
+import { SidebarSettingsDialog } from "components/sidebar.slint";
+import { ScriptGenerateDialog } from "components/script-generate-dialog.slint";
+import { ScriptImportDialog } from "components/script-import-dialog.slint";
+
+export { Theme, AppState }
+
+export component AppShell inherits Window {
+    title: "ArtForge Studio";
+    preferred-width: 1280px;
+    preferred-height: 900px;
+    min-width: 1200px;
+    min-height: 900px;
+    background: Theme.palette.bg;
+    default-font-family: Theme.typo.family;
+    default-font-size: Theme.typo.size-md;
+
+    // 引导模式：占满整个窗口
+    if AppState.in-onboarding: OnboardingPage {}
+
+    // 主界面
+    if !AppState.in-onboarding: HorizontalLayout {
+        spacing: 0px;
+
+        Sidebar {
+            collapsed: AppState.sidebar-collapsed;
+            vertical-stretch: 1;
+        }
+
+        VerticalLayout {
+            spacing: 0px;
+
+            TopBar {}
+
+            Rectangle {
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                background: Theme.palette.bg;
+                if AppState.current-page == "welcome": WelcomePage {}
+
+                if AppState.current-page == "settings": SettingsPage {
+                    width: parent.width;
+                    height: parent.height;
+                }
+
+                if AppState.current-page == "tasks": TasksPage {}
+
+                if AppState.current-page == "runtime_log": RuntimeLogPage {
+                    width: parent.width;
+                    height: parent.height;
+                }
+
+                if AppState.current-page == "project_overview": ProjectOverviewPage {}
+
+                if AppState.current-page == "project_script": ScriptPage {
+                    width: parent.width;
+                    height: parent.height;
+                }
+
+                if AppState.current-page == "project_characters": CharacterLibraryPage {}
+
+                if AppState.current-page == "project_scenes": SceneLibraryPage {}
+
+                if AppState.current-page == "project_storyboard": StoryboardPage {
+                    width: parent.width;
+                    height: parent.height;
+                }
+
+                if AppState.current-page == "project_video": VideoWorkspacePage {
+                    title: "视频创作";
+                    hint: "逐镜头调用 Seedance 视频 API 生成短视频。保存到项目 videos/ 目录。";
+                    gallery: AppState.assets-all;
+                }
+
+                if AppState.current-page == "scene": WorkspacePage {
+                    mode: "scene";
+                    title: "创建场景";
+                    hint: "环境、背景、场景概念图。生成结果保存到 out/scenes。";
+                    gallery: AppState.assets-scene;
+                }
+
+                if AppState.current-page == "character": WorkspacePage {
+                    mode: "character";
+                    title: "创建角色";
+                    hint: "可作为后续动作、特效、动画流程基础素材的角色图。";
+                    gallery: AppState.assets-character;
+                }
+
+                if AppState.current-page == "ui_concept": WorkspacePage {
+                    mode: "ui_concept";
+                    title: "UI 概念";
+                    hint: "游戏 HUD、应用面板、UI 概念图。";
+                    gallery: AppState.assets-ui;
+                }
+
+                if AppState.current-page == "effect": WorkspacePage {
+                    mode: "effect";
+                    title: "特效";
+                    hint: "技能特效、附魔效果、精灵图、动画帧参考。";
+                    gallery: AppState.assets-effect;
+                }
+
+                if AppState.current-page == "asset_browser": AssetBrowserPage {}
+
+                if AppState.current-page == "character_library": CharacterLibraryPage {}
+
+                if AppState.current-page == "character_detail": CharacterDetailPage {}
+
+                if AppState.current-page == "scene_library": SceneLibraryPage {}
+
+                if AppState.current-page == "action_sequence": ActionSequencePage {}
+
+                if AppState.current-page == "video": VideoWorkspacePage {
+                    title: "视频创作";
+                    hint: "通过 Seedance 视频 API 生成短视频。支持 T2V、I2V、多模态引用。保存到 out/videos。";
+                    gallery: AppState.assets-all;
+                }
+
+                if AppState.current-page == "animation_scene": WorkspacePage {
+                    mode: "animation_scene";
+                    title: "动画场景";
+                    hint: "为动画短片生成统一风格的场景图。保存到 out/animation_scenes。";
+                    gallery: AppState.assets-all;
+                }
+
+                if AppState.current-page == "animation_character": WorkspacePage {
+                    mode: "animation_character";
+                    title: "动画角色";
+                    hint: "为动画短片生成角色设定或角色图。保存到 out/animation_characters。";
+                    gallery: AppState.assets-all;
+                }
+
+                if AppState.current-page == "character_turnaround": WorkspacePage {
+                    mode: "character_turnaround";
+                    title: "角色三视图";
+                    hint: "把角色设定标准化为正面、侧面、背面参考。保存到 out/character_turnarounds。";
+                    gallery: AppState.assets-all;
+                }
+
+                if AppState.current-page == "animation_script": ScriptPage {
+                    width: parent.width;
+                    height: parent.height;
+                }
+
+                if AppState.current-page == "storyboard": StoryboardPage {
+                    width: parent.width;
+                    height: parent.height;
+                }
+
+                if AppState.current-page == "project": ProjectPage {}
+                if AppState.current-page == "create_project": CreateProjectPage {}
+            }
+
+            StatusBar {}
+        }
+    }
+
+    // 模态对话框（在所有路由之上）
+    DeleteConfirmDialog {}
+    if AppState.preview-open: ImagePreview {
+        width: root.width;
+        height: root.height;
+    }
+    AssetMetadataDialog {
+        width: root.width;
+        height: root.height;
+    }
+    SidebarSettingsDialog {
+        width: root.width;
+        height: root.height;
+    }
+    ScriptGenerateDialog {
+        width: root.width;
+        height: root.height;
+    }
+    ScriptImportDialog {
+        width: root.width;
+        height: root.height;
+    }
+}

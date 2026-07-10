@@ -1,0 +1,53 @@
+id = "rose"
+display_name = "暗玫瑰"
+is_dark = true
+
+[palette]
+bg            = "#0c0608"
+bg_elevated   = "#140a0e"
+bg_hover      = "#241218"
+bg_active     = "#1a0e12"
+fg            = "#f4dce4"
+fg_muted      = "#d8b4c0"
+fg_disabled   = "#9c6878"
+border        = "#2a1820"
+border_strong = "#3a1c28"
+accent        = "#f43f5e"
+accent_hover  = "#fb7185"
+accent_active = "#e11d48"
+success       = "#34d399"
+warning       = "#f59e0b"
+error         = "#ef4444"
+overlay       = "#000000aa"
+
+[shape]
+radius_sm    = 4
+radius_md    = 8
+radius_lg    = 12
+border_width = 1
+
+[typography]
+family         = "Sarasa UI SC"
+family_mono    = "Sarasa Mono SC"
+size_xs        = 11
+size_sm        = 12
+size_md        = 14
+size_lg        = 16
+size_xl        = 20
+weight_regular = 400
+weight_medium  = 500
+weight_bold    = 700
+line_height    = 1.5
+
+[spacing]
+xs  = 4
+sm  = 8
+md  = 12
+lg  = 16
+xl  = 24
+xxl = 32
+
+[motion]
+duration_fast   = "120ms"
+duration_normal = "200ms"
+duration_slow   = "300ms"

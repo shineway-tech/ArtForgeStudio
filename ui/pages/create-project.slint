@@ -1,0 +1,180 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+import { InputField } from "../components/input.slint";
+import { Button } from "../components/button.slint";
+
+component TypeCard {
+    in property <string> id;
+    in property <string> label;
+    in property <string> desc;
+    in property <bool> selected;
+    callback clicked(string);
+
+    height: 80px;
+    horizontal-stretch: 1;
+
+    Rectangle {
+        background: root.selected
+            ? Theme.palette.bg-active
+            : (touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg);
+        border-radius: Theme.shape.radius-md;
+        border-width: root.selected ? 2px : Theme.shape.border-width;
+        border-color: root.selected ? Theme.palette.accent : Theme.palette.border;
+        animate background, border-color, border-width { duration: 160ms; }
+
+        VerticalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+            padding-top: 12px;
+            padding-bottom: 12px;
+            spacing: 4px;
+
+            Text {
+                text: root.label;
+                color: root.selected ? Theme.palette.fg : Theme.palette.fg-muted;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-md;
+                font-weight: Theme.typo.weight-bold;
+            }
+
+            Text {
+                text: root.desc;
+                color: root.selected ? Theme.palette.fg-muted : Theme.palette.fg-disabled;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                overflow: elide;
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(root.id); }
+        }
+    }
+}
+
+export component CreateProjectPage {
+    width: 100%;
+    height: 100%;
+
+    property <string> project-name: "";
+    property <string> project-desc: "";
+    property <string> project-path: "";
+    property <string> project-type: "movie";
+    property <length> card-width: min(640px, root.width - 96px);
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: Theme.palette.bg;
+
+        Rectangle {
+            x: (parent.width - root.card-width) / 2;
+            y: max(0px, (parent.height - 650px) / 2);
+            width: root.card-width;
+            height: 650px;
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-md;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border;
+
+            VerticalLayout {
+                padding: 32px;
+                spacing: Theme.spacing.md;
+
+                Text {
+                    text: "创建项目";
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xl;
+                    font-weight: Theme.typo.weight-bold;
+                }
+
+                Text {
+                    text: "选择项目类型，不同类型的创作流程和导航结构会有所不同。";
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-sm;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.sm;
+
+                    TypeCard {
+                        id: "movie";
+                        label: "电影";
+                        desc: "动画长片·电影";
+                        selected: root.project-type == "movie";
+                        clicked(type) => { root.project-type = type; }
+                    }
+
+                    TypeCard {
+                        id: "short_film";
+                        label: "短片";
+                        desc: "广告·MV·短视频·微电影";
+                        selected: root.project-type == "short_film";
+                        clicked(type) => { root.project-type = type; }
+                    }
+
+                    TypeCard {
+                        id: "series";
+                        label: "剧集";
+                        desc: "多集连续剧·动画番剧";
+                        selected: root.project-type == "series";
+                        clicked(type) => { root.project-type = type; }
+                    }
+                }
+
+                InputField {
+                    width: parent.width;
+                    label: "项目名称";
+                    placeholder: "例如：我的动画短片";
+                    value <=> root.project-name;
+                }
+
+                InputField {
+                    width: parent.width;
+                    label: "描述（可选）";
+                    placeholder: "简短描述项目内容...";
+                    value <=> root.project-desc;
+                }
+
+                InputField {
+                    width: parent.width;
+                    label: "保存路径（可选）";
+                    placeholder: "默认：" + AppState.default-project-path;
+                    value <=> root.project-path;
+                }
+
+                Rectangle { vertical-stretch: 1; }
+
+                HorizontalLayout {
+                    height: 40px;
+                    spacing: Theme.spacing.md;
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    Button {
+                        text: "取消";
+                        clicked => { AppState.navigate("project"); }
+                    }
+
+                    Button {
+                        text: "创建";
+                        primary: true;
+                        disabled: root.project-name == "";
+                        clicked => {
+                            AppState.create-project(
+                                root.project-name,
+                                root.project-desc,
+                                root.project-path,
+                                root.project-type,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

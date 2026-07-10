@@ -1,0 +1,79 @@
+import { Theme } from "../theme.slint";
+
+export component SidebarItem {
+    in property <image> icon;
+    in property <bool> has-icon: false;
+    in property <bool> icon-only: false;
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> enabled: true;
+    in property <length> indent: 0px;
+    in property <bool> compact: false;
+    callback clicked();
+
+    height: root.compact ? 34px : 36px;
+    horizontal-stretch: 1;
+    property <length> icon-size: root.compact ? 15px : 16px;
+    property <length> content-left: root.icon-only ? 0px : Theme.spacing.md + root.indent;
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: root.active
+            ? Theme.palette.bg-active
+            : (touch.has-hover ? Theme.palette.bg-hover : transparent);
+        border-radius: Theme.shape.radius-md;
+        animate background { duration: 120ms; }
+
+        // 左侧 active 指示条
+        Rectangle {
+            x: 0;
+            y: parent.height / 2 - 8px;
+            width: 3px;
+            height: 16px;
+            background: root.active ? Theme.palette.accent : transparent;
+            border-radius: 2px;
+        }
+
+        if root.has-icon: Image {
+            width: root.icon-size;
+            height: root.icon-size;
+            x: root.icon-only
+                ? (parent.width - self.width) / 2
+                : root.content-left;
+            y: (parent.height - self.height) / 2 + 1px;
+            source: root.icon;
+            colorize: root.enabled
+                ? (root.active ? Theme.palette.accent : Theme.palette.fg-muted)
+                : Theme.palette.fg-disabled;
+        }
+
+        if !root.icon-only: Text {
+            x: root.has-icon
+                ? root.content-left + root.icon-size + Theme.spacing.sm
+                : root.content-left;
+            y: 0px;
+            width: parent.width - self.x - Theme.spacing.md;
+            height: parent.height;
+            text: root.text;
+            color: root.enabled
+                ? (root.active ? Theme.palette.fg : Theme.palette.fg-muted)
+                : Theme.palette.fg-disabled;
+            font-family: Theme.typo.family;
+            font-size: root.compact ? Theme.typo.size-sm : Theme.typo.size-md;
+            font-weight: root.active
+                ? Theme.typo.weight-medium
+                : Theme.typo.weight-regular;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            enabled: root.enabled;
+            mouse-cursor: root.enabled ? pointer : default;
+            clicked => { root.clicked(); }
+        }
+    }
+}

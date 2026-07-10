@@ -1,0 +1,297 @@
+import { Theme } from "../theme.slint";
+import { AppState, AssetItem } from "../app-state.slint";
+import { Button } from "../components/button.slint";
+import { AssetGrid } from "../components/asset-grid.slint";
+
+component AspectChip {
+    in property <string> id;
+    in property <string> label;
+
+    width: 64px;
+    height: 32px;
+
+    Rectangle {
+        background: AppState.ws-aspect == root.id
+            ? Theme.palette.accent
+            : (touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated);
+        border-radius: Theme.shape.radius-sm;
+        border-width: 1px;
+        border-color: AppState.ws-aspect == root.id
+            ? Theme.palette.accent
+            : Theme.palette.border;
+        animate background, border-color { duration: 120ms; }
+
+        Text {
+            text: root.label;
+            color: AppState.ws-aspect == root.id ? #ffffff : Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-sm;
+            font-weight: Theme.typo.weight-medium;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { AppState.ws-aspect = root.id; }
+        }
+    }
+}
+
+export component ActionSequencePage {
+    Rectangle {
+        background: Theme.palette.bg;
+
+        HorizontalLayout {
+            spacing: 0px;
+
+            // ===== 左：输入区 =====
+            Rectangle {
+                width: 540px;
+                background: Theme.palette.bg;
+
+                Rectangle {
+                    x: parent.width - 1px;
+                    width: 1px;
+                    height: parent.height;
+                    background: Theme.palette.border;
+                }
+
+                VerticalLayout {
+                    padding: Theme.spacing.xl;
+                    spacing: Theme.spacing.md;
+
+                    Text {
+                        text: "批量生图";
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xl;
+                        font-weight: Theme.typo.weight-bold;
+                    }
+
+                    Text {
+                        text: "每行一个提示词，批量调用生图 provider。结果保存到 out/batch/。";
+                        color: Theme.palette.fg-muted;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                    }
+
+                    // 提示词区域
+                    VerticalLayout {
+                        spacing: 4px;
+
+                        Text {
+                            text: "提示词列表 · 一行一个";
+                            color: Theme.palette.fg;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                            font-weight: Theme.typo.weight-medium;
+                        }
+
+                        Rectangle {
+                            height: 200px;
+                            background: Theme.palette.bg-elevated;
+                            border-radius: Theme.shape.radius-md;
+                            border-width: 1px;
+                            border-color: batch-input.has-focus ? Theme.palette.accent : Theme.palette.border;
+                            animate border-color { duration: 120ms; }
+
+                            batch-input := TextInput {
+                                x: Theme.spacing.md;
+                                y: Theme.spacing.md;
+                                width: parent.width - 2 * Theme.spacing.md;
+                                height: parent.height - 2 * Theme.spacing.md;
+                                color: Theme.palette.fg;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-sm;
+                                wrap: word-wrap;
+                                single-line: false;
+                                text <=> AppState.ws-prompt;
+                            }
+
+
+                        }
+                    }
+
+                    // 比例
+                    VerticalLayout {
+                        spacing: 4px;
+
+                        Text {
+                            text: "比例";
+                            color: Theme.palette.fg;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                            font-weight: Theme.typo.weight-medium;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 6px;
+                            alignment: start;
+
+                            AspectChip { id: "1:1"; label: "1:1"; }
+                            AspectChip { id: "16:9"; label: "16:9"; }
+                            AspectChip { id: "9:16"; label: "9:16"; }
+                        }
+                    }
+
+                    // 生成区
+                    Rectangle {
+                        background: Theme.palette.bg-elevated;
+                        border-radius: Theme.shape.radius-md;
+                        border-width: 1px;
+                        border-color: Theme.palette.border;
+
+                        VerticalLayout {
+                            padding: Theme.spacing.md;
+                            spacing: Theme.spacing.sm;
+
+                            HorizontalLayout {
+                                spacing: Theme.spacing.sm;
+                                alignment: space-between;
+
+                                VerticalLayout {
+                                    spacing: 2px;
+
+                                    Text {
+                                        text: "生图：" + AppState.generation.instance-name + " · " + AppState.generation.model;
+                                        color: AppState.generation.has-provider ? Theme.palette.fg-muted : Theme.palette.error;
+                                        font-family: Theme.typo.family;
+                                        font-size: Theme.typo.size-xs;
+                                    }
+
+                                    if AppState.ws-last-output != "": Text {
+                                        text: "上次输出 → " + AppState.ws-last-output;
+                                        color: Theme.palette.success;
+                                        font-family: Theme.typo.family-mono;
+                                        font-size: Theme.typo.size-xs;
+                                        overflow: elide;
+                                    }
+                                }
+
+                                Button {
+                                    text: "批量生成";
+                                    primary: true;
+                                    disabled: !AppState.generation.has-provider || AppState.ws-prompt == "";
+                                    clicked => {
+                                        AppState.generate-image("action_sequence", AppState.ws-prompt, AppState.ws-aspect, AppState.ws-quality, AppState.ws-count);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 跳过已存在
+                    HorizontalLayout {
+                        spacing: Theme.spacing.xs;
+                        alignment: start;
+
+                        Rectangle {
+                            width: 16px;
+                            height: 16px;
+                            border-radius: 3px;
+                            border-width: 1.5px;
+                            border-color: AppState.ws-skip-existing ? Theme.palette.accent : Theme.palette.border-strong;
+                            background: AppState.ws-skip-existing ? Theme.palette.accent : transparent;
+
+                            if AppState.ws-skip-existing: Image {
+                                width: 11px;
+                                height: 11px;
+                                source: @image-url("../assets/icons/check.svg");
+                                colorize: #ffffff;
+                                x: parent.width / 2 - self.width / 2;
+                                y: parent.height / 2 - self.height / 2;
+                            }
+
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { AppState.ws-skip-existing = !AppState.ws-skip-existing; }
+                            }
+                        }
+
+                        Text {
+                            text: "跳过已存在的输出文件";
+                            color: Theme.palette.fg-muted;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Rectangle { vertical-stretch: 1; }
+                }
+            }
+
+            // ===== 右：图库 =====
+            Rectangle {
+                horizontal-stretch: 1;
+                background: Theme.palette.bg;
+
+                VerticalLayout {
+                    padding: Theme.spacing.lg;
+                    spacing: Theme.spacing.md;
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing.sm;
+                        alignment: space-between;
+
+                        Text {
+                            text: "已生成 · " + AppState.assets-all.length + " 张";
+                            color: Theme.palette.fg;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-md;
+                            font-weight: Theme.typo.weight-medium;
+                            vertical-alignment: center;
+                        }
+
+                        Text {
+                            text: "点击预览 · 右键资源管理器";
+                            color: Theme.palette.fg-disabled;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    if AppState.assets-all.length == 0: Rectangle {
+                        background: Theme.palette.bg-elevated;
+                        border-radius: Theme.shape.radius-md;
+                        border-width: 1px;
+                        border-color: Theme.palette.border;
+                        height: 120px;
+
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 4px;
+
+                            Text {
+                                text: "图库是空的";
+                                color: Theme.palette.fg-muted;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-md;
+                                horizontal-alignment: center;
+                            }
+
+                            Text {
+                                text: "在左侧输入提示词（一行一个），点批量生成";
+                                color: Theme.palette.fg-disabled;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-sm;
+                                horizontal-alignment: center;
+                            }
+                        }
+                    }
+
+                    Flickable {
+                        viewport-height: grid.height;
+
+                        grid := AssetGrid {
+                            items: AppState.assets-all;
+                            columns: 4;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

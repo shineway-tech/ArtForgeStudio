@@ -1,0 +1,414 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+
+component PreviewMetric {
+    in property <string> label;
+    in property <string> value;
+
+    height: 46px;
+
+    Rectangle {
+        background: #ffffff0c;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: #ffffff12;
+
+        VerticalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            padding-top: 5px;
+            padding-bottom: 5px;
+            spacing: 2px;
+
+            Text {
+                text: root.label;
+                color: #ffffff80;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: root.value == "" ? "-" : root.value;
+                color: #ffffff;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                font-weight: Theme.typo.weight-medium;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+component PreviewActionButton {
+    in property <string> text;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    in property <bool> disabled: false;
+    callback clicked();
+
+    height: 30px;
+
+    Rectangle {
+        background: root.disabled
+            ? Theme.palette.bg-hover
+            : (root.primary
+                ? (touch.has-hover ? Theme.palette.accent-hover : Theme.palette.accent)
+                : (touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated));
+        border-radius: Theme.shape.radius-md;
+        border-width: root.primary ? 0px : 1px;
+        border-color: root.danger ? Theme.palette.error : Theme.palette.border;
+        animate background { duration: 110ms; easing: ease-out; }
+
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.text;
+            color: root.disabled
+                ? Theme.palette.fg-disabled
+                : (root.primary ? #ffffff : (root.danger ? Theme.palette.error : Theme.palette.fg));
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-sm;
+            font-weight: Theme.typo.weight-medium;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        touch := TouchArea {
+            enabled: !root.disabled;
+            mouse-cursor: root.disabled ? default : pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+export component ImagePreview {
+    width: 100%;
+    height: 100%;
+
+    property <string> size-text: AppState.preview-width > 0 && AppState.preview-height > 0
+        ? (AppState.preview-width + " x " + AppState.preview-height)
+        : "-";
+    property <string> bytes-text: AppState.preview-bytes > 0
+        ? (AppState.preview-bytes / 1024 + " KB")
+        : AppState.preview-info;
+    property <bool> has-prompt: AppState.preview-prompt != "";
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: Theme.palette.overlay;
+
+        TouchArea {
+            clicked => { AppState.preview-close(); }
+        }
+
+        Rectangle {
+            x: 18px;
+            y: 18px;
+            width: parent.width - 36px;
+            height: parent.height - 36px;
+            background: Theme.palette.bg;
+            border-radius: Theme.shape.radius-lg;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border-strong;
+            clip: true;
+
+            VerticalLayout {
+                spacing: 0px;
+
+                Rectangle {
+                    height: 64px;
+                    background: Theme.palette.bg-elevated;
+
+                    Rectangle {
+                        x: 18px;
+                        y: 15px;
+                        width: 34px;
+                        height: 34px;
+                        background: Theme.palette.bg-active;
+                        border-radius: Theme.shape.radius-md;
+                        border-width: Theme.shape.border-width;
+                        border-color: Theme.palette.border;
+
+                        Image {
+                            x: 7px;
+                            y: 7px;
+                            width: 20px;
+                            height: 20px;
+                            source: @image-url("../assets/icons/asset-browser.svg");
+                            colorize: Theme.palette.accent;
+                        }
+                    }
+
+                    Text {
+                        x: 64px;
+                        y: 13px;
+                        width: parent.width - 124px;
+                        height: 22px;
+                        text: AppState.preview-name;
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-md;
+                        font-weight: Theme.typo.weight-bold;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    Text {
+                        x: 64px;
+                        y: 38px;
+                        width: parent.width - 124px;
+                        height: 16px;
+                        text: root.size-text + "  ·  " + root.bytes-text;
+                        color: Theme.palette.fg-muted;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    Rectangle {
+                        x: parent.width - 46px;
+                        y: 15px;
+                        width: 34px;
+                        height: 34px;
+                        background: close-touch.has-hover ? Theme.palette.bg-hover : transparent;
+                        border-radius: Theme.shape.radius-md;
+
+                        Image {
+                            x: 8px;
+                            y: 8px;
+                            width: 18px;
+                            height: 18px;
+                            source: @image-url("../assets/icons/close.svg");
+                            colorize: Theme.palette.fg;
+                        }
+
+                        close-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { AppState.preview-close(); }
+                        }
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.palette.border; }
+
+                HorizontalLayout {
+                    horizontal-stretch: 1;
+                    vertical-stretch: 1;
+                    spacing: 0px;
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        vertical-stretch: 1;
+                        background: Theme.palette.bg;
+
+                        Image {
+                            x: 28px;
+                            y: 24px;
+                            width: parent.width - 56px;
+                            height: parent.height - 48px;
+                            source: AppState.preview-image;
+                            image-fit: contain;
+                        }
+                    }
+
+                    Rectangle {
+                        width: min(360px, max(280px, parent.width * 0.28));
+                        vertical-stretch: 1;
+                        background: Theme.palette.bg-elevated;
+
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 12px;
+
+                            Text {
+                                text: "图像信息";
+                                color: Theme.palette.fg;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-md;
+                                font-weight: Theme.typo.weight-bold;
+                            }
+
+                            GridLayout {
+                                spacing: 8px;
+
+                                Row {
+                                    PreviewMetric { label: "尺寸"; value: root.size-text; }
+                                    PreviewMetric { label: "宽高比"; value: AppState.preview-aspect-ratio; }
+                                }
+
+                                Row {
+                                    PreviewMetric { label: "品质"; value: AppState.preview-quality; }
+                                    PreviewMetric { label: "模型"; value: AppState.preview-model; }
+                                }
+                            }
+
+                            Rectangle {
+                                height: 1px;
+                                background: Theme.palette.border;
+                            }
+
+                            Text {
+                                text: "导演控制";
+                                color: Theme.palette.fg-muted;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-xs;
+                                font-weight: Theme.typo.weight-medium;
+                            }
+
+                            Rectangle {
+                                height: 52px;
+                                background: Theme.palette.bg-hover;
+                                border-radius: Theme.shape.radius-md;
+                                border-width: Theme.shape.border-width;
+                                border-color: Theme.palette.border;
+
+                                Text {
+                                    x: 12px;
+                                    y: 8px;
+                                    width: parent.width - 24px;
+                                    height: parent.height - 16px;
+                                    text: AppState.preview-director-summary == "" ? "未记录导演控制" : AppState.preview-director-summary;
+                                    color: AppState.preview-director-summary == "" ? Theme.palette.fg-disabled : Theme.palette.fg;
+                                    font-family: Theme.typo.family;
+                                    font-size: Theme.typo.size-sm;
+                                    wrap: word-wrap;
+                                    overflow: elide;
+                                }
+                            }
+
+                            Rectangle {
+                                height: 1px;
+                                background: Theme.palette.border;
+                            }
+
+                            Text {
+                                text: "提示词";
+                                color: Theme.palette.fg-muted;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-xs;
+                                font-weight: Theme.typo.weight-medium;
+                            }
+
+                            Rectangle {
+                                vertical-stretch: 1;
+                                background: Theme.palette.bg-hover;
+                                border-radius: Theme.shape.radius-md;
+                                border-width: Theme.shape.border-width;
+                                border-color: Theme.palette.border;
+                                clip: true;
+
+                                Flickable {
+                                    x: 12px;
+                                    y: 10px;
+                                    width: parent.width - 24px;
+                                    height: parent.height - 20px;
+                                    viewport-height: prompt-text.height;
+
+                                    prompt-text := Text {
+                                        width: parent.width;
+                                        text: root.has-prompt ? AppState.preview-prompt : "未记录提示词";
+                                        color: root.has-prompt ? Theme.palette.fg : Theme.palette.fg-disabled;
+                                        font-family: Theme.typo.family;
+                                        font-size: Theme.typo.size-sm;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                height: 34px;
+                                background: Theme.palette.bg-hover;
+                                border-radius: Theme.shape.radius-sm;
+                                border-width: Theme.shape.border-width;
+                                border-color: Theme.palette.border;
+
+                                Text {
+                                    x: 10px;
+                                    width: parent.width - 20px;
+                                    height: parent.height;
+                                    text: AppState.preview-path;
+                                    color: Theme.palette.fg-disabled;
+                                    font-family: Theme.typo.family-mono;
+                                    font-size: Theme.typo.size-xs;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.palette.border; }
+
+                Rectangle {
+                    height: 46px;
+                    background: Theme.palette.bg-elevated;
+
+                    PreviewActionButton {
+                        x: parent.width - 378px;
+                        y: 8px;
+                        width: 92px;
+                        text: "使用提示词";
+                        disabled: AppState.preview-prompt == "";
+                        clicked => {
+                            AppState.ws-prompt = AppState.preview-prompt;
+                            AppState.ws-quality = AppState.preview-quality == "" ? AppState.ws-quality : AppState.preview-quality;
+                            AppState.ws-aspect = AppState.preview-aspect-ratio == "" ? AppState.ws-aspect : AppState.preview-aspect-ratio;
+                            AppState.preview-close();
+                            AppState.navigate(
+                                AppState.preview-domain == "character" || AppState.preview-domain == "animation_character" || AppState.preview-domain == "character_turnaround"
+                                    ? "character"
+                                    : (AppState.preview-domain == "ui"
+                                        ? "ui_concept"
+                                        : (AppState.preview-domain == "effect"
+                                            ? "effect"
+                                            : (AppState.preview-domain == "storyboard" ? "storyboard" : "scene")))
+                            );
+                        }
+                    }
+
+                    PreviewActionButton {
+                        x: parent.width - 278px;
+                        y: 8px;
+                        width: 58px;
+                        text: "打开";
+                        clicked => { AppState.open-asset(AppState.preview-path); }
+                    }
+
+                    PreviewActionButton {
+                        x: parent.width - 212px;
+                        y: 8px;
+                        width: 58px;
+                        text: "位置";
+                        clicked => { AppState.reveal-asset(AppState.preview-path); }
+                    }
+
+                    PreviewActionButton {
+                        x: parent.width - 146px;
+                        y: 8px;
+                        width: 58px;
+                        text: "删除";
+                        danger: true;
+                        clicked => {
+                            AppState.preview-close();
+                            AppState.request-delete-asset(AppState.preview-path);
+                        }
+                    }
+
+                    PreviewActionButton {
+                        x: parent.width - 80px;
+                        y: 8px;
+                        width: 62px;
+                        text: "关闭";
+                        primary: true;
+                        clicked => { AppState.preview-close(); }
+                    }
+                }
+            }
+        }
+    }
+}

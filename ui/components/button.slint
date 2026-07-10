@@ -1,0 +1,49 @@
+import { Theme } from "../theme.slint";
+
+export component Button {
+    in property <string> text;
+    in property <bool> primary: false;
+    in property <bool> disabled: false;
+    callback clicked();
+
+    min-height: 32px;
+    min-width: 64px;
+    horizontal-stretch: 0;
+
+    Rectangle {
+        background: root.disabled
+            ? Theme.palette.bg-hover
+            : (root.primary
+                ? (touch.has-hover
+                    ? (touch.pressed ? Theme.palette.accent-active : Theme.palette.accent-hover)
+                    : Theme.palette.accent)
+                : (touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated));
+        border-radius: Theme.shape.radius-md;
+        border-width: root.primary ? 0px : Theme.shape.border-width;
+        border-color: Theme.palette.border;
+        animate background { duration: 120ms; }
+
+        HorizontalLayout {
+            padding-left: Theme.spacing.md;
+            padding-right: Theme.spacing.md;
+            alignment: center;
+
+            Text {
+                text: root.text;
+                color: root.disabled
+                    ? Theme.palette.fg-disabled
+                    : (root.primary ? #ffffff : Theme.palette.fg);
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-md;
+                font-weight: Theme.typo.weight-medium;
+                vertical-alignment: center;
+            }
+        }
+
+        touch := TouchArea {
+            enabled: !root.disabled;
+            mouse-cursor: root.disabled ? default : pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}

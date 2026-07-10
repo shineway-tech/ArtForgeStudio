@@ -1,0 +1,55 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+
+export component TemplateSelect {
+    height: 36px;
+    horizontal-stretch: 1;
+
+    Rectangle {
+        background: Theme.palette.bg;
+        border-radius: 7px;
+        border-width: 1px;
+        border-color: touch.has-hover || AppState.ws-show-templates
+            ? Theme.palette.accent
+            : Theme.palette.border;
+        animate border-color { duration: 120ms; }
+
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 8px;
+            spacing: 6px;
+            alignment: space-between;
+
+            Text {
+                text: AppState.ws-template-name == ""
+                    ? "不使用目录提示词"
+                    : AppState.ws-template-name;
+                color: AppState.ws-template-name == ""
+                    ? Theme.palette.fg-disabled
+                    : Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+
+            Image {
+                width: 12px;
+                height: 12px;
+                source: @image-url("../assets/icons/square.svg");
+                colorize: Theme.palette.fg-disabled;
+                vertical-alignment: center;
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                AppState.refresh-template-list();
+                AppState.ws-open-select = "";
+                AppState.ws-show-templates = !AppState.ws-show-templates;
+            }
+        }
+    }
+}

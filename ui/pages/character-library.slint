@@ -1,0 +1,514 @@
+// 角色库 - 卡片墙与独立详情页。
+
+import { Theme } from "../theme.slint";
+import { AppState, CharacterCardItem } from "../app-state.slint";
+
+component SmallButton {
+    in property <string> text;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    callback clicked();
+
+    min-height: 32px;
+    min-width: 76px;
+    horizontal-stretch: 0;
+
+    Rectangle {
+        background: root.primary
+            ? (touch.has-hover ? Theme.palette.accent-hover : Theme.palette.accent)
+            : (touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated);
+        border-radius: Theme.shape.radius-sm;
+        border-width: root.primary ? 0px : Theme.shape.border-width;
+        border-color: root.danger ? Theme.palette.error : Theme.palette.border;
+
+        Text {
+            text: root.text;
+            color: root.danger ? Theme.palette.error : (root.primary ? #ffffff : Theme.palette.fg);
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-sm;
+            font-weight: Theme.typo.weight-medium;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+component FormField {
+    in property <string> label;
+    in property <string> placeholder;
+    in-out property <string> value;
+
+    min-height: 54px;
+
+    VerticalLayout {
+        spacing: 4px;
+        Text {
+            text: root.label;
+            color: Theme.palette.fg-muted;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+        }
+        Rectangle {
+            background: Theme.palette.bg;
+            border-radius: Theme.shape.radius-sm;
+            border-width: Theme.shape.border-width;
+            border-color: input.has-focus ? Theme.palette.accent : Theme.palette.border;
+            min-height: 30px;
+
+            input := TextInput {
+                text <=> root.value;
+                color: Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                single-line: true;
+                x: Theme.spacing.sm;
+                width: parent.width - 2 * Theme.spacing.sm;
+                vertical-alignment: center;
+            }
+
+            if root.value == "" && !input.has-focus : Text {
+                text: root.placeholder;
+                color: Theme.palette.fg-disabled;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                x: Theme.spacing.sm;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+component SectionHeader {
+    in property <string> text;
+
+    min-height: 28px;
+    HorizontalLayout {
+        spacing: Theme.spacing.sm;
+        Rectangle {
+            width: 3px;
+            max-height: 14px;
+            background: Theme.palette.accent;
+            border-radius: 2px;
+            vertical-stretch: 0;
+        }
+        Text {
+            text: root.text;
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-sm;
+            font-weight: Theme.typo.weight-bold;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component AnchorSection {
+    in property <string> title;
+    in-out property <bool> expanded;
+
+    min-height: 32px;
+
+    Rectangle {
+        background: touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg;
+        border-radius: Theme.shape.radius-sm;
+        min-height: 32px;
+
+        HorizontalLayout {
+            padding-left: Theme.spacing.sm;
+            padding-right: Theme.spacing.sm;
+            spacing: Theme.spacing.sm;
+            Text {
+                text: root.expanded ? "v" : ">";
+                color: Theme.palette.fg-muted;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.title;
+                color: Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                font-weight: Theme.typo.weight-medium;
+                vertical-alignment: center;
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.expanded = !root.expanded; }
+        }
+    }
+}
+
+component CharacterCard {
+    in property <CharacterCardItem> item;
+    in property <bool> create-card: false;
+    callback clicked();
+
+    width: 190px;
+    height: 238px;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+
+    Rectangle {
+        background: touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated;
+        border-radius: Theme.shape.radius-md;
+        border-width: Theme.shape.border-width;
+        border-color: touch.has-hover ? Theme.palette.accent : Theme.palette.border;
+        clip: true;
+
+        VerticalLayout {
+            padding: Theme.spacing.sm;
+            spacing: Theme.spacing.sm;
+
+            Rectangle {
+                background: Theme.palette.bg;
+                border-radius: Theme.shape.radius-sm;
+                border-width: Theme.shape.border-width;
+                border-color: Theme.palette.border;
+                min-height: 176px;
+                clip: true;
+
+                if !root.create-card && root.item.has-thumb : Image {
+                    source: root.item.thumb;
+                    width: 100%;
+                    height: 100%;
+                    image-fit: cover;
+                }
+
+                if !root.create-card && !root.item.has-thumb : VerticalLayout {
+                    alignment: center;
+                    padding: Theme.spacing.lg;
+                    spacing: Theme.spacing.sm;
+                    Text {
+                        text: "封面待生成";
+                        color: Theme.palette.fg-disabled;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-sm;
+                        horizontal-alignment: center;
+                    }
+                }
+
+                if root.create-card : VerticalLayout {
+                    alignment: center;
+                    padding: Theme.spacing.lg;
+                    spacing: Theme.spacing.sm;
+                    Text {
+                        text: "+";
+                        color: Theme.palette.accent;
+                        font-family: Theme.typo.family;
+                        font-size: 42px;
+                        font-weight: Theme.typo.weight-bold;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "创建角色";
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-sm;
+                        font-weight: Theme.typo.weight-medium;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+
+            Text {
+                text: root.create-card ? "新角色" : root.item.name;
+                color: Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-md;
+                font-weight: Theme.typo.weight-bold;
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+export component CharacterLibraryPage {
+    width: 100%;
+    height: 100%;
+
+    property <[CharacterCardItem]> items: AppState.character-library-items;
+    property <int> count: root.items.length;
+    property <int> columns: root.width > 1180px ? 5 : (root.width > 940px ? 4 : (root.width > 700px ? 3 : 2));
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: Theme.palette.bg;
+
+        VerticalLayout {
+            padding: Theme.spacing.lg;
+            spacing: Theme.spacing.lg;
+
+            HorizontalLayout {
+                min-height: 40px;
+                spacing: Theme.spacing.md;
+                VerticalLayout {
+                    spacing: 2px;
+                    Text {
+                        text: "角色库";
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xl;
+                        font-weight: Theme.typo.weight-bold;
+                    }
+                    Text {
+                        text: (root.count) + " 个角色";
+                        color: Theme.palette.fg-muted;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                SmallButton {
+                    text: "新建角色";
+                    primary: true;
+                    clicked => { AppState.character-library-create(); }
+                }
+            }
+
+            if root.count == 0 : HorizontalLayout {
+                spacing: Theme.spacing.md;
+                CharacterCard {
+                    create-card: true;
+                    clicked => { AppState.character-library-create(); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            if root.count > 0 : Flickable {
+                VerticalLayout {
+                    spacing: Theme.spacing.md;
+                    for row in 64 : HorizontalLayout {
+                        spacing: Theme.spacing.md;
+                        for col in root.columns : Rectangle {
+                            property <int> idx: row * root.columns + col;
+                            width: 190px;
+                            height: idx < root.count ? 238px : 0px;
+                            horizontal-stretch: 0;
+                            if idx < root.count : CharacterCard {
+                                item: root.items[idx];
+                                clicked => { AppState.character-library-select(root.items[idx].id); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component CharacterDetailPage {
+    width: 100%;
+    height: 100%;
+
+    property <bool> a1: false;
+    property <bool> a2: false;
+    property <bool> a3: true;
+    property <bool> a4: false;
+    property <bool> a5: false;
+    property <bool> a6: false;
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: Theme.palette.bg;
+
+        Flickable {
+            VerticalLayout {
+                padding: Theme.spacing.lg;
+                spacing: Theme.spacing.lg;
+
+                HorizontalLayout {
+                    min-height: 42px;
+                    spacing: Theme.spacing.md;
+                    SmallButton {
+                        text: "< 返回";
+                        clicked => { AppState.navigate("character_library"); }
+                    }
+                    VerticalLayout {
+                        spacing: 3px;
+                        Text {
+                            text: AppState.character-library-detail-name;
+                            color: Theme.palette.fg;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xl;
+                            font-weight: Theme.typo.weight-bold;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: AppState.character-library-detail-status + " · "
+                                + (AppState.character-library-detail-view-count) + " 视图 · "
+                                + (AppState.character-library-detail-variation-count) + " 变体";
+                            color: Theme.palette.fg-muted;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                        }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    SmallButton {
+                        text: "生成封面";
+                        primary: true;
+                        clicked => { AppState.character-library-generate(AppState.character-library-selected-id); }
+                    }
+                    SmallButton {
+                        text: AppState.character-library-editing ? "收起编辑" : "编辑";
+                        clicked => { AppState.character-library-editing = !AppState.character-library-editing; }
+                    }
+                }
+
+                Rectangle {
+                    background: Theme.palette.bg-elevated;
+                    border-radius: Theme.shape.radius-md;
+                    border-width: Theme.shape.border-width;
+                    border-color: Theme.palette.border;
+                    min-height: 260px;
+                    clip: true;
+
+                    if AppState.character-library-detail-thumb.width > 0 : Image {
+                        source: AppState.character-library-detail-thumb;
+                        width: 100%;
+                        height: 100%;
+                        image-fit: contain;
+                    }
+                    if AppState.character-library-detail-thumb.width <= 0 : VerticalLayout {
+                        alignment: center;
+                        spacing: Theme.spacing.sm;
+                        Text {
+                            text: "封面待生成";
+                            color: Theme.palette.fg-muted;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-md;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "可用生图模型生成角色封面。";
+                            color: Theme.palette.fg-disabled;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                if !AppState.character-library-editing : VerticalLayout {
+                    spacing: Theme.spacing.md;
+                    if AppState.character-library-detail-desc != "" : Text {
+                        text: AppState.character-library-detail-desc;
+                        color: Theme.palette.fg-muted;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-sm;
+                        wrap: word-wrap;
+                    }
+                    if AppState.character-library-detail-tags != "" : Text {
+                        text: AppState.character-library-detail-tags;
+                        color: Theme.palette.accent;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                        overflow: elide;
+                    }
+                    SmallButton {
+                        text: "删除角色";
+                        danger: true;
+                        clicked => { AppState.character-library-delete(AppState.character-library-selected-id); }
+                    }
+                }
+
+                if AppState.character-library-editing : VerticalLayout {
+                    spacing: Theme.spacing.lg;
+
+                    SectionHeader { text: "基础信息"; }
+                    FormField { label: "角色名"; placeholder: "例如：林月"; value <=> AppState.char-edit-name; }
+                    HorizontalLayout {
+                        spacing: Theme.spacing.md;
+                        FormField { label: "性别"; placeholder: "女 / 男 / 未知"; value <=> AppState.char-edit-gender; }
+                        FormField { label: "年龄"; placeholder: "20 岁 / 少年 / 中年"; value <=> AppState.char-edit-age; }
+                    }
+                    FormField { label: "身份"; placeholder: "主角、剑客、机械师..."; value <=> AppState.char-edit-role; }
+                    FormField { label: "性格"; placeholder: "冷静、敏锐、外冷内热..."; value <=> AppState.char-edit-personality; }
+                    FormField { label: "外貌"; placeholder: "轮廓、发型、服装、气质"; value <=> AppState.char-edit-appearance; }
+                    FormField { label: "标签"; placeholder: "主角, 武侠, 长发"; value <=> AppState.char-edit-tags; }
+
+                    SectionHeader { text: "生成提示词"; }
+                    FormField { label: "中文提示词"; placeholder: "用于中文模型或人工检查"; value <=> AppState.char-edit-visual-zh; }
+                    FormField { label: "英文提示词"; placeholder: "用于图像生成，留空则回退中文"; value <=> AppState.char-edit-visual-en; }
+
+                    SectionHeader { text: "高级一致性锚点"; }
+                    AnchorSection { title: "① 骨相结构"; expanded <=> root.a1; }
+                    if root.a1 : VerticalLayout {
+                        spacing: Theme.spacing.sm;
+                        FormField { label: "脸型"; placeholder: "oval / square / heart"; value <=> AppState.anchor-1-face; }
+                        FormField { label: "下颌"; placeholder: "sharp angular / soft rounded"; value <=> AppState.anchor-1-jaw; }
+                        FormField { label: "颧骨"; placeholder: "high prominent / subtle"; value <=> AppState.anchor-1-cheek; }
+                    }
+                    AnchorSection { title: "② 五官特征"; expanded <=> root.a2; }
+                    if root.a2 : VerticalLayout {
+                        spacing: Theme.spacing.sm;
+                        FormField { label: "眼型"; placeholder: "almond / round / monolid"; value <=> AppState.anchor-2-eye; }
+                        FormField { label: "眼部细节"; placeholder: "double eyelids, slight fold"; value <=> AppState.anchor-2-eye-detail; }
+                        FormField { label: "鼻型"; placeholder: "straight bridge, rounded tip"; value <=> AppState.anchor-2-nose; }
+                        FormField { label: "唇型"; placeholder: "full lips, defined cupid bow"; value <=> AppState.anchor-2-lip; }
+                    }
+                    AnchorSection { title: "③ 辨识标记（最强锚点）"; expanded <=> root.a3; }
+                    if root.a3 : FormField {
+                        label: "标记";
+                        placeholder: "左眼下痣, 右眉疤痕";
+                        value <=> AppState.anchor-3-marks;
+                    }
+                    AnchorSection { title: "④ 色彩锚点"; expanded <=> root.a4; }
+                    if root.a4 : VerticalLayout {
+                        spacing: Theme.spacing.sm;
+                        FormField { label: "虹膜"; placeholder: "#3D2314 / dark brown"; value <=> AppState.anchor-4-iris; }
+                        FormField { label: "发色"; placeholder: "#1A1A1A / jet black"; value <=> AppState.anchor-4-hair; }
+                        FormField { label: "肤色"; placeholder: "#E8C4A0 / warm beige"; value <=> AppState.anchor-4-skin; }
+                        FormField { label: "唇色"; placeholder: "#C4727E / dusty rose"; value <=> AppState.anchor-4-lips; }
+                    }
+                    AnchorSection { title: "⑤ 皮肤纹理"; expanded <=> root.a5; }
+                    if root.a5 : FormField {
+                        label: "皮肤质感";
+                        placeholder: "visible pores, light smile lines";
+                        value <=> AppState.anchor-5-texture;
+                    }
+                    AnchorSection { title: "⑥ 发型锚点"; expanded <=> root.a6; }
+                    if root.a6 : VerticalLayout {
+                        spacing: Theme.spacing.sm;
+                        FormField { label: "发型"; placeholder: "shoulder-length layered"; value <=> AppState.anchor-6-style; }
+                        FormField { label: "发际线"; placeholder: "natural hairline"; value <=> AppState.anchor-6-hairline; }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing.sm;
+                        SmallButton {
+                            text: "保存";
+                            primary: true;
+                            clicked => { AppState.character-library-save(); }
+                        }
+                        SmallButton {
+                            text: "取消";
+                            clicked => { AppState.character-library-editing = false; }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        SmallButton {
+                            text: "删除角色";
+                            danger: true;
+                            clicked => { AppState.character-library-delete(AppState.character-library-selected-id); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

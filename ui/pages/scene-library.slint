@@ -1,0 +1,156 @@
+// 场景库页面 — 网格展示，布局风格与图库一致。
+
+import { Theme } from "../theme.slint";
+import { AppState, SceneCardItem } from "../app-state.slint";
+
+export component SceneLibraryPage {
+    width: 100%;
+    height: 100%;
+
+    property <[SceneCardItem]> items: AppState.scene-library-items;
+    property <int> count: root.items.length;
+    property <int> columns: 3;
+    property <length> gap: 10px;
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: Theme.palette.bg;
+
+        Rectangle {
+            x: 14px;
+            y: 14px;
+            width: parent.width - 28px;
+            height: parent.height - 28px;
+
+            VerticalLayout {
+                spacing: 14px;
+
+                Rectangle {
+                    min-height: 36px;
+                    HorizontalLayout {
+                        spacing: Theme.spacing.md;
+                        Text {
+                            text: "场景库";
+                            color: Theme.palette.fg;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xl;
+                            font-weight: Theme.typo.weight-bold;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+
+                        Rectangle {
+                            background: Theme.palette.accent;
+                            border-radius: Theme.shape.radius-sm;
+                            min-height: 32px;
+                            Text {
+                                text: "+ 新建场景";
+                                color: Theme.palette.fg;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-sm;
+                                font-weight: Theme.typo.weight-medium;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            create-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { AppState.scene-library-create(); }
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    text: "共 " + (root.count) + " 个场景";
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                }
+
+                if root.count == 0 : Rectangle {
+                    Text {
+                        text: "暂无场景，点击「+ 新建场景」开始创建";
+                        color: Theme.palette.fg-muted;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-md;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                if root.count > 0 : Flickable {
+                    VerticalLayout {
+                        spacing: root.gap;
+                        for row in 20 : HorizontalLayout {
+                            spacing: root.gap;
+                            for col in root.columns : Rectangle {
+                                property <int> idx: row * root.columns + col;
+
+                                if idx < root.count : Rectangle {
+                                    background: Theme.palette.bg-elevated;
+                                    border-radius: Theme.shape.radius-lg;
+                                    border-width: Theme.shape.border-width;
+                                    border-color: AppState.scene-library-selected-id == root.items[idx].id
+                                        ? Theme.palette.accent : Theme.palette.border;
+
+                                    VerticalLayout {
+                                        padding: Theme.spacing.sm;
+                                        spacing: Theme.spacing.sm;
+
+                                        if root.items[idx].has_thumb : Rectangle {
+                                            clip: true;
+                                            border-radius: Theme.shape.radius-md;
+                                            Image {
+                                                source: root.items[idx].thumb;
+                                                width: 100%;
+                                                height: 100%;
+                                                image-fit: contain;
+                                            }
+                                        }
+
+                                        Text {
+                                            text: root.items[idx].name;
+                                            color: Theme.palette.fg;
+                                            font-family: Theme.typo.family;
+                                            font-size: Theme.typo.size-sm;
+                                            font-weight: Theme.typo.weight-medium;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: root.items[idx].location;
+                                            color: Theme.palette.fg-muted;
+                                            font-family: Theme.typo.family;
+                                            font-size: Theme.typo.size-xs;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: root.items[idx].time_of_day + " · " + root.items[idx].atmosphere;
+                                            color: Theme.palette.fg-disabled;
+                                            font-family: Theme.typo.family;
+                                            font-size: Theme.typo.size-xs;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: "视角: " + (root.items[idx].viewpoint_count);
+                                            color: Theme.palette.fg-disabled;
+                                            font-family: Theme.typo.family;
+                                            font-size: Theme.typo.size-xs;
+                                        }
+                                    }
+
+                                    touch2 := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            AppState.scene-library-select(root.items[idx].id);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

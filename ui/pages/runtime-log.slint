@@ -1,0 +1,245 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+import { Button } from "../components/button.slint";
+import { InputField } from "../components/input.slint";
+
+component LogSwitch {
+    in property <string> on-text: "日志开启";
+    in property <string> off-text: "日志关闭";
+    in property <bool> checked;
+    callback toggled(bool);
+
+    width: 104px;
+    height: 28px;
+
+    Rectangle {
+        background: root.checked ? Theme.palette.accent : Theme.palette.bg;
+        border-radius: 7px;
+        border-width: Theme.shape.border-width;
+        border-color: root.checked ? Theme.palette.accent-hover : Theme.palette.border;
+        animate background, border-color { duration: 140ms; }
+
+        Text {
+            text: root.checked ? root.on-text : root.off-text;
+            x: root.checked ? 8px : 28px;
+            width: parent.width - 36px;
+            color: root.checked ? #ffffff : Theme.palette.fg-muted;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            font-weight: Theme.typo.weight-medium;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+
+        Rectangle {
+            x: root.checked ? parent.width - 25px : 4px;
+            y: 4px;
+            width: 20px;
+            height: 20px;
+            background: root.checked ? #ffffff : Theme.palette.fg-disabled;
+            border-radius: 10px;
+            animate x, background { duration: 140ms; easing: ease-out; }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.toggled(!root.checked); }
+        }
+    }
+}
+
+export component RuntimeLogPage {
+    width: 100%;
+    height: 100%;
+    property <length> page-pad-x: Theme.spacing.lg;
+    property <length> page-pad-y: Theme.spacing.md;
+    property <length> row-gap: 10px;
+    property <length> header-h: 48px;
+    property <length> filter-h: 56px;
+    property <length> content-x: page-pad-x;
+    property <length> content-w: max(240px, root.width - 2 * page-pad-x);
+    property <length> log-y: page-pad-y + header-h + row-gap + filter-h + row-gap;
+    property <length> log-h: max(180px, root.height - log-y - page-pad-y);
+
+    auto-refresh := Timer {
+        interval: 2000ms;
+        running: true;
+        triggered => {
+            AppState.poll-runtime-log();
+            self.restart();
+        }
+    }
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: Theme.palette.bg;
+
+        Rectangle {
+            x: root.content-x;
+            y: root.page-pad-y;
+            width: root.content-w;
+            height: root.header-h;
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-lg;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border;
+            clip: true;
+
+            HorizontalLayout {
+                width: parent.width;
+                height: parent.height;
+                padding-left: 14px;
+                padding-right: 10px;
+                padding-top: 9px;
+                padding-bottom: 9px;
+                spacing: 8px;
+
+                Text {
+                    text: "运行日志";
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-md;
+                    font-weight: Theme.typo.weight-bold;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: AppState.runtime-log-enabled
+                        ? (AppState.runtime-debug-log-enabled ? "写入中 · Debug" : "写入中")
+                        : "已暂停";
+                    color: AppState.runtime-log-enabled ? Theme.palette.success : Theme.palette.warning;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    font-weight: Theme.typo.weight-medium;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: AppState.runtime-log-path;
+                    color: Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family-mono;
+                    font-size: Theme.typo.size-xs;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+
+                LogSwitch {
+                    checked: AppState.runtime-log-enabled;
+                    toggled(value) => { AppState.set-runtime-log-enabled(value); }
+                }
+
+                LogSwitch {
+                    on-text: "调试开启";
+                    off-text: "调试关闭";
+                    checked: AppState.runtime-debug-log-enabled;
+                    toggled(value) => { AppState.set-runtime-debug-log-enabled(value); }
+                }
+
+                Button {
+                    min-height: 28px;
+                    min-width: 58px;
+                    text: "刷新";
+                    clicked => { AppState.refresh-runtime-log(); }
+                }
+
+                Button {
+                    min-height: 28px;
+                    min-width: 72px;
+                    text: "清除日志";
+                    clicked => { AppState.clear-runtime-log(); }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            x: root.content-x;
+            y: root.page-pad-y + root.header-h + root.row-gap;
+            width: root.content-w;
+            height: root.filter-h;
+            spacing: Theme.spacing.sm;
+
+            InputField {
+                label: "筛选";
+                placeholder: "输入关键字过滤日志";
+                value <=> AppState.runtime-log-filter;
+                hint: "筛选大小写不敏感，点击应用筛选或刷新后生效。";
+                horizontal-stretch: 1;
+            }
+
+            Button {
+                min-height: 34px;
+                min-width: 82px;
+                text: "应用筛选";
+                clicked => { AppState.refresh-runtime-log(); }
+            }
+        }
+
+        Rectangle {
+            x: root.content-x;
+            y: root.log-y;
+            width: root.content-w;
+            height: root.log-h;
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-lg;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border;
+            clip: true;
+
+            if AppState.runtime-log-content == "": Rectangle {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+                background: Theme.palette.bg-elevated;
+
+                VerticalLayout {
+                    width: parent.width;
+                    height: parent.height;
+                    alignment: center;
+                    spacing: 6px;
+
+                    Text {
+                        text: AppState.runtime-log-filter != "" ? "筛选无结果" : "暂无日志";
+                        color: Theme.palette.fg-muted;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-md;
+                        font-weight: Theme.typo.weight-medium;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        width: parent.width - 2 * Theme.spacing.lg;
+                        text: AppState.runtime-log-filter != ""
+                            ? "当前筛选条件没有匹配日志，清空筛选后刷新。"
+                            : "读取路径：" + AppState.runtime-log-path;
+                        color: Theme.palette.fg-disabled;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-sm;
+                        horizontal-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            if AppState.runtime-log-content != "": Flickable {
+                x: Theme.spacing.md;
+                y: Theme.spacing.md;
+                width: parent.width - 2 * Theme.spacing.md;
+                height: parent.height - 2 * Theme.spacing.md;
+                viewport-height: content.preferred-height;
+
+                content := Text {
+                    width: parent.width;
+                    min-height: parent.height;
+                    text: AppState.runtime-log-content;
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family-mono;
+                    font-size: Theme.typo.size-xs;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}

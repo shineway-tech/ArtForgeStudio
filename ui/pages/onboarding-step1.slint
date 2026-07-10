@@ -1,0 +1,105 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+
+component PresetCard {
+    in property <string> id;
+    in property <string> title;
+    in property <string> subtitle;
+
+    height: 72px;
+
+    Rectangle {
+        background: AppState.onboarding.preset == root.id
+            ? Theme.palette.bg-active
+            : (touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated);
+        border-radius: Theme.shape.radius-lg;
+        border-width: AppState.onboarding.preset == root.id ? 2px : Theme.shape.border-width;
+        border-color: AppState.onboarding.preset == root.id
+            ? Theme.palette.accent
+            : Theme.palette.border;
+        animate background, border-color { duration: 150ms; }
+
+        VerticalLayout {
+            padding: Theme.spacing.md;
+            spacing: 2px;
+
+            Text {
+                text: root.title;
+                color: Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-md;
+                font-weight: Theme.typo.weight-bold;
+            }
+
+            Text {
+                text: root.subtitle;
+                color: Theme.palette.fg-muted;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                wrap: word-wrap;
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { AppState.onboarding-pick-preset(root.id); }
+        }
+    }
+}
+
+export component StepFeatures {
+    VerticalLayout {
+        spacing: Theme.spacing.lg;
+
+        Text {
+            text: "你想用 ArtForge Studio 做什么？";
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: 22px;
+            font-weight: Theme.typo.weight-bold;
+        }
+
+        HorizontalLayout {
+            spacing: Theme.spacing.md;
+
+            PresetCard {
+                id: "general";
+                title: "通用美术";
+                subtitle: "场景 / 角色 / 特效 / 动作序列";
+                horizontal-stretch: 1;
+            }
+
+            PresetCard {
+                id: "animation";
+                title: "动画短片";
+                subtitle: "脚本 / 分镜 / 角色三视图";
+                horizontal-stretch: 1;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: Theme.spacing.md;
+
+            PresetCard {
+                id: "full";
+                title: "全功能";
+                subtitle: "启用全部模块，不确定时选这个";
+                horizontal-stretch: 1;
+            }
+
+            PresetCard {
+                id: "custom";
+                title: "自定义";
+                subtitle: "手动选择需要的模块";
+                horizontal-stretch: 1;
+            }
+        }
+
+        Text {
+            text: "之后随时可在设置里调整。";
+            color: Theme.palette.fg-disabled;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+        }
+    }
+}

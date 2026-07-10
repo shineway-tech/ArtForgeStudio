@@ -1,0 +1,53 @@
+id = "dark"
+display_name = "深色"
+is_dark = true
+
+[palette]
+bg            = "#0a0b0f"
+bg_elevated   = "#131419"
+bg_hover      = "#1b1d24"
+bg_active     = "#23262f"
+fg            = "#e5e7ea"
+fg_muted      = "#a8acb8"
+fg_disabled   = "#6b6f7d"
+border        = "#22252e"
+border_strong = "#34384a"
+accent        = "#5e6ad2"
+accent_hover  = "#6e7ce0"
+accent_active = "#4a55c0"
+success       = "#2dd4a7"
+warning       = "#e0a040"
+error         = "#e5484d"
+overlay       = "#000000cc"
+
+[shape]
+radius_sm    = 6
+radius_md    = 10
+radius_lg    = 14
+border_width = 1
+
+[typography]
+family         = "Sarasa UI SC"
+family_mono    = "Sarasa Mono SC"
+size_xs        = 11
+size_sm        = 12
+size_md        = 14
+size_lg        = 16
+size_xl        = 22
+weight_regular = 400
+weight_medium  = 500
+weight_bold    = 600
+line_height    = 1.5
+
+[spacing]
+xs  = 4
+sm  = 8
+md  = 14
+lg  = 18
+xl  = 26
+xxl = 36
+
+[motion]
+duration_fast   = "120ms"
+duration_normal = "200ms"
+duration_slow   = "300ms"

@@ -1,0 +1,881 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+import { SidebarItem } from "./sidebar-item.slint";
+import { Button } from "./button.slint";
+
+component SidebarIconButton {
+    in property <image> icon;
+    in property <bool> active: false;
+    in property <bool> danger-badge: false;
+    in property <int> badge-count: 0;
+    in property <brush> idle-color: Theme.palette.fg-disabled;
+    in property <brush> hover-color: Theme.palette.accent-hover;
+    callback clicked();
+
+    width: 34px;
+    height: 34px;
+
+    Rectangle {
+        background: root.active
+            ? Theme.palette.bg-active
+            : (touch.has-hover ? Theme.palette.bg-hover : transparent);
+        border-radius: Theme.shape.radius-sm;
+        border-width: root.active ? Theme.shape.border-width : 0px;
+        border-color: root.active ? Theme.palette.border-strong : transparent;
+        animate background, border-color { duration: 120ms; }
+
+        Image {
+            width: 19px;
+            height: 19px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            source: root.icon;
+            colorize: root.active || touch.has-hover ? root.hover-color : root.idle-color;
+        }
+
+        if root.danger-badge && root.badge-count > 0: Rectangle {
+            x: parent.width - 14px;
+            y: 2px;
+            width: 16px;
+            height: 16px;
+            background: Theme.palette.error;
+            border-radius: 8px;
+
+            Text {
+                text: root.badge-count > 9 ? "9+" : root.badge-count;
+                color: #ffffff;
+                font-family: Theme.typo.family;
+                font-size: 9px;
+                font-weight: Theme.typo.weight-bold;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+component SidebarUtilityButton {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> active: false;
+    in property <bool> danger-badge: false;
+    in property <int> badge-count: 0;
+    in property <brush> idle-color: Theme.palette.fg-disabled;
+    in property <brush> hover-color: Theme.palette.accent-hover;
+    callback clicked();
+
+    width: 40px;
+    height: 40px;
+
+    Rectangle {
+        background: root.active
+            ? Theme.palette.bg-active
+            : (touch.has-hover ? Theme.palette.bg-hover : transparent);
+        border-radius: Theme.shape.radius-sm;
+        border-width: root.active ? Theme.shape.border-width : 0px;
+        border-color: root.active ? Theme.palette.border-strong : transparent;
+        animate background, border-color { duration: 120ms; }
+
+        Image {
+            width: 18px;
+            height: 18px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            source: root.icon;
+            colorize: root.active || touch.has-hover ? root.hover-color : root.idle-color;
+        }
+
+        if root.danger-badge && root.badge-count > 0: Rectangle {
+            x: parent.width - 14px;
+            y: 2px;
+            width: 16px;
+            height: 16px;
+            background: Theme.palette.error;
+            border-radius: 8px;
+
+            Text {
+                text: root.badge-count > 9 ? "9+" : root.badge-count;
+                color: #ffffff;
+                font-family: Theme.typo.family;
+                font-size: 9px;
+                font-weight: Theme.typo.weight-bold;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+component ThemeMenuItem {
+    in property <string> id;
+    in property <string> label;
+    in property <brush> swatch;
+    callback picked(string);
+
+    height: 30px;
+
+    Rectangle {
+        background: AppState.current-theme-id == root.id
+            ? Theme.palette.bg-active
+            : (touch.has-hover ? Theme.palette.bg-hover : transparent);
+        border-radius: Theme.shape.radius-sm;
+        animate background { duration: 120ms; }
+
+        Rectangle {
+            x: 0;
+            y: 5px;
+            width: 3px;
+            height: parent.height - 10px;
+            background: AppState.current-theme-id == root.id ? Theme.palette.accent : transparent;
+            border-radius: 2px;
+        }
+
+        Rectangle {
+            x: 12px;
+            y: (parent.height - self.height) / 2;
+            width: 12px;
+            height: 12px;
+            background: root.swatch;
+            border-radius: 6px;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border-strong;
+        }
+
+        Text {
+            x: 32px;
+            width: parent.width - 40px;
+            height: parent.height;
+            text: root.label;
+            color: AppState.current-theme-id == root.id ? Theme.palette.accent-hover : Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            font-weight: AppState.current-theme-id == root.id ? Theme.typo.weight-bold : Theme.typo.weight-regular;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.picked(root.id); }
+        }
+    }
+}
+
+component SidebarFeatureToggleRow {
+    in property <string> id;
+    in property <string> label;
+    in property <bool> checked: true;
+    in property <bool> feature-enabled: true;
+    callback toggled(string);
+
+    height: 38px;
+    horizontal-stretch: 1;
+
+    Rectangle {
+        background: touch.has-hover ? Theme.palette.bg-hover : transparent;
+        border-radius: Theme.shape.radius-sm;
+        animate background { duration: 120ms; }
+
+        HorizontalLayout {
+            padding-left: Theme.spacing.sm;
+            padding-right: Theme.spacing.sm;
+            spacing: Theme.spacing.sm;
+
+            Rectangle {
+                width: 18px;
+                height: 18px;
+                y: (parent.height - self.height) / 2;
+                background: root.checked ? Theme.palette.accent : Theme.palette.bg-hover;
+                border-radius: 4px;
+                border-width: Theme.shape.border-width;
+                border-color: root.checked ? Theme.palette.accent-hover : Theme.palette.border-strong;
+
+                if root.checked: Text {
+                    text: "✓";
+                    color: #ffffff;
+                    font-size: 11px;
+                    font-weight: Theme.typo.weight-bold;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            Text {
+                horizontal-stretch: 1;
+                text: root.label;
+                color: root.feature-enabled ? Theme.palette.fg : Theme.palette.fg-disabled;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                font-weight: root.checked ? Theme.typo.weight-medium : Theme.typo.weight-regular;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            Text {
+                width: 48px;
+                text: root.feature-enabled
+                    ? (root.checked ? "显示中" : "已隐藏")
+                    : "未启用";
+                color: root.checked ? Theme.palette.accent-hover : Theme.palette.fg-disabled;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.toggled(root.id); }
+        }
+    }
+}
+
+component FeatureSidebarItem {
+    in property <string> id;
+    in property <string> label;
+    in property <bool> active: false;
+    in property <bool> enabled: true;
+    in property <bool> icon-only: false;
+    callback clicked();
+
+    height: 34px;
+    horizontal-stretch: 1;
+
+    property <image> feature-icon: root.id == "scene"
+        ? @image-url("../assets/icons/scene.svg")
+        : root.id == "character"
+            ? @image-url("../assets/icons/character.svg")
+            : root.id == "ui_concept"
+                ? @image-url("../assets/icons/ui-concept.svg")
+                : root.id == "effect"
+                    ? @image-url("../assets/icons/effect.svg")
+                    : root.id == "action_sequence"
+                        ? @image-url("../assets/icons/action-sequence.svg")
+                        : root.id == "animation_scene"
+                            ? @image-url("../assets/icons/animation-scene.svg")
+                            : root.id == "animation_character"
+                                ? @image-url("../assets/icons/animation-character.svg")
+                                : root.id == "character_turnaround"
+                                    ? @image-url("../assets/icons/character-turnaround.svg")
+                                    : root.id == "animation_script"
+                                        ? @image-url("../assets/icons/animation-script.svg")
+                                        : root.id == "storyboard"
+                                            ? @image-url("../assets/icons/storyboard.svg")
+                                            : root.id == "video"
+                                                ? @image-url("../assets/icons/play.svg")
+                                                : root.id == "project"
+                                                    ? @image-url("../assets/icons/project.svg")
+                                                    : root.id == "project_overview"
+                                                        ? @image-url("../assets/icons/info.svg")
+                                                        : root.id == "project_script"
+                                                            ? @image-url("../assets/icons/animation-script.svg")
+                                                            : root.id == "project_storyboard"
+                                                                ? @image-url("../assets/icons/storyboard.svg")
+                                                                : root.id == "project_characters"
+                                                                    ? @image-url("../assets/icons/character.svg")
+                                                                    : root.id == "project_scenes"
+                                                                        ? @image-url("../assets/icons/scene.svg")
+                                                                        : root.id == "project_video"
+                                                                            ? @image-url("../assets/icons/play.svg")
+                                                                            : @image-url("../assets/icons/asset-browser.svg");
+
+    SidebarItem {
+        width: root.width;
+        height: root.height;
+        compact: true;
+        icon: root.feature-icon;
+        has-icon: true;
+        icon-only: root.icon-only;
+        text: root.icon-only ? "" : root.label;
+        active: root.active;
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component SidebarSettingsDialog {
+    if AppState.sidebar-settings-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000088;
+
+        TouchArea {
+            clicked => { AppState.sidebar-settings-open = false; }
+        }
+
+        Rectangle {
+            width: min(440px, parent.width - 32px);
+            height: min(560px, parent.height - 80px);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-lg;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border-strong;
+
+            VerticalLayout {
+                padding: 18px;
+                spacing: 10px;
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.sm;
+
+                    Text {
+                        horizontal-stretch: 1;
+                        text: "侧边栏管理";
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-lg;
+                        font-weight: Theme.typo.weight-bold;
+                        vertical-alignment: center;
+                    }
+
+                    SidebarIconButton {
+                        icon: @image-url("../assets/icons/close.svg");
+                        idle-color: Theme.palette.fg-muted;
+                        hover-color: Theme.palette.accent-hover;
+                        clicked => { AppState.sidebar-settings-open = false; }
+                    }
+                }
+
+                Text {
+                    text: "选择显示在创作分组里的模块。已关闭的模块会保留在这里，随时可以恢复。";
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    wrap: word-wrap;
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Theme.palette.border;
+                    horizontal-stretch: 1;
+                }
+
+                Flickable {
+                    vertical-stretch: 1;
+                    horizontal-stretch: 1;
+                    viewport-height: checklist.preferred-height;
+
+                    checklist := VerticalLayout {
+                        width: parent.width;
+                        spacing: 0px;
+
+                        Text {
+                            text: "已显示";
+                            color: Theme.palette.fg-muted;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                            font-weight: Theme.typo.weight-medium;
+                        }
+
+                        Rectangle { height: 4px; }
+
+                        for item[i] in AppState.features: Rectangle {
+                            width: parent.width;
+                            height: item.visible ? 38px : 0px;
+                            preferred-height: item.visible ? 38px : 0px;
+                            visible: item.visible;
+
+                            SidebarFeatureToggleRow {
+                                width: parent.width;
+                                id: item.id;
+                                label: item.name;
+                                checked: true;
+                                feature-enabled: item.enabled;
+                                toggled(id) => { AppState.toggle-sidebar-feature-visibility(id); }
+                            }
+                        }
+
+                        Rectangle { height: 9px; }
+                        Rectangle { height: 1px; background: Theme.palette.border; }
+                        Rectangle { height: 9px; }
+
+                        Text {
+                            text: "已隐藏";
+                            color: Theme.palette.fg-disabled;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                            font-weight: Theme.typo.weight-medium;
+                        }
+
+                        Rectangle { height: 4px; }
+
+                        for item[i] in AppState.features: Rectangle {
+                            width: parent.width;
+                            height: !item.visible ? 38px : 0px;
+                            preferred-height: !item.visible ? 38px : 0px;
+                            visible: !item.visible;
+
+                            SidebarFeatureToggleRow {
+                                width: parent.width;
+                                id: item.id;
+                                label: item.name;
+                                checked: false;
+                                feature-enabled: item.enabled;
+                                toggled(id) => { AppState.toggle-sidebar-feature-visibility(id); }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    alignment: end;
+
+                    Button {
+                        text: "完成";
+                        primary: true;
+                        clicked => { AppState.sidebar-settings-open = false; }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component Sidebar {
+    in property <bool> collapsed: false;
+    callback close-workspace-popups();
+
+    width: root.collapsed ? 64px : 216px;
+    property <bool> theme-menu-open: false;
+
+    close-workspace-popups => {
+        AppState.ws-open-select = "";
+        AppState.prompt-history-open = false;
+        AppState.ws-advanced-open = false;
+    }
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: Theme.palette.bg;
+
+        // 右侧分隔线
+        Rectangle {
+            x: parent.width - 1px;
+            y: 0;
+            width: 1px;
+            height: parent.height;
+            background: Theme.palette.border;
+        }
+
+        VerticalLayout {
+            width: parent.width;
+            height: parent.height;
+            padding: root.collapsed ? 10px : Theme.spacing.md;
+            spacing: Theme.spacing.xs;
+            alignment: start;
+
+            // 标题区
+            Rectangle {
+                height: root.collapsed ? 78px : 40px;
+
+                Image {
+                    x: root.collapsed ? (parent.width - self.width) / 2 : 0px;
+                    y: root.collapsed ? 4px : 3px;
+                    width: root.collapsed ? 32px : 38px;
+                    height: root.collapsed ? 32px : 34px;
+                    source: @image-url("../assets/icons/logo.svg");
+                    image-fit: contain;
+                    colorize: Theme.palette.fg;
+                }
+
+                if !root.collapsed: Text {
+                    x: 42px;
+                    y: 0px;
+                    width: parent.width - 86px;
+                    height: parent.height;
+                    text: "ArtForge";
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-md;
+                    font-weight: Theme.typo.weight-bold;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                SidebarIconButton {
+                    x: root.collapsed ? (parent.width - self.width) / 2 : parent.width - self.width;
+                    y: root.collapsed ? 40px : 3px;
+                    icon: root.collapsed
+                        ? @image-url("../assets/icons/chevron-right.svg")
+                        : @image-url("../assets/icons/chevron-left.svg");
+                    idle-color: Theme.palette.fg-muted;
+                    hover-color: Theme.palette.accent-hover;
+                    clicked => {
+                        root.close-workspace-popups();
+                        AppState.sidebar-collapsed = !root.collapsed;
+                        root.theme-menu-open = false;
+                        AppState.sidebar-collapse-changed(AppState.sidebar-collapsed);
+                    }
+                }
+            }
+
+            // 分隔
+            Rectangle {
+                height: 1px;
+                background: Theme.palette.border;
+                horizontal-stretch: 1;
+            }
+
+            Rectangle { height: 4px; }
+
+            // 欢迎条目
+            SidebarItem {
+                icon: @image-url("../assets/icons/home.svg");
+                has-icon: true;
+                icon-only: root.collapsed;
+                text: root.collapsed ? "" : "欢迎";
+                active: AppState.current-page == "welcome";
+                clicked => {
+                    root.close-workspace-popups();
+                    AppState.navigate("welcome");
+                }
+            }
+
+            // 项目条目（仅影视创作模式）
+            if AppState.workspace-mode == "film": SidebarItem {
+                icon: @image-url("../assets/icons/project.svg");
+                has-icon: true;
+                icon-only: root.collapsed;
+                text: root.collapsed ? "" : (AppState.has-project ? "项目：" + AppState.current-project-name : "项目");
+                active: AppState.current-page == "project" || AppState.current-page == "create_project";
+                clicked => {
+                    root.close-workspace-popups();
+                    AppState.navigate-to-project();
+                }
+            }
+
+            // 分隔
+            Rectangle {
+                height: 1px;
+                background: Theme.palette.border;
+                horizontal-stretch: 1;
+            }
+
+            Rectangle { height: 4px; }
+
+            // 创作分组标题
+            if !root.collapsed: Text {
+                text: "创作";
+                color: Theme.palette.fg-disabled;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                font-weight: Theme.typo.weight-medium;
+            }
+
+            // 可滚动特征列表
+            if !root.collapsed: Flickable {
+                vertical-stretch: 1;
+                horizontal-stretch: 1;
+                viewport-height: expanded-feature-list.preferred-height;
+
+                expanded-feature-list := VerticalLayout {
+                    width: parent.width;
+                    spacing: 0px;
+
+                    for item[i] in AppState.features: Rectangle {
+                        width: parent.width;
+                        height: item.visible ? 34px : 0px;
+                        preferred-height: item.visible ? 34px : 0px;
+                        visible: item.visible;
+
+                        SidebarItem {
+                            width: parent.width;
+                            compact: true;
+                            text: item.name;
+                            active: AppState.current-page == item.id;
+                            enabled: item.enabled;
+                            clicked => {
+                                if (item.enabled) {
+                                    root.close-workspace-popups();
+                                    AppState.navigate(item.id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.collapsed: Flickable {
+                vertical-stretch: 1;
+                horizontal-stretch: 1;
+                viewport-height: collapsed-feature-list.preferred-height;
+
+                collapsed-feature-list := VerticalLayout {
+                    width: parent.width;
+                    spacing: 0px;
+
+                    for item[i] in AppState.features: Rectangle {
+                        width: parent.width;
+                        height: item.visible ? 34px : 0px;
+                        preferred-height: item.visible ? 34px : 0px;
+                        visible: item.visible;
+
+                        FeatureSidebarItem {
+                            width: parent.width;
+                            id: item.id;
+                            label: item.name;
+                            icon-only: true;
+                            active: AppState.current-page == item.id;
+                            enabled: item.enabled;
+                            clicked => {
+                                if (item.enabled) {
+                                    root.close-workspace-popups();
+                                    AppState.navigate(item.id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 系统固定入口
+            if !root.collapsed: Text {
+                text: "系统";
+                color: Theme.palette.fg-disabled;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                font-weight: Theme.typo.weight-medium;
+            }
+
+            if !root.collapsed: SidebarItem {
+                compact: true;
+                text: "运行日志";
+                active: AppState.current-page == "runtime_log";
+                clicked => {
+                    root.close-workspace-popups();
+                    AppState.navigate("runtime_log");
+                }
+            }
+
+            if !root.collapsed: SidebarItem {
+                compact: true;
+                text: "侧边栏管理";
+                active: AppState.sidebar-settings-open;
+                clicked => {
+                    root.close-workspace-popups();
+                    root.theme-menu-open = false;
+                    AppState.sidebar-settings-open = !AppState.sidebar-settings-open;
+                }
+            }
+
+            if root.collapsed: SidebarItem {
+                icon: @image-url("../assets/icons/info.svg");
+                has-icon: true;
+                icon-only: true;
+                compact: true;
+                text: "";
+                active: AppState.current-page == "runtime_log";
+                clicked => {
+                    root.close-workspace-popups();
+                    AppState.navigate("runtime_log");
+                }
+            }
+
+            if root.collapsed: SidebarItem {
+                icon: @image-url("../assets/icons/settings.svg");
+                has-icon: true;
+                icon-only: true;
+                compact: true;
+                text: "";
+                active: AppState.sidebar-settings-open;
+                clicked => {
+                    root.close-workspace-popups();
+                    root.theme-menu-open = false;
+                    AppState.sidebar-settings-open = !AppState.sidebar-settings-open;
+                }
+            }
+
+            // 为底部固定栏留空间
+            Rectangle { height: root.collapsed ? 148px : 88px; }
+        }
+
+        // 底部固定栏（绝对定位，不受滚动影响）
+        if root.theme-menu-open: TouchArea {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+            clicked => { root.theme-menu-open = false; }
+        }
+
+        Rectangle {
+            x: root.collapsed ? 10px : Theme.spacing.md;
+            y: parent.height - (root.collapsed ? 148px : 88px);
+            width: root.collapsed ? 44px : parent.width - 2 * Theme.spacing.md;
+            height: root.collapsed ? 140px : 80px;
+            background: Theme.palette.bg;
+            clip: false;
+
+            Rectangle {
+                y: 0;
+                height: 1px;
+                background: Theme.palette.border;
+                horizontal-stretch: 1;
+            }
+
+            if root.theme-menu-open: Rectangle {
+                x: root.collapsed ? parent.width + 8px : parent.width - 184px;
+                y: -348px;
+                width: 184px;
+                height: 336px;
+                background: Theme.palette.bg-elevated;
+                border-radius: Theme.shape.radius-md;
+                border-width: Theme.shape.border-width;
+                border-color: Theme.palette.border-strong;
+                clip: true;
+
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 3px;
+
+                    Text {
+                        text: "选择主题";
+                        color: Theme.palette.fg-disabled;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                        font-weight: Theme.typo.weight-medium;
+                    }
+
+                    ThemeMenuItem { id: "dark"; label: "深紫"; swatch: #4f46e5; picked(id) => { AppState.set-theme(id); root.theme-menu-open = false; } }
+                    ThemeMenuItem { id: "ocean"; label: "深海蓝"; swatch: #0ea5e9; picked(id) => { AppState.set-theme(id); root.theme-menu-open = false; } }
+                    ThemeMenuItem { id: "warm"; label: "暖墨棕"; swatch: #d97706; picked(id) => { AppState.set-theme(id); root.theme-menu-open = false; } }
+                    ThemeMenuItem { id: "forest"; label: "森林绿"; swatch: #22c55e; picked(id) => { AppState.set-theme(id); root.theme-menu-open = false; } }
+                    ThemeMenuItem { id: "rose"; label: "暗玫瑰"; swatch: #e11d48; picked(id) => { AppState.set-theme(id); root.theme-menu-open = false; } }
+                    ThemeMenuItem { id: "cyber"; label: "赛博紫"; swatch: #a855f7; picked(id) => { AppState.set-theme(id); root.theme-menu-open = false; } }
+                    ThemeMenuItem { id: "oled"; label: "纯黑"; swatch: #000000; picked(id) => { AppState.set-theme(id); root.theme-menu-open = false; } }
+                    ThemeMenuItem { id: "light"; label: "素白"; swatch: #fafafc; picked(id) => { AppState.set-theme(id); root.theme-menu-open = false; } }
+                    ThemeMenuItem { id: "cream"; label: "奶白"; swatch: #f4ebdc; picked(id) => { AppState.set-theme(id); root.theme-menu-open = false; } }
+                    ThemeMenuItem { id: "system"; label: "跟随系统"; swatch: Theme.palette.fg-muted; picked(id) => { AppState.set-theme(id); root.theme-menu-open = false; } }
+                    ThemeMenuItem { id: "user"; label: "自定义"; swatch: Theme.palette.accent; picked(id) => { AppState.set-theme(id); root.theme-menu-open = false; } }
+                }
+            }
+
+            if !root.collapsed: Text {
+                y: 8px;
+                width: parent.width;
+                text: "v0.1.0 · MVP";
+                color: Theme.palette.fg-disabled;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                horizontal-alignment: center;
+            }
+
+            if !root.collapsed: HorizontalLayout {
+                y: 32px;
+                width: parent.width;
+                height: 40px;
+                spacing: 6px;
+                alignment: center;
+
+                SidebarUtilityButton {
+                    icon: @image-url("../assets/icons/bell.svg");
+                    label: "任务";
+                    idle-color: Theme.palette.fg-muted;
+                    hover-color: Theme.palette.accent-hover;
+                    active: AppState.current-page == "tasks";
+                    danger-badge: true;
+                    badge-count: AppState.tasks.length;
+                    clicked => {
+                        root.close-workspace-popups();
+                        root.theme-menu-open = false;
+                        AppState.navigate("tasks");
+                    }
+                }
+
+                SidebarUtilityButton {
+                    icon: @image-url("../assets/icons/settings.svg");
+                    label: "设置";
+                    idle-color: Theme.palette.fg-muted;
+                    hover-color: Theme.palette.accent-hover;
+                    active: AppState.current-page == "settings";
+                    clicked => {
+                        root.close-workspace-popups();
+                        root.theme-menu-open = false;
+                        AppState.navigate("settings");
+                    }
+                }
+
+                SidebarUtilityButton {
+                    icon: @image-url("../assets/icons/sun.svg");
+                    label: "主题";
+                    idle-color: Theme.palette.fg-disabled;
+                    hover-color: Theme.palette.accent-hover;
+                    active: root.theme-menu-open;
+                    clicked => {
+                        root.close-workspace-popups();
+                        root.theme-menu-open = !root.theme-menu-open;
+                    }
+                }
+            }
+
+            if root.collapsed: VerticalLayout {
+                y: 8px;
+                width: parent.width;
+                height: parent.height - 8px;
+                spacing: 6px;
+                alignment: start;
+
+                SidebarUtilityButton {
+                    icon: @image-url("../assets/icons/bell.svg");
+                    label: "任务";
+                    idle-color: Theme.palette.fg-muted;
+                    hover-color: Theme.palette.accent-hover;
+                    active: AppState.current-page == "tasks";
+                    danger-badge: true;
+                    badge-count: AppState.tasks.length;
+                    clicked => {
+                        root.close-workspace-popups();
+                        root.theme-menu-open = false;
+                        AppState.navigate("tasks");
+                    }
+                }
+
+                SidebarUtilityButton {
+                    icon: @image-url("../assets/icons/settings.svg");
+                    label: "设置";
+                    idle-color: Theme.palette.fg-muted;
+                    hover-color: Theme.palette.accent-hover;
+                    active: AppState.current-page == "settings";
+                    clicked => {
+                        root.close-workspace-popups();
+                        root.theme-menu-open = false;
+                        AppState.navigate("settings");
+                    }
+                }
+
+                SidebarUtilityButton {
+                    icon: @image-url("../assets/icons/sun.svg");
+                    label: "主题";
+                    idle-color: Theme.palette.fg-disabled;
+                    hover-color: Theme.palette.accent-hover;
+                    active: root.theme-menu-open;
+                    clicked => {
+                        root.close-workspace-popups();
+                        if (root.collapsed) {
+                            root.theme-menu-open = true;
+                            AppState.sidebar-collapsed = false;
+                            AppState.sidebar-collapse-changed(false);
+                        } else {
+                            root.theme-menu-open = !root.theme-menu-open;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

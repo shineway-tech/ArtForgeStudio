@@ -1,0 +1,61 @@
+import { Theme } from "../theme.slint";
+
+export component InputField {
+    in property <string> label;
+    in property <string> placeholder;
+    in property <bool> secret: false;
+    in-out property <string> value;
+    in property <string> hint;
+
+    height: 56px;
+
+    VerticalLayout {
+        spacing: 4px;
+
+        Text {
+            text: root.label;
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            font-weight: Theme.typo.weight-medium;
+        }
+
+        Rectangle {
+            background: Theme.palette.bg;
+            border-radius: Theme.shape.radius-sm;
+            border-width: 1px;
+            border-color: input.has-focus ? Theme.palette.accent : Theme.palette.border;
+            animate border-color { duration: 120ms; }
+
+            input := TextInput {
+                color: Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                horizontal-alignment: left;
+                vertical-alignment: center;
+                single-line: true;
+                input-type: root.secret ? password : text;
+                text <=> root.value;
+                x: Theme.spacing.sm;
+                width: parent.width - 2 * Theme.spacing.sm;
+            }
+
+            if root.value == "" && !input.has-focus: Text {
+                text: root.placeholder;
+                color: Theme.palette.fg-disabled;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                horizontal-alignment: left;
+                vertical-alignment: center;
+                x: Theme.spacing.sm;
+            }
+        }
+
+        if root.hint != "": Text {
+            text: root.hint;
+            color: Theme.palette.fg-disabled;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+        }
+    }
+}

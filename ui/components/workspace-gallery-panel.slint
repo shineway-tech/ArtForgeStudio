@@ -1,0 +1,146 @@
+import { Theme } from "../theme.slint";
+import { AppState, AssetItem } from "../app-state.slint";
+import { AssetGrid } from "asset-grid.slint";
+import { ResultPill } from "result-pill.slint";
+import { ToolButton } from "tool-button.slint";
+
+export component WorkspaceGalleryPanel {
+    in property <string> mode;
+    in property <[AssetItem]> gallery;
+    in property <int> current-generating-count;
+
+    horizontal-stretch: 1;
+    min-width: 440px;
+    vertical-stretch: 1;
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.palette.bg-elevated;
+        border-radius: 14px;
+        border-width: 1px;
+        border-color: Theme.palette.border;
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 12px;
+
+        HorizontalLayout {
+            spacing: Theme.spacing.sm;
+            alignment: space-between;
+
+            HorizontalLayout {
+                spacing: 10px;
+
+                Text {
+                    text: "结果浏览";
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-sm;
+                    font-weight: Theme.typo.weight-medium;
+                    vertical-alignment: center;
+                }
+
+                ResultPill { text: root.gallery.length + " 张"; }
+
+                Text {
+                    text: "最新优先";
+                    color: Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    vertical-alignment: center;
+                }
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                ToolButton {
+                    text: "打开目录";
+                    clicked => { AppState.open-output-dir(root.mode); }
+                }
+
+                ToolButton {
+                    text: "刷新";
+                    clicked => { AppState.refresh-assets(); }
+                }
+            }
+        }
+
+        if root.gallery.length == 0 && root.current-generating-count == 0: Rectangle {
+            background: Theme.palette.bg;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: Theme.palette.border;
+            height: 160px;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 4px;
+
+                Text {
+                    text: "图库是空的";
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-sm;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: "在左侧输入提示词，点生成";
+                    color: Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-sm;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            background: transparent;
+            clip: true;
+
+            Flickable {
+                width: parent.width;
+                height: parent.height;
+                viewport-height: grid.height;
+
+                grid := AssetGrid {
+                    x: 0px;
+                    y: 0px;
+                    mode: root.mode;
+                    items: root.gallery;
+                    show-generating-placeholder: root.current-generating-count > 0;
+                    columns: parent.width > 1700px ? 7
+                        : (parent.width > 1500px ? 7
+                            : (parent.width > 1320px ? 6
+                                : (parent.width > 1140px ? 5
+                                    : (parent.width > 930px ? 5
+                                        : (parent.width > 760px ? 4
+                                            : (parent.width > 600px ? 3
+                                                : 2))))));
+                    cell-size: min(261px, max(176px, (parent.width - (grid.columns - 1) * 10px) / grid.columns));
+                    gap: 10px;
+                }
+            }
+        }
+    }
+
+    if AppState.ws-show-templates: TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: default;
+        clicked => { AppState.ws-show-templates = false; }
+    }
+
+    if AppState.ws-open-select != "": TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: default;
+        clicked => { AppState.ws-open-select = ""; }
+    }
+}
+}

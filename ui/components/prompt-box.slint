@@ -1,0 +1,317 @@
+import { Theme } from "../theme.slint";
+import { AppState, WorkspaceSelectOption } from "../app-state.slint";
+import { WorkspaceDropdown } from "workspace-dropdown.slint";
+
+export component PromptBox {
+    in property <string> placeholder;
+    in property <bool> show-advanced-control: false;
+    in property <string> mode;
+    in property <[WorkspaceSelectOption]> purpose-options;
+
+    Rectangle {
+        background: Theme.palette.bg;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: input.has-focus ? Theme.palette.accent : transparent;
+        clip: false;
+        animate border-color { duration: 120ms; }
+
+        if AppState.ws-prompt == "": Text {
+            x: Theme.spacing.md;
+            y: Theme.spacing.md;
+            width: parent.width - 2 * Theme.spacing.md;
+            height: 56px;
+            text: root.placeholder;
+            color: Theme.palette.fg-disabled;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-sm;
+            wrap: word-wrap;
+        }
+
+        input := TextInput {
+            x: Theme.spacing.md;
+            y: Theme.spacing.md;
+            width: parent.width - 2 * Theme.spacing.md;
+            height: parent.height - 2 * Theme.spacing.md - 34px;
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-md;
+            wrap: word-wrap;
+            single-line: false;
+            text <=> AppState.ws-prompt;
+            changed has-focus => {
+                if self.has-focus {
+                    AppState.ws-open-select = "";
+                }
+            }
+        }
+
+        if AppState.ws-open-select != "": TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: default;
+            clicked => { AppState.ws-open-select = ""; }
+        }
+
+        WorkspaceDropdown {
+            x: Theme.spacing.md;
+            y: parent.height - 8px - 26px;
+            width: 104px;
+            height: 26px;
+            id: "asset-purpose";
+            open-up: true;
+            drop-width: 156px;
+            value: AppState.ws-asset-purpose;
+            display-value: AppState.ws-asset-purpose == "" ? "自由创作" : root.mode == "ui_concept"
+                ? (AppState.ws-asset-purpose == "main_menu" ? "主界面" : AppState.ws-asset-purpose == "inventory" ? "背包" : AppState.ws-asset-purpose == "shop" ? "商城" : AppState.ws-asset-purpose == "icon" ? "Icon" : AppState.ws-asset-purpose == "loading_ui" ? "Loading界面" : AppState.ws-asset-purpose == "dialog" ? "弹窗" : "HUD")
+                : root.mode == "effect"
+                    ? (AppState.ws-asset-purpose == "buff_effect" ? "Buff特效" : AppState.ws-asset-purpose == "explosion" ? "爆炸" : AppState.ws-asset-purpose == "scene_effect" ? "场景特效" : AppState.ws-asset-purpose == "ui_effect" ? "UI特效" : AppState.ws-asset-purpose == "weapon_trail" ? "武器拖尾" : "技能特效")
+                    : (root.mode == "character" || root.mode == "animation_character" || root.mode == "character_turnaround")
+                        ? (AppState.ws-asset-purpose == "character_turnaround" ? "三视图" : AppState.ws-asset-purpose == "eight_direction" ? "8方向" : AppState.ws-asset-purpose == "sprite_sheet" ? "SpriteSheet" : AppState.ws-asset-purpose == "spine_parts" ? "Spine拆件" : AppState.ws-asset-purpose == "npc_avatar" ? "NPC头像" : AppState.ws-asset-purpose == "character_poster" ? "宣传海报" : "角色立绘")
+                        : (AppState.ws-asset-purpose == "tileset" ? "TileSet" : AppState.ws-asset-purpose == "level_design_reference" ? "地编参考" : AppState.ws-asset-purpose == "promo_art" ? "宣传图" : AppState.ws-asset-purpose == "loading_art" ? "Loading图" : AppState.ws-asset-purpose == "mini_map" ? "小地图" : AppState.ws-asset-purpose == "building_kit" ? "建筑套件" : "场景概念图");
+            selected-id: AppState.ws-asset-purpose;
+            options: root.purpose-options;
+            selected(option) => { AppState.ws-asset-purpose = option; }
+        }
+
+        WorkspaceDropdown {
+            x: Theme.spacing.md + 112px;
+            y: parent.height - 8px - 26px;
+            width: 88px;
+            height: 26px;
+            id: "color-mood";
+            open-up: true;
+            drop-width: 150px;
+            drop-x: -24px;
+            value: AppState.ws-color-mood;
+            display-value: AppState.ws-color-mood == "" ? "自由风格" : AppState.ws-color-mood == "warm_healing" ? "温暖治愈" : AppState.ws-color-mood == "cold_oppressive" ? "冷峻压抑" : AppState.ws-color-mood == "high_saturation" ? "高饱和" : AppState.ws-color-mood == "low_saturation" ? "低饱和" : AppState.ws-color-mood == "dark_fantasy" ? "暗黑风" : AppState.ws-color-mood == "cyberpunk" ? "赛博朋克" : AppState.ws-color-mood == "ghibli_like" ? "吉卜力风" : "日系幻想";
+            selected-id: AppState.ws-color-mood;
+            options: AppState.ws-color-mood-options;
+            selected(option) => { AppState.ws-color-mood = option; }
+        }
+
+        Rectangle {
+            x: parent.width - Theme.spacing.md - 78px;
+            y: parent.height - 8px - 26px;
+            width: 78px;
+            height: 26px;
+            background: history-touch.has-hover || AppState.prompt-history-open ? Theme.palette.bg-hover : Theme.palette.bg-elevated;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppState.prompt-history-open ? Theme.palette.accent : Theme.palette.border;
+
+            Image {
+                x: 8px;
+                y: (parent.height - self.height) / 2;
+                width: 10px;
+                height: 10px;
+                source: AppState.prompt-history-open
+                    ? @image-url("../assets/icons/chevron-down.svg")
+                    : @image-url("../assets/icons/chevron-up.svg");
+                colorize: AppState.prompt-history-open ? Theme.palette.accent-hover : Theme.palette.fg-disabled;
+            }
+
+            Text {
+                x: 22px;
+                width: parent.width - 30px;
+                height: parent.height;
+                text: "历史记录";
+                color: AppState.prompt-history-open ? Theme.palette.accent-hover : Theme.palette.fg-muted;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                font-weight: Theme.typo.weight-medium;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            history-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    AppState.ws-advanced-open = false;
+                    AppState.prompt-history-open = !AppState.prompt-history-open;
+                }
+            }
+        }
+
+        if root.show-advanced-control: Rectangle {
+            x: parent.width - Theme.spacing.md - 78px - 86px;
+            y: parent.height - 8px - 26px;
+            width: 78px;
+            height: 26px;
+            background: advanced-touch.has-hover || AppState.ws-advanced-open ? Theme.palette.bg-hover : Theme.palette.bg-elevated;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppState.ws-advanced-open ? Theme.palette.accent : Theme.palette.border;
+
+            Image {
+                x: 8px;
+                y: (parent.height - self.height) / 2;
+                width: 12px;
+                height: 12px;
+                source: AppState.ws-advanced-open
+                    ? @image-url("../assets/icons/chevron-down.svg")
+                    : @image-url("../assets/icons/chevron-up.svg");
+                colorize: AppState.ws-advanced-open ? Theme.palette.accent-hover : Theme.palette.fg-disabled;
+            }
+
+            Text {
+                x: 22px;
+                width: parent.width - 28px;
+                height: parent.height;
+                text: "高级控制";
+                color: AppState.ws-advanced-open ? Theme.palette.accent-hover : Theme.palette.fg-muted;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                font-weight: Theme.typo.weight-medium;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            advanced-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    AppState.prompt-history-open = false;
+                    AppState.ws-advanced-open = !AppState.ws-advanced-open;
+                }
+            }
+        }
+
+        if AppState.prompt-history-open: TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: default;
+            clicked => { AppState.prompt-history-open = false; }
+        }
+
+        if AppState.prompt-history-open: Rectangle {
+            x: max(Theme.spacing.md, parent.width - 320px - Theme.spacing.md);
+            y: max(Theme.spacing.md, parent.height - 264px - Theme.spacing.md - 28px);
+            width: min(320px, parent.width - 2 * Theme.spacing.md);
+            height: min(264px, parent.height - 3 * Theme.spacing.md - 28px);
+            background: Theme.palette.bg-elevated;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.palette.border-strong;
+            clip: true;
+
+            VerticalLayout {
+                padding: 8px;
+                spacing: 6px;
+
+                HorizontalLayout {
+                    height: 24px;
+                    alignment: space-between;
+
+                    Text {
+                        text: "提示词历史";
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                        font-weight: Theme.typo.weight-bold;
+                        vertical-alignment: center;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: end;
+
+                        Text {
+                            text: AppState.prompt-history.length + " 条";
+                            color: Theme.palette.fg-disabled;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            width: 42px;
+                            height: 22px;
+                            background: clear-history-touch.has-hover && AppState.prompt-history.length > 0 ? Theme.palette.bg-hover : transparent;
+                            border-radius: 7px;
+
+                            Text {
+                                width: parent.width;
+                                height: parent.height;
+                                text: "清空";
+                                color: AppState.prompt-history.length > 0 ? Theme.palette.fg-muted : Theme.palette.fg-disabled;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-xs;
+                                font-weight: Theme.typo.weight-medium;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            clear-history-touch := TouchArea {
+                                mouse-cursor: AppState.prompt-history.length > 0 ? pointer : default;
+                                clicked => {
+                                    if AppState.prompt-history.length > 0 {
+                                        AppState.clear-prompt-history();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Theme.palette.border;
+                }
+
+                if AppState.prompt-history.length == 0: Rectangle {
+                    horizontal-stretch: 1;
+                    vertical-stretch: 1;
+
+                    Text {
+                        width: parent.width;
+                        height: parent.height;
+                        text: "暂无请求记录";
+                        color: Theme.palette.fg-disabled;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                if AppState.prompt-history.length > 0: Flickable {
+                    horizontal-stretch: 1;
+                    vertical-stretch: 1;
+                    viewport-height: history-list.preferred-height;
+
+                    history-list := VerticalLayout {
+                        width: parent.width;
+                        spacing: 4px;
+
+                        for item[i] in AppState.prompt-history: Rectangle {
+                            height: 42px;
+                            background: row-touch.has-hover ? Theme.palette.bg-hover : transparent;
+                            border-radius: 8px;
+
+                            Text {
+                                x: 10px;
+                                y: 6px;
+                                width: parent.width - 20px;
+                                height: 30px;
+                                text: item;
+                                color: Theme.palette.fg-muted;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-xs;
+                                wrap: word-wrap;
+                                overflow: elide;
+                            }
+
+                            row-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    AppState.ws-prompt = item;
+                                    AppState.prompt-history-open = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

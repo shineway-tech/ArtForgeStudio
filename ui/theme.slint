@@ -1,0 +1,103 @@
+// ArtAIT Slint Theme global
+// 所有自建组件读 Theme.* 字段，运行时 Rust 端改字段即触发全 UI 重绘。
+
+export struct ThemePalette {
+    bg: color,
+    bg-elevated: color,
+    bg-hover: color,
+    bg-active: color,
+    fg: color,
+    fg-muted: color,
+    fg-disabled: color,
+    border: color,
+    border-strong: color,
+    accent: color,
+    accent-hover: color,
+    accent-active: color,
+    success: color,
+    warning: color,
+    error: color,
+    overlay: color,
+}
+
+export struct ThemeShape {
+    radius-sm: length,
+    radius-md: length,
+    radius-lg: length,
+    border-width: length,
+}
+
+export struct ThemeTypography {
+    family: string,
+    family-mono: string,
+    size-xs: length,
+    size-sm: length,
+    size-md: length,
+    size-lg: length,
+    size-xl: length,
+    weight-regular: int,
+    weight-medium: int,
+    weight-bold: int,
+}
+
+export struct ThemeSpacing {
+    xs: length,
+    sm: length,
+    md: length,
+    lg: length,
+    xl: length,
+    xxl: length,
+}
+
+export global Theme {
+    in-out property <ThemePalette> palette: {
+        bg: #0a0b0f,
+        bg-elevated: #131419,
+        bg-hover: #1b1d24,
+        bg-active: #23262f,
+        fg: #e5e7ea,
+        fg-muted: #a8acb8,
+        fg-disabled: #6b6f7d,
+        border: #22252e,
+        border-strong: #34384a,
+        accent: #5e6ad2,
+        accent-hover: #6e7ce0,
+        accent-active: #4a55c0,
+        success: #2dd4a7,
+        warning: #e0a040,
+        error: #e5484d,
+        overlay: #000000cc,
+    };
+
+    in-out property <ThemeShape> shape: {
+        radius-sm: 6px,
+        radius-md: 10px,
+        radius-lg: 14px,
+        border-width: 1px,
+    };
+
+    in-out property <ThemeTypography> typo: {
+        family: "Sarasa UI SC",
+        family-mono: "Sarasa Mono SC",
+        size-xs: 11px,
+        size-sm: 12px,
+        size-md: 14px,
+        size-lg: 16px,
+        size-xl: 22px,
+        weight-regular: 400,
+        weight-medium: 500,
+        weight-bold: 600,
+    };
+
+    in-out property <ThemeSpacing> spacing: {
+        xs: 4px,
+        sm: 8px,
+        md: 14px,
+        lg: 18px,
+        xl: 26px,
+        xxl: 36px,
+    };
+
+    in-out property <string> id: "dark";
+    in-out property <bool> is-dark: true;
+}

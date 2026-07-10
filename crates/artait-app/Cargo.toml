@@ -1,0 +1,52 @@
+[package]
+name = "artait-app"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+description = "ArtForge Studio - AI 美术生产套件"
+default-run = "ArtForgeStudio"
+
+[[bin]]
+name = "ArtForgeStudio"
+path = "src/main.rs"
+
+[[bin]]
+name = "artait-migrate"
+path = "src/migrate.rs"
+
+[dependencies]
+artait-model = { workspace = true }
+artait-config = { workspace = true }
+artait-provider = { workspace = true }
+artait-providers = { workspace = true }
+artait-task = { workspace = true }
+artait-asset = { workspace = true }
+artait-service = { workspace = true }
+slint = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+anyhow = { workspace = true }
+toml = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+chrono = { workspace = true }
+notify = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+single-instance = { workspace = true }
+directories = { workspace = true }
+winreg = { workspace = true }
+rfd = { workspace = true }
+open = { workspace = true }
+pulldown-cmark = { workspace = true }
+arboard = { version = "3.6.1", default-features = true }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[build-dependencies]
+slint-build = { workspace = true }
+winresource = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png"] }

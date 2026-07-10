@@ -1,0 +1,55 @@
+import { Theme } from "../theme.slint";
+
+export component CancelGenerateButton {
+    in property <bool> disabled: false;
+    callback clicked();
+
+    height: 54px;
+    property <length> content-width: 15px + 6px + cancel-label.preferred-width;
+
+    Rectangle {
+        background: root.disabled
+            ? Theme.palette.bg-elevated
+            : (touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated);
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: Theme.palette.border;
+        animate background { duration: 120ms; }
+
+        Image {
+            x: (parent.width - root.content-width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 15px;
+            height: 15px;
+            source: @image-url("../assets/icons/circle.svg");
+            colorize: root.disabled ? Theme.palette.fg-disabled : Theme.palette.warning;
+        }
+
+        Text {
+            x: (parent.width - root.content-width) / 2 + 21px;
+            y: 0px;
+            width: cancel-label.preferred-width;
+            height: parent.height;
+            text: "取消生成";
+            color: root.disabled ? Theme.palette.fg-disabled : Theme.palette.fg-muted;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-sm;
+            font-weight: Theme.typo.weight-medium;
+            vertical-alignment: center;
+        }
+
+        cancel-label := Text {
+            text: "取消生成";
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-sm;
+            font-weight: Theme.typo.weight-medium;
+            visible: false;
+        }
+
+        touch := TouchArea {
+            enabled: !root.disabled;
+            mouse-cursor: root.disabled ? default : pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}

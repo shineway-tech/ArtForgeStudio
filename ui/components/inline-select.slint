@@ -1,0 +1,69 @@
+import { Theme } from "../theme.slint";
+
+// 紧凑型内联选择器：标签 + 下拉值同在一行，32px 高。
+// 点击触发 selected(value) 回调。parent 负责轮换值。
+export component InlineSelect {
+    in property <string> label;
+    in property <string> value;
+    callback clicked();
+
+    height: 32px;
+
+    Rectangle {
+        background: touch.has-hover ? Theme.palette.bg-hover : transparent;
+        border-radius: Theme.shape.radius-sm;
+
+        HorizontalLayout {
+            padding-left: 4px;
+            spacing: 8px;
+            alignment: start;
+
+            Text {
+                width: 80px;
+                text: root.label;
+                color: Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                vertical-alignment: center;
+            }
+
+            Rectangle {
+                width: 140px;
+                height: 30px;
+                background: Theme.palette.bg-elevated;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: Theme.palette.border;
+
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 8px;
+                    spacing: 4px;
+                    alignment: space-between;
+
+                    Text {
+                        text: root.value;
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-sm;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    Image {
+                        width: 12px;
+                        height: 12px;
+                        source: @image-url("../assets/icons/chevron-down.svg");
+                        colorize: Theme.palette.fg-muted;
+                        y: (parent.height - self.height) / 2;
+                    }
+                }
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}

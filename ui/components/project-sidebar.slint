@@ -1,0 +1,168 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+
+// 单个项目模块条目
+component ProjectModule {
+    in property <string> module-id;
+    in property <string> icon;
+    in property <string> label;
+
+    property <bool> is-active: AppState.current-page == "project_" + module-id;
+
+    height: 34px;
+
+    Rectangle {
+        background: root.is-active ? Theme.palette.bg-active : (touch.has-hover ? Theme.palette.bg-hover : transparent);
+        border-radius: Theme.shape.radius-sm;
+
+        HorizontalLayout {
+            padding-left: 10px;
+            spacing: 8px;
+            alignment: start;
+
+            Text {
+                text: root.icon;
+                font-size: Theme.typo.size-sm;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: root.label;
+                color: root.is-active ? Theme.palette.accent-hover : Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                font-weight: root.is-active ? Theme.typo.weight-bold : Theme.typo.weight-regular;
+                vertical-alignment: center;
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { AppState.navigate("project_" + root.module-id); }
+        }
+    }
+}
+
+export component ProjectSidebar {
+    width: 172px;
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: Theme.palette.bg-elevated;
+
+        Rectangle {
+            x: parent.width - 1px;
+            width: 1px;
+            height: parent.height;
+            background: Theme.palette.border;
+        }
+
+        VerticalLayout {
+            padding: 0px;
+            spacing: 0px;
+
+            // 项目名头
+            Rectangle {
+                height: 48px;
+
+                HorizontalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+                    alignment: start;
+
+                    Image {
+                        width: 18px;
+                        height: 18px;
+                        source: @image-url("../assets/icons/project.svg");
+                        colorize: Theme.palette.accent;
+                        y: (parent.height - self.height) / 2;
+                    }
+
+                    Text {
+                        text: AppState.current-project-name;
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-sm;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+
+                Rectangle {
+                    y: parent.height - 1px;
+                    width: parent.width;
+                    height: 1px;
+                    background: Theme.palette.border;
+                }
+            }
+
+            // 模块列表
+            VerticalLayout {
+                padding: 6px;
+                spacing: 2px;
+
+                ProjectModule { module-id: "overview"; icon: "📋"; label: "概览"; }
+
+                Rectangle { height: 2px; }
+
+                Text {
+                    text: "创作";
+                    color: Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    font-weight: Theme.typo.weight-medium;
+                }
+
+                ProjectModule { module-id: "script"; icon: "📝"; label: "剧本"; }
+                ProjectModule { module-id: "characters"; icon: "👤"; label: "角色"; }
+                ProjectModule { module-id: "scenes"; icon: "🖼️"; label: "场景"; }
+                ProjectModule { module-id: "storyboard"; icon: "🎬"; label: "分镜"; }
+                ProjectModule { module-id: "video"; icon: "🎥"; label: "视频"; }
+
+                Rectangle { height: 2px; }
+
+                Text {
+                    text: "操作";
+                    color: Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    font-weight: Theme.typo.weight-medium;
+                }
+
+                Rectangle {
+                    height: 34px;
+                    border-radius: Theme.shape.radius-sm;
+
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        spacing: 8px;
+                        alignment: start;
+
+                        Text {
+                            text: "✕";
+                            font-size: Theme.typo.size-sm;
+                            vertical-alignment: center;
+                        }
+
+                        Text {
+                            text: "关闭项目";
+                            color: Theme.palette.fg-muted;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { AppState.close-project(); }
+                    }
+                }
+            }
+
+            Rectangle { vertical-stretch: 1; }
+        }
+    }
+}

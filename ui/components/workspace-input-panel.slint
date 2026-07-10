@@ -1,0 +1,691 @@
+import { Theme } from "../theme.slint";
+import { AppState, WorkspaceSelectOption } from "../app-state.slint";
+import { TemplateSelect } from "template-select.slint";
+import { ToolButton } from "tool-button.slint";
+import { PromptActionButton } from "prompt-action-button.slint";
+import { PromptBox } from "prompt-box.slint";
+import { PromptOptimizationPanel } from "prompt-optimization-panel.slint";
+import { RefImageChip } from "ref-image-chip.slint";
+import { WorkspaceDropdown } from "workspace-dropdown.slint";
+import { GenerateButton } from "generate-button.slint";
+import { CancelGenerateButton } from "cancel-generate-button.slint";
+
+export component WorkspaceInputPanel {
+    in property <string> mode;
+    in property <string> prompt-label;
+    in property <string> prompt-placeholder;
+
+    width: 440px;
+    vertical-stretch: 1;
+
+    property <[WorkspaceSelectOption]> purpose-options: root.mode == "ui_concept"
+        ? AppState.ws-ui-purpose-options
+        : root.mode == "effect"
+            ? AppState.ws-effect-purpose-options
+            : (root.mode == "character" || root.mode == "animation_character" || root.mode == "character_turnaround")
+                ? AppState.ws-character-purpose-options
+                : AppState.ws-scene-purpose-options;
+
+    property <bool> supports-view: root.mode != "ui_concept" && root.mode != "effect";
+    property <bool> supports-weather: root.mode == "scene" || root.mode == "animation_scene" || root.mode == "storyboard";
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.palette.bg-elevated;
+        border-radius: 14px;
+        border-width: 1px;
+        border-color: Theme.palette.border;
+
+    Rectangle {
+        visible: false;
+        x: parent.width - 1px;
+        width: 1px;
+        height: parent.height;
+        background: Theme.palette.border;
+    }
+
+    if AppState.ws-open-select != "": TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: default;
+        clicked => { AppState.ws-open-select = ""; }
+    }
+
+    if AppState.prompt-history-open: TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: default;
+        clicked => {
+            AppState.prompt-history-open = false;
+            AppState.ws-advanced-open = false;
+        }
+    }
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 10px;
+
+        HorizontalLayout {
+            height: 34px;
+            spacing: 8px;
+
+            TemplateSelect {}
+
+            ToolButton {
+                text: "创建";
+                clicked => {
+                    AppState.ws-show-templates = false;
+                    AppState.ws-open-select = "";
+                    AppState.open-create-prompt-template();
+                }
+            }
+
+            ToolButton {
+                text: "编辑";
+                clicked => {
+                    AppState.ws-show-templates = false;
+                    AppState.ws-open-select = "";
+                    AppState.open-edit-prompt-template();
+                }
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            min-height: 520px;
+            background: Theme.palette.bg;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: Theme.palette.border;
+
+        VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+
+            HorizontalLayout {
+                height: 26px;
+                alignment: space-between;
+                spacing: 8px;
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+
+                    PromptActionButton {
+                        text: "提示词优化";
+                        clicked => {
+                            AppState.ws-open-select = "";
+                            AppState.prompt-history-open = false;
+                            AppState.ws-advanced-open = false;
+                            AppState.optimize-prompt("text");
+                        }
+                    }
+
+                    if AppState.analysis.has-provider: PromptActionButton {
+                        text: "图文优化";
+                        clicked => {
+                            AppState.ws-open-select = "";
+                            AppState.prompt-history-open = false;
+                            AppState.ws-advanced-open = false;
+                            AppState.optimize-prompt("image");
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    // 请求列表（图标 + 状态点：绿=最近成功 红=最近失败 无=空）
+                    Rectangle {
+                        width: 32px;
+                        height: 24px;
+                        background: request-touch.has-hover || (AppState.request-list-open && AppState.request-list-mode == root.mode)
+                            ? Theme.palette.bg-hover : Theme.palette.bg-elevated;
+                        border-radius: 7px;
+                        border-width: 1px;
+                        border-color: (AppState.request-list-open && AppState.request-list-mode == root.mode)
+                            ? Theme.palette.accent : Theme.palette.border;
+                        animate background, border-color { duration: 120ms; }
+
+                        Image {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            width: 14px;
+                            height: 14px;
+                            source: @image-url("../assets/icons/list.svg");
+                            colorize: (AppState.request-list-open && AppState.request-list-mode == root.mode)
+                                ? Theme.palette.accent-hover : Theme.palette.fg-muted;
+                        }
+
+                        // 状态点
+                        if AppState.ws-last-task-status != "": Rectangle {
+                            x: parent.width - 11px;
+                            y: 2px;
+                            width: 9px;
+                            height: 9px;
+                            border-radius: 5px;
+                            background: AppState.ws-last-task-status == "success"
+                                ? Theme.palette.success
+                                : Theme.palette.error;
+                            border-width: 2px;
+                            border-color: Theme.palette.bg-elevated;
+                        }
+
+                        request-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                AppState.ws-open-select = "";
+                                AppState.prompt-history-open = false;
+                                AppState.ws-advanced-open = false;
+                                if AppState.request-list-open && AppState.request-list-mode == root.mode {
+                                    AppState.request-list-open = false;
+                                } else {
+                                    AppState.show-request-list(root.mode);
+                                }
+                            }
+                        }
+                    }
+
+                    // 清空提示词（X 图标，无内容时灰显）
+                    Rectangle {
+                        width: 32px;
+                        height: 24px;
+                        background: clear-touch.has-hover && AppState.ws-prompt != ""
+                            ? Theme.palette.bg-hover : Theme.palette.bg-elevated;
+                        border-radius: 7px;
+                        border-width: 1px;
+                        border-color: Theme.palette.border;
+                        animate background { duration: 120ms; }
+
+                        Image {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            width: 12px;
+                            height: 12px;
+                            source: @image-url("../assets/icons/close.svg");
+                            colorize: AppState.ws-prompt != ""
+                                ? Theme.palette.fg-muted
+                                : Theme.palette.fg-disabled;
+                        }
+
+                        clear-touch := TouchArea {
+                            mouse-cursor: AppState.ws-prompt != "" ? pointer : default;
+                            clicked => {
+                                if AppState.ws-prompt != "" {
+                                    AppState.ws-open-select = "";
+                                    AppState.prompt-history-open = false;
+                                    AppState.ws-advanced-open = false;
+                                    AppState.ws-prompt = "";
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+                PromptBox {
+                    width: parent.width;
+                    height: parent.height;
+                    mode: root.mode;
+                    placeholder: root.prompt-placeholder;
+                    purpose-options: root.purpose-options;
+                    show-advanced-control: true;
+                }
+            }
+
+            PromptOptimizationPanel {}
+
+            Rectangle {
+                height: 78px;
+                background: Theme.palette.bg;
+                border-radius: 12px;
+                border-width: AppState.ws-drop-highlight ? 2px : 1px;
+                border-color: AppState.ws-drop-highlight ? Theme.palette.accent : Theme.palette.border-strong;
+                clip: true;
+
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        AppState.ws-open-select = "";
+                        AppState.prompt-history-open = false;
+                        AppState.ws-advanced-open = false;
+                        AppState.add-reference-images();
+                    }
+                }
+
+                if AppState.ws-ref-images.length > 0: HorizontalLayout {
+                    padding: 8px;
+                    spacing: 6px;
+                    alignment: start;
+
+                    for img[i] in AppState.ws-ref-images: RefImageChip {
+                        data: img;
+                        index: i;
+                    }
+                }
+
+                if AppState.ws-ref-images.length == 0: HorizontalLayout {
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    alignment: start;
+
+                    Text {
+                        text: AppState.ws-drop-highlight ? "拖放图片到此处" : "参考图 · 0 张 · 点击添加";
+                        color: AppState.ws-drop-highlight ? Theme.palette.accent : Theme.palette.fg-disabled;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                height: 40px;
+                spacing: 8px;
+
+                WorkspaceDropdown {
+                    width: 82px;
+                    id: "quality";
+                    open-up: true;
+                    value: AppState.ws-quality;
+                    selected-id: AppState.ws-quality;
+                    options: AppState.ws-quality-options;
+                    selected(option) => { AppState.select-workspace-quality(option); }
+                }
+
+                WorkspaceDropdown {
+                    horizontal-stretch: 1;
+                    id: "aspect";
+                    open-up: true;
+                    value: AppState.ws-aspect;
+                    selected-id: AppState.ws-aspect;
+                    options: AppState.ws-aspect-options;
+                    selected(option) => { AppState.ws-aspect = option; }
+                }
+
+                WorkspaceDropdown {
+                    width: 82px;
+                    id: "count";
+                    open-up: true;
+                    value: AppState.ws-count + "张";
+                    selected-id: AppState.ws-count + "";
+                    options: AppState.ws-count-options;
+                    selected(option) => { AppState.ws-count = option == "4" ? 4 : (option == "2" ? 2 : 1); }
+                }
+            }
+        }
+    }
+
+        HorizontalLayout {
+            height: 54px;
+            spacing: 10px;
+
+        GenerateButton {
+            horizontal-stretch: 1;
+            running: AppState.tasks-count-running > 0;
+            disabled: !AppState.generation.has-provider
+                || (AppState.ws-prompt == "" && AppState.ws-template-file == "");
+            clicked => {
+                AppState.ws-open-select = "";
+                AppState.prompt-history-open = false;
+                AppState.ws-advanced-open = false;
+                if AppState.request-list-open {
+                    AppState.request-list-mode = root.mode;
+                }
+                AppState.generate-image(root.mode, AppState.ws-prompt, AppState.ws-aspect, AppState.ws-quality, AppState.ws-count);
+            }
+        }
+
+        CancelGenerateButton {
+            width: 132px;
+            disabled: AppState.tasks.length == 0;
+            clicked => {
+                AppState.ws-open-select = "";
+                AppState.prompt-history-open = false;
+                AppState.ws-advanced-open = false;
+                AppState.cancel-active-task();
+            }
+        }
+    }
+
+        Text {
+            text: AppState.tasks.length > 0
+                ? "任务队列：" + AppState.tasks.length + " 个 · " + AppState.status-text
+                : "生图：" + AppState.generation.instance-name + " · " + AppState.generation.model;
+            color: AppState.generation.has-provider ? Theme.palette.fg-disabled : Theme.palette.error;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            overflow: elide;
+        }
+    }
+
+    // Template selector popup overlay (dismissal)
+    if AppState.ws-show-templates: TouchArea {
+        x: 0px;
+        y: 52px;
+        width: parent.width;
+        height: parent.height - 52px;
+        mouse-cursor: default;
+        clicked => { AppState.ws-show-templates = false; }
+    }
+
+    // Template selector popup
+    if AppState.ws-show-templates: Rectangle {
+        x: 12px;
+        y: 52px;
+        width: 330px;
+        height: 184px;
+        background: Theme.palette.bg;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.palette.accent;
+
+        HorizontalLayout {
+            padding: 5px;
+            spacing: 6px;
+
+            VerticalLayout {
+                width: 112px;
+                spacing: 2px;
+
+                Rectangle {
+                    height: 24px;
+                    background: AppState.ws-template-file == "" || none-touch.has-hover
+                        ? Theme.palette.bg-hover
+                        : transparent;
+                    border-radius: 4px;
+
+                    Text {
+                        x: 8px;
+                        width: parent.width - 16px;
+                        text: "不使用";
+                        color: AppState.ws-template-file == ""
+                            ? Theme.palette.accent-hover
+                            : Theme.palette.fg-muted;
+                        font-size: Theme.typo.size-xs;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    none-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            AppState.load-prompt-template("");
+                            AppState.ws-show-templates = false;
+                        }
+                    }
+                }
+
+                for group[i] in AppState.ws-template-groups: Rectangle {
+                    height: 24px;
+                    background: AppState.ws-template-active-category == group.name || group-touch.has-hover
+                        ? Theme.palette.bg-hover
+                        : transparent;
+                    border-radius: 4px;
+
+                    Text {
+                        x: 8px;
+                        width: parent.width - 20px;
+                        text: group.name;
+                        color: AppState.ws-template-active-category == group.name
+                            ? Theme.palette.accent-hover
+                            : Theme.palette.fg;
+                        font-size: Theme.typo.size-xs;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    Image {
+                        x: parent.width - 14px;
+                        y: (parent.height - self.height) / 2;
+                        width: 12px;
+                        height: 12px;
+                        source: @image-url("../assets/icons/chevron-right.svg");
+                        colorize: Theme.palette.fg-disabled;
+                    }
+
+                    group-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            AppState.ws-template-active-category = group.name;
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                width: 1px;
+                background: Theme.palette.border;
+            }
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 2px;
+
+                for group[i] in AppState.ws-template-groups: VerticalLayout {
+                    visible: AppState.ws-template-active-category == group.name;
+                    spacing: 2px;
+
+                    for tmpl[j] in group.files: Rectangle {
+                        height: 24px;
+                        background: AppState.ws-template-file == tmpl || t2.has-hover
+                            ? Theme.palette.bg-hover
+                            : transparent;
+                        border-radius: 4px;
+
+                        Text {
+                            x: 8px;
+                            width: parent.width - 16px;
+                            text: tmpl;
+                            color: AppState.ws-template-file == tmpl
+                                ? Theme.palette.accent-hover
+                                : Theme.palette.fg;
+                            font-size: Theme.typo.size-xs;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+
+                        t2 := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                AppState.load-prompt-template(tmpl);
+                                AppState.ws-show-templates = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if AppState.ws-advanced-open: TouchArea {
+        x: 0px;
+        y: 238px;
+        width: parent.width;
+        height: parent.height - 238px;
+        mouse-cursor: default;
+        clicked => {
+            AppState.ws-advanced-open = false;
+            AppState.ws-open-select = "";
+        }
+    }
+
+    if AppState.ws-advanced-open: Rectangle {
+        x: 24px;
+        y: 250px;
+        width: parent.width - 48px;
+        height: AppState.ws-prompt-preview-open ? 404px : 284px;
+        background: Theme.palette.bg-elevated;
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: Theme.palette.border-strong;
+        clip: false;
+
+        Text {
+            x: 10px;
+            y: 10px;
+            width: parent.width - 150px;
+            height: 24px;
+            text: "高级控制";
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-sm;
+            font-weight: Theme.typo.weight-bold;
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: parent.width - 112px;
+            y: 10px;
+            width: 102px;
+            height: 24px;
+            text: "约束";
+            color: Theme.palette.fg-disabled;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+
+        Rectangle {
+            x: 0px;
+            y: 42px;
+            width: parent.width;
+            height: 1px;
+            background: Theme.palette.border;
+        }
+
+        Rectangle {
+            x: 10px;
+            y: root.supports-weather ? 198px : (root.supports-view ? 150px : 102px);
+            width: parent.width - 20px;
+            height: AppState.ws-prompt-preview-open ? 156px : 36px;
+            background: Theme.palette.bg;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.palette.border;
+            clip: true;
+
+            HorizontalLayout {
+                x: 10px;
+                y: 7px;
+                width: parent.width - 20px;
+                height: 22px;
+                spacing: 8px;
+
+                Text {
+                    horizontal-stretch: 1;
+                    text: "最终 Prompt 预览";
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    font-weight: Theme.typo.weight-medium;
+                    vertical-alignment: center;
+                }
+
+                PromptActionButton {
+                    width: 48px;
+                    text: AppState.ws-prompt-preview-open ? "收起" : "查看";
+                    clicked => {
+                        if AppState.ws-prompt-preview-open {
+                            AppState.ws-prompt-preview-open = false;
+                        } else {
+                            AppState.refresh-workspace-prompt-preview(root.mode);
+                        }
+                    }
+                }
+
+                PromptActionButton {
+                    width: 48px;
+                    text: "刷新";
+                    clicked => { AppState.refresh-workspace-prompt-preview(root.mode); }
+                }
+            }
+
+            if AppState.ws-prompt-preview-open: Rectangle {
+                x: 10px;
+                y: 36px;
+                width: parent.width - 20px;
+                height: parent.height - 46px;
+                background: Theme.palette.bg-elevated;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: Theme.palette.border;
+                clip: true;
+
+                Flickable {
+                    x: 10px;
+                    y: 8px;
+                    width: parent.width - 20px;
+                    height: parent.height - 16px;
+                    viewport-height: final-prompt-text.height;
+
+                    final-prompt-text := Text {
+                        width: parent.width;
+                        text: AppState.ws-final-prompt-preview == "" ? "当前没有可预览的 Prompt" : AppState.ws-final-prompt-preview;
+                        color: AppState.ws-final-prompt-preview == "" ? Theme.palette.fg-disabled : Theme.palette.fg;
+                        font-family: Theme.typo.family-mono;
+                        font-size: Theme.typo.size-xs;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+
+        WorkspaceDropdown {
+            x: 10px;
+            y: root.supports-weather ? 150px : (root.supports-view ? 102px : 54px);
+            width: parent.width - 20px;
+            id: "lighting";
+            open-up: false;
+            value: AppState.ws-lighting;
+            display-value: AppState.ws-lighting == "" ? "自然光照" : AppState.ws-lighting == "cinematic" ? "电影感" : AppState.ws-lighting == "dream_glow" ? "梦幻发光" : AppState.ws-lighting == "high_contrast" ? "高对比" : AppState.ws-lighting == "volumetric" ? "体积光" : AppState.ws-lighting == "neon" ? "霓虹灯" : "柔和自然光";
+            selected-id: AppState.ws-lighting;
+            options: AppState.ws-lighting-options;
+            selected(option) => { AppState.ws-lighting = option; }
+        }
+
+        if root.supports-weather: WorkspaceDropdown {
+            x: 10px;
+            y: 102px;
+            width: (parent.width - 28px) / 2;
+            id: "weather";
+            open-up: false;
+            value: AppState.ws-weather == "" ? "自然天气" : AppState.ws-weather;
+            display-value: AppState.ws-weather == "sunny" ? "晴天" : AppState.ws-weather == "cloudy" ? "阴天" : AppState.ws-weather == "rainy" ? "雨天" : AppState.ws-weather == "storm" ? "暴风雨" : AppState.ws-weather == "snowy" ? "雪天" : AppState.ws-weather == "foggy" ? "雾天" : AppState.ws-weather == "sandstorm" ? "沙尘" : "自然天气";
+            selected-id: AppState.ws-weather;
+            options: AppState.ws-weather-options;
+            selected(option) => { AppState.ws-weather = option; }
+        }
+
+        if root.supports-weather: WorkspaceDropdown {
+            x: 18px + (parent.width - 28px) / 2;
+            y: 102px;
+            width: (parent.width - 28px) / 2;
+            id: "time-of-day";
+            open-up: false;
+            value: AppState.ws-time-of-day == "" ? "自然时间" : AppState.ws-time-of-day;
+            display-value: AppState.ws-time-of-day == "dawn" ? "清晨" : AppState.ws-time-of-day == "noon" ? "正午" : AppState.ws-time-of-day == "dusk" ? "黄昏" : AppState.ws-time-of-day == "blue_hour" ? "蓝调时刻" : AppState.ws-time-of-day == "night" ? "深夜" : "自然时间";
+            selected-id: AppState.ws-time-of-day;
+            options: AppState.ws-time-of-day-options;
+            selected(option) => { AppState.ws-time-of-day = option; }
+        }
+
+        if root.supports-view: WorkspaceDropdown {
+            x: 10px;
+            y: 54px;
+            width: parent.width - 20px;
+            id: "game-view";
+            open-up: false;
+            value: AppState.ws-game-view;
+            display-value: AppState.ws-game-view == "" ? "自由视角" : AppState.ws-game-view == "top_down" ? "Top Down" : AppState.ws-game-view == "isometric" ? "Isometric" : AppState.ws-game-view == "side_view" ? "Side View" : AppState.ws-game-view == "third_person" ? "Third Person" : AppState.ws-game-view == "first_person" ? "First Person" : AppState.ws-game-view == "orthographic" ? "Orthographic" : "2.5D";
+            selected-id: AppState.ws-game-view;
+            options: AppState.ws-game-view-options;
+            selected(option) => { AppState.ws-game-view = option; }
+        }
+    }
+}
+}

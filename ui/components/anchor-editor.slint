@@ -1,0 +1,202 @@
+// 6层身份锚点编辑器
+
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+
+component LabeledInput {
+    in property <string> label;
+    in-out property <string> value;
+    in property <string> hint: "";
+
+    VerticalLayout {
+        spacing: 2px;
+        Text { text: root.label; color: Theme.palette.fg-muted; font-family: Theme.typo.family; font-size: Theme.typo.size-xs; }
+        Rectangle {
+            background: Theme.palette.bg; border-radius: Theme.shape.radius-sm;
+            border-width: Theme.shape.border-width; border-color: Theme.palette.border; min-height: 28px;
+            TextInput {
+                text <=> root.value; color: Theme.palette.fg; font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm; single-line: true;
+                x: Theme.spacing.sm; width: parent.width - 2 * Theme.spacing.sm; vertical-alignment: center;
+            }
+        }
+    }
+}
+
+component LabeledSelect {
+    in property <string> label;
+    in-out property <string> value;
+    in property <[string]> options;
+
+    VerticalLayout {
+        spacing: 2px;
+        Text { text: root.label; color: Theme.palette.fg-muted; font-family: Theme.typo.family; font-size: Theme.typo.size-xs; }
+        for opt[i] in root.options : Rectangle {
+            background: root.value == opt ? Theme.palette.accent : (ts.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated);
+            border-radius: Theme.shape.radius-sm; min-height: 26px;
+            Text {
+                text: opt; x: Theme.spacing.sm; vertical-alignment: center;
+                color: root.value == opt ? Theme.palette.fg : Theme.palette.fg-muted;
+                font-family: Theme.typo.family; font-size: Theme.typo.size-sm;
+            }
+            ts := TouchArea { mouse-cursor: pointer; clicked => { root.value = opt; } }
+        }
+    }
+}
+
+export component AnchorEditor {
+    width: 100%;
+
+    VerticalLayout {
+        spacing: Theme.spacing.sm;
+
+        // ① 骨相
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-sm;
+            VerticalLayout {
+                Rectangle {
+                    background: touch1.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated;
+                    border-radius: Theme.shape.radius-sm;
+                    min-height: 32px;
+                    HorizontalLayout {
+                        padding-left: Theme.spacing.sm; padding-right: Theme.spacing.sm; spacing: Theme.spacing.sm;
+                        Text { text: a1exp ? "▼" : "▶"; color: Theme.palette.fg-muted; font-family: Theme.typo.family; font-size: Theme.typo.size-xs; vertical-alignment: center; }
+                        Text { text: "① 骨相结构 Bone Structure"; color: Theme.palette.fg; font-family: Theme.typo.family; font-size: Theme.typo.size-sm; font-weight: Theme.typo.weight-medium; vertical-alignment: center; }
+                    }
+                    touch1 := TouchArea { mouse-cursor: pointer; clicked => { a1exp = !a1exp; } }
+                }
+                if a1exp : VerticalLayout {
+                    padding: Theme.spacing.sm; spacing: Theme.spacing.sm;
+                    LabeledSelect { label: "脸型 Face Shape"; value <=> AppState.anchor-1-face; options: ["", "oval", "square", "heart", "round", "diamond", "oblong"]; }
+                    LabeledSelect { label: "下颌 Jawline"; value <=> AppState.anchor-1-jaw; options: ["", "sharp angular", "soft rounded", "prominent", "narrow", "square"]; }
+                    LabeledSelect { label: "颧骨 Cheekbones"; value <=> AppState.anchor-1-cheek; options: ["", "high prominent", "subtle", "wide set", "flat", "rounded"]; }
+                }
+            }
+        }
+
+        // ② 五官
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-sm;
+            VerticalLayout {
+                Rectangle {
+                    background: touch2.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated;
+                    border-radius: Theme.shape.radius-sm; min-height: 32px;
+                    HorizontalLayout {
+                        padding-left: Theme.spacing.sm; padding-right: Theme.spacing.sm; spacing: Theme.spacing.sm;
+                        Text { text: a2exp ? "▼" : "▶"; color: Theme.palette.fg-muted; font-family: Theme.typo.family; font-size: Theme.typo.size-xs; vertical-alignment: center; }
+                        Text { text: "② 五官特征 Facial Features"; color: Theme.palette.fg; font-family: Theme.typo.family; font-size: Theme.typo.size-sm; font-weight: Theme.typo.weight-medium; vertical-alignment: center; }
+                    }
+                    touch2 := TouchArea { mouse-cursor: pointer; clicked => { a2exp = !a2exp; } }
+                }
+                if a2exp : VerticalLayout {
+                    padding: Theme.spacing.sm; spacing: Theme.spacing.sm;
+                    LabeledSelect { label: "眼型 Eye Shape"; value <=> AppState.anchor-2-eye; options: ["", "almond", "round", "hooded", "monolid", "upturned", "downturned", "deep-set"]; }
+                    LabeledInput { label: "眼部细节 Eye Details"; value <=> AppState.anchor-2-eye-detail; hint: "e.g. double eyelids"; }
+                    LabeledInput { label: "鼻型 Nose Shape"; value <=> AppState.anchor-2-nose; hint: "e.g. straight bridge, rounded tip"; }
+                    LabeledInput { label: "唇型 Lip Shape"; value <=> AppState.anchor-2-lip; hint: "e.g. full lips, defined cupid's bow"; }
+                }
+            }
+        }
+
+        // ③ 辨识标记
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-sm;
+            VerticalLayout {
+                Rectangle {
+                    background: touch3.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated;
+                    border-radius: Theme.shape.radius-sm; min-height: 32px;
+                    HorizontalLayout {
+                        padding-left: Theme.spacing.sm; padding-right: Theme.spacing.sm; spacing: Theme.spacing.sm;
+                        Text { text: a3exp ? "▼" : "▶"; color: Theme.palette.fg-muted; font-family: Theme.typo.family; font-size: Theme.typo.size-xs; vertical-alignment: center; }
+                        Text { text: "③ 辨识标记 Distinctive Marks 最强锚点"; color: Theme.palette.fg; font-family: Theme.typo.family; font-size: Theme.typo.size-sm; font-weight: Theme.typo.weight-medium; vertical-alignment: center; }
+                    }
+                    touch3 := TouchArea { mouse-cursor: pointer; clicked => { a3exp = !a3exp; } }
+                }
+                if a3exp : VerticalLayout {
+                    padding: Theme.spacing.sm; spacing: Theme.spacing.sm;
+                    LabeledInput { label: "独特标记（逗号分隔）"; value <=> AppState.anchor-3-marks; hint: "e.g. mole 2cm below left eye, scar on right eyebrow"; }
+                }
+            }
+        }
+
+        // ④ 色彩锚点
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-sm;
+            VerticalLayout {
+                Rectangle {
+                    background: touch4.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated;
+                    border-radius: Theme.shape.radius-sm; min-height: 32px;
+                    HorizontalLayout {
+                        padding-left: Theme.spacing.sm; padding-right: Theme.spacing.sm; spacing: Theme.spacing.sm;
+                        Text { text: a4exp ? "▼" : "▶"; color: Theme.palette.fg-muted; font-family: Theme.typo.family; font-size: Theme.typo.size-xs; vertical-alignment: center; }
+                        Text { text: "④ 色彩锚点 Color Anchors (Hex)"; color: Theme.palette.fg; font-family: Theme.typo.family; font-size: Theme.typo.size-sm; font-weight: Theme.typo.weight-medium; vertical-alignment: center; }
+                    }
+                    touch4 := TouchArea { mouse-cursor: pointer; clicked => { a4exp = !a4exp; } }
+                }
+                if a4exp : VerticalLayout {
+                    padding: Theme.spacing.sm; spacing: Theme.spacing.sm;
+                    LabeledInput { label: "虹膜 Iris"; value <=> AppState.anchor-4-iris; hint: "#3D2314"; }
+                    LabeledInput { label: "发色 Hair"; value <=> AppState.anchor-4-hair; hint: "#1A1A1A"; }
+                    LabeledInput { label: "肤色 Skin"; value <=> AppState.anchor-4-skin; hint: "#E8C4A0"; }
+                    LabeledInput { label: "唇色 Lips"; value <=> AppState.anchor-4-lips; hint: "#C4727E"; }
+                }
+            }
+        }
+
+        // ⑤ 皮肤纹理
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-sm;
+            VerticalLayout {
+                Rectangle {
+                    background: touch5.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated;
+                    border-radius: Theme.shape.radius-sm; min-height: 32px;
+                    HorizontalLayout {
+                        padding-left: Theme.spacing.sm; padding-right: Theme.spacing.sm; spacing: Theme.spacing.sm;
+                        Text { text: a5exp ? "▼" : "▶"; color: Theme.palette.fg-muted; font-family: Theme.typo.family; font-size: Theme.typo.size-xs; vertical-alignment: center; }
+                        Text { text: "⑤ 皮肤纹理 Skin Texture"; color: Theme.palette.fg; font-family: Theme.typo.family; font-size: Theme.typo.size-sm; font-weight: Theme.typo.weight-medium; vertical-alignment: center; }
+                    }
+                    touch5 := TouchArea { mouse-cursor: pointer; clicked => { a5exp = !a5exp; } }
+                }
+                if a5exp : VerticalLayout {
+                    padding: Theme.spacing.sm; spacing: Theme.spacing.sm;
+                    LabeledInput { label: "皮肤质感"; value <=> AppState.anchor-5-texture; hint: "e.g. visible pores, light smile lines"; }
+                }
+            }
+        }
+
+        // ⑥ 发型
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-sm;
+            VerticalLayout {
+                Rectangle {
+                    background: touch6.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated;
+                    border-radius: Theme.shape.radius-sm; min-height: 32px;
+                    HorizontalLayout {
+                        padding-left: Theme.spacing.sm; padding-right: Theme.spacing.sm; spacing: Theme.spacing.sm;
+                        Text { text: a6exp ? "▼" : "▶"; color: Theme.palette.fg-muted; font-family: Theme.typo.family; font-size: Theme.typo.size-xs; vertical-alignment: center; }
+                        Text { text: "⑥ 发型锚点 Hairstyle"; color: Theme.palette.fg; font-family: Theme.typo.family; font-size: Theme.typo.size-sm; font-weight: Theme.typo.weight-medium; vertical-alignment: center; }
+                    }
+                    touch6 := TouchArea { mouse-cursor: pointer; clicked => { a6exp = !a6exp; } }
+                }
+                if a6exp : VerticalLayout {
+                    padding: Theme.spacing.sm; spacing: Theme.spacing.sm;
+                    LabeledInput { label: "发型 Hair Style"; value <=> AppState.anchor-6-style; hint: "e.g. shoulder-length layered"; }
+                    LabeledInput { label: "发际线 Hairline"; value <=> AppState.anchor-6-hairline; hint: "e.g. natural hairline, widow's peak"; }
+                }
+            }
+        }
+    }
+
+    property <bool> a1exp: false;
+    property <bool> a2exp: false;
+    property <bool> a3exp: false;
+    property <bool> a4exp: false;
+    property <bool> a5exp: false;
+    property <bool> a6exp: false;
+}

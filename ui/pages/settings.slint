@@ -1,0 +1,1462 @@
+import { Theme } from "../theme.slint";
+import { AppState, ProviderInstanceView } from "../app-state.slint";
+import { Button } from "../components/button.slint";
+import { InputField } from "../components/input.slint";
+
+component ModelListInput {
+    in property <string> label;
+    in property <string> placeholder;
+    in property <string> hint;
+    in-out property <string> value;
+
+    height: 116px;
+
+    VerticalLayout {
+        spacing: 5px;
+
+        Text {
+            text: root.label;
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            font-weight: Theme.typo.weight-medium;
+        }
+
+        Rectangle {
+            background: Theme.palette.bg;
+            border-radius: Theme.shape.radius-sm;
+            border-width: 1px;
+            border-color: input.has-focus ? Theme.palette.accent : Theme.palette.border;
+            clip: true;
+            animate border-color { duration: 120ms; }
+
+            input := TextInput {
+                x: Theme.spacing.sm;
+                y: 8px;
+                width: parent.width - 2 * Theme.spacing.sm;
+                height: parent.height - 16px;
+                color: Theme.palette.fg;
+                font-family: Theme.typo.family-mono;
+                font-size: Theme.typo.size-xs;
+                wrap: word-wrap;
+                single-line: false;
+                text <=> root.value;
+            }
+
+            if root.value == "" && !input.has-focus: Text {
+                x: Theme.spacing.sm;
+                y: 8px;
+                width: parent.width - 2 * Theme.spacing.sm;
+                text: root.placeholder;
+                color: Theme.palette.fg-disabled;
+                font-family: Theme.typo.family-mono;
+                font-size: Theme.typo.size-xs;
+                wrap: word-wrap;
+            }
+        }
+
+        if root.hint != "": Text {
+            text: root.hint;
+            color: Theme.palette.fg-disabled;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+        }
+    }
+}
+
+component NodeKindSelector {
+    height: 62px;
+
+    VerticalLayout {
+        spacing: 6px;
+
+        Text {
+            text: "节点用途";
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            font-weight: Theme.typo.weight-medium;
+        }
+
+        HorizontalLayout {
+            spacing: Theme.spacing.xs;
+
+            for option in [
+                { id: "generation", label: "生图节点" },
+                { id: "analysis", label: "推理节点" },
+                { id: "both", label: "双用节点" },
+            ]: Button {
+                text: option.label;
+                primary: AppState.add-node-kind == option.id;
+                clicked => { AppState.add-node-kind = option.id; }
+            }
+        }
+    }
+}
+
+component ApiStyleSelector {
+    height: 62px;
+
+    VerticalLayout {
+        spacing: 6px;
+
+        Text {
+            text: "接口风格";
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            font-weight: Theme.typo.weight-medium;
+        }
+
+        HorizontalLayout {
+            spacing: Theme.spacing.xs;
+
+            for option in [
+                { id: "newapi", label: "NewAPI" },
+                { id: "cpa", label: "CPA" },
+                { id: "sub2api", label: "Sub2API" },
+                { id: "gemini", label: "Gemini" },
+                { id: "auto", label: "自动" },
+            ]: Button {
+                text: option.label;
+                primary: AppState.add-api-style == option.id;
+                clicked => { AppState.add-api-style = option.id; }
+            }
+        }
+    }
+}
+
+component CompactButton {
+    in property <string> text;
+    in property <bool> primary: false;
+    callback clicked();
+
+    height: 30px;
+    min-width: 66px;
+    horizontal-stretch: 0;
+
+    Rectangle {
+        background: root.primary
+            ? (touch.has-hover ? Theme.palette.accent-hover : Theme.palette.accent)
+            : (touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated);
+        border-radius: Theme.shape.radius-sm;
+        border-width: root.primary ? 0px : Theme.shape.border-width;
+        border-color: Theme.palette.border;
+        animate background { duration: 120ms; }
+
+        Text {
+            x: 10px;
+            width: parent.width - 20px;
+            height: parent.height;
+            text: root.text;
+            color: root.primary ? #ffffff : Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            font-weight: Theme.typo.weight-medium;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+component InstanceRow {
+    in property <ProviderInstanceView> data;
+    height: 102px;
+
+    Rectangle {
+        background: Theme.palette.bg-elevated;
+        border-radius: Theme.shape.radius-md;
+        border-width: Theme.shape.border-width;
+        border-color: Theme.palette.border;
+
+        HorizontalLayout {
+            padding: Theme.spacing.md;
+            spacing: Theme.spacing.md;
+            alignment: space-between;
+
+            VerticalLayout {
+                spacing: 4px;
+                alignment: center;
+                horizontal-stretch: 1;
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.sm;
+                    alignment: start;
+
+                    Text {
+                        text: root.data.name;
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-md;
+                        font-weight: Theme.typo.weight-medium;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle {
+                        background: Theme.palette.bg-hover;
+                        border-radius: 4px;
+
+                        HorizontalLayout {
+                            padding-left: 6px;
+                            padding-right: 6px;
+                            padding-top: 2px;
+                            padding-bottom: 2px;
+
+                            Text {
+                                text: root.data.family;
+                                color: Theme.palette.fg-muted;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-xs;
+                            }
+                        }
+                    }
+
+                    if root.data.is-default-generation: Rectangle {
+                        background: Theme.palette.accent;
+                        border-radius: 4px;
+
+                        HorizontalLayout {
+                            padding-left: 6px;
+                            padding-right: 6px;
+                            padding-top: 2px;
+                            padding-bottom: 2px;
+
+                            Text {
+                                text: "默认生图";
+                                color: #ffffff;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-xs;
+                                font-weight: Theme.typo.weight-medium;
+                            }
+                        }
+                    }
+
+                    if root.data.is-default-analysis: Rectangle {
+                        background: Theme.palette.success;
+                        border-radius: 4px;
+
+                        HorizontalLayout {
+                            padding-left: 6px;
+                            padding-right: 6px;
+                            padding-top: 2px;
+                            padding-bottom: 2px;
+
+                            Text {
+                                text: "默认推理";
+                                color: #ffffff;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-xs;
+                                font-weight: Theme.typo.weight-medium;
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    text: root.data.scopes + " · " + (root.data.endpoint != "" ? root.data.endpoint : "（无端点）");
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-sm;
+                }
+
+                Text {
+                    text: root.data.models;
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    overflow: elide;
+                }
+
+                Text {
+                    text: "接口：" + root.data.api-style
+                        + " · "
+                        + (root.data.has-secret ? "凭据：已配置" : "凭据：未配置")
+                        + " · "
+                        + (root.data.show-in-main-ui ? "主页可选" : "已从主页隐藏");
+                    color: root.data.show-in-main-ui ? Theme.palette.success : Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                }
+            }
+
+            VerticalLayout {
+                spacing: 6px;
+
+                HorizontalLayout {
+                    spacing: 6px;
+
+                    CompactButton {
+                        text: "测试";
+                        clicked => { AppState.test-connection(root.data.id); }
+                    }
+
+                    CompactButton {
+                        text: "获取模型";
+                        clicked => { AppState.fetch-provider-models(root.data.id); }
+                    }
+
+                    if root.data.has-generation-scope: CompactButton {
+                        text: "设为生图";
+                        clicked => { AppState.set-default-generation(root.data.id); }
+                    }
+
+                    if root.data.has-analysis-scope: CompactButton {
+                        text: "设为推理";
+                        clicked => { AppState.set-default-analysis(root.data.id); }
+                    }
+
+                    CompactButton {
+                        text: "编辑";
+                        clicked => { AppState.edit-instance(root.data.id); }
+                    }
+
+                    CompactButton {
+                        text: "删除";
+                        clicked => { AppState.remove-instance(root.data.id); }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: end;
+
+                    CompactButton {
+                        text: root.data.show-in-main-ui ? "主页隐藏" : "主页显示";
+                        clicked => {
+                            AppState.set-provider-main-visible(root.data.id, !root.data.show-in-main-ui);
+                        }
+                    }
+
+                    Text {
+                        text: "启用后可在主页顶部切换该接口";
+                        color: Theme.palette.fg-disabled;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}
+
+component SettingsTab {
+    in property <string> id;
+    in property <string> title;
+    in property <string> subtitle;
+
+    width: 188px;
+    height: 46px;
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: AppState.settings-section == root.id
+            ? Theme.palette.bg-active
+            : (touch.has-hover ? Theme.palette.bg-hover : transparent);
+        border-radius: Theme.shape.radius-md;
+        animate background { duration: 120ms; }
+
+        // 左边 accent 指示条（对齐侧边栏 SidebarItem）
+        if AppState.settings-section == root.id: Rectangle {
+            x: 0px;
+            y: (parent.height - 16px) / 2;
+            width: 3px;
+            height: 16px;
+            background: Theme.palette.accent;
+            border-radius: 2px;
+        }
+
+        VerticalLayout {
+            padding-left: Theme.spacing.md;
+            padding-right: Theme.spacing.md;
+            padding-top: 6px;
+            padding-bottom: 6px;
+            spacing: 2px;
+
+            Text {
+                width: parent.width - 2 * Theme.spacing.md;
+                text: root.title;
+                color: AppState.settings-section == root.id
+                    ? Theme.palette.fg
+                    : Theme.palette.fg-muted;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                font-weight: Theme.typo.weight-medium;
+                overflow: elide;
+            }
+
+            Text {
+                width: parent.width - 2 * Theme.spacing.md;
+                text: root.subtitle;
+                color: Theme.palette.fg-disabled;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                overflow: elide;
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { AppState.settings-section = root.id; }
+        }
+    }
+}
+
+component SectionTitle {
+    in property <string> title;
+    in property <string> subtitle;
+    height: 54px;
+
+    VerticalLayout {
+        spacing: 4px;
+
+        Text {
+            text: root.title;
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: 22px;
+            font-weight: Theme.typo.weight-bold;
+        }
+
+        Text {
+            text: root.subtitle;
+            color: Theme.palette.fg-muted;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-sm;
+        }
+    }
+}
+
+component ThemeChoice {
+    in property <string> id;
+    in property <string> label;
+    in property <brush> swatch;
+
+    width: 104px;
+    height: 42px;
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: AppState.settings-theme-id == root.id
+            ? Theme.palette.bg-active
+            : (touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg);
+        border-radius: Theme.shape.radius-sm;
+        border-width: Theme.shape.border-width;
+        border-color: AppState.settings-theme-id == root.id ? Theme.palette.accent : Theme.palette.border;
+        animate background, border-color { duration: 120ms; }
+
+        Rectangle {
+            x: parent.width / 2 - 7px;
+            y: 6px;
+            width: 14px;
+            height: 14px;
+            background: root.swatch;
+            border-radius: 7px;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border-strong;
+        }
+
+        Text {
+            x: 8px;
+            y: 19px;
+            width: parent.width - 16px;
+            height: parent.height - 21px;
+            text: root.label;
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            font-weight: AppState.settings-theme-id == root.id ? Theme.typo.weight-bold : Theme.typo.weight-regular;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                AppState.settings-theme-id = root.id;
+                AppState.preview-theme(root.id);
+            }
+        }
+    }
+}
+
+component FontOptionRow {
+    in property <string> family;
+    in property <string> label;
+    callback selected(string);
+
+    height: 30px;
+
+    Rectangle {
+        background: root.family == AppState.settings-font-family || option-touch.has-hover
+            ? Theme.palette.bg-hover
+            : transparent;
+        border-radius: Theme.shape.radius-sm;
+
+        Text {
+            x: 8px;
+            width: parent.width - 16px;
+            height: parent.height;
+            text: root.label;
+            color: root.family == AppState.settings-font-family ? Theme.palette.accent-hover : Theme.palette.fg;
+            font-family: root.family;
+            font-size: Theme.typo.size-xs;
+            font-weight: root.family == AppState.settings-font-family
+                ? Theme.typo.weight-bold
+                : Theme.typo.weight-regular;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        option-touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                AppState.settings-font-family = root.family;
+                AppState.preview-font(root.family);
+                root.selected(root.family);
+            }
+        }
+    }
+}
+
+component FontDropdown {
+    height: 64px;
+
+    VerticalLayout {
+        spacing: 5px;
+
+        Text {
+            text: "字体";
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            font-weight: Theme.typo.weight-medium;
+        }
+
+        Rectangle {
+            height: 34px;
+            background: field-touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg;
+            border-radius: Theme.shape.radius-sm;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border;
+            animate background, border-color { duration: 120ms; }
+
+            Text {
+                x: Theme.spacing.sm;
+                y: 0px;
+                width: parent.width - 42px;
+                height: parent.height;
+                text: AppState.settings-font-family;
+                color: Theme.palette.fg;
+                font-family: AppState.settings-font-family;
+                font-size: Theme.typo.size-sm;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            Image {
+                x: parent.width - 26px;
+                y: (parent.height - self.height) / 2;
+                width: 14px;
+                height: 14px;
+                source: @image-url("../assets/icons/chevron-down.svg");
+                colorize: Theme.palette.fg-disabled;
+            }
+
+            field-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { menu.show(); }
+            }
+        }
+
+        Text {
+            text: "选择界面字体";
+            color: Theme.palette.fg-disabled;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+        }
+    }
+
+    menu := PopupWindow {
+        x: 0px;
+        y: 58px;
+        width: root.width;
+        height: 360px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-md;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border-strong;
+            clip: true;
+
+            flick := Flickable {
+                width: 100%;
+                height: 100%;
+
+                font-list := VerticalLayout {
+                    padding: 6px;
+                    spacing: 2px;
+                    width: parent.width - 6px;
+
+                    for family in AppState.settings-font-list: FontOptionRow {
+                        family: family;
+                        label: family;
+                        selected(value) => { menu.close(); }
+                    }
+                }
+            }
+
+            // 滚动条
+            if font-list.height > flick.height: Rectangle {
+                width: 4px;
+                x: root.width - 6px;
+                y: 2px;
+                height: flick.height - 4px;
+                background: Theme.palette.border;
+                border-radius: 2px;
+
+                thumb := Rectangle {
+                    width: 4px;
+                    x: 0px;
+                    height: max(20px, flick.height * flick.height / font-list.height);
+                    y: flick.viewport-y * (flick.height - thumb.height) / (font-list.height - flick.height);
+                    background: Theme.palette.fg-disabled;
+                    border-radius: 2px;
+                }
+            }
+        }
+    }
+}
+
+component DirSettingRow {
+    in property <string> id;
+    in property <string> label;
+    in-out property <string> value;
+
+    height: 70px;
+
+    Rectangle {
+        background: Theme.palette.bg-elevated;
+        border-radius: Theme.shape.radius-md;
+        border-width: Theme.shape.border-width;
+        border-color: Theme.palette.border;
+
+        HorizontalLayout {
+            padding: Theme.spacing.md;
+            spacing: Theme.spacing.md;
+
+            VerticalLayout {
+                spacing: 4px;
+                horizontal-stretch: 1;
+
+                Text {
+                    text: root.label;
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    font-weight: Theme.typo.weight-medium;
+                }
+
+                Text {
+                    text: root.value != "" ? root.value : "未设置";
+                    color: root.value != "" ? Theme.palette.fg-muted : Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family-mono;
+                    font-size: Theme.typo.size-xs;
+                    overflow: elide;
+                }
+            }
+
+            Button {
+                text: "选择";
+                clicked => { AppState.pick-settings-dir(root.id); }
+            }
+        }
+    }
+}
+
+component BasicSettingsPane {
+    VerticalLayout {
+        spacing: Theme.spacing.md;
+
+        SectionTitle {
+            title: "基础设置";
+            subtitle: "调整外观、字体和本地数据目录。";
+        }
+
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-md;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border;
+            height: 150px;
+
+            VerticalLayout {
+                padding: Theme.spacing.md;
+                spacing: Theme.spacing.sm;
+
+                Text {
+                    text: "主题颜色";
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    font-weight: Theme.typo.weight-medium;
+                }
+
+                VerticalLayout {
+                    spacing: Theme.spacing.xs;
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing.xs;
+
+                        ThemeChoice { id: "dark"; label: "深紫"; swatch: #4f46e5; }
+                        ThemeChoice { id: "ocean"; label: "深海蓝"; swatch: #0ea5e9; }
+                        ThemeChoice { id: "warm"; label: "暖墨棕"; swatch: #d97706; }
+                        ThemeChoice { id: "forest"; label: "森林绿"; swatch: #22c55e; }
+                        ThemeChoice { id: "rose"; label: "暗玫瑰"; swatch: #e11d48; }
+                        ThemeChoice { id: "cyber"; label: "赛博紫"; swatch: #a855f7; }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing.xs;
+
+                        ThemeChoice { id: "oled"; label: "纯黑"; swatch: #000000; }
+                        ThemeChoice { id: "light"; label: "素白"; swatch: #fafafc; }
+                        ThemeChoice { id: "cream"; label: "奶白"; swatch: #f4ebdc; }
+                        ThemeChoice { id: "system"; label: "跟随系统"; swatch: Theme.palette.fg-muted; }
+                        ThemeChoice { id: "user"; label: "自定义"; swatch: Theme.palette.accent; }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-md;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border;
+            height: 132px;
+
+            VerticalLayout {
+                padding: Theme.spacing.md;
+                spacing: Theme.spacing.sm;
+
+                FontDropdown {
+                    horizontal-stretch: 1;
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.sm;
+                    alignment: start;
+
+                    Text {
+                        text: "字号";
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                        font-weight: Theme.typo.weight-medium;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle {
+                        width: 24px;
+                        height: 24px;
+                        background: size-minus-touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg;
+                        border-radius: Theme.shape.radius-sm;
+                        border-width: Theme.shape.border-width;
+                        border-color: Theme.palette.border;
+
+                        Text {
+                            text: "−";
+                            color: Theme.palette.fg;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-md;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        size-minus-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                if AppState.settings-font-size > 11 {
+                                    AppState.settings-font-size -= 1;
+                                    AppState.preview-font(AppState.settings-font-family);
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: AppState.settings-font-size;
+                        color: Theme.palette.accent-hover;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-md;
+                        font-weight: Theme.typo.weight-bold;
+                        vertical-alignment: center;
+                        min-width: 24px;
+                        horizontal-alignment: center;
+                    }
+
+                    Rectangle {
+                        width: 24px;
+                        height: 24px;
+                        background: size-plus-touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg;
+                        border-radius: Theme.shape.radius-sm;
+                        border-width: Theme.shape.border-width;
+                        border-color: Theme.palette.border;
+
+                        Text {
+                            text: "+";
+                            color: Theme.palette.fg;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-md;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        size-plus-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                if AppState.settings-font-size < 22 {
+                                    AppState.settings-font-size += 1;
+                                    AppState.preview-font(AppState.settings-font-family);
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "11 – 22";
+                        color: Theme.palette.fg-disabled;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        DirSettingRow {
+            id: "input";
+            label: "输入素材目录";
+            value <=> AppState.settings-input-dir;
+        }
+
+        DirSettingRow {
+            id: "output";
+            label: "输出目录";
+            value <=> AppState.settings-output-dir;
+        }
+
+        DirSettingRow {
+            id: "prompt";
+            label: "提示词模板目录";
+            value <=> AppState.settings-prompt-dir;
+        }
+
+        // ── 图床设置 ──
+        SectionTitle {
+            title: "图床设置";
+            subtitle: "超过 10MB 的参考图自动上传 ImgBB 获取公网 URL。需要 API Key。";
+        }
+
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-md;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border;
+            height: 100px;
+
+            VerticalLayout {
+                padding: Theme.spacing.md;
+                spacing: Theme.spacing.sm;
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.sm;
+
+                    Text {
+                        text: "上传地址";
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                        font-weight: Theme.typo.weight-medium;
+                        vertical-alignment: center;
+                        width: 86px;
+                    }
+
+                    TextInput {
+                        text <=> AppState.settings-upload-api-url;
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family-mono;
+                        font-size: Theme.typo.size-xs;
+                        single-line: true;
+                        horizontal-stretch: 1;
+                    }
+
+                    Button {
+                        width: 88px;
+                        text: "访问";
+                        clicked => { AppState.open-upload-url(); }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.sm;
+
+                    Text {
+                        text: "API Key";
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                        font-weight: Theme.typo.weight-medium;
+                        vertical-alignment: center;
+                        width: 86px;
+                    }
+
+                    TextInput {
+                        text <=> AppState.settings-upload-api-key;
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family-mono;
+                        font-size: Theme.typo.size-xs;
+                        single-line: true;
+                        input-type: password;
+                        horizontal-stretch: 1;
+                    }
+
+                    Rectangle {
+                        width: 88px;
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: Theme.spacing.sm;
+            alignment: end;
+
+            Button {
+                text: "还原";
+                clicked => { AppState.reset-basic-settings(); }
+            }
+
+            Button {
+                text: "保存基础设置";
+                primary: true;
+                clicked => { AppState.save-basic-settings(); }
+            }
+        }
+    }
+}
+
+component ProviderSettingsPane {
+    VerticalLayout {
+        spacing: Theme.spacing.md;
+
+        SectionTitle {
+            title: "供应商设置";
+            subtitle: "管理生图和推理接口、模型列表、默认供应商。";
+        }
+
+        HorizontalLayout {
+            spacing: Theme.spacing.md;
+            alignment: start;
+
+            Text {
+                text: "已注册实例 · 共 " + AppState.providers.length + " 个";
+                color: Theme.palette.fg-muted;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-md;
+                vertical-alignment: center;
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            Button {
+                text: "OpenAI";
+                primary: true;
+                clicked => { AppState.quick-add-provider("openai"); }
+            }
+            Button {
+                text: "Gemini";
+                clicked => { AppState.quick-add-provider("gemini"); }
+            }
+            Button {
+                text: "DeepSeek";
+                clicked => { AppState.quick-add-provider("deepseek"); }
+            }
+            Button {
+                text: "Seedance";
+                clicked => { AppState.quick-add-provider("volcengine"); }
+            }
+        }
+
+        if AppState.providers.length == 0: Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-md;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border;
+            height: 96px;
+            horizontal-stretch: 1;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 4px;
+
+                Text {
+                    text: "尚未配置任何 provider";
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-md;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: "点右上角快速添加 Provider";
+                    color: Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-sm;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        if AppState.providers.length > 0: VerticalLayout {
+            spacing: Theme.spacing.sm;
+            padding-bottom: Theme.spacing.xxl;
+
+            for inst[i] in AppState.providers: InstanceRow {
+                data: inst;
+            }
+        }
+    }
+}
+
+component AboutRow {
+    in property <string> label;
+    in property <string> value;
+    height: 34px;
+
+    HorizontalLayout {
+        spacing: Theme.spacing.md;
+
+        Text {
+            text: root.label;
+            color: Theme.palette.fg-disabled;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-sm;
+            width: 88px;
+        }
+
+        Text {
+            text: root.value;
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family-mono;
+            font-size: Theme.typo.size-sm;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+    }
+}
+
+component AboutPane {
+    VerticalLayout {
+        spacing: Theme.spacing.md;
+
+        SectionTitle {
+            title: "关于";
+            subtitle: "应用版本、配置位置和运行日志。";
+        }
+
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-md;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border;
+            height: 172px;
+
+            VerticalLayout {
+                padding: Theme.spacing.md;
+                spacing: Theme.spacing.sm;
+
+                Text {
+                    text: "ArtForge";
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-lg;
+                    font-weight: Theme.typo.weight-bold;
+                }
+
+                AboutRow { label: "版本"; value: "v0.1.0 · MVP"; }
+                AboutRow { label: "配置文件"; value: AppState.config-path; }
+                AboutRow { label: "运行日志"; value: AppState.runtime-log-path; }
+            }
+        }
+
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-md;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border;
+            height: 78px;
+
+            HorizontalLayout {
+                padding: Theme.spacing.md;
+                spacing: Theme.spacing.sm;
+                alignment: start;
+
+                Button {
+                    text: "刷新运行日志";
+                    clicked => { AppState.refresh-runtime-log(); }
+                }
+
+                Button {
+                    text: "清空运行日志";
+                    clicked => { AppState.clear-runtime-log(); }
+                }
+
+                Text {
+                    text: "日志开关可在运行日志页面调整。";
+                    color: Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+export component SettingsPage {
+    property <length> page-pad-x: Theme.spacing.xxl;
+    property <length> page-pad-y: Theme.spacing.xxl;
+    property <length> nav-w: 220px;
+    property <length> gap: Theme.spacing.xl;
+    property <length> min-content-w: 760px;
+    property <length> max-content-w: 980px;
+    property <length> shell-w: min(nav-w + gap + max-content-w, max(nav-w + gap + min-content-w, root.width - 2 * page-pad-x));
+    property <length> content-w: shell-w - nav-w - gap;
+    property <length> content-h: max(520px, root.height - 2 * page-pad-y);
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: Theme.palette.bg;
+
+        Rectangle {
+            x: root.page-pad-x;
+            y: root.page-pad-y;
+            width: root.nav-w;
+            height: root.content-h;
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-md;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border;
+
+            VerticalLayout {
+                padding: Theme.spacing.md;
+                spacing: Theme.spacing.sm;
+
+                    Text {
+                        text: "设置";
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: 22px;
+                        font-weight: Theme.typo.weight-bold;
+                    }
+
+                    SettingsTab {
+                        id: "basic";
+                        title: "基础设置";
+                        subtitle: "主题、字体、目录";
+                    }
+
+                    SettingsTab {
+                        id: "providers";
+                        title: "供应商设置";
+                        subtitle: "接口、模型、默认项";
+                    }
+
+                    SettingsTab {
+                        id: "about";
+                        title: "关于";
+                        subtitle: "版本与配置位置";
+                    }
+
+                    Rectangle { vertical-stretch: 1; }
+                }
+            }
+
+        Rectangle {
+            x: root.page-pad-x + root.nav-w + root.gap;
+            y: root.page-pad-y;
+            width: root.content-w;
+            height: root.content-h;
+            clip: true;
+
+            Flickable {
+                width: parent.width;
+                height: parent.height;
+                viewport-height: content.preferred-height;
+
+                content := VerticalLayout {
+                    width: parent.width;
+                    spacing: Theme.spacing.lg;
+
+                        if AppState.settings-section == "basic": BasicSettingsPane {
+                            horizontal-stretch: 1;
+                        }
+
+                        if AppState.settings-section == "providers": ProviderSettingsPane {
+                            horizontal-stretch: 1;
+                        }
+
+                        if AppState.settings-section == "about": AboutPane {
+                            horizontal-stretch: 1;
+                        }
+
+                        Rectangle { height: Theme.spacing.xxl; }
+                    }
+                }
+            }
+
+        // 编辑对话框
+        if AppState.edit-dialog-open: Rectangle {
+            background: #00000088;
+            TouchArea {}
+
+            Rectangle {
+                width: 480px;
+                height: 720px;
+                x: parent.width / 2 - 240px;
+                y: parent.height / 2 - 360px;
+                background: Theme.palette.bg-elevated;
+                border-radius: Theme.shape.radius-lg;
+                border-width: 1px;
+                border-color: Theme.palette.border;
+
+                VerticalLayout {
+                    padding: Theme.spacing.lg;
+                    spacing: Theme.spacing.md;
+
+                    Text {
+                        text: "编辑 Provider 实例";
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-lg;
+                        font-weight: Theme.typo.weight-bold;
+                    }
+
+                    InputField {
+                        label: "实例名称";
+                        placeholder: "例如：TokenHub";
+                        value <=> AppState.add-name;
+                    }
+
+                    InputField {
+                        label: "API 端点";
+                        placeholder: "https://api.openai.com/v1";
+                        value <=> AppState.add-endpoint;
+                        hint: "支持 OpenAI / 中转站";
+                    }
+
+                    InputField {
+                        label: "API Key";
+                        placeholder: "sk-...";
+                        secret: false;
+                        value <=> AppState.add-api-key;
+                        hint: "直接保存到 app_config.toml，编辑节点时会回显";
+                    }
+
+                    NodeKindSelector {}
+
+                    ApiStyleSelector {}
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing.sm;
+
+                        if AppState.add-node-kind != "analysis": ModelListInput {
+                            label: "生图模型";
+                            placeholder: "gpt-image-1\nimagen-4.0-generate-preview";
+                            value <=> AppState.add-generation-model;
+                            hint: "每行一个，第一行默认";
+                            horizontal-stretch: 1;
+                        }
+
+                        if AppState.add-node-kind != "generation": ModelListInput {
+                            label: "推理模型";
+                            placeholder: "gpt-5.5\ngpt-4o-mini";
+                            value <=> AppState.add-analysis-model;
+                            hint: "每行一个，第一行默认";
+                            horizontal-stretch: 1;
+                        }
+                    }
+
+                    if AppState.add-error != "": Rectangle {
+                        background: #ff4d4f22;
+                        border-radius: Theme.shape.radius-sm;
+                        border-width: 1px;
+                        border-color: Theme.palette.error;
+                        height: 32px;
+
+                        HorizontalLayout {
+                            padding-left: Theme.spacing.sm;
+                            padding-right: Theme.spacing.sm;
+
+                            Text {
+                                text: "✗ " + AppState.add-error;
+                                color: Theme.palette.error;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-sm;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    Rectangle { vertical-stretch: 1; }
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing.sm;
+                        alignment: end;
+
+                        Button {
+                            text: "取消";
+                            clicked => { AppState.edit-dialog-open = false; }
+                        }
+
+                        Button {
+                            text: "保存更新";
+                            primary: true;
+                            clicked => { AppState.submit-add-openai(); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 模态对话框
+        if AppState.add-dialog-open: Rectangle {
+            background: #00000088;
+
+            // 拦截背景点击
+            TouchArea {}
+
+            Rectangle {
+                width: 480px;
+                height: 740px;
+                x: parent.width / 2 - 240px;
+                y: parent.height / 2 - 370px;
+                background: Theme.palette.bg-elevated;
+                border-radius: Theme.shape.radius-lg;
+                border-width: 1px;
+                border-color: Theme.palette.border;
+
+                VerticalLayout {
+                    padding: Theme.spacing.lg;
+                    spacing: Theme.spacing.md;
+
+                    Text {
+                        text: "新增 Provider 实例";
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-lg;
+                        font-weight: Theme.typo.weight-bold;
+                    }
+
+                    InputField {
+                        label: "实例名称";
+                        placeholder: "例如：TokenHub";
+                        value <=> AppState.add-name;
+                    }
+
+                    InputField {
+                        label: "API 端点";
+                        placeholder: "https://api.openai.com/v1";
+                        value <=> AppState.add-endpoint;
+                        hint: "支持 OpenAI / 中转站，如 https://api.tokenhub.host/v1";
+                    }
+
+                    InputField {
+                        label: "API Key";
+                        placeholder: "sk-...";
+                        secret: false;
+                        value <=> AppState.add-api-key;
+                        hint: "直接保存到 app_config.toml，编辑节点时会回显";
+                    }
+
+                    NodeKindSelector {}
+
+                    ApiStyleSelector {}
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing.sm;
+
+                        if AppState.add-node-kind != "analysis": ModelListInput {
+                            label: "生图模型";
+                            placeholder: "gpt-image-1\nimagen-4.0-generate-preview";
+                            value <=> AppState.add-generation-model;
+                            hint: "每行一个，第一行默认";
+                            horizontal-stretch: 1;
+                        }
+
+                        if AppState.add-node-kind != "generation": ModelListInput {
+                            label: "推理模型";
+                            placeholder: "gpt-5.5\ngpt-4o-mini";
+                            value <=> AppState.add-analysis-model;
+                            hint: "每行一个，第一行默认";
+                            horizontal-stretch: 1;
+                        }
+                    }
+
+                    if AppState.add-error != "": Rectangle {
+                        background: #ff4d4f22;
+                        border-radius: Theme.shape.radius-sm;
+                        border-width: 1px;
+                        border-color: Theme.palette.error;
+                        height: 32px;
+
+                        HorizontalLayout {
+                            padding-left: Theme.spacing.sm;
+                            padding-right: Theme.spacing.sm;
+
+                            Text {
+                                text: "✗ " + AppState.add-error;
+                                color: Theme.palette.error;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-sm;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    Rectangle { vertical-stretch: 1; }
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing.sm;
+                        alignment: end;
+
+                        Button {
+                            text: "取消";
+                            clicked => { AppState.close-add-dialog(); }
+                        }
+
+                        Button {
+                            text: "保存并测试";
+                            primary: true;
+                            clicked => { AppState.submit-add-openai(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

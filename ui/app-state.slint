@@ -1,0 +1,791 @@
+// ArtAIT 应用状态 global。
+// Rust 端推送、UI 端订阅。
+
+import { Theme } from "theme.slint";
+
+export struct FeatureItem {
+    id: string,
+    name: string,
+    enabled: bool,
+    visible: bool,
+}
+
+export struct ProviderInfo {
+    has-provider: bool,
+    instance-name: string,
+    model: string,
+}
+
+export struct ProviderInstanceView {
+    id: string,
+    name: string,
+    family: string,
+    scopes: string,
+    endpoint: string,
+    models: string,
+    api-style: string,
+    has-secret: bool,
+    show-in-main-ui: bool,
+    has-generation-scope: bool,
+    has-analysis-scope: bool,
+    is-default-generation: bool,
+    is-default-analysis: bool,
+}
+
+export struct TaskItem {
+    id: string,
+    label: string,
+    status: string,
+    progress: float,
+    last-log: string,
+    error: string,
+    kind: string,
+    output-path: string,
+    provider-name: string,
+    model: string,
+    mode: string,
+    prompt: string,
+    thumb: image,
+    has-thumb: bool,
+    has-provider-task-id: bool,
+    finished-at: string,
+    created-at: string,
+}
+
+export struct ScriptFileItem {
+    path: string,
+    name: string,
+}
+
+export struct ScriptBlockItem {
+    index: int,
+    title: string,
+    body: string,
+}
+
+export struct StoryboardPackageItem {
+    index: int,
+    label: string,
+    shot-count: int,
+    markdown: string,
+}
+
+export struct StoryboardShotItem {
+    index: int,
+    label: string,
+    markdown: string,
+    summary: string,
+}
+
+export struct StoryboardShotImageItem {
+    package-index: int,
+    shot-index: int,
+    path: string,
+    image: image,
+}
+
+export struct ScriptEpisodeItem {
+    id: string,
+    label: string,
+    scenes: string,  // JSON: [{id, label, prompt}]
+}
+
+export struct ScriptSceneSummaryItem {
+    id: string,
+    episode: string,
+    label: string,
+    characters: string,
+    action-preview: string,
+    dialogue-count: int,
+}
+
+export struct ScriptCharacterSummaryItem {
+    name: string,
+    role: string,
+    scene-count: int,
+    dialogue-count: int,
+    sample: string,
+}
+
+export struct AssetItem {
+    id: string,
+    path: string,
+    name: string,
+    domain: string,
+    is-video: bool,
+    selected: bool,
+    bytes: int,
+    prompt: string,
+    quality: string,
+    aspect-ratio: string,
+    model: string,
+    width: int,
+    height: int,
+    thumb: image,
+}
+
+export struct RefImageItem {
+    path: string,
+    name: string,
+    thumb: image,
+}
+
+export struct PromptTemplateGroup {
+    name: string,
+    files: [string],
+}
+
+export struct WorkspaceSelectOption {
+    id: string,
+    label: string,
+    hint: string,
+}
+
+export struct ProviderModelOption {
+    provider-id: string,
+    model: string,
+    label: string,
+    hint: string,
+}
+
+export struct OnboardingState {
+    step: int,
+    preset: string,
+    feature-flags: [bool],
+    input-dir: string,
+    output-dir: string,
+    prompt-dir: string,
+    theme-id: string,
+    legacy-detected: bool,
+    legacy-hint: string,
+    last-error: string,
+}
+
+export struct CharacterCardItem {
+    id: string,
+    name: string,
+    status: string,
+    view-count: int,
+    variation-count: int,
+    description: string,
+    tags: string,
+    has-thumb: bool,
+    thumb: image,
+}
+
+export struct SceneCardItem {
+    id: string,
+    name: string,
+    location: string,
+    time_of_day: string,
+    atmosphere: string,
+    viewpoint_count: int,
+    has_thumb: bool,
+    thumb: image,
+}
+
+export struct ProjectItem {
+    id: string,
+    name: string,
+    description: string,
+    created-at: string,
+    scene-count: int,
+    project-type: string,
+}
+
+export global AppState {
+    // 路由
+    in-out property <string> current-page: "welcome";
+    in-out property <string> current-theme-id: "dark";
+    in-out property <bool> sidebar-collapsed: false;
+
+    // 工作台模式：art=美术创作, film=影视创作
+    in-out property <string> workspace-mode: "art";
+
+    // 是否处于引导模式（true 时主路由被隐藏）
+    in-out property <bool> in-onboarding: false;
+
+    // 引导状态
+    in-out property <OnboardingState> onboarding: {
+        step: 1,
+        preset: "general",
+        feature-flags: [true, true, true, true, true, true, false, false, false, false, false],
+        input-dir: "",
+        output-dir: "",
+        prompt-dir: "",
+        theme-id: "dark",
+        legacy-detected: false,
+        legacy-hint: "",
+        last-error: "",
+    };
+
+    // 功能开关 → 侧栏
+    in-out property <[FeatureItem]> features: [];
+
+    // provider 信息（顶栏）
+    in-out property <ProviderInfo> generation: {
+        has-provider: false,
+        instance-name: "未配置",
+        model: "—",
+    };
+    in-out property <ProviderInfo> analysis: {
+        has-provider: false,
+        instance-name: "未配置",
+        model: "—",
+    };
+
+    // 项目
+    in-out property <string> current-project-id: "";
+    in-out property <string> current-project-name: "";
+    in-out property <bool> has-project: false;
+    in-out property <[ProjectItem]> projects: [];
+    callback open-project(string);           // 打开已有项目
+    callback open-create-project();          // 打开创建项目页
+    callback create-project(string, string, string, string); // name, description, path, project_type
+    callback close-project();                // 回到通配模式
+    callback navigate-to-project();          // 导航到当前项目
+
+    // provider 列表（设置页）
+    in-out property <[ProviderInstanceView]> providers: [];
+
+    // 设置页
+    in-out property <string> settings-section: "basic";
+    in-out property <string> settings-theme-id: "dark";
+    in-out property <string> settings-font-family: "Sarasa UI SC";
+    in-out property <int> settings-font-size: 14;
+    in-out property <string> settings-input-dir: "";
+    in-out property <string> settings-output-dir: "";
+    in-out property <string> settings-prompt-dir: "";
+    in-out property <string> default-project-path: "";
+    in-out property <string> settings-upload-api-key: "";
+    in-out property <string> settings-upload-api-url: "";
+    in-out property <[string]> settings-font-list: [];
+
+    // 添加/编辑 provider 对话框
+    in-out property <bool> add-dialog-open: false;
+    in-out property <bool> edit-dialog-open: false;
+    in-out property <string> edit-instance-id: "";
+    in-out property <string> add-name: "OpenAI 兼容";
+    in-out property <string> add-endpoint: "https://api.openai.com/v1";
+    in-out property <string> add-api-key: "";
+    in-out property <string> add-node-kind: "both";
+    in-out property <string> add-api-style: "newapi";
+    // 每行一个模型，第一行作为默认模型。
+    in-out property <string> add-generation-model: "gpt-image-1";
+    in-out property <string> add-analysis-model: "gpt-4o-mini";
+    in-out property <string> add-error: "";
+
+    // 任务列表（顶栏 badge + 任务面板）
+    in-out property <[TaskItem]> tasks: [];
+    in-out property <string> tasks-filter: "all";
+    // 最近一次已完成任务的状态："" | "success" | "failed"
+    in-out property <string> ws-last-task-status: "";
+    in-out property <bool> request-list-open: false;
+    in-out property <string> request-list-mode: "";
+    in-out property <int> request-list-count-total: 0;
+    in-out property <int> request-list-count-running: 0;
+    in-out property <int> request-list-count-completed: 0;
+    in-out property <int> request-list-count-failed: 0;
+    in-out property <int> tasks-count-running: 0;
+    in-out property <int> tasks-count-completed: 0;
+    in-out property <int> tasks-count-failed: 0;
+    in-out property <int> tasks-count-prompt-opt: 0;
+    in-out property <int> tasks-count-prompt-opt-running: 0;
+    in-out property <int> tasks-count-prompt-opt-completed: 0;
+    in-out property <int> tasks-count-prompt-opt-failed: 0;
+
+    // 创作工作台共享状态
+    in-out property <string> ws-prompt: "";
+    in-out property <bool> prompt-history-open: false;
+    in-out property <[string]> prompt-history: [];
+    in-out property <string> ws-negative: "";
+    in-out property <string> ws-aspect: "1:1";
+    in-out property <string> ws-quality: "2K";
+    in-out property <int> ws-count: 1;
+    in-out property <string> ws-asset-purpose: "";
+    in-out property <string> ws-color-mood: "";
+    in-out property <string> ws-game-view: "";
+    in-out property <string> ws-weather: "";
+    in-out property <string> ws-time-of-day: "";
+    in-out property <string> ws-lighting: "";
+    in-out property <bool> ws-advanced-open: false;
+    in-out property <bool> ws-prompt-preview-open: false;
+    in-out property <string> ws-final-prompt-preview: "";
+    in-out property <string> ws-open-select: "";
+    in-out property <[WorkspaceSelectOption]> ws-quality-options: [
+        { id: "1K", label: "1K", hint: "标准" },
+        { id: "2K", label: "2K", hint: "高清" },
+        { id: "4K", label: "4K", hint: "超清" },
+    ];
+    in-out property <[WorkspaceSelectOption]> ws-aspect-options: [
+        { id: "1:1", label: "1:1", hint: "方图" },
+        { id: "16:9", label: "16:9", hint: "横图" },
+        { id: "9:16", label: "9:16", hint: "竖图" },
+    ];
+    in-out property <[WorkspaceSelectOption]> ws-count-options: [
+        { id: "1", label: "1张", hint: "单张" },
+        { id: "2", label: "2张", hint: "两张" },
+        { id: "4", label: "4张", hint: "四张" },
+    ];
+    in-out property <[WorkspaceSelectOption]> ws-scene-purpose-options: [
+        { id: "", label: "自由创作", hint: "" },
+        { id: "scene_concept", label: "场景概念图", hint: "探索" },
+        { id: "tileset", label: "TileSet", hint: "地块" },
+        { id: "level_design_reference", label: "地编参考", hint: "布局" },
+        { id: "promo_art", label: "宣传图", hint: "营销" },
+        { id: "loading_art", label: "Loading图", hint: "载入" },
+        { id: "mini_map", label: "小地图", hint: "俯视" },
+        { id: "building_kit", label: "建筑套件", hint: "模块" },
+    ];
+    in-out property <[WorkspaceSelectOption]> ws-character-purpose-options: [
+        { id: "", label: "自由创作", hint: "" },
+        { id: "character_portrait", label: "角色立绘", hint: "立绘" },
+        { id: "character_turnaround", label: "三视图", hint: "设定" },
+        { id: "eight_direction", label: "8方向", hint: "动作" },
+        { id: "sprite_sheet", label: "SpriteSheet", hint: "帧" },
+        { id: "spine_parts", label: "Spine拆件", hint: "拆件" },
+        { id: "npc_avatar", label: "NPC头像", hint: "头像" },
+        { id: "character_poster", label: "宣传海报", hint: "海报" },
+    ];
+    in-out property <[WorkspaceSelectOption]> ws-effect-purpose-options: [
+        { id: "", label: "自由创作", hint: "" },
+        { id: "skill_effect", label: "技能特效", hint: "技能" },
+        { id: "buff_effect", label: "Buff特效", hint: "状态" },
+        { id: "explosion", label: "爆炸", hint: "冲击" },
+        { id: "scene_effect", label: "场景特效", hint: "环境" },
+        { id: "ui_effect", label: "UI特效", hint: "反馈" },
+        { id: "weapon_trail", label: "武器拖尾", hint: "轨迹" },
+    ];
+    in-out property <[WorkspaceSelectOption]> ws-ui-purpose-options: [
+        { id: "", label: "自由创作", hint: "" },
+        { id: "hud", label: "HUD", hint: "战斗" },
+        { id: "main_menu", label: "主界面", hint: "入口" },
+        { id: "inventory", label: "背包", hint: "物品" },
+        { id: "shop", label: "商城", hint: "购买" },
+        { id: "icon", label: "Icon", hint: "图标" },
+        { id: "loading_ui", label: "Loading界面", hint: "载入" },
+        { id: "dialog", label: "弹窗", hint: "模态" },
+    ];
+    in-out property <[WorkspaceSelectOption]> ws-color-mood-options: [
+        { id: "", label: "自由风格", hint: "" },
+        { id: "warm_healing", label: "温暖治愈", hint: "暖" },
+        { id: "cold_oppressive", label: "冷峻压抑", hint: "冷" },
+        { id: "high_saturation", label: "高饱和", hint: "艳" },
+        { id: "low_saturation", label: "低饱和", hint: "淡" },
+        { id: "dark_fantasy", label: "暗黑风", hint: "暗" },
+        { id: "cyberpunk", label: "赛博朋克", hint: "霓虹" },
+        { id: "japanese_fantasy", label: "日系幻想", hint: "幻想" },
+        { id: "ghibli_like", label: "吉卜力风", hint: "绘本" },
+    ];
+    in-out property <[WorkspaceSelectOption]> ws-game-view-options: [
+        { id: "", label: "自由视角", hint: "" },
+        { id: "top_down", label: "Top Down", hint: "俯视" },
+        { id: "2_5d", label: "2.5D", hint: "斜视" },
+        { id: "isometric", label: "Isometric", hint: "等距" },
+        { id: "side_view", label: "Side View", hint: "横版" },
+        { id: "third_person", label: "Third Person", hint: "三人称" },
+        { id: "first_person", label: "First Person", hint: "一人称" },
+        { id: "orthographic", label: "Orthographic", hint: "正交" },
+    ];
+    in-out property <[WorkspaceSelectOption]> ws-weather-options: [
+        { id: "", label: "自然天气", hint: "" },
+        { id: "sunny", label: "晴天", hint: "晴" },
+        { id: "cloudy", label: "阴天", hint: "阴" },
+        { id: "rainy", label: "雨天", hint: "雨" },
+        { id: "storm", label: "暴风雨", hint: "暴" },
+        { id: "snowy", label: "雪天", hint: "雪" },
+        { id: "foggy", label: "雾天", hint: "雾" },
+        { id: "sandstorm", label: "沙尘", hint: "尘" },
+    ];
+    in-out property <[WorkspaceSelectOption]> ws-time-of-day-options: [
+        { id: "", label: "自然时间", hint: "" },
+        { id: "dawn", label: "清晨", hint: "晨" },
+        { id: "noon", label: "正午", hint: "昼" },
+        { id: "dusk", label: "黄昏", hint: "昏" },
+        { id: "blue_hour", label: "蓝调时刻", hint: "蓝" },
+        { id: "night", label: "深夜", hint: "夜" },
+    ];
+    in-out property <[WorkspaceSelectOption]> ws-lighting-options: [
+        { id: "", label: "自然光照", hint: "" },
+        { id: "soft_natural", label: "柔和自然光", hint: "自然" },
+        { id: "cinematic", label: "电影感", hint: "电影" },
+        { id: "dream_glow", label: "梦幻发光", hint: "发光" },
+        { id: "high_contrast", label: "高对比", hint: "对比" },
+        { id: "volumetric", label: "体积光", hint: "光束" },
+        { id: "neon", label: "霓虹灯", hint: "霓虹" },
+    ];
+    in-out property <string> ws-generation-provider-id: "";
+    in-out property <string> ws-generation-model: "";
+    // 视频工作台状态
+    in-out property <string> ws-video-resolution: "720p";
+    in-out property <int> ws-video-duration: 5;
+    in-out property <bool> ws-video-enable-audio: false;
+    in-out property <[WorkspaceSelectOption]> ws-video-resolution-options: [
+        { id: "480p", label: "480p", hint: "标准" },
+        { id: "720p", label: "720p", hint: "高清" },
+        { id: "1080p", label: "1080p", hint: "超清" },
+    ];
+    in-out property <[WorkspaceSelectOption]> ws-generation-provider-options: [];
+    in-out property <[ProviderModelOption]> ws-generation-model-options: [];
+    in-out property <string> ws-analysis-provider-id: "";
+    in-out property <string> ws-analysis-model: "";
+    in-out property <[WorkspaceSelectOption]> ws-analysis-provider-options: [];
+    in-out property <[ProviderModelOption]> ws-analysis-model-options: [];
+    in-out property <bool> ws-skip-existing: false;
+    in-out property <string> ws-last-output: "";
+    in-out property <[RefImageItem]> ws-ref-images: [];
+    in-out property <bool> ws-show-templates: false;
+    in-out property <bool> ws-drop-highlight: false;
+    in-out property <[string]> ws-template-files: [];
+    in-out property <[PromptTemplateGroup]> ws-template-groups: [];
+    in-out property <string> ws-template-category: "默认";
+    in-out property <string> ws-template-active-category: "默认";
+    in-out property <string> ws-template-name: "";
+    in-out property <string> ws-template-file: "";
+    in-out property <bool> ws-prompt-optimizing: false;
+    in-out property <string> ws-prompt-opt-title: "";
+    in-out property <string> ws-prompt-opt-summary: "";
+    in-out property <string> ws-prompt-opt-changes: "";
+    in-out property <bool> prompt-template-dialog-open: false;
+    in-out property <bool> prompt-template-editing: false;
+    in-out property <string> prompt-template-mode: "manual"; // "manual" | "reverse"
+    in-out property <string> prompt-template-original-file: "";
+    in-out property <string> prompt-template-title: "创建提示词";
+    in-out property <string> prompt-template-name: "";
+    in-out property <string> prompt-template-category: "默认";
+    in-out property <bool> prompt-template-show-categories: false;
+    in-out property <string> prompt-template-format: "json";
+    in-out property <string> prompt-template-content: "";
+    in-out property <string> prompt-template-negative: "";
+    in-out property <string> prompt-template-error: "";
+
+    // 图库（按 domain 过滤后的视图）
+    in-out property <[AssetItem]> assets-all: [];
+    in-out property <[AssetItem]> assets-scene: [];
+    in-out property <[AssetItem]> assets-character: [];
+    in-out property <[AssetItem]> assets-ui: [];
+    in-out property <[AssetItem]> assets-effect: [];
+    in-out property <[AssetItem]> assets-storyboard: [];
+    in-out property <int> gallery-generating-count: 0;
+    in-out property <int> gallery-generating-scene-count: 0;
+    in-out property <int> gallery-generating-character-count: 0;
+    in-out property <int> gallery-generating-ui-count: 0;
+    in-out property <int> gallery-generating-effect-count: 0;
+    in-out property <int> gallery-generating-animation-scene-count: 0;
+    in-out property <int> gallery-generating-animation-character-count: 0;
+    in-out property <int> gallery-generating-character-turnaround-count: 0;
+    in-out property <int> gallery-generating-video-count: 0;
+    in-out property <string> turnaround-source-path: "";
+    in-out property <string> browser-tab: "all";
+
+    // 角色库
+    in-out property <[CharacterCardItem]> character-library-items: [];
+    in-out property <string> character-library-search: "";
+    in-out property <string> character-library-selected-id: "";
+    in-out property <string> character-library-detail-name: "";
+    in-out property <string> character-library-detail-status: "";
+    in-out property <string> character-library-detail-desc: "";
+    in-out property <string> character-library-detail-tags: "";
+    in-out property <int> character-library-detail-view-count: 0;
+    in-out property <int> character-library-detail-variation-count: 0;
+    in-out property <image> character-library-detail-thumb;
+    in-out property <bool> character-library-detail-visible: false;
+
+    // 角色编辑表单
+    in-out property <bool> character-library-editing: false;
+    in-out property <string> char-edit-name: "";
+    in-out property <string> char-edit-gender: "";
+    in-out property <string> char-edit-age: "";
+    in-out property <string> char-edit-role: "";
+    in-out property <string> char-edit-personality: "";
+    in-out property <string> char-edit-appearance: "";
+    in-out property <string> char-edit-visual-en: "";
+    in-out property <string> char-edit-visual-zh: "";
+    in-out property <string> char-edit-tags: "";
+    // 6层锚点编辑
+    in-out property <string> anchor-1-face: "";
+    in-out property <string> anchor-1-jaw: "";
+    in-out property <string> anchor-1-cheek: "";
+    in-out property <string> anchor-2-eye: "";
+    in-out property <string> anchor-2-eye-detail: "";
+    in-out property <string> anchor-2-nose: "";
+    in-out property <string> anchor-2-lip: "";
+    in-out property <string> anchor-3-marks: "";
+    in-out property <string> anchor-4-iris: "";
+    in-out property <string> anchor-4-hair: "";
+    in-out property <string> anchor-4-skin: "";
+    in-out property <string> anchor-4-lips: "";
+    in-out property <string> anchor-5-texture: "";
+    in-out property <string> anchor-6-style: "";
+    in-out property <string> anchor-6-hairline: "";
+
+    callback character-library-search-changed(string);
+    callback character-library-select(string);
+    callback character-library-create();
+    callback character-library-delete(string);
+    callback character-library-generate(string);
+    callback character-library-save();
+
+    // 场景库
+    in-out property <[SceneCardItem]> scene-library-items: [];
+    in-out property <string> scene-library-selected-id: "";
+    callback scene-library-create();
+    callback scene-library-select(string);
+
+    // 图片预览
+    in-out property <bool> preview-open: false;
+    in-out property <string> preview-path: "";
+    in-out property <string> preview-name: "";
+    in-out property <image> preview-image;
+    in-out property <string> preview-info: "";
+    in-out property <string> preview-prompt: "";
+    in-out property <string> preview-quality: "";
+    in-out property <string> preview-aspect-ratio: "";
+    in-out property <string> preview-model: "";
+    in-out property <int> preview-width: 0;
+    in-out property <int> preview-height: 0;
+    in-out property <int> preview-bytes: 0;
+    in-out property <string> preview-domain: "";
+    in-out property <string> preview-director-summary: "";
+
+    // 图库元信息
+    in-out property <bool> asset-meta-open: false;
+    in-out property <string> asset-meta-path: "";
+    in-out property <string> asset-meta-name: "";
+    in-out property <string> asset-meta-domain: "";
+    in-out property <string> asset-meta-prompt: "";
+    in-out property <string> asset-meta-quality: "";
+    in-out property <string> asset-meta-aspect-ratio: "";
+    in-out property <string> asset-meta-model: "";
+    in-out property <int> asset-meta-width: 0;
+    in-out property <int> asset-meta-height: 0;
+    in-out property <int> asset-meta-bytes: 0;
+    in-out property <string> asset-meta-director-summary: "";
+
+    callback preview-show(string, string);             // path, name
+    callback preview-close();
+    callback open-asset-metadata(string);              // path
+    callback close-app();
+    callback asset-clicked(string, bool);              // path, additive selection
+    callback asset-open-preview(string, string);        // path, name
+    callback generate-character-turnaround-from-asset(string); // path
+
+    // 剧本页状态
+    in-out property <bool> script-generate-dialog-open: false;
+    in-out property <bool> script-import-dialog-open: false;
+    in-out property <bool> script-story-ready: false;
+    in-out property <string> script-generating-step: "";  // "" | "story" | "format"
+    in-out property <string> script-theme: "";
+    in-out property <string> script-mode: "create";
+    in-out property <string> script-parse-status: "idle";
+    in-out property <string> script-parse-summary: "";
+    in-out property <int> script-episode-count: 0;
+    in-out property <int> script-parsed-scene-count: 0;
+    in-out property <int> script-character-count: 0;
+    in-out property <int> script-dialogue-count: 0;
+    in-out property <[string]> script-docs: [];
+    in-out property <[ScriptFileItem]> script-files: [];
+    in-out property <string> script-selected: "";
+    in-out property <string> script-content: "";
+    in-out property <string> script-content-plain: "";
+    in-out property <string> script-view-mode: "preview";
+    in-out property <[ScriptBlockItem]> script-blocks: [];
+    in-out property <[ScriptSceneSummaryItem]> script-scenes: [];
+    in-out property <[ScriptCharacterSummaryItem]> script-characters: [];
+    in-out property <[StoryboardPackageItem]> script-packages: [];
+    in-out property <string> script-language: "中文";
+    in-out property <string> script-prompt-language: "中文";
+    in-out property <string> script-scene-count: "auto";
+    in-out property <string> script-shot-count: "auto";
+    in-out property <string> script-video-ratio: "16:9";
+    // InlineSelect 选项（纯字符串，紧凑显示）
+    in-out property <[string]> script-language-opts: ["中文", "English", "日本語"];
+    in-out property <[string]> script-prompt-language-opts: ["中文", "English"];
+    in-out property <[string]> script-count-opts: ["自动", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "自定义"];
+    in-out property <[string]> script-video-ratio-opts: ["16:9", "9:16"];
+    in-out property <[WorkspaceSelectOption]> script-language-options: [
+        { id: "中文", label: "中文", hint: "简体中文" },
+        { id: "English", label: "English", hint: "English" },
+        { id: "日本語", label: "日本語", hint: "日本語" },
+    ];
+    in-out property <[WorkspaceSelectOption]> script-prompt-language-options: [
+        { id: "中文", label: "中文", hint: "中文" },
+        { id: "English", label: "English", hint: "English" },
+    ];
+    in-out property <[WorkspaceSelectOption]> script-count-options: [
+        { id: "auto", label: "自动", hint: "AI 决定" },
+        { id: "1", label: "1", hint: "" },
+        { id: "2", label: "2", hint: "" },
+        { id: "3", label: "3", hint: "" },
+        { id: "4", label: "4", hint: "" },
+        { id: "5", label: "5", hint: "" },
+        { id: "6", label: "6", hint: "" },
+        { id: "7", label: "7", hint: "" },
+        { id: "8", label: "8", hint: "" },
+        { id: "9", label: "9", hint: "" },
+        { id: "10", label: "10", hint: "" },
+        { id: "custom", label: "自定义", hint: "手动输入" },
+    ];
+    in-out property <int> script-custom-scene-count: 5;
+    in-out property <int> script-custom-shot-count: 5;
+    in-out property <[WorkspaceSelectOption]> script-video-ratio-options: [
+        { id: "16:9", label: "16:9", hint: "横屏" },
+        { id: "9:16", label: "9:16", hint: "竖屏" },
+    ];
+    // 中间栏：剧集结构
+    in-out property <[ScriptEpisodeItem]> script-episodes: [];
+    // 右侧栏：当前选中场景详情
+    in-out property <string> script-scene-detail-scene-id: "";
+    in-out property <string> script-scene-detail-title: "";
+    in-out property <string> script-scene-detail-prompt: "";
+    in-out property <string> script-scene-detail-cinematography: "";
+    in-out property <string> script-scene-detail-lip-sync: "";
+
+    callback script-add-doc();
+    callback script-remove-doc(int);
+    callback script-generate();
+    callback script-import-current();
+    callback script-load-format-example();
+    callback script-export-characters();
+    callback script-export-scenes();
+    callback script-run-stage(string);
+    callback script-save-current();
+    callback script-select(string);
+    callback script-open-dir();
+    callback script-refresh();
+    callback script-delete-file(string);                // 删除脚本文件
+    callback script-rename-file(string);                // 重命名脚本文件
+    callback script-send-to-storyboard(string);
+    callback script-split-packages();
+    callback script-send-package(int);
+
+    // 分镜板状态
+    in-out property <[StoryboardPackageItem]> sb-packages: [];
+    in-out property <int> sb-selected: 0;
+    in-out property <[StoryboardShotItem]> sb-shots: [];
+    in-out property <int> sb-selected-shot: 0;
+    in-out property <string> sb-prompt: "";
+    in-out property <string> sb-shot-prompt: "";
+    in-out property <string> sb-shot-note: "";
+    in-out property <string> sb-aspect: "16:9";
+    in-out property <string> sb-output: "";
+    in-out property <[StoryboardShotImageItem]> sb-shot-images: [];
+    in-out property <int> sb-generating-shot: -1;
+    in-out property <string> sb-current-shot-image-path: "";
+    in-out property <image> sb-current-shot-image;
+    in-out property <[RefImageItem]> sb-ref-images: [];
+    in-out property <bool> sb-drop-highlight: false;
+    in-out property <image> sb-output-image;
+
+    callback sb-select(int);
+    callback sb-select-shot(int);
+    callback sb-generate();
+    callback sb-add-reference-images();
+    callback sb-remove-reference-image(int);
+    callback sb-clear-reference-images();
+
+    // 状态栏
+    in-out property <string> status-text: "就绪";
+    in-out property <string> config-path: "";
+    in-out property <string> runtime-log-filter: "";
+    in-out property <string> runtime-log-content: "";
+    in-out property <string> runtime-log-path: "";
+    in-out property <bool> runtime-log-enabled: true;
+    in-out property <bool> runtime-debug-log-enabled: false;
+
+    // 回调
+    callback navigate(string);
+    callback switch-workspace-mode(string);
+    callback toggle-theme();
+    callback set-theme(string);
+    callback preview-theme(string);
+    callback preview-font(string);
+    callback load-system-fonts();
+    callback save-basic-settings();
+    callback reset-basic-settings();
+    callback pick-settings-dir(string);               // "input" | "output" | "prompt"
+    callback open-upload-url();                        // 在浏览器中打开图床上传地址
+    callback open-settings();
+    callback open-tasks();
+    callback show-request-list(string);
+    callback add-mock-instance();
+    callback open-add-dialog();
+    callback quick-add-provider(string);                 // 快速添加模板：预填表单并打开对话框
+    callback close-add-dialog();
+    callback submit-add-openai();
+    callback set-default-generation(string);
+    callback set-default-analysis(string);
+    callback set-provider-main-visible(string, bool);
+    callback fetch-provider-models(string);
+    callback apply-fetched-provider-models(string, string, string);
+    callback select-generation-provider(string);
+    callback select-generation-model(string);
+    callback select-workspace-quality(string);
+    callback select-analysis-provider(string);
+    callback select-analysis-model(string);
+    callback test-connection(string);
+    callback cancel-task(string);
+    callback cancel-active-task();
+    callback reacquire-task(string);
+    callback clear-tasks(string);
+    callback remove-task(string);
+    callback remove-instance(string);
+    callback edit-instance(string);                    // 编辑 provider 实例
+    callback generate-image(string, string, string, string, int);  // mode, prompt, aspect-ratio, quality, count
+    callback generate-video(string, string, string, int, bool);  // prompt, aspect-ratio, resolution, duration-secs, enable-audio
+    callback refresh-workspace-prompt-preview(string); // mode
+    callback clear-prompt-history();
+    callback add-reference-images();                   // 添加参考图
+    callback try-add-clipboard-reference-image();      // 尝试导入剪贴板参考图
+    callback remove-reference-image(int);              // 移除第 i 张参考图
+    callback clear-reference-images();                  // 清空所有参考图
+    callback save-prompt-template();                   // 保存当前提示词为模板
+    callback open-create-prompt-template();             // 打开创建提示词弹窗
+    callback open-edit-prompt-template();               // 打开编辑提示词弹窗
+    callback close-prompt-template-dialog();            // 关闭提示词弹窗
+    callback submit-prompt-template();                  // 保存提示词弹窗内容
+    callback analyze-prompt-template-images();          // 分析参考图并填入弹窗内容
+    callback load-prompt-template(string);             // 加载模板到提示词框
+    callback refresh-template-list();                   // 刷新模板列表
+    callback analyze-reference-images();                // 分析参考图生成提示词
+    callback optimize-prompt(string);                   // "text" | "image"
+    callback refresh-assets();                          // 重新扫描输出资产
+    callback open-output-dir(string);                   // 打开当前模式输出目录
+    callback add-output-to-reference(string);           // 将结果图加入参考图
+    callback open-asset(string);                       // path
+    callback reveal-asset(string);                     // path → explorer 选中
+    callback copy-asset-path(string);                  // 复制文件路径
+    callback start-asset-drag(string);                 // 拖拽文件到外部应用
+    callback asset-drag-finished(string);              // 系统拖拽结束后通知 UI 复位
+    callback delete-asset(string);                     // 由 confirm 之后真正调用
+    callback request-delete-asset(string);             // 弹确认
+    callback unmult-asset(string);                     // 去黑
+    callback remove-bg-asset(string);                  // 去背景
+    callback perfect-unmult-asset(string);             // 高级去黑
+    callback refresh-runtime-log();                    // 刷新运行日志
+    callback poll-runtime-log();                       // 页面内静默刷新运行日志
+    callback clear-runtime-log();                      // 清空运行日志文件
+    callback set-runtime-log-enabled(bool);             // 开关运行日志写入
+    callback set-runtime-debug-log-enabled(bool);       // 开关 debug 级操作日志
+    in-out property <string> active-asset-drag-path: "";
+
+    // 删除确认
+    in-out property <string> pending-delete-path: "";
+    in-out property <[string]> pending-delete-paths: [];
+
+    // 引导回调
+    callback onboarding-pick-preset(string);
+    callback onboarding-toggle-feature(int);
+    callback onboarding-pick-theme(string);
+    callback onboarding-use-legacy-paths();
+    callback onboarding-pick-dir(string);   // "input" | "output" | "prompt"
+    callback onboarding-next();
+    callback onboarding-prev();
+    callback onboarding-finish();
+    callback onboarding-skip-provider();
+
+    // 侧边栏创作设置
+    in-out property <bool> sidebar-settings-open: false;
+    callback sidebar-collapse-changed(bool);
+    callback toggle-sidebar-feature-visibility(string);
+}

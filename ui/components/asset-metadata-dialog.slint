@@ -1,0 +1,299 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+import { Button } from "../components/button.slint";
+
+component InfoRow {
+    in property <string> label;
+    in property <string> value;
+
+    height: 30px;
+
+    HorizontalLayout {
+        spacing: 10px;
+
+        Text {
+            width: 72px;
+            text: root.label;
+            color: Theme.palette.fg-disabled;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            vertical-alignment: center;
+        }
+
+        Text {
+            horizontal-stretch: 1;
+            text: root.value == "" ? "-" : root.value;
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-sm;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+export component AssetMetadataDialog {
+    width: 100%;
+    height: 100%;
+
+    property <string> size-text: AppState.asset-meta-width > 0 && AppState.asset-meta-height > 0
+        ? (AppState.asset-meta-width + " x " + AppState.asset-meta-height)
+        : "-";
+    property <string> bytes-text: AppState.asset-meta-bytes > 0
+        ? (AppState.asset-meta-bytes / 1024 + " KB")
+        : "-";
+    property <string> domain-text: AppState.asset-meta-domain == "scene" ? "场景"
+        : AppState.asset-meta-domain == "character" ? "角色"
+        : AppState.asset-meta-domain == "ui" ? "UI"
+        : AppState.asset-meta-domain == "effect" ? "特效"
+        : AppState.asset-meta-domain == "animation_scene" ? "动画场景"
+        : AppState.asset-meta-domain == "animation_character" ? "动画角色"
+        : AppState.asset-meta-domain == "character_turnaround" ? "角色三视图"
+        : AppState.asset-meta-domain == "storyboard" ? "分镜"
+        : AppState.asset-meta-domain == "action_sequence" ? "动作序列"
+        : AppState.asset-meta-domain == "animation_script" ? "动画脚本"
+        : AppState.asset-meta-domain;
+
+    if AppState.asset-meta-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000088;
+
+        TouchArea {
+            clicked => { AppState.asset-meta-open = false; }
+        }
+
+        Rectangle {
+            width: min(680px, parent.width - 80px);
+            height: min(560px, parent.height - 80px);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-lg;
+            border-width: 1px;
+            border-color: Theme.palette.border;
+            clip: true;
+
+            VerticalLayout {
+                padding: Theme.spacing.lg;
+                spacing: Theme.spacing.md;
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.md;
+
+                    Rectangle {
+                        width: 38px;
+                        height: 38px;
+                        background: Theme.palette.bg-active;
+                        border-radius: 8px;
+
+                        Image {
+                            x: 9px;
+                            y: 9px;
+                            width: 20px;
+                            height: 20px;
+                            source: @image-url("../assets/icons/info.svg");
+                            colorize: Theme.palette.accent;
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 2px;
+                        horizontal-stretch: 1;
+
+                        Text {
+                            text: "元信息";
+                            color: Theme.palette.fg;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-md;
+                            font-weight: Theme.typo.weight-bold;
+                        }
+
+                        Text {
+                            text: AppState.asset-meta-name;
+                            color: Theme.palette.fg-muted;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                            overflow: elide;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 30px;
+                        height: 30px;
+                        background: close-touch.has-hover ? Theme.palette.bg-hover : transparent;
+                        border-radius: 6px;
+
+                        Image {
+                            x: 7px;
+                            y: 7px;
+                            width: 16px;
+                            height: 16px;
+                            source: @image-url("../assets/icons/close.svg");
+                            colorize: Theme.palette.fg-muted;
+                        }
+
+                        close-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { AppState.asset-meta-open = false; }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Theme.palette.border;
+                }
+
+                GridLayout {
+                    spacing: 8px;
+
+                    Row {
+                        InfoRow { label: "类型"; value: root.domain-text; }
+                        InfoRow { label: "尺寸"; value: root.size-text; }
+                    }
+
+                    Row {
+                        InfoRow { label: "品质"; value: AppState.asset-meta-quality; }
+                        InfoRow { label: "宽高比"; value: AppState.asset-meta-aspect-ratio; }
+                    }
+
+                    Row {
+                        InfoRow { label: "模型"; value: AppState.asset-meta-model; }
+                        InfoRow { label: "大小"; value: root.bytes-text; }
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Theme.palette.border;
+                }
+
+                Text {
+                    text: "导演控制";
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    font-weight: Theme.typo.weight-medium;
+                }
+
+                Rectangle {
+                    height: 42px;
+                    background: Theme.palette.bg;
+                    border-radius: Theme.shape.radius-sm;
+                    border-width: 1px;
+                    border-color: Theme.palette.border;
+
+                    Text {
+                        x: 12px;
+                        width: parent.width - 24px;
+                        height: parent.height;
+                        text: AppState.asset-meta-director-summary == "" ? "未记录导演控制" : AppState.asset-meta-director-summary;
+                        color: AppState.asset-meta-director-summary == "" ? Theme.palette.fg-disabled : Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-sm;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Theme.palette.border;
+                }
+
+                Text {
+                    text: "提示词";
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    font-weight: Theme.typo.weight-medium;
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: Theme.palette.bg;
+                    border-radius: Theme.shape.radius-md;
+                    border-width: 1px;
+                    border-color: Theme.palette.border;
+                    clip: true;
+
+                    Flickable {
+                        x: 12px;
+                        y: 10px;
+                        width: parent.width - 24px;
+                        height: parent.height - 20px;
+                        viewport-height: prompt-text.height;
+
+                        prompt-text := Text {
+                            width: parent.width;
+                            text: AppState.asset-meta-prompt == "" ? "未记录提示词" : AppState.asset-meta-prompt;
+                            color: AppState.asset-meta-prompt == "" ? Theme.palette.fg-disabled : Theme.palette.fg;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-sm;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 34px;
+                    background: Theme.palette.bg;
+                    border-radius: Theme.shape.radius-sm;
+                    border-width: 1px;
+                    border-color: Theme.palette.border;
+
+                    Text {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        height: parent.height;
+                        text: AppState.asset-meta-path;
+                        color: Theme.palette.fg-disabled;
+                        font-family: Theme.typo.family-mono;
+                        font-size: Theme.typo.size-xs;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.sm;
+                    alignment: end;
+
+                    Button {
+                        text: "使用提示词";
+                        primary: true;
+                        disabled: AppState.asset-meta-prompt == "";
+                        clicked => {
+                            AppState.ws-prompt = AppState.asset-meta-prompt;
+                            AppState.ws-quality = AppState.asset-meta-quality == "" ? AppState.ws-quality : AppState.asset-meta-quality;
+                            AppState.ws-aspect = AppState.asset-meta-aspect-ratio == "" ? AppState.ws-aspect : AppState.asset-meta-aspect-ratio;
+                            AppState.asset-meta-open = false;
+                            AppState.navigate(
+                                AppState.asset-meta-domain == "character" || AppState.asset-meta-domain == "animation_character" || AppState.asset-meta-domain == "character_turnaround"
+                                    ? "character"
+                                    : (AppState.asset-meta-domain == "ui"
+                                        ? "ui_concept"
+                                        : (AppState.asset-meta-domain == "effect"
+                                            ? "effect"
+                                            : (AppState.asset-meta-domain == "storyboard" ? "storyboard" : "scene")))
+                            );
+                        }
+                    }
+
+                    Button {
+                        text: "复制路径";
+                        clicked => { AppState.copy-asset-path(AppState.asset-meta-path); }
+                    }
+
+                    Button {
+                        text: "打开位置";
+                        clicked => { AppState.reveal-asset(AppState.asset-meta-path); }
+                    }
+
+                    Button { text: "关闭"; clicked => { AppState.asset-meta-open = false; } }
+                }
+            }
+        }
+    }
+}

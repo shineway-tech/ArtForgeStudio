@@ -1,0 +1,50 @@
+import { Theme } from "../theme.slint";
+import { AppState, RefImageItem } from "../app-state.slint";
+
+export component RefImageChip {
+    in property <RefImageItem> data;
+    in property <int> index;
+
+    width: 44px;
+    height: 52px;
+
+    Rectangle {
+        background: Theme.palette.bg;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.palette.border;
+        clip: true;
+
+        Image {
+            x: 3px;
+            y: 3px;
+            width: parent.width - 6px;
+            height: parent.height - 6px;
+            source: root.data.thumb;
+            image-fit: cover;
+        }
+
+        Rectangle {
+            x: parent.width - 17px;
+            y: 3px;
+            width: 14px;
+            height: 14px;
+            background: del-touch.has-hover ? Theme.palette.error : #000000aa;
+            border-radius: 7px;
+
+            Image {
+                width: 10px;
+                height: 10px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                source: @image-url("../assets/icons/close.svg");
+                colorize: #ffffff;
+            }
+
+            del-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { AppState.remove-reference-image(root.index); }
+            }
+        }
+    }
+}

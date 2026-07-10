@@ -1,0 +1,251 @@
+import { Theme } from "../theme.slint";
+import { AppState, AssetItem } from "../app-state.slint";
+import { AssetGrid } from "../components/asset-grid.slint";
+import { Button } from "../components/button.slint";
+
+component TabChip {
+    in property <string> id;
+    in property <string> label;
+    in property <int> count;
+
+    width: root.id == "all" ? 78px
+        : (root.id == "character" || root.id == "storyboard" ? 86px : 74px);
+    height: 28px;
+
+    Rectangle {
+        background: AppState.browser-tab == root.id
+            ? Theme.palette.accent
+            : (touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg);
+        border-radius: 7px;
+        border-width: AppState.browser-tab == root.id ? 0px : Theme.shape.border-width;
+        border-color: Theme.palette.border;
+        animate background, border-color { duration: 120ms; }
+
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 9px;
+            spacing: 6px;
+            alignment: space-between;
+
+            Text {
+                text: root.label;
+                color: AppState.browser-tab == root.id ? #ffffff : Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                font-weight: Theme.typo.weight-medium;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: root.count;
+                color: AppState.browser-tab == root.id ? #ffffffcc : Theme.palette.fg-disabled;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                vertical-alignment: center;
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { AppState.browser-tab = root.id; }
+        }
+    }
+}
+
+component StatPill {
+    in property <string> label;
+    in property <int> value;
+
+    height: 26px;
+
+    Rectangle {
+        background: Theme.palette.bg;
+        border-radius: Theme.shape.radius-sm;
+        border-width: Theme.shape.border-width;
+        border-color: Theme.palette.border;
+
+        HorizontalLayout {
+            padding-left: Theme.spacing.sm;
+            padding-right: Theme.spacing.sm;
+            spacing: 5px;
+
+            Text {
+                text: root.label;
+                color: Theme.palette.fg-disabled;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-xs;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: root.value;
+                color: Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                font-weight: Theme.typo.weight-medium;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+export component AssetBrowserPage {
+    width: 100%;
+    height: 100%;
+
+    property <[AssetItem]> current: AppState.browser-tab == "scene" ? AppState.assets-scene
+        : AppState.browser-tab == "character" ? AppState.assets-character
+        : AppState.browser-tab == "ui" ? AppState.assets-ui
+        : AppState.browser-tab == "effect" ? AppState.assets-effect
+        : AppState.browser-tab == "storyboard" ? AppState.assets-storyboard
+        : AppState.assets-all;
+    property <int> current-count: AppState.browser-tab == "scene" ? AppState.assets-scene.length
+        : AppState.browser-tab == "character" ? AppState.assets-character.length
+        : AppState.browser-tab == "ui" ? AppState.assets-ui.length
+        : AppState.browser-tab == "effect" ? AppState.assets-effect.length
+        : AppState.browser-tab == "storyboard" ? AppState.assets-storyboard.length
+        : AppState.assets-all.length;
+    property <int> grid-columns: max(2,
+        grid-shell.width > 2100px ? 9
+        : (grid-shell.width > 1920px ? 8
+            : (grid-shell.width > 1740px ? 8
+                : (grid-shell.width > 1560px ? 7
+                    : (grid-shell.width > 1360px ? 6
+                        : (grid-shell.width > 1160px ? 5
+                            : (grid-shell.width > 960px ? 5
+                                : (grid-shell.width > 760px ? 4
+                                    : (grid-shell.width > 560px ? 3 : 2)))))))));
+    property <length> grid-gap: 10px;
+    property <length> grid-cell: min(229px, max(157px, (grid-shell.width - (grid-columns - 1) * grid-gap) / grid-columns));
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: Theme.palette.bg;
+
+        VerticalLayout {
+            width: parent.width;
+            height: parent.height;
+            padding-left: Theme.spacing.lg;
+            padding-right: Theme.spacing.lg;
+            padding-top: Theme.spacing.md;
+            padding-bottom: Theme.spacing.md;
+            spacing: 10px;
+
+            Rectangle {
+                height: 48px;
+                background: Theme.palette.bg-elevated;
+                border-radius: Theme.shape.radius-lg;
+                border-width: Theme.shape.border-width;
+                border-color: Theme.palette.border;
+                clip: true;
+
+                HorizontalLayout {
+                    padding-left: 14px;
+                    padding-right: 10px;
+                    padding-top: 9px;
+                    padding-bottom: 9px;
+                    spacing: 8px;
+
+                    Text {
+                        text: "图库";
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-md;
+                        font-weight: Theme.typo.weight-bold;
+                        vertical-alignment: center;
+                    }
+
+                    StatPill { label: "当前"; value: current-count; }
+                    StatPill { label: "全部"; value: AppState.assets-all.length; }
+
+                    Rectangle {
+                        width: 1px;
+                        height: 24px;
+                        background: Theme.palette.border;
+                    }
+
+                    TabChip { id: "all"; label: "全部"; count: AppState.assets-all.length; }
+                    TabChip { id: "scene"; label: "场景"; count: AppState.assets-scene.length; }
+                    TabChip { id: "character"; label: "角色"; count: AppState.assets-character.length; }
+                    TabChip { id: "ui"; label: "UI"; count: AppState.assets-ui.length; }
+                    TabChip { id: "effect"; label: "特效"; count: AppState.assets-effect.length; }
+                    TabChip { id: "storyboard"; label: "分镜"; count: AppState.assets-storyboard.length; }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    Button {
+                        min-height: 28px;
+                        min-width: 72px;
+                        text: "打开目录";
+                        clicked => { AppState.open-output-dir(AppState.browser-tab); }
+                    }
+
+                    Button {
+                        min-height: 28px;
+                        min-width: 58px;
+                        text: "刷新";
+                        clicked => { AppState.refresh-assets(); }
+                    }
+                }
+            }
+
+            grid-shell := Rectangle {
+                vertical-stretch: 1;
+                background: Theme.palette.bg-elevated;
+                border-radius: Theme.shape.radius-lg;
+                border-width: Theme.shape.border-width;
+                border-color: Theme.palette.border;
+                clip: true;
+
+                if current-count == 0: Rectangle {
+                    background: Theme.palette.bg;
+                    border-radius: Theme.shape.radius-md;
+                    border-width: 1px;
+                    border-color: Theme.palette.border;
+                    width: min(420px, parent.width - 40px);
+                    height: 148px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 6px;
+
+                        Text {
+                            text: "此分类暂无结果";
+                            color: Theme.palette.fg-muted;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-md;
+                            font-weight: Theme.typo.weight-medium;
+                            horizontal-alignment: center;
+                        }
+
+                        Text {
+                            text: "去创作页生成素材，或刷新输出目录。";
+                            color: Theme.palette.fg-disabled;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-sm;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                if current-count > 0: Flickable {
+                    x: Theme.spacing.md;
+                    y: Theme.spacing.md;
+                    width: parent.width - 2 * Theme.spacing.md;
+                    height: parent.height - 2 * Theme.spacing.md;
+                    viewport-height: grid.height;
+
+                    grid := AssetGrid {
+                        items: root.current;
+                        columns: root.grid-columns;
+                        cell-size: root.grid-cell;
+                        gap: root.grid-gap;
+                    }
+                }
+            }
+        }
+    }
+}

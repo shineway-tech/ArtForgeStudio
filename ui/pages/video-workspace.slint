@@ -1,0 +1,308 @@
+import { Theme } from "../theme.slint";
+import { AppState, AssetItem } from "../app-state.slint";
+import { PromptBox } from "../components/prompt-box.slint";
+import { GenerateButton } from "../components/generate-button.slint";
+import { CancelGenerateButton } from "../components/cancel-generate-button.slint";
+import { WorkspaceDropdown } from "../components/workspace-dropdown.slint";
+import { WorkspaceGalleryPanel } from "../components/workspace-gallery-panel.slint";
+
+export component VideoWorkspacePage {
+    width: 100%;
+    height: 100%;
+
+    in property <string> title;
+    in property <string> hint;
+    in property <[AssetItem]> gallery;
+
+    property <int> current-generating-count: AppState.gallery-generating-video-count;
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: Theme.palette.bg;
+
+        Rectangle {
+            x: 14px;
+            y: 14px;
+            width: parent.width - 28px;
+            height: parent.height - 28px;
+
+            HorizontalLayout {
+                width: parent.width;
+                height: parent.height;
+                spacing: 14px;
+
+                // ===== 左：输入区 =====
+                Rectangle {
+                    width: 440px;
+                    vertical-stretch: 1;
+
+                    background: Theme.palette.bg-elevated;
+                    border-radius: 14px;
+                    border-width: 1px;
+                    border-color: Theme.palette.border;
+
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 10px;
+
+                        // 标题
+                        Text {
+                            text: root.title;
+                            color: Theme.palette.fg;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-md;
+                            font-weight: 700;
+                        }
+
+                        Text {
+                            text: root.hint;
+                            color: Theme.palette.fg-muted;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                            wrap: word-wrap;
+                        }
+
+                        // 项目上下文
+                        if AppState.has-project: HorizontalLayout {
+                            height: 28px;
+                            spacing: 6px;
+                            alignment: start;
+
+                            Rectangle {
+                                width: 6px;
+                                height: 6px;
+                                border-radius: 3px;
+                                background: Theme.palette.accent;
+                                y: (parent.height - self.height) / 2;
+                            }
+
+                            Text {
+                                text: "项目：" + AppState.current-project-name;
+                                color: Theme.palette.accent;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-xs;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        // 提示词输入
+                        Rectangle {
+                            vertical-stretch: 1;
+                            min-height: 360px;
+                            background: Theme.palette.bg;
+                            border-radius: 14px;
+                            border-width: 1px;
+                            border-color: Theme.palette.border;
+
+                            PromptBox {
+                                placeholder: "描述你想要生成的视频内容...\n例如：一只白色的狼在雪地中奔跑，电影感光影，4K 风格，摄像机跟随";
+                            }
+                        }
+
+                        // 参数行1：宽高比 + 分辨率
+                        HorizontalLayout {
+                            height: 40px;
+                            spacing: 8px;
+
+                            WorkspaceDropdown {
+                                horizontal-stretch: 1;
+                                id: "aspect";
+                                open-up: true;
+                                value: AppState.ws-aspect;
+                                selected-id: AppState.ws-aspect;
+                                options: AppState.ws-aspect-options;
+                                selected(option) => { AppState.ws-aspect = option; }
+                            }
+
+                            WorkspaceDropdown {
+                                horizontal-stretch: 1;
+                                id: "resolution";
+                                open-up: true;
+                                value: AppState.ws-video-resolution;
+                                selected-id: AppState.ws-video-resolution;
+                                options: AppState.ws-video-resolution-options;
+                                selected(option) => { AppState.ws-video-resolution = option; }
+                            }
+                        }
+
+                        // 参数行2：时长 + 音频
+                        HorizontalLayout {
+                            height: 40px;
+                            spacing: 8px;
+                            alignment: start;
+
+                            Rectangle {
+                                width: 140px;
+                                height: 36px;
+                                background: Theme.palette.bg;
+                                border-radius: 8px;
+                                border-width: 1px;
+                                border-color: Theme.palette.border-strong;
+
+                                HorizontalLayout {
+                                    padding: 0px;
+                                    spacing: 4px;
+                                    alignment: center;
+
+                                    Text {
+                                        text: "时长";
+                                        color: Theme.palette.fg-muted;
+                                        font-family: Theme.typo.family;
+                                        font-size: Theme.typo.size-xs;
+                                        vertical-alignment: center;
+                                    }
+
+                                    Rectangle {
+                                        width: 28px;
+                                        height: 28px;
+                                        background: dec-touch.has-hover ? Theme.palette.bg-hover : transparent;
+                                        border-radius: 6px;
+
+                                        Text {
+                                            text: "−";
+                                            color: Theme.palette.fg;
+                                            font-size: Theme.typo.size-md;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            width: parent.width;
+                                            height: parent.height;
+                                        }
+
+                                        dec-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                AppState.ws-video-duration = max(4, AppState.ws-video-duration - 1);
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        text: AppState.ws-video-duration + "s";
+                                        color: Theme.palette.fg;
+                                        font-family: Theme.typo.family;
+                                        font-size: Theme.typo.size-sm;
+                                        font-weight: 600;
+                                        vertical-alignment: center;
+                                        min-width: 30px;
+                                        horizontal-alignment: center;
+                                    }
+
+                                    Rectangle {
+                                        width: 28px;
+                                        height: 28px;
+                                        background: inc-touch.has-hover ? Theme.palette.bg-hover : transparent;
+                                        border-radius: 6px;
+
+                                        Text {
+                                            text: "+";
+                                            color: Theme.palette.fg;
+                                            font-size: Theme.typo.size-md;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            width: parent.width;
+                                            height: parent.height;
+                                        }
+
+                                        inc-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                AppState.ws-video-duration = min(15, AppState.ws-video-duration + 1);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 音频开关
+                    Rectangle {
+                        width: 80px;
+                        height: 36px;
+                        background: Theme.palette.bg;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: Theme.palette.border-strong;
+
+                                TouchArea {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        AppState.ws-video-enable-audio = !AppState.ws-video-enable-audio;
+                                    }
+                                }
+
+                        HorizontalLayout {
+                            padding: 8px;
+                            spacing: 4px;
+                            alignment: center;
+
+                            Text {
+                                text: AppState.ws-video-enable-audio ? "🔊" : "🔇";
+                                font-size: Theme.typo.size-sm;
+                                vertical-alignment: center;
+                            }
+
+                            Text {
+                                text: AppState.ws-video-enable-audio ? "音频" : "静音";
+                                color: Theme.palette.fg;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-xs;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                        }
+
+                        // 按钮行
+                        HorizontalLayout {
+                            height: 54px;
+                            spacing: 10px;
+
+                            GenerateButton {
+                                horizontal-stretch: 1;
+                                disabled: !AppState.generation.has-provider
+                                    || AppState.ws-prompt == "";
+                                clicked => {
+                                    AppState.generate-video(
+                                        AppState.ws-prompt,
+                                        AppState.ws-aspect,
+                                        AppState.ws-video-resolution,
+                                        AppState.ws-video-duration,
+                                        AppState.ws-video-enable-audio,
+                                    );
+                                }
+                            }
+
+                            CancelGenerateButton {
+                                width: 132px;
+                                disabled: AppState.tasks.length == 0;
+                                clicked => {
+                                    AppState.cancel-active-task();
+                                }
+                            }
+                        }
+
+                        // 状态信息
+                        Text {
+                            text: AppState.tasks.length > 0
+                                ? "任务队列：" + AppState.tasks.length + " 个 · " + AppState.status-text
+                                : "视频：" + AppState.generation.instance-name + " · " + AppState.generation.model;
+                            color: AppState.generation.has-provider ? Theme.palette.fg-disabled : Theme.palette.error;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                            overflow: elide;
+                        }
+                    }
+                }
+
+                // ===== 右：图库 =====
+                WorkspaceGalleryPanel {
+                    mode: "video";
+                    gallery: root.gallery;
+                    current-generating-count: root.current-generating-count;
+                }
+            }
+        }
+    }
+}

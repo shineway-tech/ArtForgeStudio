@@ -1,0 +1,134 @@
+import { Theme } from "../theme.slint";
+import { AppState, WorkspaceSelectOption } from "../app-state.slint";
+
+export component WorkspaceDropdown {
+    in property <string> id;
+    in property <string> value;
+    in property <string> display-value: root.value;
+    in property <string> selected-id: root.value;
+    in property <[WorkspaceSelectOption]> options;
+    in property <length> drop-width: root.width;
+    in property <length> drop-x: 0px;
+    in property <bool> open-up: false;
+    callback selected(string);
+
+    width: 116px;
+    height: 40px;
+
+    focus-scope := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                AppState.ws-open-select = "";
+                accept
+            } else {
+                reject
+            }
+        }
+        changed has-focus => {
+            if !self.has-focus && AppState.ws-open-select == root.id {
+                AppState.ws-open-select = "";
+            }
+        }
+    }
+
+    Rectangle {
+        background: touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated;
+            border-radius: 8px;
+        border-width: 1px;
+        border-color: AppState.ws-open-select == root.id ? Theme.palette.accent : Theme.palette.border;
+        animate background, border-color { duration: 120ms; }
+
+        Text {
+                x: root.height <= 28px ? 10px : 12px;
+                y: 0px;
+                width: parent.width - (root.height <= 28px ? 32px : 38px);
+                height: parent.height;
+                text: root.display-value;
+                color: Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: root.height <= 28px ? Theme.typo.size-xs : Theme.typo.size-sm;
+            font-weight: Theme.typo.weight-medium;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Image {
+                x: parent.width - (root.height <= 28px ? 22px : 24px);
+                y: (parent.height - self.height) / 2;
+                width: root.height <= 28px ? 12px : 14px;
+                height: root.height <= 28px ? 12px : 14px;
+            source: AppState.ws-open-select == root.id
+                ? @image-url("../assets/icons/chevron-up.svg")
+                : @image-url("../assets/icons/chevron-down.svg");
+            colorize: Theme.palette.fg-disabled;
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                AppState.ws-open-select = AppState.ws-open-select == root.id ? "" : root.id;
+                focus-scope.focus();
+            }
+        }
+    }
+
+    if AppState.ws-open-select == root.id: Rectangle {
+        x: root.drop-x;
+        y: root.open-up ? -(self.height + 4px) : root.height + 4px;
+        width: root.drop-width;
+        height: 8px + root.options.length * 30px;
+        background: Theme.palette.bg;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.palette.accent;
+        clip: true;
+
+        VerticalLayout {
+            padding: 4px;
+            spacing: 2px;
+
+            for item[i] in root.options: Rectangle {
+                height: 28px;
+                background: item.id == root.selected-id || option-touch.has-hover
+                    ? Theme.palette.bg-hover
+                    : transparent;
+                border-radius: 5px;
+
+                Text {
+                    x: 8px;
+                    width: parent.width - (item.hint == "" ? 16px : 58px);
+                    height: parent.height;
+                    text: item.label;
+                    color: item.id == root.selected-id ? Theme.palette.accent-hover : Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    font-weight: item.id == root.selected-id ? Theme.typo.weight-bold : Theme.typo.weight-regular;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                Text {
+                    visible: item.hint != "";
+                    x: parent.width - 50px;
+                    width: 42px;
+                    height: parent.height;
+                    text: item.hint;
+                    color: Theme.palette.fg-disabled;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                option-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.selected(item.id);
+                        AppState.ws-open-select = "";
+                    }
+                }
+            }
+        }
+    }
+}

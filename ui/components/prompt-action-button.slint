@@ -1,0 +1,37 @@
+import { Theme } from "../theme.slint";
+
+export component PromptActionButton {
+    in property <string> text;
+    callback clicked();
+
+    height: 24px;
+    min-width: 72px;
+    horizontal-stretch: 0;
+
+    Rectangle {
+        background: touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg-elevated;
+        border-radius: 7px;
+        border-width: 1px;
+        border-color: Theme.palette.border;
+        animate background, border-color { duration: 120ms; }
+
+        Text {
+            x: 10px;
+            width: parent.width - 20px;
+            height: parent.height;
+            text: root.text;
+            color: Theme.palette.fg-muted;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+            font-weight: Theme.typo.weight-medium;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}

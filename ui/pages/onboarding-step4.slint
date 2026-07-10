@@ -1,0 +1,339 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+import { Button } from "../components/button.slint";
+
+export component StepProvider {
+    VerticalLayout {
+        spacing: Theme.spacing.md;
+
+        Text {
+            text: "配置 AI 服务";
+            color: Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: 24px;
+            font-weight: Theme.typo.weight-bold;
+        }
+
+        Text {
+            text: "至少配一个 provider 才能开始生成。如果暂时没有，点跳过，回头在设置页配。";
+            color: Theme.palette.fg-muted;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-md;
+            wrap: word-wrap;
+        }
+
+        // Mock 实例信息卡
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-md;
+            border-width: Theme.shape.border-width;
+            border-color: Theme.palette.border;
+            height: 124px;
+
+            HorizontalLayout {
+                padding: Theme.spacing.md;
+                spacing: Theme.spacing.md;
+
+                VerticalLayout {
+                    spacing: 4px;
+                    horizontal-stretch: 1;
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing.sm;
+
+                        Text {
+                            text: "Mock 实例";
+                            color: Theme.palette.fg;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-md;
+                            font-weight: Theme.typo.weight-bold;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            background: Theme.palette.bg-hover;
+                            border-radius: 4px;
+
+                            HorizontalLayout {
+                                padding-left: 6px;
+                                padding-right: 6px;
+                                padding-top: 2px;
+                                padding-bottom: 2px;
+
+                                Text {
+                                    text: "推荐先用";
+                                    color: Theme.palette.accent;
+                                    font-family: Theme.typo.family;
+                                    font-size: Theme.typo.size-xs;
+                                    font-weight: Theme.typo.weight-medium;
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "本地内存 provider，不发任何网络请求，1 秒内可用。先把 UI 流跑通，再回设置页接真实服务（OpenAI 兼容、Gemini、Wavespeed 等）。";
+                        color: Theme.palette.fg-muted;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-sm;
+                        wrap: word-wrap;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: Theme.spacing.xs;
+
+                    Button {
+                        text: "添加 Mock 实例";
+                        primary: true;
+                        clicked => { AppState.add-mock-instance(); }
+                    }
+                }
+            }
+        }
+
+        // 已添加列表
+        if AppState.providers.length > 0: Rectangle {
+            background: #52c41a22;
+            border-radius: Theme.shape.radius-sm;
+            border-width: 1px;
+            border-color: Theme.palette.success;
+
+            HorizontalLayout {
+                padding: Theme.spacing.sm;
+                spacing: Theme.spacing.sm;
+
+                Image {
+                    width: 16px;
+                    height: 16px;
+                    source: @image-url("../assets/icons/check.svg");
+                    colorize: Theme.palette.success;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: "已添加 " + AppState.providers.length + " 个实例。点完成进入主界面。";
+                    color: Theme.palette.success;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-sm;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // OpenAI 兼容配置
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-md;
+            border-width: 1px;
+            border-color: Theme.palette.accent;
+
+            VerticalLayout {
+                padding: Theme.spacing.md;
+                spacing: Theme.spacing.sm;
+
+                Text {
+                    text: "OpenAI 兼容（推荐）";
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-sm;
+                    font-weight: Theme.typo.weight-medium;
+                }
+
+                Text {
+                    text: "支持 OpenAI / tokenhub.host / DeepSeek 等兼容端点。密钥保存到本机配置文件。";
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.sm;
+
+                    VerticalLayout {
+                        spacing: 2px;
+                        horizontal-stretch: 1;
+
+                        Text {
+                            text: "API 端点";
+                            color: Theme.palette.fg;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                        }
+
+                        Rectangle {
+                            height: 28px;
+                            background: Theme.palette.bg;
+                            border-radius: Theme.shape.radius-sm;
+                            border-width: 1px;
+                            border-color: Theme.palette.border;
+
+                            TextInput {
+                                x: 6px;
+                                width: parent.width - 12px;
+                                height: parent.height;
+                                color: Theme.palette.fg;
+                                font-family: Theme.typo.family-mono;
+                                font-size: Theme.typo.size-xs;
+                                single-line: true;
+                                text <=> AppState.add-endpoint;
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 2px;
+                        width: 200px;
+
+                        Text {
+                            text: "API Key";
+                            color: Theme.palette.fg;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                        }
+
+                        Rectangle {
+                            height: 28px;
+                            background: Theme.palette.bg;
+                            border-radius: Theme.shape.radius-sm;
+                            border-width: 1px;
+                            border-color: Theme.palette.border;
+
+                            TextInput {
+                                x: 6px;
+                                width: parent.width - 12px;
+                                height: parent.height;
+                                color: Theme.palette.fg;
+                                font-family: Theme.typo.family-mono;
+                                font-size: Theme.typo.size-xs;
+                                single-line: true;
+                                text <=> AppState.add-api-key;
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.sm;
+
+                    VerticalLayout {
+                        spacing: 2px;
+                        horizontal-stretch: 1;
+
+                        Text {
+                            text: "生图模型（可选）";
+                            color: Theme.palette.fg;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                        }
+
+                        Rectangle {
+                            height: 28px;
+                            background: Theme.palette.bg;
+                            border-radius: Theme.shape.radius-sm;
+                            border-width: 1px;
+                            border-color: Theme.palette.border;
+
+                            TextInput {
+                                x: 6px;
+                                width: parent.width - 12px;
+                                height: parent.height;
+                                color: Theme.palette.fg;
+                                font-family: Theme.typo.family-mono;
+                                font-size: Theme.typo.size-xs;
+                                single-line: true;
+                                text <=> AppState.add-generation-model;
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 2px;
+                        horizontal-stretch: 1;
+
+                        Text {
+                            text: "推理模型（可选）";
+                            color: Theme.palette.fg;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                        }
+
+                        Rectangle {
+                            height: 28px;
+                            background: Theme.palette.bg;
+                            border-radius: Theme.shape.radius-sm;
+                            border-width: 1px;
+                            border-color: Theme.palette.border;
+
+                            TextInput {
+                                x: 6px;
+                                width: parent.width - 12px;
+                                height: parent.height;
+                                color: Theme.palette.fg;
+                                font-family: Theme.typo.family-mono;
+                                font-size: Theme.typo.size-xs;
+                                single-line: true;
+                                text <=> AppState.add-analysis-model;
+                            }
+                        }
+                    }
+                }
+
+                if AppState.add-error != "": Rectangle {
+                    height: 28px;
+                    background: #ff4d4f22;
+                    border-radius: Theme.shape.radius-sm;
+                    border-width: 1px;
+                    border-color: Theme.palette.error;
+
+                    Text {
+                        text: AppState.add-error;
+                        color: Theme.palette.error;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-xs;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                }
+
+                Button {
+                    text: "保存并测试";
+                    primary: true;
+                    clicked => { AppState.submit-add-openai(); }
+                }
+            }
+        }
+
+        // 提示
+        Rectangle {
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-md;
+            border-width: 1px;
+            border-color: Theme.palette.border;
+
+            HorizontalLayout {
+                padding: Theme.spacing.sm;
+                spacing: Theme.spacing.sm;
+
+                Image {
+                    width: 16px;
+                    height: 16px;
+                    source: @image-url("../assets/icons/info.svg");
+                    colorize: Theme.palette.accent;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: "填完点\"保存并测试\"自动验证连通性。之后在设置页可随时增减 provider 实例。";
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}

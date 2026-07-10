@@ -1,0 +1,150 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+import { Button } from "../components/button.slint";
+
+export component ProjectPage {
+    width: 100%;
+    height: 100%;
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: Theme.palette.bg;
+
+        VerticalLayout {
+            x: 40px;
+            y: 40px;
+            width: parent.width - 80px;
+            height: parent.height - 80px;
+            spacing: 20px;
+
+            // 顶栏
+            HorizontalLayout {
+                height: 48px;
+                spacing: 16px;
+                alignment: start;
+
+                Text {
+                    text: "项目";
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-lg;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+
+                Button {
+                    text: "创建项目";
+                    primary: true;
+                    clicked => { AppState.open-create-project(); }
+                }
+            }
+
+            // 项目网格
+            Rectangle {
+                vertical-stretch: 1;
+                border-radius: Theme.shape.radius-md;
+                background: Theme.palette.bg-elevated;
+                border-width: 1px;
+                border-color: Theme.palette.border;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+
+                    if AppState.projects.length == 0: VerticalLayout {
+                        height: 200px;
+                        alignment: center;
+
+                        Text {
+                            text: "还没有项目";
+                            color: Theme.palette.fg-disabled;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-md;
+                            horizontal-alignment: center;
+                        }
+
+                        Text {
+                            text: "点击上方「创建项目」开始你的创作";
+                            color: Theme.palette.fg-disabled;
+                            font-family: Theme.typo.family;
+                            font-size: Theme.typo.size-xs;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    for project[i] in AppState.projects: Rectangle {
+                        height: 72px;
+                        background: AppState.current-project-id == project.id
+                            ? Theme.palette.accent
+                            : (touch.has-hover ? Theme.palette.bg-hover : Theme.palette.bg);
+                        border-radius: Theme.shape.radius-md;
+                        border-width: 1px;
+                        border-color: AppState.current-project-id == project.id
+                            ? Theme.palette.accent-hover
+                            : Theme.palette.border;
+
+                        HorizontalLayout {
+                            padding: 12px;
+                            spacing: 12px;
+                            alignment: start;
+
+                            VerticalLayout {
+                                spacing: 4px;
+
+                                Text {
+                                    text: project.name;
+                                    color: AppState.current-project-id == project.id ? #ffffff : Theme.palette.fg;
+                                    font-family: Theme.typo.family;
+                                    font-size: Theme.typo.size-md;
+                                    font-weight: 600;
+                                }
+
+                                Text {
+                                    text: project.description != "" ? project.description : project.created-at;
+                                    color: AppState.current-project-id == project.id ? #ffffff : Theme.palette.fg-muted;
+                                    font-family: Theme.typo.family;
+                                    font-size: Theme.typo.size-xs;
+                                }
+                            }
+
+                            Rectangle { horizontal-stretch: 1; }
+
+                            Text {
+                                text: project.scene-count + " 个镜头";
+                                color: AppState.current-project-id == project.id ? #ffffff : Theme.palette.fg-disabled;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-xs;
+                                vertical-alignment: center;
+                            }
+
+                            if AppState.current-project-id != project.id: Button {
+                                text: "打开";
+                                primary: true;
+                                clicked => { AppState.open-project(project.id); }
+                            }
+
+                            if AppState.current-project-id == project.id: Text {
+                                text: "当前项目";
+                                color: #ffffff;
+                                font-family: Theme.typo.family;
+                                font-size: Theme.typo.size-xs;
+                                vertical-alignment: center;
+                                font-weight: 600;
+                            }
+                        }
+
+                        touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { AppState.open-project(project.id); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

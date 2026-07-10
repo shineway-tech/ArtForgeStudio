@@ -1,0 +1,53 @@
+import { Theme } from "../theme.slint";
+
+export component DialogTextArea {
+    in property <string> label;
+    in property <string> placeholder;
+    in property <bool> disabled: false;
+    in-out property <string> value;
+
+    VerticalLayout {
+        spacing: 5px;
+
+        Text {
+            text: root.label;
+            color: root.disabled ? Theme.palette.fg-disabled : Theme.palette.fg;
+            font-family: Theme.typo.family;
+            font-size: Theme.typo.size-xs;
+        }
+
+        Rectangle {
+            background: root.disabled ? Theme.palette.bg-elevated : Theme.palette.bg;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: input.has-focus ? Theme.palette.accent : Theme.palette.border;
+            clip: true;
+            animate border-color { duration: 120ms; }
+
+            input := TextInput {
+                x: 12px;
+                y: 10px;
+                width: parent.width - 24px;
+                height: parent.height - 20px;
+                enabled: !root.disabled;
+                color: root.disabled ? Theme.palette.fg-disabled : Theme.palette.fg;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                wrap: word-wrap;
+                single-line: false;
+                text <=> root.value;
+            }
+
+            if root.value == "" && !input.has-focus: Text {
+                x: 12px;
+                y: 10px;
+                width: parent.width - 24px;
+                text: root.placeholder;
+                color: Theme.palette.fg-disabled;
+                font-family: Theme.typo.family;
+                font-size: Theme.typo.size-sm;
+                wrap: word-wrap;
+            }
+        }
+    }
+}

@@ -1,0 +1,110 @@
+import { Theme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
+import { Button } from "../components/button.slint";
+
+export component ScriptImportDialog {
+    width: 100%;
+    height: 100%;
+
+    if AppState.script-import-dialog-open: Rectangle {
+        background: #00000088;
+
+        TouchArea {}
+
+        Rectangle {
+            width: 560px;
+            height: 460px;
+            x: parent.width / 2 - 280px;
+            y: parent.height / 2 - 230px;
+            background: Theme.palette.bg-elevated;
+            border-radius: Theme.shape.radius-lg;
+            border-width: 1px;
+            border-color: Theme.palette.border;
+
+            VerticalLayout {
+                padding: Theme.spacing.lg;
+                spacing: Theme.spacing.md;
+
+                Text {
+                    text: "导入剧本";
+                    color: Theme.palette.fg;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-lg;
+                    font-weight: Theme.typo.weight-bold;
+                }
+
+                Text {
+                    text: "粘贴剧本正文，系统将自动解析为集、场、角色和对白。推荐格式：剧名、大纲、人物小传、第X集、场头（1-1 日/夜 内/外 地点）";
+                    color: Theme.palette.fg-muted;
+                    font-family: Theme.typo.family;
+                    font-size: Theme.typo.size-xs;
+                    wrap: word-wrap;
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: Theme.palette.bg;
+                    border-radius: Theme.shape.radius-md;
+                    border-width: 1px;
+                    border-color: prompt.has-focus ? Theme.palette.accent : Theme.palette.border;
+
+                    prompt := TextInput {
+                        x: Theme.spacing.md;
+                        y: Theme.spacing.md;
+                        width: parent.width - 2 * Theme.spacing.md;
+                        height: parent.height - 2 * Theme.spacing.md;
+                        color: Theme.palette.fg;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-sm;
+                        wrap: word-wrap;
+                        single-line: false;
+                        text <=> AppState.script-theme;
+                    }
+
+                    if AppState.script-theme == "": Text {
+                        x: Theme.spacing.md;
+                        y: Theme.spacing.md;
+                        width: parent.width - 2 * Theme.spacing.md;
+                        text: "粘贴剧本正文，推荐格式：剧名、大纲、人物小传、第X集、1-1 日/夜 内/外 地点、人物、△动作、角色对白。";
+                        color: Theme.palette.fg-disabled;
+                        font-family: Theme.typo.family;
+                        font-size: Theme.typo.size-sm;
+                        wrap: word-wrap;
+                    }
+                }
+
+                Rectangle { vertical-stretch: 1; }
+
+                HorizontalLayout {
+                    spacing: Theme.spacing.md;
+                    alignment: end;
+
+                    Button {
+                        text: "格式示例";
+                        clicked => { AppState.script-load-format-example(); }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    Button {
+                        text: "取消";
+                        clicked => {
+                            AppState.script-import-dialog-open = false;
+                        }
+                    }
+
+                    Button {
+                        text: "导入解析";
+                        primary: true;
+                        disabled: AppState.script-theme == "";
+                        clicked => {
+                            AppState.script-mode = "import";
+                            AppState.script-import-current();
+                            AppState.script-import-dialog-open = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,53 @@
+id = "ocean"
+display_name = "深海蓝"
+is_dark = true
+
+[palette]
+bg            = "#060b14"
+bg_elevated   = "#0c101c"
+bg_hover      = "#18243c"
+bg_active     = "#10182c"
+fg            = "#e4ecf8"
+fg_muted      = "#b8c4d8"
+fg_disabled   = "#7890a8"
+border        = "#18223a"
+border_strong = "#2c405c"
+accent        = "#0ea5e9"
+accent_hover  = "#38bdf8"
+accent_active = "#0284c7"
+success       = "#34d399"
+warning       = "#f59e0b"
+error         = "#ef4444"
+overlay       = "#000000aa"
+
+[shape]
+radius_sm    = 4
+radius_md    = 8
+radius_lg    = 12
+border_width = 1
+
+[typography]
+family         = "Sarasa UI SC"
+family_mono    = "Sarasa Mono SC"
+size_xs        = 11
+size_sm        = 12
+size_md        = 14
+size_lg        = 16
+size_xl        = 20
+weight_regular = 400
+weight_medium  = 500
+weight_bold    = 700
+line_height    = 1.5
+
+[spacing]
+xs  = 4
+sm  = 8
+md  = 12
+lg  = 16
+xl  = 24
+xxl = 32
+
+[motion]
+duration_fast   = "120ms"
+duration_normal = "200ms"
+duration_slow   = "300ms"

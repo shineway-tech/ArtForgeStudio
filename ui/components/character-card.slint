@@ -1,0 +1,91 @@
+// 角色库卡片 — 用于角色库网格展示。
+// 每个卡片显示缩略图、角色名、状态标签和基础信息。
+
+import { Theme } from "../theme.slint";
+import { CharacterCardItem } from "../app-state.slint";
+
+export component CharacterCard {
+    in property <CharacterCardItem> item;
+    in property <bool> selected: false;
+    callback clicked();
+
+    width: 100%;
+    height: 100%;
+
+    card-rect := Rectangle {
+        background: root.selected ? Theme.palette.bg-active : Theme.palette.bg-elevated;
+        border-radius: Theme.shape.radius-lg;
+        border-width: root.selected ? 2px : Theme.shape.border-width;
+        border-color: root.selected ? Theme.palette.accent : Theme.palette.border;
+
+        VerticalLayout {
+            padding: Theme.spacing.sm;
+            spacing: Theme.spacing.sm;
+
+            // 缩略图区域
+            if root.item.has-thumb : Rectangle {
+                clip: true;
+                border-radius: Theme.shape.radius-md;
+                Image {
+                    source: root.item.thumb;
+                    width: 100%;
+                    height: 100%;
+                    image-fit: contain;
+                }
+            }
+
+            if !root.item.has-thumb : Rectangle {
+                background: Theme.palette.bg-hover;
+                border-radius: Theme.shape.radius-md;
+                min-height: 80px;
+                // 占位文本
+                Text {
+                    text: "暂无图片";
+                    color: Theme.palette.fg-disabled;
+                    font-size: Theme.typo.size-xs;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            // 角色名
+            Text {
+                text: root.item.name;
+                color: Theme.palette.fg;
+                font-size: Theme.typo.size-sm;
+                font-weight: Theme.typo.weight-medium;
+                overflow: elide;
+            }
+
+            // 标签行
+            if root.item.tags != "" : Text {
+                text: root.item.tags;
+                color: Theme.palette.fg-muted;
+                font-size: Theme.typo.size-xs;
+                overflow: elide;
+            }
+
+            // 统计
+            HorizontalLayout {
+                spacing: Theme.spacing.sm;
+                // 视图计数
+                Text {
+                    text: "视图: " + (root.item.view-count);
+                    color: Theme.palette.fg-muted;
+                    font-size: Theme.typo.size-xs;
+                }
+                // 变体计数
+                if root.item.variation-count > 0 : Text {
+                    text: "变体: " + (root.item.variation-count);
+                    color: Theme.palette.accent;
+                    font-size: Theme.typo.size-xs;
+                }
+            }
+        }
+
+        // 点击
+        touch := TouchArea {
+            clicked => { root.clicked(); }
+        }
+    }
+}
