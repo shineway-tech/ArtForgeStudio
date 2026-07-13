@@ -287,6 +287,8 @@ struct UserProfileData {
     last_daily_credit_date: String,
     #[serde(default)]
     theme_id: String,
+    #[serde(default = "default_card_style")]
+    card_style: String,
     #[serde(default)]
     language: String,
     #[serde(default)]
@@ -297,6 +299,10 @@ struct UserProfileData {
     invite_link: String,
     #[serde(default)]
     invited_users: Vec<InvitedUserData>,
+}
+
+fn default_card_style() -> String {
+    "rounded".to_string()
 }
 
 #[derive(Default, Deserialize)]
@@ -470,6 +476,17 @@ fn wire_callbacks(app: &AppWindow, store: Rc<RefCell<Store>>) {
                 let state = app.global::<AppState>();
                 state.set_theme_id(theme.clone());
                 apply_theme(&app, &theme);
+                save_user_profile(&app);
+            }
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_set_card_style(move |style| {
+            if let Some(app) = app_weak.upgrade() {
+                let style = if style.as_str() == "square" { "square" } else { "rounded" };
+                app.global::<AppState>().set_card_style(style.into());
                 save_user_profile(&app);
             }
         });
@@ -2156,12 +2173,24 @@ fn wire_notification_callbacks(app: &AppWindow, store: Rc<RefCell<Store>>) {
     });
 
     let app_weak = app.as_weak();
+    let store_for_all = store.clone();
     state.on_mark_all_notifications_read(move || {
         if let Some(app) = app_weak.upgrade() {
-            let mut store = store.borrow_mut();
+            let mut store = store_for_all.borrow_mut();
             for item in &mut store.notifications {
                 item.read = true;
             }
+            push_notifications(&app, &store);
+            save_local_store(&app, &store);
+        }
+    });
+
+    let app_weak = app.as_weak();
+    let store_for_clear = store.clone();
+    state.on_clear_all_notifications(move || {
+        if let Some(app) = app_weak.upgrade() {
+            let mut store = store_for_clear.borrow_mut();
+            store.notifications.clear();
             push_notifications(&app, &store);
             save_local_store(&app, &store);
         }
@@ -5424,6 +5453,12 @@ fn load_user_profile(app: &AppWindow) {
         state.set_theme_id(profile.theme_id.clone().into());
         apply_theme(app, &profile.theme_id);
     }
+    let card_style = if profile.card_style == "square" {
+        "square"
+    } else {
+        "rounded"
+    };
+    state.set_card_style(card_style.into());
     if !profile.asset_type.trim().is_empty() {
         let category = resolve_category(&profile.asset_type, "");
         if category == "action-sequence" {
@@ -5452,6 +5487,11 @@ fn save_user_profile(app: &AppWindow) {
         credit_balance: state.get_credit_balance(),
         last_daily_credit_date: state.get_last_daily_credit_date().to_string(),
         theme_id: state.get_theme_id().to_string(),
+        card_style: if state.get_card_style() == "square" {
+            "square".to_string()
+        } else {
+            "rounded".to_string()
+        },
         language: state.get_language().to_string(),
         asset_type: resolve_category(&state.get_asset_type().to_string(), ""),
         invite_code: state.get_invite_code().to_string(),
