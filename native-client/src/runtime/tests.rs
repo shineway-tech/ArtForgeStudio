@@ -125,11 +125,21 @@ mod tests {
     #[test]
     fn notification_page_distinguishes_success_details_from_failure_reasons() {
         let page = include_str!("../../ui/pages/notifications-page.slint");
+        let api = include_str!("api/notifications.rs");
+        let callbacks = include_str!("callbacks/notification.rs");
 
         assert!(page.contains("text: item.success"));
         assert!(page.contains("\"成功说明：\" + item.reason"));
         assert!(page.contains("\"失败原因：\" + item.reason"));
         assert!(page.contains("color: item.success ? AppTheme.success : AppTheme.danger"));
+        assert!(page.contains("AppState.delete-notification(item.id)"));
+        assert!(page.contains("AppState.clear-all-notifications()"));
+        assert!(page.contains("一键删除"));
+        assert!(api.contains("Method::DELETE"));
+        assert!(api.contains("/v1/notifications/{id}"));
+        assert!(api.contains("/v1/notifications"));
+        assert!(callbacks.contains("store.notifications.retain(|item| item.id != id)"));
+        assert!(callbacks.contains("store.notifications.clear()"));
     }
 
     #[test]
@@ -153,6 +163,7 @@ mod tests {
         let credit_page = include_str!("../../ui/pages/credits-page.slint");
         let checkout = include_str!("../../ui/dialogs/ali-pay-qr-dialog.slint");
         let membership = include_str!("../../ui/dialogs/membership-dialog.slint");
+        let purchase_agreements = include_str!("../../ui/components/purchase-agreements.slint");
         let callbacks = include_str!("callbacks/payment.rs");
         let payment_window = include_str!("payment_window.rs");
         let top_bar = include_str!("../../ui/components/top-bar.slint");
@@ -173,8 +184,18 @@ mod tests {
         assert!(!payment_window.contains(".with_url(config.checkout.to_string())"));
         assert!(!callbacks.contains("state.set_payment_qr_message(message.clone().into());"));
         assert!(callbacks.contains("暂时无法确认支付结果，请稍后查看订单状态"));
-        assert!(!membership.contains("purchase-membership-accepted"));
-        assert!(!callbacks.contains("accept_agreements"));
+        assert!(membership.contains("PurchaseAgreements"));
+        assert!(credit_page.contains("PurchaseAgreements"));
+        assert!(purchase_agreements.contains("purchase-membership-accepted"));
+        assert!(purchase_agreements.contains("purchase-credit-rules-accepted"));
+        assert!(callbacks.contains("agreements_api.accept_agreements(&acceptances)?;"));
+        assert!(callbacks.contains("apply_agreements_from_payment_error"));
+        assert!(callbacks.contains("agreement_acceptance_required"));
+        assert!(callbacks.contains("cancel_active_payment"));
+        assert!(callbacks.contains("支付已取消，可重新发起支付"));
+        assert!(!callbacks.contains(
+            "if started.kind == PaymentOrderKind::Membership {\n            state.set_membership_open(false);"
+        ));
         assert!(membership.contains("AppState.close-payment-window();"));
         assert!(top_bar.contains("关闭支付码"));
 
@@ -190,5 +211,55 @@ mod tests {
         assert!(!callbacks.contains(
             "continue_payment_order(&app, context, backend, started, false);"
         ));
+    }
+
+    #[test]
+    fn all_agreement_links_use_the_embedded_client_viewer() {
+        let app = include_str!("../../ui/app.slint");
+        let auth_dialog = include_str!("../../ui/dialogs/auth-dialog.slint");
+        let update_dialog = include_str!("../../ui/dialogs/agreement-update-dialog.slint");
+        let purchase_agreements = include_str!("../../ui/components/purchase-agreements.slint");
+        let credits = include_str!("../../ui/pages/credits-page.slint");
+        let auth_callbacks = include_str!("callbacks/auth.rs");
+        let agreement_window = include_str!("agreement_window.rs");
+
+        assert!(app.contains("AgreementViewerDialog"));
+        assert!(auth_dialog.contains("AppState.open-agreement(title, url)"));
+        assert!(update_dialog.contains("AppState.open-agreement(root.title, root.url)"));
+        assert!(purchase_agreements.contains("AppState.open-agreement(root.title, root.url)"));
+        assert!(credits.contains("AppState.open-agreement(AppState.purchase-credit-rules-title"));
+        assert!(auth_callbacks.contains("open_agreement_window(&app, &url)"));
+        assert!(!auth_callbacks.contains("open_external_url"));
+        assert!(agreement_window.contains(".with_url(config.content_url)"));
+        assert!(agreement_window.contains("NewWindowResponse::Deny"));
+        assert!(agreement_window.contains("cdn.honeykid.cn"));
+    }
+
+    #[test]
+    fn insufficient_credit_generation_opens_recharge_dialog_without_failed_record() {
+        let backend = include_str!("generation/backend.rs");
+        let poll = include_str!("generation/poll.rs");
+        let model = include_str!("model.rs");
+        let dialog = include_str!("../../ui/dialogs/credit-insufficient-dialog.slint");
+        let api_error = include_str!("api/error.rs");
+
+        assert!(api_error.contains("is_insufficient_credits"));
+        assert!(model.contains("CreditInsufficient"));
+        assert!(backend.contains("error.is_insufficient_credits()"));
+        assert!(backend.contains("GenerationOutcome::CreditInsufficient"));
+        assert!(backend.contains("remove_pending_generation(&request.client_request_id)"));
+        assert!(poll.contains("GenerationOutcome::CreditInsufficient"));
+        let credit_branch = poll
+            .split("GenerationOutcome::CreditInsufficient")
+            .nth(1)
+            .and_then(|value| value.split("GenerationOutcome::Failure").next())
+            .expect("credit insufficient branch");
+        assert!(credit_branch.contains("state.set_credit_insufficient_open(true)"));
+        assert!(credit_branch.contains("restore_stream_inputs("));
+        assert!(credit_branch.contains("remove_conversation_placeholder(&state, &conversation_id)"));
+        assert!(!credit_branch.contains("finish_conversation_placeholder(&state, &conversation_id"));
+        assert!(dialog.contains("积分不足"));
+        assert!(dialog.contains("前往充值"));
+        assert!(dialog.contains("AppState.navigate(\"credits\")"));
     }
 }

@@ -223,7 +223,7 @@ fn poll_credit_ledger_page(
                 );
             }
             Err(error) => state.set_credit_ledger_message(
-                format!("积分明细加载失败：{error}").into(),
+                format!("积分明细加载失败：{}", error.user_message()).into(),
             ),
         }
     });

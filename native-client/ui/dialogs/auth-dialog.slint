@@ -1,4 +1,5 @@
 import { AppState } from "../app-state.slint";
+import { AgreementCheckbox } from "../components/agreement-checkbox.slint";
 import { Field } from "../components/field.slint";
 import { PillButton } from "../components/pill-button.slint";
 import { SectionTitle } from "../components/section-title.slint";
@@ -9,28 +10,11 @@ component AgreementChoice {
     in property <bool> required: false;
     in property <string> title;
     in property <string> url;
-    callback open(string);
+    callback open(string, string);
     height: root.required ? 28px : 0px;
     if root.required: HorizontalLayout {
         spacing: 8px;
-        Rectangle {
-            width: 20px;
-            height: 20px;
-            border-radius: 4px;
-            border-width: 1px;
-            border-color: root.accepted ? AppTheme.accent : AppTheme.border;
-            background: root.accepted ? AppTheme.accent : AppTheme.panel;
-            Text {
-                width: parent.width;
-                height: parent.height;
-                text: root.accepted ? "✓" : "";
-                color: #ffffff;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                font-size: 13px;
-            }
-            TouchArea { clicked => { root.accepted = !root.accepted; } }
-        }
+        AgreementCheckbox { accepted <=> root.accepted; }
         Text {
             text: AppState.en ? "I have read and agree to" : "我已阅读并同意";
             color: AppTheme.muted;
@@ -42,7 +26,7 @@ component AgreementChoice {
             color: AppTheme.accent;
             font-size: 13px;
             vertical-alignment: center;
-            TouchArea { mouse-cursor: pointer; clicked => { root.open(root.url); } }
+            TouchArea { mouse-cursor: pointer; clicked => { root.open(root.title, root.url); } }
         }
         Rectangle { horizontal-stretch: 1; background: transparent; }
     }
@@ -131,8 +115,10 @@ export component AuthDialog {
                         x: parent.width - 120px;
                         y: 37px;
                         width: 120px;
-                        disabled: AppState.auth-busy || AppState.auth-countdown > 0;
-                        text: AppState.auth-countdown > 0 ? (AppState.en ? "\{AppState.auth-countdown}s" : "\{AppState.auth-countdown}秒") : (AppState.en ? "Get Code" : "获取验证码");
+                        disabled: AppState.auth-code-busy || AppState.auth-busy || AppState.auth-countdown > 0;
+                        text: AppState.auth-code-busy
+                            ? (AppState.en ? "Sending..." : "发送中...")
+                            : (AppState.auth-countdown > 0 ? (AppState.en ? "\{AppState.auth-countdown}s" : "\{AppState.auth-countdown}秒") : (AppState.en ? "Get Code" : "获取验证码"));
                         clicked => { AppState.request-code(); }
                     }
                 }
@@ -141,14 +127,14 @@ export component AuthDialog {
                     title: AppState.auth-user-terms-title;
                     url: AppState.auth-user-terms-url;
                     accepted <=> AppState.auth-user-terms-accepted;
-                    open(url) => { AppState.open-auth-agreement(url); }
+                    open(title, url) => { AppState.open-agreement(title, url); }
                 }
                 AgreementChoice {
                     required: AppState.auth-privacy-required;
                     title: AppState.auth-privacy-title;
                     url: AppState.auth-privacy-url;
                     accepted <=> AppState.auth-privacy-accepted;
-                    open(url) => { AppState.open-auth-agreement(url); }
+                    open(title, url) => { AppState.open-agreement(title, url); }
                 }
                 Text {
                     height: 32px;

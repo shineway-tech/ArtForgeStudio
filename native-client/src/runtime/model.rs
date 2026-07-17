@@ -117,6 +117,9 @@ enum GenerationOutcome {
         time: String,
     },
     Finished,
+    CreditInsufficient {
+        message: String,
+    },
     Failure {
         reason: String,
         time: String,
@@ -174,6 +177,8 @@ struct AppContext {
     store: Rc<RefCell<Store>>,
     generations: Rc<GenerationRegistry>,
     recovering_orders: Rc<RefCell<BTreeSet<String>>>,
+    active_payment_request: Rc<RefCell<Option<String>>>,
+    cancelled_payment_requests: Rc<RefCell<BTreeSet<String>>>,
     cancelled_generation_requests: Arc<Mutex<BTreeSet<String>>>,
     backend: Option<Arc<BackendRuntime>>,
 }

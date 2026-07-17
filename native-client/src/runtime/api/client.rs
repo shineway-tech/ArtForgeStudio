@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
-const DEFAULT_DEV_API_BASE_URL: &str = "http://127.0.0.1:3000";
+const DEFAULT_DEV_API_BASE_URL: &str = "https://artforge-api.honeykid.cn";
 const DEFAULT_PROD_API_BASE_URL: &str = "https://artforge-api.honeykid.cn";
 
 #[derive(Clone, Debug)]

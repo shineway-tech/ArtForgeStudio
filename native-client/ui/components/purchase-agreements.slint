@@ -1,0 +1,53 @@
+import { AppState } from "../app-state.slint";
+import { AgreementCheckbox } from "agreement-checkbox.slint";
+import { AppTheme } from "../theme.slint";
+
+component AgreementChoice {
+    in-out property <bool> accepted: false;
+    in property <bool> required: false;
+    in property <string> title;
+    in property <string> url;
+    height: root.required ? 28px : 0px;
+    if root.required: HorizontalLayout {
+        spacing: 8px;
+        AgreementCheckbox { accepted <=> root.accepted; }
+        Text {
+            text: AppState.en ? "I have read and agree to" : "我已阅读并同意";
+            color: AppTheme.muted;
+            font-size: 13px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.title;
+            color: AppTheme.accent;
+            font-size: 13px;
+            vertical-alignment: center;
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => { AppState.open-agreement(root.title, root.url); }
+            }
+        }
+        Rectangle { horizontal-stretch: 1; background: transparent; }
+    }
+}
+
+export component PurchaseAgreements {
+    height: (AppState.purchase-membership-required ? 28px : 0px)
+        + (AppState.purchase-credit-rules-required ? 28px : 0px)
+        + (AppState.purchase-membership-required && AppState.purchase-credit-rules-required ? 6px : 0px);
+    VerticalLayout {
+        spacing: 6px;
+        AgreementChoice {
+            required: AppState.purchase-membership-required;
+            title: AppState.purchase-membership-title;
+            url: AppState.purchase-membership-url;
+            accepted <=> AppState.purchase-membership-accepted;
+        }
+        AgreementChoice {
+            required: AppState.purchase-credit-rules-required;
+            title: AppState.purchase-credit-rules-title;
+            url: AppState.purchase-credit-rules-url;
+            accepted <=> AppState.purchase-credit-rules-accepted;
+        }
+    }
+}

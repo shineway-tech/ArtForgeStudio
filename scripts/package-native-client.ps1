@@ -120,7 +120,7 @@ function Build-Client {
 
 function Package-Windows {
     $outDir = Join-Path $DistRoot "$AppName-windows-x64"
-    $zipPath = Join-Path $DistRoot "$AppName-windows-x64.zip"
+    $zipPath = Join-Path $DistRoot "${AppName}_${ClientVersion}_windows_x64_portable.zip"
 
     Build-Client
 

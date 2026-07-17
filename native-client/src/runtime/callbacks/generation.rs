@@ -246,7 +246,7 @@ fn start_backend_prompt_task(
             target_language,
         };
         let result = (|| {
-            let mut detail = api.create_task(&request).map_err(|error| error.to_string())?;
+            let mut detail = api.create_task(&request).map_err(|error| error.user_message())?;
             loop {
                 if detail.terminal() {
                     if matches!(detail.status.as_str(), "completed" | "partially_completed") {
@@ -258,7 +258,7 @@ fn start_backend_prompt_task(
                         .unwrap_or_else(|| "服务端提示词任务执行失败".to_string()));
                 }
                 std::thread::sleep(Duration::from_millis(IMAGE_POLL_INTERVAL_MS));
-                detail = api.task(&detail.id).map_err(|error| error.to_string())?;
+                detail = api.task(&detail.id).map_err(|error| error.user_message())?;
             }
         })();
         let _ = sender.send(result);

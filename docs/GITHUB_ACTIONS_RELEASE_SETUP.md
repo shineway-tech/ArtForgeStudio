@@ -4,14 +4,14 @@
 
 | 平台 | Runner | Rust target | 产物 |
 |---|---|---|---|
-| Windows x64 | `windows-2025` | `x86_64-pc-windows-msvc` | `ArtForgeStudio_<version>_windows_x64_setup.exe` |
-| macOS Intel | `macos-15-intel` | `x86_64-apple-darwin` | `ArtForgeStudio_<version>_macos_x64.dmg` |
+| Windows x64 | `windows-2025` | `x86_64-pc-windows-msvc` | `ArtForgeStudio_<version>_windows_x64_setup.exe`、`ArtForgeStudio_<version>_windows_x64_portable.zip` |
+| macOS Intel | `macos-15` | `x86_64-apple-darwin` | `ArtForgeStudio_<version>_macos_x64.dmg` |
 | macOS Apple Silicon | `macos-15` | `aarch64-apple-darwin` | `ArtForgeStudio_<version>_macos_aarch64.dmg` |
 
 ## 触发规则
 
-- 推送到 `master`、创建目标为 `master` 的 Pull Request，或手动运行时：执行 check、test、release 打包，并上传 GitHub Actions 制品。
-- 推送 `v*` 标签时：执行相同门禁；macOS 额外完成 Developer ID 签名、公证和 stapling；三个安装文件同时上传 OSS。
+- 推送到 `master`、创建目标为 `master` 的 Pull Request，或手动运行 Desktop CI 时：在三个目标上执行 check 和 test。
+- 推送 `v*` 标签时：执行 release 打包；macOS 额外完成 Developer ID 签名、公证和 stapling；四个发布文件同时上传 OSS。
 - 普通分支和 Pull Request 不访问发布密钥，也不会写入 OSS。
 
 版本号以 `native-client/Cargo.toml` 的 package version 为准。发布标签必须与版本一致，例如版本 `1.0.0` 使用 `v1.0.0`。
@@ -51,14 +51,21 @@ public/artforge_studio/ArtForgeStudio_macos_aarch64.dmg
 
 版本路径用于历史版本和回滚；稳定路径用于固定下载入口。
 
-Windows 上传的是 Inno Setup 安装器，不是脱离资源目录的裸程序。安装器把程序和官方素材安装到当前用户目录：
+Windows 免安装版对应：
+
+```text
+public/artforge_studio/1.0.0/ArtForgeStudio_windows_x64_portable.zip
+public/artforge_studio/ArtForgeStudio_windows_x64_portable.zip
+```
+
+Windows 同时上传 Inno Setup 安装器和免安装 ZIP。安装器把程序和官方素材安装到当前用户目录：
 
 ```text
 %LOCALAPPDATA%\Programs\ArtForgeStudio\ArtForgeStudio.exe
 %LOCALAPPDATA%\Programs\ArtForgeStudio\assets\sucai\...
 ```
 
-因此 OSS 只需分发一个 EXE，安装后仍可读取完整官方灵感素材；用户生成内容保留在同一应用目录的 `data` 下，卸载时不会删除该目录。
+免安装 ZIP 包含 `ArtForgeStudio.exe`、`assets` 和初始 `data` 目录。使用时需要先完整解压，再运行其中的 EXE；不要只复制裸 EXE。用户配置和生成内容会保存在解压目录旁的 `data` 中，因此移动或升级绿色版时应一并保留该目录。
 
 ## 发布步骤
 
@@ -67,7 +74,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-标签工作流全部通过后，核对三个 Actions 制品、三个 OSS 稳定 URL 和对应版本 URL。Windows 应验证安装、覆盖升级、卸载后的 `data` 保留以及官方灵感素材；macOS DMG 还应在 Intel 与 Apple Silicon 真机分别打开验证。
+标签工作流全部通过后，核对四个 Actions 制品、四个 OSS 稳定 URL 和对应版本 URL。Windows 应分别验证安装版，以及绿色版解压、启动和携带 `data` 目录移动；macOS DMG 还应在 Intel 与 Apple Silicon 真机分别打开验证。
 
 ## Windows WebView2 真机验收
 

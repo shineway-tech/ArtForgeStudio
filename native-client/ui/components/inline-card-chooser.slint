@@ -8,14 +8,41 @@ export component InlineCardChooser {
     Rectangle {
         background: transparent;
         Text { x: 0px; y: 0px; width: parent.width; height: 18px; text: AppState.en ? "Canvas" : "画布"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
-        GridLayout {
+        if !AppState.ratio-more-open: GridLayout {
             x: 0px;
             y: 20px;
             spacing: 8px;
             Row {
-                InlineChoiceCard { group: "ratio"; value: "1:1"; label: AppState.en ? "Square" : "方形"; }
-                InlineChoiceCard { group: "ratio"; value: "16:9"; label: AppState.en ? "Landscape" : "横图"; }
-                InlineChoiceCard { group: "ratio"; value: "9:16"; label: AppState.en ? "Portrait" : "竖图"; }
+                InlineChoiceCard { group: "ratio"; value: "1:1"; label: "1:1"; }
+                InlineChoiceCard { group: "ratio"; value: "3:2"; label: "3:2"; }
+                InlineChoiceCard { group: "ratio"; value: "2:3"; label: "2:3"; }
+                InlineChoiceCard { group: "ratio"; value: "4:3"; label: "4:3"; }
+                InlineToggleCard { label: AppState.en ? "More" : "更多"; clicked => { AppState.ratio-more-open = true; } }
+            }
+        }
+        if AppState.ratio-more-open: GridLayout {
+            x: 0px;
+            y: 20px;
+            spacing: 8px;
+            Row {
+                InlineChoiceCard { group: "ratio"; value: "1:1"; label: "1:1"; }
+                InlineChoiceCard { group: "ratio"; value: "3:2"; label: "3:2"; }
+                InlineChoiceCard { group: "ratio"; value: "2:3"; label: "2:3"; }
+                InlineChoiceCard { group: "ratio"; value: "4:3"; label: "4:3"; }
+                InlineChoiceCard { group: "ratio"; value: "3:4"; label: "3:4"; }
+                InlineChoiceCard { group: "ratio"; value: "5:4"; label: "5:4"; }
+            }
+            Row {
+                InlineChoiceCard { group: "ratio"; value: "4:5"; label: "4:5"; }
+                InlineChoiceCard { group: "ratio"; value: "16:9"; label: "16:9"; }
+                InlineChoiceCard { group: "ratio"; value: "9:16"; label: "9:16"; }
+                InlineChoiceCard { group: "ratio"; value: "2:1"; label: "2:1"; }
+                InlineChoiceCard { group: "ratio"; value: "1:2"; label: "1:2"; }
+                InlineChoiceCard { group: "ratio"; value: "21:9"; label: "21:9"; }
+            }
+            Row {
+                InlineChoiceCard { group: "ratio"; value: "9:21"; label: "9:21"; }
+                InlineToggleCard { label: AppState.en ? "Close" : "收起"; clicked => { AppState.ratio-more-open = false; } }
             }
         }
 
@@ -45,7 +72,7 @@ export component InlineCardChooser {
     }
 
     function ratio-rows-height() -> length {
-        return 42px;
+        return AppState.ratio-more-open ? 142px : 42px;
     }
     function quality-y() -> length {
         return 20px + root.ratio-rows-height() + 22px;

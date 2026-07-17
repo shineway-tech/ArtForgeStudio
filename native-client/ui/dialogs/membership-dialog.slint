@@ -1,6 +1,7 @@
 import { AppState } from "../app-state.slint";
 import { DialogCloseButton } from "../components/dialog-close-button.slint";
 import { PillButton } from "../components/pill-button.slint";
+import { PurchaseAgreements } from "../components/purchase-agreements.slint";
 import { SectionTitle } from "../components/section-title.slint";
 import { AppTheme } from "../theme.slint";
 
@@ -10,9 +11,9 @@ export component MembershipDialog {
         TouchArea { width: parent.width; height: parent.height; }
         Rectangle {
             x: (parent.width - 720px) / 2;
-            y: (parent.height - 520px) / 2;
+            y: (parent.height - 620px) / 2;
             width: 720px;
-            height: 520px;
+            height: 620px;
             background: AppTheme.panel;
             border-radius: 14px;
             border-width: 1px;
@@ -70,6 +71,7 @@ export component MembershipDialog {
                         }
                     }
                 }
+                PurchaseAgreements { horizontal-stretch: 1; }
                 Text {
                     height: 44px;
                     text: AppState.membership-payment-message;

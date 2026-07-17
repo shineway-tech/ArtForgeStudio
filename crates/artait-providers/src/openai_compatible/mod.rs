@@ -53,8 +53,9 @@ const META: ProviderMeta = ProviderMeta {
         upload_binary: false,
         poll_task: false,
     },
-    default_generation_models: &["gpt-image-1", "dall-e-3", "gemini-2.5-flash-image"],
+    default_generation_models: &["gpt-image-2", "dall-e-3", "gemini-2.5-flash-image"],
     default_analysis_models: &[
+        "gpt-5.5",
         "gpt-4o-mini",
         "gpt-4o",
         "claude-3-5-sonnet-latest",
@@ -80,12 +81,12 @@ const META: ProviderMeta = ProviderMeta {
     "generation_model": {
       "type": "string",
       "label": "生图模型",
-      "default": "gpt-image-1"
+      "default": "gpt-image-2"
     },
     "analysis_model": {
       "type": "string",
       "label": "推理模型",
-      "default": "gpt-4o-mini"
+      "default": "gpt-5.5"
     },
     "api_style": {
       "type": "string",
@@ -168,7 +169,7 @@ impl Provider for OpenAiCompatibleProvider {
 
     async fn test_connection(&self, ctx: &ProviderContext) -> ProviderResult<ConnectionStatus> {
         let base = EndpointBase::from_ctx(ctx)?;
-        let model = response::pick_analysis_model(ctx, "gpt-4o-mini");
+        let model = response::pick_analysis_model(ctx, "gpt-5.5");
         let mut last_error = String::new();
 
         for url in base.model_endpoint_candidates(&model) {
@@ -208,7 +209,7 @@ impl Provider for OpenAiCompatibleProvider {
 
     async fn list_models(&self, ctx: &ProviderContext) -> ProviderResult<ProviderModelList> {
         let base = EndpointBase::from_ctx(ctx)?;
-        let analysis_model = response::pick_analysis_model(ctx, "gpt-4o-mini");
+        let analysis_model = response::pick_analysis_model(ctx, "gpt-5.5");
         let mut last_error = String::new();
 
         for url in base.model_endpoint_candidates(&analysis_model) {
@@ -271,8 +272,8 @@ impl ImageGenerator for OpenAiCompatibleProvider {
             return Err(ProviderError::TaskCancelled);
         }
 
-        let model = response::pick_generation_model(ctx, "gpt-image-1");
-        let analysis_model = response::pick_analysis_model(ctx, "gpt-4o-mini");
+        let model = response::pick_generation_model(ctx, "gpt-image-2");
+        let analysis_model = response::pick_analysis_model(ctx, "gpt-5.5");
         let plan = EndpointPlan::for_ctx(ctx, &analysis_model, &model);
         let mut req = req;
         // 超过 10MB 的参考图自动上传图床
@@ -298,8 +299,8 @@ impl Analyzer for OpenAiCompatibleProvider {
         let model = req
             .model
             .clone()
-            .unwrap_or_else(|| response::pick_analysis_model(ctx, "gpt-4o-mini"));
-        let image_model = response::pick_generation_model(ctx, "gpt-image-1");
+            .unwrap_or_else(|| response::pick_analysis_model(ctx, "gpt-5.5"));
+        let image_model = response::pick_generation_model(ctx, "gpt-image-2");
         let plan = EndpointPlan::for_ctx(ctx, &model, &image_model);
         match plan.analysis_api {
             AnalysisApi::OpenAiChat => analyze::analyze_with_openai_chat(req, ctx, &model).await,

@@ -19,9 +19,9 @@ export component NotificationsPage {
                 Rectangle {
                     height: 44px;
                     background: transparent;
-                    SectionTitle { x: 0px; y: 0px; width: parent.width - 280px; text: AppState.en ? "Notifications" : "通知"; }
+                    SectionTitle { x: 0px; y: 0px; width: parent.width - 300px; text: AppState.en ? "Notifications" : "通知"; }
                     PillButton {
-                        x: parent.width - 128px;
+                        x: parent.width - 264px;
                         y: 0px;
                         width: 128px;
                         height: 40px;
@@ -29,6 +29,16 @@ export component NotificationsPage {
                         primary: true;
                         disabled: !AppState.has-unread;
                         clicked => { AppState.mark-all-notifications-read(); }
+                    }
+                    PillButton {
+                        x: parent.width - 128px;
+                        y: 0px;
+                        width: 128px;
+                        height: 40px;
+                        text: AppState.en ? "Delete all" : "一键删除";
+                        danger: true;
+                        disabled: AppState.notifications.length == 0;
+                        clicked => { AppState.clear-all-notifications(); }
                     }
                 }
                 ScrollView {
@@ -43,13 +53,13 @@ export component NotificationsPage {
                             border-width: 1px;
                             border-color: AppTheme.border;
                             Rectangle { x: 14px; y: 22px; width: 9px; height: 9px; border-radius: 5px; background: item.read ? transparent : (item.success ? AppTheme.success : AppTheme.danger); }
-                            Text { x: 42px; y: 14px; width: parent.width - 242px; text: item.title; color: item.success ? AppTheme.text : AppTheme.danger; font-size: 14px; font-weight: 400; overflow: elide; }
-                            Text { x: parent.width - 184px; y: 14px; width: 160px; text: item.time; color: AppTheme.muted; font-size: 12px; font-weight: 400; horizontal-alignment: right; overflow: elide; }
-                            Text { x: 42px; y: 38px; width: parent.width - 64px; text: AppState.en ? ("Model: " + item.model) : ("模型：" + item.model); color: AppTheme.muted; font-size: 12px; font-weight: 400; overflow: elide; }
+                            Text { x: 42px; y: 14px; width: parent.width - 258px; text: item.title; color: item.success ? AppTheme.text : AppTheme.danger; font-size: 14px; font-weight: 400; overflow: elide; }
+                            Text { x: parent.width - 210px; y: 14px; width: 130px; text: item.time; color: AppTheme.muted; font-size: 12px; font-weight: 400; horizontal-alignment: right; overflow: elide; }
+                            Text { x: 42px; y: 38px; width: parent.width - 154px; text: AppState.en ? ("Model: " + item.model) : ("模型：" + item.model); color: AppTheme.muted; font-size: 12px; font-weight: 400; overflow: elide; }
                             if item.reason != "": Text {
                                 x: 42px;
                                 y: 64px;
-                                width: parent.width - 64px;
+                                width: parent.width - 154px;
                                 text: item.success
                                     ? (AppState.en ? ("Details: " + item.reason) : ("成功说明：" + item.reason))
                                     : (AppState.en ? ("Reason: " + item.reason) : ("失败原因：" + item.reason));
@@ -59,6 +69,15 @@ export component NotificationsPage {
                                 overflow: elide;
                             }
                             TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.mark-notification-read(item.id); } }
+                            PillButton {
+                                x: parent.width - 84px;
+                                y: item.reason == "" ? 34px : 56px;
+                                width: 68px;
+                                height: 30px;
+                                text: AppState.en ? "Delete" : "删除";
+                                danger: true;
+                                clicked => { AppState.delete-notification(item.id); }
+                            }
                         }
                     }
                 }

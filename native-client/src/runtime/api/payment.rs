@@ -7,6 +7,9 @@ pub(crate) struct CreditPack {
     pub(crate) code: String,
     pub(crate) name: String,
     pub(crate) price_cents: String,
+    pub(crate) payable_price_cents: Option<String>,
+    pub(crate) discount_amount_cents: Option<String>,
+    pub(crate) recharge_discount_bps: Option<i32>,
     pub(crate) credits: String,
 }
 

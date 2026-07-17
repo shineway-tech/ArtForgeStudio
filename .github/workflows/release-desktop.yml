@@ -218,11 +218,16 @@ jobs:
           }
           "APP_VERSION=$($package.version)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Package Windows installer
+      - name: Package Windows releases
         shell: pwsh
         run: |
           & ./scripts/package-native-client.ps1 -Target windows
           New-Item -ItemType Directory -Force -Path release-windows | Out-Null
+
+          $portable = "dist/ArtForgeStudio_${env:APP_VERSION}_windows_x64_portable.zip"
+          if (!(Test-Path -LiteralPath $portable)) {
+            throw "Missing Windows portable package: $portable"
+          }
 
           function Find-InnoCompiler {
             $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
@@ -260,7 +265,7 @@ jobs:
             throw "Missing Windows installer: $installer"
           }
 
-      - name: Upload Windows package artifact
+      - name: Upload Windows installer artifact
         uses: actions/upload-artifact@v7
         with:
           name: ArtForgeStudio-windows-x64
@@ -268,7 +273,15 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
-      - name: Upload Windows installer to OSS
+      - name: Upload Windows portable artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ArtForgeStudio-windows-x64-portable
+          path: dist/ArtForgeStudio_*_windows_x64_portable.zip
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload Windows releases to OSS
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         env:
@@ -281,6 +294,16 @@ jobs:
           ALIYUN_OSS_PREFIX: ${{ secrets.ALIYUN_OSS_PREFIX || 'public/artforge_studio' }}
           ALIYUN_OSS_OBJECT_ACL: ${{ secrets.ALIYUN_OSS_OBJECT_ACL }}
         run: |
-          node scripts/upload-release-assets.js `
+          & node scripts/upload-release-assets.js `
             --file "release-windows/ArtForgeStudio_${env:APP_VERSION}_windows_x64_setup.exe" `
             --version $env:APP_VERSION
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to upload Windows installer to OSS."
+          }
+
+          & node scripts/upload-release-assets.js `
+            --file "dist/ArtForgeStudio_${env:APP_VERSION}_windows_x64_portable.zip" `
+            --version $env:APP_VERSION
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to upload Windows portable package to OSS."
+          }

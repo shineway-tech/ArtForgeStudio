@@ -38,6 +38,8 @@ mod credit_callbacks;
 use credit_callbacks::*;
 mod payment_window;
 use payment_window::*;
+mod agreement_window;
+use agreement_window::*;
 #[path = "callbacks/generation.rs"]
 mod generation_callbacks;
 use generation_callbacks::*;

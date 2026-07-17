@@ -1,0 +1,66 @@
+import { AppState } from "../app-state.slint";
+import { DialogCloseButton } from "../components/dialog-close-button.slint";
+import { SectionTitle } from "../components/section-title.slint";
+import { AppTheme } from "../theme.slint";
+
+export component AgreementViewerDialog {
+    if AppState.agreement-viewer-open: Rectangle {
+        background: #00000066;
+        TouchArea { width: parent.width; height: parent.height; }
+        Rectangle {
+            x: (parent.width - 860px) / 2;
+            y: (parent.height - 680px) / 2;
+            width: 860px;
+            height: 680px;
+            background: AppTheme.panel;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            SectionTitle {
+                x: 24px;
+                y: 18px;
+                width: parent.width - 76px;
+                height: 34px;
+                text: AppState.agreement-viewer-title;
+            }
+            DialogCloseButton {
+                x: parent.width - 42px;
+                y: 12px;
+                clicked => { AppState.close-agreement(); }
+            }
+            Rectangle {
+                x: 30px;
+                y: 70px;
+                width: 800px;
+                height: 560px;
+                background: #ffffff;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+                if AppState.agreement-viewer-message != "": Text {
+                    x: 24px;
+                    y: 24px;
+                    width: parent.width - 48px;
+                    height: parent.height - 48px;
+                    text: AppState.agreement-viewer-message;
+                    color: AppTheme.danger;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+            Text {
+                x: 30px;
+                y: 638px;
+                width: 800px;
+                height: 24px;
+                text: AppState.en ? "Agreement content is provided by the service." : "协议内容由服务端提供";
+                color: AppTheme.muted;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

@@ -1,0 +1,30 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component AgreementCheckbox {
+    in-out property <bool> accepted: false;
+    width: 20px;
+    height: 20px;
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: root.accepted ? AppTheme.accent : AppTheme.border;
+        background: root.accepted ? AppTheme.accent : AppTheme.panel;
+        if root.accepted: Image {
+            x: 3px;
+            y: 3px;
+            width: parent.width - 6px;
+            height: parent.height - 6px;
+            source: AppState.icon-check;
+            image-fit: contain;
+        }
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.accepted = !root.accepted; }
+        }
+    }
+}

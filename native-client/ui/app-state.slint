@@ -50,7 +50,6 @@ export global AppState {
     in-out property <string> purchase-credit-rules-title: "积分规则";
     in-out property <string> purchase-credit-rules-version: "";
     in-out property <string> purchase-credit-rules-url: "";
-    in-out property <bool> credit-rule-open: false;
     in-out property <bool> credit-insufficient-open: false;
     in-out property <string> credit-insufficient-message: "积分不足以支持本次生图，请前往充值";
 
@@ -64,7 +63,7 @@ export global AppState {
     in-out property <string> prompt: "";
     in-out property <string> asset-type: "character";
     in-out property <string> ratio: "1:1";
-    in-out property <bool> ratio-more-open: false;
+    in-out property <bool> ratio-more-open: true;
     in-out property <string> quality: "1K";
     in-out property <int> count: 1;
     in-out property <string> mode: "game";
@@ -131,6 +130,7 @@ export global AppState {
     in-out property <image> icon-notifications: @image-url("../assets/icons/notifications.svg");
     in-out property <image> icon-empty: @image-url("../assets/icons/empty.svg");
     in-out property <image> icon-download: @image-url("../assets/icons/download.svg");
+    in-out property <image> icon-check: @image-url("../assets/icons/check.svg");
 
     in-out property <string> asset-kind-filter: "game";
     in-out property <string> asset-category-filter: "all";
@@ -149,6 +149,7 @@ export global AppState {
     in-out property <int> auth-countdown: 0;
     in-out property <string> auth-error: "";
     in-out property <bool> auth-busy: false;
+    in-out property <bool> auth-code-busy: false;
     in-out property <bool> auth-user-terms-required: false;
     in-out property <bool> auth-user-terms-accepted: false;
     in-out property <string> auth-user-terms-title: "用户协议";
@@ -164,6 +165,10 @@ export global AppState {
     in-out property <bool> agreement-update-open: false;
     in-out property <bool> agreement-update-busy: false;
     in-out property <string> agreement-update-message: "";
+    in-out property <bool> agreement-viewer-open: false;
+    in-out property <string> agreement-viewer-title: "";
+    in-out property <string> agreement-viewer-url: "";
+    in-out property <string> agreement-viewer-message: "";
 
     in-out property <bool> profile-open: false;
     in-out property <string> profile-name: "";
@@ -240,7 +245,8 @@ export global AppState {
     callback purchase-membership(string);
     callback revoke-session(string);
     callback enter-offline();
-    callback open-auth-agreement(string);
+    callback open-agreement(string, string);
+    callback close-agreement();
     callback accept-current-agreements();
     callback save-profile();
     callback recharge-credits(string);
@@ -298,5 +304,6 @@ export global AppState {
     callback confirm-delete();
     callback mark-notification-read(string);
     callback mark-all-notifications-read();
+    callback delete-notification(string);
     callback clear-all-notifications();
 }

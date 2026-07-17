@@ -4,6 +4,7 @@ import { CreditPlan } from "../components/credit-plan.slint";
 import { CreditRecordRow } from "../components/credit-record-row.slint";
 import { EmptyState } from "../components/empty-state.slint";
 import { PillButton } from "../components/pill-button.slint";
+import { PurchaseAgreements } from "../components/purchase-agreements.slint";
 import { SectionTitle } from "../components/section-title.slint";
 import { AppTheme } from "../theme.slint";
 
@@ -12,7 +13,7 @@ export component CreditsPage {
         return root.width - 48px;
     }
     function content-height() -> length {
-        return max(root.height + 80px, 790px + max(1, AppState.credit-records.length) * 96px);
+        return max(root.height + 80px, 860px + max(1, AppState.credit-records.length) * 96px);
     }
     Rectangle {
         background: AppTheme.bg;
@@ -58,7 +59,7 @@ export component CreditsPage {
                             width: 90px;
                             height: parent.height;
                             mouse-cursor: pointer;
-                            clicked => { AppState.credit-rule-open = true; }
+                            clicked => { AppState.open-agreement(AppState.purchase-credit-rules-title, AppState.purchase-credit-rules-url); }
                         }
                     }
                     Rectangle {
@@ -84,6 +85,7 @@ export component CreditsPage {
                         }
                         Rectangle { horizontal-stretch: 1; background: transparent; }
                     }
+                    PurchaseAgreements { horizontal-stretch: 1; }
                     Rectangle {
                         height: AppState.credit-payment-message == "" ? 54px : 76px;
                         background: transparent;

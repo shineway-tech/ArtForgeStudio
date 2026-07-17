@@ -170,3 +170,22 @@ pub(super) fn finish_conversation_placeholder(state: &AppState, conversation_id:
     }
     state.set_conversations(ModelRc::new(VecModel::from(conversations)));
 }
+
+pub(super) fn remove_conversation_placeholder(state: &AppState, conversation_id: &str) {
+    let mut conversations = state.get_conversations().iter().collect::<Vec<_>>();
+    let before = conversations.len();
+    conversations.retain(|item| !(item.loading && item.id.as_str() == conversation_id));
+    if conversations.len() == before {
+        return;
+    }
+
+    let was_current = state.get_current_conversation_id().as_str() == conversation_id;
+    let next_current = conversations
+        .first()
+        .map(|item| item.id.to_string())
+        .unwrap_or_default();
+    state.set_conversations(ModelRc::new(VecModel::from(conversations)));
+    if was_current {
+        state.set_current_conversation_id(next_current.into());
+    }
+}

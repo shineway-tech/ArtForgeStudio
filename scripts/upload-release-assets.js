@@ -66,6 +66,8 @@ function contentTypeFor(filePath) {
       return 'application/x-apple-diskimage';
     case '.exe':
       return 'application/vnd.microsoft.portable-executable';
+    case '.zip':
+      return 'application/zip';
     default:
       return 'application/octet-stream';
   }

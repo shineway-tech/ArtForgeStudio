@@ -479,8 +479,8 @@ pub(crate) fn init(ctx: &CbCtx) {
                         s.set_add_endpoint("https://api.openai.com/v1".into());
                         s.set_add_node_kind("both".into());
                         s.set_add_api_style("auto".into());
-                        s.set_add_generation_model("gpt-image-1".into());
-                        s.set_add_analysis_model("gpt-4o-mini".into());
+                        s.set_add_generation_model("gpt-image-2".into());
+                        s.set_add_analysis_model("gpt-5.5".into());
                     }
                     "gemini" => {
                         s.set_add_name("Google Gemini".into());

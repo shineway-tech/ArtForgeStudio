@@ -112,8 +112,8 @@ pub(super) fn start_backend_generation(
         terminal: false,
         expected_success_count: 0,
     };
-    if let Err(error) = upsert_pending_generation(recovery_record) {
-        state.set_generation_status(format!("无法写入任务恢复记录：{error}").into());
+    if upsert_pending_generation(recovery_record).is_err() {
+        state.set_generation_status("任务准备失败，请重试".into());
         return;
     }
     insert_active_generation(&context, ActiveGeneration {
@@ -206,6 +206,13 @@ pub(super) fn start_backend_generation(
             Ok(detail) => detail,
             Err(error) => {
                 for file_id in &uploaded { api.delete_reference(file_id); }
+                if error.is_insufficient_credits() {
+                    let _ = remove_pending_generation(&request.client_request_id);
+                    let _ = sender.send(GenerationOutcome::CreditInsufficient {
+                        message: "积分不足以支持本次生图，请前往充值".to_string(),
+                    });
+                    return;
+                }
                 let _ = sender.send(GenerationOutcome::Failure {
                     reason: error.generation_message(),
                     time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
@@ -564,7 +571,7 @@ fn run_recovered_generation_worker(
             }
             Err(error) => {
                 let _ = sender.send(GenerationOutcome::Failure {
-                    reason: format!("恢复参考图上传失败：{error}"),
+                    reason: format!("恢复参考图上传失败：{}", error.generation_message()),
                     time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
                 });
                 return;
@@ -597,8 +604,16 @@ fn run_recovered_generation_worker(
         match api.create_task(&request) {
             Ok(detail) => detail,
             Err(error) => {
+                if error.is_insufficient_credits() {
+                    for file_id in &uploaded { api.delete_reference(file_id); }
+                    let _ = remove_pending_generation(&record.client_request_id);
+                    let _ = sender.send(GenerationOutcome::CreditInsufficient {
+                        message: "积分不足以支持本次生图，请前往充值".to_string(),
+                    });
+                    return;
+                }
                 let _ = sender.send(GenerationOutcome::Failure {
-                    reason: format!("恢复任务提交失败：{error}"),
+                    reason: format!("恢复任务提交失败：{}", error.generation_message()),
                     time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
                 });
                 return;
@@ -609,7 +624,7 @@ fn run_recovered_generation_worker(
             Ok(detail) => detail,
             Err(error) => {
                 let _ = sender.send(GenerationOutcome::Failure {
-                    reason: format!("恢复任务查询失败：{error}"),
+                    reason: format!("恢复任务查询失败：{}", error.generation_message()),
                     time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
                 });
                 return;

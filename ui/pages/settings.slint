@@ -1286,7 +1286,7 @@ export component SettingsPage {
 
                         if AppState.add-node-kind != "analysis": ModelListInput {
                             label: "生图模型";
-                            placeholder: "gpt-image-1\nimagen-4.0-generate-preview";
+                            placeholder: "gpt-image-2\nimagen-4.0-generate-preview";
                             value <=> AppState.add-generation-model;
                             hint: "每行一个，第一行默认";
                             horizontal-stretch: 1;
@@ -1294,7 +1294,7 @@ export component SettingsPage {
 
                         if AppState.add-node-kind != "generation": ModelListInput {
                             label: "推理模型";
-                            placeholder: "gpt-5.5\ngpt-4o-mini";
+                            placeholder: "gpt-5.5";
                             value <=> AppState.add-analysis-model;
                             hint: "每行一个，第一行默认";
                             horizontal-stretch: 1;
@@ -1402,7 +1402,7 @@ export component SettingsPage {
 
                         if AppState.add-node-kind != "analysis": ModelListInput {
                             label: "生图模型";
-                            placeholder: "gpt-image-1\nimagen-4.0-generate-preview";
+                            placeholder: "gpt-image-2\nimagen-4.0-generate-preview";
                             value <=> AppState.add-generation-model;
                             hint: "每行一个，第一行默认";
                             horizontal-stretch: 1;
@@ -1410,7 +1410,7 @@ export component SettingsPage {
 
                         if AppState.add-node-kind != "generation": ModelListInput {
                             label: "推理模型";
-                            placeholder: "gpt-5.5\ngpt-4o-mini";
+                            placeholder: "gpt-5.5";
                             value <=> AppState.add-analysis-model;
                             hint: "每行一个，第一行默认";
                             horizontal-stretch: 1;

@@ -34,10 +34,45 @@ fn payment_order_phase(order: &OrderDetail) -> PaymentOrderPhase {
     }
 }
 
+fn required_purchase_acceptances(
+    app: &AppWindow,
+) -> std::result::Result<Vec<AgreementAcceptance>, &'static str> {
+    let state = app.global::<AppState>();
+    let mut acceptances = Vec::new();
+    if state.get_purchase_membership_required() {
+        if !state.get_purchase_membership_accepted() {
+            return Err("请先阅读并同意会员服务协议");
+        }
+        acceptances.push(AgreementAcceptance {
+            agreement_type: "membership_service".to_string(),
+            version: state.get_purchase_membership_version().to_string(),
+        });
+    }
+    if state.get_purchase_credit_rules_required() {
+        if !state.get_purchase_credit_rules_accepted() {
+            return Err("请先阅读并同意积分使用规则");
+        }
+        acceptances.push(AgreementAcceptance {
+            agreement_type: "credit_rules".to_string(),
+            version: state.get_purchase_credit_rules_version().to_string(),
+        });
+    }
+    Ok(acceptances)
+}
+
 pub(super) fn wire_payment_callbacks(app: &AppWindow, context: AppContext) {
     let Some(backend) = context.backend.clone() else { return; };
     let state = app.global::<AppState>();
-    state.on_close_payment_window(close_payment_window);
+    {
+        let app_weak = app.as_weak();
+        let context = context.clone();
+        state.on_close_payment_window(move || {
+            close_payment_window();
+            if let Some(app) = app_weak.upgrade() {
+                cancel_active_payment(&app, &context);
+            }
+        });
+    }
     let app_weak = app.as_weak();
     let credit_context = context.clone();
     state.on_recharge_credits(move |pack_code| {
@@ -46,6 +81,13 @@ pub(super) fn wire_payment_callbacks(app: &AppWindow, context: AppContext) {
         if !require_online_operation(&app, "充值积分") || state.get_credit_payment_busy() {
             return;
         }
+        let acceptances = match required_purchase_acceptances(&app) {
+            Ok(value) => value,
+            Err(message) => {
+                state.set_credit_payment_message(message.into());
+                return;
+            }
+        };
         state.set_credit_payment_busy(true);
         state.set_credit_payment_message("正在创建支付订单...".into());
         let pack_code = pack_code.trim().to_string();
@@ -55,22 +97,28 @@ pub(super) fn wire_payment_callbacks(app: &AppWindow, context: AppContext) {
             return;
         }
         let api = PaymentApi::new(backend.api.clone());
+        let agreements_api = AuthApi::new(backend.api.clone());
         let request_id = Uuid::new_v4().simple().to_string();
-        if let Err(error) = upsert_pending_order(PendingOrderRecord {
-            schema_version: 1,
-            kind: "credit".to_string(),
-            client_request_id: request_id.clone(),
-            order_id: String::new(),
-            product_code: pack_code.clone(),
-            created_at: Local::now().to_rfc3339(),
-        }) {
-            state.set_credit_payment_busy(false);
-            state.set_credit_payment_message(format!("无法保存订单恢复记录：{error}").into());
-            return;
-        }
+        *credit_context.active_payment_request.borrow_mut() = Some(request_id.clone());
+        credit_context
+            .cancelled_payment_requests
+            .borrow_mut()
+            .remove(&request_id);
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let result = (|| {
+                agreements_api.accept_agreements(&acceptances)?;
+                upsert_pending_order(PendingOrderRecord {
+                    schema_version: 1,
+                    kind: "credit".to_string(),
+                    client_request_id: request_id.clone(),
+                    order_id: String::new(),
+                    product_code: pack_code.clone(),
+                    created_at: Local::now().to_rfc3339(),
+                })
+                .map_err(|error| ApiError::LocalState {
+                    message: format!("无法保存订单恢复记录：{error}"),
+                })?;
                 let order = api.create_credit_order(&pack_code, &request_id)?;
                 update_pending_order_id(&request_id, &order.id).map_err(|error| ApiError::LocalState {
                     message: format!("无法保存服务端订单编号：{error}"),
@@ -100,6 +148,13 @@ pub(super) fn wire_payment_callbacks(app: &AppWindow, context: AppContext) {
         if !require_online_operation(&app, "购买会员") || state.get_membership_payment_busy() {
             return;
         }
+        let acceptances = match required_purchase_acceptances(&app) {
+            Ok(value) => value,
+            Err(message) => {
+                state.set_membership_payment_message(message.into());
+                return;
+            }
+        };
         let plan_code = plan_code.trim().to_string();
         let Some(target) = state.get_membership_plans().iter().find(|plan| plan.code.as_str() == plan_code) else {
             state.set_membership_payment_message("所选会员套餐已下线，请刷新后重试".into());
@@ -109,17 +164,6 @@ pub(super) fn wire_payment_callbacks(app: &AppWindow, context: AppContext) {
             && target.tier_rank > state.get_membership_tier_rank();
         let kind = if is_upgrade { "membership_upgrade" } else { "membership" }.to_string();
         let request_id = Uuid::new_v4().simple().to_string();
-        if let Err(error) = upsert_pending_order(PendingOrderRecord {
-            schema_version: 1,
-            kind: kind.clone(),
-            client_request_id: request_id.clone(),
-            order_id: String::new(),
-            product_code: plan_code.clone(),
-            created_at: Local::now().to_rfc3339(),
-        }) {
-            state.set_membership_payment_message(format!("无法保存订单恢复记录：{error}").into());
-            return;
-        }
         state.set_membership_payment_busy(true);
         state.set_membership_payment_message(if is_upgrade {
             "正在获取服务端升级报价...".into()
@@ -127,9 +171,27 @@ pub(super) fn wire_payment_callbacks(app: &AppWindow, context: AppContext) {
             "正在创建会员订单...".into()
         });
         let api = MembershipApi::new(backend.api.clone());
+        let agreements_api = AuthApi::new(backend.api.clone());
+        *context.active_payment_request.borrow_mut() = Some(request_id.clone());
+        context
+            .cancelled_payment_requests
+            .borrow_mut()
+            .remove(&request_id);
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let result = (|| {
+                agreements_api.accept_agreements(&acceptances)?;
+                upsert_pending_order(PendingOrderRecord {
+                    schema_version: 1,
+                    kind,
+                    client_request_id: request_id.clone(),
+                    order_id: String::new(),
+                    product_code: plan_code.clone(),
+                    created_at: Local::now().to_rfc3339(),
+                })
+                .map_err(|error| ApiError::LocalState {
+                    message: format!("无法保存订单恢复记录：{error}"),
+                })?;
                 let order = if is_upgrade {
                     let quote = api.create_upgrade_quote(&plan_code)?;
                     api.create_upgrade_order(&quote.id, &request_id)?
@@ -188,14 +250,16 @@ fn poll_payment_started(
                 continue_payment_order(&app, context, backend, started, true);
             }
             Err(error) => {
+                context.active_payment_request.borrow_mut().take();
+                apply_agreements_from_payment_error(&app, &error);
                 match kind {
                     PaymentOrderKind::Credit => {
                         state.set_credit_payment_busy(false);
-                        state.set_credit_payment_message(error.to_string().into());
+                        state.set_credit_payment_message(error.user_message().into());
                     }
                     PaymentOrderKind::Membership => {
                         state.set_membership_payment_busy(false);
-                        state.set_membership_payment_message(error.to_string().into());
+                        state.set_membership_payment_message(error.user_message().into());
                     }
                 }
             }
@@ -213,6 +277,10 @@ fn poll_payment_order(
     attempt: u32,
 ) {
     slint::Timer::single_shot(Duration::from_secs(3), move || {
+        if is_payment_cancelled(&context, &client_request_id) {
+            finish_cancelled_payment(&context, &client_request_id);
+            return;
+        }
         let (sender, receiver) = mpsc::channel();
         let api = PaymentApi::new(backend.api.clone());
         let id = order_id.clone();
@@ -238,12 +306,17 @@ fn poll_payment_sync_result(
             return;
         };
         let Some(app) = app_weak.upgrade() else { return; };
+        if is_payment_cancelled(&context, &client_request_id) {
+            finish_cancelled_payment(&context, &client_request_id);
+            return;
+        }
         let state = app.global::<AppState>();
         match result {
             Ok(order) if payment_order_phase(&order) == PaymentOrderPhase::Fulfilled => {
                 close_payment_window();
                 let _ = remove_pending_order(&client_request_id);
                 context.recovering_orders.borrow_mut().remove(&client_request_id);
+                clear_active_payment(&context, &client_request_id);
                 state.set_payment_qr_open(false);
                 state.set_payment_qr_message("".into());
                 match kind {
@@ -263,6 +336,7 @@ fn poll_payment_sync_result(
                 close_payment_window();
                 let _ = remove_pending_order(&client_request_id);
                 context.recovering_orders.borrow_mut().remove(&client_request_id);
+                clear_active_payment(&context, &client_request_id);
                 state.set_payment_qr_open(false);
                 state.set_payment_qr_message("订单已关闭或过期".into());
                 match kind {
@@ -290,6 +364,7 @@ fn poll_payment_sync_result(
                     }
                 }
                 context.recovering_orders.borrow_mut().remove(&client_request_id);
+                clear_active_payment(&context, &client_request_id);
             }
             Err(_) if attempt < 200 => {
                 poll_payment_order(app.as_weak(), context, backend, order_id, client_request_id, kind, attempt + 1);
@@ -307,6 +382,7 @@ fn poll_payment_sync_result(
                     }
                 }
                 context.recovering_orders.borrow_mut().remove(&client_request_id);
+                clear_active_payment(&context, &client_request_id);
             }
         }
     });
@@ -320,10 +396,17 @@ fn continue_payment_order(
     open_checkout: bool,
 ) {
     let state = app.global::<AppState>();
+    if is_payment_cancelled(&context, &started.client_request_id) {
+        let _ = remove_pending_order(&started.client_request_id);
+        finish_cancelled_payment(&context, &started.client_request_id);
+        clear_active_payment(&context, &started.client_request_id);
+        return;
+    }
     if payment_order_phase(&started.order) == PaymentOrderPhase::Fulfilled {
         close_payment_window();
         let _ = remove_pending_order(&started.client_request_id);
         context.recovering_orders.borrow_mut().remove(&started.client_request_id);
+        clear_active_payment(&context, &started.client_request_id);
         state.set_payment_qr_open(false);
         state.set_payment_qr_message("".into());
         match started.kind {
@@ -345,6 +428,7 @@ fn continue_payment_order(
         close_payment_window();
         let _ = remove_pending_order(&started.client_request_id);
         context.recovering_orders.borrow_mut().remove(&started.client_request_id);
+        clear_active_payment(&context, &started.client_request_id);
         state.set_payment_qr_open(false);
         state.set_payment_qr_message("订单已关闭或过期".into());
         match started.kind {
@@ -384,10 +468,12 @@ fn continue_payment_order(
     if checkout_opened {
         state.set_payment_qr_message(message.into());
         state.set_payment_qr_open(true);
-        if started.kind == PaymentOrderKind::Membership {
-            state.set_membership_open(false);
-        }
     }
+    *context.active_payment_request.borrow_mut() = Some(started.client_request_id.clone());
+    context
+        .cancelled_payment_requests
+        .borrow_mut()
+        .remove(&started.client_request_id);
     match started.kind {
         PaymentOrderKind::Credit => {
             state.set_credit_payment_busy(true);
@@ -407,6 +493,70 @@ fn continue_payment_order(
         started.kind,
         0,
     );
+}
+
+fn cancel_active_payment(app: &AppWindow, context: &AppContext) {
+    let state = app.global::<AppState>();
+    state.set_payment_qr_open(false);
+    state.set_payment_qr_message("支付已取消，可重新发起支付".into());
+    if state.get_credit_payment_busy() {
+        state.set_credit_payment_busy(false);
+        state.set_credit_payment_message("支付已取消，可重新发起支付".into());
+    }
+    if state.get_membership_payment_busy() {
+        state.set_membership_payment_busy(false);
+        state.set_membership_payment_message("支付已取消，可重新发起支付".into());
+    }
+    if let Some(client_request_id) = context.active_payment_request.borrow_mut().take() {
+        context
+            .cancelled_payment_requests
+            .borrow_mut()
+            .insert(client_request_id.clone());
+        context.recovering_orders.borrow_mut().remove(&client_request_id);
+        let _ = remove_pending_order(&client_request_id);
+    }
+}
+
+fn is_payment_cancelled(context: &AppContext, client_request_id: &str) -> bool {
+    context
+        .cancelled_payment_requests
+        .borrow()
+        .contains(client_request_id)
+}
+
+fn finish_cancelled_payment(context: &AppContext, client_request_id: &str) {
+    context
+        .cancelled_payment_requests
+        .borrow_mut()
+        .remove(client_request_id);
+    context.recovering_orders.borrow_mut().remove(client_request_id);
+}
+
+fn clear_active_payment(context: &AppContext, client_request_id: &str) {
+    let mut active = context.active_payment_request.borrow_mut();
+    if active.as_deref() == Some(client_request_id) {
+        active.take();
+    }
+}
+
+fn apply_agreements_from_payment_error(app: &AppWindow, error: &ApiError) {
+    let ApiError::Http {
+        code,
+        details: Some(details),
+        ..
+    } = error
+    else {
+        return;
+    };
+    if code != "agreement_acceptance_required" {
+        return;
+    }
+    let Some(agreements) = details.get("agreements").cloned() else {
+        return;
+    };
+    if let Ok(items) = serde_json::from_value::<Vec<AgreementItem>>(agreements) {
+        apply_agreements(app, &items);
+    }
 }
 
 #[cfg(test)]
@@ -539,7 +689,7 @@ fn poll_recovered_order(
             Err(error) => {
                 context.recovering_orders.borrow_mut().remove(&client_request_id);
                 let state = app.global::<AppState>();
-                let message = format!("未完成订单暂时无法恢复：{error}");
+                let message = format!("未完成订单暂时无法恢复：{}", error.user_message());
                 match kind {
                     PaymentOrderKind::Credit => state.set_credit_payment_message(message.into()),
                     PaymentOrderKind::Membership => state.set_membership_payment_message(message.into()),

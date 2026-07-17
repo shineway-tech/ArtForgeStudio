@@ -25,7 +25,7 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
                 return;
             };
             let state = app.global::<AppState>();
-            if state.get_auth_busy() || state.get_auth_countdown() > 0 {
+            if state.get_auth_busy() || state.get_auth_code_busy() || state.get_auth_countdown() > 0 {
                 return;
             }
             let email = state.get_auth_email().trim().to_ascii_lowercase();
@@ -33,7 +33,7 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
                 state.set_auth_error("请输入正确的邮箱地址".into());
                 return;
             }
-            state.set_auth_busy(true);
+            state.set_auth_code_busy(true);
             state.set_auth_error("".into());
             let api = AuthApi::new(backend.api.clone());
             let weak = app.as_weak();
@@ -41,7 +41,7 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
                 let result = api.request_email_code(&email);
                 let _ = weak.upgrade_in_event_loop(move |app| {
                     let state = app.global::<AppState>();
-                    state.set_auth_busy(false);
+                    state.set_auth_code_busy(false);
                     match result {
                         Ok(response) => {
                             let seconds = response.resend_after_seconds.min(i32::MAX as u64) as i32;
@@ -79,7 +79,7 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
                     match result {
                         Ok(()) => app.global::<AppState>().set_generation_status("设备会话已撤销".into()),
                         Err(error) => app.global::<AppState>().set_generation_status(
-                            format!("撤销设备失败：{error}").into(),
+                            format!("撤销设备失败：{}", error.user_message()).into(),
                         ),
                     }
                 });
@@ -96,7 +96,7 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
                 return;
             };
             let state = app.global::<AppState>();
-            if state.get_auth_busy() {
+            if state.get_auth_busy() || state.get_auth_code_busy() {
                 return;
             }
             let email = state.get_auth_email().trim().to_ascii_lowercase();
@@ -172,10 +172,35 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
     }
 
     {
-        state.on_open_auth_agreement(move |url| {
+        let app_weak = app.as_weak();
+        state.on_open_agreement(move |title, url| {
+            let Some(app) = app_weak.upgrade() else { return; };
+            let state = app.global::<AppState>();
+            let title = title.trim().to_string();
             let url = url.trim().to_string();
-            if url.starts_with("https://") || (cfg!(debug_assertions) && url.starts_with("http://")) {
-                let _ = open_external_url(&url);
+            close_agreement_window();
+            state.set_agreement_viewer_title(if title.is_empty() {
+                "协议".into()
+            } else {
+                title.into()
+            });
+            state.set_agreement_viewer_url(url.clone().into());
+            state.set_agreement_viewer_message("".into());
+            state.set_agreement_viewer_open(true);
+            if open_agreement_window(&app, &url).is_err() {
+                state.set_agreement_viewer_message("协议内容加载失败，请稍后重试".into());
+            }
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_close_agreement(move || {
+            close_agreement_window();
+            if let Some(app) = app_weak.upgrade() {
+                let state = app.global::<AppState>();
+                state.set_agreement_viewer_open(false);
+                state.set_agreement_viewer_message("".into());
             }
         });
     }
@@ -607,8 +632,8 @@ pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snap
         code: pack.code.clone().into(),
         name: pack.name.clone().into(),
         credits: pack.credits.clone().into(),
-        price: format_cents(&pack.price_cents).into(),
-        note: format!("{} 积分 · 服务端实时计价", pack.credits).into(),
+        price: format_cents(credit_pack_price_cents(pack)).into(),
+        note: credit_pack_note(pack).into(),
     }).collect::<Vec<_>>();
     let selected_code = state.get_selected_credit_pack_code().to_string();
     if let Some(selected) = snapshot.packs.iter().find(|pack| pack.code == selected_code)
@@ -616,7 +641,7 @@ pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snap
     {
         state.set_selected_credit_pack_code(selected.code.clone().into());
         state.set_selected_credit_amount(selected.credits.clone().into());
-        state.set_selected_credit_price(format_cents(&selected.price_cents).into());
+        state.set_selected_credit_price(format_cents(credit_pack_price_cents(selected)).into());
     } else {
         state.set_selected_credit_pack_code("".into());
         state.set_selected_credit_amount("".into());
@@ -767,15 +792,31 @@ fn format_cents(value: &str) -> String {
     format!("¥ {sign}{}.{}", &padded[..split], &padded[split..])
 }
 
+fn credit_pack_price_cents(pack: &CreditPack) -> &str {
+    pack.payable_price_cents.as_deref().unwrap_or(&pack.price_cents)
+}
+
+fn credit_pack_note(pack: &CreditPack) -> String {
+    let discount_bps = pack.recharge_discount_bps.unwrap_or(10000);
+    let discount_amount = pack.discount_amount_cents.as_deref().unwrap_or("0");
+    if discount_bps < 10000 && discount_amount != "0" {
+        return format!(
+            "会员 {} 折 · 已优惠 {}",
+            discount_bps / 100,
+            format_cents(discount_amount),
+        );
+    }
+    format!("{} 积分 · 服务端实时计价", pack.credits)
+}
+
 fn model_capabilities_text(model: &ModelCatalogItem) -> String {
     let mut parts = Vec::new();
     if let Some(ratios) = model.capabilities.get("aspect_ratios").and_then(Value::as_array) {
-        let values = ratios.iter().filter_map(Value::as_str).map(|ratio| match ratio {
-            "square" => "方形",
-            "landscape" => "横图",
-            "portrait" => "竖图",
-            value => value,
-        }).collect::<Vec<_>>();
+        let values = ratios
+            .iter()
+            .filter_map(Value::as_str)
+            .map(client_ratio_from_api)
+            .collect::<Vec<_>>();
         if !values.is_empty() {
             parts.push(format!("比例：{}", values.join("/")));
         }
@@ -796,32 +837,32 @@ fn model_capabilities_text(model: &ModelCatalogItem) -> String {
     if parts.is_empty() { "服务端模型能力".to_string() } else { parts.join(" · ") }
 }
 
-fn apply_agreements(app: &AppWindow, agreements: &[AgreementItem]) {
+pub(super) fn apply_agreements(app: &AppWindow, agreements: &[AgreementItem]) {
     let state = app.global::<AppState>();
     for agreement in agreements {
-        if agreement.required_action != "login" {
-            continue;
-        }
-        match agreement.agreement_type.as_str() {
-            "user_terms" => {
+        match (
+            agreement.required_action.as_str(),
+            agreement.agreement_type.as_str(),
+        ) {
+            ("login", "user_terms") => {
                 state.set_auth_user_terms_required(agreement.required);
                 state.set_auth_user_terms_title(agreement.title.clone().into());
                 state.set_auth_user_terms_version(agreement.version.clone().into());
                 state.set_auth_user_terms_url(agreement.content_url.clone().into());
             }
-            "privacy_policy" => {
+            ("login", "privacy_policy") => {
                 state.set_auth_privacy_required(agreement.required);
                 state.set_auth_privacy_title(agreement.title.clone().into());
                 state.set_auth_privacy_version(agreement.version.clone().into());
                 state.set_auth_privacy_url(agreement.content_url.clone().into());
             }
-            "membership_service" => {
+            ("purchase", "membership_service") => {
                 state.set_purchase_membership_required(agreement.required);
                 state.set_purchase_membership_title(agreement.title.clone().into());
                 state.set_purchase_membership_version(agreement.version.clone().into());
                 state.set_purchase_membership_url(agreement.content_url.clone().into());
             }
-            "credit_rules" => {
+            ("purchase", "credit_rules") => {
                 state.set_purchase_credit_rules_required(agreement.required);
                 state.set_purchase_credit_rules_title(agreement.title.clone().into());
                 state.set_purchase_credit_rules_version(agreement.version.clone().into());
@@ -851,14 +892,11 @@ fn apply_auth_error(app: &AppWindow, error: ApiError) {
     if error.is_client_update_required() {
         state.set_session_state("update_required".into());
     }
-    let mut message = if error.is_client_update_required() {
+    let message = if error.is_client_update_required() {
         update_required_message(&error)
     } else {
         auth_error_message(&error)
     };
-    if let Some(request_id) = error.request_id() {
-        message.push_str(&format!("（请求号：{request_id}）"));
-    }
     state.set_auth_error(message.into());
 }
 
@@ -874,18 +912,11 @@ fn update_required_message(error: &ApiError) -> String {
 }
 
 fn auth_error_message(error: &ApiError) -> String {
-    match error.code() {
-        Some("email_code_invalid") | Some("verification_code_invalid") => "验证码不正确或已失效".to_string(),
-        Some("email_code_rate_limited") | Some("rate_limited") => "操作过于频繁，请稍后再试".to_string(),
-        Some("agreement_acceptance_required") => "请阅读并同意最新协议后重试".to_string(),
-        Some("client_update_required") => "当前客户端版本过旧，请更新后重试".to_string(),
-        Some("account_disabled") | Some("account_unavailable") => "当前账号暂不可用，请联系客服".to_string(),
-        _ if error.is_network_error() => "无法连接服务端，请检查网络后重试".to_string(),
-        _ => error.to_string(),
-    }
+    error.user_message()
 }
 
 fn sign_out_locally(app: &AppWindow, revoked: bool) {
+    close_agreement_window();
     let state = app.global::<AppState>();
     state.set_logged_in(false);
     state.set_offline_mode(false);
@@ -897,6 +928,7 @@ fn sign_out_locally(app: &AppWindow, revoked: bool) {
     state.set_auth_error(if revoked { "登录状态已失效，请重新登录".into() } else { "".into() });
     state.set_page("welcome".into());
     state.set_profile_open(false);
+    state.set_agreement_viewer_open(false);
     save_user_profile(app);
 }
 
@@ -917,28 +949,6 @@ pub(super) fn require_online_operation(app: &AppWindow, operation: &str) -> bool
 fn valid_email(email: &str) -> bool {
     let mut parts = email.split('@');
     matches!((parts.next(), parts.next(), parts.next()), (Some(local), Some(domain), None) if !local.is_empty() && domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.'))
-}
-
-pub(super) fn open_external_url(url: &str) -> std::io::Result<()> {
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", "", url]);
-        command
-    };
-    #[cfg(target_os = "macos")]
-    let mut command = {
-        let mut command = Command::new("open");
-        command.arg(url);
-        command
-    };
-    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-    let mut command = {
-        let mut command = Command::new("xdg-open");
-        command.arg(url);
-        command
-    };
-    command.spawn().map(|_| ())
 }
 
 #[cfg(test)]
@@ -998,5 +1008,43 @@ mod tests {
             startup_error_disposition(&error("client_update_required"), true),
             StartupErrorDisposition::UpdateRequired
         );
+    }
+
+    #[test]
+    fn auth_error_messages_hide_request_ids() {
+        let error = ApiError::Http {
+            status: 400,
+            code: "email_code_invalid".to_string(),
+            message: "invalid code".to_string(),
+            request_id: Some("94ab68af-e2b5-4a99-877b-b572edbd0e1c".to_string()),
+            details: None,
+        };
+        let message = auth_error_message(&error);
+        assert_eq!(message, "验证码不正确或已失效");
+        assert!(!message.contains("请求号"));
+        assert!(!message.contains("94ab68af"));
+        assert!(!message.contains("email_code_invalid"));
+    }
+
+    fn credit_pack(payable_price_cents: Option<&str>) -> CreditPack {
+        CreditPack {
+            code: "pack_1000".to_string(),
+            name: "1000 积分".to_string(),
+            price_cents: "1000".to_string(),
+            payable_price_cents: payable_price_cents.map(ToString::to_string),
+            discount_amount_cents: payable_price_cents.map(|_| "50".to_string()),
+            recharge_discount_bps: payable_price_cents.map(|_| 9500),
+            credits: "1000".to_string(),
+        }
+    }
+
+    #[test]
+    fn credit_pack_price_prefers_membership_discount_quote() {
+        let discounted = credit_pack(Some("950"));
+        assert_eq!(format_cents(credit_pack_price_cents(&discounted)), "¥ 9.50");
+        assert_eq!(credit_pack_note(&discounted), "会员 95 折 · 已优惠 ¥ 0.50");
+
+        let original = credit_pack(None);
+        assert_eq!(format_cents(credit_pack_price_cents(&original)), "¥ 10.00");
     }
 }

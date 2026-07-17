@@ -1,5 +1,6 @@
 import { AppState } from "../app-state.slint";
 import { DropdownIcon } from "dropdown-icon.slint";
+import { PillButton } from "pill-button.slint";
 import { QualityButton } from "quality-button.slint";
 import { RatioButton } from "ratio-button.slint";
 import { AppTheme } from "../theme.slint";
@@ -12,15 +13,15 @@ export component CanvasChip {
         border-radius: 18px;
         border-width: 1px;
         border-color: open ? AppTheme.accent : AppTheme.border;
-        Text { x: 16px; width: parent.width - 46px; height: parent.height; text: ratio-label() + " · " + AppState.quality; color: AppTheme.text; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+        Text { x: 16px; width: parent.width - 46px; height: parent.height; text: AppState.ratio + " · " + AppState.quality; color: AppTheme.text; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; overflow: elide; }
         DropdownIcon { x: parent.width - 32px; y: (parent.height - 12px) / 2; }
         TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.open = true; popup.show(); } }
     }
     popup := PopupWindow {
         x: 0px;
-        y: -230px;
-        width: 440px;
-        height: 226px;
+        y: -342px;
+        width: 596px;
+        height: 338px;
         close-policy: close-on-click-outside;
         Rectangle {
             visible: root.open;
@@ -31,13 +32,28 @@ export component CanvasChip {
             VerticalLayout {
                 padding: 14px;
                 spacing: 14px;
-                Text { text: AppState.en ? "Aspect ratio" : "选择比例"; color: AppTheme.muted; font-size: 13px; font-weight: 400; }
+                Text { text: AppState.en ? "Canvas" : "画布"; color: AppTheme.muted; font-size: 13px; font-weight: 400; }
                 GridLayout {
-                    spacing: 10px;
+                    spacing: 12px;
                     Row {
-                        RatioButton { id: "1:1"; label: AppState.en ? "Square" : "方形"; }
-                        RatioButton { id: "16:9"; label: AppState.en ? "Landscape" : "横图"; }
-                        RatioButton { id: "9:16"; label: AppState.en ? "Portrait" : "竖图"; }
+                        RatioButton { width: 80px; id: "1:1"; label: "1:1"; }
+                        RatioButton { width: 80px; id: "3:2"; label: "3:2"; }
+                        RatioButton { width: 80px; id: "2:3"; label: "2:3"; }
+                        RatioButton { width: 80px; id: "4:3"; label: "4:3"; }
+                        RatioButton { width: 80px; id: "3:4"; label: "3:4"; }
+                        RatioButton { width: 80px; id: "5:4"; label: "5:4"; }
+                    }
+                    Row {
+                        RatioButton { width: 80px; id: "4:5"; label: "4:5"; }
+                        RatioButton { width: 80px; id: "16:9"; label: "16:9"; }
+                        RatioButton { width: 80px; id: "9:16"; label: "9:16"; }
+                        RatioButton { width: 80px; id: "2:1"; label: "2:1"; }
+                        RatioButton { width: 80px; id: "1:2"; label: "1:2"; }
+                        RatioButton { width: 80px; id: "21:9"; label: "21:9"; }
+                    }
+                    Row {
+                        RatioButton { width: 80px; id: "9:21"; label: "9:21"; }
+                        PillButton { width: 80px; height: 40px; text: AppState.en ? "Close" : "收起"; clicked => { root.open = false; popup.close(); } }
                     }
                 }
                 Text { text: AppState.en ? "Resolution" : "选择分辨率"; color: AppTheme.muted; font-size: 13px; font-weight: 400; }
@@ -49,10 +65,5 @@ export component CanvasChip {
                 }
             }
         }
-    }
-    function ratio-label() -> string {
-        if AppState.ratio == "16:9" { return AppState.en ? "Landscape" : "横图"; }
-        if AppState.ratio == "9:16" { return AppState.en ? "Portrait" : "竖图"; }
-        return AppState.en ? "Square" : "方形";
     }
 }

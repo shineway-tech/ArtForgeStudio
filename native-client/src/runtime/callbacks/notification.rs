@@ -39,7 +39,56 @@ pub(super) fn wire_notification_callbacks(app: &AppWindow, context: AppContext) 
         });
     }
 
-    state.on_clear_all_notifications(move || {});
+    {
+        let app_weak = app.as_weak();
+        let store = context.store.clone();
+        let backend = backend.clone();
+        state.on_delete_notification(move |id| {
+            let Some(app) = app_weak.upgrade() else { return; };
+            let id = id.to_string();
+            {
+                let mut store = store.borrow_mut();
+                store.notifications.retain(|item| item.id != id);
+                push_notifications(&app, &store);
+            }
+            let api = NotificationsApi::new(backend.api.clone());
+            let app_weak = app.as_weak();
+            std::thread::spawn(move || {
+                if let Err(error) = api.delete(&id) {
+                    let _ = app_weak.upgrade_in_event_loop(move |app| {
+                        app.global::<AppState>().set_generation_status(
+                            format!("通知删除失败：{}", error.user_message()).into(),
+                        );
+                    });
+                }
+            });
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = context.store.clone();
+        let backend = backend.clone();
+        state.on_clear_all_notifications(move || {
+            let Some(app) = app_weak.upgrade() else { return; };
+            {
+                let mut store = store.borrow_mut();
+                store.notifications.clear();
+                push_notifications(&app, &store);
+            }
+            let api = NotificationsApi::new(backend.api.clone());
+            let app_weak = app.as_weak();
+            std::thread::spawn(move || {
+                if let Err(error) = api.delete_all() {
+                    let _ = app_weak.upgrade_in_event_loop(move |app| {
+                        app.global::<AppState>().set_generation_status(
+                            format!("通知清空失败：{}", error.user_message()).into(),
+                        );
+                    });
+                }
+            });
+        });
+    }
 }
 
 pub(super) fn refresh_server_notifications(app: &AppWindow, context: AppContext) {
@@ -89,7 +138,7 @@ fn poll_server_notifications(
                 push_notifications(&app, &store);
             }
             Err(error) => app.global::<AppState>().set_generation_status(
-                format!("通知刷新失败：{error}").into(),
+                format!("通知刷新失败：{}", error.user_message()).into(),
             ),
         }
     });

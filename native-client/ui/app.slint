@@ -6,12 +6,12 @@ import { TopBar } from "components/top-bar.slint";
 import { AliPayQrDialog } from "dialogs/ali-pay-qr-dialog.slint";
 import { AuthDialog } from "dialogs/auth-dialog.slint";
 import { CreditInsufficientDialog } from "dialogs/credit-insufficient-dialog.slint";
-import { CreditRuleDialog } from "dialogs/credit-rule-dialog.slint";
 import { DeleteConfirm } from "dialogs/delete-confirm.slint";
 import { ModelRequiredDialog } from "dialogs/model-required-dialog.slint";
 import { ProfileDialog } from "dialogs/profile-dialog.slint";
 import { MembershipDialog } from "dialogs/membership-dialog.slint";
 import { AgreementUpdateDialog } from "dialogs/agreement-update-dialog.slint";
+import { AgreementViewerDialog } from "dialogs/agreement-viewer-dialog.slint";
 import { UpdateProgressDialog } from "dialogs/update-progress-dialog.slint";
 import { UpscaleDialog } from "dialogs/upscale-dialog.slint";
 import { VersionCheckDialog } from "dialogs/version-check-dialog.slint";
@@ -68,7 +68,6 @@ export component AppWindow inherits Window {
     MembershipDialog { width: root.width; height: root.height; }
     AgreementUpdateDialog { width: root.width; height: root.height; }
     AliPayQrDialog { width: root.width; height: root.height; }
-    CreditRuleDialog { width: root.width; height: root.height; }
     VersionCheckDialog { width: root.width; height: root.height; }
     UpdateProgressDialog { width: root.width; height: root.height; }
     ViewerOverlay { width: root.width; height: root.height; }
@@ -94,4 +93,5 @@ export component AppWindow inherits Window {
     DeleteConfirm { width: root.width; height: root.height; }
     ModelRequiredDialog { width: root.width; height: root.height; }
     CreditInsufficientDialog { width: root.width; height: root.height; }
+    AgreementViewerDialog { width: root.width; height: root.height; }
 }

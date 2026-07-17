@@ -1,4 +1,5 @@
 import { AppState } from "../app-state.slint";
+import { AgreementCheckbox } from "../components/agreement-checkbox.slint";
 import { PillButton } from "../components/pill-button.slint";
 import { SectionTitle } from "../components/section-title.slint";
 import { AppTheme } from "../theme.slint";
@@ -12,8 +13,8 @@ component AgreementRow {
     if root.required: Rectangle {
         background: AppTheme.panel-soft;
         border-radius: 8px;
-        Text { x: 12px; width: parent.width - 110px; height: parent.height; text: root.title; color: AppTheme.accent; font-size: 13px; vertical-alignment: center; TouchArea { mouse-cursor: pointer; clicked => { AppState.open-auth-agreement(root.url); } } }
-        PillButton { x: parent.width - 92px; y: 7px; width: 80px; height: 30px; active: root.accepted; text: root.accepted ? "已同意" : "同意"; clicked => { root.accepted = !root.accepted; } }
+        Text { x: 12px; width: parent.width - 52px; height: parent.height; text: root.title; color: AppTheme.accent; font-size: 13px; vertical-alignment: center; TouchArea { mouse-cursor: pointer; clicked => { AppState.open-agreement(root.title, root.url); } } }
+        AgreementCheckbox { x: parent.width - 32px; y: 12px; accepted <=> root.accepted; }
     }
 }
 

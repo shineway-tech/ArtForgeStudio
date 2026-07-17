@@ -231,6 +231,31 @@ pub(super) fn poll_generation_stream(
                     refresh_backend_snapshot(&app, context.clone());
                 }
             }
+            GenerationOutcome::CreditInsufficient { message } => {
+                keep_polling = false;
+                receiver.borrow_mut().take();
+                let Some(task) = remove_active_generation(&context, &category, &task_id) else {
+                    return;
+                };
+                if create_conversation && task.success_count == 0 {
+                    remove_conversation_placeholder(&state, &conversation_id);
+                }
+                restore_stream_inputs(
+                    &app,
+                    &store,
+                    &raw_prompt,
+                    &category,
+                    original_references.clone(),
+                    original_quote.clone(),
+                );
+                context.generations.statuses.borrow_mut().remove(&category);
+                sync_generation_state_for_current_category(&context, &app);
+                state.set_credit_insufficient_message(message.into());
+                state.set_credit_insufficient_open(true);
+                if context.backend.is_some() {
+                    refresh_backend_snapshot(&app, context.clone());
+                }
+            }
             GenerationOutcome::Failure { reason, time } => {
                 keep_polling = false;
                 receiver.borrow_mut().take();

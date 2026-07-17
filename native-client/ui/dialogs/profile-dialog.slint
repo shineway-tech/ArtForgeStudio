@@ -1,3 +1,4 @@
+import { ScrollView } from "std-widgets.slint";
 import { AppState } from "../app-state.slint";
 import { DialogCloseButton } from "../components/dialog-close-button.slint";
 import { PillButton } from "../components/pill-button.slint";
@@ -9,10 +10,10 @@ export component ProfileDialog {
         background: #00000055;
         TouchArea { width: parent.width; height: parent.height; }
         Rectangle {
-            x: (parent.width - 400px) / 2;
-            y: (parent.height - 474px) / 2;
-            width: 400px;
-            height: 474px;
+            x: (parent.width - 420px) / 2;
+            y: (parent.height - 540px) / 2;
+            width: 420px;
+            height: 540px;
             background: AppTheme.panel;
             border-radius: 14px;
             border-width: 1px;
@@ -20,36 +21,57 @@ export component ProfileDialog {
             DialogCloseButton { x: parent.width - 42px; y: 12px; clicked => { AppState.profile-open = false; } }
             VerticalLayout {
                 padding: 24px;
-                spacing: 14px;
+                spacing: 12px;
                 SectionTitle { text: AppState.en ? "Account" : "账号信息"; }
                 Rectangle {
-                    height: 116px;
+                    height: AppState.nickname == "" ? 82px : 124px;
                     background: AppTheme.panel-soft;
                     border-radius: 10px;
-                    Text { x: 16px; y: 14px; text: AppState.en ? "Nickname" : "昵称"; color: AppTheme.muted; font-size: 12px; }
-                    Text { x: 16px; y: 34px; width: parent.width - 32px; text: AppState.nickname; color: AppTheme.text; font-size: 16px; overflow: elide; }
-                    Text { x: 16px; y: 66px; text: AppState.en ? "Email" : "邮箱"; color: AppTheme.muted; font-size: 12px; }
-                    Text { x: 16px; y: 86px; width: parent.width - 32px; text: AppState.email-mask; color: AppTheme.text; font-size: 14px; overflow: elide; }
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 4px;
+                        if AppState.nickname != "": Text { height: 16px; text: AppState.en ? "Nickname" : "昵称"; color: AppTheme.muted; font-size: 12px; }
+                        if AppState.nickname != "": Text { height: 24px; text: AppState.nickname; color: AppTheme.text; font-size: 16px; overflow: elide; }
+                        Text { height: 16px; text: AppState.en ? "Email" : "邮箱"; color: AppTheme.muted; font-size: 12px; }
+                        Text { height: 22px; text: AppState.email-mask; color: AppTheme.text; font-size: 14px; overflow: elide; }
+                    }
                 }
                 Rectangle {
-                    height: 58px;
+                    height: 64px;
                     background: AppTheme.panel-soft;
                     border-radius: 10px;
-                    Text { x: 16px; width: parent.width - 32px; height: parent.height; text: (AppState.en ? "Plan: " : "当前会员：") + AppState.membership-plan-name + " · " + AppState.membership-max-quality; color: AppTheme.text; font-size: 14px; vertical-alignment: center; overflow: elide; }
+                    Text { x: 16px; y: 12px; width: parent.width - 32px; height: 18px; text: AppState.en ? "Membership" : "当前会员"; color: AppTheme.muted; font-size: 12px; overflow: elide; }
+                    Text { x: 16px; y: 32px; width: parent.width - 32px; height: 22px; text: AppState.membership-plan-name + " · " + AppState.membership-max-quality; color: AppTheme.text; font-size: 14px; overflow: elide; }
                     TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.membership-open = true; } }
                 }
                 Text { height: 20px; text: AppState.en ? "Signed-in devices" : "登录设备"; color: AppTheme.muted; font-size: 13px; }
                 Rectangle {
-                    height: 92px;
+                    height: 108px;
                     background: AppTheme.panel-soft;
                     border-radius: 10px;
-                    VerticalLayout {
-                        padding: 8px;
-                        spacing: 4px;
-                        for session in AppState.account-sessions: Rectangle {
-                            height: 34px;
-                            Text { x: 8px; width: parent.width - 116px; height: parent.height; text: session.device-name + " · " + session.platform + (session.is-current ? (AppState.en ? " · Current" : " · 当前设备") : ""); color: AppTheme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
-                            if !session.is-current: PillButton { x: parent.width - 96px; y: 2px; width: 88px; height: 30px; text: AppState.en ? "Revoke" : "撤销"; danger: true; clicked => { AppState.revoke-session(session.id); } }
+                    if AppState.account-sessions.length == 0: Text {
+                        x: 14px;
+                        width: parent.width - 28px;
+                        height: parent.height;
+                        text: AppState.en ? "No device information" : "暂无登录设备信息";
+                        color: AppTheme.muted;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+                    if AppState.account-sessions.length > 0: ScrollView {
+                        x: 8px;
+                        y: 8px;
+                        width: parent.width - 16px;
+                        height: parent.height - 16px;
+                        VerticalLayout {
+                            spacing: 4px;
+                            for session in AppState.account-sessions: Rectangle {
+                                height: 38px;
+                                border-radius: 8px;
+                                background: session.is-current ? AppTheme.panel : transparent;
+                                Text { x: 10px; width: parent.width - 118px; height: parent.height; text: session.device-name + " · " + session.platform + (session.is-current ? (AppState.en ? " · Current" : " · 当前设备") : ""); color: AppTheme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                                if !session.is-current: PillButton { x: parent.width - 94px; y: 4px; width: 86px; height: 30px; text: AppState.en ? "Revoke" : "撤销"; danger: true; clicked => { AppState.revoke-session(session.id); } }
+                            }
                         }
                     }
                 }

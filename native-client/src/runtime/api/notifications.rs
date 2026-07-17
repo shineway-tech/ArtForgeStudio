@@ -48,4 +48,21 @@ impl NotificationsApi {
         )?;
         Ok(())
     }
+
+    pub(crate) fn delete(&self, id: &str) -> Result<(), ApiError> {
+        self.client.authenticated_json::<Value>(
+            Method::DELETE,
+            &format!("/v1/notifications/{id}"),
+            None,
+            None,
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn delete_all(&self) -> Result<(), ApiError> {
+        self.client.authenticated_json::<Value>(
+            Method::DELETE, "/v1/notifications", None, None,
+        )?;
+        Ok(())
+    }
 }
