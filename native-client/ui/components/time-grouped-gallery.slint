@@ -1,0 +1,15 @@
+import { TimeGroupSection } from "time-group-section.slint";
+import { AssetGroup } from "../types.slint";
+
+export component TimeGroupedGallery inherits VerticalLayout {
+    in property <[AssetGroup]> groups;
+    in property <length> card-width: 200px;
+    in property <string> source: "asset";
+    spacing: 0px;
+    for group in root.groups: TimeGroupSection {
+        width: root.width;
+        group: group;
+        card-width: root.card-width;
+        source: root.source;
+    }
+}

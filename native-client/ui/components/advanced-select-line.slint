@@ -1,0 +1,112 @@
+import { AppState } from "../app-state.slint";
+import { DropdownIcon } from "dropdown-icon.slint";
+import { TextOption } from "text-option.slint";
+import { AppTheme } from "../theme.slint";
+
+export component AdvancedSelectLine {
+    in property <string> kind;
+    property <bool> open: false;
+    height: 34px;
+    Rectangle {
+        background: AppTheme.bg;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: AppTheme.accent;
+        Text { x: 10px; width: parent.width - 38px; height: parent.height; text: root.label(); color: AppTheme.text; font-size: 12px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+        DropdownIcon { x: parent.width - 26px; y: (parent.height - 12px) / 2; }
+        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.open = true; popup.show(); } }
+    }
+    popup := PopupWindow {
+        x: 0px;
+        y: 38px;
+        width: root.width;
+        height: root.options-height();
+        close-policy: close-on-click-outside;
+        Rectangle {
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.accent;
+            VerticalLayout {
+                padding: 6px;
+                spacing: 3px;
+                if root.kind == "view": TextOption { left: AppState.en ? "Free Camera" : "自由视角"; right: ""; active: AppState.view-mode == "free"; clicked => { AppState.view-mode = "free"; root.open = false; popup.close(); } }
+                if root.kind == "view": TextOption { left: "Top Down"; right: AppState.en ? "Top" : "俯视"; active: AppState.view-mode == "top-down"; clicked => { AppState.view-mode = "top-down"; root.open = false; popup.close(); } }
+                if root.kind == "view": TextOption { left: "2.5D"; right: AppState.en ? "Angle" : "斜视"; active: AppState.view-mode == "2.5d"; clicked => { AppState.view-mode = "2.5d"; root.open = false; popup.close(); } }
+                if root.kind == "view": TextOption { left: "Isometric"; right: AppState.en ? "Iso" : "等距"; active: AppState.view-mode == "isometric"; clicked => { AppState.view-mode = "isometric"; root.open = false; popup.close(); } }
+                if root.kind == "view": TextOption { left: "Side View"; right: AppState.en ? "Side" : "横版"; active: AppState.view-mode == "side-view"; clicked => { AppState.view-mode = "side-view"; root.open = false; popup.close(); } }
+                if root.kind == "view": TextOption { left: "Third Person"; right: AppState.en ? "3rd" : "三人称"; active: AppState.view-mode == "third-person"; clicked => { AppState.view-mode = "third-person"; root.open = false; popup.close(); } }
+                if root.kind == "view": TextOption { left: "First Person"; right: AppState.en ? "1st" : "第一人称"; active: AppState.view-mode == "first-person"; clicked => { AppState.view-mode = "first-person"; root.open = false; popup.close(); } }
+                if root.kind == "view": TextOption { left: "Orthographic"; right: AppState.en ? "Ortho" : "正交"; active: AppState.view-mode == "orthographic"; clicked => { AppState.view-mode = "orthographic"; root.open = false; popup.close(); } }
+
+                if root.kind == "weather": TextOption { left: AppState.en ? "Natural Weather" : "自然天气"; right: ""; active: AppState.weather-mode == "natural"; clicked => { AppState.weather-mode = "natural"; root.open = false; popup.close(); } }
+                if root.kind == "weather": TextOption { left: AppState.en ? "Sunny" : "晴天"; right: AppState.en ? "Sun" : "晴"; active: AppState.weather-mode == "sunny"; clicked => { AppState.weather-mode = "sunny"; root.open = false; popup.close(); } }
+                if root.kind == "weather": TextOption { left: AppState.en ? "Cloudy" : "阴天"; right: AppState.en ? "Cloud" : "阴"; active: AppState.weather-mode == "cloudy"; clicked => { AppState.weather-mode = "cloudy"; root.open = false; popup.close(); } }
+                if root.kind == "weather": TextOption { left: AppState.en ? "Rainy" : "雨天"; right: AppState.en ? "Rain" : "雨"; active: AppState.weather-mode == "rainy"; clicked => { AppState.weather-mode = "rainy"; root.open = false; popup.close(); } }
+                if root.kind == "weather": TextOption { left: AppState.en ? "Storm" : "暴风雨"; right: AppState.en ? "Storm" : "暴"; active: AppState.weather-mode == "storm"; clicked => { AppState.weather-mode = "storm"; root.open = false; popup.close(); } }
+                if root.kind == "weather": TextOption { left: AppState.en ? "Snow" : "雪天"; right: AppState.en ? "Snow" : "雪"; active: AppState.weather-mode == "snow"; clicked => { AppState.weather-mode = "snow"; root.open = false; popup.close(); } }
+                if root.kind == "weather": TextOption { left: AppState.en ? "Fog" : "雾天"; right: AppState.en ? "Fog" : "雾"; active: AppState.weather-mode == "fog"; clicked => { AppState.weather-mode = "fog"; root.open = false; popup.close(); } }
+                if root.kind == "weather": TextOption { left: AppState.en ? "Dust" : "沙尘"; right: AppState.en ? "Dust" : "尘"; active: AppState.weather-mode == "dust"; clicked => { AppState.weather-mode = "dust"; root.open = false; popup.close(); } }
+
+                if root.kind == "time": TextOption { left: AppState.en ? "Natural Time" : "自然时间"; right: ""; active: AppState.time-mode == "natural"; clicked => { AppState.time-mode = "natural"; root.open = false; popup.close(); } }
+                if root.kind == "time": TextOption { left: AppState.en ? "Morning" : "清晨"; right: AppState.en ? "AM" : "晨"; active: AppState.time-mode == "morning"; clicked => { AppState.time-mode = "morning"; root.open = false; popup.close(); } }
+                if root.kind == "time": TextOption { left: AppState.en ? "Noon" : "正午"; right: AppState.en ? "Noon" : "昼"; active: AppState.time-mode == "noon"; clicked => { AppState.time-mode = "noon"; root.open = false; popup.close(); } }
+                if root.kind == "time": TextOption { left: AppState.en ? "Dusk" : "黄昏"; right: AppState.en ? "Dusk" : "昏"; active: AppState.time-mode == "dusk"; clicked => { AppState.time-mode = "dusk"; root.open = false; popup.close(); } }
+                if root.kind == "time": TextOption { left: AppState.en ? "Blue Hour" : "蓝调时刻"; right: AppState.en ? "Blue" : "蓝"; active: AppState.time-mode == "blue-hour"; clicked => { AppState.time-mode = "blue-hour"; root.open = false; popup.close(); } }
+                if root.kind == "time": TextOption { left: AppState.en ? "Deep Night" : "深夜"; right: AppState.en ? "Night" : "夜"; active: AppState.time-mode == "night"; clicked => { AppState.time-mode = "night"; root.open = false; popup.close(); } }
+
+                if root.kind == "light": TextOption { left: AppState.en ? "Natural Light" : "自然光照"; right: ""; active: AppState.light-mode == "natural"; clicked => { AppState.light-mode = "natural"; root.open = false; popup.close(); } }
+                if root.kind == "light": TextOption { left: AppState.en ? "Soft Natural Light" : "柔和自然光"; right: AppState.en ? "Soft" : "自然"; active: AppState.light-mode == "soft"; clicked => { AppState.light-mode = "soft"; root.open = false; popup.close(); } }
+                if root.kind == "light": TextOption { left: AppState.en ? "Cinematic" : "电影感"; right: AppState.en ? "Film" : "电影"; active: AppState.light-mode == "cinematic"; clicked => { AppState.light-mode = "cinematic"; root.open = false; popup.close(); } }
+                if root.kind == "light": TextOption { left: AppState.en ? "Dream Glow" : "梦幻发光"; right: AppState.en ? "Glow" : "发光"; active: AppState.light-mode == "glow"; clicked => { AppState.light-mode = "glow"; root.open = false; popup.close(); } }
+                if root.kind == "light": TextOption { left: AppState.en ? "High Contrast" : "高对比"; right: AppState.en ? "Contrast" : "对比"; active: AppState.light-mode == "contrast"; clicked => { AppState.light-mode = "contrast"; root.open = false; popup.close(); } }
+                if root.kind == "light": TextOption { left: AppState.en ? "Volumetric Light" : "体积光"; right: AppState.en ? "Beam" : "光束"; active: AppState.light-mode == "volumetric"; clicked => { AppState.light-mode = "volumetric"; root.open = false; popup.close(); } }
+                if root.kind == "light": TextOption { left: AppState.en ? "Neon Light" : "霓虹灯"; right: AppState.en ? "Neon" : "霓虹"; active: AppState.light-mode == "neon"; clicked => { AppState.light-mode = "neon"; root.open = false; popup.close(); } }
+            }
+        }
+    }
+
+    function options-height() -> length {
+        if root.kind == "time" { return 198px; }
+        if root.kind == "light" { return 230px; }
+        return 294px;
+    }
+
+    function label() -> string {
+        if root.kind == "view" {
+            if AppState.view-mode == "top-down" { return "Top Down"; }
+            if AppState.view-mode == "2.5d" { return "2.5D"; }
+            if AppState.view-mode == "isometric" { return "Isometric"; }
+            if AppState.view-mode == "side-view" { return "Side View"; }
+            if AppState.view-mode == "third-person" { return "Third Person"; }
+            if AppState.view-mode == "first-person" { return "First Person"; }
+            if AppState.view-mode == "orthographic" { return "Orthographic"; }
+            return AppState.en ? "Free Camera" : "自由视角";
+        }
+        if root.kind == "weather" {
+            if AppState.weather-mode == "sunny" { return AppState.en ? "Sunny" : "晴天"; }
+            if AppState.weather-mode == "cloudy" { return AppState.en ? "Cloudy" : "阴天"; }
+            if AppState.weather-mode == "rainy" { return AppState.en ? "Rainy" : "雨天"; }
+            if AppState.weather-mode == "storm" { return AppState.en ? "Storm" : "暴风雨"; }
+            if AppState.weather-mode == "snow" { return AppState.en ? "Snow" : "雪天"; }
+            if AppState.weather-mode == "fog" { return AppState.en ? "Fog" : "雾天"; }
+            if AppState.weather-mode == "dust" { return AppState.en ? "Dust" : "沙尘"; }
+            return AppState.en ? "Natural Weather" : "自然天气";
+        }
+        if root.kind == "time" {
+            if AppState.time-mode == "morning" { return AppState.en ? "Morning" : "清晨"; }
+            if AppState.time-mode == "noon" { return AppState.en ? "Noon" : "正午"; }
+            if AppState.time-mode == "dusk" { return AppState.en ? "Dusk" : "黄昏"; }
+            if AppState.time-mode == "blue-hour" { return AppState.en ? "Blue Hour" : "蓝调时刻"; }
+            if AppState.time-mode == "night" { return AppState.en ? "Deep Night" : "深夜"; }
+            return AppState.en ? "Natural Time" : "自然时间";
+        }
+        if AppState.light-mode == "soft" { return AppState.en ? "Soft Natural Light" : "柔和自然光"; }
+        if AppState.light-mode == "cinematic" { return AppState.en ? "Cinematic" : "电影感"; }
+        if AppState.light-mode == "glow" { return AppState.en ? "Dream Glow" : "梦幻发光"; }
+        if AppState.light-mode == "contrast" { return AppState.en ? "High Contrast" : "高对比"; }
+        if AppState.light-mode == "volumetric" { return AppState.en ? "Volumetric Light" : "体积光"; }
+        if AppState.light-mode == "neon" { return AppState.en ? "Neon Light" : "霓虹灯"; }
+        return AppState.en ? "Natural Light" : "自然光照";
+    }
+}

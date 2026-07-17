@@ -1,0 +1,67 @@
+import { AppTheme } from "../theme.slint";
+
+export component HelpBubble {
+    in property <string> text;
+    property <bool> open: false;
+    width: 18px;
+    height: 18px;
+    Timer {
+        interval: 80ms;
+        running: true;
+        triggered => {
+            if helper.has-hover && !root.open {
+                root.open = true;
+                popup.show();
+            }
+            if !helper.has-hover && root.open {
+                root.open = false;
+                popup.close();
+            }
+        }
+    }
+    Rectangle {
+        background: helper.has-hover ? AppTheme.panel-soft : transparent;
+        border-radius: 9px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: "?";
+            color: AppTheme.muted;
+            font-size: 12px;
+            font-weight: 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        helper := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: help;
+        }
+    }
+    popup := PopupWindow {
+        x: -242px;
+        y: 24px;
+        width: 260px;
+        height: 82px;
+        Rectangle {
+            visible: root.open;
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            Text {
+                x: 12px;
+                y: 10px;
+                width: parent.width - 24px;
+                height: parent.height - 20px;
+                text: root.text;
+                color: AppTheme.text;
+                font-size: 12px;
+                font-weight: 400;
+                wrap: word-wrap;
+            }
+        }
+    }
+}

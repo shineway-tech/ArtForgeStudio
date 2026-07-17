@@ -7,21 +7,32 @@ edition = "2021"
 name = "ArtForgeStudio"
 path = "src/main.rs"
 
+[lib]
+doctest = false
+
 [dependencies]
 anyhow = "1"
 arboard = "3.6.1"
-base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 fontdb = "0.23"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls"] }
 rfd = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-slint = { version = "=1.16.1", default-features = false, features = ["compat-1-2", "std", "backend-winit", "renderer-software"] }
+sha2 = "0.10"
+slint = { version = "=1.16.1", default-features = false, features = ["compat-1-2", "std", "backend-winit", "renderer-software", "raw-window-handle-06"] }
+thiserror = { workspace = true }
 uuid = { version = "1", features = ["v4", "serde"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData"] }
+wry = "0.55.1"
+
 [target.'cfg(windows)'.dependencies]
+wry = "0.55.1"
 windows = { version = "0.61.3", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
@@ -47,10 +58,3 @@ slint-build = "=1.16.1"
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1.31"
-
-[profile.release]
-opt-level = 2
-lto = "fat"
-codegen-units = 1
-strip = "symbols"
-panic = "abort"

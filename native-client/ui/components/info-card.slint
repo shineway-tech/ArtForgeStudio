@@ -1,0 +1,15 @@
+import { AppTheme } from "../theme.slint";
+
+export component InfoCard {
+    in property <string> label;
+    in property <string> value;
+    height: 70px;
+    Rectangle {
+        background: AppTheme.panel-soft;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        Text { x: 12px; y: 10px; text: root.label; color: AppTheme.muted; font-size: 14px; font-weight: 400; }
+        Text { x: 12px; y: 36px; width: parent.width - 24px; text: root.value; color: AppTheme.text; font-size: 16px; font-weight: 400; overflow: elide; }
+    }
+}

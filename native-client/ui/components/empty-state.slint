@@ -1,0 +1,32 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component EmptyState {
+    height: 220px;
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: transparent;
+        Image {
+            x: (parent.width - 96px) / 2;
+            y: max(0px, (parent.height - 146px) / 2);
+            width: 96px;
+            height: 96px;
+            source: AppState.icon-empty;
+            image-fit: contain;
+            colorize: AppTheme.accent;
+        }
+        Text {
+            x: 0px;
+            y: max(0px, (parent.height - 146px) / 2) + 112px;
+            width: parent.width;
+            height: 24px;
+            text: AppState.en ? "No data" : "暂无数据";
+            color: AppTheme.accent-dark;
+            font-size: 14px;
+            font-weight: 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}

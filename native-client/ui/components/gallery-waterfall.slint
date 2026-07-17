@@ -1,0 +1,55 @@
+import { WaterfallColumn } from "waterfall-column.slint";
+import { AssetItem } from "../types.slint";
+
+export component GalleryWaterfall {
+    in property <[AssetItem]> items;
+    in property <length> card-width: 220px;
+    in property <string> source: "asset";
+    Rectangle {
+        width: root.width;
+        height: root.content-height();
+        background: transparent;
+        HorizontalLayout {
+            x: 0px;
+            width: root.used-width();
+            height: parent.height;
+            spacing: root.grid-gap();
+            alignment: start;
+            if root.column-count() >= 1: WaterfallColumn { items: root.items; card-width: root.item-width(); source: root.source; column-index: 0; column-count: root.column-count(); }
+            if root.column-count() >= 2: WaterfallColumn { items: root.items; card-width: root.item-width(); source: root.source; column-index: 1; column-count: root.column-count(); }
+            if root.column-count() >= 3: WaterfallColumn { items: root.items; card-width: root.item-width(); source: root.source; column-index: 2; column-count: root.column-count(); }
+            if root.column-count() >= 4: WaterfallColumn { items: root.items; card-width: root.item-width(); source: root.source; column-index: 3; column-count: root.column-count(); }
+            if root.column-count() >= 5: WaterfallColumn { items: root.items; card-width: root.item-width(); source: root.source; column-index: 4; column-count: root.column-count(); }
+            if root.column-count() >= 6: WaterfallColumn { items: root.items; card-width: root.item-width(); source: root.source; column-index: 5; column-count: root.column-count(); }
+            if root.column-count() >= 7: WaterfallColumn { items: root.items; card-width: root.item-width(); source: root.source; column-index: 6; column-count: root.column-count(); }
+            if root.column-count() >= 8: WaterfallColumn { items: root.items; card-width: root.item-width(); source: root.source; column-index: 7; column-count: root.column-count(); }
+        }
+    }
+    function column-count() -> int {
+        return max(1, min(root.items.length, min(8, floor((root.grid-width() + root.grid-gap()) / root.item-slot-width()))));
+    }
+    function grid-width() -> length {
+        return max(1px, root.width);
+    }
+    function grid-gap() -> length {
+        return 18px;
+    }
+    function item-slot-width() -> length {
+        return root.card-width + root.grid-gap();
+    }
+    function item-width() -> length {
+        return min(root.card-width, max(139px, (root.grid-width() - (root.column-count() - 1) * root.grid-gap()) / root.column-count()));
+    }
+    function used-width() -> length {
+        return root.column-count() * root.item-width() + max(0, root.column-count() - 1) * root.grid-gap();
+    }
+    function row-height() -> length {
+        return root.item-width() + 48px;
+    }
+    function row-count() -> int {
+        return (root.items.length + root.column-count() - 1) / root.column-count();
+    }
+    function content-height() -> length {
+        return max(1px, root.row-count() * root.row-height());
+    }
+}

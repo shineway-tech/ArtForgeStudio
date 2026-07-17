@@ -1,0 +1,36 @@
+import { AppState } from "../app-state.slint";
+import { LoadingDots } from "loading-dots.slint";
+import { AppTheme } from "../theme.slint";
+
+export component GenerationLoadingCard {
+    in property <length> card-width: 188px;
+    in property <length> card-gap: 10px;
+    width: root.card-width;
+    height: root.card-width + root.card-gap;
+    Rectangle {
+        width: root.width;
+        height: root.card-width;
+        background: AppTheme.panel-soft;
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        LoadingDots {
+            x: (parent.width - 64px) / 2;
+            y: parent.height / 2 - 48px;
+            width: 64px;
+            height: 46px;
+        }
+        Text {
+            x: 0px;
+            y: parent.height / 2 + 6px;
+            width: parent.width;
+            height: 24px;
+            text: AppState.en ? "Generating..." : "生成中...";
+            color: AppTheme.accent-dark;
+            font-size: 13px;
+            font-weight: 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}

@@ -1,0 +1,17 @@
+import { AppState } from "../app-state.slint";
+
+export component NavGlyph {
+    in property <string> kind;
+    in property <color> glyph-color;
+    width: 22px;
+    height: 22px;
+    if root.kind == "assets": Image { width: parent.width; height: parent.height; source: AppState.icon-assets; colorize: root.glyph-color; image-fit: contain; }
+    if root.kind == "generation": Image { width: parent.width; height: parent.height; source: AppState.icon-generation; colorize: root.glyph-color; image-fit: contain; }
+    if root.kind == "workspace": Image { width: parent.width; height: parent.height; source: AppState.icon-workspace; colorize: root.glyph-color; image-fit: contain; }
+    if root.kind == "inspiration": Image { width: parent.width; height: parent.height; source: AppState.icon-inspiration; colorize: root.glyph-color; image-fit: contain; }
+    if root.kind == "notifications": Image { width: parent.width; height: parent.height; source: AppState.icon-notifications; colorize: root.glyph-color; image-fit: contain; }
+    if root.kind == "settings": Image { width: parent.width; height: parent.height; source: AppState.icon-settings; colorize: root.glyph-color; image-fit: contain; }
+    if root.kind == "models": Image { width: parent.width; height: parent.height; source: AppState.icon-models; colorize: root.glyph-color; image-fit: contain; }
+    if root.kind == "credits": Text { width: parent.width; height: parent.height; text: "¥"; color: root.glyph-color; font-size: 14px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+    if root.kind == "rebate": Text { width: parent.width; height: parent.height; text: "%"; color: root.glyph-color; font-size: 14px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+}

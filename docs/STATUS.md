@@ -3,6 +3,9 @@
 > 生成日期：2025-07-14  
 > 基于 `docs/rewrite/08-migration-plan.md` 的 13 阶段路线图对标
 
+> 归档说明：本文主体记录早期 `crates/` 模块化方案。当前 workspace 只构建
+> `native-client/ArtForgeStudio`，归档 crate 不参与构建或发布。
+
 ---
 
 ## 一、当前版本信息
@@ -10,8 +13,8 @@
 | 项 | 值 |
 |----|-----|
 | 产品名 | ArtForge Studio |
-| 主二进制 | `ArtForgeStudio.exe` |
-| 辅助工具 | `artait-migrate.exe`（兼容迁移） |
+| 当前客户端二进制 | `ArtForgeStudio.exe` |
+| 活动 workspace 成员 | `native-client` |
 | 所有 crate 版本 | `0.1.0` |
 | Rust edition | 2021，MSRV 1.78 |
 | UI 框架 | Slint 1.8 |
@@ -30,7 +33,7 @@
 | `artait-task` | 0.1.0 | TaskRunner + 取消 + 事件总线 | 2 |
 | `artait-asset` | 0.1.0 | 资产懒索引 + 缩略图 + 后处理 | 6 |
 | `artait-service` | 0.1.0 | 业务编排（生成 / 脚本 / 提示词优化 / 任务历史） | 13 |
-| `artait-app` | 0.1.0 | Slint UI + main，唯一二进制入口 | 13 |
+| `artait-app` | 0.1.0 | 归档模块化 Slint UI，不参与当前构建 | 13 |
 
 > 所有业务逻辑已沉入 `artait-service`，`main.rs` 仅 768 行做初始化+注册。
 

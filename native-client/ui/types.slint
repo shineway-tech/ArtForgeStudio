@@ -1,0 +1,104 @@
+export struct ModelOption {
+    code: string,
+    name: string,
+}
+
+export struct ModelGroup {
+    kind: string,
+    name: string,
+    models: [ModelOption],
+    used-models: [string],
+    selected-model: string,
+}
+
+export struct AssetItem {
+    id: string,
+    title: string,
+    category: string,
+    kind: string,
+    time: string,
+    prompt: string,
+    ratio: string,
+    quality: string,
+    model: string,
+    width: int,
+    height: int,
+    image: image,
+    source-path: string,
+    drag-uri: string,
+    cutout-done: bool,
+    remove-black-done: bool,
+    upscale-done: bool,
+}
+
+export struct AssetGroup {
+    title: string,
+    items: [AssetItem],
+}
+
+export struct ConversationItem {
+    id: string,
+    title: string,
+    image: image,
+    loading: bool,
+}
+
+export struct NotificationItem {
+    id: string,
+    title: string,
+    model: string,
+    time: string,
+    reason: string,
+    success: bool,
+    read: bool,
+}
+
+export struct CreditRecord {
+    title: string,
+    amount: string,
+    time: string,
+    note: string,
+    tone: string,
+}
+
+export struct CreditPackView {
+    code: string,
+    name: string,
+    credits: string,
+    price: string,
+    note: string,
+}
+
+export struct MembershipPlanView {
+    code: string,
+    name: string,
+    price: string,
+    grant-credits: string,
+    period-days: int,
+    tier-rank: int,
+    max-quality: string,
+}
+
+export struct CatalogModelView {
+    code: string,
+    name: string,
+    purpose: string,
+    version: int,
+    capabilities: string,
+    pricing: string,
+}
+
+export struct AccountSession {
+    id: string,
+    device-name: string,
+    platform: string,
+    app-version: string,
+    last-seen-at: string,
+    is-current: bool,
+}
+
+export struct ReferenceItem {
+    id: string,
+    image: image,
+    source-path: string,
+}

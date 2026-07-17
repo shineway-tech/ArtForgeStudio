@@ -1,0 +1,68 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { EmptyState } from "../components/empty-state.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { SectionTitle } from "../components/section-title.slint";
+import { AppTheme } from "../theme.slint";
+
+export component NotificationsPage {
+    Rectangle {
+        background: AppTheme.bg;
+        Rectangle {
+            x: 24px;
+            y: 24px;
+            width: parent.width - 48px;
+            height: parent.height - 48px;
+            background: transparent;
+            VerticalLayout {
+                spacing: 12px;
+                Rectangle {
+                    height: 44px;
+                    background: transparent;
+                    SectionTitle { x: 0px; y: 0px; width: parent.width - 280px; text: AppState.en ? "Notifications" : "通知"; }
+                    PillButton {
+                        x: parent.width - 128px;
+                        y: 0px;
+                        width: 128px;
+                        height: 40px;
+                        text: AppState.en ? "Mark all read" : "一键已读";
+                        primary: true;
+                        disabled: !AppState.has-unread;
+                        clicked => { AppState.mark-all-notifications-read(); }
+                    }
+                }
+                ScrollView {
+                    vertical-stretch: 1;
+                    if AppState.notifications.length == 0: EmptyState { width: parent.width; height: parent.height; }
+                    if AppState.notifications.length > 0: VerticalLayout {
+                        spacing: 10px;
+                        for item in AppState.notifications: Rectangle {
+                            height: item.reason == "" ? 72px : 96px;
+                            background: AppTheme.panel;
+                            border-radius: 12px;
+                            border-width: 1px;
+                            border-color: AppTheme.border;
+                            Rectangle { x: 14px; y: 22px; width: 9px; height: 9px; border-radius: 5px; background: item.read ? transparent : (item.success ? AppTheme.success : AppTheme.danger); }
+                            Text { x: 42px; y: 14px; width: parent.width - 242px; text: item.title; color: item.success ? AppTheme.text : AppTheme.danger; font-size: 14px; font-weight: 400; overflow: elide; }
+                            Text { x: parent.width - 184px; y: 14px; width: 160px; text: item.time; color: AppTheme.muted; font-size: 12px; font-weight: 400; horizontal-alignment: right; overflow: elide; }
+                            Text { x: 42px; y: 38px; width: parent.width - 64px; text: AppState.en ? ("Model: " + item.model) : ("模型：" + item.model); color: AppTheme.muted; font-size: 12px; font-weight: 400; overflow: elide; }
+                            if item.reason != "": Text {
+                                x: 42px;
+                                y: 64px;
+                                width: parent.width - 64px;
+                                text: item.success
+                                    ? (AppState.en ? ("Details: " + item.reason) : ("成功说明：" + item.reason))
+                                    : (AppState.en ? ("Reason: " + item.reason) : ("失败原因：" + item.reason));
+                                color: item.success ? AppTheme.success : AppTheme.danger;
+                                font-size: 12px;
+                                font-weight: 400;
+                                overflow: elide;
+                            }
+                            TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.mark-notification-read(item.id); } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

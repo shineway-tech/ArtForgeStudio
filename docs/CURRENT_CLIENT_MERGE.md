@@ -1,17 +1,22 @@
-# Current Client Merge
+# Current Client Layout
 
-This source tree now contains two Rust client code paths:
+The source tree retains two generations of client code, but only one is active:
 
-- `crates/artait-app`: upstream workspace application from `ArtStudio-main`.
-- `native-client`: the current ArtForgeStudio client that contains the recent UI and workflow changes.
+- `native-client`: the ArtForgeStudio product source and the only workspace member.
+- `crates/`: archived modular migration sources, excluded from the workspace.
 
-The workspace root `Cargo.toml` includes `native-client` as a member, so the current client can be checked or built from this directory:
+Normal and workspace-wide Cargo commands therefore build only `native-client`:
 
 ```powershell
 cargo check -p artforge-studio-native
-cargo build -p artforge-studio-native --release
+cargo test -p artforge-studio-native
+cargo build --release -p artforge-studio-native --bin ArtForgeStudio
+cargo build --release --workspace
 ```
 
-The current executable package name remains `ArtForgeStudio`.
+The only application output is `ArtForgeStudio` (`ArtForgeStudio.exe` on Windows).
+The archived `crates/artait-app/src/main.rs` is retained for reference but is not
+declared as a Cargo binary target.
 
-The `assets/sucai` folder was also synced into this source tree so the client can load the inspiration assets when packaged with the executable.
+The `assets/sucai` folder remains available to the active client for packaged
+inspiration assets.

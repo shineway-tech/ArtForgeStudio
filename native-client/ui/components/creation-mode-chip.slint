@@ -1,0 +1,125 @@
+import { AppState } from "../app-state.slint";
+import { DropdownIcon } from "dropdown-icon.slint";
+import { TextOption } from "text-option.slint";
+import { AppTheme } from "../theme.slint";
+
+export component CreationModeChip {
+    property <bool> open: false;
+    width: 108px;
+    height: 36px;
+    Rectangle {
+        background: AppTheme.panel-soft;
+        border-radius: 18px;
+        border-width: 1px;
+        border-color: AppTheme.accent;
+        Text { x: 14px; width: parent.width - 44px; height: parent.height; text: label(); color: AppTheme.text; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+        DropdownIcon { x: parent.width - 28px; y: (parent.height - 12px) / 2; }
+        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.open = true; popup.show(); } }
+    }
+    popup := PopupWindow {
+        x: 0px;
+        y: 42px;
+        width: 170px;
+        height: root.options-height();
+        close-policy: close-on-click-outside;
+        Rectangle {
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.accent;
+            VerticalLayout {
+                padding: 6px;
+                spacing: 3px;
+                if AppState.asset-type == "character": TextOption { left: AppState.en ? "Free Create" : "自由创作"; right: ""; active: AppState.creation-mode == "free"; clicked => { AppState.creation-mode = "free"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "character": TextOption { left: AppState.en ? "Character Full Body" : "角色立绘"; right: AppState.en ? "Full" : "立绘"; active: AppState.creation-mode == "character-standee"; clicked => { AppState.creation-mode = "character-standee"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "character": TextOption { left: AppState.en ? "Three Views" : "三视图"; right: AppState.en ? "Sheet" : "设定"; active: AppState.creation-mode == "character-turnaround"; clicked => { AppState.creation-mode = "character-turnaround"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "character": TextOption { left: AppState.en ? "8 Directions" : "8方向"; right: AppState.en ? "Action" : "动作"; active: AppState.creation-mode == "character-8dir"; clicked => { AppState.creation-mode = "character-8dir"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "character": TextOption { left: "SpriteSheet"; right: AppState.en ? "Frames" : "帧"; active: AppState.creation-mode == "character-spritesheet"; clicked => { AppState.creation-mode = "character-spritesheet"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "character": TextOption { left: AppState.en ? "Spine Parts" : "Spine拆件"; right: AppState.en ? "Parts" : "拆件"; active: AppState.creation-mode == "character-spine-parts"; clicked => { AppState.creation-mode = "character-spine-parts"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "character": TextOption { left: AppState.en ? "NPC Portrait" : "NPC头像"; right: AppState.en ? "Head" : "头像"; active: AppState.creation-mode == "character-portrait"; clicked => { AppState.creation-mode = "character-portrait"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "character": TextOption { left: AppState.en ? "Promo Poster" : "宣传海报"; right: AppState.en ? "Poster" : "海报"; active: AppState.creation-mode == "character-poster"; clicked => { AppState.creation-mode = "character-poster"; root.open = false; popup.close(); } }
+
+                if AppState.asset-type == "scene": TextOption { left: AppState.en ? "Free Create" : "自由创作"; right: ""; active: AppState.creation-mode == "free"; clicked => { AppState.creation-mode = "free"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "scene": TextOption { left: AppState.en ? "Scene concept" : "场景概念图"; right: AppState.en ? "Explore" : "探索"; active: AppState.creation-mode == "scene-concept"; clicked => { AppState.creation-mode = "scene-concept"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "scene": TextOption { left: "TileSet"; right: AppState.en ? "Tiles" : "地块"; active: AppState.creation-mode == "tileset"; clicked => { AppState.creation-mode = "tileset"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "scene": TextOption { left: AppState.en ? "Map Reference" : "地编参考"; right: AppState.en ? "Layout" : "布局"; active: AppState.creation-mode == "map-ref"; clicked => { AppState.creation-mode = "map-ref"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "scene": TextOption { left: AppState.en ? "Key Visual" : "宣传图"; right: AppState.en ? "Marketing" : "营销"; active: AppState.creation-mode == "poster"; clicked => { AppState.creation-mode = "poster"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "scene": TextOption { left: AppState.en ? "Loading Image" : "Loading 图"; right: AppState.en ? "Load" : "载入"; active: AppState.creation-mode == "loading"; clicked => { AppState.creation-mode = "loading"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "scene": TextOption { left: AppState.en ? "Mini Map" : "小地图"; right: AppState.en ? "Top" : "俯视"; active: AppState.creation-mode == "minimap"; clicked => { AppState.creation-mode = "minimap"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "scene": TextOption { left: AppState.en ? "Building Kit" : "建筑套件"; right: AppState.en ? "Module" : "模块"; active: AppState.creation-mode == "building-kit"; clicked => { AppState.creation-mode = "building-kit"; root.open = false; popup.close(); } }
+
+                if AppState.asset-type == "ui": TextOption { left: AppState.en ? "Free Create" : "自由创作"; right: ""; active: AppState.creation-mode == "free"; clicked => { AppState.creation-mode = "free"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "ui": TextOption { left: "HUD"; right: AppState.en ? "Battle" : "战斗"; active: AppState.creation-mode == "ui-hud"; clicked => { AppState.creation-mode = "ui-hud"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "ui": TextOption { left: AppState.en ? "Main Screen" : "主界面"; right: AppState.en ? "Entry" : "入口"; active: AppState.creation-mode == "ui-main-screen"; clicked => { AppState.creation-mode = "ui-main-screen"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "ui": TextOption { left: AppState.en ? "Backpack" : "背包"; right: AppState.en ? "Items" : "物品"; active: AppState.creation-mode == "ui-backpack"; clicked => { AppState.creation-mode = "ui-backpack"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "ui": TextOption { left: AppState.en ? "Shop" : "商城"; right: AppState.en ? "Buy" : "购买"; active: AppState.creation-mode == "ui-shop"; clicked => { AppState.creation-mode = "ui-shop"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "ui": TextOption { left: "Icon"; right: AppState.en ? "Icon" : "图标"; active: AppState.creation-mode == "ui-icon"; clicked => { AppState.creation-mode = "ui-icon"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "ui": TextOption { left: AppState.en ? "Loading UI" : "Loading界面"; right: AppState.en ? "Load" : "载入"; active: AppState.creation-mode == "ui-loading"; clicked => { AppState.creation-mode = "ui-loading"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "ui": TextOption { left: AppState.en ? "Popup" : "弹窗"; right: AppState.en ? "Modal" : "模态"; active: AppState.creation-mode == "ui-popup"; clicked => { AppState.creation-mode = "ui-popup"; root.open = false; popup.close(); } }
+
+                if AppState.asset-type == "effect": TextOption { left: AppState.en ? "Free Create" : "自由创作"; right: ""; active: AppState.creation-mode == "free"; clicked => { AppState.creation-mode = "free"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "effect": TextOption { left: AppState.en ? "Skill VFX" : "技能特效"; right: AppState.en ? "Skill" : "技能"; active: AppState.creation-mode == "fx-skill"; clicked => { AppState.creation-mode = "fx-skill"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "effect": TextOption { left: AppState.en ? "Buff VFX" : "Buff特效"; right: AppState.en ? "Status" : "状态"; active: AppState.creation-mode == "fx-buff"; clicked => { AppState.creation-mode = "fx-buff"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "effect": TextOption { left: AppState.en ? "Explosion" : "爆炸"; right: AppState.en ? "Impact" : "冲击"; active: AppState.creation-mode == "fx-explosion"; clicked => { AppState.creation-mode = "fx-explosion"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "effect": TextOption { left: AppState.en ? "Scene VFX" : "场景特效"; right: AppState.en ? "Env" : "环境"; active: AppState.creation-mode == "fx-scene"; clicked => { AppState.creation-mode = "fx-scene"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "effect": TextOption { left: AppState.en ? "UI VFX" : "UI特效"; right: AppState.en ? "Feedback" : "反馈"; active: AppState.creation-mode == "fx-ui"; clicked => { AppState.creation-mode = "fx-ui"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "effect": TextOption { left: AppState.en ? "Weapon Trail" : "武器拖尾"; right: AppState.en ? "Trail" : "轨迹"; active: AppState.creation-mode == "fx-weapon-trail"; clicked => { AppState.creation-mode = "fx-weapon-trail"; root.open = false; popup.close(); } }
+
+                if AppState.asset-type == "action-sequence": TextOption { left: AppState.en ? "Idle" : "待机"; right: AppState.en ? "Idle" : "待机"; active: AppState.creation-mode == "anim-idle" || AppState.creation-mode == "free"; clicked => { AppState.creation-mode = "anim-idle"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "action-sequence": TextOption { left: AppState.en ? "Run" : "跑步"; right: AppState.en ? "Run" : "跑步"; active: AppState.creation-mode == "anim-run"; clicked => { AppState.creation-mode = "anim-run"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "action-sequence": TextOption { left: AppState.en ? "Walk" : "走路"; right: AppState.en ? "Walk" : "走路"; active: AppState.creation-mode == "anim-walk"; clicked => { AppState.creation-mode = "anim-walk"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "action-sequence": TextOption { left: AppState.en ? "Attack" : "攻击"; right: AppState.en ? "Atk" : "攻击"; active: AppState.creation-mode == "anim-attack"; clicked => { AppState.creation-mode = "anim-attack"; root.open = false; popup.close(); } }
+                if AppState.asset-type == "action-sequence": TextOption { left: AppState.en ? "Death" : "死亡"; right: AppState.en ? "Death" : "死亡"; active: AppState.creation-mode == "anim-death"; clicked => { AppState.creation-mode = "anim-death"; root.open = false; popup.close(); } }
+            }
+        }
+    }
+    function options-height() -> length {
+        if AppState.asset-type == "action-sequence" { return 174px; }
+        return 252px;
+    }
+    function label() -> string {
+        if AppState.asset-type == "action-sequence" {
+            if AppState.creation-mode == "anim-run" { return AppState.en ? "Run" : "跑步"; }
+            if AppState.creation-mode == "anim-walk" { return AppState.en ? "Walk" : "走路"; }
+            if AppState.creation-mode == "anim-attack" { return AppState.en ? "Attack" : "攻击"; }
+            if AppState.creation-mode == "anim-death" { return AppState.en ? "Death" : "死亡"; }
+            return AppState.en ? "Idle" : "待机";
+        }
+        if AppState.creation-mode == "character-standee" { return AppState.en ? "Character Full Body" : "角色立绘"; }
+        if AppState.creation-mode == "character-turnaround" { return AppState.en ? "Three Views" : "三视图"; }
+        if AppState.creation-mode == "character-8dir" { return AppState.en ? "8 Directions" : "8方向"; }
+        if AppState.creation-mode == "character-spritesheet" { return "SpriteSheet"; }
+        if AppState.creation-mode == "character-spine-parts" { return AppState.en ? "Spine Parts" : "Spine拆件"; }
+        if AppState.creation-mode == "character-portrait" { return AppState.en ? "NPC Portrait" : "NPC头像"; }
+        if AppState.creation-mode == "character-poster" { return AppState.en ? "Promo Poster" : "宣传海报"; }
+        if AppState.creation-mode == "scene-concept" { return AppState.en ? "Scene concept" : "场景概念图"; }
+        if AppState.creation-mode == "tileset" { return "TileSet"; }
+        if AppState.creation-mode == "map-ref" { return AppState.en ? "Map Reference" : "地编参考"; }
+        if AppState.creation-mode == "poster" { return AppState.en ? "Key Visual" : "宣传图"; }
+        if AppState.creation-mode == "loading" { return AppState.en ? "Loading Image" : "Loading 图"; }
+        if AppState.creation-mode == "minimap" { return AppState.en ? "Mini Map" : "小地图"; }
+        if AppState.creation-mode == "building-kit" { return AppState.en ? "Building Kit" : "建筑套件"; }
+        if AppState.creation-mode == "ui-hud" { return "HUD"; }
+        if AppState.creation-mode == "ui-main-screen" { return AppState.en ? "Main Screen" : "主界面"; }
+        if AppState.creation-mode == "ui-backpack" { return AppState.en ? "Backpack" : "背包"; }
+        if AppState.creation-mode == "ui-shop" { return AppState.en ? "Shop" : "商城"; }
+        if AppState.creation-mode == "ui-icon" { return "Icon"; }
+        if AppState.creation-mode == "ui-loading" { return AppState.en ? "Loading UI" : "Loading界面"; }
+        if AppState.creation-mode == "ui-popup" { return AppState.en ? "Popup" : "弹窗"; }
+        if AppState.creation-mode == "fx-skill" { return AppState.en ? "Skill VFX" : "技能特效"; }
+        if AppState.creation-mode == "fx-buff" { return AppState.en ? "Buff VFX" : "Buff特效"; }
+        if AppState.creation-mode == "fx-explosion" { return AppState.en ? "Explosion" : "爆炸"; }
+        if AppState.creation-mode == "fx-scene" { return AppState.en ? "Scene VFX" : "场景特效"; }
+        if AppState.creation-mode == "fx-ui" { return AppState.en ? "UI VFX" : "UI特效"; }
+        if AppState.creation-mode == "fx-weapon-trail" { return AppState.en ? "Weapon Trail" : "武器拖尾"; }
+        if AppState.creation-mode == "anim-run" { return AppState.en ? "Run Cycle" : "跑步循环"; }
+        if AppState.creation-mode == "anim-walk" { return AppState.en ? "Walk" : "走路"; }
+        if AppState.creation-mode == "anim-attack" { return AppState.en ? "Attack" : "攻击动作"; }
+        if AppState.creation-mode == "anim-hit" { return AppState.en ? "Hit React" : "受击动作"; }
+        if AppState.creation-mode == "anim-idle" { return AppState.en ? "Idle Loop" : "待机动作"; }
+        if AppState.creation-mode == "anim-jump" { return AppState.en ? "Jump" : "跳跃动作"; }
+        if AppState.creation-mode == "anim-death" { return AppState.en ? "Death" : "死亡动作"; }
+        if AppState.creation-mode == "anim-skill" { return AppState.en ? "Skill Move" : "技能动作"; }
+        return AppState.en ? "Free Create" : "自由创作";
+    }
+}

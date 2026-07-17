@@ -1,0 +1,13 @@
+import { AppTheme } from "../theme.slint";
+
+export component UploadCard {
+    callback clicked();
+    Rectangle {
+        background: AppTheme.panel-soft;
+        border-radius: 3px;
+        border-width: 1px;
+        border-color: AppTheme.accent;
+        Text { width: parent.width; height: parent.height; text: "+"; color: AppTheme.muted; font-size: 22px; font-weight: 300; horizontal-alignment: center; vertical-alignment: center; }
+        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.clicked(); } }
+    }
+}

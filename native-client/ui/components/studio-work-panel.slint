@@ -1,0 +1,109 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { GenerateActionButton } from "generate-action-button.slint";
+import { InlineCardChooser } from "inline-card-chooser.slint";
+import { PromptComposer } from "prompt-composer.slint";
+import { SmallToggle } from "small-toggle.slint";
+import { TranslateTipArea } from "translate-tip-area.slint";
+import { AppTheme } from "../theme.slint";
+
+export component StudioWorkPanel {
+    in property <bool> generation: false;
+    Rectangle {
+        background: AppTheme.panel;
+        border-width: 0px;
+        border-color: transparent;
+        Text {
+            x: 22px;
+            y: 20px;
+            text: root.title-text();
+            color: AppTheme.text;
+            font-size: 18px;
+            font-weight: 500;
+        }
+        Rectangle {
+            x: parent.width - 198px;
+            y: 21px;
+            width: 176px;
+            height: 22px;
+            Text { x: 0px; width: 78px; height: parent.height; text: AppState.en ? "Translate" : "翻译提示词"; color: AppTheme.muted; font-size: 12px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+            Text { x: 78px; width: 16px; height: parent.height; text: "?"; color: AppTheme.muted; font-size: 12px; font-weight: 400; horizontal-alignment: center; vertical-alignment: center; }
+            TranslateTipArea {
+                x: 0px;
+                y: 0px;
+                width: 96px;
+                height: parent.height;
+                text: AppState.en ? "When enabled, your input will be translated into English to help English-only models understand it better." : "开启后，我们会将你的输入自动翻译成英文，帮助仅支持英文的模型更好理解你的需求";
+            }
+            SmallToggle {
+                x: parent.width - 44px;
+                y: (parent.height - 22px) / 2;
+                checked: AppState.translate-prompt;
+                toggled => {
+                    AppState.translate-prompt = !AppState.translate-prompt;
+                    if AppState.translate-prompt && AppState.prompt != "" {
+                        AppState.translate-current-prompt();
+                    }
+                }
+            }
+        }
+        composer := PromptComposer {
+            x: 22px;
+            y: 66px;
+            width: parent.width - 44px;
+            generation: root.generation;
+            show-generate-button: false;
+        }
+        ScrollView {
+            x: 22px;
+            y: composer.y + composer.height + 14px;
+            width: parent.width - 44px;
+            height: max(80px, parent.height - (composer.y + composer.height + 132px));
+            viewport-width: parent.width - 44px;
+            viewport-height: AppState.ratio-more-open ? 344px : 244px;
+            InlineCardChooser {
+                width: parent.viewport-width;
+                height: AppState.ratio-more-open ? 344px : 244px;
+            }
+        }
+        GenerateActionButton {
+            x: 22px;
+            y: parent.height - 118px;
+            width: parent.width - 44px;
+            height: 56px;
+            disabled: !AppState.generating && AppState.reasoning-model == "";
+            clicked => {
+                if AppState.generating {
+                    AppState.stop-generation();
+                } else {
+                    AppState.generate();
+                }
+            }
+        }
+        Text {
+            visible: AppState.optimizing-prompt || AppState.translating-prompt || AppState.generating || AppState.generation-status != "";
+            x: 22px;
+            y: parent.height - 48px;
+            width: parent.width - 44px;
+            height: 18px;
+            text: AppState.optimizing-prompt ? (AppState.en ? "Optimizing prompt..." : "正在优化提示词...")
+                : (AppState.translating-prompt ? (AppState.en ? "Translating prompt..." : "正在翻译提示词...")
+                : (AppState.generating ? (AppState.en ? "Generating..." : "正在生成中...")
+                : AppState.generation-status));
+            color: AppTheme.text;
+            font-size: 13px;
+            font-weight: 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    function title-text() -> string {
+        if AppState.asset-type == "scene" { return AppState.en ? "Workspace · Scene" : "工作台 · 场景"; }
+        if AppState.asset-type == "ui" { return AppState.en ? "Workspace · UI" : "工作台 · UI"; }
+        if AppState.asset-type == "effect" { return AppState.en ? "Workspace · Effect" : "工作台 · 特效"; }
+        if AppState.asset-type == "action-sequence" { return AppState.en ? "Workspace · Action Sequence" : "工作台 · 动作序列"; }
+        return AppState.en ? "Workspace · Character" : "工作台 · 角色";
+    }
+}

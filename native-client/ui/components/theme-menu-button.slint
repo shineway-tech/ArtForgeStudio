@@ -1,0 +1,50 @@
+import { AppState } from "../app-state.slint";
+import { DropdownIcon } from "dropdown-icon.slint";
+import { ThemeOption } from "theme-option.slint";
+import { AppTheme } from "../theme.slint";
+
+export component ThemeMenuButton {
+    in property <bool> marketing: false;
+    property <bool> open: false;
+    callback clicked();
+    height: 36px;
+    Rectangle {
+        background: root.marketing ? #ffffffcc : AppTheme.panel;
+        border-radius: 18px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        Rectangle { x: 17px; y: 12px; width: 12px; height: 12px; border-radius: 6px; background: AppTheme.accent; }
+        Text { x: 36px; width: parent.width - 66px; height: parent.height; text: AppState.en ? "Theme" : "主题"; color: root.marketing ? #111827 : AppTheme.text; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; }
+        DropdownIcon { x: parent.width - 28px; y: (parent.height - 12px) / 2; }
+        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.open = true; AppState.theme-menu-open = true; popup.show(); } }
+    }
+    popup := PopupWindow {
+        x: -84px;
+        y: 42px;
+        width: 188px;
+        height: 402px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            visible: AppState.theme-menu-open;
+            background: AppTheme.panel;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 4px;
+                ThemeOption { id: "light"; label: AppState.en ? "Light" : "素白"; color: #ffffff; close => { root.open = false; AppState.theme-menu-open = false; popup.close(); } }
+                ThemeOption { id: "deep"; label: AppState.en ? "Deep Purple" : "深紫"; color: #4f46e5; close => { root.open = false; AppState.theme-menu-open = false; popup.close(); } }
+                ThemeOption { id: "ocean"; label: AppState.en ? "Ocean Blue" : "深海蓝"; color: #0ea5e9; close => { root.open = false; AppState.theme-menu-open = false; popup.close(); } }
+                ThemeOption { id: "forest"; label: AppState.en ? "Forest Green" : "森林绿"; color: #22c55e; close => { root.open = false; AppState.theme-menu-open = false; popup.close(); } }
+                ThemeOption { id: "warm"; label: AppState.en ? "Warm Ink" : "暖墨棕"; color: #f59e0b; close => { root.open = false; AppState.theme-menu-open = false; popup.close(); } }
+                ThemeOption { id: "rose"; label: AppState.en ? "Rose" : "暗玫瑰"; color: #f43f5e; close => { root.open = false; AppState.theme-menu-open = false; popup.close(); } }
+                ThemeOption { id: "cream"; label: AppState.en ? "Cream" : "奶白"; color: #c96b73; close => { root.open = false; AppState.theme-menu-open = false; popup.close(); } }
+                ThemeOption { id: "cyber"; label: AppState.en ? "Cyber Purple" : "赛博紫"; color: #d946ef; close => { root.open = false; AppState.theme-menu-open = false; popup.close(); } }
+                ThemeOption { id: "oled"; label: AppState.en ? "Black" : "纯黑"; color: #000000; close => { root.open = false; AppState.theme-menu-open = false; popup.close(); } }
+                ThemeOption { id: "system"; label: AppState.en ? "System" : "跟随系统"; color: #5b6472; close => { root.open = false; AppState.theme-menu-open = false; popup.close(); } }
+                ThemeOption { id: "user"; label: AppState.en ? "Custom" : "自定义"; color: #5b5fc7; close => { root.open = false; AppState.theme-menu-open = false; popup.close(); } }
+            }
+        }
+    }
+}

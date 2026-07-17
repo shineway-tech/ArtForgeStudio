@@ -170,7 +170,7 @@ fn cmd_scan(legacy_dir: &PathBuf) -> Result<()> {
         "  1. 运行 'artait-migrate generate {}' 生成新配置",
         legacy_dir.display()
     );
-    println!("  2. 启动 ArtAITRust，图库会自动索引输出目录中的资产");
+    println!("  2. 启动 ArtForgeStudio，图库会自动索引输出目录中的资产");
     println!("  3. 在设置页重新配置 API Key（旧密钥不会自动导入）");
     println!("  4. 旧 prompt/ 模板可手动复制到新 prompt_dir/ 对应子目录");
 
@@ -229,7 +229,7 @@ fn cmd_generate(legacy_dir: &PathBuf) -> Result<()> {
     println!("配置已保存到 {}", path.display());
     println!();
     println!("下一步:");
-    println!("  1. 启动 ArtAITRust.exe");
+    println!("  1. 启动 ArtForgeStudio.exe");
     println!("  2. 在设置页配置 API Key（旧密钥不会自动导入）");
     Ok(())
 }

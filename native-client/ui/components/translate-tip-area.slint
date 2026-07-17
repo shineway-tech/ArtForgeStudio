@@ -1,0 +1,49 @@
+import { AppTheme } from "../theme.slint";
+
+export component TranslateTipArea {
+    in property <string> text;
+    property <bool> open: false;
+    Timer {
+        interval: 80ms;
+        running: true;
+        triggered => {
+            if hover.has-hover && !root.open {
+                root.open = true;
+                popup.show();
+            }
+            if !hover.has-hover && root.open {
+                root.open = false;
+                popup.close();
+            }
+        }
+    }
+    hover := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: help;
+    }
+    popup := PopupWindow {
+        x: -84px;
+        y: 28px;
+        width: 260px;
+        height: 82px;
+        Rectangle {
+            visible: root.open;
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            Text {
+                x: 12px;
+                y: 10px;
+                width: parent.width - 24px;
+                height: parent.height - 20px;
+                text: root.text;
+                color: AppTheme.text;
+                font-size: 12px;
+                font-weight: 400;
+                wrap: word-wrap;
+            }
+        }
+    }
+}

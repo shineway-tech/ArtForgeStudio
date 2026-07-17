@@ -1,0 +1,78 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { EmptyState } from "../components/empty-state.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { SectionTitle } from "../components/section-title.slint";
+import { AppTheme } from "../theme.slint";
+
+export component ModelsPage {
+    function content-width() -> length {
+        return root.width - 48px;
+    }
+    Rectangle {
+        background: AppTheme.bg;
+        ScrollView {
+            width: parent.width;
+            height: parent.height;
+            Rectangle {
+                x: 24px;
+                y: 24px;
+                width: root.content-width();
+                height: max(680px, parent.height - 48px);
+                background: transparent;
+                VerticalLayout {
+                    spacing: 16px;
+                    HorizontalLayout {
+                        spacing: 12px;
+                        SectionTitle { horizontal-stretch: 1; text: AppState.en ? "Available Models" : "可用模型"; }
+                    }
+                    Text {
+                        height: 32px;
+                        text: AppState.en ? "The model catalog and pricing are managed by ArtForge services." : "模型目录、能力与计费由 ArtForge 服务端统一管理，无需配置供应商或 API Key。";
+                        color: AppTheme.muted;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                    if AppState.model-catalog-message != "": Rectangle {
+                        height: 40px;
+                        background: AppTheme.panel-soft;
+                        border-radius: 10px;
+                        border-width: 1px;
+                        border-color: AppTheme.border;
+                        Text {
+                            x: 14px;
+                            width: parent.width - 28px;
+                            height: parent.height;
+                            text: AppState.model-catalog-message;
+                            color: AppTheme.muted;
+                            font-size: 13px;
+                            font-weight: 400;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                    if AppState.catalog-models.length == 0: EmptyState {}
+                    for model in AppState.catalog-models: Rectangle {
+                        height: 132px;
+                        background: AppTheme.panel;
+                        border-radius: 14px;
+                        border-width: 1px;
+                        border-color: AppTheme.border;
+                        HorizontalLayout {
+                            padding: 18px;
+                            spacing: 14px;
+                            Rectangle { width: 46px; height: 46px; border-radius: 12px; background: AppTheme.panel-soft; Text { width: parent.width; height: parent.height; text: model.purpose == "image_generation" ? "IMG" : "TXT"; color: AppTheme.accent-dark; horizontal-alignment: center; vertical-alignment: center; font-size: 11px; font-weight: 500; } }
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 6px;
+                                Text { text: model.name; color: AppTheme.text; font-size: 17px; font-weight: 500; }
+                                Text { text: model.capabilities; color: AppTheme.muted; font-size: 13px; font-weight: 400; overflow: elide; }
+                                Text { text: model.pricing; color: AppTheme.accent-dark; font-size: 13px; font-weight: 400; overflow: elide; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

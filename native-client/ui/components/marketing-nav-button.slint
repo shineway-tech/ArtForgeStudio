@@ -1,0 +1,23 @@
+import { AppTheme } from "../theme.slint";
+
+export component MarketingNavButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    callback clicked();
+    height: 32px;
+    background: root.primary ? AppTheme.accent : #ffffffcc;
+    border-radius: 16px;
+    border-width: root.primary ? 0px : 1px;
+    border-color: #d5dce3;
+    Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        color: root.primary ? #ffffff : #11151c;
+        font-size: 14px;
+        font-weight: root.primary ? 500 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.clicked(); } }
+}

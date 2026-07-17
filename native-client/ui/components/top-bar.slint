@@ -1,0 +1,92 @@
+import { AppState } from "../app-state.slint";
+import { ModelPicker } from "model-picker.slint";
+import { PillButton } from "pill-button.slint";
+import { ThemeMenuButton } from "theme-menu-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component TopBar {
+    height: 58px;
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: AppTheme.bg;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        Rectangle {
+            x: 18px;
+            y: 0px;
+            width: 94px;
+            height: parent.height;
+            background: transparent;
+            if AppState.page != "welcome" && AppState.page != "generation": PillButton {
+                x: 0px;
+                y: (parent.height - 36px) / 2;
+                width: 88px;
+                text: AppState.en ? "← Back" : "← 返回";
+                clicked => { AppState.back(); }
+            }
+        }
+        Rectangle {
+            x: 118px;
+            y: 0px;
+            width: max(360px, parent.width - 118px - root.actions-width() - 32px);
+            height: parent.height;
+            background: transparent;
+            clip: true;
+            if AppState.page == "generation": Rectangle {
+                width: parent.width;
+                height: parent.height;
+                background: transparent;
+                ModelPicker {
+                    x: max(0px, (parent.width - root.models-width()) / 2);
+                    y: 6px;
+                    kind: "image";
+                    label: AppState.en ? "Image Model" : "生图模型";
+                    picker-width: root.model-picker-width();
+                    select-model(model) => { AppState.select-image-model(model); }
+                }
+                ModelPicker {
+                    x: max(0px, (parent.width - root.models-width()) / 2) + root.model-picker-width() + 18px;
+                    y: 6px;
+                    kind: "reasoning";
+                    label: AppState.en ? "Reasoning Model" : "推理模型";
+                    picker-width: root.model-picker-width();
+                    select-model(model) => { AppState.select-reasoning-model(model); }
+                }
+            }
+        }
+        Rectangle {
+            x: parent.width - root.actions-width() - 18px;
+            y: 0px;
+            width: root.actions-width();
+            height: parent.height;
+            background: transparent;
+            HorizontalLayout {
+                width: parent.width;
+                y: (parent.height - 36px) / 2;
+                height: 36px;
+                spacing: 8px;
+                alignment: center;
+                if AppState.payment-qr-open: PillButton {
+                    width: 112px;
+                    text: AppState.en ? "Hide payment QR" : "关闭支付码";
+                    clicked => { AppState.close-payment-window(); AppState.payment-qr-open = false; }
+                }
+                PillButton { width: 94px; text: AppState.language == "zh" ? "中文" : "English"; clicked => { AppState.set-language(AppState.language == "zh" ? "en" : "zh"); } }
+                ThemeMenuButton { width: 94px; }
+                if AppState.logged-in: PillButton { width: 104px; text: AppState.en ? ("Credits " + AppState.credit-balance) : ("积分 " + AppState.credit-balance); clicked => { AppState.navigate("credits"); } }
+                if AppState.logged-in: PillButton { width: 128px; text: AppState.nickname != "" ? AppState.nickname : AppState.email-mask; clicked => { AppState.profile-open = true; AppState.profile-name = AppState.nickname; } }
+                if !AppState.logged-in && AppState.page != "welcome": PillButton { width: 112px; text: AppState.en ? "Login" : "登录/注册"; primary: true; clicked => { AppState.auth-open = true; } }
+            }
+        }
+    }
+    function actions-width() -> length {
+        return (AppState.logged-in ? 446px : 318px) + (AppState.payment-qr-open ? 120px : 0px);
+    }
+    function model-picker-width() -> length {
+        return min(330px, max(180px, (root.width - 118px - root.actions-width() - 70px) / 2));
+    }
+    function models-width() -> length {
+        return root.model-picker-width() * 2 + 18px;
+    }
+}

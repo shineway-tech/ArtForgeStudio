@@ -1,0 +1,32 @@
+import { AppState } from "../app-state.slint";
+import { DialogCloseButton } from "../components/dialog-close-button.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component ModelRequiredDialog {
+    if AppState.model-required-open: Rectangle {
+        background: #00000055;
+        TouchArea { width: parent.width; height: parent.height; }
+        Rectangle {
+            x: (parent.width - 330px) / 2;
+            y: (parent.height - 170px) / 2;
+            width: 330px;
+            height: 170px;
+            background: AppTheme.panel;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            DialogCloseButton { x: parent.width - 42px; y: 12px; clicked => { AppState.model-required-open = false; } }
+            VerticalLayout {
+                padding: 22px;
+                spacing: 18px;
+                Text { text: AppState.en ? "Please add a model first" : "请先添加模型"; color: AppTheme.text; font-size: 18px; font-weight: 500; horizontal-alignment: center; }
+                HorizontalLayout {
+                    spacing: 10px;
+                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Cancel" : "取消"; clicked => { AppState.model-required-open = false; } }
+                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Add Now" : "立即添加"; primary: true; clicked => { AppState.model-required-open = false; AppState.navigate("models"); } }
+                }
+            }
+        }
+    }
+}

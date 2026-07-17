@@ -1,0 +1,14 @@
+import { AppState } from "../app-state.slint";
+import { WaterfallColumn } from "waterfall-column.slint";
+
+export component InspirationWaterfall {
+    in property <length> card-width: 220px;
+    HorizontalLayout {
+        spacing: 18px;
+        WaterfallColumn { items: AppState.inspiration-col-0; card-width: root.card-width; }
+        WaterfallColumn { items: AppState.inspiration-col-1; card-width: root.card-width; }
+        WaterfallColumn { items: AppState.inspiration-col-2; card-width: root.card-width; }
+        WaterfallColumn { items: AppState.inspiration-col-3; card-width: root.card-width; }
+        WaterfallColumn { items: AppState.inspiration-col-4; card-width: root.card-width; }
+    }
+}

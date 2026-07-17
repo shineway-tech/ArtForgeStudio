@@ -1,0 +1,27 @@
+import { AppTheme } from "../theme.slint";
+
+export component FontStepButton {
+    in property <string> text;
+    callback clicked();
+    width: 36px;
+    height: 36px;
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: touch.has-hover ? AppTheme.panel-soft : AppTheme.panel;
+        border-radius: 18px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.text;
+            color: AppTheme.text;
+            font-size: 15px;
+            font-weight: 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        touch := TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.clicked(); } }
+    }
+}

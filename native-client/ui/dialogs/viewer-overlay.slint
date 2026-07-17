@@ -1,0 +1,214 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { InfoCard } from "../components/info-card.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { ProgressSpinner } from "../components/progress-spinner.slint";
+import { SectionTitle } from "../components/section-title.slint";
+import { ViewerContextMenuItem } from "../components/viewer-context-menu-item.slint";
+import { ViewerNavButton } from "../components/viewer-nav-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component ViewerOverlay {
+    property <length> viewer-message-width: min(360px, max(220px, root.width - 80px));
+    property <length> detail-panel-width: AppState.viewer-source == "reference" ? 0px : 396px;
+    property <length> viewer-content-right: root.width - root.detail-panel-width;
+    property <length> viewer-padding: 24px;
+    property <length> viewer-nav-lane: AppState.viewer-source == "reference" ? 0px : 84px;
+    property <length> viewer-nav-size: 52px;
+    property <bool> context-menu-open: false;
+    property <length> context-menu-x: 0px;
+    property <length> context-menu-y: 0px;
+    property <length> context-menu-width: 148px;
+    property <length> context-menu-height: 170px;
+    if AppState.viewer-open: Rectangle {
+        background: AppTheme.bg;
+        Timer {
+            interval: 2200ms;
+            running: AppState.viewer-message != "";
+            triggered => { AppState.viewer-message = ""; }
+        }
+        PillButton { x: 24px; y: 24px; width: 88px; text: AppState.en ? "← Back" : "← 返回"; clicked => { AppState.close-viewer(); } }
+        Rectangle {
+            x: AppState.viewer-source == "reference" ? 128px : root.viewer-padding + root.viewer-nav-lane;
+            y: 78px;
+            width: AppState.viewer-source == "reference" ? parent.width - 256px : root.viewer-content-right - root.viewer-padding * 2 - root.viewer-nav-lane * 2;
+            height: parent.height - 112px;
+            background: transparent;
+            Image {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+                source: AppState.viewer-image;
+                image-fit: contain;
+            }
+            TouchArea {
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: pointer;
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                        root.context-menu-open = true;
+                        root.context-menu-x = self.absolute-position.x + self.mouse-x;
+                        root.context-menu-y = self.absolute-position.y + self.mouse-y;
+                    } else if event.kind == PointerEventKind.down {
+                        root.context-menu-open = false;
+                    }
+                }
+            }
+            if AppState.viewer-processing: Rectangle {
+                width: parent.width;
+                height: parent.height;
+                background: #00000099;
+                ProgressSpinner {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    label: AppState.viewer-processing-label;
+                    progress: AppState.viewer-processing-progress;
+                }
+                TouchArea { width: parent.width; height: parent.height; }
+            }
+        }
+        if AppState.viewer-source != "reference": ViewerNavButton {
+            x: root.viewer-padding + (root.viewer-nav-lane - root.viewer-nav-size) / 2;
+            y: (parent.height - 52px) / 2;
+            direction: "prev";
+            clicked => { AppState.viewer-prev(); }
+        }
+        if AppState.viewer-source != "reference": ViewerNavButton {
+            x: root.viewer-content-right - root.viewer-padding - root.viewer-nav-lane + (root.viewer-nav-lane - root.viewer-nav-size) / 2;
+            y: (parent.height - 52px) / 2;
+            direction: "next";
+            clicked => { AppState.viewer-next(); }
+        }
+        if AppState.viewer-message != "": Rectangle {
+            x: (parent.width - root.viewer-message-width) / 2;
+            y: parent.height - 74px;
+            width: root.viewer-message-width;
+            height: 42px;
+            background: #111827d8;
+            border-radius: 21px;
+            Text {
+                x: 18px;
+                width: parent.width - 36px;
+                height: parent.height;
+                text: AppState.viewer-message;
+                color: #ffffff;
+                font-size: 14px;
+                font-weight: 400;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+        if AppState.viewer-source != "reference": Rectangle {
+            x: root.viewer-content-right;
+            y: 0px;
+            width: root.detail-panel-width;
+            height: parent.height;
+            background: AppTheme.panel;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+                if AppState.viewer-source == "asset": Rectangle {
+                    height: 40px;
+                    background: transparent;
+                    PillButton { x: 0px; width: 128px; text: AppState.en ? "Open Folder" : "打开文件夹位置"; primary: true; clicked => { AppState.viewer-download-image(); } }
+                    PillButton { x: parent.width - 72px; width: 72px; text: "删除"; danger: true; clicked => { AppState.request-delete-asset(AppState.viewer-id); } }
+                }
+                Text { text: AppState.en ? "Prompt" : "图片提示词"; color: AppTheme.muted; font-size: 14px; font-weight: 400; }
+                ScrollView {
+                    horizontal-stretch: 1;
+                    horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                    height: min(360px, max(24px, (AppState.viewer-prompt-lines > 20 ? 20 : AppState.viewer-prompt-lines) * 18px));
+                    viewport-width: self.width;
+                    viewport-height: max(self.height, AppState.viewer-prompt-lines * 18px);
+                    Text {
+                        width: parent.width;
+                        height: parent.viewport-height;
+                        text: AppState.viewer-prompt;
+                        color: AppTheme.text;
+                        font-size: 13px;
+                        font-weight: 400;
+                        wrap: word-wrap;
+                    }
+                }
+                Text { text: AppState.viewer-time + " · " + AppState.viewer-ratio + " · " + AppState.viewer-quality; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
+                Rectangle { height: 1px; background: AppTheme.border; }
+                SectionTitle { text: AppState.en ? "Image Info" : "图像信息"; }
+                GridLayout {
+                    spacing: 10px;
+                    Row { InfoCard { label: AppState.en ? "Size" : "尺寸"; value: AppState.viewer-width + " x " + AppState.viewer-height; } InfoCard { label: AppState.en ? "Ratio" : "宽高比"; value: AppState.viewer-ratio; } }
+                    Row { InfoCard { label: AppState.en ? "Quality" : "清晰度"; value: AppState.viewer-quality; } InfoCard { label: AppState.en ? "Model" : "模型"; value: AppState.viewer-model; } }
+                }
+                if AppState.viewer-source != "inspiration": HorizontalLayout {
+                    spacing: 10px;
+                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Cutout" : "抠图"; primary: true; disabled: AppState.viewer-processing || AppState.viewer-cutout-done; clicked => { AppState.viewer-cutout-image(); } }
+                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Remove Black" : "去黑"; primary: true; disabled: AppState.viewer-processing || AppState.viewer-remove-black-done; clicked => { AppState.viewer-remove-black(); } }
+                }
+                if AppState.viewer-source != "inspiration": PillButton { horizontal-stretch: 1; text: AppState.en ? "Clear Upscale" : "清晰放大"; primary: true; disabled: AppState.viewer-processing || AppState.viewer-upscale-done; clicked => { AppState.open-upscale-dialog(); } }
+                Rectangle { vertical-stretch: 1; }
+                if AppState.viewer-source != "inspiration": HorizontalLayout {
+                    spacing: 10px;
+                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Edit Again" : "重新编辑"; primary: true; clicked => { AppState.viewer-edit(); } }
+                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Generate Again" : "再次生成"; primary: true; clicked => { AppState.viewer-regenerate(); } }
+                }
+                if AppState.viewer-source == "inspiration": HorizontalLayout {
+                    spacing: 10px;
+                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Use Style" : "做同款"; primary: true; clicked => { AppState.viewer-use-same(); } }
+                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Use as Ref" : "用作参考图"; primary: true; clicked => { AppState.viewer-use-reference(); } }
+                }
+            }
+        }
+        if root.context-menu-open: Rectangle {
+            x: max(12px, min(root.context-menu-x, parent.width - root.context-menu-width - 12px));
+            y: max(12px, min(root.context-menu-y, parent.height - root.context-menu-height - 12px));
+            width: root.context-menu-width;
+            height: root.context-menu-height;
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #0000002d;
+            VerticalLayout {
+                x: 8px;
+                y: 8px;
+                width: parent.width - 16px;
+                height: parent.height - 16px;
+                spacing: 2px;
+                ViewerContextMenuItem {
+                    text: AppState.en ? "Open Folder" : "打开文件夹位置";
+                    clicked => {
+                        root.context-menu-open = false;
+                        AppState.viewer-download-image();
+                    }
+                }
+                ViewerContextMenuItem {
+                    text: AppState.en ? "Copy" : "复制";
+                    clicked => {
+                        root.context-menu-open = false;
+                        AppState.viewer-copy-image();
+                    }
+                }
+                ViewerContextMenuItem {
+                    text: AppState.en ? "Use as Ref" : "用作参考图";
+                    clicked => {
+                        root.context-menu-open = false;
+                        AppState.viewer-use-reference();
+                    }
+                }
+                ViewerContextMenuItem {
+                    text: AppState.en ? "Delete" : "删除";
+                    danger: true;
+                    clicked => {
+                        root.context-menu-open = false;
+                        AppState.request-delete-asset(AppState.viewer-id);
+                    }
+                }
+            }
+        }
+    }
+}

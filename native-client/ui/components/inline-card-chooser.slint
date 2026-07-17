@@ -1,0 +1,60 @@
+import { AppState } from "../app-state.slint";
+import { InlineChoiceCard } from "inline-choice-card.slint";
+import { InlineToggleCard } from "inline-toggle-card.slint";
+import { AppTheme } from "../theme.slint";
+
+export component InlineCardChooser {
+    height: root.content-height();
+    Rectangle {
+        background: transparent;
+        Text { x: 0px; y: 0px; width: parent.width; height: 18px; text: AppState.en ? "Canvas" : "画布"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
+        GridLayout {
+            x: 0px;
+            y: 20px;
+            spacing: 8px;
+            Row {
+                InlineChoiceCard { group: "ratio"; value: "1:1"; label: AppState.en ? "Square" : "方形"; }
+                InlineChoiceCard { group: "ratio"; value: "16:9"; label: AppState.en ? "Landscape" : "横图"; }
+                InlineChoiceCard { group: "ratio"; value: "9:16"; label: AppState.en ? "Portrait" : "竖图"; }
+            }
+        }
+
+        Text { x: 0px; y: root.quality-y(); width: parent.width; height: 18px; text: AppState.en ? "Resolution" : "清晰度"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
+        GridLayout {
+            x: 0px;
+            y: root.quality-y() + 20px;
+            spacing: 8px;
+            Row {
+                InlineChoiceCard { group: "quality"; value: "1K"; label: "1K"; }
+                InlineChoiceCard { group: "quality"; value: "2K"; label: "2K"; disabled: AppState.membership-max-quality == "1K"; }
+                InlineChoiceCard { group: "quality"; value: "4K"; label: "4K"; disabled: AppState.membership-max-quality != "4K"; }
+            }
+        }
+
+        if AppState.asset-type != "action-sequence": Text { x: 0px; y: root.count-y(); width: parent.width; height: 18px; text: AppState.en ? "Count" : "张数"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
+        if AppState.asset-type != "action-sequence": GridLayout {
+            x: 0px;
+            y: root.count-y() + 20px;
+            spacing: 8px;
+            Row {
+                InlineChoiceCard { group: "count"; value: "1"; label: AppState.en ? "1 img" : "1张"; }
+                InlineChoiceCard { group: "count"; value: "2"; label: AppState.en ? "2 imgs" : "2张"; }
+                InlineChoiceCard { group: "count"; value: "4"; label: AppState.en ? "4 imgs" : "4张"; }
+            }
+        }
+    }
+
+    function ratio-rows-height() -> length {
+        return 42px;
+    }
+    function quality-y() -> length {
+        return 20px + root.ratio-rows-height() + 22px;
+    }
+    function count-y() -> length {
+        return root.quality-y() + 84px;
+    }
+    function content-height() -> length {
+        if AppState.asset-type == "action-sequence" { return root.quality-y() + 64px; }
+        return root.count-y() + 64px;
+    }
+}

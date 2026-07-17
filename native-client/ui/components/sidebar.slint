@@ -1,0 +1,36 @@
+import { AppState } from "../app-state.slint";
+import { CategoryWorkspaceMenu } from "category-workspace-menu.slint";
+import { NavItem } from "nav-item.slint";
+import { AppTheme } from "../theme.slint";
+
+export component Sidebar {
+    width: 204px;
+    Rectangle {
+        background: AppTheme.panel;
+        border-color: AppTheme.border;
+        border-width: 1px;
+        VerticalLayout {
+            padding: 14px;
+            spacing: 10px;
+            Rectangle {
+                height: 56px;
+                HorizontalLayout {
+                    spacing: 10px;
+                    Image { width: 36px; height: 36px; source: AppState.app-logo; image-fit: contain; }
+                    VerticalLayout {
+                        Text { text: "ArtForgeStudio"; color: AppTheme.text; font-size: 18px; font-weight: 600; }
+                        Text { text: "AI Art Studio"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
+                    }
+                }
+            }
+            Rectangle { height: 1px; background: AppTheme.border; }
+            CategoryWorkspaceMenu {}
+            NavItem { icon: "assets"; label: AppState.en ? "My Assets" : "我的资产"; page: "assets"; }
+            NavItem { icon: "inspiration"; label: AppState.en ? "Inspiration" : "灵感广场"; page: "inspiration"; }
+            NavItem { icon: "notifications"; label: AppState.en ? "Notifications" : "通知"; page: "notifications"; show-dot: AppState.has-unread; }
+            NavItem { icon: "models"; label: AppState.en ? "Model Management" : "模型管理"; page: "models"; }
+            Rectangle { vertical-stretch: 1; }
+            NavItem { icon: "settings"; label: AppState.en ? "Settings" : "设置"; page: "settings"; }
+        }
+    }
+}

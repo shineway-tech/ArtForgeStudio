@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "native-client"]
+members = ["native-client"]
+exclude = ["crates/*"]
+default-members = ["native-client"]
 
 [workspace.package]
 edition = "2021"

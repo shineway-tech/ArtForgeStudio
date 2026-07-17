@@ -1,0 +1,24 @@
+import { GenerationResultPanel } from "../components/generation-result-panel.slint";
+import { StudioWorkPanel } from "../components/studio-work-panel.slint";
+import { AppTheme } from "../theme.slint";
+
+export component StudioSplitPage {
+    in property <bool> generation: false;
+    Rectangle {
+        background: AppTheme.bg;
+        StudioWorkPanel {
+            x: 0px;
+            y: 0px;
+            width: 420px;
+            height: parent.height;
+            generation: root.generation;
+        }
+        Rectangle { x: 420px; y: 0px; width: 1px; height: parent.height; background: AppTheme.border; }
+        GenerationResultPanel {
+            x: 421px;
+            y: 0px;
+            width: parent.width - 421px;
+            height: parent.height;
+        }
+    }
+}

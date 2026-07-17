@@ -1,0 +1,37 @@
+import { AppTheme } from "../theme.slint";
+
+export component TextOption {
+    in property <string> left;
+    in property <string> right: "";
+    in property <bool> active: false;
+    callback clicked();
+    height: 30px;
+    Rectangle {
+        background: root.active ? AppTheme.panel-soft : transparent;
+        border-radius: 6px;
+        Text {
+            x: 10px;
+            width: parent.width - 86px;
+            height: parent.height;
+            text: root.left;
+            color: root.active ? AppTheme.accent-dark : AppTheme.text;
+            font-size: 12px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            x: parent.width - 72px;
+            width: 58px;
+            height: parent.height;
+            text: root.right;
+            color: AppTheme.muted;
+            font-size: 12px;
+            font-weight: 400;
+            horizontal-alignment: TextHorizontalAlignment.right;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.clicked(); } }
+    }
+}

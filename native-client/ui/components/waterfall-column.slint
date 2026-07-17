@@ -1,0 +1,28 @@
+import { ThumbnailCard } from "thumbnail-card.slint";
+import { AssetItem } from "../types.slint";
+
+export component WaterfallColumn {
+    in property <[AssetItem]> items;
+    in property <length> card-width: 220px;
+    in property <string> source: "inspiration";
+    in property <int> column-index: 0;
+    in property <int> column-count: 1;
+    horizontal-stretch: 0;
+    width: root.column-width();
+    VerticalLayout {
+        x: 0px;
+        width: root.width;
+        spacing: 0px;
+        alignment: start;
+        for item[index] in root.items: ThumbnailCard {
+            active: Math.mod(index, root.column-count) == root.column-index;
+            item: item;
+            card-width: root.card-width;
+            card-gap: 18px;
+            source: root.source;
+        }
+    }
+    function column-width() -> length {
+        return root.card-width;
+    }
+}

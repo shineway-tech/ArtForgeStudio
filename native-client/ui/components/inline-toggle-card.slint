@@ -1,0 +1,34 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component InlineToggleCard {
+    in property <string> label;
+    callback clicked();
+    width: 54px;
+    height: 42px;
+    Rectangle {
+        background: AppTheme.panel-soft;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        Text {
+            x: 6px;
+            y: 0px;
+            width: parent.width - 12px;
+            height: parent.height;
+            text: root.label;
+            color: AppTheme.text;
+            font-size: max(10px, (AppState.settings-font-size - 1) * 1px);
+            font-weight: 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}

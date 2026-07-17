@@ -1,0 +1,61 @@
+import { AppState } from "../app-state.slint";
+import { CategoryWorkspaceOption } from "category-workspace-option.slint";
+import { DropdownIcon } from "dropdown-icon.slint";
+import { NavGlyph } from "nav-glyph.slint";
+import { AppTheme } from "../theme.slint";
+
+export component CategoryWorkspaceMenu {
+    property <bool> open: true;
+    width: 176px;
+    height: root.open ? 182px : 38px;
+    VerticalLayout {
+        spacing: 4px;
+        Rectangle {
+            width: root.width;
+            height: 38px;
+            background: AppState.page == "generation" ? AppTheme.panel-soft : (touch.has-hover ? AppTheme.panel-soft : transparent);
+            border-radius: 7px;
+            border-width: AppState.page == "generation" ? 1px : 0px;
+            border-color: AppTheme.accent;
+            Rectangle {
+                x: 9px;
+                y: 8px;
+                width: 22px;
+                height: 22px;
+                border-radius: 6px;
+                background: AppTheme.panel-soft;
+                NavGlyph {
+                    kind: "generation";
+                    glyph-color: AppTheme.accent-dark;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+            Text {
+                x: 42px;
+                width: parent.width - 74px;
+                height: parent.height;
+                text: AppState.en ? "Workspace" : "工作台";
+                color: AppTheme.text;
+                font-size: AppState.settings-font-size * 1px;
+                font-weight: 400;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            DropdownIcon { x: parent.width - 28px; y: (parent.height - 12px) / 2; }
+            touch := TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.open = !root.open; } }
+        }
+        if root.open: CategoryWorkspaceOption { category: "character"; label: AppState.en ? "Character" : "角色"; }
+        if root.open: CategoryWorkspaceOption { category: "scene"; label: AppState.en ? "Scene" : "场景"; }
+        if root.open: CategoryWorkspaceOption { category: "ui"; label: "UI"; }
+        if root.open: CategoryWorkspaceOption { category: "effect"; label: AppState.en ? "Effect" : "特效"; }
+    }
+
+    function current-label() -> string {
+        if AppState.asset-type == "scene" { return AppState.en ? "Scene" : "场景"; }
+        if AppState.asset-type == "ui" { return "UI"; }
+        if AppState.asset-type == "effect" { return AppState.en ? "Effect" : "特效"; }
+        if AppState.asset-type == "action-sequence" { return AppState.en ? "Action Sequence" : "动作序列"; }
+        return AppState.en ? "Character" : "角色";
+    }
+}

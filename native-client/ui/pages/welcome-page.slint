@@ -1,0 +1,202 @@
+import { AppState } from "../app-state.slint";
+import { InspirationWaterfall } from "../components/inspiration-waterfall.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { SectionTitle } from "../components/section-title.slint";
+import { ShowcaseMosaic } from "../components/showcase-mosaic.slint";
+import { WelcomeMarketingNav } from "../components/welcome-marketing-nav.slint";
+import { AppTheme } from "../theme.slint";
+
+export component WelcomePage {
+    in-out property <length> scroll-y: 0px;
+
+    function hero-width() -> length {
+        return root.width - 96px;
+    }
+
+    function hero-x() -> length {
+        return 48px;
+    }
+
+    function hero-gap() -> length {
+        return 52px;
+    }
+
+    function copy-width() -> length {
+        return max(420px, root.hero-width() * 40 / 100);
+    }
+
+    function mosaic-width() -> length {
+        return root.hero-width() - root.copy-width() - root.hero-gap();
+    }
+
+    function mosaic-height() -> length {
+        return min(root.hero-height() - 76px, root.mosaic-width() * 540 / 606);
+    }
+
+    function inspiration-width() -> length {
+        return root.width - 96px;
+    }
+
+    function inspiration-x() -> length {
+        return 48px;
+    }
+
+    function inspiration-card-width() -> length {
+        return max(267px, (root.inspiration-width() - 72px) / 4);
+    }
+
+    function hero-height() -> length {
+        return max(520px, root.height - 190px);
+    }
+
+    function inspiration-title-y() -> length {
+        return root.hero-height() + 72px;
+    }
+
+    function inspiration-waterfall-y() -> length {
+        return root.inspiration-title-y() + 62px;
+    }
+
+    function inspiration-estimated-height() -> length {
+        return max(1180px, root.inspiration-card-width() * 46 / 10);
+    }
+
+    function cta-y() -> length {
+        return root.inspiration-waterfall-y() + root.inspiration-estimated-height() + 56px;
+    }
+
+    function content-height() -> length {
+        return root.cta-y() + 330px;
+    }
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: AppTheme.bg;
+        Flickable {
+            x: 0px;
+            y: 48px;
+            width: parent.width;
+            height: parent.height - 48px;
+            viewport-width: parent.width;
+            viewport-height: root.content-height();
+            viewport-y <=> root.scroll-y;
+            interactive: true;
+            Rectangle {
+                width: root.width;
+                height: root.content-height();
+                background: transparent;
+
+                Rectangle {
+                    x: root.hero-x();
+                    y: 0px;
+                    width: root.hero-width();
+                    height: root.hero-height();
+                    background: transparent;
+                    Rectangle {
+                        y: max(38px, (root.hero-height() - root.mosaic-height()) / 2);
+                        width: root.hero-width();
+                        height: root.mosaic-height();
+                        background: transparent;
+                        Rectangle {
+                            x: 0px;
+                            y: 0px;
+                            width: root.copy-width();
+                            height: parent.height;
+                            background: transparent;
+                            Rectangle {
+                                x: 0px;
+                                y: max(42px, (parent.height - 282px) / 2);
+                                width: parent.width;
+                                height: 282px;
+                                background: transparent;
+                                Text { x: 0px; y: 0px; width: parent.width; height: 80px; text: "ArtForgeStudio"; color: AppTheme.text; font-size: 60px; font-weight: 600; }
+                                Text {
+                                    x: 0px;
+                                    y: 108px;
+                                    width: parent.width;
+                                    height: 86px;
+                                    text: "利用 ArtForgeStudio，为您的游戏生成：角色、特效、UI、场景、精灵图、影视创作等。";
+                                    color: AppTheme.muted;
+                                    font-size: 24px;
+                                    font-weight: 400;
+                                    wrap: word-wrap;
+                                }
+                                PillButton { x: 0px; y: 216px; width: 168px; height: 50px; text: "立即使用"; primary: true; clicked => { AppState.use-now(); } }
+                            }
+                        }
+                        ShowcaseMosaic { x: root.copy-width() + root.hero-gap(); y: 0px; width: root.mosaic-width(); height: root.mosaic-height(); }
+                    }
+                }
+
+                SectionTitle {
+                    x: root.inspiration-x();
+                    y: root.inspiration-title-y();
+                    width: root.inspiration-width();
+                    text: "作品灵感";
+                }
+                InspirationWaterfall {
+                    x: root.inspiration-x();
+                    y: root.inspiration-waterfall-y();
+                    width: root.inspiration-width();
+                    card-width: root.inspiration-card-width();
+                }
+                Rectangle {
+                    x: root.inspiration-x();
+                    y: root.cta-y();
+                    width: root.inspiration-width();
+                    height: 250px;
+                    background: AppTheme.panel-soft;
+                    border-radius: 28px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    Rectangle {
+                        x: 0px;
+                        y: (parent.height - 156px) / 2;
+                        width: parent.width;
+                        height: 156px;
+                        background: transparent;
+                        Text {
+                            x: 0px;
+                            y: 0px;
+                            width: parent.width;
+                            height: 54px;
+                            text: "登录查看全部灵感";
+                            color: AppTheme.text;
+                            font-size: 40px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            x: 0px;
+                            y: 66px;
+                            width: parent.width;
+                            height: 24px;
+                            text: "与 AI 一起创作不可思议的作品";
+                            color: AppTheme.muted;
+                            font-size: 18px;
+                            font-weight: 400;
+                            letter-spacing: 8px;
+                            horizontal-alignment: center;
+                        }
+                        PillButton {
+                            x: (parent.width - 180px) / 2;
+                            y: 112px;
+                            width: 180px;
+                            height: 44px;
+                            text: "立即创作";
+                            primary: true;
+                            clicked => { AppState.use-now(); }
+                        }
+                    }
+                }
+            }
+        }
+        WelcomeMarketingNav {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: 48px;
+        }
+    }
+}

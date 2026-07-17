@@ -1,4 +1,6 @@
-use std::path::{Path, PathBuf};
+#[cfg(target_os = "windows")]
+use std::path::Path;
+use std::path::PathBuf;
 
 #[cfg(target_os = "windows")]
 pub fn start_thumbnail_drag_preview(path: PathBuf) -> bool {

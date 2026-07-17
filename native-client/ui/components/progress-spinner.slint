@@ -1,0 +1,49 @@
+export component ProgressSpinner {
+    in property <string> label: "";
+    in property <int> progress: 0;
+    in-out property <int> step: 0;
+    width: 220px;
+    height: 118px;
+    Timer {
+        interval: 95ms;
+        running: true;
+        triggered => { root.step = Math.mod(root.step + 1, 8); }
+    }
+    Rectangle {
+        x: (parent.width - 62px) / 2;
+        y: 0px;
+        width: 62px;
+        height: 62px;
+        background: transparent;
+        Rectangle { x: 27px; y: 0px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; opacity: root.dot-opacity(0); }
+        Rectangle { x: 45px; y: 8px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; opacity: root.dot-opacity(1); }
+        Rectangle { x: 54px; y: 27px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; opacity: root.dot-opacity(2); }
+        Rectangle { x: 45px; y: 46px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; opacity: root.dot-opacity(3); }
+        Rectangle { x: 27px; y: 54px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; opacity: root.dot-opacity(4); }
+        Rectangle { x: 8px; y: 46px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; opacity: root.dot-opacity(5); }
+        Rectangle { x: 0px; y: 27px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; opacity: root.dot-opacity(6); }
+        Rectangle { x: 8px; y: 8px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; opacity: root.dot-opacity(7); }
+    }
+    Text {
+        x: 0px;
+        y: 76px;
+        width: parent.width;
+        height: 28px;
+        text: root.label + " " + root.progress + "%";
+        color: #ffffff;
+        font-size: 18px;
+        font-weight: 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    function dot-opacity(index: int) -> float {
+        let age = Math.mod(root.step + 8 - index, 8);
+        if age == 0 { return 1.0; }
+        if age == 1 { return 0.82; }
+        if age == 2 { return 0.64; }
+        if age == 3 { return 0.48; }
+        if age == 4 { return 0.34; }
+        return 0.22;
+    }
+}

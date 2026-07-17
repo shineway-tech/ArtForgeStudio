@@ -1,0 +1,50 @@
+import { AppState } from "../app-state.slint";
+import { DialogCloseButton } from "../components/dialog-close-button.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component CreditInsufficientDialog {
+    if AppState.credit-insufficient-open: Rectangle {
+        background: #00000055;
+        TouchArea { width: parent.width; height: parent.height; }
+        Rectangle {
+            x: (parent.width - 360px) / 2;
+            y: (parent.height - 190px) / 2;
+            width: 360px;
+            height: 190px;
+            background: AppTheme.panel;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            DialogCloseButton { x: parent.width - 42px; y: 12px; clicked => { AppState.credit-insufficient-open = false; } }
+            VerticalLayout {
+                padding: 22px;
+                spacing: 18px;
+                Text {
+                    text: AppState.en ? "Insufficient credits" : "积分不足";
+                    color: AppTheme.text;
+                    font-size: 18px;
+                    font-weight: 500;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: AppState.en ? "Your credits are insufficient. Please recharge." : AppState.credit-insufficient-message;
+                    color: AppTheme.muted;
+                    font-size: 13px;
+                    font-weight: 400;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+                PillButton {
+                    horizontal-stretch: 1;
+                    text: AppState.en ? "Go to Recharge" : "前往充值";
+                    primary: true;
+                    clicked => {
+                        AppState.credit-insufficient-open = false;
+                        AppState.navigate("credits");
+                    }
+                }
+            }
+        }
+    }
+}

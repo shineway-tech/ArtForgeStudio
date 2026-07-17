@@ -1,0 +1,24 @@
+import { AppTheme } from "../theme.slint";
+
+export component SmallToggle {
+    in property <bool> checked: false;
+    callback toggled();
+    width: 36px;
+    height: 20px;
+    Rectangle {
+        background: root.checked ? AppTheme.accent : AppTheme.panel-soft;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: root.checked ? AppTheme.accent : AppTheme.border;
+        Rectangle {
+            x: root.checked ? parent.width - 18px : 2px;
+            y: 2px;
+            width: 16px;
+            height: 16px;
+            border-radius: 8px;
+            background: #ffffff;
+            animate x { duration: 120ms; }
+        }
+        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.toggled(); } }
+    }
+}

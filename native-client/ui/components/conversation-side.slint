@@ -1,0 +1,40 @@
+import { AppState } from "../app-state.slint";
+import { EmptyState } from "empty-state.slint";
+import { LoadingDots } from "loading-dots.slint";
+import { AppTheme } from "../theme.slint";
+
+export component ConversationSide {
+    width: 236px;
+    Rectangle {
+        background: AppTheme.panel;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        VerticalLayout {
+            padding: 14px;
+            spacing: 12px;
+            alignment: start;
+            Text { vertical-stretch: 0; text: AppState.en ? "Conversations" : "对话记录"; color: AppTheme.text; font-size: 15px; font-weight: 400; }
+            Rectangle { height: 1px; vertical-stretch: 0; background: AppTheme.border; }
+            if AppState.conversations.length == 0: EmptyState { height: 180px; vertical-stretch: 0; }
+            for item in AppState.conversations: Rectangle {
+                height: 58px;
+                vertical-stretch: 0;
+                background: item.id == AppState.current-conversation-id || touch.has-hover ? AppTheme.panel-soft : AppTheme.panel;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: item.id == AppState.current-conversation-id || touch.has-hover ? AppTheme.accent : AppTheme.border;
+                HorizontalLayout {
+                    padding: 8px;
+                    spacing: 10px;
+                    Rectangle {
+                        width: 42px; height: 42px; border-radius: 8px; background: AppTheme.panel; clip: true;
+                        if item.loading: LoadingDots { width: parent.width; height: parent.height; }
+                        if !item.loading: Image { source: item.image; width: parent.width; height: parent.height; image-fit: cover; }
+                    }
+                    Text { text: item.title; color: AppTheme.text; font-size: 13px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+                }
+                touch := TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.open-conversation(item.id); } }
+            }
+        }
+    }
+}

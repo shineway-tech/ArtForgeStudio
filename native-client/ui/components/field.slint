@@ -1,0 +1,52 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component Field {
+    in property <string> label;
+    in property <string> placeholder;
+    in-out property <string> value;
+    in property <bool> secret: false;
+    in property <bool> required: false;
+    height: 78px;
+    VerticalLayout {
+        spacing: 7px;
+        HorizontalLayout {
+            height: 20px;
+            spacing: 3px;
+            alignment: start;
+            Text { height: parent.height; text: root.label; color: AppTheme.text; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; }
+            if root.required: Text { width: 8px; height: parent.height; text: "*"; color: AppTheme.danger; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+        }
+        Rectangle {
+            height: 46px;
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: input.has-focus ? AppTheme.accent : AppTheme.border;
+            input := TextInput {
+                x: 14px;
+                width: parent.width - 28px;
+                height: parent.height;
+                text <=> root.value;
+                input-type: root.secret ? password : text;
+                single-line: true;
+                color: AppTheme.text;
+                font-size: AppState.settings-font-size * 1px;
+                font-weight: 400;
+                vertical-alignment: center;
+            }
+            if root.value == "" && !input.has-focus: Text {
+                x: 14px;
+                width: parent.width - 28px;
+                height: parent.height;
+                text: root.placeholder;
+                color: AppTheme.weak;
+                font-size: AppState.settings-font-size * 1px;
+                font-weight: 400;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+}

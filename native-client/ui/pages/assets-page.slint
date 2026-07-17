@@ -1,0 +1,43 @@
+import { AppState } from "../app-state.slint";
+import { AssetGallery } from "../components/asset-gallery.slint";
+import { CategoryTabs } from "../components/category-tabs.slint";
+import { AppTheme } from "../theme.slint";
+
+export component AssetsPage {
+    function content-width() -> length {
+        return root.width - 40px;
+    }
+    function content-x() -> length {
+        return 20px;
+    }
+    function card-width() -> length {
+        return 200px;
+    }
+    Rectangle {
+        background: AppTheme.bg;
+        Rectangle {
+            x: root.content-x();
+            y: 0px;
+            width: root.content-width();
+            height: parent.height;
+            background: transparent;
+            CategoryTabs {
+                x: 0px;
+                y: 20px;
+                width: parent.width;
+                height: 64px;
+                for-assets: true;
+            }
+            AssetGallery {
+                x: 0px;
+                y: 116px;
+                width: parent.width;
+                height: parent.height - 116px;
+                items: AppState.assets;
+                groups: AppState.asset-groups;
+                source: "asset";
+                card-width: root.card-width();
+            }
+        }
+    }
+}

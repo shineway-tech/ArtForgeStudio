@@ -1,0 +1,36 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component CardStyleOption {
+    in property <string> id;
+    in property <string> label;
+    height: 46px;
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: AppState.card-style == root.id ? AppTheme.panel-soft : AppTheme.panel;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: AppState.card-style == root.id ? AppTheme.accent : AppTheme.border;
+        Rectangle {
+            x: 12px;
+            y: 15px;
+            width: 16px;
+            height: 16px;
+            border-radius: root.id == "rounded" ? 5px : 0px;
+            border-width: 1px;
+            border-color: AppState.card-style == root.id ? AppTheme.accent : AppTheme.weak;
+            background: transparent;
+            if AppState.card-style == root.id: Rectangle {
+                x: 4px;
+                y: 4px;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: AppTheme.accent;
+            }
+        }
+        Text { x: 38px; width: parent.width - 48px; height: parent.height; text: root.label; color: AppTheme.text; font-size: 13px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.set-card-style(root.id); } }
+    }
+}

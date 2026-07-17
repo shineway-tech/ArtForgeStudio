@@ -1,0 +1,39 @@
+import { AppState } from "../app-state.slint";
+import { MarketingNavButton } from "marketing-nav-button.slint";
+import { ThemeMenuButton } from "theme-menu-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component WelcomeMarketingNav {
+    height: 48px;
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: transparent;
+        border-width: 0px;
+        border-color: transparent;
+        Image { x: 22px; y: 12px; width: 24px; height: 24px; source: AppState.app-logo; image-fit: contain; }
+        Text { x: 50px; y: 0px; width: 190px; height: root.height; text: "ArtForgeStudio"; color: AppTheme.text; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+        MarketingNavButton {
+            x: root.width - 376px;
+            y: 8px;
+            width: 96px;
+            text: AppState.language == "zh" ? "中文" : "English";
+            clicked => { AppState.set-language(AppState.language == "zh" ? "en" : "zh"); }
+        }
+        ThemeMenuButton {
+            x: root.width - 266px;
+            y: 6px;
+            width: 110px;
+            marketing: true;
+        }
+        MarketingNavButton {
+            x: root.width - 142px;
+            y: 8px;
+            width: 108px;
+            text: AppState.en ? "Login" : "登录/注册";
+            primary: true;
+            clicked => { AppState.auth-open = true; }
+        }
+    }
+}

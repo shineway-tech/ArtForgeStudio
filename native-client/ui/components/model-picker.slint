@@ -1,0 +1,110 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { DropdownIcon } from "dropdown-icon.slint";
+import { IconButton } from "icon-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component ModelPicker {
+    in property <string> kind;
+    in property <string> label;
+    in property <length> picker-width: 320px;
+    callback select-model(string);
+    property <bool> open: false;
+    width: root.picker-width;
+    height: 46px;
+    Rectangle {
+        background: AppTheme.panel;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: open ? AppTheme.accent : AppTheme.border;
+        Text {
+            x: 14px;
+            width: 62px;
+            height: parent.height;
+            text: root.label;
+            color: AppTheme.muted;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Rectangle { x: 82px; y: (parent.height - 8px) / 2; width: 8px; height: 8px; border-radius: 4px; background: AppTheme.accent; }
+        Text {
+            x: 100px;
+            width: parent.width - 134px;
+            height: parent.height;
+            text: display-text();
+            color: AppTheme.text;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        DropdownIcon { x: parent.width - 32px; y: (parent.height - 12px) / 2; }
+        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.open = true; popup.show(); } }
+    }
+    popup := PopupWindow {
+        x: 0px;
+        y: 50px;
+        width: root.width;
+        height: 320px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            visible: root.open;
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.accent;
+            ScrollView {
+                width: parent.width;
+                height: parent.height;
+                VerticalLayout {
+                    padding: 6px;
+                    spacing: 4px;
+                    if AppState.model-groups.length == 0: IconButton {
+                        width: root.width - 12px;
+                        text: AppState.en ? "Add a model first" : "请先添加模型";
+                        clicked => { root.open = false; popup.close(); AppState.navigate("models"); }
+                    }
+                    VerticalLayout {
+                        spacing: 4px;
+                        for group in AppState.model-groups: VerticalLayout {
+                            visible: group.kind == root.kind;
+                            spacing: 4px;
+                            if group.models.length == 0: IconButton {
+                                width: root.width - 12px;
+                                text: group.name + " / " + (group.selected-model == "" ? (AppState.en ? "No models fetched" : "未获取模型") : group.selected-model);
+                                active: root.kind == "image"
+                                    ? AppState.image-model == group.selected-model
+                                    : AppState.reasoning-model == group.selected-model;
+                                clicked => {
+                                    root.select-model(group.selected-model);
+                                    root.open = false;
+                                    popup.close();
+                                }
+                            }
+                            for model in group.models: IconButton {
+                                width: root.width - 12px;
+                                text: group.name + " / " + model.name;
+                                active: root.kind == "image"
+                                    ? AppState.image-model == model.code
+                                    : AppState.reasoning-model == model.code;
+                                clicked => {
+                                    root.select-model(model.code);
+                                    root.open = false;
+                                    popup.close();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    function display-text() -> string {
+        if root.kind == "image" {
+            return AppState.image-model == "" ? (AppState.en ? "Not selected" : "未选择") : AppState.image-model-name;
+        }
+        return AppState.reasoning-model == "" ? (AppState.en ? "Not selected" : "未选择") : AppState.reasoning-model-name;
+    }
+}

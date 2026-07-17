@@ -1,0 +1,110 @@
+import { AppState } from "../app-state.slint";
+import { AdvancedSelectLine } from "advanced-select-line.slint";
+import { DropdownIcon } from "dropdown-icon.slint";
+import { PillButton } from "pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component AdvancedControlChip {
+    property <bool> open: false;
+    width: 108px;
+    height: 36px;
+    Rectangle {
+        background: AppTheme.panel-soft;
+        border-radius: 18px;
+        border-width: 1px;
+        border-color: root.open ? AppTheme.accent : AppTheme.border;
+        Text { x: 14px; width: parent.width - 44px; height: parent.height; text: AppState.en ? "Advanced" : "高级控制"; color: AppTheme.text; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+        DropdownIcon { x: parent.width - 28px; y: (parent.height - 12px) / 2; }
+        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.open = true; popup.show(); } }
+    }
+    popup := PopupWindow {
+        x: -228px;
+        y: 42px;
+        width: 336px;
+        height: root.popup-height();
+        close-policy: close-on-click-outside;
+        Rectangle {
+            background: AppTheme.panel;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            Text { x: 14px; y: 12px; text: AppState.en ? "Advanced Control" : "高级控制"; color: AppTheme.text; font-size: 13px; font-weight: 500; }
+            Text { x: parent.width - 52px; y: 12px; width: 36px; text: AppState.en ? "Limit" : "约束"; color: AppTheme.muted; font-size: 12px; font-weight: 400; horizontal-alignment: TextHorizontalAlignment.right; }
+            Rectangle { x: 0px; y: 43px; width: parent.width; height: 1px; background: AppTheme.border; }
+            if root.show-view(): AdvancedSelectLine { x: 14px; y: 58px; width: parent.width - 28px; kind: "view"; }
+            if AppState.asset-type == "scene": AdvancedSelectLine { x: 14px; y: 102px; width: (parent.width - 38px) / 2; kind: "weather"; }
+            if AppState.asset-type == "scene": AdvancedSelectLine { x: 24px + (parent.width - 38px) / 2; y: 102px; width: (parent.width - 38px) / 2; kind: "time"; }
+            AdvancedSelectLine { x: 14px; y: root.light-y(); width: parent.width - 28px; kind: "light"; }
+            Rectangle {
+                x: 14px; y: root.preview-y(); width: parent.width - 28px; height: AppState.advanced-preview-open ? 178px : 34px;
+                background: AppTheme.bg;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+                Text { x: 10px; y: 0px; width: parent.width - 112px; height: 34px; text: AppState.en ? "Advanced Prompt Preview" : "高级设置 Prompt 预览"; color: AppTheme.muted; font-size: 12px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+                PillButton {
+                    x: parent.width - 98px;
+                    y: 5px;
+                    width: 42px;
+                    height: 24px;
+                    text: AppState.advanced-preview-open ? (AppState.en ? "Hide" : "收起") : (AppState.en ? "View" : "查看");
+                    clicked => {
+                        AppState.advanced-preview-open = !AppState.advanced-preview-open;
+                        if AppState.advanced-preview-open {
+                            AppState.refresh-advanced-prompt-preview();
+                        }
+                    }
+                }
+                PillButton { x: parent.width - 50px; y: 5px; width: 42px; height: 24px; text: AppState.en ? "Refresh" : "刷新"; clicked => { AppState.advanced-preview-open = true; AppState.refresh-advanced-prompt-preview(); } }
+                if AppState.advanced-preview-open: Rectangle {
+                    x: 10px;
+                    y: 42px;
+                    width: parent.width - 20px;
+                    height: 122px;
+                    background: AppTheme.panel;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    Text {
+                        x: 10px;
+                        y: 8px;
+                        width: parent.width - 20px;
+                        height: parent.height - 16px;
+                        text: AppState.advanced-prompt-preview;
+                        color: AppTheme.text;
+                        font-size: 12px;
+                        font-weight: 400;
+                        wrap: word-wrap;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+    }
+
+    function popup-height() -> length {
+        if AppState.asset-type == "scene" {
+            return AppState.advanced-preview-open ? 392px : 246px;
+        }
+        if AppState.asset-type == "character" {
+            return AppState.advanced-preview-open ? 338px : 202px;
+        }
+        return AppState.advanced-preview-open ? 338px : 202px;
+    }
+
+    function show-view() -> bool {
+        return AppState.asset-type == "scene" || AppState.asset-type == "character";
+    }
+
+    function light-y() -> length {
+        if AppState.asset-type == "scene" { return 146px; }
+        if AppState.asset-type == "character" { return 102px; }
+        return 58px;
+    }
+
+    function preview-y() -> length {
+        if AppState.asset-type == "scene" { return 190px; }
+        if AppState.asset-type == "character" { return 146px; }
+        return 102px;
+    }
+}

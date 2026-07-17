@@ -1,0 +1,50 @@
+import { AppTheme } from "../theme.slint";
+
+export component RebateStatCard {
+    in property <string> title;
+    in property <string> value;
+    in property <string> note;
+    in property <bool> accent: false;
+    height: 94px;
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: AppTheme.panel;
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        Text {
+            x: 18px;
+            y: 16px;
+            width: parent.width - 36px;
+            height: 18px;
+            text: root.title;
+            color: AppTheme.muted;
+            font-size: 12px;
+            font-weight: 400;
+            overflow: elide;
+        }
+        Text {
+            x: 18px;
+            y: 40px;
+            width: parent.width - 36px;
+            height: 34px;
+            text: root.value;
+            color: root.accent ? AppTheme.success : AppTheme.text;
+            font-size: 24px;
+            font-weight: 600;
+            overflow: elide;
+        }
+        if root.note != "": Text {
+            x: 18px;
+            y: 72px;
+            width: parent.width - 36px;
+            height: 16px;
+            text: root.note;
+            color: AppTheme.weak;
+            font-size: 11px;
+            font-weight: 400;
+            overflow: elide;
+        }
+    }
+}

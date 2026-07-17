@@ -1,9 +1,5 @@
 fn main() {
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-        let mut res = winresource::WindowsResource::new();
-        res.set_icon("assets/app.ico");
-        res.compile().expect("embed Windows application icon");
-    }
+    embed_windows_resources();
 
     std::thread::Builder::new()
         .name("slint-build".into())
@@ -16,3 +12,13 @@ fn main() {
         .join()
         .expect("Slint build thread panicked");
 }
+
+#[cfg(target_os = "windows")]
+fn embed_windows_resources() {
+    let mut res = winresource::WindowsResource::new();
+    res.set_icon("assets/app.ico");
+    res.compile().expect("embed Windows application icon");
+}
+
+#[cfg(not(target_os = "windows"))]
+fn embed_windows_resources() {}

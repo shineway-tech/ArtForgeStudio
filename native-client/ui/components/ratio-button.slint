@@ -1,0 +1,10 @@
+import { AppState } from "../app-state.slint";
+import { PillButton } from "pill-button.slint";
+
+export component RatioButton {
+    in property <string> id;
+    in property <string> label;
+    width: 94px;
+    height: 40px;
+    PillButton { width: root.width; height: root.height; text: root.label; active: AppState.ratio == root.id; clicked => { AppState.ratio = root.id; } }
+}

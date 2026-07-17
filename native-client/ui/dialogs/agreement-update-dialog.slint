@@ -1,0 +1,51 @@
+import { AppState } from "../app-state.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { SectionTitle } from "../components/section-title.slint";
+import { AppTheme } from "../theme.slint";
+
+component AgreementRow {
+    in-out property <bool> accepted;
+    in property <bool> required;
+    in property <string> title;
+    in property <string> url;
+    height: root.required ? 44px : 0px;
+    if root.required: Rectangle {
+        background: AppTheme.panel-soft;
+        border-radius: 8px;
+        Text { x: 12px; width: parent.width - 110px; height: parent.height; text: root.title; color: AppTheme.accent; font-size: 13px; vertical-alignment: center; TouchArea { mouse-cursor: pointer; clicked => { AppState.open-auth-agreement(root.url); } } }
+        PillButton { x: parent.width - 92px; y: 7px; width: 80px; height: 30px; active: root.accepted; text: root.accepted ? "已同意" : "同意"; clicked => { root.accepted = !root.accepted; } }
+    }
+}
+
+export component AgreementUpdateDialog {
+    if AppState.agreement-update-open: Rectangle {
+        background: #00000066;
+        TouchArea { width: parent.width; height: parent.height; }
+        Rectangle {
+            x: (parent.width - 460px) / 2;
+            y: (parent.height - 330px) / 2;
+            width: 460px;
+            height: 330px;
+            background: AppTheme.panel;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            VerticalLayout {
+                padding: 24px;
+                spacing: 12px;
+                SectionTitle { text: AppState.en ? "Agreement update" : "协议更新"; }
+                Text { height: 44px; text: AppState.en ? "Please review and accept the latest required agreements to continue online services." : "继续使用在线服务前，请阅读并同意最新版本的必选协议。"; color: AppTheme.muted; font-size: 13px; wrap: word-wrap; }
+                AgreementRow { required: AppState.auth-user-terms-required; title: AppState.auth-user-terms-title; url: AppState.auth-user-terms-url; accepted <=> AppState.auth-user-terms-accepted; }
+                AgreementRow { required: AppState.auth-privacy-required; title: AppState.auth-privacy-title; url: AppState.auth-privacy-url; accepted <=> AppState.auth-privacy-accepted; }
+                Text { height: 32px; text: AppState.agreement-update-message; color: AppTheme.danger; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+                PillButton {
+                    height: 40px;
+                    primary: true;
+                    disabled: AppState.agreement-update-busy;
+                    text: AppState.agreement-update-busy ? (AppState.en ? "Submitting..." : "提交中...") : (AppState.en ? "Accept and continue" : "同意并继续");
+                    clicked => { AppState.accept-current-agreements(); }
+                }
+            }
+        }
+    }
+}

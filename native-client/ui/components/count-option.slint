@@ -1,0 +1,10 @@
+import { AppState } from "../app-state.slint";
+import { IconButton } from "icon-button.slint";
+
+export component CountOption {
+    in property <int> count;
+    callback close();
+    width: 104px;
+    height: 38px;
+    IconButton { width: root.width; height: root.height; text: root.count + (AppState.en ? " img" : " 张"); active: AppState.count == root.count; clicked => { AppState.count = root.count; root.close(); } }
+}

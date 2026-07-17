@@ -1,0 +1,25 @@
+import { AppState } from "../app-state.slint";
+import { PillButton } from "pill-button.slint";
+
+export component CategoryTabs {
+    in property <bool> for-assets: true;
+    VerticalLayout {
+        spacing: 9px;
+        HorizontalLayout {
+            visible: false;
+            spacing: 10px;
+            PillButton { width: 98px; text: AppState.en ? "Game Art" : "游戏美术"; active: root.for-assets ? AppState.asset-kind-filter == "game" : AppState.inspiration-kind-filter == "game"; clicked => { if root.for-assets { AppState.asset-kind-filter = "game"; AppState.refresh-assets(); } else { AppState.inspiration-kind-filter = "game"; AppState.refresh-inspiration(); } } }
+            PillButton { width: 98px; text: AppState.en ? "Film" : "影视创作"; active: root.for-assets ? AppState.asset-kind-filter == "film" : AppState.inspiration-kind-filter == "film"; clicked => { if root.for-assets { AppState.asset-kind-filter = "film"; AppState.refresh-assets(); } else { AppState.inspiration-kind-filter = "film"; AppState.refresh-inspiration(); } } }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            if root.for-assets: PillButton { width: 78px; text: (AppState.en ? "All " : "全部 ") + AppState.asset-all-count; active: AppState.asset-category-filter == "all"; clicked => { AppState.asset-category-filter = "all"; AppState.refresh-assets(); } }
+            if !root.for-assets: PillButton { width: 78px; text: AppState.en ? "All" : "全部"; active: AppState.inspiration-category-filter == "all"; clicked => { AppState.inspiration-category-filter = "all"; AppState.refresh-inspiration(); } }
+            PillButton { width: 78px; text: root.for-assets ? (AppState.en ? "Char " : "角色 ") + AppState.asset-character-count : (AppState.en ? "Char" : "角色"); active: root.for-assets ? AppState.asset-category-filter == "character" : AppState.inspiration-category-filter == "character"; clicked => { if root.for-assets { AppState.asset-category-filter = "character"; AppState.refresh-assets(); } else { AppState.inspiration-category-filter = "character"; AppState.refresh-inspiration(); } } }
+            PillButton { width: 78px; text: root.for-assets ? (AppState.en ? "Scene " : "场景 ") + AppState.asset-scene-count : (AppState.en ? "Scene" : "场景"); active: root.for-assets ? AppState.asset-category-filter == "scene" : AppState.inspiration-category-filter == "scene"; clicked => { if root.for-assets { AppState.asset-category-filter = "scene"; AppState.refresh-assets(); } else { AppState.inspiration-category-filter = "scene"; AppState.refresh-inspiration(); } } }
+            PillButton { width: 68px; text: root.for-assets ? "UI " + AppState.asset-ui-count : "UI"; active: root.for-assets ? AppState.asset-category-filter == "ui" : AppState.inspiration-category-filter == "ui"; clicked => { if root.for-assets { AppState.asset-category-filter = "ui"; AppState.refresh-assets(); } else { AppState.inspiration-category-filter = "ui"; AppState.refresh-inspiration(); } } }
+            PillButton { width: 78px; text: root.for-assets ? (AppState.en ? "FX " : "特效 ") + AppState.asset-effect-count : (AppState.en ? "FX" : "特效"); active: root.for-assets ? AppState.asset-category-filter == "effect" : AppState.inspiration-category-filter == "effect"; clicked => { if root.for-assets { AppState.asset-category-filter = "effect"; AppState.refresh-assets(); } else { AppState.inspiration-category-filter = "effect"; AppState.refresh-inspiration(); } } }
+            PillButton { width: 78px; text: root.for-assets ? (AppState.en ? "Other " : "其他 ") + AppState.asset-other-count : (AppState.en ? "Other" : "其他"); active: root.for-assets ? AppState.asset-category-filter == "other" : AppState.inspiration-category-filter == "other"; clicked => { if root.for-assets { AppState.asset-category-filter = "other"; AppState.refresh-assets(); } else { AppState.inspiration-category-filter = "other"; AppState.refresh-inspiration(); } } }
+        }
+    }
+}

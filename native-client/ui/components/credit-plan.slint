@@ -1,0 +1,53 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component CreditPlan {
+    in property <string> code;
+    in property <string> amount;
+    in property <string> price;
+    in property <string> title;
+    in property <string> note;
+    width: 210px;
+    height: 128px;
+    Rectangle {
+        background: AppState.selected-credit-pack-code == root.code ? AppTheme.panel-soft : AppTheme.panel;
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: AppState.selected-credit-pack-code == root.code ? AppTheme.accent : AppTheme.border;
+        Text { x: 12px; y: 12px; width: parent.width - 24px; height: 22px; text: root.title; color: AppTheme.text; font-size: 15px; font-weight: 500; overflow: elide; }
+        Text { x: 12px; y: 38px; width: parent.width - 24px; height: 18px; text: root.note; color: AppTheme.muted; font-size: 12px; font-weight: 400; overflow: elide; }
+        Text {
+            x: 12px;
+            y: 60px;
+            width: parent.width - 24px;
+            height: 34px;
+            text: AppState.en ? (root.amount + " server-priced credits") : (root.amount + " 积分，以服务端实时价格为准");
+            color: AppTheme.muted;
+            font-size: 11px;
+            font-weight: 400;
+            wrap: word-wrap;
+        }
+        Text { x: 12px; y: 96px; width: 82px; height: 22px; text: root.price; color: AppTheme.accent-dark; font-size: 17px; font-weight: 500; }
+        Text {
+            x: parent.width - 74px;
+            y: 96px;
+            width: 62px;
+            height: 22px;
+            text: AppState.selected-credit-pack-code == root.code ? (AppState.en ? "Selected" : "已选择") : (AppState.en ? "Select" : "选择");
+            color: AppState.selected-credit-pack-code == root.code ? AppTheme.accent-dark : AppTheme.muted;
+            font-size: 12px;
+            font-weight: 400;
+            horizontal-alignment: right;
+        }
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => {
+                AppState.selected-credit-pack-code = root.code;
+                AppState.selected-credit-amount = root.amount;
+                AppState.selected-credit-price = root.price;
+            }
+        }
+    }
+}

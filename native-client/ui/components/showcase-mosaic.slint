@@ -1,0 +1,24 @@
+import { AppState } from "../app-state.slint";
+import { ShowcaseTile } from "showcase-tile.slint";
+
+export component ShowcaseMosaic inherits Rectangle {
+    background: transparent;
+    clip: false;
+
+    function tile-x(n: int) -> length {
+        if n == 0 { return 0px; }
+        return root.width * 346 / 606;
+    }
+
+    function tile-y(n: int) -> length {
+        if n == 0 { return 0px; }
+        if n == 1 { return 0px; }
+        if n == 2 { return root.width * 188 / 606; }
+        return root.width * 384 / 606;
+    }
+
+    ShowcaseTile { x: root.tile-x(0); y: root.tile-y(0); width: root.width * 322 / 606; height: root.width * 360 / 606; source: AppState.showcase-character; title: "角色设定"; subtitle: "完整立绘"; }
+    ShowcaseTile { x: root.tile-x(1); y: root.tile-y(1); width: root.width * 260 / 606; height: root.width * 172 / 606; source: AppState.showcase-scene; title: "场景概念"; subtitle: "环境参考"; }
+    ShowcaseTile { x: root.tile-x(1); y: root.tile-y(2); width: root.width * 260 / 606; height: root.width * 172 / 606; source: AppState.showcase-ui; title: "游戏 UI"; subtitle: "界面方案"; }
+    ShowcaseTile { x: root.tile-x(0); y: root.tile-y(3); width: root.width * 346 / 606; height: root.width * 142 / 606; source: AppState.showcase-vfx; title: "特效设计"; subtitle: "技能表现"; }
+}

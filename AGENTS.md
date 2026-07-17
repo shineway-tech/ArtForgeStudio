@@ -2,8 +2,11 @@
 
 ## 项目定位
 
-ArtForge Studio（二进制 `ArtForgeStudio.exe`）是桌面端 AI 美术生产套件。
-Rust + Slint 重构版，仅 Windows 10/11，单二进制发布。
+ArtForge Studio 是桌面端 AI 美术生产套件。`native-client` 是唯一活动客户端，
+也是 workspace 的唯一成员，输出 `ArtForgeStudio.exe`。
+
+`crates/` 是早期模块化迁移源码，已排除在 workspace 之外，不参与构建、测试
+或发布。除非任务明确要求恢复迁移，不要修改或重新接入这些归档 crate。
 
 ## 架构
 
@@ -16,7 +19,9 @@ crates/
 ├── artait-task/           TaskRunner + 取消 + 事件总线
 ├── artait-asset/          资产懒索引 + 缩略图 + 后处理
 ├── artait-service/        业务编排（生成 / 脚本 / 提示词优化 / 任务历史）
-└── artait-app/            Slint UI + main，唯一二进制
+└── artait-app/            归档 UI 源码（无应用二进制目标）
+
+native-client/             当前产品客户端（ArtForgeStudio）
 ```
 
 **依赖方向（禁止反向）**：
@@ -32,14 +37,13 @@ app → service → task → provider → config → model
 ## 构建
 
 ```sh
-cargo build --release          # 正式发布
-cargo check                     # 快速检查
-cargo build -p artait-app --profile dev-fast   # 极速迭代
-cargo clippy                    # lint
-cargo test -p artait-service    # 业务层测试
+cargo build --release -p artforge-studio-native --bin ArtForgeStudio
+cargo check -p artforge-studio-native
+cargo test -p artforge-studio-native
+cargo clippy -p artforge-studio-native
 ```
 
-`build.bat` 封装了以上常用命令（菜单式选择）。
+`build.bat` 封装了以上常用命令（菜单式选择），只处理 `ArtForgeStudio`。
 
 ## 技术栈
 

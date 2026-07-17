@@ -1,0 +1,52 @@
+import { AppState } from "../app-state.slint";
+import { PillButton } from "pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component RebateDisplayField {
+    in property <string> label;
+    in property <string> value;
+    in property <string> button-text;
+    height: 58px;
+    Rectangle {
+        background: transparent;
+        Text {
+            y: 0px;
+            width: parent.width;
+            height: 18px;
+            text: root.label;
+            color: AppTheme.muted;
+            font-size: 12px;
+            font-weight: 400;
+            overflow: elide;
+        }
+        Rectangle {
+            y: 22px;
+            width: parent.width;
+            height: 36px;
+            background: AppTheme.panel-soft;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            Text {
+                x: 12px;
+                width: parent.width - 132px;
+                height: parent.height;
+                text: root.value == "" ? (AppState.en ? "Waiting for backend" : "待后端返回") : root.value;
+                color: root.value == "" ? AppTheme.weak : AppTheme.text;
+                font-size: 12px;
+                font-weight: 500;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            PillButton {
+                x: parent.width - 112px;
+                y: 5px;
+                width: 104px;
+                height: 26px;
+                text: root.button-text;
+                disabled: root.value == "";
+                clicked => {}
+            }
+        }
+    }
+}

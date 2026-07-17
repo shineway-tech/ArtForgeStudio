@@ -1,0 +1,45 @@
+import { GenerationLoadingCard } from "generation-loading-card.slint";
+import { ThumbnailCard } from "thumbnail-card.slint";
+import { AssetItem } from "../types.slint";
+
+export component GenerationMasonryColumn {
+    in property <[AssetItem]> items;
+    in property <length> card-width: 188px;
+    in property <int> column-index: 0;
+    in property <int> column-count: 1;
+    in property <int> loading-count: 0;
+    horizontal-stretch: 0;
+    width: root.column-width();
+    VerticalLayout {
+        x: 0px;
+        width: root.width;
+        spacing: 0px;
+        alignment: start;
+        if root.loading-count > 0 && Math.mod(0, root.column-count) == root.column-index: GenerationLoadingCard {
+            card-width: root.card-width;
+            card-gap: 10px;
+        }
+        if root.loading-count > 1 && Math.mod(1, root.column-count) == root.column-index: GenerationLoadingCard {
+            card-width: root.card-width;
+            card-gap: 10px;
+        }
+        if root.loading-count > 2 && Math.mod(2, root.column-count) == root.column-index: GenerationLoadingCard {
+            card-width: root.card-width;
+            card-gap: 10px;
+        }
+        if root.loading-count > 3 && Math.mod(3, root.column-count) == root.column-index: GenerationLoadingCard {
+            card-width: root.card-width;
+            card-gap: 10px;
+        }
+        for item[index] in root.items: ThumbnailCard {
+            active: Math.mod(index + root.loading-count, root.column-count) == root.column-index;
+            item: item;
+            card-width: root.card-width;
+            card-gap: 10px;
+            source: "generation";
+        }
+    }
+    function column-width() -> length {
+        return root.card-width;
+    }
+}

@@ -1,0 +1,63 @@
+import { EmptyState } from "empty-state.slint";
+import { TimeGroupedGallery } from "time-grouped-gallery.slint";
+import { AssetGroup, AssetItem } from "../types.slint";
+
+export component AssetGallery {
+    in property <[AssetItem]> items;
+    in property <[AssetGroup]> groups;
+    in property <string> source;
+    in property <length> card-width: 220px;
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        clip: true;
+        background: transparent;
+        Flickable {
+            width: parent.width;
+            height: parent.height;
+            viewport-width: parent.width;
+            viewport-height: root.content-height();
+            interactive: true;
+            Rectangle {
+                width: parent.viewport-width;
+                height: root.content-height();
+                background: transparent;
+                if root.is-empty(): EmptyState {
+                    width: parent.width;
+                    height: max(360px, root.height);
+                }
+                if !root.is-empty(): TimeGroupedGallery {
+                    width: parent.width;
+                    height: root.content-height();
+                    groups: root.groups;
+                    card-width: root.card-width;
+                    source: root.source;
+                }
+            }
+        }
+    }
+    function is-empty() -> bool {
+        return root.items.length == 0;
+    }
+    function content-height() -> length {
+        return max(root.height, 34px + root.groups.length * 66px + root.row-count() * root.row-height());
+    }
+    function column-count() -> int {
+        return max(1, min(root.items.length, min(8, floor((root.grid-width() + 18px) / root.item-slot-width()))));
+    }
+    function grid-width() -> length {
+        return max(1px, root.width);
+    }
+    function item-slot-width() -> length {
+        return root.card-width + 18px;
+    }
+    function item-width() -> length {
+        return min(root.card-width, max(139px, (root.grid-width() - (root.column-count() - 1) * 18px) / root.column-count()));
+    }
+    function row-height() -> length {
+        return root.item-width() + 48px;
+    }
+    function row-count() -> int {
+        return (root.items.length + root.column-count() - 1) / root.column-count();
+    }
+}

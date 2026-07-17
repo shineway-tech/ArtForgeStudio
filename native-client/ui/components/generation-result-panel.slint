@@ -1,0 +1,98 @@
+import { AppState } from "../app-state.slint";
+import { EmptyState } from "empty-state.slint";
+import { GenerationWaterfall } from "generation-waterfall.slint";
+import { TimeGroupedGallery } from "time-grouped-gallery.slint";
+import { AppTheme } from "../theme.slint";
+
+export component GenerationResultPanel {
+    Rectangle {
+        background: AppTheme.panel;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        Text {
+            x: 20px;
+            y: 18px;
+            width: parent.width - 40px;
+            text: AppState.en ? "Generated Images" : "生成结果";
+            color: AppTheme.text;
+            font-size: 16px;
+            font-weight: 500;
+        }
+        Rectangle { x: 20px; y: 52px; width: parent.width - 40px; height: 1px; background: AppTheme.border; }
+        Rectangle {
+            x: 20px;
+            y: 70px;
+            width: parent.width - 40px;
+            height: parent.height - 90px;
+            clip: true;
+            background: transparent;
+            Flickable {
+                width: parent.width;
+                height: parent.height;
+                viewport-width: parent.width;
+                viewport-height: root.content-height();
+                interactive: true;
+                Rectangle {
+                    width: parent.viewport-width;
+                    height: root.content-height();
+                    background: transparent;
+                    if AppState.generations.length == 0 && !root.active-generating(): EmptyState {
+                        width: parent.width;
+                        height: max(360px, root.height - 90px);
+                    }
+                    if root.active-generating(): GenerationWaterfall {
+                        width: parent.width;
+                        height: root.content-height();
+                        items: AppState.generations;
+                        card-width: root.item-width();
+                        column-count: root.column-count();
+                        loading-count: root.loading-count();
+                    }
+                    if AppState.generations.length > 0 && !root.active-generating(): TimeGroupedGallery {
+                        width: parent.width;
+                        height: root.content-height();
+                        groups: AppState.generation-groups;
+                        card-width: root.item-width();
+                        source: "generation";
+                    }
+                }
+            }
+        }
+    }
+    function column-count() -> int {
+        return max(1, min(root.visible-count(), min(8, floor((root.grid-width() + root.grid-gap()) / root.item-slot-width()))));
+    }
+    function grid-width() -> length {
+        return max(1px, root.width - 40px);
+    }
+    function grid-gap() -> length {
+        return 10px;
+    }
+    function base-thumb-width() -> length {
+        return 160px;
+    }
+    function item-slot-width() -> length {
+        return root.base-thumb-width() + root.grid-gap();
+    }
+    function item-width() -> length {
+        return min(root.base-thumb-width(), max(91px, (root.grid-width() - (root.column-count() - 1) * root.grid-gap()) / root.column-count()));
+    }
+    function row-height() -> length {
+        return root.item-width() + 30px;
+    }
+    function content-height() -> length {
+        return max(360px, max(root.height - 90px, 34px + AppState.generation-groups.length * 66px + root.row-count() * root.row-height()));
+    }
+    function row-count() -> int {
+        return (AppState.generations.length + root.loading-count() + root.column-count() - 1) / root.column-count();
+    }
+    function loading-count() -> int {
+        return root.active-generating() ? AppState.generation-loading-count : 0;
+    }
+    function visible-count() -> int {
+        return AppState.generations.length + root.loading-count();
+    }
+    function active-generating() -> bool {
+        return AppState.generating && AppState.generation-active-category == AppState.asset-type;
+    }
+}

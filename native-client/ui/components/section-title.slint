@@ -1,0 +1,14 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component SectionTitle {
+    in property <string> text;
+    height: 36px;
+    Text {
+        text: root.text;
+        color: AppTheme.text;
+        font-size: (AppState.settings-font-size + 8) * 1px;
+        font-weight: 600;
+        vertical-alignment: center;
+    }
+}

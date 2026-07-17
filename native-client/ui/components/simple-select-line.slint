@@ -1,0 +1,15 @@
+import { DropdownIcon } from "dropdown-icon.slint";
+import { AppTheme } from "../theme.slint";
+
+export component SimpleSelectLine {
+    in property <string> label;
+    height: 34px;
+    Rectangle {
+        background: AppTheme.bg;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        Text { x: 10px; width: parent.width - 38px; height: parent.height; text: root.label; color: AppTheme.text; font-size: 12px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+        DropdownIcon { x: parent.width - 26px; y: (parent.height - 12px) / 2; }
+    }
+}

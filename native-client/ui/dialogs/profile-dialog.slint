@@ -1,0 +1,65 @@
+import { AppState } from "../app-state.slint";
+import { DialogCloseButton } from "../components/dialog-close-button.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { SectionTitle } from "../components/section-title.slint";
+import { AppTheme } from "../theme.slint";
+
+export component ProfileDialog {
+    if AppState.profile-open: Rectangle {
+        background: #00000055;
+        TouchArea { width: parent.width; height: parent.height; }
+        Rectangle {
+            x: (parent.width - 400px) / 2;
+            y: (parent.height - 474px) / 2;
+            width: 400px;
+            height: 474px;
+            background: AppTheme.panel;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            DialogCloseButton { x: parent.width - 42px; y: 12px; clicked => { AppState.profile-open = false; } }
+            VerticalLayout {
+                padding: 24px;
+                spacing: 14px;
+                SectionTitle { text: AppState.en ? "Account" : "账号信息"; }
+                Rectangle {
+                    height: 116px;
+                    background: AppTheme.panel-soft;
+                    border-radius: 10px;
+                    Text { x: 16px; y: 14px; text: AppState.en ? "Nickname" : "昵称"; color: AppTheme.muted; font-size: 12px; }
+                    Text { x: 16px; y: 34px; width: parent.width - 32px; text: AppState.nickname; color: AppTheme.text; font-size: 16px; overflow: elide; }
+                    Text { x: 16px; y: 66px; text: AppState.en ? "Email" : "邮箱"; color: AppTheme.muted; font-size: 12px; }
+                    Text { x: 16px; y: 86px; width: parent.width - 32px; text: AppState.email-mask; color: AppTheme.text; font-size: 14px; overflow: elide; }
+                }
+                Rectangle {
+                    height: 58px;
+                    background: AppTheme.panel-soft;
+                    border-radius: 10px;
+                    Text { x: 16px; width: parent.width - 32px; height: parent.height; text: (AppState.en ? "Plan: " : "当前会员：") + AppState.membership-plan-name + " · " + AppState.membership-max-quality; color: AppTheme.text; font-size: 14px; vertical-alignment: center; overflow: elide; }
+                    TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.membership-open = true; } }
+                }
+                Text { height: 20px; text: AppState.en ? "Signed-in devices" : "登录设备"; color: AppTheme.muted; font-size: 13px; }
+                Rectangle {
+                    height: 92px;
+                    background: AppTheme.panel-soft;
+                    border-radius: 10px;
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 4px;
+                        for session in AppState.account-sessions: Rectangle {
+                            height: 34px;
+                            Text { x: 8px; width: parent.width - 116px; height: parent.height; text: session.device-name + " · " + session.platform + (session.is-current ? (AppState.en ? " · Current" : " · 当前设备") : ""); color: AppTheme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                            if !session.is-current: PillButton { x: parent.width - 96px; y: 2px; width: 88px; height: 30px; text: AppState.en ? "Revoke" : "撤销"; danger: true; clicked => { AppState.revoke-session(session.id); } }
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Close" : "关闭"; clicked => { AppState.profile-open = false; } }
+                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Logout" : "退出登录"; danger: true; clicked => { AppState.logout(); } }
+                }
+                PillButton { height: 34px; text: AppState.en ? "Logout all devices" : "退出全部设备"; danger: true; clicked => { AppState.logout-all(); } }
+            }
+        }
+    }
+}

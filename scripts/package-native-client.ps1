@@ -11,6 +11,16 @@ $Root = Resolve-Path (Join-Path $ScriptDir "..")
 $DistRoot = Join-Path $Root "dist"
 $ClientDir = Join-Path $Root "native-client"
 $AppName = "ArtForgeStudio"
+$metadataJson = & cargo metadata --manifest-path (Join-Path $Root "Cargo.toml") --format-version 1 --no-deps
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to read Cargo package metadata"
+}
+$metadata = $metadataJson | ConvertFrom-Json
+$clientPackage = $metadata.packages | Where-Object { $_.name -eq "artforge-studio-native" } | Select-Object -First 1
+if (-not $clientPackage) {
+    throw "Unable to find artforge-studio-native in Cargo metadata"
+}
+$ClientVersion = $clientPackage.version
 $IsMacHost = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
     [System.Runtime.InteropServices.OSPlatform]::OSX
 )
@@ -175,9 +185,9 @@ function Package-Macos {
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>$ClientVersion</string>
   <key>CFBundleVersion</key>
-  <string>0.1.0</string>
+  <string>$ClientVersion</string>
   <key>LSMinimumSystemVersion</key>
   <string>11.0</string>
   <key>NSHighResolutionCapable</key>

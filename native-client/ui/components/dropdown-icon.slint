@@ -1,0 +1,14 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component DropdownIcon {
+    width: 12px;
+    height: 12px;
+    Image {
+        width: parent.width;
+        height: parent.height;
+        source: AppState.icon-dropdown;
+        colorize: AppTheme.muted;
+        image-fit: contain;
+    }
+}

@@ -1,0 +1,205 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { CardStyleOption } from "../components/card-style-option.slint";
+import { DirRow } from "../components/dir-row.slint";
+import { FontPicker } from "../components/font-picker.slint";
+import { FontStepButton } from "../components/font-step-button.slint";
+import { LoadingDots } from "../components/loading-dots.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { ThemeTile } from "../components/theme-tile.slint";
+import { AppTheme } from "../theme.slint";
+
+export component SettingsPage {
+    property <string> active-section: "basic";
+    Rectangle {
+        background: AppTheme.bg;
+        ScrollView {
+            width: parent.width;
+            height: parent.height;
+            Rectangle {
+                property <length> left-w: 250px;
+                property <length> gap: 28px;
+                property <length> content-x: 24px + left-w + gap;
+                property <length> content-w: parent.width - content-x - 48px;
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: max(960px, parent.height);
+                background: transparent;
+
+                Rectangle {
+                    x: 24px;
+                    y: 30px;
+                    width: left-w;
+                    height: parent.height - 60px;
+                    background: AppTheme.panel;
+                    border-radius: 16px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    Text { x: 18px; y: 24px; text: AppState.en ? "Settings" : "设置"; color: AppTheme.text; font-size: 22px; font-weight: 600; }
+                    Rectangle {
+                        x: 16px;
+                        y: 86px;
+                        width: parent.width - 32px;
+                        height: 62px;
+                        background: root.active-section == "basic" ? AppTheme.panel-soft : transparent;
+                        border-radius: 10px;
+                        if root.active-section == "basic": Rectangle { x: 0px; y: 14px; width: 3px; height: 24px; border-radius: 2px; background: AppTheme.accent; }
+                        Text { x: 18px; y: 10px; text: AppState.en ? "Basic" : "基础设置"; color: root.active-section == "basic" ? AppTheme.text : AppTheme.muted; font-size: 14px; font-weight: 400; }
+                        Text { x: 18px; y: 34px; text: AppState.en ? "Theme, font, folders" : "主题、字体、目录"; color: AppTheme.weak; font-size: 12px; font-weight: 400; }
+                        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.active-section = "basic"; } }
+                    }
+                    Rectangle {
+                        x: 16px;
+                        y: 168px;
+                        width: parent.width - 32px;
+                        height: 62px;
+                        background: root.active-section == "about" ? AppTheme.panel-soft : transparent;
+                        border-radius: 10px;
+                        if root.active-section == "about": Rectangle { x: 0px; y: 14px; width: 3px; height: 24px; border-radius: 2px; background: AppTheme.accent; }
+                        Text { x: 18px; y: 10px; text: AppState.en ? "About" : "关于"; color: root.active-section == "about" ? AppTheme.text : AppTheme.muted; font-size: 14px; font-weight: 400; }
+                        Text { x: 18px; y: 34px; text: AppState.en ? "Version and paths" : "版本与配置位置"; color: AppTheme.weak; font-size: 12px; font-weight: 400; }
+                        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.active-section = "about"; } }
+                    }
+                }
+
+                Text {
+                    x: content-x;
+                    y: 38px;
+                    width: content-w;
+                    text: root.active-section == "about" ? (AppState.en ? "About" : "关于") : (AppState.en ? "Basic Settings" : "基础设置");
+                    color: AppTheme.text;
+                    font-size: 24px;
+                    font-weight: 600;
+                }
+                if root.active-section == "basic": Rectangle {
+                    x: content-x;
+                    y: 96px;
+                    width: content-w;
+                    height: 270px;
+                    background: transparent;
+                    Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: AppTheme.border; }
+                    Text { x: 0px; y: 0px; text: AppState.en ? "Theme color" : "主题颜色"; color: AppTheme.text; font-size: 14px; font-weight: 400; }
+                    ThemeTile { x: 0px; y: 38px; width: (parent.width - 16px) / 3; id: "light"; label: AppState.en ? "Light" : "素白"; color: #ffffff; }
+                    ThemeTile { x: ((parent.width - 16px) / 3 + 8px); y: 38px; width: (parent.width - 16px) / 3; id: "deep"; label: AppState.en ? "Deep Purple" : "深紫"; color: #4f46e5; }
+                    ThemeTile { x: 2 * ((parent.width - 16px) / 3 + 8px); y: 38px; width: (parent.width - 16px) / 3; id: "ocean"; label: AppState.en ? "Ocean Blue" : "深海蓝"; color: #0ea5e9; }
+                    ThemeTile { x: 0px; y: 94px; width: (parent.width - 16px) / 3; id: "forest"; label: AppState.en ? "Forest Green" : "森林绿"; color: #38c172; }
+                    ThemeTile { x: ((parent.width - 16px) / 3 + 8px); y: 94px; width: (parent.width - 16px) / 3; id: "warm"; label: AppState.en ? "Warm Ink" : "暖墨棕"; color: #f59e0b; }
+                    ThemeTile { x: 2 * ((parent.width - 16px) / 3 + 8px); y: 94px; width: (parent.width - 16px) / 3; id: "rose"; label: AppState.en ? "Rose" : "暗玫瑰"; color: #e11d48; }
+                    ThemeTile { x: 0px; y: 150px; width: (parent.width - 16px) / 3; id: "cream"; label: AppState.en ? "Cream" : "奶白"; color: #c96b73; }
+                    ThemeTile { x: ((parent.width - 16px) / 3 + 8px); y: 150px; width: (parent.width - 16px) / 3; id: "cyber"; label: AppState.en ? "Cyber Purple" : "赛博紫"; color: #d946ef; }
+                    ThemeTile { x: 2 * ((parent.width - 16px) / 3 + 8px); y: 150px; width: (parent.width - 16px) / 3; id: "oled"; label: AppState.en ? "Black" : "纯黑"; color: #000000; }
+                    ThemeTile { x: 0px; y: 206px; width: (parent.width - 16px) / 3; id: "system"; label: AppState.en ? "System" : "跟随系统"; color: #5b6472; }
+                    ThemeTile { x: ((parent.width - 16px) / 3 + 8px); y: 206px; width: (parent.width - 16px) / 3; id: "user"; label: AppState.en ? "Custom" : "自定义"; color: #5b5fc7; }
+                }
+                if root.active-section == "basic": Rectangle {
+                    x: content-x;
+                    y: 386px;
+                    width: content-w;
+                    height: 142px;
+                    background: transparent;
+                    Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: AppTheme.border; }
+                    Text { x: 0px; y: 0px; text: AppState.en ? "Font" : "字体"; color: AppTheme.text; font-size: 14px; font-weight: 400; }
+                    FontPicker { x: 0px; y: 36px; width: parent.width; }
+                    HorizontalLayout {
+                        x: 0px;
+                        y: 94px;
+                        width: 240px;
+                        height: 36px;
+                        spacing: 12px;
+                        FontStepButton { horizontal-stretch: 0; text: "-"; clicked => { AppState.settings-font-size = max(10, AppState.settings-font-size - 1); } }
+                        Text { width: 28px; horizontal-stretch: 0; text: AppState.settings-font-size; color: AppTheme.accent-dark; font-size: 16px; font-weight: 400; vertical-alignment: center; }
+                        FontStepButton { horizontal-stretch: 0; text: "+"; clicked => { AppState.settings-font-size = min(24, AppState.settings-font-size + 1); } }
+                        Text { width: 72px; horizontal-stretch: 0; text: "10 - 24"; color: AppTheme.muted; font-size: 13px; font-weight: 400; vertical-alignment: center; }
+                    }
+                }
+                if root.active-section == "basic": Rectangle {
+                    x: content-x;
+                    y: 550px;
+                    width: content-w;
+                    height: 142px;
+                    background: transparent;
+                    Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: AppTheme.border; }
+                    Text { x: 0px; y: 0px; text: AppState.en ? "Card style" : "卡片设置"; color: AppTheme.text; font-size: 14px; font-weight: 400; }
+                    HorizontalLayout {
+                        x: 0px;
+                        y: 36px;
+                        width: parent.width;
+                        height: 46px;
+                        spacing: 12px;
+                        CardStyleOption { horizontal-stretch: 1; id: "rounded"; label: AppState.en ? "Rounded" : "圆角"; }
+                        CardStyleOption { horizontal-stretch: 1; id: "square"; label: AppState.en ? "Square" : "直角"; }
+                    }
+                }
+                if root.active-section == "basic": DirRow { x: content-x; y: 714px; width: content-w; label: AppState.en ? "Input folder" : "输入素材目录"; value: AppState.input-dir; kind: "input"; }
+                if root.active-section == "basic": DirRow { x: content-x; y: 792px; width: content-w; label: AppState.en ? "Output folder" : "输出目录"; value: AppState.output-dir; kind: "output"; }
+                if root.active-section == "basic": DirRow { x: content-x; y: 870px; width: content-w; label: AppState.en ? "Prompt folder" : "提示词模板目录"; value: AppState.prompt-dir; kind: "prompt"; }
+                if root.active-section == "about": Rectangle {
+                    x: content-x;
+                    y: 96px;
+                    width: content-w;
+                    height: 270px;
+                    background: AppTheme.panel;
+                    border-radius: 14px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    Text { x: 18px; y: 18px; text: AppState.en ? "Version" : "版本信息"; color: AppTheme.text; font-size: 14px; font-weight: 400; }
+                    Text { x: 18px; y: 58px; text: "ArtForgeStudio"; color: AppTheme.text; font-size: 18px; font-weight: 500; }
+                    Text { x: 18px; y: 88px; text: AppState.en ? ("Version: " + AppState.current-version) : ("版本：" + AppState.current-version); color: AppTheme.muted; font-size: 13px; font-weight: 400; }
+                    if AppState.update-available: Rectangle {
+                        x: 18px;
+                        y: 116px;
+                        width: 10px;
+                        height: 10px;
+                        border-radius: 5px;
+                        background: AppTheme.danger;
+                    }
+                    Text {
+                        visible: AppState.update-available || AppState.update-checking || AppState.update-message != "";
+                        x: 34px;
+                        y: 110px;
+                        width: parent.width - 300px;
+                        height: 22px;
+                        text: AppState.update-checking ? (AppState.en ? "Checking for updates..." : "正在检查版本...")
+                            : (AppState.update-available ? (AppState.en ? ("New version " + AppState.latest-version + " available") : ("发现新版本 " + AppState.latest-version))
+                            : AppState.update-message);
+                        color: AppState.update-available ? AppTheme.danger : AppTheme.muted;
+                        font-size: 13px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    HorizontalLayout {
+                        x: parent.width - 246px;
+                        y: 78px;
+                        width: 220px;
+                        height: 36px;
+                        spacing: 10px;
+                        PillButton {
+                            horizontal-stretch: 1;
+                            text: AppState.update-checking ? (AppState.en ? "Checking" : "检查中") : (AppState.en ? "Check" : "检查版本");
+                            disabled: AppState.update-checking;
+                            clicked => { AppState.check-version(); }
+                        }
+                        PillButton {
+                            horizontal-stretch: 1;
+                            text: AppState.en ? "Update" : "更新";
+                            primary: AppState.update-available;
+                            disabled: !AppState.update-available || AppState.update-checking;
+                            clicked => { AppState.start-update(); }
+                        }
+                    }
+                    if AppState.update-checking: LoadingDots {
+                        x: parent.width - 268px;
+                        y: 75px;
+                        width: 28px;
+                        height: 28px;
+                    }
+                    Rectangle { x: 18px; y: 150px; width: parent.width - 36px; height: 1px; background: AppTheme.border; }
+                    Text { x: 18px; y: 176px; text: AppState.en ? "Config path" : "配置位置"; color: AppTheme.text; font-size: 14px; font-weight: 400; }
+                    Text { x: 18px; y: 206px; width: parent.width - 36px; text: AppState.input-dir; color: AppTheme.muted; font-size: 13px; font-weight: 400; overflow: elide; }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,56 @@
+import { AppState } from "../app-state.slint";
+import { DropdownIcon } from "dropdown-icon.slint";
+import { TextOption } from "text-option.slint";
+import { AppTheme } from "../theme.slint";
+
+export component StyleModeChip {
+    property <bool> open: false;
+    width: 108px;
+    height: 36px;
+    Rectangle {
+        background: AppTheme.panel-soft;
+        border-radius: 18px;
+        border-width: 1px;
+        border-color: AppTheme.accent;
+        Text { x: 14px; width: parent.width - 44px; height: parent.height; text: label(); color: AppTheme.text; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+        DropdownIcon { x: parent.width - 28px; y: (parent.height - 12px) / 2; }
+        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.open = true; popup.show(); } }
+    }
+    popup := PopupWindow {
+        x: 0px;
+        y: 42px;
+        width: 170px;
+        height: 282px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.accent;
+            VerticalLayout {
+                padding: 6px;
+                spacing: 3px;
+                TextOption { left: AppState.en ? "Free Style" : "自由风格"; right: ""; active: AppState.style-mode == "free"; clicked => { AppState.style-mode = "free"; root.open = false; popup.close(); } }
+                TextOption { left: AppState.en ? "Warm Healing" : "温暖治愈"; right: AppState.en ? "Warm" : "暖"; active: AppState.style-mode == "warm"; clicked => { AppState.style-mode = "warm"; root.open = false; popup.close(); } }
+                TextOption { left: AppState.en ? "Cool Pressure" : "冷峻压抑"; right: AppState.en ? "Cold" : "冷"; active: AppState.style-mode == "cold"; clicked => { AppState.style-mode = "cold"; root.open = false; popup.close(); } }
+                TextOption { left: AppState.en ? "High Saturation" : "高饱和"; right: AppState.en ? "Vivid" : "艳"; active: AppState.style-mode == "vivid"; clicked => { AppState.style-mode = "vivid"; root.open = false; popup.close(); } }
+                TextOption { left: AppState.en ? "Low Saturation" : "低饱和"; right: AppState.en ? "Soft" : "淡"; active: AppState.style-mode == "soft"; clicked => { AppState.style-mode = "soft"; root.open = false; popup.close(); } }
+                TextOption { left: AppState.en ? "Dark Style" : "暗黑风"; right: AppState.en ? "Dark" : "暗"; active: AppState.style-mode == "dark"; clicked => { AppState.style-mode = "dark"; root.open = false; popup.close(); } }
+                TextOption { left: AppState.en ? "Cyber Neon" : "赛博朋克"; right: AppState.en ? "Neon" : "霓虹"; active: AppState.style-mode == "cyber"; clicked => { AppState.style-mode = "cyber"; root.open = false; popup.close(); } }
+                TextOption { left: AppState.en ? "Fantasy" : "日系幻想"; right: AppState.en ? "Fantasy" : "幻想"; active: AppState.style-mode == "fantasy"; clicked => { AppState.style-mode = "fantasy"; root.open = false; popup.close(); } }
+                TextOption { left: AppState.en ? "Cartoon" : "吉卜力风"; right: AppState.en ? "Paint" : "绘本"; active: AppState.style-mode == "ghibli"; clicked => { AppState.style-mode = "ghibli"; root.open = false; popup.close(); } }
+            }
+        }
+    }
+    function label() -> string {
+        if AppState.style-mode == "warm" { return AppState.en ? "Warm Healing" : "温暖治愈"; }
+        if AppState.style-mode == "cold" { return AppState.en ? "Cool Pressure" : "冷峻压抑"; }
+        if AppState.style-mode == "vivid" { return AppState.en ? "High Saturation" : "高饱和"; }
+        if AppState.style-mode == "soft" { return AppState.en ? "Low Saturation" : "低饱和"; }
+        if AppState.style-mode == "dark" { return AppState.en ? "Dark Style" : "暗黑风"; }
+        if AppState.style-mode == "cyber" { return AppState.en ? "Cyber Neon" : "赛博朋克"; }
+        if AppState.style-mode == "fantasy" { return AppState.en ? "Fantasy" : "日系幻想"; }
+        if AppState.style-mode == "ghibli" { return AppState.en ? "Cartoon" : "吉卜力风"; }
+        return AppState.en ? "Free Style" : "自由风格";
+    }
+}

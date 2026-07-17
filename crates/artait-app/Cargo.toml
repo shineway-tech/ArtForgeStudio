@@ -7,11 +7,7 @@ license.workspace = true
 authors.workspace = true
 publish.workspace = true
 description = "ArtForge Studio - AI 美术生产套件"
-default-run = "ArtForgeStudio"
-
-[[bin]]
-name = "ArtForgeStudio"
-path = "src/main.rs"
+autobins = false
 
 [[bin]]
 name = "artait-migrate"

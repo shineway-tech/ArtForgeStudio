@@ -1,0 +1,70 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { DropdownIcon } from "dropdown-icon.slint";
+import { IconButton } from "icon-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component FontPicker {
+    property <bool> open: false;
+    height: 46px;
+    Rectangle {
+        background: AppTheme.panel;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: root.open ? AppTheme.accent : AppTheme.border;
+        Text {
+            x: 14px;
+            width: parent.width - 48px;
+            height: parent.height;
+            text: AppState.settings-font-family;
+            color: AppTheme.text;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        DropdownIcon { x: parent.width - 32px; y: (parent.height - 12px) / 2; }
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => {
+                AppState.load-fonts();
+                root.open = true;
+                popup.show();
+            }
+        }
+    }
+    popup := PopupWindow {
+        x: 0px;
+        y: 50px;
+        width: root.width;
+        height: 260px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            visible: root.open;
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.accent;
+            ScrollView {
+                width: parent.width;
+                height: parent.height;
+                VerticalLayout {
+                    padding: 6px;
+                    spacing: 4px;
+                    for font in AppState.font-list: IconButton {
+                        width: root.width - 12px;
+                        text: font;
+                        active: AppState.settings-font-family == font;
+                        clicked => {
+                            AppState.settings-font-family = font;
+                            root.open = false;
+                            popup.close();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

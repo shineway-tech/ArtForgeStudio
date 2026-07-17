@@ -1,0 +1,91 @@
+import { AppState } from "../app-state.slint";
+import { CategoryTabs } from "../components/category-tabs.slint";
+import { EmptyState } from "../components/empty-state.slint";
+import { SquareGalleryGrid } from "../components/square-gallery-grid.slint";
+import { AppTheme } from "../theme.slint";
+
+export component InspirationPage {
+    function content-width() -> length {
+        return root.width - 40px;
+    }
+    function content-x() -> length {
+        return 20px;
+    }
+    function card-width() -> length {
+        return 200px;
+    }
+    function gallery-y() -> length {
+        return 124px;
+    }
+    function gallery-top-gap() -> length {
+        return 18px;
+    }
+    function gallery-height() -> length {
+        return max(root.height - root.gallery-y(), max(820px, root.gallery-top-gap() + 32px + root.row-count() * root.row-height()));
+    }
+    Rectangle {
+        background: AppTheme.bg;
+        Rectangle {
+            y: root.gallery-y();
+            width: parent.width;
+            height: max(0px, parent.height - root.gallery-y());
+            clip: true;
+            background: transparent;
+            Flickable {
+                width: parent.width;
+                height: parent.height;
+                viewport-width: parent.width;
+                viewport-height: root.gallery-height();
+                interactive: true;
+                Rectangle {
+                    width: root.width;
+                    height: root.gallery-height();
+                    background: transparent;
+
+                    if root.is-empty(): EmptyState {
+                        x: root.content-x();
+                        y: 0px;
+                        width: root.content-width();
+                        height: max(360px, root.height - 106px);
+                    }
+
+                    if !root.is-empty(): SquareGalleryGrid {
+                        x: root.content-x();
+                        y: root.gallery-top-gap();
+                        width: root.content-width();
+                        items: AppState.inspiration;
+                        card-width: root.card-width();
+                        source: "inspiration";
+                    }
+                }
+            }
+        }
+        Rectangle {
+            y: 0px;
+            width: parent.width;
+            height: root.gallery-y();
+            background: AppTheme.bg;
+        }
+        CategoryTabs {
+            x: root.content-x();
+            y: 14px;
+            width: root.content-width();
+            for-assets: false;
+        }
+    }
+    function is-empty() -> bool {
+        return AppState.inspiration.length == 0;
+    }
+    function column-count() -> int {
+        return max(1, min(AppState.inspiration.length, min(8, floor((root.content-width() + 18px) / (root.card-width() + 18px)))));
+    }
+    function item-width() -> length {
+        return min(root.card-width(), max(139px, (root.content-width() - (root.column-count() - 1) * 18px) / root.column-count()));
+    }
+    function row-height() -> length {
+        return root.item-width() + 48px;
+    }
+    function row-count() -> int {
+        return (AppState.inspiration.length + root.column-count() - 1) / root.column-count();
+    }
+}

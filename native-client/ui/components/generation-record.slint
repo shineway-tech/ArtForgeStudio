@@ -1,0 +1,97 @@
+import { AppState } from "../app-state.slint";
+import { PillButton } from "pill-button.slint";
+import { AppTheme } from "../theme.slint";
+import { AssetItem } from "../types.slint";
+
+export component GenerationRecord {
+    in property <AssetItem> item;
+    in property <length> record-width: 820px;
+    VerticalLayout {
+        spacing: 12px;
+        width: root.record-width;
+        HorizontalLayout {
+            width: root.record-width;
+            Rectangle { horizontal-stretch: 1; }
+            Rectangle {
+                width: min(460px, root.record-width * 54 / 100);
+                height: 48px;
+                background: AppTheme.panel;
+                border-radius: 16px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+                Text { x: 16px; width: parent.width - 32px; height: parent.height; text: root.item.title; color: AppTheme.text; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+            }
+        }
+        VerticalLayout {
+            spacing: 10px;
+            alignment: start;
+            if root.item.source-path != "failed": Rectangle {
+                width: thumb-width(root.item.ratio) * 1px;
+                height: thumb-height(root.item.ratio) * 1px;
+                background: transparent;
+                Image {
+                    width: parent.width;
+                    height: parent.height;
+                    source: root.item.image;
+                    image-fit: cover;
+                    TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.open-viewer(root.item.id, "generation"); } }
+                }
+            }
+            if root.item.source-path == "failed": Rectangle {
+                width: min(520px, root.record-width * 62 / 100);
+                height: 54px;
+                background: AppTheme.panel-soft;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: AppTheme.danger;
+                Text {
+                    x: 14px;
+                    width: parent.width - 28px;
+                    height: parent.height;
+                    text: root.item.prompt;
+                    color: AppTheme.danger;
+                    font-size: AppState.settings-font-size * 1px;
+                    font-weight: 400;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+            Text { text: root.item.time; color: AppTheme.muted; font-size: 13px; font-weight: 400; }
+            HorizontalLayout {
+                spacing: 8px;
+                PillButton { width: 104px; text: AppState.en ? "Regenerate" : "重新生成"; primary: true; clicked => { AppState.regenerate(root.item.id); } }
+                if root.item.source-path != "failed": PillButton { width: 44px; text: "引用"; primary: true; clicked => { AppState.quote-generation(root.item.id); } }
+            }
+        }
+    }
+    function thumb-width(ratio: string) -> int {
+        if ratio == "9:16" { return 205; }
+        if ratio == "3:4" { return 250; }
+        if ratio == "2:3" { return 240; }
+        if ratio == "4:5" { return 250; }
+        if ratio == "1:2" { return 205; }
+        if ratio == "9:21" { return 190; }
+        if ratio == "16:9" { return 360; }
+        if ratio == "21:9" { return 400; }
+        if ratio == "2:1" { return 380; }
+        if ratio == "3:2" { return 330; }
+        if ratio == "4:3" { return 320; }
+        if ratio == "5:4" { return 300; }
+        return 250;
+    }
+    function thumb-height(ratio: string) -> int {
+        if ratio == "9:16" { return 450; }
+        if ratio == "3:4" { return 336; }
+        if ratio == "2:3" { return 360; }
+        if ratio == "4:5" { return 312; }
+        if ratio == "1:2" { return 410; }
+        if ratio == "9:21" { return 444; }
+        if ratio == "16:9" { return 203; }
+        if ratio == "21:9" { return 171; }
+        if ratio == "2:1" { return 190; }
+        if ratio == "3:2" { return 220; }
+        if ratio == "4:3" { return 240; }
+        if ratio == "5:4" { return 240; }
+        return 250;
+    }
+}

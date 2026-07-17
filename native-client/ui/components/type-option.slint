@@ -1,0 +1,11 @@
+import { AppState } from "../app-state.slint";
+import { IconButton } from "icon-button.slint";
+
+export component TypeOption {
+    in property <string> id;
+    in property <string> label;
+    callback close();
+    width: 138px;
+    height: 38px;
+    IconButton { width: root.width; height: root.height; text: root.label; active: AppState.asset-type == root.id; clicked => { AppState.asset-type = root.id; root.close(); } }
+}

@@ -1,0 +1,253 @@
+import { AppState } from "../app-state.slint";
+import { PillButton } from "pill-button.slint";
+import { AppTheme } from "../theme.slint";
+import { AssetItem } from "../types.slint";
+
+export component ThumbnailCard {
+    in property <AssetItem> item;
+    in property <length> card-width: 188px;
+    in property <length> card-gap: 18px;
+    in property <string> source: "asset";
+    in property <bool> active: true;
+    property <length> outline-pad: 4px;
+    property <bool> drag-armed: false;
+    property <bool> system-drag-preview-started: false;
+    width: root.card-width;
+    height: root.active ? root.card-width + root.card-gap : 0px;
+    DragArea {
+        width: root.card-width;
+        height: root.card-width;
+        visible: root.item.source-path != "failed";
+        enabled: root.can-drag-preview();
+        mime-type: "application/x-artforge-image-path";
+        data: root.item.source-path;
+        Rectangle {
+            width: root.card-width;
+            height: root.card-width;
+            visible: root.active;
+            background: transparent;
+            if root.item.source-path != "failed" && hover.has-hover: Rectangle {
+                width: parent.width;
+                height: parent.height;
+                background: transparent;
+                border-radius: AppState.card-style == "rounded" ? 10px : 0px;
+                border-width: 2px;
+                border-color: AppTheme.accent;
+            }
+            content := Rectangle {
+                x: root.outline-pad;
+                y: root.outline-pad;
+                width: root.visual-card-width();
+                height: root.visual-card-width();
+                background: root.item.source-path == "failed" || hover.has-hover ? AppTheme.panel-soft : transparent;
+                border-radius: AppState.card-style == "rounded" ? 8px : 0px;
+                border-width: root.item.source-path == "failed" ? 1px : 0px;
+                border-color: AppTheme.border;
+                clip: true;
+                if root.item.source-path != "failed": Image {
+                    x: hover.has-hover ? -parent.width * 0.05 : 0px;
+                    y: hover.has-hover ? -parent.height * 0.05 : 0px;
+                    width: hover.has-hover ? parent.width * 1.10 : parent.width;
+                    height: hover.has-hover ? parent.height * 1.10 : parent.height;
+                    source: root.item.image;
+                    image-fit: cover;
+                    animate x, y, width, height { duration: 140ms; }
+                }
+                if root.item.source-path == "failed": Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    background: AppTheme.panel-soft;
+                    Text {
+                        x: 12px;
+                        y: parent.height / 2 - 30px;
+                        width: parent.width - 24px;
+                        height: 24px;
+                        text: AppState.en ? "Failed" : "生成失败";
+                        color: AppTheme.danger;
+                        font-size: 13px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                        overflow: elide;
+                    }
+                }
+                if root.item.source-path == "failed": PillButton {
+                    x: (parent.width - 74px) / 2;
+                    y: parent.height / 2 + 2px;
+                    width: 74px;
+                    height: 32px;
+                    text: AppState.en ? "Retry" : "重试";
+                    primary: true;
+                    disabled: AppState.generating && AppState.generation-active-category == root.item.category;
+                    clicked => { AppState.retry-generation(root.item.id); }
+                }
+                if root.item.source-path != "failed" && root.source != "generation": Rectangle {
+                    y: parent.height - 86px;
+                    width: parent.width;
+                    height: 86px;
+                    background: @linear-gradient(0deg, #000000b8, #00000000);
+                }
+                if root.item.source-path != "failed" && root.source != "generation": Text {
+                    x: 13px;
+                    y: parent.height - 46px;
+                    width: parent.width - 26px;
+                    text: root.item.title;
+                    color: #ffffff;
+                    font-size: 14px;
+                    font-weight: 500;
+                    overflow: elide;
+                }
+                if root.item.source-path != "failed" && root.source != "generation": Text {
+                    x: 13px;
+                    y: parent.height - 24px;
+                    width: parent.width - 26px;
+                    text: category-label(root.item.category);
+                    color: #ffffffc8;
+                    font-size: 12px;
+                    font-weight: 400;
+                    overflow: elide;
+                }
+                if root.item.source-path != "failed" && hover.has-hover: Rectangle {
+                    y: parent.height - 42px;
+                    width: parent.width;
+                    height: 42px;
+                    background: #000000a8;
+                    Text {
+                        x: 12px;
+                        width: parent.width - 24px;
+                        height: parent.height;
+                        text: root.meta-label();
+                        color: #ffffff;
+                        font-size: 12px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+            hover := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                visible: root.item.source-path != "failed";
+                mouse-cursor: pointer;
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                        root.drag-armed = true;
+                        root.system-drag-preview-started = false;
+                        root.update-drag-preview();
+                    } else if event.kind == PointerEventKind.move {
+                        root.update-drag-preview();
+                        root.start-system-drag-preview();
+                    } else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                        root.hide-drag-preview();
+                    }
+                }
+                moved => {
+                    if root.drag-armed {
+                        root.update-drag-preview();
+                        root.start-system-drag-preview();
+                    } else {
+                        root.hide-drag-preview();
+                    }
+                }
+                clicked => {
+                    root.hide-drag-preview();
+                    if root.item.source-path != "failed" {
+                        AppState.open-viewer(root.item.id, root.source);
+                    }
+                }
+            }
+        }
+    }
+    if root.item.source-path == "failed": Rectangle {
+        width: root.card-width;
+        height: root.card-width;
+        visible: root.active;
+        background: transparent;
+        Rectangle {
+            x: root.outline-pad;
+            y: root.outline-pad;
+            width: root.visual-card-width();
+            height: root.visual-card-width();
+            background: AppTheme.panel-soft;
+            border-radius: AppState.card-style == "rounded" ? 8px : 0px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            Text {
+                x: 12px;
+                y: parent.height / 2 - 30px;
+                width: parent.width - 24px;
+                height: 24px;
+                text: AppState.en ? "Failed" : "生成失败";
+                color: AppTheme.danger;
+                font-size: 13px;
+                font-weight: 400;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+            PillButton {
+                x: (parent.width - 74px) / 2;
+                y: parent.height / 2 + 2px;
+                width: 74px;
+                height: 32px;
+                text: AppState.en ? "Retry" : "重试";
+                primary: true;
+                disabled: AppState.generating && AppState.generation-active-category == root.item.category;
+                clicked => { AppState.retry-generation(root.item.id); }
+            }
+        }
+    }
+    function image-height() -> length {
+        return root.card-width;
+    }
+    function image-width() -> length {
+        return root.card-width;
+    }
+    function visual-height() -> length {
+        return root.card-width;
+    }
+    function visual-card-width() -> length {
+        return max(1px, root.card-width - root.outline-pad * 2);
+    }
+    function can-drag-preview() -> bool {
+        return root.active && root.item.source-path != "" && root.item.source-path != "failed";
+    }
+    function update-drag-preview() {
+        if !root.can-drag-preview() || !root.drag-armed {
+            return;
+        }
+        AppState.thumbnail-drag-preview-visible = true;
+        AppState.thumbnail-drag-preview-image = root.item.image;
+        AppState.thumbnail-drag-preview-size = root.card-width * 0.82;
+        AppState.thumbnail-drag-preview-x = hover.absolute-position.x + hover.mouse-x;
+        AppState.thumbnail-drag-preview-y = hover.absolute-position.y + hover.mouse-y;
+    }
+    function hide-drag-preview() {
+        root.drag-armed = false;
+        AppState.thumbnail-drag-preview-visible = false;
+        root.system-drag-preview-started = false;
+    }
+    function start-system-drag-preview() {
+        if !root.can-drag-preview() || !root.drag-armed || root.system-drag-preview-started {
+            return;
+        }
+        root.system-drag-preview-started = true;
+        let drag-data = root.item.drag-uri != "" ? root.item.drag-uri : root.item.source-path;
+        AppState.start-thumbnail-drag-preview(drag-data);
+        AppState.thumbnail-drag-preview-visible = false;
+        AppState.start-thumbnail-file-drag(drag-data);
+    }
+    function category-label(id: string) -> string {
+        if id == "character" { return AppState.en ? "Character" : "角色"; }
+        if id == "scene" { return AppState.en ? "Scene" : "场景"; }
+        if id == "ui" { return AppState.en ? "UI" : "UI"; }
+        if id == "effect" { return AppState.en ? "Effect" : "特效"; }
+        return AppState.en ? "Other" : "其他";
+    }
+    function meta-label() -> string {
+        if root.item.quality != "" && root.item.model != "" { return root.item.quality + " · " + root.item.model; }
+        if root.item.quality != "" { return root.item.quality; }
+        return root.item.model;
+    }
+}

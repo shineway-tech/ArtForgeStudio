@@ -1,0 +1,24 @@
+import { AppTheme } from "../theme.slint";
+
+export component DialogCloseButton {
+    callback clicked();
+    width: 30px;
+    height: 30px;
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: touch.has-hover ? AppTheme.panel-soft : transparent;
+        border-radius: 15px;
+        Text {
+            width: parent.width;
+            height: parent.height;
+                text: "x";
+            color: AppTheme.muted;
+            font-size: 18px;
+            font-weight: 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        touch := TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.clicked(); } }
+    }
+}

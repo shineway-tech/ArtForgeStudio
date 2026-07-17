@@ -1,0 +1,17 @@
+import { AppState } from "../app-state.slint";
+import { PillButton } from "pill-button.slint";
+
+export component QualityButton {
+    in property <string> label;
+    in property <string> value: label;
+    width: 130px;
+    height: 40px;
+    PillButton {
+        width: root.width;
+        height: root.height;
+        text: root.label;
+        active: AppState.quality == root.value;
+        disabled: (root.value == "2K" && AppState.membership-max-quality == "1K") || (root.value == "4K" && AppState.membership-max-quality != "4K");
+        clicked => { AppState.quality = root.value; }
+    }
+}

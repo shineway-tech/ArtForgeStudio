@@ -1,0 +1,30 @@
+import { AppTheme } from "../theme.slint";
+
+export component ViewerContextMenuItem {
+    in property <string> text;
+    in property <bool> danger: false;
+    callback clicked();
+    height: 38px;
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: touch.has-hover ? (root.danger ? #fff1f1 : AppTheme.panel-soft) : transparent;
+        border-radius: 6px;
+        Text {
+            x: 12px;
+            width: parent.width - 24px;
+            height: parent.height;
+            text: root.text;
+            color: root.danger ? AppTheme.danger : AppTheme.text;
+            font-size: 14px;
+            font-weight: 400;
+            vertical-alignment: center;
+        }
+        touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}

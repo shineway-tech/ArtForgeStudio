@@ -1,0 +1,44 @@
+import { ThumbnailCard } from "thumbnail-card.slint";
+import { AssetItem } from "../types.slint";
+
+export component SquareGalleryGrid {
+    in property <[AssetItem]> items;
+    in property <length> card-width: 200px;
+    in property <string> source: "inspiration";
+    height: root.content-height();
+    for item[index] in root.items: ThumbnailCard {
+        x: root.item-x(index);
+        y: root.item-y(index);
+        item: item;
+        card-width: root.item-width();
+        card-gap: 0px;
+        source: root.source;
+    }
+    function grid-gap() -> length {
+        return 8px;
+    }
+    function grid-width() -> length {
+        return max(1px, root.width);
+    }
+    function column-count() -> int {
+        return max(1, min(root.items.length, min(8, floor((root.grid-width() + root.grid-gap()) / (root.card-width + root.grid-gap())))));
+    }
+    function item-width() -> length {
+        return min(root.card-width, max(118px, (root.grid-width() - (root.column-count() - 1) * root.grid-gap()) / root.column-count()));
+    }
+    function row-height() -> length {
+        return root.item-width() + root.grid-gap();
+    }
+    function row-count() -> int {
+        return (root.items.length + root.column-count() - 1) / root.column-count();
+    }
+    function item-x(index: int) -> length {
+        return Math.mod(index, root.column-count()) * (root.item-width() + root.grid-gap());
+    }
+    function item-y(index: int) -> length {
+        return floor(index / root.column-count()) * root.row-height();
+    }
+    function content-height() -> length {
+        return max(1px, root.row-count() * root.row-height());
+    }
+}

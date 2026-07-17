@@ -1,0 +1,135 @@
+import { AppState } from "../app-state.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component UpscaleDialog {
+    function dialog-width() -> length {
+        return min(920px, root.width - 80px);
+    }
+    function dialog-height() -> length {
+        return min(560px, root.height - 80px);
+    }
+    function frame-size() -> length {
+        return 112px * AppState.upscale-scale;
+    }
+    if AppState.upscale-open: Rectangle {
+        background: #00000076;
+        TouchArea { width: parent.width; height: parent.height; clicked => { if !AppState.viewer-processing { AppState.close-upscale-dialog(); } } }
+        Rectangle {
+            x: (parent.width - root.dialog-width()) / 2;
+            y: (parent.height - root.dialog-height()) / 2;
+            width: root.dialog-width();
+            height: root.dialog-height();
+            background: AppTheme.panel;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            drop-shadow-blur: 30px;
+            drop-shadow-color: #00000036;
+            Text {
+                x: 24px;
+                y: 20px;
+                width: parent.width - 92px;
+                height: 32px;
+                text: AppState.en ? "Clear Upscale" : "清晰放大";
+                color: AppTheme.text;
+                font-size: 20px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            PillButton {
+                x: parent.width - 68px;
+                y: 18px;
+                width: 44px;
+                height: 34px;
+                text: "×";
+                disabled: AppState.viewer-processing;
+                clicked => { AppState.close-upscale-dialog(); }
+            }
+            preview := Rectangle {
+                x: 24px;
+                y: 70px;
+                width: parent.width - 314px;
+                height: parent.height - 94px;
+                background: #0e1117;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: #202633;
+                clip: true;
+                Text {
+                    x: 12px;
+                    y: 10px;
+                    width: 64px;
+                    height: 20px;
+                    text: AppState.upscale-scale + "x";
+                    color: #ffffffa0;
+                    font-size: 12px;
+                    font-weight: 400;
+                }
+                frame := Rectangle {
+                    x: (parent.width - root.frame-size()) / 2;
+                    y: (parent.height - root.frame-size()) / 2;
+                    width: root.frame-size();
+                    height: root.frame-size();
+                    background: #111827;
+                    border-width: 2px;
+                    border-color: #ffffffd8;
+                    clip: true;
+                    animate width { duration: 160ms; }
+                    animate height { duration: 160ms; }
+                    animate x { duration: 160ms; }
+                    animate y { duration: 160ms; }
+                    Image {
+                        x: (parent.width - min(210px, parent.width - 40px)) / 2;
+                        y: (parent.height - min(210px, parent.height - 40px)) / 2;
+                        width: min(210px, parent.width - 40px);
+                        height: min(210px, parent.height - 40px);
+                        source: AppState.viewer-image;
+                        image-fit: contain;
+                    }
+                }
+            }
+            Rectangle {
+                x: parent.width - 266px;
+                y: 70px;
+                width: 242px;
+                height: parent.height - 94px;
+                background: transparent;
+                VerticalLayout {
+                    spacing: 18px;
+                    Text { text: AppState.en ? "Scale" : "放大倍数"; color: AppTheme.muted; font-size: 13px; font-weight: 400; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        PillButton { horizontal-stretch: 1; text: "2X"; active: AppState.upscale-scale == 2; clicked => { AppState.upscale-scale = 2; } }
+                        PillButton { horizontal-stretch: 1; text: "3X"; active: AppState.upscale-scale == 3; clicked => { AppState.upscale-scale = 3; } }
+                        PillButton { horizontal-stretch: 1; text: "4X"; active: AppState.upscale-scale == 4; clicked => { AppState.upscale-scale = 4; } }
+                    }
+                    Text { text: AppState.en ? "Quality" : "清晰度"; color: AppTheme.muted; font-size: 13px; font-weight: 400; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        PillButton { horizontal-stretch: 1; text: "2K"; active: AppState.upscale-quality == "2K"; clicked => { AppState.upscale-quality = "2K"; } }
+                        PillButton { horizontal-stretch: 1; text: "4K"; active: AppState.upscale-quality == "4K"; clicked => { AppState.upscale-quality = "4K"; } }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    if AppState.viewer-processing: Text {
+                        height: 24px;
+                        text: AppState.viewer-processing-label + " " + AppState.viewer-processing-progress + "%";
+                        color: AppTheme.accent-dark;
+                        font-size: 13px;
+                        font-weight: 400;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    PillButton {
+                        height: 44px;
+                        horizontal-stretch: 1;
+                        text: AppState.en ? "Start" : "开始放大";
+                        primary: true;
+                        disabled: AppState.viewer-processing || AppState.viewer-upscale-done;
+                        clicked => { AppState.start-upscale-image(AppState.upscale-scale, AppState.upscale-quality); }
+                    }
+                }
+            }
+        }
+    }
+}

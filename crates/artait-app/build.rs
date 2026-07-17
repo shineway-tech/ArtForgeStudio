@@ -29,8 +29,8 @@ fn main() {
         res.set("ProductName", "ArtForge Studio");
         res.set("CompanyName", "ArtForge Studio");
         res.set("LegalCopyright", "© 2026 ArtForge Studio");
-        res.set("OriginalFilename", "ArtForgeStudio.exe");
-        res.set("InternalName", "ArtForgeStudio");
+        res.set("OriginalFilename", "artait-migrate.exe");
+        res.set("InternalName", "artait-migrate");
         res.set("FileVersion", "0.1.0.0");
         res.set("ProductVersion", "0.1.0.0");
         if let Err(e) = res.compile() {

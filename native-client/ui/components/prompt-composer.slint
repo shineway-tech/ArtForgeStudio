@@ -1,0 +1,240 @@
+import { AppState } from "../app-state.slint";
+import { AdvancedControlChip } from "advanced-control-chip.slint";
+import { CreationModeChip } from "creation-mode-chip.slint";
+import { GenerateActionButton } from "generate-action-button.slint";
+import { LoadingDots } from "loading-dots.slint";
+import { PillButton } from "pill-button.slint";
+import { ReferenceThumb } from "reference-thumb.slint";
+import { StyleModeChip } from "style-mode-chip.slint";
+import { UploadCard } from "upload-card.slint";
+import { AppTheme } from "../theme.slint";
+
+export component PromptComposer {
+    in property <bool> generation: false;
+    in property <bool> show-generate-button: true;
+    height: AppState.references.length > 0 || AppState.quote-title != "" ? 480px : 430px;
+    Rectangle {
+        background: AppTheme.panel-soft;
+        border-radius: 16px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        clip: false;
+        if AppState.quote-title != "": Rectangle {
+            x: 112px;
+            y: 14px;
+            height: 32px;
+            width: parent.width - 136px;
+            background: AppTheme.panel-soft;
+            border-radius: 8px;
+            Text { x: 12px; width: parent.width - 54px; height: parent.height; text: (AppState.en ? "Quoted image: " : "引用图片：") + AppState.quote-title; color: AppTheme.muted; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+            Text { x: parent.width - 34px; width: 24px; height: parent.height; text: "×"; color: AppTheme.muted; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { width: parent.width; height: parent.height; clicked => { AppState.quote-title = ""; AppState.quote-prompt = ""; AppState.quote-ratio = ""; AppState.quote-quality = ""; AppState.quote-width = 0; AppState.quote-height = 0; } }
+        }
+        for ref[index] in AppState.references: ReferenceThumb {
+            x: root.reference-x(index);
+            y: root.reference-y(index);
+            item: ref;
+        }
+        if AppState.references.length < root.max-reference-count(): UploadCard {
+            x: root.reference-x(AppState.references.length) + 4px;
+            y: root.reference-y(AppState.references.length) + 4px;
+            width: 56px;
+            height: 64px;
+            clicked => { AppState.add-reference(); }
+        }
+        PillButton {
+            x: 24px;
+            y: 14px;
+            width: 78px;
+            height: 28px;
+            text: AppState.optimizing-prompt ? (AppState.en ? "Optimizing..." : "正在优化...") : (AppState.en ? "AI Optimize" : "AI优化");
+            primary: true;
+            disabled: AppState.reasoning-model == "" || AppState.optimizing-prompt;
+            clicked => { AppState.optimize-current-prompt(); }
+        }
+        PillButton {
+            x: 110px;
+            y: 14px;
+            width: 88px;
+            height: 28px;
+            text: AppState.en ? "Image+Text" : "图文优化";
+            primary: true;
+            disabled: AppState.reasoning-model == "" || AppState.optimizing-prompt || AppState.references.length == 0;
+            clicked => { AppState.visual-optimize-current-prompt(); }
+        }
+        if AppState.optimizing-prompt: LoadingDots {
+            x: 204px;
+            y: 7px;
+            width: 30px;
+            height: 30px;
+        }
+        Text {
+            visible: AppState.optimizing-prompt || AppState.translating-prompt;
+            x: 240px;
+            y: 20px;
+            width: parent.width - 264px;
+            height: 18px;
+            text: AppState.optimizing-prompt ? (AppState.en ? "Optimizing prompt..." : "正在优化提示词...")
+                : (AppState.en ? "Translating prompt..." : "正在翻译提示词...");
+            color: AppTheme.text;
+            font-size: 13px;
+            font-weight: 400;
+            overflow: elide;
+        }
+        prompt-input := TextInput {
+            x: 24px;
+            y: root.prompt-input-y();
+            width: parent.width - 48px;
+            height: root.prompt-input-height();
+            text <=> AppState.prompt;
+            single-line: false;
+            color: AppTheme.text;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 400;
+            wrap: word-wrap;
+            key-pressed(event) => {
+                if event.modifiers.control && (event.text == "v" || event.text == "V") {
+                    if AppState.paste-reference() {
+                        return accept;
+                    }
+                }
+                return reject;
+            }
+        }
+        Text {
+            visible: prompt-input.text == "" && !prompt-input.has-focus;
+            x: 24px;
+            y: root.prompt-input-y();
+            width: parent.width - 48px;
+            height: root.prompt-input-height();
+            text: root.prompt-placeholder();
+            color: AppTheme.weak;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 400;
+            wrap: word-wrap;
+        }
+        HorizontalLayout {
+            x: 24px;
+            y: parent.height - 70px;
+            spacing: 10px;
+            CreationModeChip {}
+            if AppState.asset-type != "action-sequence": StyleModeChip {}
+            if AppState.asset-type != "action-sequence": AdvancedControlChip {}
+        }
+        GenerateActionButton {
+            x: root.width < 560px ? parent.width - 190px : parent.width - 178px;
+            y: parent.height - 78px;
+            width: root.width < 560px ? 166px : 154px;
+            height: 54px;
+            visible: root.show-generate-button;
+            disabled: !AppState.generating && AppState.reasoning-model == "";
+            clicked => {
+                if AppState.generating {
+                    AppState.stop-generation();
+                } else {
+                    AppState.generate();
+                }
+            }
+        }
+        Text {
+            visible: root.show-generate-button && (AppState.optimizing-prompt || AppState.translating-prompt || AppState.generating || AppState.generation-status != "");
+            x: 24px;
+            y: parent.height - 24px;
+            width: parent.width - 48px;
+            height: 16px;
+            text: AppState.optimizing-prompt ? (AppState.en ? "Optimizing prompt..." : "正在优化提示词...")
+                : (AppState.translating-prompt ? (AppState.en ? "Translating prompt..." : "正在翻译提示词...")
+                : (AppState.generating ? (AppState.en ? "Generating..." : "正在生成中...")
+                : AppState.generation-status));
+            color: AppTheme.text;
+            font-size: 13px;
+            font-weight: 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        reference-drop := DropArea {
+            width: parent.width;
+            height: parent.height;
+            can-drop(event) => {
+                return event.mime-type == "text/uri-list" || event.mime-type == "text/plain" || event.mime-type == "application/x-artforge-image-path";
+            }
+            dropped(event) => {
+                AppState.add-reference-from-drag(event.mime-type, event.data);
+            }
+        }
+        if reference-drop.contains-drag: Rectangle {
+            x: 8px;
+            y: 8px;
+            width: parent.width - 16px;
+            height: parent.height - 16px;
+            background: #00d98218;
+            border-radius: 14px;
+            border-width: 2px;
+            border-color: AppTheme.accent;
+            Text {
+                width: parent.width;
+                height: parent.height;
+                text: AppState.en ? "Drop to add reference" : "松开添加为参考图";
+                color: AppTheme.accent;
+                font-size: 16px;
+                font-weight: 500;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    function reference-visible-count() -> int {
+        return AppState.references.length + (AppState.references.length < root.max-reference-count() ? 1 : 0);
+    }
+
+    function max-reference-count() -> int {
+        if AppState.asset-type == "action-sequence" { return 1; }
+        return 8;
+    }
+
+    function reference-columns() -> int {
+        return max(1, min(8, floor((root.width - 48px) / 72px)));
+    }
+
+    function reference-row-count() -> int {
+        return max(1, (root.reference-visible-count() + root.reference-columns() - 1) / root.reference-columns());
+    }
+
+    function reference-tray-y() -> length {
+        return root.height - 80px - root.reference-row-count() * 74px;
+    }
+
+    function reference-x(index: int) -> length {
+        return 24px + Math.mod(index, root.reference-columns()) * 72px;
+    }
+
+    function reference-y(index: int) -> length {
+        return root.reference-tray-y() + floor(index / root.reference-columns()) * 74px;
+    }
+
+    function prompt-input-y() -> length {
+        return AppState.quote-title != "" ? 62px : 58px;
+    }
+
+    function prompt-input-height() -> length {
+        return max(96px, root.reference-tray-y() - root.prompt-input-y() - 12px);
+    }
+
+    function prompt-placeholder() -> string {
+        if AppState.mode == "film" { return AppState.en ? "Describe the script, characters, scenes, storyboard, or video" : "描述你想创作的剧本、角色、场景、分镜或视频"; }
+        if AppState.en {
+            if AppState.asset-type == "scene" { return "Describe the scene you want to create...\nExample: a wasteland market at dusk, steam-powered mechanical stalls, cinematic lighting, game concept art style"; }
+            if AppState.asset-type == "character" { return "Describe the character you want to create...\nExample: a female knight holding a flaming longsword, full armor, dark fantasy style, complete full-body illustration design"; }
+            if AppState.asset-type == "ui" { return "Describe the UI screen you want to create...\nExample: dark control-console home page, modular card layout, cyan-blue highlights, hybrid game HUD and data dashboard style"; }
+            if AppState.asset-type == "effect" { return "Describe the VFX, enchantment, skill release, or sprite-sheet animation effect you want...\nExample: blue-white lightning enchantment around a sword, 8-direction continuous flicker, suitable for pixel-style RPG battle skill VFX sprite sheet"; }
+            return "Describe the character, scene, UI, or effect you want";
+        }
+        if AppState.asset-type == "scene" { return "描述你想要创作的场景...\n例如：黄昏中的废土集市，蒸汽机械摊位，电影感光影，游戏概念图风格"; }
+        if AppState.asset-type == "character" { return "描述你想要创建的角色...\n例如：一位手持火焰长剑的女骑士，全身铠甲，暗黑奇幻风格，完整立绘设计"; }
+        if AppState.asset-type == "ui" { return "描述你想要创建的 UI 界面...\n例如：暗黑风控制台首页，模块化卡片布局，蓝青色高亮，游戏 HUD + 数据看板混合风格"; }
+        if AppState.asset-type == "effect" { return "描述你想生成的特效、附魔、技能释放或精灵图集动态效果...\n例如：蓝白雷电附魔环绕剑身，8方向连续闪烁，适合像素风 RPG 战斗技能特效精灵图集"; }
+        return "描述你想生成的角色、场景、UI 或特效";
+    }
+}

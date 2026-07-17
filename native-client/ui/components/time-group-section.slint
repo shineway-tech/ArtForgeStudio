@@ -1,0 +1,74 @@
+import { ThumbnailCard } from "thumbnail-card.slint";
+import { AppTheme } from "../theme.slint";
+import { AssetGroup } from "../types.slint";
+
+export component TimeGroupSection {
+    in property <AssetGroup> group;
+    in property <length> card-width: 200px;
+    in property <string> source: "asset";
+    height: root.content-height();
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: transparent;
+        Text {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: root.header-height();
+            text: root.group.title;
+            color: AppTheme.text;
+            font-size: 20px;
+            font-weight: 600;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        for item[index] in root.group.items: ThumbnailCard {
+            x: root.item-x(index);
+            y: root.item-y(index);
+            item: item;
+            card-width: root.item-width();
+            card-gap: 0px;
+            source: root.source;
+        }
+    }
+    function grid-gap() -> length {
+        return 8px;
+    }
+    function header-height() -> length {
+        return 32px;
+    }
+    function section-gap() -> length {
+        return 26px;
+    }
+    function grid-y() -> length {
+        return root.header-height() + 8px;
+    }
+    function grid-width() -> length {
+        return max(1px, root.width);
+    }
+    function column-count() -> int {
+        return max(1, min(root.group.items.length, min(8, floor((root.grid-width() + root.grid-gap()) / (root.card-width + root.grid-gap())))));
+    }
+    function item-width() -> length {
+        return min(root.card-width, max(118px, (root.grid-width() - (root.column-count() - 1) * root.grid-gap()) / root.column-count()));
+    }
+    function row-height() -> length {
+        return root.item-width() + root.grid-gap();
+    }
+    function row-count() -> int {
+        return (root.group.items.length + root.column-count() - 1) / root.column-count();
+    }
+    function item-x(index: int) -> length {
+        return Math.mod(index, root.column-count()) * (root.item-width() + root.grid-gap());
+    }
+    function item-y(index: int) -> length {
+        return root.grid-y() + floor(index / root.column-count()) * root.row-height();
+    }
+    function content-height() -> length {
+        if root.group.items.length == 0 {
+            return 0px;
+        }
+        return root.grid-y() + root.row-count() * root.row-height() + root.section-gap();
+    }
+}

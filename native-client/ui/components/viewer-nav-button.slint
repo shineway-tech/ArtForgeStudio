@@ -1,0 +1,32 @@
+import { AppTheme } from "../theme.slint";
+
+export component ViewerNavButton {
+    in property <string> direction: "next";
+    callback clicked();
+    width: 52px;
+    height: 52px;
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: touch.has-hover ? AppTheme.panel-soft : AppTheme.panel;
+        border-radius: 26px;
+        border-width: 1px;
+        border-color: touch.has-hover ? AppTheme.accent : AppTheme.border;
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.direction == "prev" ? "‹" : "›";
+            color: AppTheme.text;
+            font-size: 36px;
+            font-weight: 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}

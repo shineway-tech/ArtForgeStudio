@@ -1,0 +1,44 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component PillButton {
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    in property <bool> disabled: false;
+    callback clicked();
+    min-width: 72px;
+    height: 36px;
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        opacity: root.disabled ? 0.45 : 1.0;
+        background: root.primary || root.active ? AppTheme.accent : (touch.has-hover && !root.disabled ? AppTheme.panel-soft : AppTheme.panel);
+        border-radius: 18px;
+        border-width: root.primary || root.active ? 0px : 1px;
+        border-color: root.danger ? AppTheme.danger : (touch.has-hover && !root.disabled ? AppTheme.accent : AppTheme.border);
+        Text {
+            x: 0px;
+            width: parent.width;
+            height: parent.height;
+            text: root.text;
+            color: root.primary || root.active ? #ffffff : (root.danger ? AppTheme.danger : AppTheme.text);
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: root.primary ? 500 : 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: root.disabled ? default : pointer;
+            clicked => {
+                if !root.disabled {
+                    root.clicked();
+                }
+            }
+        }
+    }
+}

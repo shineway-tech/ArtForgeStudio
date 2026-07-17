@@ -1,0 +1,31 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component IconButton {
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> danger: false;
+    callback clicked();
+    width: 120px;
+    height: 38px;
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: root.active ? AppTheme.panel-soft : (touch.has-hover ? AppTheme.panel-soft : transparent);
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: root.active ? AppTheme.accent : transparent;
+        Text {
+            x: 12px;
+            width: parent.width - 24px;
+            height: parent.height;
+            text: root.text;
+            color: root.active ? AppTheme.accent-dark : (root.danger ? AppTheme.danger : AppTheme.text);
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        touch := TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.clicked(); } }
+    }
+}

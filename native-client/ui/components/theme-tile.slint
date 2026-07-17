@@ -1,0 +1,20 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component ThemeTile {
+    in property <string> id;
+    in property <string> label;
+    in property <color> color;
+    height: 46px;
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: AppState.theme-id == root.id ? AppTheme.panel-soft : AppTheme.panel;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: AppState.theme-id == root.id ? AppTheme.accent : AppTheme.border;
+        Rectangle { x: 12px; y: 16px; width: 14px; height: 14px; border-radius: 7px; background: root.color; }
+        Text { x: 34px; width: parent.width - 42px; height: parent.height; text: root.label; color: AppTheme.text; font-size: 13px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.set-theme(root.id); } }
+    }
+}

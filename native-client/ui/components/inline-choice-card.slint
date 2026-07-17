@@ -1,0 +1,57 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component InlineChoiceCard {
+    in property <string> label;
+    in property <string> value;
+    in property <string> group;
+    in property <bool> disabled: false;
+    width: 54px;
+    height: 42px;
+    Rectangle {
+        opacity: root.disabled ? 0.4 : 1.0;
+        background: root.active() ? AppTheme.accent : AppTheme.panel-soft;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: root.active() ? AppTheme.accent : AppTheme.border;
+        Text {
+            x: 6px;
+            y: 0px;
+            width: parent.width - 12px;
+            height: parent.height;
+            text: root.label;
+            color: root.active() ? #ffffff : AppTheme.text;
+            font-size: max(10px, (AppState.settings-font-size - 1) * 1px);
+            font-weight: 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: root.disabled ? default : pointer;
+            clicked => { if !root.disabled { root.pick(); } }
+        }
+    }
+
+    function active() -> bool {
+        if root.group == "type" { return AppState.asset-type == root.value; }
+        if root.group == "ratio" { return AppState.ratio == root.value; }
+        if root.group == "quality" { return AppState.quality == root.value; }
+        return root.group == "count" && AppState.count == root.count-value();
+    }
+
+    function count-value() -> int {
+        if root.value == "2" { return 2; }
+        if root.value == "4" { return 4; }
+        return 1;
+    }
+
+    function pick() {
+        if root.group == "type" { AppState.asset-type = root.value; }
+        if root.group == "ratio" { AppState.ratio = root.value; }
+        if root.group == "quality" { AppState.quality = root.value; }
+        if root.group == "count" { AppState.count = root.count-value(); }
+    }
+}

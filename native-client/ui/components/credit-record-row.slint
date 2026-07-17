@@ -1,0 +1,27 @@
+import { AppTheme } from "../theme.slint";
+import { CreditRecord } from "../types.slint";
+
+export component CreditRecordRow {
+    in property <CreditRecord> item;
+    height: 76px;
+    Rectangle {
+        background: AppTheme.panel;
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        Text { x: 16px; y: 12px; width: parent.width - 140px; height: 22px; text: root.item.title; color: AppTheme.text; font-size: 15px; font-weight: 400; overflow: elide; }
+        Text { x: 16px; y: 38px; width: parent.width - 140px; height: 20px; text: root.item.time + " · " + root.item.note; color: AppTheme.muted; font-size: 12px; font-weight: 400; overflow: elide; }
+        Text {
+            x: parent.width - 112px;
+            y: 0px;
+            width: 96px;
+            height: parent.height;
+            text: root.item.amount;
+            color: root.item.tone == "positive" ? AppTheme.success : (root.item.tone == "negative" ? AppTheme.danger : AppTheme.muted);
+            font-size: 16px;
+            font-weight: 500;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+}

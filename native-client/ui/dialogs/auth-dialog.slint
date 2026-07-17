@@ -1,0 +1,180 @@
+import { AppState } from "../app-state.slint";
+import { Field } from "../components/field.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { SectionTitle } from "../components/section-title.slint";
+import { AppTheme } from "../theme.slint";
+
+component AgreementChoice {
+    in-out property <bool> accepted: false;
+    in property <bool> required: false;
+    in property <string> title;
+    in property <string> url;
+    callback open(string);
+    height: root.required ? 28px : 0px;
+    if root.required: HorizontalLayout {
+        spacing: 8px;
+        Rectangle {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: root.accepted ? AppTheme.accent : AppTheme.border;
+            background: root.accepted ? AppTheme.accent : AppTheme.panel;
+            Text {
+                width: parent.width;
+                height: parent.height;
+                text: root.accepted ? "✓" : "";
+                color: #ffffff;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                font-size: 13px;
+            }
+            TouchArea { clicked => { root.accepted = !root.accepted; } }
+        }
+        Text {
+            text: AppState.en ? "I have read and agree to" : "我已阅读并同意";
+            color: AppTheme.muted;
+            font-size: 13px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.title;
+            color: AppTheme.accent;
+            font-size: 13px;
+            vertical-alignment: center;
+            TouchArea { mouse-cursor: pointer; clicked => { root.open(root.url); } }
+        }
+        Rectangle { horizontal-stretch: 1; background: transparent; }
+    }
+}
+
+export component AuthDialog {
+    if AppState.auth-open: Rectangle {
+        background: #00000066;
+        TouchArea { width: parent.width; height: parent.height; }
+        Rectangle {
+            x: (parent.width - 440px) / 2;
+            y: (parent.height - 450px) / 2;
+            width: 440px;
+            height: 450px;
+            background: AppTheme.panel;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            if AppState.session-state == "update_required": Rectangle {
+                z: 10;
+                width: parent.width;
+                height: parent.height;
+                background: AppTheme.panel;
+                border-radius: 14px;
+                VerticalLayout {
+                    padding: 30px;
+                    spacing: 18px;
+                    SectionTitle { text: AppState.en ? "Update required" : "需要更新客户端"; }
+                    Text { height: 110px; text: AppState.auth-error; color: AppTheme.danger; font-size: 15px; wrap: word-wrap; horizontal-alignment: center; vertical-alignment: center; }
+                    Text { height: 64px; text: AppState.en ? "Online features are disabled until the app is updated. Local files remain available in offline mode." : "更新前在线功能不可用；你仍可进入离线模式查看和编辑本地内容。"; color: AppTheme.muted; font-size: 13px; wrap: word-wrap; horizontal-alignment: center; }
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+                    if AppState.offline-available: PillButton { height: 42px; text: AppState.en ? "Continue offline" : "继续离线使用"; clicked => { AppState.enter-offline(); } }
+                }
+            }
+            VerticalLayout {
+                padding: 24px;
+                spacing: 10px;
+                SectionTitle { text: AppState.en ? "Login / Sign Up" : "登录/注册"; }
+                Text {
+                    height: 24px;
+                    text: AppState.en ? "Use your email to continue" : "使用邮箱验证码登录，首次登录将自动注册";
+                    color: AppTheme.muted;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                }
+                Field {
+                    label: AppState.en ? "Email" : "邮箱";
+                    placeholder: AppState.en ? "Enter email address" : "请输入邮箱地址";
+                    value <=> AppState.auth-email;
+                    required: true;
+                }
+                Rectangle {
+                    height: 78px;
+                    background: transparent;
+                    Text { x: 0px; y: 0px; text: AppState.en ? "Code" : "验证码"; color: AppTheme.text; font-size: AppState.settings-font-size * 1px; }
+                    Rectangle {
+                        x: 0px;
+                        y: 32px;
+                        width: parent.width - 130px;
+                        height: 46px;
+                        background: AppTheme.panel;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: code-input.has-focus ? AppTheme.accent : AppTheme.border;
+                        code-input := TextInput {
+                            x: 14px;
+                            width: parent.width - 28px;
+                            height: parent.height;
+                            text <=> AppState.auth-code;
+                            single-line: true;
+                            color: AppTheme.text;
+                            font-size: AppState.settings-font-size * 1px;
+                            vertical-alignment: center;
+                        }
+                        if (AppState.auth-code == "") && (!code-input.has-focus): Text {
+                            x: 14px;
+                            width: parent.width - 28px;
+                            height: parent.height;
+                            text: AppState.en ? "6-digit code" : "请输入 6 位验证码";
+                            color: AppTheme.weak;
+                            font-size: AppState.settings-font-size * 1px;
+                            vertical-alignment: center;
+                        }
+                    }
+                    PillButton {
+                        x: parent.width - 120px;
+                        y: 37px;
+                        width: 120px;
+                        disabled: AppState.auth-busy || AppState.auth-countdown > 0;
+                        text: AppState.auth-countdown > 0 ? (AppState.en ? "\{AppState.auth-countdown}s" : "\{AppState.auth-countdown}秒") : (AppState.en ? "Get Code" : "获取验证码");
+                        clicked => { AppState.request-code(); }
+                    }
+                }
+                AgreementChoice {
+                    required: AppState.auth-user-terms-required;
+                    title: AppState.auth-user-terms-title;
+                    url: AppState.auth-user-terms-url;
+                    accepted <=> AppState.auth-user-terms-accepted;
+                    open(url) => { AppState.open-auth-agreement(url); }
+                }
+                AgreementChoice {
+                    required: AppState.auth-privacy-required;
+                    title: AppState.auth-privacy-title;
+                    url: AppState.auth-privacy-url;
+                    accepted <=> AppState.auth-privacy-accepted;
+                    open(url) => { AppState.open-auth-agreement(url); }
+                }
+                Text {
+                    height: 32px;
+                    text: AppState.auth-error;
+                    color: AppState.auth-error == "" ? transparent : AppTheme.danger;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    if AppState.offline-available: PillButton {
+                        horizontal-stretch: 1;
+                        disabled: AppState.auth-busy;
+                        text: AppState.en ? "Use Offline" : "离线使用";
+                        clicked => { AppState.enter-offline(); }
+                    }
+                    PillButton {
+                        horizontal-stretch: 1;
+                        disabled: AppState.auth-busy;
+                        text: AppState.auth-busy ? (AppState.en ? "Signing in..." : "登录中...") : (AppState.en ? "Login / Sign Up" : "登录/注册");
+                        primary: true;
+                        clicked => { AppState.login-or-register(); }
+                    }
+                }
+            }
+        }
+    }
+}
