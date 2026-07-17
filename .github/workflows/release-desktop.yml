@@ -1,0 +1,307 @@
+name: Release Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-desktop-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 10
+  CARGO_HTTP_TIMEOUT: 600
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
+jobs:
+  build-macos:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Intel
+            runner: macos-15-intel
+            rust_target: x86_64-apple-darwin
+            artifact_arch: x64
+          - name: macOS Apple Silicon
+            runner: macos-15
+            rust_target: aarch64-apple-darwin
+            artifact_arch: aarch64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure Rust toolchain
+        run: |
+          set -euo pipefail
+          rustup set profile minimal
+          rustup toolchain install stable --no-self-update
+          rustup default stable
+          rustup target add "${{ matrix.rust_target }}"
+          rustc --version
+          cargo --version
+
+      - name: Cache Cargo downloads
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rust_target }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rust_target }}-
+
+      - name: Resolve application version
+        run: |
+          set -euo pipefail
+          APP_VERSION="$(cargo metadata --format-version 1 --no-deps | python3 -c '
+          import json
+          import sys
+          metadata = json.load(sys.stdin)
+          package = next(item for item in metadata["packages"] if item["name"] == "artforge-studio-native")
+          print(package["version"])
+          ')"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]] && [[ "${GITHUB_REF_NAME#v}" != "$APP_VERSION" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match Cargo version $APP_VERSION."
+            exit 1
+          fi
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+
+      - name: Check macOS target
+        run: cargo check -p artforge-studio-native --target "${{ matrix.rust_target }}" --locked
+
+      - name: Test macOS target
+        run: cargo test -p artforge-studio-native --lib --target "${{ matrix.rust_target }}" --locked
+
+      - name: Import Apple Developer ID certificate
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ] || [ -z "${KEYCHAIN_PASSWORD:-}" ]; then
+            echo "Missing APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD or KEYCHAIN_PASSWORD."
+            exit 1
+          fi
+
+          export CERT_PATH="$RUNNER_TEMP/developer-id-application.p12"
+          export KEYCHAIN_PATH="$RUNNER_TEMP/artforge-signing.keychain-db"
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          Path(os.environ["CERT_PATH"]).write_bytes(base64.b64decode(os.environ["APPLE_CERTIFICATE"]))
+          PY
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          CERT_ID="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | awk -F '"' '/Developer ID Application/ { print $2; exit }')"
+          if [ -z "$CERT_ID" ]; then
+            echo "Developer ID Application certificate was not found."
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
+
+      - name: Package macOS DMG
+        run: ./scripts/package-macos.sh "${{ matrix.artifact_arch }}"
+
+      - name: Write Apple notarization API key
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_API_ISSUER:-}" ] || [ -z "${APPLE_API_KEY:-}" ] || [ -z "${APPLE_API_KEY_BASE64:-}" ]; then
+            echo "Missing APPLE_API_ISSUER, APPLE_API_KEY or APPLE_API_KEY_BASE64."
+            exit 1
+          fi
+
+          export API_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          Path(os.environ["API_KEY_PATH"]).write_bytes(base64.b64decode(os.environ["APPLE_API_KEY_BASE64"]))
+          PY
+          chmod 600 "$API_KEY_PATH"
+          echo "APPLE_API_KEY_PATH=$API_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Notarize macOS DMG
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          set -euo pipefail
+          DMG_PATH="dist/ArtForgeStudio_${APP_VERSION}_macos_${{ matrix.artifact_arch }}.dmg"
+          xcrun notarytool submit "$DMG_PATH" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
+
+      - name: Upload macOS package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ArtForgeStudio-macos-${{ matrix.artifact_arch }}
+          path: dist/ArtForgeStudio_*_macos_${{ matrix.artifact_arch }}.dmg
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload macOS DMG to OSS
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          ALIYUN_OSS_REGION: ${{ secrets.ALIYUN_OSS_REGION }}
+          ALIYUN_OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
+          ALIYUN_OSS_ACCESS_KEY_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
+          ALIYUN_OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
+          ALIYUN_OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
+          ALIYUN_OSS_PUBLIC_BASE_URL: ${{ secrets.ALIYUN_OSS_PUBLIC_BASE_URL || 'https://cdn.honeykid.cn' }}
+          ALIYUN_OSS_PREFIX: ${{ secrets.ALIYUN_OSS_PREFIX || 'public/artforge_studio' }}
+          ALIYUN_OSS_OBJECT_ACL: ${{ secrets.ALIYUN_OSS_OBJECT_ACL }}
+        run: |
+          set -euo pipefail
+          node scripts/upload-release-assets.js \
+            --file "dist/ArtForgeStudio_${APP_VERSION}_macos_${{ matrix.artifact_arch }}.dmg" \
+            --version "$APP_VERSION"
+
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-2025
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure Rust toolchain
+        shell: pwsh
+        run: |
+          rustup set profile minimal
+          rustup toolchain install stable --no-self-update
+          rustup default stable
+          rustup target add x86_64-pc-windows-msvc
+          rustc --version
+          cargo --version
+
+      - name: Cache Cargo downloads
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-x86_64-pc-windows-msvc-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ runner.arch }}-x86_64-pc-windows-msvc-
+
+      - name: Resolve application version
+        shell: pwsh
+        run: |
+          $metadata = cargo metadata --format-version 1 --no-deps | ConvertFrom-Json
+          $package = $metadata.packages | Where-Object { $_.name -eq "artforge-studio-native" } | Select-Object -First 1
+          if (!$package) {
+            throw "Unable to find artforge-studio-native in Cargo metadata"
+          }
+          if ($env:GITHUB_REF.StartsWith("refs/tags/v") -and $env:GITHUB_REF_NAME.Substring(1) -ne $package.version) {
+            throw "Tag $env:GITHUB_REF_NAME does not match Cargo version $($package.version)."
+          }
+          "APP_VERSION=$($package.version)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Check Windows target
+        run: cargo check -p artforge-studio-native --target x86_64-pc-windows-msvc --locked
+
+      - name: Test Windows target
+        run: cargo test -p artforge-studio-native --lib --target x86_64-pc-windows-msvc --locked
+
+      - name: Package Windows installer
+        shell: pwsh
+        run: |
+          & ./scripts/package-native-client.ps1 -Target windows
+          New-Item -ItemType Directory -Force -Path release-windows | Out-Null
+
+          function Find-InnoCompiler {
+            $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+            @(
+              $command.Source,
+              "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
+              "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
+              "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+              "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+            ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+          }
+
+          $iscc = Find-InnoCompiler
+          if (!$iscc) {
+            choco install innosetup --no-progress -y
+            $iscc = Find-InnoCompiler
+          }
+          if (!(Test-Path -LiteralPath $iscc)) {
+            throw "Unable to find Inno Setup compiler."
+          }
+
+          $env:ARTFORGE_APP_VERSION = $env:APP_VERSION
+          $env:ARTFORGE_PACKAGE_DIR = (Resolve-Path "dist/ArtForgeStudio-windows-x64").Path
+          $env:ARTFORGE_RELEASE_DIR = (Resolve-Path "release-windows").Path
+          & $iscc "installer/ArtForgeStudio.iss"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup failed with exit code $LASTEXITCODE."
+          }
+
+          $installer = "release-windows/ArtForgeStudio_${env:APP_VERSION}_windows_x64_setup.exe"
+          if (!(Test-Path -LiteralPath $installer)) {
+            throw "Missing Windows installer: $installer"
+          }
+
+      - name: Upload Windows package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ArtForgeStudio-windows-x64
+          path: release-windows/ArtForgeStudio_*_windows_x64_setup.exe
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload Windows installer to OSS
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          ALIYUN_OSS_REGION: ${{ secrets.ALIYUN_OSS_REGION }}
+          ALIYUN_OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
+          ALIYUN_OSS_ACCESS_KEY_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
+          ALIYUN_OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
+          ALIYUN_OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
+          ALIYUN_OSS_PUBLIC_BASE_URL: ${{ secrets.ALIYUN_OSS_PUBLIC_BASE_URL || 'https://cdn.honeykid.cn' }}
+          ALIYUN_OSS_PREFIX: ${{ secrets.ALIYUN_OSS_PREFIX || 'public/artforge_studio' }}
+          ALIYUN_OSS_OBJECT_ACL: ${{ secrets.ALIYUN_OSS_OBJECT_ACL }}
+        run: |
+          node scripts/upload-release-assets.js `
+            --file "release-windows/ArtForgeStudio_${env:APP_VERSION}_windows_x64_setup.exe" `
+            --version $env:APP_VERSION

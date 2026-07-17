@@ -34,3 +34,9 @@ cargo build --release
 `ArtForgeStudio` 当前可在 Windows 和 macOS 构建。
 
 正式支付窗口仅在 Windows 使用 WebView2；macOS 开发环境会使用系统浏览器打开同一服务端收银台 URL。
+
+## GitHub Actions 发布
+
+`.github/workflows/release-desktop.yml` 构建并上传三个独立制品：包含完整素材的 Windows x64 安装器 EXE、macOS Intel DMG 和 macOS Apple Silicon DMG。普通分支、Pull Request 和手动运行只上传 Actions 制品；`v*` 标签还会签名、公证 macOS 应用，并把三个安装文件上传 OSS。
+
+Secrets、OSS 路径和发版步骤见 [`docs/GITHUB_ACTIONS_RELEASE_SETUP.md`](docs/GITHUB_ACTIONS_RELEASE_SETUP.md)。

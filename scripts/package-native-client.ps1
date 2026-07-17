@@ -111,7 +111,7 @@ function Build-Client {
         return
     }
 
-    $args = @("build", "--release", "--manifest-path", (Join-Path $ClientDir "Cargo.toml"))
+    $args = @("build", "--release", "--locked", "--manifest-path", (Join-Path $ClientDir "Cargo.toml"))
     if ($RustTarget -ne "") {
         $args += @("--target", $RustTarget)
     }

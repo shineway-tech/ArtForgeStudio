@@ -659,8 +659,8 @@ WebView2 真机验证延期至正式发布阶段。
 
 - 客户端内部服务端模型目录已从遗留 `Provider` 命名收敛为 `ModelGroup/ModelCatalog`，移除 provider ID 状态、旧 callback 文件和未使用的 Provider 选择组件。
 - 删除未使用的直连生成结果分支、旧提示词拼装函数、旧模型角色函数、客户端硬编码积分价格函数和图片 data URL 转换函数。
-- 客户端仓库新增 CNB Windows CI：依次执行 MSVC 工具链检查、locked check、library test 和 release EXE 构建。远端为 CNB，根组织管理员必须先接入带 `windows` 标签的自托管 Windows Runner；未接入前流水线无法获得 Windows 执行节点。
-- Windows Runner 接入、工具链前置条件和 WebView2/支付宝真机验收脚本见 `docs/CNB_WINDOWS_RUNNER_SETUP.md`。
+- 客户端仓库已改用 GitHub Actions：Windows x64、macOS Intel 和 macOS Apple Silicon 分别执行 locked check、library test 和 release 打包；`v*` 标签会将 EXE 与两个 DMG 上传 OSS。
+- Runner、Secrets、OSS 路径和 WebView2/支付宝真机验收说明见 `docs/GITHUB_ACTIONS_RELEASE_SETUP.md`。
 - 按当前开发范围不为后端配置 Runner；服务端测试继续使用本地 Node 24 命令执行。
 - 生产 `preflight` 新增协议目录完整性门禁；用户协议、隐私政策、会员服务协议和积分规则缺少任一项均禁止通过预检。协议正文、HTTPS 发布地址和 SHA-256 仍需法务/部署提供。
 - 修复隔离本地环境中服务端无私有配置可用的问题：关闭支付宝时不初始化 RSA SDK，dev/prod 示例配置均可通过 schema；启用支付宝仍强制校验正式商户号和 RSA 密钥。
