@@ -62,8 +62,8 @@ artait-asset    = { path = "crates/artait-asset" }
 artait-service  = { path = "crates/artait-service" }
 [profile.release]
 opt-level = 2
-lto = "fat"
-codegen-units = 1
+lto = "thin"
+codegen-units = 8
 strip = "symbols"
 panic = "abort"
 incremental = false

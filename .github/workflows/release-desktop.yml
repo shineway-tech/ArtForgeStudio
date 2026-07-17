@@ -28,7 +28,7 @@ jobs:
       matrix:
         include:
           - name: macOS Intel
-            runner: macos-15-intel
+            runner: macos-15
             rust_target: x86_64-apple-darwin
             artifact_arch: x64
           - name: macOS Apple Silicon
@@ -50,15 +50,12 @@ jobs:
           rustc --version
           cargo --version
 
-      - name: Cache Cargo downloads
-        uses: actions/cache@v5
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rust_target }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rust_target }}-
+          workspaces: . -> target
+          shared-key: desktop-${{ matrix.rust_target }}
+          cache-on-failure: true
 
       - name: Resolve application version
         run: |
@@ -75,12 +72,6 @@ jobs:
             exit 1
           fi
           echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
-
-      - name: Check macOS target
-        run: cargo check -p artforge-studio-native --target "${{ matrix.rust_target }}" --locked
-
-      - name: Test macOS target
-        run: cargo test -p artforge-studio-native --lib --target "${{ matrix.rust_target }}" --locked
 
       - name: Import Apple Developer ID certificate
         if: startsWith(github.ref, 'refs/tags/v')
@@ -207,15 +198,12 @@ jobs:
           rustc --version
           cargo --version
 
-      - name: Cache Cargo downloads
-        uses: actions/cache@v5
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: cargo-${{ runner.os }}-${{ runner.arch }}-x86_64-pc-windows-msvc-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-${{ runner.arch }}-x86_64-pc-windows-msvc-
+          workspaces: . -> target
+          shared-key: desktop-x86_64-pc-windows-msvc
+          cache-on-failure: true
 
       - name: Resolve application version
         shell: pwsh
@@ -229,12 +217,6 @@ jobs:
             throw "Tag $env:GITHUB_REF_NAME does not match Cargo version $($package.version)."
           }
           "APP_VERSION=$($package.version)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Check Windows target
-        run: cargo check -p artforge-studio-native --target x86_64-pc-windows-msvc --locked
-
-      - name: Test Windows target
-        run: cargo test -p artforge-studio-native --lib --target x86_64-pc-windows-msvc --locked
 
       - name: Package Windows installer
         shell: pwsh
@@ -260,6 +242,9 @@ jobs:
           }
           if (!(Test-Path -LiteralPath $iscc)) {
             throw "Unable to find Inno Setup compiler."
+          }
+          if (!(Test-Path -LiteralPath "installer/languages/ChineseSimplified.isl")) {
+            throw "Missing vendored Inno Setup language file: installer/languages/ChineseSimplified.isl"
           }
 
           $env:ARTFORGE_APP_VERSION = $env:APP_VERSION

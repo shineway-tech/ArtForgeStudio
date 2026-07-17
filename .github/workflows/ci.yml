@@ -1,0 +1,98 @@
+name: Desktop CI
+
+on:
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 10
+  CARGO_HTTP_TIMEOUT: 600
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
+jobs:
+  verify-macos:
+    name: Verify ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Intel
+            runner: macos-15-intel
+            rust_target: x86_64-apple-darwin
+          - name: macOS Apple Silicon
+            runner: macos-15
+            rust_target: aarch64-apple-darwin
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure Rust toolchain
+        run: |
+          set -euo pipefail
+          rustup set profile minimal
+          rustup toolchain install stable --no-self-update
+          rustup default stable
+          rustup target add "${{ matrix.rust_target }}"
+          rustc --version
+          cargo --version
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          shared-key: desktop-${{ matrix.rust_target }}
+          cache-on-failure: true
+
+      - name: Check target
+        run: cargo check -p artforge-studio-native --target "${{ matrix.rust_target }}" --locked
+
+      - name: Test target
+        run: cargo test -p artforge-studio-native --lib --target "${{ matrix.rust_target }}" --locked
+
+  verify-windows:
+    name: Verify Windows x64
+    runs-on: windows-2025
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure Rust toolchain
+        shell: pwsh
+        run: |
+          rustup set profile minimal
+          rustup toolchain install stable --no-self-update
+          rustup default stable
+          rustup target add x86_64-pc-windows-msvc
+          rustc --version
+          cargo --version
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          shared-key: desktop-x86_64-pc-windows-msvc
+          cache-on-failure: true
+
+      - name: Check target
+        run: cargo check -p artforge-studio-native --target x86_64-pc-windows-msvc --locked
+
+      - name: Test target
+        run: cargo test -p artforge-studio-native --lib --target x86_64-pc-windows-msvc --locked
