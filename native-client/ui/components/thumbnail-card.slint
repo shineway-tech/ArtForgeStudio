@@ -124,6 +124,24 @@ export component ThumbnailCard {
                         overflow: elide;
                     }
                 }
+                Rectangle {
+                    visible: hover.has-hover && root.can-delete();
+                    x: parent.width - 38px;
+                    y: 8px;
+                    width: 30px;
+                    height: 30px;
+                    background: root.delete-hit() ? AppTheme.danger : #000000b8;
+                    border-radius: AppState.card-style == "rounded" ? 6px : 0px;
+                    Image {
+                        x: 7px;
+                        y: 7px;
+                        width: 16px;
+                        height: 16px;
+                        source: @image-url("../../assets/icons/trash.svg");
+                        colorize: #ffffff;
+                        image-fit: contain;
+                    }
+                }
             }
             hover := TouchArea {
                 width: parent.width;
@@ -132,9 +150,13 @@ export component ThumbnailCard {
                 mouse-cursor: pointer;
                 pointer-event(event) => {
                     if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
-                        root.drag-armed = true;
-                        root.system-drag-preview-started = false;
-                        root.update-drag-preview();
+                        if root.delete-hit() {
+                            root.hide-drag-preview();
+                        } else {
+                            root.drag-armed = true;
+                            root.system-drag-preview-started = false;
+                            root.update-drag-preview();
+                        }
                     } else if event.kind == PointerEventKind.move {
                         root.update-drag-preview();
                         root.start-system-drag-preview();
@@ -152,7 +174,9 @@ export component ThumbnailCard {
                 }
                 clicked => {
                     root.hide-drag-preview();
-                    if root.item.source-path != "failed" {
+                    if root.delete-hit() {
+                        AppState.request-delete-thumbnail(root.item.id, root.source);
+                    } else if root.item.source-path != "failed" {
                         AppState.open-viewer(root.item.id, root.source);
                     }
                 }
@@ -212,6 +236,15 @@ export component ThumbnailCard {
     }
     function can-drag-preview() -> bool {
         return root.active && root.item.source-path != "" && root.item.source-path != "failed";
+    }
+    function can-delete() -> bool {
+        return root.can-drag-preview()
+            && (root.source == "asset" || root.source == "generation");
+    }
+    function delete-hit() -> bool {
+        return root.can-delete()
+            && hover.mouse-x >= root.card-width - root.outline-pad - 40px
+            && hover.mouse-y <= root.outline-pad + 40px;
     }
     function update-drag-preview() {
         if !root.can-drag-preview() || !root.drag-armed {

@@ -113,6 +113,117 @@ mod tests {
     }
 
     #[test]
+    fn slash_prompt_history_uses_latest_unique_local_prompts() {
+        let mut prompts = vec!["  recent prompt  ".to_string(), String::new(), "recent prompt".to_string()];
+        prompts.extend((0..25).map(|index| format!("prompt-{index}")));
+
+        let history = recent_prompt_history(prompts.iter().map(String::as_str), 20);
+        assert_eq!(history.len(), 20);
+        assert_eq!(history[0], "recent prompt");
+        assert_eq!(history[1], "prompt-0");
+        assert_eq!(history[19], "prompt-18");
+
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let sync = include_str!("presentation/sync.rs");
+
+        assert!(state.contains("in-out property <[string]> prompt-history"));
+        assert!(state.contains("in-out property <bool> prompt-history-open"));
+        assert!(composer.contains("event.text == \"/\""));
+        assert!(composer.contains("AppState.prompt == \"\""));
+        assert!(composer.contains("AppState.prompt-history-open = true"));
+        assert!(composer.contains("AppState.prompt = item"));
+        assert!(sync.contains("recent_prompt_history"));
+        assert!(sync.contains("20"));
+    }
+
+    #[test]
+    fn prompt_history_is_a_compact_outside_click_popup() {
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        assert!(composer.contains("history-popup := PopupWindow"));
+        assert!(composer.contains("close-policy: close-on-click-outside"));
+        assert!(composer.contains("y: root.prompt-input-y() + 32px;"));
+        assert!(composer.contains("width: root.width - 48px"));
+        assert!(composer.contains("history-popup.show()"));
+        assert!(composer.contains("history-popup.close()"));
+        assert!(!composer.contains("最近提示词"));
+        assert!(!composer.contains("history-close"));
+        assert!(composer.contains("horizontal-alignment: left"));
+    }
+
+    #[test]
+    fn enter_confirms_inputs_and_alt_enter_keeps_prompt_line_breaks() {
+        let field = include_str!("../../ui/components/field.slint");
+        let auth = include_str!("../../ui/dialogs/auth-dialog.slint");
+        let invoice = include_str!("../../ui/dialogs/invoice-dialog.slint");
+        let prompt = include_str!("../../ui/components/prompt-composer.slint");
+
+        assert!(field.contains("callback accepted();"));
+        assert!(field.contains("accepted => { root.accepted(); }"));
+
+        assert!(auth.contains("function confirm-auth()"));
+        assert_eq!(auth.matches("accepted => { root.confirm-auth(); }").count(), 2);
+
+        assert!(invoice.contains("function submit-form()"));
+        assert_eq!(invoice.matches("accepted => { root.submit-form(); }").count(), 3);
+
+        assert!(prompt.contains("event.text == Key.Return"));
+        assert!(prompt.contains("event.modifiers.alt"));
+        assert!(prompt.contains("return reject"));
+        assert!(prompt.contains("AppState.generate()"));
+        assert!(prompt.contains("return accept"));
+    }
+
+    #[test]
+    fn long_prompt_input_scrolls_inside_its_fixed_viewport() {
+        let prompt = include_str!("../../ui/components/prompt-composer.slint");
+
+        assert!(prompt.contains("prompt-scroll := ScrollView"));
+        assert!(prompt.contains("viewport-height: max(self.visible-height, prompt-input.preferred-height);"));
+        assert!(prompt.contains("page-height: prompt-scroll.visible-height;"));
+        assert!(prompt.contains("cursor-position-changed(position)"));
+        assert!(prompt.contains("prompt-scroll.viewport-y"));
+    }
+
+    #[test]
+    fn auth_dialog_can_be_closed_without_changing_auth_state_contract() {
+        let auth = include_str!("../../ui/dialogs/auth-dialog.slint");
+        assert!(auth.contains("import { DialogCloseButton }"));
+        assert!(auth.contains("DialogCloseButton"));
+        assert!(auth.contains("AppState.auth-open = false"));
+    }
+
+    #[test]
+    fn model_picker_height_tracks_visible_options() {
+        let picker = include_str!("../../ui/components/model-picker.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let sync = include_str!("presentation/sync.rs");
+
+        assert!(picker.contains("height: root.popup-height();"));
+        assert!(picker.contains("function option-count() -> int"));
+        assert!(picker.contains("12px + root.option-count() * 42px"));
+        assert!(picker.contains("AppState.model-image-options"));
+        assert!(picker.contains("AppState.model-reasoning-options"));
+        assert!(!picker.contains("visible: group.kind == root.kind"));
+        assert!(state.contains("model-image-options"));
+        assert!(state.contains("model-reasoning-options"));
+        assert!(sync.contains("model_picker_options(store, \"image\")"));
+        assert!(sync.contains("model_picker_options(store, \"reasoning\")"));
+    }
+
+    #[test]
+    fn generation_model_pickers_are_left_aligned() {
+        let top_bar = include_str!("../../ui/components/top-bar.slint").replace("\r\n", "\n");
+
+        assert!(top_bar.contains("x: 18px;\n            y: 0px;"));
+        assert!(top_bar.contains("width: max(360px, parent.width - 18px - root.actions-width() - 32px);"));
+        assert!(top_bar.contains("(root.width - 18px - root.actions-width() - 70px) / 2"));
+        assert!(top_bar.contains("x: 0px;\n                    y: 6px;\n                    kind: \"image\";"));
+        assert!(top_bar.contains("x: root.model-picker-width() + 18px;\n                    y: 6px;\n                    kind: \"reasoning\";"));
+        assert!(!top_bar.contains("root.models-width()"));
+    }
+
+    #[test]
     fn generated_filename_removes_path_separators() {
         let value = sanitize_filename("角色/场景\\测试:*?");
         assert!(!value.contains('/'));
@@ -140,6 +251,28 @@ mod tests {
         assert!(api.contains("/v1/notifications"));
         assert!(callbacks.contains("store.notifications.retain(|item| item.id != id)"));
         assert!(callbacks.contains("store.notifications.clear()"));
+
+        let failed = ServerNotification {
+            id: "failed-generation".to_string(),
+            notification_type: "generation.settled".to_string(),
+            title: "生成失败".to_string(),
+            body: "任务未能完成，未消耗的积分已经退回。".to_string(),
+            metadata: serde_json::json!({ "status": "failed" }),
+            created_at: "2026-07-20T00:00:00Z".to_string(),
+            read_at: None,
+        };
+        assert!(!notification_is_success(&failed));
+
+        let completed = ServerNotification {
+            id: "completed-generation".to_string(),
+            notification_type: "generation.settled".to_string(),
+            title: "生成完成".to_string(),
+            body: "图片已经生成。".to_string(),
+            metadata: serde_json::json!({ "status": "succeeded" }),
+            created_at: "2026-07-20T00:00:00Z".to_string(),
+            read_at: None,
+        };
+        assert!(notification_is_success(&completed));
     }
 
     #[test]
@@ -162,7 +295,7 @@ mod tests {
     fn payment_ui_uses_direct_alipay_qr_flow() {
         let credit_page = include_str!("../../ui/pages/credits-page.slint");
         let checkout = include_str!("../../ui/dialogs/ali-pay-qr-dialog.slint");
-        let membership = include_str!("../../ui/dialogs/membership-dialog.slint");
+        let membership = include_str!("../../ui/components/membership-plans.slint");
         let purchase_agreements = include_str!("../../ui/components/purchase-agreements.slint");
         let callbacks = include_str!("callbacks/payment.rs");
         let payment_window = include_str!("payment_window.rs");
@@ -196,13 +329,131 @@ mod tests {
         assert!(!callbacks.contains(
             "if started.kind == PaymentOrderKind::Membership {\n            state.set_membership_open(false);"
         ));
-        assert!(membership.contains("AppState.close-payment-window();"));
         assert!(top_bar.contains("关闭支付码"));
 
         let combined = format!("{checkout}\n{membership}\n{top_bar}");
         for removed in ["支付宝收银台", "打开支付宝支付", "关闭收银台"] {
             assert!(!combined.contains(removed), "obsolete payment copy: {removed}");
         }
+    }
+
+    #[test]
+    fn credits_page_contains_recharge_and_subscription_tabs() {
+        let credits = include_str!("../../ui/pages/credits-page.slint");
+        let profile = include_str!("../../ui/dialogs/profile-dialog.slint");
+        let app = include_str!("../../ui/app.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let membership = include_str!("../../ui/components/membership-plans.slint");
+
+        assert!(state.contains("in-out property <string> credits-tab: \"recharge\";"));
+        assert!(credits.contains("text: AppState.en ? \"Recharge\" : \"充值\";"));
+        assert!(credits.contains("text: AppState.en ? \"Subscription\" : \"订阅\";"));
+        assert!(credits.contains("active: AppState.credits-tab == \"recharge\";"));
+        assert!(credits.contains("active: AppState.credits-tab == \"membership\";"));
+        assert!(credits.contains("MembershipPlans { horizontal-stretch: 1; }"));
+        assert!(membership.contains("AppState.purchase-membership(plan.code)"));
+        assert!(membership.contains("PurchaseAgreements"));
+        assert!(profile.contains("AppState.navigate(\"credits\")"));
+        assert!(profile.contains("AppState.credits-tab = \"membership\""));
+        assert!(!app.contains("MembershipDialog"));
+    }
+
+    #[test]
+    fn invoice_application_ui_is_required_and_reachable() {
+        let credits = include_str!("../../ui/pages/credits-page.slint");
+        let app = include_str!("../../ui/app.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let dialog_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("ui/dialogs/invoice-dialog.slint");
+        let dialog = std::fs::read_to_string(dialog_path).unwrap_or_default();
+
+        assert!(credits.contains("申请开票"));
+        assert!(credits.contains("callback open-invoice()"));
+        assert!(credits.contains("root.open-invoice()"));
+        assert!(app.contains("InvoiceDialog"));
+        assert!(app.contains("property <bool> invoice-open"));
+        assert!(!state.contains("invoice-open"));
+        assert!(!state.contains("submit-invoice-request"));
+        assert!(dialog.contains("in-out property <bool> open"));
+        assert!(!dialog.contains("AppState.invoice-"));
+
+        for label in [
+            "发票类型",
+            "抬头类型",
+            "发票抬头",
+            "税号",
+            "接收邮箱",
+        ] {
+            assert!(dialog.contains(label), "missing required field: {label}");
+        }
+        assert!(dialog.contains("电子增值税普通发票"));
+        assert!(dialog.contains("个人"));
+        assert!(!dialog.contains("事业单位"));
+        assert!(!dialog.contains("\"institution\""));
+        assert!(dialog.contains("企业"));
+        assert_eq!(dialog.matches("RequiredLabel { text:").count(), 2);
+        assert_eq!(dialog.matches("required: true;").count(), 3);
+        assert!(dialog.contains("function requires-tax-id() -> bool"));
+        assert!(dialog.contains("!root.requires-tax-id() || root.invoice-tax-id != \"\""));
+        assert!(dialog.contains("if root.requires-tax-id(): Field"));
+        assert!(dialog.contains("root.invoice-tax-id = \"\""));
+        assert!(dialog.contains("viewport-width: self.width"));
+        assert!(dialog.contains("clip: true"));
+        assert!(dialog.contains("disabled: !root.form-valid()"));
+        assert!(dialog.contains("将在12小时内自动推送至您的电子邮箱内"));
+        assert!(dialog.contains("超过6个月未申请开票的订单暂不支持线上开具"));
+        assert!(dialog.contains("具有同等法律效力"));
+        assert!(dialog.contains("仅为实际支付金额"));
+    }
+
+    #[test]
+    fn credit_plans_fill_the_recharge_row() {
+        let credits = include_str!("../../ui/pages/credits-page.slint");
+        let plan = include_str!("../../ui/components/credit-plan.slint");
+        assert!(credits.contains(
+            "for pack in AppState.credit-packs: CreditPlan {\n                            horizontal-stretch: 1;"
+        ));
+
+        let plans = credits
+            .split("for pack in AppState.credit-packs: CreditPlan")
+            .nth(1)
+            .and_then(|value| value.split("PurchaseAgreements").next())
+            .expect("credit plan row");
+        assert!(!plans.contains("Rectangle { horizontal-stretch: 1; background: transparent; }"));
+        assert!(plan.contains("AppTheme.accent.with-alpha(0.12)"));
+        assert!(plan.contains("visible: AppState.selected-credit-pack-code == root.code;"));
+        assert!(!plan.contains("AppState.en ? \"Select\" : \"选择\""));
+    }
+
+    #[test]
+    fn free_membership_copy_is_vertically_centered_without_an_action_button() {
+        let membership = include_str!("../../ui/components/membership-plans.slint");
+
+        assert!(membership.contains("if plan.code == \"free\": Rectangle { vertical-stretch: 1;"));
+        assert!(membership.contains("Rectangle { vertical-stretch: 1; background: transparent; }"));
+        assert!(membership.contains("if plan.code != \"free\": PillButton"));
+    }
+
+    #[test]
+    fn thumbnail_hover_delete_reuses_confirmation_with_explicit_source() {
+        let card = include_str!("../../ui/components/thumbnail-card.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+        let callbacks = include_str!("callbacks/viewer.rs");
+
+        assert!(card.contains("@image-url(\"../../assets/icons/trash.svg\")"));
+        assert!(card.contains("visible: hover.has-hover && root.can-delete()"));
+        assert!(card.contains("root.delete-hit()"));
+        assert!(card.contains("root.source == \"asset\" || root.source == \"generation\""));
+        assert!(!card.contains("root.source == \"inspiration\""));
+        assert!(card.contains(
+            "AppState.request-delete-thumbnail(root.item.id, root.source)"
+        ));
+        assert!(state.contains("callback request-delete-thumbnail(string, string);"));
+        assert!(callbacks.contains("state.on_request_delete_thumbnail"));
+
+        assert!(state.contains("callback request-delete-asset(string);"));
+        assert!(viewer.contains("AppState.request-delete-asset(AppState.viewer-id)"));
     }
 
     #[test]

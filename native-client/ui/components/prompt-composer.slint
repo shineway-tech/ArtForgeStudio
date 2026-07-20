@@ -1,3 +1,4 @@
+import { ScrollView } from "std-widgets.slint";
 import { AppState } from "../app-state.slint";
 import { AdvancedControlChip } from "advanced-control-chip.slint";
 import { CreationModeChip } from "creation-mode-chip.slint";
@@ -81,24 +82,49 @@ export component PromptComposer {
             font-weight: 400;
             overflow: elide;
         }
-        prompt-input := TextInput {
+        prompt-scroll := ScrollView {
             x: 24px;
             y: root.prompt-input-y();
             width: parent.width - 48px;
             height: root.prompt-input-height();
-            text <=> AppState.prompt;
-            single-line: false;
-            color: AppTheme.text;
-            font-size: AppState.settings-font-size * 1px;
-            font-weight: 400;
-            wrap: word-wrap;
-            key-pressed(event) => {
-                if event.modifiers.control && (event.text == "v" || event.text == "V") {
-                    if AppState.paste-reference() {
-                        return accept;
+            viewport-width: self.visible-width;
+            viewport-height: max(self.visible-height, prompt-input.preferred-height);
+            prompt-input := TextInput {
+                text <=> AppState.prompt;
+                single-line: false;
+                color: AppTheme.text;
+                font-size: AppState.settings-font-size * 1px;
+                font-weight: 400;
+                wrap: word-wrap;
+                page-height: prompt-scroll.visible-height;
+                cursor-position-changed(position) => {
+                    if position.y + prompt-scroll.viewport-y < 8px {
+                        prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, -position.y + 8px));
+                    } else if position.y + prompt-scroll.viewport-y > prompt-scroll.visible-height - 28px {
+                        prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, prompt-scroll.visible-height - position.y - 28px));
                     }
                 }
-                return reject;
+                key-pressed(event) => {
+                    if event.text == Key.Return {
+                        if event.modifiers.alt {
+                            return reject;
+                        }
+                        if root.show-generate-button && !AppState.generating && AppState.reasoning-model != "" {
+                            AppState.generate();
+                        }
+                        return accept;
+                    }
+                    if event.text == "/" && AppState.prompt == "" && AppState.prompt-history.length > 0 {
+                        AppState.prompt-history-open = true;
+                        history-popup.show();
+                    }
+                    if event.modifiers.control && (event.text == "v" || event.text == "V") {
+                        if AppState.paste-reference() {
+                            return accept;
+                        }
+                    }
+                    return reject;
+                }
             }
         }
         Text {
@@ -181,6 +207,61 @@ export component PromptComposer {
                 font-weight: 500;
                 horizontal-alignment: center;
                 vertical-alignment: center;
+            }
+        }
+    }
+
+    history-popup := PopupWindow {
+        x: 24px;
+        y: root.prompt-input-y() + 32px;
+        width: root.width - 48px;
+        height: min(238px, 16px + AppState.prompt-history.length * 36px);
+        close-policy: close-on-click-outside;
+        Rectangle {
+            visible: AppState.prompt-history-open && AppState.prompt-history.length > 0;
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            ScrollView {
+                x: 8px;
+                y: 8px;
+                width: parent.width - 16px;
+                height: parent.height - 16px;
+                viewport-width: self.width;
+                viewport-height: AppState.prompt-history.length * 36px;
+                VerticalLayout {
+                    width: parent.width;
+                    height: AppState.prompt-history.length * 36px;
+                    for item in AppState.prompt-history: Rectangle {
+                        height: 36px;
+                        background: history-row.has-hover ? AppTheme.panel-soft : transparent;
+                        border-radius: 6px;
+                        Text {
+                            x: 10px;
+                            width: parent.width - 20px;
+                            height: parent.height;
+                            text: item;
+                            color: AppTheme.text;
+                            font-size: AppState.settings-font-size * 1px;
+                            font-weight: 400;
+                            horizontal-alignment: left;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        history-row := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => {
+                                AppState.prompt = item;
+                                AppState.prompt-history-open = false;
+                                history-popup.close();
+                                prompt-input.focus();
+                            }
+                        }
+                    }
+                }
             }
         }
     }

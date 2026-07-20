@@ -47,7 +47,7 @@ export component ModelPicker {
         x: 0px;
         y: 50px;
         width: root.width;
-        height: 320px;
+        height: root.popup-height();
         close-policy: close-on-click-outside;
         Rectangle {
             visible: root.open;
@@ -61,45 +61,46 @@ export component ModelPicker {
                 VerticalLayout {
                     padding: 6px;
                     spacing: 4px;
-                    if AppState.model-groups.length == 0: IconButton {
+                    if root.option-count() == 0: IconButton {
                         width: root.width - 12px;
                         text: AppState.en ? "Add a model first" : "请先添加模型";
                         clicked => { root.open = false; popup.close(); AppState.navigate("models"); }
                     }
-                    VerticalLayout {
+                    if root.kind == "image": VerticalLayout {
                         spacing: 4px;
-                        for group in AppState.model-groups: VerticalLayout {
-                            visible: group.kind == root.kind;
-                            spacing: 4px;
-                            if group.models.length == 0: IconButton {
-                                width: root.width - 12px;
-                                text: group.name + " / " + (group.selected-model == "" ? (AppState.en ? "No models fetched" : "未获取模型") : group.selected-model);
-                                active: root.kind == "image"
-                                    ? AppState.image-model == group.selected-model
-                                    : AppState.reasoning-model == group.selected-model;
-                                clicked => {
-                                    root.select-model(group.selected-model);
-                                    root.open = false;
-                                    popup.close();
-                                }
+                        for model in AppState.model-image-options: IconButton {
+                            width: root.width - 12px;
+                            text: model.name;
+                            active: AppState.image-model == model.code;
+                            clicked => {
+                                root.select-model(model.code);
+                                root.open = false;
+                                popup.close();
                             }
-                            for model in group.models: IconButton {
-                                width: root.width - 12px;
-                                text: group.name + " / " + model.name;
-                                active: root.kind == "image"
-                                    ? AppState.image-model == model.code
-                                    : AppState.reasoning-model == model.code;
-                                clicked => {
-                                    root.select-model(model.code);
-                                    root.open = false;
-                                    popup.close();
-                                }
+                        }
+                    }
+                    if root.kind == "reasoning": VerticalLayout {
+                        spacing: 4px;
+                        for model in AppState.model-reasoning-options: IconButton {
+                            width: root.width - 12px;
+                            text: model.name;
+                            active: AppState.reasoning-model == model.code;
+                            clicked => {
+                                root.select-model(model.code);
+                                root.open = false;
+                                popup.close();
                             }
                         }
                     }
                 }
             }
         }
+    }
+    function option-count() -> int {
+        return root.kind == "image" ? AppState.model-image-options.length : AppState.model-reasoning-options.length;
+    }
+    function popup-height() -> length {
+        return min(320px, max(54px, 12px + root.option-count() * 42px));
     }
     function display-text() -> string {
         if root.kind == "image" {

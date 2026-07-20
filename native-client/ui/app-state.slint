@@ -1,4 +1,4 @@
-import { AccountSession, AssetGroup, AssetItem, CatalogModelView, ConversationItem, CreditPackView, CreditRecord, MembershipPlanView, ModelGroup, NotificationItem, ReferenceItem } from "types.slint";
+import { AccountSession, AssetGroup, AssetItem, CatalogModelView, ConversationItem, CreditPackView, CreditRecord, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 
 export global AppState {
     callback close-payment-window();
@@ -38,6 +38,7 @@ export global AppState {
     in-out property <string> selected-credit-price: "";
     in-out property <bool> credit-payment-busy: false;
     in-out property <string> credit-payment-message: "";
+    in-out property <string> credits-tab: "recharge";
     in-out property <bool> payment-qr-open: false;
     in-out property <string> payment-qr-message: "";
     in-out property <bool> purchase-membership-required: false;
@@ -54,6 +55,8 @@ export global AppState {
     in-out property <string> credit-insufficient-message: "积分不足以支持本次生图，请前往充值";
 
     in-out property <[ModelGroup]> model-groups: [];
+    in-out property <[ModelOption]> model-image-options: [];
+    in-out property <[ModelOption]> model-reasoning-options: [];
     in-out property <[CatalogModelView]> catalog-models: [];
     in-out property <string> image-model: "";
     in-out property <string> image-model-name: "";
@@ -61,6 +64,8 @@ export global AppState {
     in-out property <string> reasoning-model-name: "";
 
     in-out property <string> prompt: "";
+    in-out property <[string]> prompt-history: [];
+    in-out property <bool> prompt-history-open: false;
     in-out property <string> asset-type: "character";
     in-out property <string> ratio: "1:1";
     in-out property <bool> ratio-more-open: true;
@@ -301,6 +306,7 @@ export global AppState {
     callback start-upscale-image(int, string);
     callback open-conversation(string);
     callback request-delete-asset(string);
+    callback request-delete-thumbnail(string, string);
     callback confirm-delete();
     callback mark-notification-read(string);
     callback mark-all-notifications-read();

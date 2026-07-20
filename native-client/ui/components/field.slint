@@ -7,6 +7,7 @@ export component Field {
     in-out property <string> value;
     in property <bool> secret: false;
     in property <bool> required: false;
+    callback accepted();
     height: 78px;
     VerticalLayout {
         spacing: 7px;
@@ -35,6 +36,7 @@ export component Field {
                 font-size: AppState.settings-font-size * 1px;
                 font-weight: 400;
                 vertical-alignment: center;
+                accepted => { root.accepted(); }
             }
             if root.value == "" && !input.has-focus: Text {
                 x: 14px;

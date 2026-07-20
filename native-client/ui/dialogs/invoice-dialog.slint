@@ -1,0 +1,245 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { DialogCloseButton } from "../components/dialog-close-button.slint";
+import { Field } from "../components/field.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { SectionTitle } from "../components/section-title.slint";
+import { AppTheme } from "../theme.slint";
+
+component RequiredLabel {
+    in property <string> text;
+    height: 18px;
+    HorizontalLayout {
+        spacing: 3px;
+        Text {
+            height: parent.height;
+            text: root.text;
+            color: AppTheme.text;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 400;
+            vertical-alignment: center;
+        }
+        Text {
+            width: 8px;
+            height: parent.height;
+            text: "*";
+            color: AppTheme.danger;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 400;
+            vertical-alignment: center;
+        }
+        Rectangle { horizontal-stretch: 1; background: transparent; }
+    }
+}
+
+component InvoiceChoice {
+    in property <string> text;
+    in property <bool> selected: false;
+    callback clicked();
+    height: 36px;
+    Rectangle {
+        background: root.selected ? AppTheme.accent : (touch.has-hover ? AppTheme.panel-soft : AppTheme.panel);
+        border-radius: 6px;
+        border-width: root.selected ? 0px : 1px;
+        border-color: touch.has-hover ? AppTheme.accent : AppTheme.border;
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.text;
+            color: root.selected ? #ffffff : AppTheme.text;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: root.selected ? 500 : 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+export component InvoiceDialog {
+    in-out property <bool> open: false;
+    property <string> invoice-type: "vat-normal";
+    property <string> invoice-title-type: "personal";
+    property <string> invoice-title: "";
+    property <string> invoice-tax-id: "";
+    property <string> invoice-email: "";
+    callback submit-request(string, string, string, string, string);
+
+    function form-valid() -> bool {
+        return root.invoice-type != ""
+            && root.invoice-title-type != ""
+            && root.invoice-title != ""
+            && (!root.requires-tax-id() || root.invoice-tax-id != "")
+            && root.invoice-email != "";
+    }
+    function requires-tax-id() -> bool {
+        return root.invoice-title-type == "enterprise";
+    }
+    function form-content-height() -> length {
+        return root.requires-tax-id() ? 636px : 552px;
+    }
+    function submit-form() {
+        if !root.form-valid() {
+            return;
+        }
+        root.submit-request(
+            root.invoice-type,
+            root.invoice-title-type,
+            root.invoice-title,
+            root.invoice-tax-id,
+            root.invoice-email
+        );
+    }
+
+    if root.open: Rectangle {
+        background: #00000055;
+        TouchArea { width: parent.width; height: parent.height; }
+        dialog := Rectangle {
+            width: min(700px, parent.width - 32px);
+            height: min(728px, parent.height - 32px);
+            x: (parent.width - dialog.width) / 2;
+            y: (parent.height - dialog.height) / 2;
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            clip: true;
+            DialogCloseButton {
+                x: parent.width - 42px;
+                y: 12px;
+                clicked => { root.open = false; }
+            }
+            ScrollView {
+                x: 24px;
+                y: 24px;
+                width: parent.width - 48px;
+                height: parent.height - 48px;
+                viewport-width: self.width;
+                viewport-height: root.form-content-height();
+                VerticalLayout {
+                    width: parent.width;
+                    height: root.form-content-height();
+                    spacing: 6px;
+                SectionTitle { text: AppState.en ? "Apply for invoice" : "申请开票"; }
+
+                RequiredLabel { text: AppState.en ? "Invoice type" : "发票类型"; }
+                HorizontalLayout {
+                    height: 36px;
+                    spacing: 8px;
+                    InvoiceChoice {
+                        horizontal-stretch: 1;
+                        text: AppState.en ? "Electronic VAT invoice" : "电子增值税普通发票";
+                        selected: root.invoice-type == "vat-normal";
+                        clicked => { root.invoice-type = "vat-normal"; }
+                    }
+                    InvoiceChoice {
+                        horizontal-stretch: 1;
+                        text: AppState.en ? "Electronic VAT special invoice" : "电子增值税专用发票";
+                        selected: root.invoice-type == "vat-special";
+                        clicked => { root.invoice-type = "vat-special"; }
+                    }
+                }
+
+                RequiredLabel { text: AppState.en ? "Title type" : "抬头类型"; }
+                HorizontalLayout {
+                    height: 36px;
+                    spacing: 8px;
+                    InvoiceChoice {
+                        horizontal-stretch: 1;
+                        text: AppState.en ? "Individual" : "个人";
+                        selected: root.invoice-title-type == "personal";
+                        clicked => {
+                            root.invoice-title-type = "personal";
+                            root.invoice-tax-id = "";
+                        }
+                    }
+                    InvoiceChoice {
+                        horizontal-stretch: 1;
+                        text: AppState.en ? "Enterprise" : "企业";
+                        selected: root.invoice-title-type == "enterprise";
+                        clicked => { root.invoice-title-type = "enterprise"; }
+                    }
+                }
+
+                Field {
+                    label: AppState.en ? "Invoice title" : "发票抬头";
+                    placeholder: AppState.en ? "Enter the invoice title" : "请输入发票抬头";
+                    value <=> root.invoice-title;
+                    required: true;
+                    accepted => { root.submit-form(); }
+                }
+                if root.requires-tax-id(): Field {
+                    label: AppState.en ? "Tax ID" : "税号";
+                    placeholder: AppState.en ? "Enter the tax identification number" : "请输入税号";
+                    value <=> root.invoice-tax-id;
+                    required: true;
+                    accepted => { root.submit-form(); }
+                }
+                Field {
+                    label: AppState.en ? "Email" : "接收邮箱";
+                    placeholder: AppState.en ? "Enter the email address" : "请输入接收邮箱";
+                    value <=> root.invoice-email;
+                    required: true;
+                    accepted => { root.submit-form(); }
+                }
+
+                Rectangle {
+                    height: 166px;
+                    background: AppTheme.panel-soft;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 8px;
+                        Text {
+                            height: 20px;
+                            text: AppState.en ? "Invoice information" : "发票说明";
+                            color: AppTheme.text;
+                            font-size: 14px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            vertical-stretch: 1;
+                            text: AppState.en
+                                ? "If your invoice information is submitted successfully, the invoice will be sent to your email within 12 hours. Contact customer service if it does not arrive in time.\n\nOrders older than six months cannot currently be invoiced online. Please contact customer service for assistance.\n\nElectronic VAT invoices and paper VAT invoices have the same legal effect under applicable tax regulations.\n\nThe invoiced amount is limited to the amount actually paid and excludes credits, red packets, coupons, and other deductions."
+                                : "如您的发票信息提交成功，将在12小时内自动推送至您的电子邮箱内，请您注意查收。如果超时未收到发票，请及时联系客服。\n\n超过6个月未申请开票的订单暂不支持线上开具，如您需要开票，请直接联系客服为您开具。\n\n根据国家税务总局相关规定，电子增值税普通发票与纸质增值税普通发票具有同等法律效力。\n\n发票开具金额仅为实际支付金额，不包含积分奖励、红包、优惠券等形式抵扣的金额。";
+                            color: AppTheme.muted;
+                            font-size: 12px;
+                            font-weight: 400;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    height: 38px;
+                    spacing: 10px;
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    PillButton {
+                        width: 104px;
+                        height: 38px;
+                        text: AppState.en ? "Cancel" : "取消";
+                        clicked => { root.open = false; }
+                    }
+                    PillButton {
+                        width: 124px;
+                        height: 38px;
+                        text: AppState.en ? "Submit" : "提交申请";
+                        primary: true;
+                        disabled: !root.form-valid();
+                        clicked => { root.submit-form(); }
+                    }
+                }
+                }
+            }
+        }
+    }
+}

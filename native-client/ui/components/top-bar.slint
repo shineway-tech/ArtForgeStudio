@@ -27,9 +27,9 @@ export component TopBar {
             }
         }
         Rectangle {
-            x: 118px;
+            x: 18px;
             y: 0px;
-            width: max(360px, parent.width - 118px - root.actions-width() - 32px);
+            width: max(360px, parent.width - 18px - root.actions-width() - 32px);
             height: parent.height;
             background: transparent;
             clip: true;
@@ -38,7 +38,7 @@ export component TopBar {
                 height: parent.height;
                 background: transparent;
                 ModelPicker {
-                    x: max(0px, (parent.width - root.models-width()) / 2);
+                    x: 0px;
                     y: 6px;
                     kind: "image";
                     label: AppState.en ? "Image Model" : "生图模型";
@@ -46,7 +46,7 @@ export component TopBar {
                     select-model(model) => { AppState.select-image-model(model); }
                 }
                 ModelPicker {
-                    x: max(0px, (parent.width - root.models-width()) / 2) + root.model-picker-width() + 18px;
+                    x: root.model-picker-width() + 18px;
                     y: 6px;
                     kind: "reasoning";
                     label: AppState.en ? "Reasoning Model" : "推理模型";
@@ -84,9 +84,6 @@ export component TopBar {
         return (AppState.logged-in ? 446px : 318px) + (AppState.payment-qr-open ? 120px : 0px);
     }
     function model-picker-width() -> length {
-        return min(330px, max(180px, (root.width - 118px - root.actions-width() - 70px) / 2));
-    }
-    function models-width() -> length {
-        return root.model-picker-width() * 2 + 18px;
+        return min(330px, max(180px, (root.width - 18px - root.actions-width() - 70px) / 2));
     }
 }

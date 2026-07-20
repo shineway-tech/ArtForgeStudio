@@ -104,6 +104,35 @@ pub(super) fn refresh_server_notifications(app: &AppWindow, context: AppContext)
     );
 }
 
+pub(super) fn notification_is_success(item: &ServerNotification) -> bool {
+    if has_failure_marker(&item.notification_type) || has_failure_marker(&item.title) {
+        return false;
+    }
+
+    !["status", "task_status", "result", "outcome"]
+        .iter()
+        .filter_map(|key| item.metadata.get(key).and_then(Value::as_str))
+        .any(has_failure_marker)
+}
+
+fn has_failure_marker(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    [
+        "failed",
+        "failure",
+        "error",
+        "expired",
+        "cancelled",
+        "canceled",
+        "rejected",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+        || ["失败", "未完成", "错误", "已取消", "已过期"]
+            .iter()
+            .any(|marker| value.contains(marker))
+}
+
 fn poll_server_notifications(
     app_weak: Weak<AppWindow>,
     context: AppContext,
@@ -123,8 +152,7 @@ fn poll_server_notifications(
                     let model = item.metadata.get("model_name")
                         .or_else(|| item.metadata.get("model_code"))
                         .and_then(|value| value.as_str()).unwrap_or("").to_string();
-                    let success = !item.notification_type.contains("failed")
-                        && !item.notification_type.contains("expired");
+                    let success = notification_is_success(&item);
                     NotificationData {
                         id: item.id,
                         title: item.title,

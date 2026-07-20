@@ -1,5 +1,6 @@
 import { AppState } from "../app-state.slint";
 import { AgreementCheckbox } from "../components/agreement-checkbox.slint";
+import { DialogCloseButton } from "../components/dialog-close-button.slint";
 import { Field } from "../components/field.slint";
 import { PillButton } from "../components/pill-button.slint";
 import { SectionTitle } from "../components/section-title.slint";
@@ -33,6 +34,15 @@ component AgreementChoice {
 }
 
 export component AuthDialog {
+    function confirm-auth() {
+        if AppState.auth-code == "" {
+            if !AppState.auth-code-busy && !AppState.auth-busy && AppState.auth-countdown <= 0 {
+                AppState.request-code();
+            }
+        } else if !AppState.auth-busy {
+            AppState.login-or-register();
+        }
+    }
     if AppState.auth-open: Rectangle {
         background: #00000066;
         TouchArea { width: parent.width; height: parent.height; }
@@ -45,6 +55,11 @@ export component AuthDialog {
             border-radius: 14px;
             border-width: 1px;
             border-color: AppTheme.border;
+            DialogCloseButton {
+                x: parent.width - 42px;
+                y: 12px;
+                clicked => { AppState.auth-open = false; }
+            }
             if AppState.session-state == "update_required": Rectangle {
                 z: 10;
                 width: parent.width;
@@ -77,6 +92,7 @@ export component AuthDialog {
                     placeholder: AppState.en ? "Enter email address" : "请输入邮箱地址";
                     value <=> AppState.auth-email;
                     required: true;
+                    accepted => { root.confirm-auth(); }
                 }
                 Rectangle {
                     height: 78px;
@@ -100,6 +116,7 @@ export component AuthDialog {
                             color: AppTheme.text;
                             font-size: AppState.settings-font-size * 1px;
                             vertical-alignment: center;
+                            accepted => { root.confirm-auth(); }
                         }
                         if (AppState.auth-code == "") && (!code-input.has-focus): Text {
                             x: 14px;

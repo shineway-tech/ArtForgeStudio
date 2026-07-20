@@ -281,6 +281,18 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
+        state.on_request_delete_thumbnail(move |id, source| {
+            if let Some(app) = app_weak.upgrade() {
+                let state = app.global::<AppState>();
+                state.set_pending_delete_id(id);
+                state.set_pending_delete_source(source);
+                state.set_delete_confirm_open(true);
+            }
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
         let store = store.clone();
         state.on_confirm_delete(move || {
             let Some(app) = app_weak.upgrade() else {

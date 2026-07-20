@@ -148,6 +148,7 @@ pub(super) fn navigate_to_with_store(app: &AppWindow, store: &Store, page: &str)
 pub(super) fn push_all(app: &AppWindow, store: &Store) {
     push_model_groups(app, store);
     push_conversations(app, store);
+    push_prompt_history(app, store);
     push_assets(app, store);
     push_generations(app, store);
     push_inspiration(app, store);
@@ -155,8 +156,49 @@ pub(super) fn push_all(app: &AppWindow, store: &Store) {
     push_references(app, store);
 }
 
+pub(super) fn recent_prompt_history<'a>(
+    prompts: impl IntoIterator<Item = &'a str>,
+    limit: usize,
+) -> Vec<String> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let mut seen = BTreeSet::new();
+    let mut history = Vec::new();
+    for raw in prompts {
+        let prompt = raw.trim();
+        if prompt.is_empty() || !seen.insert(prompt.to_string()) {
+            continue;
+        }
+        history.push(prompt.to_string());
+        if history.len() == limit {
+            break;
+        }
+    }
+    history
+}
+
+pub(super) fn push_prompt_history(app: &AppWindow, store: &Store) {
+    let state = app.global::<AppState>();
+    let history = recent_prompt_history(
+        store.generations.iter().map(|item| item.prompt.as_str()),
+        20,
+    )
+    .into_iter()
+    .map(SharedString::from)
+    .collect::<Vec<_>>();
+    if history.is_empty() {
+        state.set_prompt_history_open(false);
+    }
+    state.set_prompt_history(ModelRc::new(VecModel::from(history)));
+}
+
 pub(super) fn push_model_groups(app: &AppWindow, store: &Store) {
     let state = app.global::<AppState>();
+    let image_options = model_picker_options(store, "image");
+    let reasoning_options = model_picker_options(store, "reasoning");
+    state.set_model_image_options(ModelRc::new(VecModel::from(image_options)));
+    state.set_model_reasoning_options(ModelRc::new(VecModel::from(reasoning_options)));
     state.set_model_groups(ModelRc::new(VecModel::from(
         store
             .model_groups
@@ -164,6 +206,20 @@ pub(super) fn push_model_groups(app: &AppWindow, store: &Store) {
             .map(to_model_group_view)
             .collect::<Vec<_>>(),
     )));
+}
+
+fn model_picker_options(store: &Store, kind: &str) -> Vec<ModelOption> {
+    store
+        .model_groups
+        .iter()
+        .filter(|group| group.kind == kind)
+        .flat_map(|group| {
+            group.models.iter().map(|model| ModelOption {
+                code: model.code.clone().into(),
+                name: format!("{} / {}", group.name, model.name).into(),
+            })
+        })
+        .collect()
 }
 
 pub(super) fn push_conversations(app: &AppWindow, store: &Store) {

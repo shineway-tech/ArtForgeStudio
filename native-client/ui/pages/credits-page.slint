@@ -3,17 +3,22 @@ import { AppState } from "../app-state.slint";
 import { CreditPlan } from "../components/credit-plan.slint";
 import { CreditRecordRow } from "../components/credit-record-row.slint";
 import { EmptyState } from "../components/empty-state.slint";
+import { MembershipPlans } from "../components/membership-plans.slint";
 import { PillButton } from "../components/pill-button.slint";
 import { PurchaseAgreements } from "../components/purchase-agreements.slint";
 import { SectionTitle } from "../components/section-title.slint";
 import { AppTheme } from "../theme.slint";
 
 export component CreditsPage {
+    callback open-invoice();
+
     function content-width() -> length {
         return root.width - 48px;
     }
     function content-height() -> length {
-        return max(root.height + 80px, 860px + max(1, AppState.credit-records.length) * 96px);
+        return AppState.credits-tab == "membership"
+            ? max(root.height + 80px, 760px)
+            : max(root.height + 80px, 860px + max(1, AppState.credit-records.length) * 96px);
     }
     Rectangle {
         background: AppTheme.bg;
@@ -44,10 +49,28 @@ export component CreditsPage {
                             vertical-alignment: center;
                         }
                         Text {
-                            x: parent.width - 90px;
-                            width: 90px;
+                            x: parent.width - 220px;
+                            width: 116px;
                             height: parent.height;
-                            text: "积分规则";
+                            text: AppState.en ? "Apply for invoice" : "申请开票";
+                            color: invoice-touch.has-hover ? AppTheme.accent : AppTheme.muted;
+                            font-size: 12px;
+                            font-weight: 400;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                        }
+                        invoice-touch := TouchArea {
+                            x: parent.width - 220px;
+                            width: 116px;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => { root.open-invoice(); }
+                        }
+                        Text {
+                            x: parent.width - 92px;
+                            width: 92px;
+                            height: parent.height;
+                            text: AppState.en ? "Credit rules" : "积分规则";
                             color: rule-touch.has-hover ? AppTheme.accent : AppTheme.muted;
                             font-size: 12px;
                             font-weight: 400;
@@ -55,13 +78,33 @@ export component CreditsPage {
                             vertical-alignment: center;
                         }
                         rule-touch := TouchArea {
-                            x: parent.width - 90px;
-                            width: 90px;
+                            x: parent.width - 92px;
+                            width: 92px;
                             height: parent.height;
                             mouse-cursor: pointer;
                             clicked => { AppState.open-agreement(AppState.purchase-credit-rules-title, AppState.purchase-credit-rules-url); }
                         }
                     }
+                    HorizontalLayout {
+                        height: 40px;
+                        spacing: 8px;
+                        PillButton {
+                            width: 96px;
+                            text: AppState.en ? "Recharge" : "充值";
+                            active: AppState.credits-tab == "recharge";
+                            clicked => { AppState.credits-tab = "recharge"; }
+                        }
+                        PillButton {
+                            width: 96px;
+                            text: AppState.en ? "Subscription" : "订阅";
+                            active: AppState.credits-tab == "membership";
+                            clicked => { AppState.credits-tab = "membership"; }
+                        }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                    }
+                    if AppState.credits-tab == "membership": MembershipPlans { horizontal-stretch: 1; }
+                    if AppState.credits-tab == "recharge": VerticalLayout {
+                        spacing: 16px;
                     Rectangle {
                         height: 132px;
                         background: AppTheme.panel;
@@ -77,13 +120,13 @@ export component CreditsPage {
                         height: 128px;
                         spacing: 12px;
                         for pack in AppState.credit-packs: CreditPlan {
+                            horizontal-stretch: 1;
                             code: pack.code;
                             amount: pack.credits;
                             title: pack.name;
                             note: pack.note;
                             price: pack.price;
                         }
-                        Rectangle { horizontal-stretch: 1; background: transparent; }
                     }
                     PurchaseAgreements { horizontal-stretch: 1; }
                     Rectangle {
@@ -196,6 +239,7 @@ export component CreditsPage {
                             disabled: !AppState.credit-ledger-has-next || AppState.credit-ledger-loading;
                             clicked => { AppState.credit-ledger-next-page(); }
                         }
+                    }
                     }
                 }
             }

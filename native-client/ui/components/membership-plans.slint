@@ -1,0 +1,69 @@
+import { AppState } from "../app-state.slint";
+import { PillButton } from "pill-button.slint";
+import { PurchaseAgreements } from "purchase-agreements.slint";
+import { SectionTitle } from "section-title.slint";
+import { AppTheme } from "../theme.slint";
+
+export component MembershipPlans {
+    height: AppState.membership-expiry-message == "" ? 600px : 630px;
+
+    VerticalLayout {
+        width: root.width;
+        spacing: 14px;
+
+        SectionTitle { text: AppState.en ? "Membership plans" : "会员套餐"; }
+        Text {
+            height: 24px;
+            text: (AppState.en ? "Current: " : "当前会员：") + AppState.membership-plan-name + (AppState.membership-ends-at == "" ? "" : (" · " + AppState.membership-ends-at));
+            color: AppTheme.muted;
+            font-size: 13px;
+        }
+        if AppState.membership-expiry-message != "": Text {
+            height: 24px;
+            text: AppState.membership-expiry-message;
+            color: AppTheme.warning;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        HorizontalLayout {
+            height: AppState.membership-expiry-message == "" ? 300px : 276px;
+            spacing: 12px;
+            for plan in AppState.membership-plans: Rectangle {
+                horizontal-stretch: 1;
+                background: plan.code == AppState.membership-plan-code ? AppTheme.panel-soft : AppTheme.panel;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: plan.code == AppState.membership-plan-code ? AppTheme.accent : AppTheme.border;
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+                    if plan.code == "free": Rectangle { vertical-stretch: 1; background: transparent; }
+                    Text { height: 28px; text: plan.name; color: AppTheme.text; font-size: 18px; font-weight: 600; horizontal-alignment: center; }
+                    Text { height: 34px; text: plan.price; color: AppTheme.accent-dark; font-size: 24px; horizontal-alignment: center; }
+                    Text { height: 22px; text: plan.period-days + (AppState.en ? " days" : " 天"); color: AppTheme.muted; font-size: 13px; horizontal-alignment: center; }
+                    Text { height: 40px; text: (AppState.en ? "Grant credits: " : "赠送积分：") + plan.grant-credits; color: AppTheme.text; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
+                    Text { height: 40px; text: (AppState.en ? "Max quality: " : "最高画质：") + plan.max-quality; color: AppTheme.text; font-size: 13px; horizontal-alignment: center; }
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+                    if plan.code != "free": PillButton {
+                        height: 38px;
+                        primary: plan.tier-rank > AppState.membership-tier-rank;
+                        disabled: AppState.membership-payment-busy || plan.tier-rank < AppState.membership-tier-rank;
+                        text: plan.tier-rank > AppState.membership-tier-rank ? (AppState.en ? "Upgrade" : "升级") : (plan.code == AppState.membership-plan-code ? (AppState.en ? "Renew" : "续费") : (AppState.en ? "Purchase" : "购买"));
+                        clicked => { AppState.purchase-membership(plan.code); }
+                    }
+                }
+            }
+        }
+        PurchaseAgreements { horizontal-stretch: 1; }
+        Text {
+            height: 44px;
+            text: AppState.membership-payment-message;
+            color: AppState.membership-payment-busy ? AppTheme.accent : AppTheme.text;
+            font-size: 13px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: word-wrap;
+        }
+        Text { height: 28px; text: AppState.en ? "Price and entitlements are server-authoritative. Downgrades are not supported." : "价格和权益以服务端为准；当前不支持降级。"; color: AppTheme.muted; font-size: 12px; horizontal-alignment: center; }
+    }
+}

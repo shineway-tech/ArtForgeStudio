@@ -24,7 +24,7 @@ export component ProfileDialog {
                 spacing: 12px;
                 SectionTitle { text: AppState.en ? "Account" : "账号信息"; }
                 Rectangle {
-                    height: AppState.nickname == "" ? 82px : 124px;
+                    height: AppState.nickname == "" ? 118px : 166px;
                     background: AppTheme.panel-soft;
                     border-radius: 10px;
                     VerticalLayout {
@@ -34,15 +34,14 @@ export component ProfileDialog {
                         if AppState.nickname != "": Text { height: 24px; text: AppState.nickname; color: AppTheme.text; font-size: 16px; overflow: elide; }
                         Text { height: 16px; text: AppState.en ? "Email" : "邮箱"; color: AppTheme.muted; font-size: 12px; }
                         Text { height: 22px; text: AppState.email-mask; color: AppTheme.text; font-size: 14px; overflow: elide; }
+                        Rectangle {
+                            height: 40px;
+                            background: transparent;
+                            Text { width: parent.width; height: 16px; text: AppState.en ? "Membership" : "当前会员"; color: AppTheme.muted; font-size: 12px; overflow: elide; }
+                            Text { y: 18px; width: parent.width; height: 22px; text: AppState.membership-plan-name + " · " + AppState.membership-max-quality; color: AppTheme.text; font-size: 14px; overflow: elide; }
+                            TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.navigate("credits"); AppState.credits-tab = "membership"; AppState.profile-open = false; } }
+                        }
                     }
-                }
-                Rectangle {
-                    height: 64px;
-                    background: AppTheme.panel-soft;
-                    border-radius: 10px;
-                    Text { x: 16px; y: 12px; width: parent.width - 32px; height: 18px; text: AppState.en ? "Membership" : "当前会员"; color: AppTheme.muted; font-size: 12px; overflow: elide; }
-                    Text { x: 16px; y: 32px; width: parent.width - 32px; height: 22px; text: AppState.membership-plan-name + " · " + AppState.membership-max-quality; color: AppTheme.text; font-size: 14px; overflow: elide; }
-                    TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.membership-open = true; } }
                 }
                 Text { height: 20px; text: AppState.en ? "Signed-in devices" : "登录设备"; color: AppTheme.muted; font-size: 13px; }
                 Rectangle {
