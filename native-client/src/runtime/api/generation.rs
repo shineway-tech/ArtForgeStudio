@@ -104,6 +104,18 @@ pub(crate) struct CreateGenerationTask {
     pub(crate) target_language: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct CreateUpscaleGenerationTask {
+    pub(crate) client_request_id: String,
+    pub(crate) task_type: String,
+    pub(crate) model_code: String,
+    pub(crate) prompt: String,
+    pub(crate) quality: String,
+    pub(crate) reference_file_ids: Vec<String>,
+    pub(crate) target_width: u32,
+    pub(crate) target_height: u32,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct UploadFile {
     id: String,
@@ -213,12 +225,28 @@ impl GenerationApi {
 
     pub(crate) fn create_task(&self, request: &CreateGenerationTask) -> Result<GenerationTaskDetail, ApiError> {
         let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.create_task_body(&request.client_request_id, body)
+    }
+
+    pub(crate) fn create_upscale_task(
+        &self,
+        request: &CreateUpscaleGenerationTask,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.create_task_body(&request.client_request_id, body)
+    }
+
+    fn create_task_body(
+        &self,
+        client_request_id: &str,
+        body: serde_json::Value,
+    ) -> Result<GenerationTaskDetail, ApiError> {
         self.client
             .authenticated_json::<GenerationTaskDetail>(
                 Method::POST,
                 "/v1/generation/tasks",
                 Some(body),
-                Some(&request.client_request_id),
+                Some(client_request_id),
             )
             .map(|response| response.data)
     }

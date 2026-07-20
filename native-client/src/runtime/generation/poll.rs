@@ -14,6 +14,7 @@ pub(super) fn poll_generation_stream(
     create_conversation: bool,
     original_references: Vec<ReferenceData>,
     original_quote: QuoteContext,
+    restore_inputs_on_failure: bool,
     task_id: String,
     started_at: Instant,
 ) {
@@ -68,6 +69,7 @@ pub(super) fn poll_generation_stream(
                 create_conversation,
                 original_references,
                 original_quote,
+                restore_inputs_on_failure,
                 task_id,
                 started_at,
             );
@@ -108,6 +110,7 @@ pub(super) fn poll_generation_stream(
                 bytes,
                 optimized,
                 time,
+                upscale_done,
                 delivery,
             } => match add_stream_success_item(
                 &app,
@@ -121,6 +124,7 @@ pub(super) fn poll_generation_stream(
                 &optimized,
                 &time,
                 &bytes,
+                upscale_done,
             ) {
                 Ok((conversation_image, source_path)) => {
                     if let (Some(backend), Some(delivery)) = (context.backend.clone(), delivery) {
@@ -209,7 +213,7 @@ pub(super) fn poll_generation_stream(
                 if create_conversation && task.success_count == 0 {
                     finish_conversation_placeholder(&state, &conversation_id, None);
                 }
-                if task.failed_count > 0 && task.success_count == 0 {
+                if restore_inputs_on_failure && task.failed_count > 0 && task.success_count == 0 {
                     restore_stream_inputs(
                         &app,
                         &store,
@@ -240,14 +244,16 @@ pub(super) fn poll_generation_stream(
                 if create_conversation && task.success_count == 0 {
                     remove_conversation_placeholder(&state, &conversation_id);
                 }
-                restore_stream_inputs(
-                    &app,
-                    &store,
-                    &raw_prompt,
-                    &category,
-                    original_references.clone(),
-                    original_quote.clone(),
-                );
+                if restore_inputs_on_failure {
+                    restore_stream_inputs(
+                        &app,
+                        &store,
+                        &raw_prompt,
+                        &category,
+                        original_references.clone(),
+                        original_quote.clone(),
+                    );
+                }
                 context.generations.statuses.borrow_mut().remove(&category);
                 sync_generation_state_for_current_category(&context, &app);
                 state.set_credit_insufficient_message(message.into());
@@ -281,7 +287,7 @@ pub(super) fn poll_generation_stream(
                 if create_conversation && task.success_count == 0 {
                     finish_conversation_placeholder(&state, &conversation_id, None);
                 }
-                if task.success_count == 0 {
+                if restore_inputs_on_failure && task.success_count == 0 {
                     restore_stream_inputs(
                         &app,
                         &store,
@@ -320,6 +326,7 @@ pub(super) fn poll_generation_stream(
                 create_conversation,
                 original_references,
                 original_quote,
+                restore_inputs_on_failure,
                 task_id,
                 started_at,
             );

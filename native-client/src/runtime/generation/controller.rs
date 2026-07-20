@@ -118,6 +118,7 @@ pub(super) fn add_stream_success_item(
     optimized: &str,
     time: &str,
     bytes: &[u8],
+    upscale_done: bool,
 ) -> Result<(Image, String)> {
     let (bytes, image, width, height) = generated_image_from_bytes(bytes, quality)?;
     let source_path = save_generated_bytes(app, &bytes, raw_prompt)?;
@@ -138,7 +139,7 @@ pub(super) fn add_stream_success_item(
         source_path: source_path.clone(),
         cutout_done: false,
         remove_black_done: false,
-        upscale_done: false,
+        upscale_done,
     };
     let conversation_image = item.image.clone();
     let mut store_mut = store.borrow_mut();

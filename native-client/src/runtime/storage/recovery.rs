@@ -24,6 +24,8 @@ pub(super) struct PendingGenerationRecord {
     pub(super) server_task_id: String,
     pub(super) raw_prompt: String,
     pub(super) generation_prompt: String,
+    #[serde(default)]
+    pub(super) task_type: String,
     pub(super) category: String,
     pub(super) mode: String,
     pub(super) ratio: String,
@@ -31,6 +33,10 @@ pub(super) struct PendingGenerationRecord {
     pub(super) model_code: String,
     pub(super) conversation_id: String,
     pub(super) count: i32,
+    #[serde(default)]
+    pub(super) target_width: u32,
+    #[serde(default)]
+    pub(super) target_height: u32,
     pub(super) create_conversation: bool,
     #[serde(default)]
     pub(super) reference_paths: Vec<String>,
@@ -255,6 +261,7 @@ mod tests {
             server_task_id: "server".to_string(),
             raw_prompt: "prompt".to_string(),
             generation_prompt: "prompt".to_string(),
+            task_type: "image_generation".to_string(),
             category: "character".to_string(),
             mode: "game".to_string(),
             ratio: "1:1".to_string(),
@@ -262,6 +269,8 @@ mod tests {
             model_code: "openai_image".to_string(),
             conversation_id: "conversation".to_string(),
             count: 1,
+            target_width: 0,
+            target_height: 0,
             create_conversation: true,
             reference_paths: vec![],
             uploaded_file_ids: vec![],

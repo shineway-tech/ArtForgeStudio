@@ -143,20 +143,16 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
-        let store = store.clone();
+        let context = context.clone();
         state.on_start_upscale_image(move |scale, quality| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let scale = scale.clamp(2, 4) as u32;
-            let target_long_edge = upscale_quality_long_edge(quality.as_str());
-            start_viewer_image_processing(
+            start_backend_upscale(
                 &app,
-                store.clone(),
-                ProcessImageMode::Upscale {
-                    scale,
-                    target_long_edge,
-                },
+                context.clone(),
+                scale.clamp(2, 4) as u32,
+                quality.to_string(),
             );
         });
     }

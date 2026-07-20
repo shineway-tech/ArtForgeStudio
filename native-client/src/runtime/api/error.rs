@@ -104,6 +104,9 @@ impl ApiError {
             Some("model_quality_unavailable") => {
                 "当前模型暂不支持所选清晰度，请更换清晰度".to_string()
             }
+            Some("image_target_size_invalid") => {
+                "放大尺寸超过所选清晰度上限，请调整清晰度后重试".to_string()
+            }
             Some("model_unavailable" | "model_configuration_missing") => {
                 "所选模型已下线或暂不可用，请刷新模型目录后重试".to_string()
             }
@@ -160,6 +163,9 @@ impl ApiError {
             }
             Some("model_quality_unavailable") => {
                 "当前模型暂不支持所选清晰度，请更换清晰度".to_string()
+            }
+            Some("image_target_size_invalid") => {
+                "放大尺寸超过所选清晰度上限，请调整清晰度后重试".to_string()
             }
             Some("model_unavailable" | "model_configuration_missing") => {
                 "所选模型已下线或暂不可用，请刷新模型目录后重试".to_string()

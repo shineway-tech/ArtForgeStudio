@@ -110,6 +110,7 @@ enum GenerationOutcome {
         bytes: Vec<u8>,
         optimized: String,
         time: String,
+        upscale_done: bool,
         delivery: Option<DeliveryConfirmation>,
     },
     ImageFailure {
