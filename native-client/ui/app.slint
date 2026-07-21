@@ -1,6 +1,6 @@
 import { AppState } from "app-state.slint";
 import { AppTheme } from "theme.slint";
-import { AccountSession, AssetGroup, AssetItem, ConversationItem, CreditRecord, CustomPromptItem, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
+import { AccountSession, AssetGroup, AssetItem, CanvasNote, ConversationItem, CreditRecord, CustomPromptItem, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 import { Sidebar } from "components/sidebar.slint";
 import { TopBar } from "components/top-bar.slint";
 import { AliPayQrDialog } from "dialogs/ali-pay-qr-dialog.slint";
@@ -20,12 +20,13 @@ import { ViewerOverlay } from "dialogs/viewer-overlay.slint";
 import { AssetsPage } from "pages/assets-page.slint";
 import { CreditsPage } from "pages/credits-page.slint";
 import { InspirationPage } from "pages/inspiration-page.slint";
+import { InfiniteCanvasPage } from "pages/infinite-canvas-page.slint";
 import { NotificationsPage } from "pages/notifications-page.slint";
 import { SettingsPage } from "pages/settings-page.slint";
 import { StudioSplitPage } from "pages/studio-split-page.slint";
 import { WelcomePage } from "pages/welcome-page.slint";
 
-export { AppState, AppTheme, AccountSession, ModelGroup, ModelOption, AssetItem, AssetGroup, ConversationItem, NotificationItem, CreditRecord, CustomPromptItem, ReferenceItem }
+export { AppState, AppTheme, AccountSession, ModelGroup, ModelOption, AssetItem, AssetGroup, CanvasNote, ConversationItem, NotificationItem, CreditRecord, CustomPromptItem, ReferenceItem }
 
 export component AppWindow inherits Window {
     property <bool> invoice-open: false;
@@ -55,6 +56,7 @@ export component AppWindow inherits Window {
                 horizontal-stretch: 1;
                 vertical-stretch: 1;
                 if AppState.page == "generation": StudioSplitPage { width: parent.width; height: parent.height; generation: true; }
+                if AppState.page == "canvas": InfiniteCanvasPage { width: parent.width; height: parent.height; }
                 if AppState.page == "assets": AssetsPage { width: parent.width; height: parent.height; }
                 if AppState.page == "inspiration": InspirationPage { width: parent.width; height: parent.height; }
                 if AppState.page == "notifications": NotificationsPage { width: parent.width; height: parent.height; }

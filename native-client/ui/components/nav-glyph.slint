@@ -8,6 +8,7 @@ export component NavGlyph {
     if root.kind == "assets": Image { width: parent.width; height: parent.height; source: AppState.icon-assets; colorize: root.glyph-color; image-fit: contain; }
     if root.kind == "generation": Image { width: parent.width; height: parent.height; source: AppState.icon-generation; colorize: root.glyph-color; image-fit: contain; }
     if root.kind == "workspace": Image { width: parent.width; height: parent.height; source: AppState.icon-workspace; colorize: root.glyph-color; image-fit: contain; }
+    if root.kind == "canvas": Image { width: parent.width; height: parent.height; source: @image-url("../../assets/icons/canvas.svg"); colorize: root.glyph-color; image-fit: contain; }
     if root.kind == "inspiration": Image { width: parent.width; height: parent.height; source: AppState.icon-inspiration; colorize: root.glyph-color; image-fit: contain; }
     if root.kind == "notifications": Image { width: parent.width; height: parent.height; source: AppState.icon-notifications; colorize: root.glyph-color; image-fit: contain; }
     if root.kind == "settings": Image { width: parent.width; height: parent.height; source: AppState.icon-settings; colorize: root.glyph-color; image-fit: contain; }

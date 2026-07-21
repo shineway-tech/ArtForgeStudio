@@ -24,6 +24,14 @@ struct ModelGroupData {
     selected_model: String,
 }
 
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct CanvasNoteData {
+    id: String,
+    content: String,
+    x: f32,
+    y: f32,
+}
+
 #[derive(Clone)]
 struct AssetData {
     id: String,
@@ -166,6 +174,7 @@ struct Store {
     prompt_drafts: PromptDrafts,
     custom_prompts: Vec<String>,
     custom_prompt_times: BTreeMap<String, String>,
+    canvas_notes: Vec<CanvasNoteData>,
     credit_ledger_pagination: CreditLedgerPagination,
 }
 
@@ -204,6 +213,8 @@ struct LocalStoreData {
     custom_prompts: Vec<String>,
     #[serde(default)]
     custom_prompt_times: BTreeMap<String, String>,
+    #[serde(default)]
+    canvas_notes: Vec<CanvasNoteData>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

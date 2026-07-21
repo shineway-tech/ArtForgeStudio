@@ -1,4 +1,4 @@
-import { AccountSession, AssetGroup, AssetItem, CatalogModelView, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
+import { AccountSession, AssetGroup, AssetItem, CanvasNote, CatalogModelView, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 
 export global AppState {
     callback close-payment-window();
@@ -75,6 +75,7 @@ export global AppState {
     in-out property <string> custom-prompt-editing-original: "";
     in-out property <bool> custom-prompt-open: false;
     in-out property <bool> custom-prompt-editor-open: false;
+    in-out property <[CanvasNote]> canvas-notes: [];
     in-out property <string> asset-type: "character";
     in-out property <string> ratio: "1:1";
     in-out property <bool> ratio-more-open: true;
@@ -281,6 +282,9 @@ export global AppState {
     callback restart-after-update();
     callback save-custom-prompt(string, string);
     callback remove-custom-prompt(string);
+    callback add-canvas-note();
+    callback update-canvas-note(string, string, float, float);
+    callback remove-canvas-note(string);
     callback select-image-model(string);
     callback select-reasoning-model(string);
     callback refresh-assets();

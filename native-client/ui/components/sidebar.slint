@@ -25,6 +25,7 @@ export component Sidebar {
             }
             Rectangle { height: 1px; background: AppTheme.border; }
             CategoryWorkspaceMenu {}
+            NavItem { icon: "canvas"; label: AppState.en ? "Infinite Canvas" : "无限画布"; page: "canvas"; }
             NavItem { icon: "assets"; label: AppState.en ? "My Assets" : "我的资产"; page: "assets"; }
             NavItem { icon: "inspiration"; label: AppState.en ? "Inspiration" : "灵感广场"; page: "inspiration"; }
             NavItem { icon: "notifications"; label: AppState.en ? "Notifications" : "通知"; page: "notifications"; show-dot: AppState.has-unread; }

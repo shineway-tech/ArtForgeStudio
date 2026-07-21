@@ -39,6 +39,9 @@ use credit_callbacks::*;
 #[path = "callbacks/custom_prompt.rs"]
 mod custom_prompt_callbacks;
 use custom_prompt_callbacks::*;
+#[path = "callbacks/infinite_canvas.rs"]
+mod infinite_canvas_callbacks;
+use infinite_canvas_callbacks::*;
 mod payment_window;
 use payment_window::*;
 mod agreement_window;

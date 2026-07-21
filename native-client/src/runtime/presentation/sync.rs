@@ -150,6 +150,7 @@ pub(super) fn push_all(app: &AppWindow, store: &Store) {
     push_conversations(app, store);
     push_prompt_history(app, store);
     push_custom_prompts(app, store);
+    push_canvas_notes(app, store);
     push_assets(app, store);
     push_generations(app, store);
     push_inspiration(app, store);
@@ -231,6 +232,22 @@ pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
             .map(SharedString::from)
             .collect::<Vec<_>>(),
     )));
+}
+
+pub(super) fn push_canvas_notes(app: &AppWindow, store: &Store) {
+    app.global::<AppState>()
+        .set_canvas_notes(ModelRc::new(VecModel::from(
+            store
+                .canvas_notes
+                .iter()
+                .map(|note| CanvasNote {
+                    id: note.id.clone().into(),
+                    content: note.content.clone().into(),
+                    x: note.x,
+                    y: note.y,
+                })
+                .collect::<Vec<_>>(),
+        )));
 }
 
 pub(super) fn single_line_prompt_preview(prompt: &str) -> String {

@@ -114,6 +114,7 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
         store_mut.prompt_drafts = data.prompt_drafts;
         store_mut.custom_prompts = normalize_custom_prompts(data.custom_prompts);
         store_mut.custom_prompt_times = data.custom_prompt_times;
+        store_mut.canvas_notes = data.canvas_notes;
         let original_prompt_times = store_mut.custom_prompt_times.clone();
         let retained = store_mut
             .custom_prompts
@@ -356,6 +357,7 @@ pub(super) fn save_local_store(app: &AppWindow, store: &Store) {
         prompt_drafts: store.prompt_drafts.clone(),
         custom_prompts: store.custom_prompts.clone(),
         custom_prompt_times: store.custom_prompt_times.clone(),
+        canvas_notes: store.canvas_notes.clone(),
     };
     if let Ok(text) = serde_json::to_string_pretty(&data) {
         let path = local_store_path();

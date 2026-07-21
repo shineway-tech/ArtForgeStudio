@@ -249,6 +249,14 @@ mod tests {
             .and_then(|value| value.split("if event.text == Key.Return").next())
             .expect("double slash handler");
         assert!(double_slash_handler.contains("return accept;"));
+        assert!(double_slash_handler.contains("prompt-input.set-selection-offsets(2, 2);"));
+        let write_position = double_slash_handler
+            .find("AppState.prompt = \"//\";")
+            .expect("double slash value assignment");
+        let cursor_position = double_slash_handler
+            .find("prompt-input.set-selection-offsets(2, 2);")
+            .expect("double slash cursor assignment");
+        assert!(write_position < cursor_position);
         assert!(composer.contains("history-popup.close()"));
         assert!(composer.contains("custom-prompt-popup.show()"));
         let composer_normalized = composer.replace("\r\n", "\n");
@@ -492,6 +500,54 @@ mod tests {
             assert!(source.contains("AppState.navigate(\"settings\")"));
             assert!(!source.contains("AppState.navigate(\"models\")"));
         }
+    }
+
+    #[test]
+    fn infinite_canvas_is_a_local_workspace_below_the_workbench() {
+        let app = include_str!("../../ui/app.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let types = include_str!("../../ui/types.slint");
+        let sidebar = include_str!("../../ui/components/sidebar.slint");
+        let glyph = include_str!("../../ui/components/nav-glyph.slint");
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let page = std::fs::read_to_string(manifest.join("ui/pages/infinite-canvas-page.slint"))
+            .unwrap_or_default();
+        let callbacks = std::fs::read_to_string(manifest.join("src/runtime/callbacks/infinite_canvas.rs"))
+            .unwrap_or_default();
+        let local_store = include_str!("storage/local_store.rs");
+        let sync = include_str!("presentation/sync.rs");
+
+        let workbench = sidebar.find("CategoryWorkspaceMenu {}").expect("workbench menu");
+        let canvas = sidebar.find("page: \"canvas\"").expect("canvas nav item");
+        let assets = sidebar.find("page: \"assets\"").expect("assets nav item");
+        assert!(workbench < canvas && canvas < assets);
+        assert!(app.contains("import { InfiniteCanvasPage }"));
+        assert!(app.contains("AppState.page == \"canvas\""));
+        assert!(glyph.contains("root.kind == \"canvas\""));
+        assert!(types.contains("export struct CanvasNote"));
+        assert!(state.contains("in-out property <[CanvasNote]> canvas-notes"));
+        assert!(state.contains("callback add-canvas-note()"));
+        assert!(state.contains("callback update-canvas-note(string, string, float, float)"));
+        assert!(state.contains("callback remove-canvas-note(string)"));
+
+        assert!(page.contains("scroll-event(event)"));
+        assert!(page.contains("root.zoom-percent"));
+        assert!(page.contains("root.pan-x"));
+        assert!(page.contains("root.pan-y"));
+        assert!(page.contains("AppState.add-canvas-note()"));
+        assert!(page.contains("for note in AppState.canvas-notes"));
+        assert!(page.contains("AppState.update-canvas-note"));
+        assert!(page.contains("AppState.pending-delete-kind = \"canvas-note\""));
+        assert!(include_str!("../../ui/dialogs/delete-confirm.slint")
+            .contains("AppState.remove-canvas-note(AppState.pending-delete-id)"));
+
+        assert!(callbacks.contains("state.on_add_canvas_note"));
+        assert!(callbacks.contains("state.on_update_canvas_note"));
+        assert!(callbacks.contains("state.on_remove_canvas_note"));
+        assert!(callbacks.contains("save_local_store"));
+        assert!(local_store.contains("canvas_notes: store.canvas_notes.clone()"));
+        assert!(local_store.contains("store_mut.canvas_notes = data.canvas_notes"));
+        assert!(sync.contains("push_canvas_notes(app, store)"));
     }
 
     #[test]

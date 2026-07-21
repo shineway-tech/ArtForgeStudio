@@ -1,0 +1,356 @@
+import { AppState } from "../app-state.slint";
+import { CanvasNote } from "../types.slint";
+import { AppTheme } from "../theme.slint";
+
+component CanvasToolbarButton {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> compact: false;
+    callback clicked();
+    width: root.compact ? 38px : 112px;
+    height: 38px;
+
+    Rectangle {
+        background: touch.has-hover ? AppTheme.panel-soft : AppTheme.panel;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        Image {
+            x: root.compact ? 10px : 12px;
+            y: 10px;
+            width: 18px;
+            height: 18px;
+            source: root.icon;
+            colorize: AppTheme.accent-dark;
+            image-fit: contain;
+        }
+        if !root.compact: Text {
+            x: 38px;
+            width: parent.width - 48px;
+            height: parent.height;
+            text: root.label;
+            color: AppTheme.text;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 500;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+component CanvasNoteCard {
+    in property <CanvasNote> note;
+    in property <int> zoom-percent;
+    in property <length> pan-x;
+    in property <length> pan-y;
+    in-out property <length> drag-offset-x: 0px;
+    in-out property <length> drag-offset-y: 0px;
+
+    x: root.pan-x + root.note.x * 1px * root.zoom-percent / 100 + root.drag-offset-x;
+    y: root.pan-y + root.note.y * 1px * root.zoom-percent / 100 + root.drag-offset-y;
+    width: 280px * root.zoom-percent / 100;
+    height: 176px * root.zoom-percent / 100;
+
+    function commit-position() {
+        AppState.update-canvas-note(
+            root.note.id,
+            note-input.text,
+            root.note.x + root.drag-offset-x / 1px * 100 / root.zoom-percent,
+            root.note.y + root.drag-offset-y / 1px * 100 / root.zoom-percent
+        );
+        root.drag-offset-x = 0px;
+        root.drag-offset-y = 0px;
+    }
+
+    Rectangle {
+        background: AppTheme.panel;
+        border-radius: 7px;
+        border-width: 1px;
+        border-color: drag-touch.pressed ? AppTheme.accent : AppTheme.border;
+        clip: true;
+
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: max(28px, 34px * root.zoom-percent / 100);
+            background: AppTheme.panel-soft;
+            Text {
+                x: 12px;
+                width: parent.width - 50px;
+                height: parent.height;
+                text: AppState.en ? "Note" : "便签";
+                color: AppTheme.muted;
+                font-size: max(10px, (AppState.settings-font-size - 1) * 1px * root.zoom-percent / 100);
+                font-weight: 400;
+                vertical-alignment: center;
+            }
+            drag-touch := TouchArea {
+                property <length> start-pointer-x: 0px;
+                property <length> start-pointer-y: 0px;
+                x: 0px;
+                y: 0px;
+                width: parent.width - 38px;
+                height: parent.height;
+                pointer-event(event) => {
+                    if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                        self.start-pointer-x = self.absolute-position.x + self.mouse-x;
+                        self.start-pointer-y = self.absolute-position.y + self.mouse-y;
+                    } else if event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
+                        root.commit-position();
+                    }
+                }
+                moved => {
+                    if self.pressed {
+                        root.drag-offset-x = self.absolute-position.x + self.mouse-x - self.start-pointer-x;
+                        root.drag-offset-y = self.absolute-position.y + self.mouse-y - self.start-pointer-y;
+                    }
+                }
+            }
+            Rectangle {
+                x: parent.width - 34px;
+                y: (parent.height - 28px) / 2;
+                width: 28px;
+                height: 28px;
+                border-radius: 5px;
+                background: delete-touch.has-hover ? AppTheme.danger.with-alpha(0.12) : transparent;
+                Image {
+                    x: 7px;
+                    y: 7px;
+                    width: 14px;
+                    height: 14px;
+                    source: @image-url("../../assets/icons/trash.svg");
+                    colorize: AppTheme.danger;
+                    image-fit: contain;
+                }
+                delete-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => {
+                        AppState.pending-delete-kind = "canvas-note";
+                        AppState.pending-delete-id = root.note.id;
+                        AppState.pending-delete-source = "canvas";
+                        AppState.delete-confirm-open = true;
+                    }
+                }
+            }
+        }
+
+        note-input := TextInput {
+            x: max(10px, 14px * root.zoom-percent / 100);
+            y: max(38px, 46px * root.zoom-percent / 100);
+            width: parent.width - 2 * self.x;
+            height: parent.height - self.y - max(10px, 14px * root.zoom-percent / 100);
+            text: root.note.content;
+            single-line: false;
+            wrap: word-wrap;
+            color: AppTheme.text;
+            font-size: max(10px, AppState.settings-font-size * 1px * root.zoom-percent / 100);
+            font-weight: 400;
+            key-pressed(event) => {
+                if event.text == Key.Return {
+                    if event.modifiers.alt {
+                        return reject;
+                    }
+                    AppState.update-canvas-note(root.note.id, self.text, root.note.x, root.note.y);
+                    return accept;
+                }
+                return reject;
+            }
+        }
+    }
+}
+
+export component InfiniteCanvasPage {
+    in-out property <length> pan-x: 120px;
+    in-out property <length> pan-y: 92px;
+    in-out property <int> zoom-percent: 100;
+
+    function grid-spacing() -> length {
+        return 40px * root.zoom-percent / 100;
+    }
+
+    function grid-offset-x() -> length {
+        let offset = Math.mod(root.pan-x / 1px, root.grid-spacing() / 1px) * 1px;
+        return offset < 0px ? offset + root.grid-spacing() : offset;
+    }
+
+    function grid-offset-y() -> length {
+        let offset = Math.mod(root.pan-y / 1px, root.grid-spacing() / 1px) * 1px;
+        return offset < 0px ? offset + root.grid-spacing() : offset;
+    }
+
+    function set-zoom(next: int, anchor-x: length, anchor-y: length) {
+        let target = max(50, min(200, next));
+        let world-x = (anchor-x - root.pan-x) * 100 / root.zoom-percent;
+        let world-y = (anchor-y - root.pan-y) * 100 / root.zoom-percent;
+        root.pan-x = anchor-x - world-x * target / 100;
+        root.pan-y = anchor-y - world-y * target / 100;
+        root.zoom-percent = target;
+    }
+
+    function reset-view() {
+        root.pan-x = 120px;
+        root.pan-y = 92px;
+        root.zoom-percent = 100;
+    }
+
+    Rectangle {
+        background: AppTheme.bg;
+
+        Text {
+            x: 20px;
+            y: 0px;
+            width: parent.width - 180px;
+            height: 64px;
+            text: AppState.en ? "Infinite Canvas" : "无限画布";
+            color: AppTheme.text;
+            font-size: 22px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        CanvasToolbarButton {
+            x: parent.width - 132px;
+            y: 13px;
+            icon: @image-url("../../assets/icons/plus.svg");
+            label: AppState.en ? "Add note" : "添加便签";
+            clicked => { AppState.add-canvas-note(); }
+        }
+
+        canvas := Rectangle {
+            x: 20px;
+            y: 64px;
+            width: parent.width - 40px;
+            height: parent.height - 84px;
+            background: AppTheme.panel-soft;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            border-radius: 7px;
+            clip: true;
+
+            for column in 100: Rectangle {
+                x: root.grid-offset-x() + column * root.grid-spacing();
+                y: 0px;
+                width: 1px;
+                height: parent.height;
+                background: AppTheme.border.with-alpha(0.46);
+            }
+            for row in 70: Rectangle {
+                x: 0px;
+                y: root.grid-offset-y() + row * root.grid-spacing();
+                width: parent.width;
+                height: 1px;
+                background: AppTheme.border.with-alpha(0.46);
+            }
+
+            canvas-touch := TouchArea {
+                in-out property <length> start-pan-x: 0px;
+                in-out property <length> start-pan-y: 0px;
+                width: parent.width;
+                height: parent.height;
+                pointer-event(event) => {
+                    if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                        self.start-pan-x = root.pan-x;
+                        self.start-pan-y = root.pan-y;
+                    }
+                }
+                moved => {
+                    if self.pressed {
+                        root.pan-x = self.start-pan-x + self.mouse-x - self.pressed-x;
+                        root.pan-y = self.start-pan-y + self.mouse-y - self.pressed-y;
+                    }
+                }
+                scroll-event(event) => {
+                    if event.delta-y != 0 {
+                        root.set-zoom(root.zoom-percent + (event.delta-y > 0 ? 10 : -10), self.mouse-x, self.mouse-y);
+                        return accept;
+                    }
+                    return reject;
+                }
+            }
+
+            if AppState.canvas-notes.length == 0: Rectangle {
+                x: (parent.width - 280px) / 2;
+                y: (parent.height - 126px) / 2;
+                width: 280px;
+                height: 126px;
+                background: AppTheme.panel;
+                border-radius: 7px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+                Text {
+                    x: 16px;
+                    y: 18px;
+                    width: parent.width - 32px;
+                    height: 30px;
+                    text: AppState.en ? "Empty canvas" : "画布为空";
+                    color: AppTheme.text;
+                    font-size: 18px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                CanvasToolbarButton {
+                    x: (parent.width - 112px) / 2;
+                    y: 66px;
+                    icon: @image-url("../../assets/icons/plus.svg");
+                    label: AppState.en ? "Add note" : "添加便签";
+                    clicked => { AppState.add-canvas-note(); }
+                }
+            }
+
+            for note in AppState.canvas-notes: CanvasNoteCard {
+                note: note;
+                zoom-percent: root.zoom-percent;
+                pan-x: root.pan-x;
+                pan-y: root.pan-y;
+            }
+
+            Rectangle {
+                x: parent.width - 184px;
+                y: parent.height - 54px;
+                width: 168px;
+                height: 42px;
+                background: AppTheme.panel;
+                border-radius: 7px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+                HorizontalLayout {
+                    padding: 2px;
+                    spacing: 2px;
+                    CanvasToolbarButton {
+                        compact: true;
+                        icon: @image-url("../../assets/icons/minus.svg");
+                        clicked => { root.set-zoom(root.zoom-percent - 10, canvas.width / 2, canvas.height / 2); }
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.zoom-percent + "%";
+                        color: AppTheme.text;
+                        font-size: 12px;
+                        font-weight: 400;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    CanvasToolbarButton {
+                        compact: true;
+                        icon: @image-url("../../assets/icons/plus.svg");
+                        clicked => { root.set-zoom(root.zoom-percent + 10, canvas.width / 2, canvas.height / 2); }
+                    }
+                    CanvasToolbarButton {
+                        compact: true;
+                        icon: @image-url("../../assets/icons/fit.svg");
+                        clicked => { root.reset-view(); }
+                    }
+                }
+            }
+        }
+    }
+}
