@@ -10,6 +10,7 @@ export component CustomPromptDialog {
         AppState.custom-prompt-editor-open = false;
         AppState.custom-prompt-input = "";
         AppState.custom-prompt-message = "";
+        AppState.custom-prompt-editing-original = "";
     }
 
     if AppState.custom-prompt-editor-open: Rectangle {
@@ -32,7 +33,11 @@ export component CustomPromptDialog {
             VerticalLayout {
                 padding: 24px;
                 spacing: 12px;
-                SectionTitle { text: AppState.en ? "Add custom prompt" : "新增自定义提示词"; }
+                SectionTitle {
+                    text: AppState.custom-prompt-editing-original == ""
+                        ? (AppState.en ? "Add custom prompt" : "新增自定义提示词")
+                        : (AppState.en ? "Edit custom prompt" : "编辑自定义提示词");
+                }
                 Text {
                     height: 20px;
                     text: AppState.en ? "Prompt" : "提示词";
@@ -73,7 +78,10 @@ export component CustomPromptDialog {
                                     if event.modifiers.alt {
                                         return reject;
                                     }
-                                    AppState.add-custom-prompt(AppState.custom-prompt-input);
+                                    AppState.save-custom-prompt(
+                                        AppState.custom-prompt-editing-original,
+                                        AppState.custom-prompt-input,
+                                    );
                                     return accept;
                                 }
                                 return reject;
@@ -112,9 +120,16 @@ export component CustomPromptDialog {
                     PillButton {
                         width: 124px;
                         height: 38px;
-                        text: AppState.en ? "Add" : "确认新增";
+                        text: AppState.custom-prompt-editing-original == ""
+                            ? (AppState.en ? "Add" : "确认新增")
+                            : (AppState.en ? "Save" : "保存修改");
                         primary: true;
-                        clicked => { AppState.add-custom-prompt(AppState.custom-prompt-input); }
+                        clicked => {
+                            AppState.save-custom-prompt(
+                                AppState.custom-prompt-editing-original,
+                                AppState.custom-prompt-input,
+                            );
+                        }
                     }
                 }
             }

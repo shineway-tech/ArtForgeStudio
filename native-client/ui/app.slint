@@ -1,6 +1,6 @@
 import { AppState } from "app-state.slint";
 import { AppTheme } from "theme.slint";
-import { AccountSession, AssetGroup, AssetItem, ConversationItem, CreditRecord, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
+import { AccountSession, AssetGroup, AssetItem, ConversationItem, CreditRecord, CustomPromptItem, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 import { Sidebar } from "components/sidebar.slint";
 import { TopBar } from "components/top-bar.slint";
 import { AliPayQrDialog } from "dialogs/ali-pay-qr-dialog.slint";
@@ -26,7 +26,7 @@ import { SettingsPage } from "pages/settings-page.slint";
 import { StudioSplitPage } from "pages/studio-split-page.slint";
 import { WelcomePage } from "pages/welcome-page.slint";
 
-export { AppState, AppTheme, AccountSession, ModelGroup, ModelOption, AssetItem, AssetGroup, ConversationItem, NotificationItem, CreditRecord, ReferenceItem }
+export { AppState, AppTheme, AccountSession, ModelGroup, ModelOption, AssetItem, AssetGroup, ConversationItem, NotificationItem, CreditRecord, CustomPromptItem, ReferenceItem }
 
 export component AppWindow inherits Window {
     property <bool> invoice-open: false;

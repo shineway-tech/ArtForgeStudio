@@ -1,4 +1,4 @@
-import { AccountSession, AssetGroup, AssetItem, CatalogModelView, ConversationItem, CreditPackView, CreditRecord, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
+import { AccountSession, AssetGroup, AssetItem, CatalogModelView, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 
 export global AppState {
     callback close-payment-window();
@@ -69,8 +69,10 @@ export global AppState {
     in-out property <bool> prompt-history-open: false;
     in-out property <[string]> custom-prompts: [];
     in-out property <[string]> custom-prompt-previews: [];
+    in-out property <[CustomPromptItem]> custom-prompt-items: [];
     in-out property <string> custom-prompt-input: "";
     in-out property <string> custom-prompt-message: "";
+    in-out property <string> custom-prompt-editing-original: "";
     in-out property <bool> custom-prompt-open: false;
     in-out property <bool> custom-prompt-editor-open: false;
     in-out property <string> asset-type: "character";
@@ -275,7 +277,7 @@ export global AppState {
     callback check-version();
     callback start-update();
     callback restart-after-update();
-    callback add-custom-prompt(string);
+    callback save-custom-prompt(string, string);
     callback remove-custom-prompt(string);
     callback select-image-model(string);
     callback select-reasoning-model(string);

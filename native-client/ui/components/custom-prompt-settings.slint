@@ -27,6 +27,7 @@ export component CustomPromptSettings {
             clicked => {
                 AppState.custom-prompt-input = "";
                 AppState.custom-prompt-message = "";
+                AppState.custom-prompt-editing-original = "";
                 AppState.custom-prompt-editor-open = true;
             }
         }
@@ -40,7 +41,7 @@ export component CustomPromptSettings {
             border-width: 1px;
             border-color: AppTheme.border;
             clip: true;
-            if AppState.custom-prompts.length == 0: Text {
+            if AppState.custom-prompt-items.length == 0: Text {
                 x: 20px;
                 width: parent.width - 40px;
                 height: parent.height;
@@ -50,39 +51,79 @@ export component CustomPromptSettings {
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
-            if AppState.custom-prompts.length > 0: ScrollView {
+            if AppState.custom-prompt-items.length > 0: ScrollView {
                 x: 8px;
                 y: 8px;
                 width: parent.width - 16px;
                 height: parent.height - 16px;
                 viewport-width: self.width;
-                viewport-height: max(self.height, AppState.custom-prompts.length * 62px);
+                viewport-height: max(self.height, AppState.custom-prompt-items.length * 78px);
                 VerticalLayout {
                     width: parent.viewport-width;
                     height: parent.viewport-height;
                     spacing: 6px;
-                    for prompt in AppState.custom-prompts: Rectangle {
-                        height: 56px;
+                    for item in AppState.custom-prompt-items: Rectangle {
+                        height: 72px;
                         background: row-touch.has-hover ? AppTheme.panel-soft : transparent;
                         border-radius: 8px;
                         Text {
                             x: 12px;
-                            width: parent.width - 60px;
-                            height: parent.height;
-                            text: prompt;
+                            y: 10px;
+                            width: parent.width - 104px;
+                            height: 24px;
+                            text: item.content;
                             color: AppTheme.text;
                             font-size: 13px;
                             vertical-alignment: center;
                             wrap: no-wrap;
                             overflow: elide;
                         }
+                        Text {
+                            x: 12px;
+                            y: 38px;
+                            width: parent.width - 104px;
+                            height: 20px;
+                            text: item.time;
+                            color: AppTheme.muted;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                            wrap: no-wrap;
+                            overflow: elide;
+                        }
                         row-touch := TouchArea {
-                            width: parent.width - 48px;
+                            width: parent.width - 92px;
                             height: parent.height;
                         }
                         Rectangle {
+                            x: parent.width - 84px;
+                            y: 19px;
+                            width: 34px;
+                            height: 34px;
+                            background: edit-touch.has-hover ? AppTheme.accent.with-alpha(0.12) : transparent;
+                            border-radius: 6px;
+                            Image {
+                                x: 9px;
+                                y: 9px;
+                                width: 16px;
+                                height: 16px;
+                                source: @image-url("../../assets/icons/edit.svg");
+                                colorize: AppTheme.accent;
+                            }
+                            edit-touch := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    AppState.custom-prompt-input = item.content;
+                                    AppState.custom-prompt-editing-original = item.content;
+                                    AppState.custom-prompt-message = "";
+                                    AppState.custom-prompt-editor-open = true;
+                                }
+                            }
+                        }
+                        Rectangle {
                             x: parent.width - 42px;
-                            y: 10px;
+                            y: 19px;
                             width: 34px;
                             height: 34px;
                             background: delete-touch.has-hover ? AppTheme.danger.with-alpha(0.12) : transparent;
@@ -99,7 +140,7 @@ export component CustomPromptSettings {
                                 width: parent.width;
                                 height: parent.height;
                                 mouse-cursor: pointer;
-                                clicked => { AppState.remove-custom-prompt(prompt); }
+                                clicked => { AppState.remove-custom-prompt(item.content); }
                             }
                         }
                     }

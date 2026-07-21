@@ -165,6 +165,7 @@ struct Store {
     references: ReferenceGroups,
     prompt_drafts: PromptDrafts,
     custom_prompts: Vec<String>,
+    custom_prompt_times: BTreeMap<String, String>,
     credit_ledger_pagination: CreditLedgerPagination,
 }
 
@@ -201,6 +202,8 @@ struct LocalStoreData {
     prompt_drafts: PromptDrafts,
     #[serde(default)]
     custom_prompts: Vec<String>,
+    #[serde(default)]
+    custom_prompt_times: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

@@ -111,6 +111,7 @@ export component PromptComposer {
                         history-popup.close();
                         AppState.custom-prompt-open = true;
                         custom-prompt-popup.show();
+                        prompt-input.focus();
                         return accept;
                     }
                     if event.text == Key.Return {
@@ -125,6 +126,7 @@ export component PromptComposer {
                     if event.text == "/" && AppState.prompt == "" && AppState.prompt-history.length > 0 {
                         AppState.prompt-history-open = true;
                         history-popup.show();
+                        prompt-input.focus();
                     }
                     if event.modifiers.control && (event.text == "v" || event.text == "V") {
                         if AppState.paste-reference() {

@@ -201,6 +201,21 @@ pub(super) fn push_prompt_history(app: &AppWindow, store: &Store) {
 
 pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
     let state = app.global::<AppState>();
+    state.set_custom_prompt_items(ModelRc::new(VecModel::from(
+        store
+            .custom_prompts
+            .iter()
+            .map(|prompt| CustomPromptItem {
+                content: prompt.clone().into(),
+                time: store
+                    .custom_prompt_times
+                    .get(prompt)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into(),
+            })
+            .collect::<Vec<_>>(),
+    )));
     state.set_custom_prompt_previews(ModelRc::new(VecModel::from(
         store
             .custom_prompts

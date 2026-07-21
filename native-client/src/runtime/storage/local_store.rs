@@ -96,7 +96,7 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
         save_local_store(app, &store.borrow());
         return;
     };
-    {
+    let migrated_custom_prompt_times = {
         let mut store_mut = store.borrow_mut();
         // Legacy provider endpoints and API keys are intentionally ignored.
         store_mut.model_groups.clear();
@@ -113,13 +113,34 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
         store_mut.notifications = data.notifications;
         store_mut.prompt_drafts = data.prompt_drafts;
         store_mut.custom_prompts = normalize_custom_prompts(data.custom_prompts);
-    }
+        store_mut.custom_prompt_times = data.custom_prompt_times;
+        let original_prompt_times = store_mut.custom_prompt_times.clone();
+        let retained = store_mut
+            .custom_prompts
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        store_mut
+            .custom_prompt_times
+            .retain(|prompt, _| retained.contains(prompt));
+        let migration_time = Local::now().format("%Y-%m-%d %H:%M").to_string();
+        for prompt in store_mut.custom_prompts.clone() {
+            store_mut
+                .custom_prompt_times
+                .entry(prompt)
+                .or_insert_with(|| migration_time.clone());
+        }
+        store_mut.custom_prompt_times != original_prompt_times
+    };
     let state = app.global::<AppState>();
     state.set_image_model("".into());
     state.set_reasoning_model("".into());
     let category = resolve_category(&state.get_asset_type().to_string(), "");
     state.set_asset_type(category.clone().into());
     state.set_prompt(prompt_draft_for_category(&store.borrow().prompt_drafts, &category).into());
+    if migrated_custom_prompt_times {
+        save_local_store(app, &store.borrow());
+    }
 }
 
 pub(super) fn prompt_draft_for_category(drafts: &PromptDrafts, category: &str) -> String {
@@ -150,23 +171,47 @@ pub(super) fn store_current_prompt_draft(app: &AppWindow, store: &Rc<RefCell<Sto
 pub(super) const MAX_CUSTOM_PROMPTS: usize = 100;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum AddCustomPromptResult {
-    Added,
+pub(super) enum SaveCustomPromptResult {
+    Saved,
     Empty,
     Duplicate,
+    Missing,
 }
 
-pub(super) fn add_custom_prompt_to_store(store: &mut Store, raw: &str) -> AddCustomPromptResult {
+pub(super) fn save_custom_prompt_to_store(
+    store: &mut Store,
+    original: &str,
+    raw: &str,
+    timestamp: &str,
+) -> SaveCustomPromptResult {
     let prompt = raw.trim();
     if prompt.is_empty() {
-        return AddCustomPromptResult::Empty;
+        return SaveCustomPromptResult::Empty;
     }
-    if store.custom_prompts.iter().any(|item| item == prompt) {
-        return AddCustomPromptResult::Duplicate;
+    let original = original.trim();
+    if store
+        .custom_prompts
+        .iter()
+        .any(|item| item == prompt && item != original)
+    {
+        return SaveCustomPromptResult::Duplicate;
     }
-    store.custom_prompts.insert(0, prompt.to_string());
+    if original.is_empty() {
+        store.custom_prompts.insert(0, prompt.to_string());
+    } else {
+        let Some(index) = store.custom_prompts.iter().position(|item| item == original) else {
+            return SaveCustomPromptResult::Missing;
+        };
+        store.custom_prompts[index] = prompt.to_string();
+        store.custom_prompt_times.remove(original);
+    }
+    store
+        .custom_prompt_times
+        .insert(prompt.to_string(), timestamp.to_string());
     store.custom_prompts.truncate(MAX_CUSTOM_PROMPTS);
-    AddCustomPromptResult::Added
+    let retained = store.custom_prompts.iter().cloned().collect::<BTreeSet<_>>();
+    store.custom_prompt_times.retain(|item, _| retained.contains(item));
+    SaveCustomPromptResult::Saved
 }
 
 pub(super) fn remove_custom_prompt_from_store(store: &mut Store, prompt: &str) -> bool {
@@ -174,6 +219,7 @@ pub(super) fn remove_custom_prompt_from_store(store: &mut Store, prompt: &str) -
         return false;
     };
     store.custom_prompts.remove(index);
+    store.custom_prompt_times.remove(prompt);
     true
 }
 
@@ -309,6 +355,7 @@ pub(super) fn save_local_store(app: &AppWindow, store: &Store) {
         reasoning_model: state.get_reasoning_model().to_string(),
         prompt_drafts: store.prompt_drafts.clone(),
         custom_prompts: store.custom_prompts.clone(),
+        custom_prompt_times: store.custom_prompt_times.clone(),
     };
     if let Ok(text) = serde_json::to_string_pretty(&data) {
         let path = local_store_path();

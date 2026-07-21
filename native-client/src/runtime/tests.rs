@@ -163,19 +163,46 @@ mod tests {
 
         let mut store = Store::default();
         assert_eq!(
-            add_custom_prompt_to_store(&mut store, "  saved prompt  "),
-            AddCustomPromptResult::Added
+            save_custom_prompt_to_store(&mut store, "", "  saved prompt  ", "2026-07-21 10:00"),
+            SaveCustomPromptResult::Saved
         );
         assert_eq!(
-            add_custom_prompt_to_store(&mut store, "saved prompt"),
-            AddCustomPromptResult::Duplicate
+            store.custom_prompt_times.get("saved prompt").map(String::as_str),
+            Some("2026-07-21 10:00")
         );
         assert_eq!(
-            add_custom_prompt_to_store(&mut store, "   "),
-            AddCustomPromptResult::Empty
+            save_custom_prompt_to_store(&mut store, "", "saved prompt", "2026-07-21 10:01"),
+            SaveCustomPromptResult::Duplicate
+        );
+        assert_eq!(
+            save_custom_prompt_to_store(&mut store, "", "   ", "2026-07-21 10:02"),
+            SaveCustomPromptResult::Empty
+        );
+        assert_eq!(
+            save_custom_prompt_to_store(
+                &mut store,
+                "saved prompt",
+                "edited prompt",
+                "2026-07-21 10:03",
+            ),
+            SaveCustomPromptResult::Saved
+        );
+        assert!(!store.custom_prompt_times.contains_key("saved prompt"));
+        assert_eq!(
+            store.custom_prompt_times.get("edited prompt").map(String::as_str),
+            Some("2026-07-21 10:03")
+        );
+        assert_eq!(
+            save_custom_prompt_to_store(&mut store, "missing", "other", "2026-07-21 10:04"),
+            SaveCustomPromptResult::Missing
         );
         for index in 0..110 {
-            let _ = add_custom_prompt_to_store(&mut store, &format!("prompt-{index}"));
+            let _ = save_custom_prompt_to_store(
+                &mut store,
+                "",
+                &format!("prompt-{index}"),
+                "2026-07-21 10:05",
+            );
         }
         assert_eq!(store.custom_prompts.len(), MAX_CUSTOM_PROMPTS);
         assert!(remove_custom_prompt_from_store(&mut store, "prompt-109"));
@@ -194,18 +221,22 @@ mod tests {
         let callbacks = include_str!("callbacks/custom_prompt.rs");
 
         assert!(state.contains("in-out property <[string]> custom-prompts"));
+        assert!(state.contains("in-out property <[CustomPromptItem]> custom-prompt-items"));
         assert!(state.contains("in-out property <bool> custom-prompt-editor-open"));
-        assert!(state.contains("callback add-custom-prompt(string)"));
+        assert!(state.contains("callback save-custom-prompt(string, string)"));
         assert!(state.contains("callback remove-custom-prompt(string)"));
         assert!(app.contains("CustomPromptDialog"));
         assert!(settings.contains("CustomPromptSettings"));
         assert!(settings.contains("自定义提示词"));
         assert!(custom_settings.contains("text: AppState.en ? \"Add\" : \"新增\""));
         assert!(custom_settings.contains("AppState.custom-prompt-editor-open = true"));
+        assert!(custom_settings.contains("for item in AppState.custom-prompt-items"));
+        assert!(custom_settings.contains("text: item.time"));
+        assert!(custom_settings.contains("assets/icons/edit.svg"));
         assert!(custom_settings.contains("AppState.remove-custom-prompt"));
         assert!(custom_dialog.contains("event.text == Key.Return"));
         assert!(custom_dialog.contains("event.modifiers.alt"));
-        assert!(custom_dialog.contains("AppState.add-custom-prompt"));
+        assert!(custom_dialog.contains("AppState.save-custom-prompt"));
 
         assert!(composer.contains("event.text == \"/\" && AppState.prompt == \"/\""));
         assert!(composer.contains("AppState.prompt = \"//\";"));
@@ -217,12 +248,20 @@ mod tests {
         assert!(double_slash_handler.contains("return accept;"));
         assert!(composer.contains("history-popup.close()"));
         assert!(composer.contains("custom-prompt-popup.show()"));
+        let composer_normalized = composer.replace("\r\n", "\n");
+        assert!(composer_normalized.contains(
+            "custom-prompt-popup.show();\n                        prompt-input.focus();"
+        ));
+        assert!(composer_normalized
+            .contains("history-popup.show();\n                        prompt-input.focus();"));
         assert!(composer.contains("for preview[index] in AppState.custom-prompt-previews"));
         assert!(composer.contains("close-policy: close-on-click-outside"));
 
         assert!(local_store.contains("custom_prompts: store.custom_prompts.clone()"));
+        assert!(local_store.contains("custom_prompt_times: store.custom_prompt_times.clone()"));
         assert!(local_store.contains("normalize_custom_prompts(data.custom_prompts)"));
         assert!(callbacks.contains("save_local_store(&app, &store.borrow())"));
+        assert!(callbacks.contains("state.on_save_custom_prompt"));
         assert!(callbacks.contains("state.set_custom_prompt_editor_open(false)"));
     }
 
