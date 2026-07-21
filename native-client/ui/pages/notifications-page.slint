@@ -41,7 +41,12 @@ export component NotificationsPage {
                         text: AppState.en ? "Delete all" : "一键删除";
                         danger: true;
                         disabled: AppState.notifications.length == 0;
-                        clicked => { AppState.clear-all-notifications(); }
+                        clicked => {
+                            AppState.pending-delete-kind = "notifications-all";
+                            AppState.pending-delete-id = "";
+                            AppState.pending-delete-source = "";
+                            AppState.delete-confirm-open = true;
+                        }
                     }
                 }
                 ScrollView {
@@ -83,7 +88,12 @@ export component NotificationsPage {
                                 height: 30px;
                                 text: AppState.en ? "Delete" : "删除";
                                 danger: true;
-                                clicked => { AppState.delete-notification(item.id); }
+                                clicked => {
+                                    AppState.pending-delete-kind = "notification";
+                                    AppState.pending-delete-id = item.id;
+                                    AppState.pending-delete-source = "";
+                                    AppState.delete-confirm-open = true;
+                                }
                             }
                         }
                     }

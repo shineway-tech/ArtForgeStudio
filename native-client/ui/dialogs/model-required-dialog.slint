@@ -24,7 +24,16 @@ export component ModelRequiredDialog {
                 HorizontalLayout {
                     spacing: 10px;
                     PillButton { horizontal-stretch: 1; text: AppState.en ? "Cancel" : "取消"; clicked => { AppState.model-required-open = false; } }
-                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Add Now" : "立即添加"; primary: true; clicked => { AppState.model-required-open = false; AppState.navigate("models"); } }
+                    PillButton {
+                        horizontal-stretch: 1;
+                        text: AppState.en ? "View Models" : "查看模型";
+                        primary: true;
+                        clicked => {
+                            AppState.model-required-open = false;
+                            AppState.settings-section = "models";
+                            AppState.navigate("settings");
+                        }
+                    }
                 }
             }
         }

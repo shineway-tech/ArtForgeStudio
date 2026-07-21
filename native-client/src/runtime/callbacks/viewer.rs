@@ -272,6 +272,7 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
         state.on_request_delete_asset(move |id| {
             if let Some(app) = app_weak.upgrade() {
                 let state = app.global::<AppState>();
+                state.set_pending_delete_kind("asset".into());
                 state.set_pending_delete_id(id);
                 state.set_pending_delete_source(state.get_viewer_source());
                 state.set_delete_confirm_open(true);
@@ -284,6 +285,7 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
         state.on_request_delete_thumbnail(move |id, source| {
             if let Some(app) = app_weak.upgrade() {
                 let state = app.global::<AppState>();
+                state.set_pending_delete_kind("asset".into());
                 state.set_pending_delete_id(id);
                 state.set_pending_delete_source(source);
                 state.set_delete_confirm_open(true);

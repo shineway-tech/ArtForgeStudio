@@ -6,18 +6,33 @@ import { DirRow } from "../components/dir-row.slint";
 import { FontPicker } from "../components/font-picker.slint";
 import { FontStepButton } from "../components/font-step-button.slint";
 import { LoadingDots } from "../components/loading-dots.slint";
+import { ModelsPage } from "models-page.slint";
 import { PillButton } from "../components/pill-button.slint";
 import { ThemeTile } from "../components/theme-tile.slint";
 import { AppTheme } from "../theme.slint";
 
 export component SettingsPage {
+    function models-height() -> length {
+        if AppState.catalog-models.length == 0 {
+            return 360px;
+        }
+        return 132px + AppState.catalog-models.length * 148px;
+    }
+
+    function page-height() -> length {
+        if AppState.settings-section == "models" {
+            return max(960px, 126px + root.models-height());
+        }
+        return 960px;
+    }
+
     Rectangle {
         background: AppTheme.bg;
         ScrollView {
             width: parent.width;
             height: parent.height;
             viewport-width: parent.width;
-            viewport-height: max(960px, parent.height);
+            viewport-height: max(root.page-height(), parent.height);
             Rectangle {
                 property <length> left-w: 250px;
                 property <length> gap: 28px;
@@ -26,7 +41,7 @@ export component SettingsPage {
                 x: 0px;
                 y: 0px;
                 width: parent.width;
-                height: max(960px, parent.height);
+                height: max(root.page-height(), parent.height);
                 background: transparent;
 
                 Rectangle {
@@ -68,6 +83,18 @@ export component SettingsPage {
                         y: 250px;
                         width: parent.width - 32px;
                         height: 62px;
+                        background: AppState.settings-section == "models" ? AppTheme.panel-soft : transparent;
+                        border-radius: 10px;
+                        if AppState.settings-section == "models": Rectangle { x: 0px; y: 14px; width: 3px; height: 24px; border-radius: 2px; background: AppTheme.accent; }
+                        Text { x: 18px; y: 10px; text: AppState.en ? "Model Management" : "模型管理"; color: AppState.settings-section == "models" ? AppTheme.text : AppTheme.muted; font-size: 14px; font-weight: 400; }
+                        Text { x: 18px; y: 34px; text: AppState.en ? "Models and pricing" : "服务模型与计费"; color: AppTheme.weak; font-size: 12px; font-weight: 400; }
+                        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.settings-section = "models"; } }
+                    }
+                    Rectangle {
+                        x: 16px;
+                        y: 332px;
+                        width: parent.width - 32px;
+                        height: 62px;
                         background: AppState.settings-section == "about" ? AppTheme.panel-soft : transparent;
                         border-radius: 10px;
                         if AppState.settings-section == "about": Rectangle { x: 0px; y: 14px; width: 3px; height: 24px; border-radius: 2px; background: AppTheme.accent; }
@@ -83,7 +110,9 @@ export component SettingsPage {
                     width: content-w;
                     text: AppState.settings-section == "about"
                         ? (AppState.en ? "About" : "关于")
-                        : (AppState.settings-section == "prompts" ? (AppState.en ? "Custom prompts" : "自定义提示词") : (AppState.en ? "Basic Settings" : "基础设置"));
+                        : (AppState.settings-section == "models"
+                            ? (AppState.en ? "Model Management" : "模型管理")
+                            : (AppState.settings-section == "prompts" ? (AppState.en ? "Custom prompts" : "自定义提示词") : (AppState.en ? "Basic Settings" : "基础设置")));
                     color: AppTheme.text;
                     font-size: 24px;
                     font-weight: 600;
@@ -155,6 +184,12 @@ export component SettingsPage {
                     y: 96px;
                     width: content-w;
                     height: parent.height - 126px;
+                }
+                if AppState.settings-section == "models": ModelsPage {
+                    x: content-x;
+                    y: 96px;
+                    width: content-w;
+                    height: root.models-height();
                 }
                 if AppState.settings-section == "about": Rectangle {
                     x: content-x;

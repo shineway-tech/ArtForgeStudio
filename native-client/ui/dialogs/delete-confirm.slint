@@ -4,6 +4,26 @@ import { PillButton } from "../components/pill-button.slint";
 import { AppTheme } from "../theme.slint";
 
 export component DeleteConfirm {
+    function close-dialog() {
+        AppState.delete-confirm-open = false;
+        AppState.pending-delete-kind = "";
+        AppState.pending-delete-id = "";
+        AppState.pending-delete-source = "";
+    }
+
+    function confirm-pending-delete() {
+        if AppState.pending-delete-kind == "custom-prompt" {
+            AppState.remove-custom-prompt(AppState.pending-delete-id);
+        } else if AppState.pending-delete-kind == "notification" {
+            AppState.delete-notification(AppState.pending-delete-id);
+        } else if AppState.pending-delete-kind == "notifications-all" {
+            AppState.clear-all-notifications();
+        } else {
+            AppState.confirm-delete();
+        }
+        root.close-dialog();
+    }
+
     if AppState.delete-confirm-open: Rectangle {
         background: #00000055;
         TouchArea { width: parent.width; height: parent.height; }
@@ -16,16 +36,36 @@ export component DeleteConfirm {
             border-radius: 14px;
             border-width: 1px;
             border-color: AppTheme.border;
-            DialogCloseButton { x: parent.width - 42px; y: 12px; clicked => { AppState.delete-confirm-open = false; } }
+            DialogCloseButton { x: parent.width - 42px; y: 12px; clicked => { root.close-dialog(); } }
             VerticalLayout {
                 padding: 22px;
                 spacing: 18px;
-                Text { text: AppState.en ? "Delete this asset?" : "确认删除这个资产？"; color: AppTheme.text; font-size: 18px; font-weight: 600; }
-                Text { text: AppState.en ? "It will be removed from My Assets." : "删除后将从我的资产中移除。"; color: AppTheme.muted; font-size: 13px; font-weight: 400; }
+                Text {
+                    text: AppState.pending-delete-kind == "custom-prompt"
+                        ? (AppState.en ? "Delete this prompt?" : "确认删除这条提示词？")
+                        : (AppState.pending-delete-kind == "notification"
+                            ? (AppState.en ? "Delete this notification?" : "确认删除这条通知？")
+                            : (AppState.pending-delete-kind == "notifications-all"
+                                ? (AppState.en ? "Delete all notifications?" : "确认删除全部通知？")
+                                : (AppState.en ? "Delete this asset?" : "确认删除这个资产？")));
+                    color: AppTheme.text;
+                    font-size: 18px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: AppState.pending-delete-kind == "notifications-all"
+                        ? (AppState.en ? "All notifications will be permanently deleted." : "所有通知都将被删除，且无法恢复。")
+                        : (AppState.pending-delete-kind == "custom-prompt" || AppState.pending-delete-kind == "notification"
+                            ? (AppState.en ? "This action cannot be undone." : "删除后无法恢复。")
+                            : (AppState.en ? "It will be removed from My Assets." : "删除后将从我的资产中移除。"));
+                    color: AppTheme.muted;
+                    font-size: 13px;
+                    font-weight: 400;
+                }
                 HorizontalLayout {
                     spacing: 10px;
-                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Cancel" : "取消"; clicked => { AppState.delete-confirm-open = false; } }
-                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.confirm-delete(); } }
+                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Cancel" : "取消"; clicked => { root.close-dialog(); } }
+                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { root.confirm-pending-delete(); } }
                 }
             }
         }

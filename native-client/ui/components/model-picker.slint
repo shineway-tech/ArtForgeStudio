@@ -68,7 +68,12 @@ export component ModelPicker {
                     if root.option-count() == 0: IconButton {
                         width: root.width - 12px;
                         text: AppState.en ? "Add a model first" : "请先添加模型";
-                        clicked => { root.open = false; popup.close(); AppState.navigate("models"); }
+                        clicked => {
+                            root.open = false;
+                            popup.close();
+                            AppState.settings-section = "models";
+                            AppState.navigate("settings");
+                        }
                     }
                     if root.kind == "image": VerticalLayout {
                         spacing: 4px;

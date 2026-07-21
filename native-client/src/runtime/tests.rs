@@ -235,7 +235,8 @@ mod tests {
         assert!(custom_settings.contains("for item in AppState.custom-prompt-items"));
         assert!(custom_settings.contains("text: item.time"));
         assert!(custom_settings.contains("assets/icons/edit.svg"));
-        assert!(custom_settings.contains("AppState.remove-custom-prompt"));
+        assert!(custom_settings.contains("AppState.pending-delete-kind = \"custom-prompt\""));
+        assert!(custom_settings.contains("AppState.delete-confirm-open = true"));
         assert!(custom_dialog.contains("event.text == Key.Return"));
         assert!(custom_dialog.contains("event.modifiers.alt"));
         assert!(custom_dialog.contains("AppState.save-custom-prompt"));
@@ -404,8 +405,8 @@ mod tests {
         assert!(page.contains("\"成功说明：\" + item.reason"));
         assert!(page.contains("\"失败原因：\" + item.reason"));
         assert!(page.contains("color: item.success ? AppTheme.success : AppTheme.danger"));
-        assert!(page.contains("AppState.delete-notification(item.id)"));
-        assert!(page.contains("AppState.clear-all-notifications()"));
+        assert!(page.contains("AppState.pending-delete-kind = \"notification\""));
+        assert!(page.contains("AppState.pending-delete-kind = \"notifications-all\""));
         assert!(page.contains("一键删除"));
         assert!(api.contains("Method::DELETE"));
         assert!(api.contains("/v1/notifications/{id}"));
@@ -434,6 +435,63 @@ mod tests {
             read_at: None,
         };
         assert!(notification_is_success(&completed));
+    }
+
+    #[test]
+    fn permanent_delete_actions_require_shared_confirmation() {
+        let state = include_str!("../../ui/app-state.slint");
+        let dialog = include_str!("../../ui/dialogs/delete-confirm.slint");
+        let prompts = include_str!("../../ui/components/custom-prompt-settings.slint");
+        let notifications = include_str!("../../ui/pages/notifications-page.slint");
+        let viewer_callbacks = include_str!("callbacks/viewer.rs");
+
+        assert!(state.contains("in-out property <string> pending-delete-kind"));
+        assert!(dialog.contains("AppState.pending-delete-kind == \"custom-prompt\""));
+        assert!(dialog.contains("AppState.pending-delete-kind == \"notification\""));
+        assert!(dialog.contains("AppState.pending-delete-kind == \"notifications-all\""));
+        assert!(dialog.contains("AppState.remove-custom-prompt(AppState.pending-delete-id)"));
+        assert!(dialog.contains("AppState.delete-notification(AppState.pending-delete-id)"));
+        assert!(dialog.contains("AppState.clear-all-notifications()"));
+        assert!(dialog.contains("AppState.confirm-delete()"));
+
+        assert!(prompts.contains("AppState.pending-delete-kind = \"custom-prompt\""));
+        assert!(prompts.contains("AppState.delete-confirm-open = true"));
+        assert!(!prompts.contains(
+            "clicked => { AppState.remove-custom-prompt(item.content); }"
+        ));
+        assert!(notifications.contains("AppState.pending-delete-kind = \"notification\""));
+        assert!(notifications.contains("AppState.pending-delete-kind = \"notifications-all\""));
+        assert!(!notifications.contains(
+            "clicked => { AppState.delete-notification(item.id); }"
+        ));
+        assert!(!notifications.contains(
+            "clicked => { AppState.clear-all-notifications(); }"
+        ));
+        assert!(viewer_callbacks.contains("state.set_pending_delete_kind(\"asset\".into())"));
+    }
+
+    #[test]
+    fn model_management_is_a_settings_section() {
+        let app = include_str!("../../ui/app.slint");
+        let sidebar = include_str!("../../ui/components/sidebar.slint");
+        let settings = include_str!("../../ui/pages/settings-page.slint");
+        let model_page = include_str!("../../ui/pages/models-page.slint");
+        let model_picker = include_str!("../../ui/components/model-picker.slint");
+        let required_dialog = include_str!("../../ui/dialogs/model-required-dialog.slint");
+
+        assert!(!app.contains("AppState.page == \"models\""));
+        assert!(!sidebar.contains("page: \"models\""));
+        assert!(settings.contains("import { ModelsPage }"));
+        assert!(settings.contains("AppState.settings-section == \"models\""));
+        assert!(settings.contains("ModelsPage"));
+        assert!(settings.contains("AppState.catalog-models.length * 148px"));
+        assert!(!model_page.contains("ScrollView"));
+
+        for source in [model_picker, required_dialog] {
+            assert!(source.contains("AppState.settings-section = \"models\""));
+            assert!(source.contains("AppState.navigate(\"settings\")"));
+            assert!(!source.contains("AppState.navigate(\"models\")"));
+        }
     }
 
     #[test]
@@ -617,12 +675,13 @@ mod tests {
         assert!(agreement_viewer.contains("height: parent.height - 120px;"));
         assert!(update_progress.contains("height: 42px;"));
 
-        assert!(models.contains("function content-height() -> length"));
-        assert!(models.contains("AppState.catalog-models.length * 148px"));
-        assert!(models.contains("viewport-height: root.content-height() + 48px;"));
+        assert!(!models.contains("ScrollView"));
+        assert!(settings.contains("function models-height() -> length"));
+        assert!(settings.contains("AppState.catalog-models.length * 148px"));
+        assert!(settings.contains("function page-height() -> length"));
         assert!(notifications.contains("function list-height() -> length"));
         assert!(notifications.contains("viewport-height: root.list-height();"));
-        assert!(settings.contains("viewport-height: max(960px, parent.height);"));
+        assert!(settings.contains("viewport-height: max(root.page-height(), parent.height);"));
     }
 
     #[test]

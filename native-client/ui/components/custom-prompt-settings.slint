@@ -140,7 +140,12 @@ export component CustomPromptSettings {
                                 width: parent.width;
                                 height: parent.height;
                                 mouse-cursor: pointer;
-                                clicked => { AppState.remove-custom-prompt(item.content); }
+                                clicked => {
+                                    AppState.pending-delete-kind = "custom-prompt";
+                                    AppState.pending-delete-id = item.content;
+                                    AppState.pending-delete-source = "";
+                                    AppState.delete-confirm-open = true;
+                                }
                             }
                         }
                     }

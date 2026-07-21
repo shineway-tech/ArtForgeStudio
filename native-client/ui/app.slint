@@ -20,7 +20,6 @@ import { ViewerOverlay } from "dialogs/viewer-overlay.slint";
 import { AssetsPage } from "pages/assets-page.slint";
 import { CreditsPage } from "pages/credits-page.slint";
 import { InspirationPage } from "pages/inspiration-page.slint";
-import { ModelsPage } from "pages/models-page.slint";
 import { NotificationsPage } from "pages/notifications-page.slint";
 import { SettingsPage } from "pages/settings-page.slint";
 import { StudioSplitPage } from "pages/studio-split-page.slint";
@@ -64,7 +63,6 @@ export component AppWindow inherits Window {
                     height: parent.height;
                     open-invoice => { root.invoice-open = true; }
                 }
-                if AppState.page == "models": ModelsPage { width: parent.width; height: parent.height; }
                 if AppState.page == "settings": SettingsPage { width: parent.width; height: parent.height; }
             }
         }
