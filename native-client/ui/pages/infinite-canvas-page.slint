@@ -126,6 +126,194 @@ component CanvasToggle {
     }
 }
 
+component CanvasMediaAction {
+    in property <image> icon;
+    in property <string> text;
+    in property <bool> danger: false;
+    callback clicked();
+    height: 38px;
+    Rectangle {
+        background: action-touch.has-hover ? (root.danger ? #fee9e7 : #ebe9e7) : transparent;
+        border-radius: 6px;
+        Image {
+            x: 8px;
+            y: (parent.height - 16px) / 2;
+            width: 16px;
+            height: 16px;
+            source: root.icon;
+            colorize: root.danger ? #d7473f : #302c29;
+            image-fit: contain;
+        }
+        Text {
+            x: 30px;
+            width: parent.width - 36px;
+            height: parent.height;
+            text: root.text;
+            color: root.danger ? #d7473f : #302c29;
+            font-size: 13px;
+            vertical-alignment: center;
+            wrap: no-wrap;
+            overflow: elide;
+        }
+        action-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+component CanvasMediaChip {
+    in property <image> icon;
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> disabled: false;
+    callback clicked();
+    height: 38px;
+    Rectangle {
+        opacity: root.disabled ? 0.48 : 1;
+        background: chip-touch.has-hover && !root.disabled ? #34302d : #292624;
+        border-radius: 19px;
+        border-width: 1px;
+        border-color: root.active ? #ddd7d1 : #4c4743;
+        Image {
+            x: 12px;
+            y: (parent.height - 16px) / 2;
+            width: 16px;
+            height: 16px;
+            source: root.icon;
+            colorize: #eee9e4;
+            image-fit: contain;
+        }
+        Text {
+            x: 36px;
+            width: parent.width - 58px;
+            height: parent.height;
+            text: root.text;
+            color: #eee9e4;
+            font-size: 13px;
+            font-weight: 500;
+            vertical-alignment: center;
+            wrap: no-wrap;
+            overflow: elide;
+        }
+        Image {
+            x: parent.width - 22px;
+            y: (parent.height - 12px) / 2;
+            width: 12px;
+            height: 12px;
+            source: @image-url("../../assets/icons/dropdown.svg");
+            colorize: #a9a29c;
+            image-fit: contain;
+        }
+        chip-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: root.disabled ? default : pointer;
+            clicked => { if !root.disabled { root.clicked(); } }
+        }
+    }
+}
+
+component CanvasOptionPill {
+    in property <string> text;
+    in property <bool> selected: false;
+    callback clicked();
+    height: 36px;
+    Rectangle {
+        background: option-touch.has-hover ? #393532 : transparent;
+        border-radius: 18px;
+        border-width: root.selected ? 2px : 1px;
+        border-color: root.selected ? #f2eee9 : #514c48;
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.text;
+            color: #f0ebe7;
+            font-size: 13px;
+            font-weight: root.selected ? 600 : 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: no-wrap;
+            overflow: elide;
+        }
+        option-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+component CanvasRatioOption {
+    in property <string> value;
+    in property <string> label;
+    in property <string> detail: "";
+    in property <bool> selected: false;
+    callback clicked();
+    height: 66px;
+    Rectangle {
+        background: ratio-touch.has-hover ? #393532 : transparent;
+        border-radius: 8px;
+        border-width: root.selected ? 2px : 1px;
+        border-color: root.selected ? #f2eee9 : #514c48;
+        Rectangle {
+            x: (parent.width - root.preview-width()) / 2;
+            y: 10px;
+            width: root.preview-width();
+            height: root.preview-height();
+            background: transparent;
+            border-width: 2px;
+            border-color: #f2eee9;
+        }
+        Text {
+            x: 4px;
+            y: 34px;
+            width: parent.width - 8px;
+            height: root.detail == "" ? 25px : 17px;
+            text: root.label;
+            color: #f0ebe7;
+            font-size: 12px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: no-wrap;
+            overflow: elide;
+        }
+        if root.detail != "": Text {
+            x: 4px;
+            y: 50px;
+            width: parent.width - 8px;
+            height: 13px;
+            text: root.detail;
+            color: #8f8882;
+            font-size: 9px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: no-wrap;
+            overflow: elide;
+        }
+        ratio-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+    function preview-width() -> length {
+        if root.value == "2:3" || root.value == "3:4" || root.value == "9:16" || root.value == "portrait" || root.value == "tall" { return 12px; }
+        if root.value == "3:2" || root.value == "4:3" || root.value == "16:9" || root.value == "landscape" || root.value == "wide" { return 24px; }
+        return 18px;
+    }
+    function preview-height() -> length {
+        if root.value == "2:3" || root.value == "3:4" || root.value == "9:16" || root.value == "portrait" || root.value == "tall" { return 20px; }
+        if root.value == "3:2" || root.value == "4:3" || root.value == "16:9" || root.value == "landscape" || root.value == "wide" { return 14px; }
+        return 18px;
+    }
+}
+
 component CanvasNodeCard {
     in property <CanvasNote> note;
     in property <int> zoom-percent;
@@ -133,10 +321,21 @@ component CanvasNodeCard {
     in property <length> pan-y;
     in property <bool> show-image-info;
     in property <bool> dark-background;
+    in property <length> viewport-width;
+    in property <length> viewport-height;
     in-out property <length> drag-offset-x: 0px;
     in-out property <length> drag-offset-y: 0px;
     in-out property <string> current-content: root.note.content;
     in-out property <bool> editing: false;
+    in-out property <bool> media-model-open: false;
+    in-out property <bool> media-settings-open: false;
+    in-out property <string> video-quality: "720p";
+    in-out property <string> video-layout: "square";
+    in-out property <string> video-duration: "6s";
+    in-out property <string> audio-voice: "Alloy";
+    in-out property <string> audio-format: "MP3";
+    in-out property <string> audio-speed: "1x";
+    in-out property <string> audio-instruction: "";
 
     x: root.pan-x + root.note.x * 1px * root.zoom-percent / 100 + root.drag-offset-x;
     y: root.pan-y + root.note.y * 1px * root.zoom-percent / 100 + root.drag-offset-y;
@@ -149,6 +348,116 @@ component CanvasNodeCard {
         if root.note.kind == "audio" { return AppState.en ? "Audio" : "音频"; }
         if root.note.kind == "group" { return AppState.en ? "Group" : "分组"; }
         return AppState.en ? "Text" : "文本";
+    }
+
+    function is-visual-media() -> bool {
+        return root.note.kind == "image" || root.note.kind == "video" || root.note.kind == "audio";
+    }
+
+    function empty-media-label() -> string {
+        if root.note.kind == "image" { return AppState.en ? "Empty image node" : "空图片节点"; }
+        if root.note.kind == "video" { return AppState.en ? "Empty video node" : "空视频节点"; }
+        return AppState.en ? "Empty audio node" : "空音频节点";
+    }
+
+    function media-prompt-placeholder() -> string {
+        if root.note.kind == "image" { return AppState.en ? "Describe the image to generate" : "描述要生成的图片内容"; }
+        if root.note.kind == "video" { return AppState.en ? "Describe the video to generate" : "描述要生成的视频内容"; }
+        return AppState.en ? "Describe the audio to generate" : "描述要生成的音频内容";
+    }
+
+    function media-editor-width() -> length {
+        return max(root.width, min(590px, (root.note.kind == "image" ? 540px : 580px) * root.zoom-percent / 100));
+    }
+
+    function media-editor-height() -> length {
+        return max(128px, 180px * root.zoom-percent / 100);
+    }
+
+    function media-editor-y() -> length {
+        let gap = max(16px, 20px * root.zoom-percent / 100);
+        let below = root.height + gap;
+        if root.y + below + root.media-editor-height() <= root.viewport-height - 8px {
+            return below;
+        }
+        return max(8px - root.y, -root.media-editor-height() - gap);
+    }
+
+    function dropdown-popup-x(popup-width: length) -> length {
+        let preferred = (root.width - root.media-editor-width()) / 2 + max(54px, 64px * root.zoom-percent / 100);
+        return max(8px - root.x, min(preferred, root.viewport-width - popup-width - root.x - 8px));
+    }
+
+    function dropdown-popup-y(popup-height: length) -> length {
+        let preferred = root.media-editor-y() + root.media-editor-height() + max(10px, 16px * root.zoom-percent / 100);
+        return max(8px - root.y, min(preferred, root.viewport-height - popup-height - root.y - 8px));
+    }
+
+    function settings-popup-x(popup-width: length) -> length {
+        return max(8px - root.x, min(root.width + 16px, root.viewport-width - popup-width - root.x - 8px));
+    }
+
+    function settings-popup-y(popup-height: length) -> length {
+        return max(8px - root.y, min(-32px, root.viewport-height - popup-height - root.y - 8px));
+    }
+
+    function media-model-text() -> string {
+        if root.note.kind == "image" {
+            return AppState.image-model-name == "" ? (AppState.en ? "Select image model" : "选择图片模型") : AppState.image-model-name;
+        }
+        if root.note.kind == "video" { return AppState.en ? "Video model not configured" : "未配置视频模型"; }
+        return AppState.en ? "Audio model not configured" : "未配置音频模型";
+    }
+
+    function media-settings-text() -> string {
+        if root.note.kind == "image" { return (AppState.en ? "Auto" : "自动") + " · " + AppState.ratio + " · " + AppState.count + (AppState.en ? " images" : "张"); }
+        if root.note.kind == "video" { return root.video-quality + " · " + root.video-layout-label() + " · " + root.video-duration; }
+        return root.audio-voice + " · " + root.audio-format + " · " + root.audio-speed;
+    }
+
+    function video-layout-label() -> string {
+        if root.video-layout == "landscape" { return AppState.en ? "Landscape" : "横屏"; }
+        if root.video-layout == "portrait" { return AppState.en ? "Portrait" : "竖屏"; }
+        if root.video-layout == "wide" { return AppState.en ? "Wide" : "宽屏"; }
+        if root.video-layout == "tall" { return AppState.en ? "Tall" : "长图"; }
+        if root.video-layout == "auto" { return "auto"; }
+        return AppState.en ? "Square" : "方形";
+    }
+
+    function image-width-text() -> string {
+        if AppState.ratio == "2:3" { return "680"; }
+        if AppState.ratio == "3:4" { return "768"; }
+        if AppState.ratio == "4:5" { return "816"; }
+        if AppState.ratio == "9:16" { return "576"; }
+        if AppState.ratio == "1:2" { return "512"; }
+        if AppState.ratio == "9:21" { return "440"; }
+        return "1024";
+    }
+
+    function image-height-text() -> string {
+        if AppState.ratio == "3:2" { return "680"; }
+        if AppState.ratio == "4:3" { return "768"; }
+        if AppState.ratio == "5:4" { return "816"; }
+        if AppState.ratio == "16:9" { return "576"; }
+        if AppState.ratio == "2:1" { return "512"; }
+        if AppState.ratio == "21:9" { return "440"; }
+        return "1024";
+    }
+
+    function video-width-text() -> string {
+        if root.video-layout == "portrait" { return "720"; }
+        if root.video-layout == "square" { return "1024"; }
+        if root.video-layout == "wide" { return "1792"; }
+        if root.video-layout == "tall" { return "1024"; }
+        return "1280";
+    }
+
+    function video-height-text() -> string {
+        if root.video-layout == "portrait" { return "1280"; }
+        if root.video-layout == "square" { return "1024"; }
+        if root.video-layout == "wide" { return "1024"; }
+        if root.video-layout == "tall" { return "1792"; }
+        return "720";
     }
 
     function commit-position() {
@@ -170,12 +479,12 @@ component CanvasNodeCard {
         clip: false;
         background: root.note.kind == "group"
             ? AppTheme.accent.with-alpha(AppState.canvas-selected-id == root.note.id ? 0.10 : 0.045)
-            : (root.dark-background ? #111927 : AppTheme.panel);
-        border-radius: root.note.kind == "group" ? 4px : 7px;
+            : (root.is-visual-media() ? (root.dark-background ? #292522 : AppTheme.panel) : (root.dark-background ? #111927 : AppTheme.panel));
+        border-radius: root.note.kind == "group" ? 4px : (root.is-visual-media() ? max(10px, 20px * root.zoom-percent / 100) : 7px);
         border-width: AppState.canvas-selected-id == root.note.id ? 2px : 1px;
-        border-color: AppState.canvas-selected-id == root.note.id ? AppTheme.accent : (root.note.kind == "group" ? AppTheme.accent.with-alpha(0.55) : AppTheme.border);
+        border-color: AppState.canvas-selected-id == root.note.id ? AppTheme.accent : (root.note.kind == "group" ? AppTheme.accent.with-alpha(0.55) : (root.is-visual-media() ? #514c48 : AppTheme.border));
 
-        if root.note.kind != "group": Rectangle {
+        if root.note.kind != "group" && (!root.is-visual-media() || AppState.canvas-selected-id == root.note.id): Rectangle {
             x: -5px;
             y: (parent.height - 10px) / 2;
             width: 10px;
@@ -185,7 +494,7 @@ component CanvasNodeCard {
             border-width: 2px;
             border-color: AppTheme.accent;
         }
-        if root.note.kind != "group": Rectangle {
+        if root.note.kind != "group" && (!root.is-visual-media() || AppState.canvas-selected-id == root.note.id): Rectangle {
             x: parent.width - 5px;
             y: (parent.height - 10px) / 2;
             width: 10px;
@@ -220,7 +529,8 @@ component CanvasNodeCard {
         }
 
         header := Rectangle {
-            height: max(18px, 36px * root.zoom-percent / 100);
+            visible: !root.is-visual-media();
+            height: root.is-visual-media() ? 0px : max(18px, 36px * root.zoom-percent / 100);
             background: root.note.kind == "group" ? transparent : (root.dark-background ? #182235 : AppTheme.panel-soft);
             border-radius: root.note.kind == "group" ? 0px : 7px;
             Text {
@@ -360,90 +670,476 @@ component CanvasNodeCard {
             }
         }
 
-        if root.zoom-percent >= 30 && (root.note.kind == "image" || root.note.kind == "video" || root.note.kind == "audio"): Rectangle {
-            x: max(6px, 12px * root.zoom-percent / 100);
-            y: header.height + max(5px, 9px * root.zoom-percent / 100);
+        if root.is-visual-media() && root.zoom-percent >= 30: Text {
+            x: max(8px, 12px * root.zoom-percent / 100);
+            y: root.y < max(34px, 40px * root.zoom-percent / 100) ? max(8px, 12px * root.zoom-percent / 100) : -max(30px, 34px * root.zoom-percent / 100);
             width: parent.width - 2 * self.x;
-            height: max(34px, 72px * root.zoom-percent / 100);
-            background: root.dark-background ? #0b111c : AppTheme.panel-soft;
-            border-radius: 5px;
-            Image {
-                x: (parent.width - max(22px, 34px * root.zoom-percent / 100)) / 2;
-                y: (parent.height - self.height) / 2;
-                width: max(22px, 34px * root.zoom-percent / 100);
-                height: self.width;
-                source: root.note.kind == "image" ? @image-url("../../assets/icons/image.svg")
-                    : (root.note.kind == "video" ? @image-url("../../assets/icons/video.svg") : @image-url("../../assets/icons/audio.svg"));
-                colorize: AppTheme.accent;
-                image-fit: contain;
-            }
-        }
-
-        if root.zoom-percent >= 30 && (root.note.kind == "image" || root.note.kind == "video" || root.note.kind == "audio") && !root.editing: Text {
-            x: max(6px, 12px * root.zoom-percent / 100);
-            y: header.height + max(48px, 92px * root.zoom-percent / 100);
-            width: parent.width - 2 * self.x;
-            height: max(28px, parent.height - self.y - (root.show-image-info ? max(25px, 38px * root.zoom-percent / 100) : max(7px, 12px * root.zoom-percent / 100)));
-            text: root.current-content;
-            wrap: word-wrap;
-            overflow: elide;
-            color: root.dark-background ? #dce7f8 : AppTheme.text;
-            font-size: max(9px, AppState.settings-font-size * 1px * root.zoom-percent / 100);
-        }
-
-        if root.zoom-percent >= 30 && (root.note.kind == "image" || root.note.kind == "video" || root.note.kind == "audio") && root.editing: TextInput {
-            x: max(6px, 12px * root.zoom-percent / 100);
-            y: header.height + max(48px, 92px * root.zoom-percent / 100);
-            width: parent.width - 2 * self.x;
-            height: max(28px, parent.height - self.y - (root.show-image-info ? max(25px, 38px * root.zoom-percent / 100) : max(7px, 12px * root.zoom-percent / 100)));
-            text <=> root.current-content;
-            single-line: false;
-            wrap: word-wrap;
-            color: root.dark-background ? #dce7f8 : AppTheme.text;
-            font-size: max(9px, AppState.settings-font-size * 1px * root.zoom-percent / 100);
-            key-pressed(event) => {
-                AppState.canvas-selected-id = root.note.id;
-                if event.text == Key.Return {
-                    if event.modifiers.alt { return reject; }
-                    root.save-content();
-                    root.editing = false;
-                    return accept;
-                }
-                return reject;
-            }
-        }
-
-        if root.zoom-percent >= 35 && root.show-image-info && root.note.kind == "image": Text {
-            x: max(6px, 12px * root.zoom-percent / 100);
-            y: parent.height - max(23px, 34px * root.zoom-percent / 100);
-            width: parent.width - 2 * self.x;
-            height: max(18px, 26px * root.zoom-percent / 100);
-            text: (AppState.image-model == "" ? "GPT Image 2" : AppState.image-model) + " · " + AppState.ratio + " · " + AppState.count + (AppState.en ? " images" : "张");
-            color: root.dark-background ? #8fa0b8 : AppTheme.muted;
-            font-size: max(8px, 11px * root.zoom-percent / 100);
+            height: max(24px, 28px * root.zoom-percent / 100);
+            text: root.node-title();
+            color: root.dark-background ? #ddd7d1 : AppTheme.text;
+            font-size: max(11px, 15px * root.zoom-percent / 100);
+            font-weight: 600;
             vertical-alignment: center;
             wrap: no-wrap;
             overflow: elide;
         }
-        if root.zoom-percent >= 35 && root.show-image-info && root.note.kind == "video": Text {
-            x: max(6px, 12px * root.zoom-percent / 100);
-            y: parent.height - max(23px, 34px * root.zoom-percent / 100);
-            width: parent.width - 2 * self.x;
-            height: max(18px, 26px * root.zoom-percent / 100);
-            text: AppState.en ? "Video · 720p · 6s" : "视频 · 720p · 6秒";
-            color: root.dark-background ? #8fa0b8 : AppTheme.muted;
-            font-size: max(8px, 11px * root.zoom-percent / 100);
-            vertical-alignment: center;
+
+        if root.is-visual-media() && root.zoom-percent >= 30: Rectangle {
+            x: (parent.width - max(54px, 64px * root.zoom-percent / 100)) / 2;
+            y: (parent.height - max(88px, 104px * root.zoom-percent / 100)) / 2;
+            width: max(54px, 64px * root.zoom-percent / 100);
+            height: self.width;
+            background: root.dark-background ? #393532 : AppTheme.panel-soft;
+            border-radius: max(12px, 18px * root.zoom-percent / 100);
+            Image {
+                x: (parent.width - max(22px, 28px * root.zoom-percent / 100)) / 2;
+                y: (parent.height - self.height) / 2;
+                width: max(22px, 28px * root.zoom-percent / 100);
+                height: self.width;
+                source: root.note.kind == "image" ? @image-url("../../assets/icons/image.svg")
+                    : (root.note.kind == "video" ? @image-url("../../assets/icons/video.svg") : @image-url("../../assets/icons/audio.svg"));
+                colorize: root.dark-background ? #716a64 : AppTheme.muted;
+                image-fit: contain;
+            }
         }
-        if root.zoom-percent >= 35 && root.show-image-info && root.note.kind == "audio": Text {
-            x: max(6px, 12px * root.zoom-percent / 100);
-            y: parent.height - max(23px, 34px * root.zoom-percent / 100);
-            width: parent.width - 2 * self.x;
-            height: max(18px, 26px * root.zoom-percent / 100);
-            text: AppState.en ? "Audio · Auto" : "音频 · 自动";
-            color: root.dark-background ? #8fa0b8 : AppTheme.muted;
-            font-size: max(8px, 11px * root.zoom-percent / 100);
+
+        if root.is-visual-media() && root.zoom-percent >= 30: Text {
+            x: 12px;
+            y: parent.height / 2 + max(18px, 28px * root.zoom-percent / 100);
+            width: parent.width - 24px;
+            height: max(24px, 30px * root.zoom-percent / 100);
+            text: root.empty-media-label();
+            color: root.dark-background ? #8b847e : AppTheme.muted;
+            font-size: max(10px, 13px * root.zoom-percent / 100);
+            horizontal-alignment: center;
             vertical-alignment: center;
+            wrap: no-wrap;
+            overflow: elide;
+        }
+
+        if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 45: media-action-bar := Rectangle {
+            width: root.note.kind == "video" ? max(380px, 380px * root.zoom-percent / 100) : max(312px, 312px * root.zoom-percent / 100);
+            height: max(42px, 46px * root.zoom-percent / 100);
+            x: max(8px - root.x, min((parent.width - self.width) / 2, root.viewport-width - self.width - root.x - 8px));
+            y: root.y < max(70px, 82px * root.zoom-percent / 100) ? max(42px, 48px * root.zoom-percent / 100) : -max(70px, 76px * root.zoom-percent / 100);
+            background: #f7f6f4;
+            border-radius: self.height / 2;
+            border-width: 1px;
+            border-color: #e2dfdc;
+            if root.note.kind == "video": HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                padding-top: 4px;
+                padding-bottom: 4px;
+                spacing: 2px;
+                CanvasMediaAction { width: 76px; icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.canvas-show-image-info = !AppState.canvas-show-image-info; } }
+                CanvasMediaAction { width: 76px; icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
+                CanvasMediaAction { width: 76px; icon: @image-url("../../assets/icons/edit.svg"); text: AppState.en ? "Edit" : "编辑"; clicked => { root.editing = true; } }
+                CanvasMediaAction { width: 118px; icon: @image-url("../../assets/icons/upload.svg"); text: AppState.en ? "Upload video" : "上传视频"; clicked => { AppState.generation-status = AppState.en ? "Video upload requires a configured video provider" : "请先配置视频生成服务"; } }
+            }
+            if root.note.kind != "video": HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                padding-top: 4px;
+                padding-bottom: 4px;
+                spacing: 2px;
+                CanvasMediaAction { width: 76px; icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.canvas-show-image-info = !AppState.canvas-show-image-info; } }
+                CanvasMediaAction { width: 76px; icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
+                CanvasMediaAction { width: 132px; icon: @image-url("../../assets/icons/upload.svg"); text: root.note.kind == "image" ? (AppState.en ? "Upload image" : "上传图片") : (AppState.en ? "Upload audio" : "上传音频"); clicked => { if root.note.kind == "image" { AppState.add-reference(); } else { AppState.generation-status = AppState.en ? "Audio upload requires a configured audio provider" : "请先配置音频生成服务"; } } }
+            }
+        }
+
+        if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 45: media-editor-panel := Rectangle {
+            x: (parent.width - root.media-editor-width()) / 2;
+            y: root.media-editor-y();
+            width: root.media-editor-width();
+            height: root.media-editor-height();
+            background: root.dark-background ? #211e1c : AppTheme.panel;
+            border-radius: max(10px, 16px * root.zoom-percent / 100);
+            border-width: 1px;
+            border-color: root.dark-background ? #4d4844 : AppTheme.border;
+
+            prompt-frame := Rectangle {
+                x: max(10px, 14px * root.zoom-percent / 100);
+                y: self.x;
+                width: parent.width - 2 * self.x;
+                height: max(72px, 104px * root.zoom-percent / 100);
+                background: root.dark-background ? #292522 : AppTheme.panel-soft;
+                border-radius: max(8px, 12px * root.zoom-percent / 100);
+                border-width: 1px;
+                border-color: root.dark-background ? #514c48 : AppTheme.border;
+                media-prompt := TextInput {
+                    x: 12px;
+                    y: 10px;
+                    width: parent.width - 24px;
+                    height: parent.height - 20px;
+                    text <=> root.current-content;
+                    single-line: false;
+                    wrap: word-wrap;
+                    color: root.dark-background ? #eee9e4 : AppTheme.text;
+                    font-size: max(10px, 13px * root.zoom-percent / 100);
+                    key-pressed(event) => {
+                        if event.text == Key.Return {
+                            if event.modifiers.alt { return reject; }
+                            root.save-content();
+                            return accept;
+                        }
+                        return reject;
+                    }
+                }
+                if root.current-content == "" && !media-prompt.has-focus: Text {
+                    x: 12px;
+                    y: 10px;
+                    width: parent.width - 24px;
+                    height: 24px;
+                    text: root.media-prompt-placeholder();
+                    color: root.dark-background ? #8f8882 : AppTheme.muted;
+                    font-size: max(10px, 13px * root.zoom-percent / 100);
+                    vertical-alignment: center;
+                }
+            }
+
+            Rectangle {
+                x: max(12px, 16px * root.zoom-percent / 100);
+                y: parent.height - max(46px, 52px * root.zoom-percent / 100);
+                width: max(32px, 38px * root.zoom-percent / 100);
+                height: self.width;
+                background: prompt-library-touch.has-hover ? #34302d : transparent;
+                border-radius: self.height / 2;
+                Image {
+                    x: (parent.width - 17px) / 2;
+                    y: (parent.height - 17px) / 2;
+                    width: 17px;
+                    height: 17px;
+                    source: @image-url("../../assets/icons/book.svg");
+                    colorize: root.dark-background ? #eee9e4 : AppTheme.text;
+                    image-fit: contain;
+                }
+                prompt-library-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => { AppState.settings-section = "prompts"; AppState.navigate("settings"); }
+                }
+            }
+
+            media-model-chip := CanvasMediaChip {
+                x: max(54px, 64px * root.zoom-percent / 100);
+                y: parent.height - max(44px, 50px * root.zoom-percent / 100);
+                width: (parent.width - self.x - max(62px, 72px * root.zoom-percent / 100)) / 2;
+                icon: root.note.kind == "image" ? @image-url("../../assets/icons/image.svg") : (root.note.kind == "video" ? @image-url("../../assets/icons/video.svg") : @image-url("../../assets/icons/audio.svg"));
+                text: root.media-model-text();
+                active: root.media-model-open;
+                clicked => { root.media-model-open = true; image-model-popup.show(); }
+            }
+
+            CanvasMediaChip {
+                x: media-model-chip.x + media-model-chip.width + max(5px, 8px * root.zoom-percent / 100);
+                y: parent.height - max(44px, 50px * root.zoom-percent / 100);
+                width: parent.width - self.x - max(56px, 64px * root.zoom-percent / 100);
+                icon: @image-url("../../assets/icons/controls.svg");
+                text: root.media-settings-text();
+                active: root.media-settings-open;
+                clicked => {
+                    root.media-settings-open = true;
+                    if root.note.kind == "image" { image-settings-popup.show(); }
+                    else if root.note.kind == "video" { video-settings-popup.show(); }
+                    else { audio-settings-popup.show(); }
+                }
+            }
+
+            Rectangle {
+                x: parent.width - max(48px, 56px * root.zoom-percent / 100);
+                y: parent.height - max(45px, 51px * root.zoom-percent / 100);
+                width: max(38px, 44px * root.zoom-percent / 100);
+                height: self.width;
+                opacity: root.note.kind == "image" && root.current-content != "" && AppState.image-model != "" && !AppState.generating ? 1 : 0.42;
+                background: generate-touch.has-hover && root.note.kind == "image" && root.current-content != "" && AppState.image-model != "" && !AppState.generating ? AppTheme.accent : #4a4642;
+                border-radius: self.height / 2;
+                border-width: 1px;
+                border-color: root.dark-background ? #5a5550 : AppTheme.border;
+                Image {
+                    x: (parent.width - 18px) / 2;
+                    y: (parent.height - 18px) / 2;
+                    width: 18px;
+                    height: 18px;
+                    source: @image-url("../../assets/icons/arrow-up.svg");
+                    colorize: #f5f2ee;
+                    image-fit: contain;
+                }
+                generate-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: root.note.kind == "image" && root.current-content != "" && AppState.image-model != "" && !AppState.generating ? pointer : default;
+                    clicked => {
+                        if root.note.kind == "image" && root.current-content != "" && AppState.image-model != "" && !AppState.generating {
+                            root.save-content();
+                            AppState.prompt = root.current-content;
+                            AppState.generate();
+                        }
+                    }
+                }
+            }
+        }
+
+        image-model-popup := PopupWindow {
+            width: max(230px, min(320px, 280px * root.zoom-percent / 100));
+            height: root.note.kind == "image" ? min(270px, max(58px, 12px + AppState.model-image-options.length * 42px)) : 74px;
+            x: root.dropdown-popup-x(self.width);
+            y: root.dropdown-popup-y(self.height);
+            close-policy: close-on-click-outside;
+            Rectangle {
+                background: #211e1c;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: #4f4a46;
+                clip: true;
+                if root.note.kind == "image" && AppState.model-image-options.length > 0: VerticalLayout {
+                    padding: 6px;
+                    spacing: 4px;
+                    for model in AppState.model-image-options: Rectangle {
+                        height: 38px;
+                        background: model-touch.has-hover ? #35312e : (AppState.image-model == model.code ? #302c29 : transparent);
+                        border-radius: 7px;
+                        Image {
+                            x: 10px;
+                            y: (parent.height - 16px) / 2;
+                            width: 16px;
+                            height: 16px;
+                            source: @image-url("../../assets/icons/image.svg");
+                            colorize: #eee9e4;
+                        }
+                        Text {
+                            x: 34px;
+                            width: parent.width - 64px;
+                            height: parent.height;
+                            text: model.name;
+                            color: #eee9e4;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                            wrap: no-wrap;
+                            overflow: elide;
+                        }
+                        if AppState.image-model == model.code: Image {
+                            x: parent.width - 24px;
+                            y: (parent.height - 14px) / 2;
+                            width: 14px;
+                            height: 14px;
+                            source: @image-url("../../assets/icons/check.svg");
+                            colorize: #eee9e4;
+                        }
+                        model-touch := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => { AppState.select-image-model(model.code); root.media-model-open = false; image-model-popup.close(); }
+                        }
+                    }
+                }
+                if root.note.kind != "image" || AppState.model-image-options.length == 0: Rectangle {
+                    x: 6px;
+                    y: 6px;
+                    width: parent.width - 12px;
+                    height: parent.height - 12px;
+                    background: empty-model-touch.has-hover ? #35312e : transparent;
+                    border-radius: 7px;
+                    Text {
+                        x: 12px;
+                        width: parent.width - 24px;
+                        height: parent.height;
+                        text: AppState.en ? "Configure a compatible model" : "前往模型管理配置";
+                        color: #eee9e4;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+                    empty-model-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => { root.media-model-open = false; image-model-popup.close(); AppState.settings-section = "models"; AppState.navigate("settings"); }
+                    }
+                }
+            }
+        }
+
+        image-settings-popup := PopupWindow {
+            width: 378px;
+            height: 418px;
+            x: root.settings-popup-x(self.width);
+            y: root.settings-popup-y(self.height);
+            close-policy: close-on-click-outside;
+            Rectangle {
+                background: #211e1c;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: #4f4a46;
+                Text { x: 18px; y: 10px; width: parent.width - 36px; height: 28px; text: AppState.en ? "Image settings" : "图片设置"; color: #f0ebe7; font-size: 16px; font-weight: 600; vertical-alignment: center; }
+                Rectangle { x: 18px; y: 44px; width: 154px; height: 36px; background: #2d2926; border-radius: 10px; Text { x: 12px; width: 26px; height: parent.height; text: "W"; color: #aaa39d; font-size: 12px; vertical-alignment: center; } Text { x: 48px; width: parent.width - 60px; height: parent.height; text: root.image-width-text(); color: #eee9e4; font-size: 13px; vertical-alignment: center; } }
+                Text { x: 177px; y: 44px; width: 24px; height: 36px; text: "↔"; color: #8d8680; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
+                Rectangle { x: 206px; y: 44px; width: 154px; height: 36px; background: #2d2926; border-radius: 10px; Text { x: 12px; width: 26px; height: parent.height; text: "H"; color: #aaa39d; font-size: 12px; vertical-alignment: center; } Text { x: 48px; width: parent.width - 60px; height: parent.height; text: root.image-height-text(); color: #eee9e4; font-size: 13px; vertical-alignment: center; } }
+                Text { x: 18px; y: 88px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Aspect ratio" : "宽高比"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
+                GridLayout {
+                    x: 18px;
+                    y: 114px;
+                    width: parent.width - 36px;
+                    height: 208px;
+                    spacing: 8px;
+                    Row {
+                        CanvasRatioOption { width: 78px; value: "1:1"; label: "1:1"; selected: AppState.ratio == "1:1"; clicked => { AppState.ratio = "1:1"; } }
+                        CanvasRatioOption { width: 78px; value: "3:2"; label: "3:2"; selected: AppState.ratio == "3:2"; clicked => { AppState.ratio = "3:2"; } }
+                        CanvasRatioOption { width: 78px; value: "2:3"; label: "2:3"; selected: AppState.ratio == "2:3"; clicked => { AppState.ratio = "2:3"; } }
+                        CanvasRatioOption { width: 78px; value: "4:3"; label: "4:3"; selected: AppState.ratio == "4:3"; clicked => { AppState.ratio = "4:3"; } }
+                    }
+                    Row {
+                        CanvasRatioOption { width: 78px; value: "3:4"; label: "3:4"; selected: AppState.ratio == "3:4"; clicked => { AppState.ratio = "3:4"; } }
+                        CanvasRatioOption { width: 78px; value: "16:9"; label: "16:9"; selected: AppState.ratio == "16:9"; clicked => { AppState.ratio = "16:9"; } }
+                        CanvasRatioOption { width: 78px; value: "9:16"; label: "9:16"; selected: AppState.ratio == "9:16"; clicked => { AppState.ratio = "9:16"; } }
+                        CanvasRatioOption { width: 78px; value: "2:1"; label: "2:1"; selected: AppState.ratio == "2:1"; clicked => { AppState.ratio = "2:1"; } }
+                    }
+                    Row {
+                        CanvasRatioOption { width: 78px; value: "1:2"; label: "1:2"; selected: AppState.ratio == "1:2"; clicked => { AppState.ratio = "1:2"; } }
+                        CanvasRatioOption { width: 78px; value: "21:9"; label: "21:9"; selected: AppState.ratio == "21:9"; clicked => { AppState.ratio = "21:9"; } }
+                        CanvasRatioOption { width: 78px; value: "9:21"; label: "9:21"; selected: AppState.ratio == "9:21"; clicked => { AppState.ratio = "9:21"; } }
+                    }
+                }
+                Text { x: 18px; y: 332px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Generation count" : "生成张数"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
+                HorizontalLayout {
+                    x: 18px;
+                    y: 360px;
+                    width: parent.width - 36px;
+                    height: 36px;
+                    spacing: 10px;
+                    CanvasOptionPill { text: AppState.en ? "1 image" : "1张"; selected: AppState.count == 1; clicked => { AppState.count = 1; } }
+                    CanvasOptionPill { text: AppState.en ? "2 images" : "2张"; selected: AppState.count == 2; clicked => { AppState.count = 2; } }
+                    CanvasOptionPill { text: AppState.en ? "3 images" : "3张"; selected: AppState.count == 3; clicked => { AppState.count = 3; } }
+                    CanvasOptionPill { text: AppState.en ? "4 images" : "4张"; selected: AppState.count == 4; clicked => { AppState.count = 4; } }
+                }
+            }
+        }
+
+        video-settings-popup := PopupWindow {
+            width: 366px;
+            height: 430px;
+            x: root.settings-popup-x(self.width);
+            y: root.settings-popup-y(self.height);
+            close-policy: close-on-click-outside;
+            Rectangle {
+                background: #211e1c;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: #4f4a46;
+                Text { x: 18px; y: 10px; width: parent.width - 36px; height: 28px; text: AppState.en ? "Video settings" : "视频设置"; color: #f0ebe7; font-size: 16px; font-weight: 600; vertical-alignment: center; }
+                Text { x: 18px; y: 44px; width: parent.width - 36px; height: 20px; text: AppState.en ? "Quality" : "清晰度"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
+                HorizontalLayout { x: 18px; y: 68px; width: parent.width - 36px; height: 36px; spacing: 10px; CanvasOptionPill { text: "720p"; selected: root.video-quality == "720p"; clicked => { root.video-quality = "720p"; } } CanvasOptionPill { text: "480p"; selected: root.video-quality == "480p"; clicked => { root.video-quality = "480p"; } } }
+                Text { x: 18px; y: 112px; width: parent.width - 36px; height: 20px; text: AppState.en ? "Size" : "尺寸"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
+                Rectangle { x: 18px; y: 136px; width: 145px; height: 36px; background: #2d2926; border-radius: 10px; Text { x: 12px; width: 24px; height: parent.height; text: "W"; color: #aaa39d; font-size: 12px; vertical-alignment: center; } Text { x: 45px; width: parent.width - 55px; height: parent.height; text: root.video-width-text(); color: #eee9e4; font-size: 13px; vertical-alignment: center; } }
+                Text { x: 168px; y: 136px; width: 24px; height: 36px; text: "↔"; color: #8d8680; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
+                Rectangle { x: 197px; y: 136px; width: 151px; height: 36px; background: #2d2926; border-radius: 10px; Text { x: 12px; width: 24px; height: parent.height; text: "H"; color: #aaa39d; font-size: 12px; vertical-alignment: center; } Text { x: 45px; width: parent.width - 55px; height: parent.height; text: root.video-height-text(); color: #eee9e4; font-size: 13px; vertical-alignment: center; } }
+                GridLayout {
+                    x: 18px;
+                    y: 182px;
+                    width: parent.width - 36px;
+                    height: 142px;
+                    spacing: 8px;
+                    Row {
+                        CanvasRatioOption { width: 104px; value: "landscape"; label: AppState.en ? "Landscape" : "横屏"; detail: "1280x720"; selected: root.video-layout == "landscape"; clicked => { root.video-layout = "landscape"; } }
+                        CanvasRatioOption { width: 104px; value: "portrait"; label: AppState.en ? "Portrait" : "竖屏"; detail: "720x1280"; selected: root.video-layout == "portrait"; clicked => { root.video-layout = "portrait"; } }
+                        CanvasRatioOption { width: 104px; value: "square"; label: AppState.en ? "Square" : "方形"; detail: "1024x1024"; selected: root.video-layout == "square"; clicked => { root.video-layout = "square"; } }
+                    }
+                    Row {
+                        CanvasRatioOption { width: 104px; value: "wide"; label: AppState.en ? "Wide" : "宽屏"; detail: "1792x1024"; selected: root.video-layout == "wide"; clicked => { root.video-layout = "wide"; } }
+                        CanvasRatioOption { width: 104px; value: "tall"; label: AppState.en ? "Tall" : "长图"; detail: "1024x1792"; selected: root.video-layout == "tall"; clicked => { root.video-layout = "tall"; } }
+                        CanvasRatioOption { width: 104px; value: "auto"; label: "auto"; selected: root.video-layout == "auto"; clicked => { root.video-layout = "auto"; } }
+                    }
+                }
+                Text { x: 18px; y: 332px; width: parent.width - 36px; height: 20px; text: AppState.en ? "Duration" : "秒数"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
+                GridLayout {
+                    x: 18px;
+                    y: 358px;
+                    width: parent.width - 36px;
+                    height: 36px;
+                    spacing: 8px;
+                    Row {
+                        CanvasOptionPill { width: 58px; text: "6s"; selected: root.video-duration == "6s"; clicked => { root.video-duration = "6s"; } }
+                        CanvasOptionPill { width: 58px; text: "10s"; selected: root.video-duration == "10s"; clicked => { root.video-duration = "10s"; } }
+                        CanvasOptionPill { width: 58px; text: "12s"; selected: root.video-duration == "12s"; clicked => { root.video-duration = "12s"; } }
+                        CanvasOptionPill { width: 58px; text: "16s"; selected: root.video-duration == "16s"; clicked => { root.video-duration = "16s"; } }
+                        CanvasOptionPill { width: 58px; text: "20s"; selected: root.video-duration == "20s"; clicked => { root.video-duration = "20s"; } }
+                    }
+                }
+            }
+        }
+
+        audio-settings-popup := PopupWindow {
+            width: 372px;
+            height: min(520px, max(280px, root.viewport-height - 16px));
+            x: root.settings-popup-x(self.width);
+            y: root.settings-popup-y(self.height);
+            close-policy: close-on-click-outside;
+            Rectangle {
+                background: #211e1c;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: #4f4a46;
+                clip: true;
+                audio-settings-scroll := Flickable {
+                    width: parent.width;
+                    height: parent.height;
+                    viewport-width: parent.width;
+                    viewport-height: 520px;
+                    interactive: true;
+                    Rectangle {
+                        width: audio-settings-scroll.width;
+                        height: 520px;
+                        Text { x: 18px; y: 10px; width: parent.width - 36px; height: 28px; text: AppState.en ? "Audio settings" : "音频设置"; color: #f0ebe7; font-size: 16px; font-weight: 600; vertical-alignment: center; }
+                        Text { x: 18px; y: 44px; width: parent.width - 36px; height: 20px; text: AppState.en ? "Voice" : "声音"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
+                        GridLayout {
+                            x: 18px;
+                            y: 68px;
+                            width: parent.width - 36px;
+                            height: 152px;
+                            spacing: 8px;
+                            Row { CanvasOptionPill { width: 104px; text: "Alloy"; selected: root.audio-voice == "Alloy"; clicked => { root.audio-voice = "Alloy"; } } CanvasOptionPill { width: 104px; text: "Ash"; selected: root.audio-voice == "Ash"; clicked => { root.audio-voice = "Ash"; } } CanvasOptionPill { width: 104px; text: "Ballad"; selected: root.audio-voice == "Ballad"; clicked => { root.audio-voice = "Ballad"; } } }
+                            Row { CanvasOptionPill { width: 104px; text: "Coral"; selected: root.audio-voice == "Coral"; clicked => { root.audio-voice = "Coral"; } } CanvasOptionPill { width: 104px; text: "Echo"; selected: root.audio-voice == "Echo"; clicked => { root.audio-voice = "Echo"; } } CanvasOptionPill { width: 104px; text: "Fable"; selected: root.audio-voice == "Fable"; clicked => { root.audio-voice = "Fable"; } } }
+                            Row { CanvasOptionPill { width: 104px; text: "Nova"; selected: root.audio-voice == "Nova"; clicked => { root.audio-voice = "Nova"; } } CanvasOptionPill { width: 104px; text: "Onyx"; selected: root.audio-voice == "Onyx"; clicked => { root.audio-voice = "Onyx"; } } CanvasOptionPill { width: 104px; text: "Sage"; selected: root.audio-voice == "Sage"; clicked => { root.audio-voice = "Sage"; } } }
+                            Row { CanvasOptionPill { width: 104px; text: "Shimmer"; selected: root.audio-voice == "Shimmer"; clicked => { root.audio-voice = "Shimmer"; } } CanvasOptionPill { width: 104px; text: "Verse"; selected: root.audio-voice == "Verse"; clicked => { root.audio-voice = "Verse"; } } CanvasOptionPill { width: 104px; text: "Marin"; selected: root.audio-voice == "Marin"; clicked => { root.audio-voice = "Marin"; } } }
+                        }
+                        Text { x: 18px; y: 230px; width: parent.width - 36px; height: 20px; text: AppState.en ? "Format" : "格式"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
+                        GridLayout {
+                            x: 18px;
+                            y: 254px;
+                            width: parent.width - 36px;
+                            height: 80px;
+                            spacing: 8px;
+                            Row { CanvasOptionPill { width: 104px; text: "MP3"; selected: root.audio-format == "MP3"; clicked => { root.audio-format = "MP3"; } } CanvasOptionPill { width: 104px; text: "WAV"; selected: root.audio-format == "WAV"; clicked => { root.audio-format = "WAV"; } } CanvasOptionPill { width: 104px; text: "Opus"; selected: root.audio-format == "Opus"; clicked => { root.audio-format = "Opus"; } } }
+                            Row { CanvasOptionPill { width: 104px; text: "AAC"; selected: root.audio-format == "AAC"; clicked => { root.audio-format = "AAC"; } } CanvasOptionPill { width: 104px; text: "FLAC"; selected: root.audio-format == "FLAC"; clicked => { root.audio-format = "FLAC"; } } CanvasOptionPill { width: 104px; text: "PCM"; selected: root.audio-format == "PCM"; clicked => { root.audio-format = "PCM"; } } }
+                        }
+                        Text { x: 18px; y: 344px; width: parent.width - 36px; height: 20px; text: AppState.en ? "Speed" : "语速"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
+                        HorizontalLayout { x: 18px; y: 368px; width: parent.width - 36px; height: 36px; spacing: 8px; CanvasOptionPill { text: "0.75x"; selected: root.audio-speed == "0.75x"; clicked => { root.audio-speed = "0.75x"; } } CanvasOptionPill { text: "1x"; selected: root.audio-speed == "1x"; clicked => { root.audio-speed = "1x"; } } CanvasOptionPill { text: "1.25x"; selected: root.audio-speed == "1.25x"; clicked => { root.audio-speed = "1.25x"; } } CanvasOptionPill { text: "1.5x"; selected: root.audio-speed == "1.5x"; clicked => { root.audio-speed = "1.5x"; } } }
+                        Text { x: 18px; y: 414px; width: parent.width - 36px; height: 20px; text: AppState.en ? "Voice instruction" : "声音指令"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
+                        Rectangle {
+                            x: 18px;
+                            y: 438px;
+                            width: parent.width - 36px;
+                            height: 66px;
+                            background: #292522;
+                            border-radius: 10px;
+                            border-width: 1px;
+                            border-color: #514c48;
+                            audio-instruction-input := TextInput { x: 10px; y: 8px; width: parent.width - 20px; height: parent.height - 16px; text <=> root.audio-instruction; single-line: false; wrap: word-wrap; color: #eee9e4; font-size: 12px; key-pressed(event) => { if event.text == Key.Return && !event.modifiers.alt { return accept; } return reject; } }
+                            if root.audio-instruction == "" && !audio-instruction-input.has-focus: Text { x: 10px; y: 8px; width: parent.width - 20px; height: 22px; text: AppState.en ? "e.g. Natural, warm, suitable for narration." : "例如：自然、温暖、适合旁白。"; color: #8f8882; font-size: 12px; vertical-alignment: center; }
+                        }
+                    }
+                }
+                if parent.height < 520px: Rectangle {
+                    x: parent.width - 6px;
+                    y: 8px + (-audio-settings-scroll.viewport-y / 1px) / max(1, (520px - audio-settings-scroll.height) / 1px) * (parent.height - 16px - self.height);
+                    width: 3px;
+                    height: max(32px, (parent.height - 16px) * parent.height / 520px);
+                    background: #8f8882;
+                    border-radius: 2px;
+                }
+            }
         }
     }
 }
@@ -631,6 +1327,8 @@ export component InfiniteCanvasPage {
                 pan-y: root.pan-y;
                 show-image-info: AppState.canvas-show-image-info;
                 dark-background: AppState.canvas-dark-background;
+                viewport-width: canvas.width;
+                viewport-height: canvas.height;
             }
 
             for note in AppState.canvas-notes: CanvasNodeCard {
@@ -641,6 +1339,8 @@ export component InfiniteCanvasPage {
                 pan-y: root.pan-y;
                 show-image-info: AppState.canvas-show-image-info;
                 dark-background: AppState.canvas-dark-background;
+                viewport-width: canvas.width;
+                viewport-height: canvas.height;
             }
 
             if AppState.canvas-minimap-open: Rectangle {

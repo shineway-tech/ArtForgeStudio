@@ -618,6 +618,40 @@ mod tests {
     }
 
     #[test]
+    fn infinite_canvas_media_nodes_expand_reference_style_editors_when_selected() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .and_then(|value| value.split("export component InfiniteCanvasPage").next())
+            .expect("canvas node component");
+
+        assert!(node.contains("function is-visual-media()"));
+        assert!(node.contains("media-action-bar := Rectangle"));
+        assert!(node.contains("media-editor-panel := Rectangle"));
+        assert!(node.contains("image-model-popup := PopupWindow"));
+        assert!(node.contains("image-settings-popup := PopupWindow"));
+        assert!(node.contains("video-settings-popup := PopupWindow"));
+        assert!(node.contains("audio-settings-popup := PopupWindow"));
+        assert!(node.contains("空图片节点"));
+        assert!(node.contains("空视频节点"));
+        assert!(node.contains("空音频节点"));
+        assert!(node.contains("上传图片"));
+        assert!(node.contains("上传视频"));
+        assert!(node.contains("上传音频"));
+        assert!(node.contains("AppState.model-image-options"));
+        assert!(node.contains("AppState.count = 4"));
+        assert!(node.contains("audio-voice: \"Alloy\""));
+        assert!(node.contains("audio-format: \"MP3\""));
+        assert!(node.contains("audio-speed: \"1x\""));
+        assert!(node.contains("function media-editor-y()"));
+        assert!(node.contains("function settings-popup-x"));
+        assert!(node.contains("audio-settings-scroll := Flickable"));
+        assert!(page.contains("viewport-width: canvas.width"));
+        assert!(node.contains("AppState.generate()"));
+    }
+
+    #[test]
     fn atomic_image_write_propagates_disk_errors_without_final_file() {
         let root = std::env::temp_dir().join(format!("artforge-atomic-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
