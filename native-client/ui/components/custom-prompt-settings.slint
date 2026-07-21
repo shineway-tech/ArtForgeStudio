@@ -6,117 +6,35 @@ import { AppTheme } from "../theme.slint";
 export component CustomPromptSettings {
     Rectangle {
         background: transparent;
-        Rectangle {
-            width: parent.width;
-            height: 154px;
-            background: AppTheme.panel;
-            border-radius: 12px;
-            border-width: 1px;
-            border-color: AppTheme.border;
-            Text {
-                x: 16px;
-                y: 14px;
-                width: parent.width - 32px;
-                height: 22px;
-                text: AppState.en ? "Add prompt" : "添加提示词";
-                color: AppTheme.text;
-                font-size: 14px;
-                font-weight: 500;
-                vertical-alignment: center;
-            }
-            Rectangle {
-                x: 16px;
-                y: 44px;
-                width: parent.width - 32px;
-                height: 62px;
-                background: AppTheme.bg;
-                border-radius: 8px;
-                border-width: 1px;
-                border-color: prompt-input.has-focus ? AppTheme.accent : AppTheme.border;
-                clip: true;
-                prompt-scroll := ScrollView {
-                    x: 12px;
-                    y: 8px;
-                    width: parent.width - 24px;
-                    height: parent.height - 16px;
-                    viewport-width: self.visible-width;
-                    viewport-height: max(self.visible-height, prompt-input.preferred-height);
-                    prompt-input := TextInput {
-                        text <=> AppState.custom-prompt-input;
-                        single-line: false;
-                        wrap: word-wrap;
-                        color: AppTheme.text;
-                        font-size: AppState.settings-font-size * 1px;
-                        page-height: prompt-scroll.visible-height;
-                        cursor-position-changed(position) => {
-                            if position.y + prompt-scroll.viewport-y < 4px {
-                                prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, -position.y + 4px));
-                            } else if position.y + prompt-scroll.viewport-y > prompt-scroll.visible-height - 24px {
-                                prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, prompt-scroll.visible-height - position.y - 24px));
-                            }
-                        }
-                        key-pressed(event) => {
-                            if event.text == Key.Return {
-                                if event.modifiers.alt {
-                                    return reject;
-                                }
-                                AppState.add-custom-prompt(AppState.custom-prompt-input);
-                                return accept;
-                            }
-                            return reject;
-                        }
-                    }
-                }
-                if AppState.custom-prompt-input == "" && !prompt-input.has-focus: Text {
-                    x: 12px;
-                    y: 8px;
-                    width: parent.width - 24px;
-                    height: parent.height - 16px;
-                    text: AppState.en ? "Enter a custom prompt" : "请输入自定义提示词";
-                    color: AppTheme.weak;
-                    font-size: AppState.settings-font-size * 1px;
-                    vertical-alignment: center;
-                    overflow: elide;
-                }
-            }
-            Text {
-                x: 16px;
-                y: 114px;
-                width: parent.width - 142px;
-                height: 28px;
-                text: AppState.custom-prompt-message;
-                color: AppTheme.danger;
-                font-size: 12px;
-                vertical-alignment: center;
-                overflow: elide;
-            }
-            PillButton {
-                x: parent.width - 120px;
-                y: 112px;
-                width: 104px;
-                height: 32px;
-                text: AppState.en ? "Add" : "添加";
-                primary: true;
-                clicked => { AppState.add-custom-prompt(AppState.custom-prompt-input); }
-            }
-        }
-
         Text {
             x: 0px;
-            y: 178px;
-            width: parent.width;
-            height: 24px;
+            y: 0px;
+            width: parent.width - 128px;
+            height: 36px;
             text: (AppState.en ? "Saved prompts " : "已保存提示词 ") + AppState.custom-prompts.length;
             color: AppTheme.text;
             font-size: 14px;
             font-weight: 500;
             vertical-alignment: center;
         }
+        PillButton {
+            x: parent.width - 104px;
+            y: 0px;
+            width: 104px;
+            height: 36px;
+            text: AppState.en ? "Add" : "新增";
+            primary: true;
+            clicked => {
+                AppState.custom-prompt-input = "";
+                AppState.custom-prompt-message = "";
+                AppState.custom-prompt-editor-open = true;
+            }
+        }
         Rectangle {
             x: 0px;
-            y: 214px;
+            y: 48px;
             width: parent.width;
-            height: parent.height - 214px;
+            height: parent.height - 48px;
             background: AppTheme.panel;
             border-radius: 12px;
             border-width: 1px;
@@ -155,6 +73,7 @@ export component CustomPromptSettings {
                             color: AppTheme.text;
                             font-size: 13px;
                             vertical-alignment: center;
+                            wrap: no-wrap;
                             overflow: elide;
                         }
                         row-touch := TouchArea {

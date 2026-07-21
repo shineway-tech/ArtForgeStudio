@@ -1,0 +1,123 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { DialogCloseButton } from "../components/dialog-close-button.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { SectionTitle } from "../components/section-title.slint";
+import { AppTheme } from "../theme.slint";
+
+export component CustomPromptDialog {
+    function close-dialog() {
+        AppState.custom-prompt-editor-open = false;
+        AppState.custom-prompt-input = "";
+        AppState.custom-prompt-message = "";
+    }
+
+    if AppState.custom-prompt-editor-open: Rectangle {
+        background: #00000055;
+        TouchArea { width: parent.width; height: parent.height; }
+        dialog := Rectangle {
+            width: min(560px, root.width - 32px);
+            height: min(420px, root.height - 40px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            background: AppTheme.panel;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            DialogCloseButton {
+                x: parent.width - 42px;
+                y: 12px;
+                clicked => { root.close-dialog(); }
+            }
+            VerticalLayout {
+                padding: 24px;
+                spacing: 12px;
+                SectionTitle { text: AppState.en ? "Add custom prompt" : "新增自定义提示词"; }
+                Text {
+                    height: 20px;
+                    text: AppState.en ? "Prompt" : "提示词";
+                    color: AppTheme.text;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    height: 190px;
+                    background: AppTheme.bg;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: prompt-input.has-focus ? AppTheme.accent : AppTheme.border;
+                    clip: true;
+                    prompt-scroll := ScrollView {
+                        x: 12px;
+                        y: 10px;
+                        width: parent.width - 24px;
+                        height: parent.height - 20px;
+                        viewport-width: self.visible-width;
+                        viewport-height: max(self.visible-height, prompt-input.preferred-height);
+                        prompt-input := TextInput {
+                            text <=> AppState.custom-prompt-input;
+                            single-line: false;
+                            wrap: word-wrap;
+                            color: AppTheme.text;
+                            font-size: AppState.settings-font-size * 1px;
+                            page-height: prompt-scroll.visible-height;
+                            cursor-position-changed(position) => {
+                                if position.y + prompt-scroll.viewport-y < 4px {
+                                    prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, -position.y + 4px));
+                                } else if position.y + prompt-scroll.viewport-y > prompt-scroll.visible-height - 24px {
+                                    prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, prompt-scroll.visible-height - position.y - 24px));
+                                }
+                            }
+                            key-pressed(event) => {
+                                if event.text == Key.Return {
+                                    if event.modifiers.alt {
+                                        return reject;
+                                    }
+                                    AppState.add-custom-prompt(AppState.custom-prompt-input);
+                                    return accept;
+                                }
+                                return reject;
+                            }
+                        }
+                    }
+                    if AppState.custom-prompt-input == "" && !prompt-input.has-focus: Text {
+                        x: 12px;
+                        y: 10px;
+                        width: parent.width - 24px;
+                        height: parent.height - 20px;
+                        text: AppState.en ? "Enter a custom prompt" : "请输入自定义提示词";
+                        color: AppTheme.weak;
+                        font-size: AppState.settings-font-size * 1px;
+                        vertical-alignment: top;
+                    }
+                }
+                Text {
+                    height: 24px;
+                    text: AppState.custom-prompt-message;
+                    color: AppTheme.danger;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                HorizontalLayout {
+                    height: 38px;
+                    spacing: 10px;
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    PillButton {
+                        width: 104px;
+                        height: 38px;
+                        text: AppState.en ? "Cancel" : "取消";
+                        clicked => { root.close-dialog(); }
+                    }
+                    PillButton {
+                        width: 124px;
+                        height: 38px;
+                        text: AppState.en ? "Add" : "确认新增";
+                        primary: true;
+                        clicked => { AppState.add-custom-prompt(AppState.custom-prompt-input); }
+                    }
+                }
+            }
+        }
+    }
+}

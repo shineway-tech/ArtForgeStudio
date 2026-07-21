@@ -132,7 +132,7 @@ mod tests {
         assert!(composer.contains("event.text == \"/\""));
         assert!(composer.contains("AppState.prompt == \"\""));
         assert!(composer.contains("AppState.prompt-history-open = true"));
-        assert!(composer.contains("AppState.prompt = item"));
+        assert!(composer.contains("AppState.prompt = AppState.prompt-history[index]"));
         assert!(sync.contains("recent_prompt_history"));
         assert!(sync.contains("20"));
     }
@@ -185,31 +185,55 @@ mod tests {
     #[test]
     fn double_slash_opens_locally_persisted_custom_prompts() {
         let state = include_str!("../../ui/app-state.slint");
+        let app = include_str!("../../ui/app.slint");
         let settings = include_str!("../../ui/pages/settings-page.slint");
         let custom_settings = include_str!("../../ui/components/custom-prompt-settings.slint");
+        let custom_dialog = include_str!("../../ui/dialogs/custom-prompt-dialog.slint");
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         let local_store = include_str!("storage/local_store.rs");
         let callbacks = include_str!("callbacks/custom_prompt.rs");
 
         assert!(state.contains("in-out property <[string]> custom-prompts"));
+        assert!(state.contains("in-out property <bool> custom-prompt-editor-open"));
         assert!(state.contains("callback add-custom-prompt(string)"));
         assert!(state.contains("callback remove-custom-prompt(string)"));
+        assert!(app.contains("CustomPromptDialog"));
         assert!(settings.contains("CustomPromptSettings"));
         assert!(settings.contains("自定义提示词"));
-        assert!(custom_settings.contains("event.text == Key.Return"));
-        assert!(custom_settings.contains("event.modifiers.alt"));
-        assert!(custom_settings.contains("AppState.add-custom-prompt"));
+        assert!(custom_settings.contains("text: AppState.en ? \"Add\" : \"新增\""));
+        assert!(custom_settings.contains("AppState.custom-prompt-editor-open = true"));
         assert!(custom_settings.contains("AppState.remove-custom-prompt"));
+        assert!(custom_dialog.contains("event.text == Key.Return"));
+        assert!(custom_dialog.contains("event.modifiers.alt"));
+        assert!(custom_dialog.contains("AppState.add-custom-prompt"));
 
         assert!(composer.contains("event.text == \"/\" && AppState.prompt == \"/\""));
         assert!(composer.contains("history-popup.close()"));
         assert!(composer.contains("custom-prompt-popup.show()"));
-        assert!(composer.contains("for item in AppState.custom-prompts"));
+        assert!(!composer.contains("AppState.prompt = \"\";"));
+        assert!(composer.contains("for preview[index] in AppState.custom-prompt-previews"));
         assert!(composer.contains("close-policy: close-on-click-outside"));
 
         assert!(local_store.contains("custom_prompts: store.custom_prompts.clone()"));
         assert!(local_store.contains("normalize_custom_prompts(data.custom_prompts)"));
         assert!(callbacks.contains("save_local_store(&app, &store.borrow())"));
+        assert!(callbacks.contains("state.set_custom_prompt_editor_open(false)"));
+    }
+
+    #[test]
+    fn prompt_popups_show_ten_single_line_previews_without_losing_full_values() {
+        assert_eq!(
+            single_line_prompt_preview("first line\nsecond\tline  end"),
+            "first line second line end"
+        );
+
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        assert_eq!(composer.matches("min(10, AppState.").count(), 2);
+        assert_eq!(composer.matches("wrap: no-wrap;").count(), 2);
+        assert!(composer.contains("AppState.prompt = AppState.prompt-history[index]"));
+        assert!(composer.contains("AppState.prompt = AppState.custom-prompts[index]"));
+        assert!(composer.contains("viewport-height: AppState.prompt-history.length * 32px"));
+        assert!(composer.contains("viewport-height: AppState.custom-prompts.length * 32px"));
     }
 
     #[test]

@@ -184,18 +184,31 @@ pub(super) fn push_prompt_history(app: &AppWindow, store: &Store) {
     let history = recent_prompt_history(
         store.generations.iter().map(|item| item.prompt.as_str()),
         20,
-    )
-    .into_iter()
-    .map(SharedString::from)
-    .collect::<Vec<_>>();
+    );
     if history.is_empty() {
         state.set_prompt_history_open(false);
     }
-    state.set_prompt_history(ModelRc::new(VecModel::from(history)));
+    state.set_prompt_history_previews(ModelRc::new(VecModel::from(
+        history
+            .iter()
+            .map(|prompt| SharedString::from(single_line_prompt_preview(prompt)))
+            .collect::<Vec<_>>(),
+    )));
+    state.set_prompt_history(ModelRc::new(VecModel::from(
+        history.into_iter().map(SharedString::from).collect::<Vec<_>>(),
+    )));
 }
 
 pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
-    app.global::<AppState>().set_custom_prompts(ModelRc::new(VecModel::from(
+    let state = app.global::<AppState>();
+    state.set_custom_prompt_previews(ModelRc::new(VecModel::from(
+        store
+            .custom_prompts
+            .iter()
+            .map(|prompt| SharedString::from(single_line_prompt_preview(prompt)))
+            .collect::<Vec<_>>(),
+    )));
+    state.set_custom_prompts(ModelRc::new(VecModel::from(
         store
             .custom_prompts
             .iter()
@@ -203,6 +216,10 @@ pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
             .map(SharedString::from)
             .collect::<Vec<_>>(),
     )));
+}
+
+pub(super) fn single_line_prompt_preview(prompt: &str) -> String {
+    prompt.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 pub(super) fn push_model_groups(app: &AppWindow, store: &Store) {

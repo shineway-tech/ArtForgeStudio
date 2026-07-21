@@ -16,6 +16,7 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, store: Rc<RefCell<St
                 AddCustomPromptResult::Added => {
                     state.set_custom_prompt_input("".into());
                     state.set_custom_prompt_message("".into());
+                    state.set_custom_prompt_editor_open(false);
                     push_custom_prompts(&app, &store.borrow());
                     save_local_store(&app, &store.borrow());
                 }

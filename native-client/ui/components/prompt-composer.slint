@@ -106,12 +106,11 @@ export component PromptComposer {
                 }
                 key-pressed(event) => {
                     if event.text == "/" && AppState.prompt == "/" {
-                        AppState.prompt = "";
                         AppState.prompt-history-open = false;
                         history-popup.close();
                         AppState.custom-prompt-open = true;
                         custom-prompt-popup.show();
-                        return accept;
+                        return reject;
                     }
                     if event.text == Key.Return {
                         if event.modifiers.alt {
@@ -223,7 +222,7 @@ export component PromptComposer {
         x: 24px;
         y: root.prompt-input-y() + 32px;
         width: root.width - 48px;
-        height: min(238px, 16px + AppState.prompt-history.length * 36px);
+        height: 16px + min(10, AppState.prompt-history.length) * 32px;
         close-policy: close-on-click-outside;
         Rectangle {
             visible: AppState.prompt-history-open && AppState.prompt-history.length > 0;
@@ -237,24 +236,25 @@ export component PromptComposer {
                 width: parent.width - 16px;
                 height: parent.height - 16px;
                 viewport-width: self.width;
-                viewport-height: AppState.prompt-history.length * 36px;
+                viewport-height: AppState.prompt-history.length * 32px;
                 VerticalLayout {
                     width: parent.width;
-                    height: AppState.prompt-history.length * 36px;
-                    for item in AppState.prompt-history: Rectangle {
-                        height: 36px;
+                    height: AppState.prompt-history.length * 32px;
+                    for preview[index] in AppState.prompt-history-previews: Rectangle {
+                        height: 32px;
                         background: history-row.has-hover ? AppTheme.panel-soft : transparent;
                         border-radius: 6px;
                         Text {
                             x: 10px;
                             width: parent.width - 20px;
                             height: parent.height;
-                            text: item;
+                            text: preview;
                             color: AppTheme.text;
                             font-size: AppState.settings-font-size * 1px;
                             font-weight: 400;
                             horizontal-alignment: left;
                             vertical-alignment: center;
+                            wrap: no-wrap;
                             overflow: elide;
                         }
                         history-row := TouchArea {
@@ -262,7 +262,7 @@ export component PromptComposer {
                             height: parent.height;
                             mouse-cursor: pointer;
                             clicked => {
-                                AppState.prompt = item;
+                                AppState.prompt = AppState.prompt-history[index];
                                 AppState.prompt-history-open = false;
                                 history-popup.close();
                                 prompt-input.focus();
@@ -278,7 +278,7 @@ export component PromptComposer {
         x: 24px;
         y: root.prompt-input-y() + 32px;
         width: root.width - 48px;
-        height: min(238px, max(54px, 16px + AppState.custom-prompts.length * 36px));
+        height: max(54px, 16px + min(10, AppState.custom-prompts.length) * 32px);
         close-policy: close-on-click-outside;
         Rectangle {
             visible: AppState.custom-prompt-open;
@@ -302,23 +302,24 @@ export component PromptComposer {
                 width: parent.width - 16px;
                 height: parent.height - 16px;
                 viewport-width: self.width;
-                viewport-height: AppState.custom-prompts.length * 36px;
+                viewport-height: AppState.custom-prompts.length * 32px;
                 VerticalLayout {
                     width: parent.viewport-width;
                     height: parent.viewport-height;
-                    for item in AppState.custom-prompts: Rectangle {
-                        height: 36px;
+                    for preview[index] in AppState.custom-prompt-previews: Rectangle {
+                        height: 32px;
                         background: custom-row.has-hover ? AppTheme.panel-soft : transparent;
                         border-radius: 6px;
                         Text {
                             x: 10px;
                             width: parent.width - 20px;
                             height: parent.height;
-                            text: item;
+                            text: preview;
                             color: AppTheme.text;
                             font-size: AppState.settings-font-size * 1px;
                             horizontal-alignment: left;
                             vertical-alignment: center;
+                            wrap: no-wrap;
                             overflow: elide;
                         }
                         custom-row := TouchArea {
@@ -326,7 +327,7 @@ export component PromptComposer {
                             height: parent.height;
                             mouse-cursor: pointer;
                             clicked => {
-                                AppState.prompt = item;
+                                AppState.prompt = AppState.custom-prompts[index];
                                 AppState.custom-prompt-open = false;
                                 custom-prompt-popup.close();
                                 prompt-input.focus();
