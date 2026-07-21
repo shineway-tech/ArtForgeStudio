@@ -106,11 +106,12 @@ export component PromptComposer {
                 }
                 key-pressed(event) => {
                     if event.text == "/" && AppState.prompt == "/" {
+                        AppState.prompt = "//";
                         AppState.prompt-history-open = false;
                         history-popup.close();
                         AppState.custom-prompt-open = true;
                         custom-prompt-popup.show();
-                        return reject;
+                        return accept;
                     }
                     if event.text == Key.Return {
                         if event.modifiers.alt {

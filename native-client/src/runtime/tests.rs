@@ -208,9 +208,15 @@ mod tests {
         assert!(custom_dialog.contains("AppState.add-custom-prompt"));
 
         assert!(composer.contains("event.text == \"/\" && AppState.prompt == \"/\""));
+        assert!(composer.contains("AppState.prompt = \"//\";"));
+        let double_slash_handler = composer
+            .split("event.text == \"/\" && AppState.prompt == \"/\"")
+            .nth(1)
+            .and_then(|value| value.split("if event.text == Key.Return").next())
+            .expect("double slash handler");
+        assert!(double_slash_handler.contains("return accept;"));
         assert!(composer.contains("history-popup.close()"));
         assert!(composer.contains("custom-prompt-popup.show()"));
-        assert!(!composer.contains("AppState.prompt = \"\";"));
         assert!(composer.contains("for preview[index] in AppState.custom-prompt-previews"));
         assert!(composer.contains("close-policy: close-on-click-outside"));
 
