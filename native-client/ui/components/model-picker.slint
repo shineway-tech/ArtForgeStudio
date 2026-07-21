@@ -58,7 +58,11 @@ export component ModelPicker {
             ScrollView {
                 width: parent.width;
                 height: parent.height;
+                viewport-width: self.width;
+                viewport-height: max(self.height, 12px + root.option-count() * 42px);
                 VerticalLayout {
+                    width: parent.viewport-width;
+                    height: parent.viewport-height;
                     padding: 6px;
                     spacing: 4px;
                     if root.option-count() == 0: IconButton {

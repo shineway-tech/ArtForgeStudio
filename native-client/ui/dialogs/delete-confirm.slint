@@ -7,11 +7,11 @@ export component DeleteConfirm {
     if AppState.delete-confirm-open: Rectangle {
         background: #00000055;
         TouchArea { width: parent.width; height: parent.height; }
-        Rectangle {
-            x: (parent.width - 330px) / 2;
-            y: (parent.height - 180px) / 2;
-            width: 330px;
-            height: 180px;
+        dialog := Rectangle {
+            width: min(330px, root.width - 32px);
+            height: min(180px, root.height - 40px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
             background: AppTheme.panel;
             border-radius: 14px;
             border-width: 1px;

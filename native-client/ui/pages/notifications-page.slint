@@ -6,6 +6,9 @@ import { SectionTitle } from "../components/section-title.slint";
 import { AppTheme } from "../theme.slint";
 
 export component NotificationsPage {
+    function list-height() -> length {
+        return max(root.height - 116px, AppState.notifications.length * 106px);
+    }
     Rectangle {
         background: AppTheme.bg;
         Rectangle {
@@ -43,8 +46,12 @@ export component NotificationsPage {
                 }
                 ScrollView {
                     vertical-stretch: 1;
+                    viewport-width: self.width;
+                    viewport-height: root.list-height();
                     if AppState.notifications.length == 0: EmptyState { width: parent.width; height: parent.height; }
                     if AppState.notifications.length > 0: VerticalLayout {
+                        width: parent.viewport-width;
+                        height: parent.viewport-height;
                         spacing: 10px;
                         for item in AppState.notifications: Rectangle {
                             height: item.reason == "" ? 72px : 96px;

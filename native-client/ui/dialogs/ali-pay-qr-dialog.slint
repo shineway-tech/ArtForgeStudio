@@ -6,11 +6,11 @@ export component AliPayQrDialog {
     if AppState.payment-qr-open: Rectangle {
         background: #00000055;
         TouchArea { width: parent.width; height: parent.height; }
-        Rectangle {
-            x: (parent.width - 340px) / 2;
-            y: (parent.height - 350px) / 2;
-            width: 340px;
-            height: 350px;
+        dialog := Rectangle {
+            width: min(340px, root.width - 32px);
+            height: min(350px, root.height - 40px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
             background: AppTheme.panel;
             border-radius: 8px;
             border-width: 1px;

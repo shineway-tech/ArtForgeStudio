@@ -9,16 +9,24 @@ export component ModelsPage {
     function content-width() -> length {
         return root.width - 48px;
     }
+    function content-height() -> length {
+        if AppState.catalog-models.length == 0 {
+            return max(root.height - 48px, 320px);
+        }
+        return max(root.height - 48px, 172px + AppState.catalog-models.length * 148px);
+    }
     Rectangle {
         background: AppTheme.bg;
         ScrollView {
             width: parent.width;
             height: parent.height;
+            viewport-width: parent.width;
+            viewport-height: root.content-height() + 48px;
             Rectangle {
                 x: 24px;
                 y: 24px;
                 width: root.content-width();
-                height: max(680px, parent.height - 48px);
+                height: root.content-height();
                 background: transparent;
                 VerticalLayout {
                     spacing: 16px;

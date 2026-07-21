@@ -7,11 +7,11 @@ export component VersionCheckDialog {
     if AppState.update-result-open: Rectangle {
         background: #00000055;
         TouchArea { width: parent.width; height: parent.height; }
-        Rectangle {
-            x: (parent.width - 360px) / 2;
-            y: (parent.height - 190px) / 2;
-            width: 360px;
-            height: 190px;
+        dialog := Rectangle {
+            width: min(380px, root.width - 32px);
+            height: min(220px, root.height - 40px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
             background: AppTheme.panel;
             border-radius: 14px;
             border-width: 1px;
@@ -19,7 +19,7 @@ export component VersionCheckDialog {
             DialogCloseButton { x: parent.width - 42px; y: 12px; clicked => { AppState.update-result-open = false; } }
             VerticalLayout {
                 padding: 22px;
-                spacing: 18px;
+                spacing: 14px;
                 Text {
                     text: AppState.en ? "Version Check" : "版本检查";
                     color: AppTheme.text;
@@ -28,11 +28,13 @@ export component VersionCheckDialog {
                     horizontal-alignment: center;
                 }
                 Text {
+                    height: 54px;
                     text: AppState.update-message;
                     color: AppTheme.muted;
                     font-size: 13px;
                     font-weight: 400;
                     horizontal-alignment: center;
+                    vertical-alignment: center;
                     wrap: word-wrap;
                 }
                 PillButton {

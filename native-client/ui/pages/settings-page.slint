@@ -16,6 +16,8 @@ export component SettingsPage {
         ScrollView {
             width: parent.width;
             height: parent.height;
+            viewport-width: parent.width;
+            viewport-height: max(960px, parent.height);
             Rectangle {
                 property <length> left-w: 250px;
                 property <length> gap: 28px;

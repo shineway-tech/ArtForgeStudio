@@ -9,11 +9,11 @@ export component ProfileDialog {
     if AppState.profile-open: Rectangle {
         background: #00000055;
         TouchArea { width: parent.width; height: parent.height; }
-        Rectangle {
-            x: (parent.width - 420px) / 2;
-            y: (parent.height - 540px) / 2;
-            width: 420px;
-            height: 540px;
+        dialog := Rectangle {
+            width: min(420px, root.width - 32px);
+            height: min(AppState.nickname == "" ? 540px : 604px, root.height - 40px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
             background: AppTheme.panel;
             border-radius: 14px;
             border-width: 1px;
@@ -24,30 +24,31 @@ export component ProfileDialog {
                 spacing: 12px;
                 SectionTitle { text: AppState.en ? "Account" : "账号信息"; }
                 Rectangle {
-                    height: AppState.nickname == "" ? 118px : 166px;
+                    height: AppState.nickname == "" ? 150px : 214px;
                     background: AppTheme.panel-soft;
                     border-radius: 10px;
                     VerticalLayout {
                         padding: 16px;
-                        spacing: 4px;
-                        if AppState.nickname != "": Text { height: 16px; text: AppState.en ? "Nickname" : "昵称"; color: AppTheme.muted; font-size: 12px; }
-                        if AppState.nickname != "": Text { height: 24px; text: AppState.nickname; color: AppTheme.text; font-size: 16px; overflow: elide; }
-                        Text { height: 16px; text: AppState.en ? "Email" : "邮箱"; color: AppTheme.muted; font-size: 12px; }
-                        Text { height: 22px; text: AppState.email-mask; color: AppTheme.text; font-size: 14px; overflow: elide; }
+                        spacing: 8px;
+                        if AppState.nickname != "": Text { height: 20px; text: AppState.en ? "Nickname" : "昵称"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; }
+                        if AppState.nickname != "": Text { height: 28px; text: AppState.nickname; color: AppTheme.text; font-size: 16px; vertical-alignment: center; overflow: elide; }
+                        Text { height: 20px; text: AppState.en ? "Email" : "邮箱"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; }
+                        Text { height: 26px; text: AppState.email-mask; color: AppTheme.text; font-size: 14px; vertical-alignment: center; overflow: elide; }
                         Rectangle {
-                            height: 40px;
+                            height: 56px;
                             background: transparent;
-                            Text { width: parent.width; height: 16px; text: AppState.en ? "Membership" : "当前会员"; color: AppTheme.muted; font-size: 12px; overflow: elide; }
-                            Text { y: 18px; width: parent.width; height: 22px; text: AppState.membership-plan-name + " · " + AppState.membership-max-quality; color: AppTheme.text; font-size: 14px; overflow: elide; }
+                            Text { width: parent.width; height: 20px; text: AppState.en ? "Membership" : "当前会员"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                            Text { y: 28px; width: parent.width; height: 26px; text: AppState.membership-plan-name + " · " + AppState.membership-max-quality; color: AppTheme.text; font-size: 14px; vertical-alignment: center; overflow: elide; }
                             TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.navigate("credits"); AppState.credits-tab = "membership"; AppState.profile-open = false; } }
                         }
                     }
                 }
                 Text { height: 20px; text: AppState.en ? "Signed-in devices" : "登录设备"; color: AppTheme.muted; font-size: 13px; }
                 Rectangle {
-                    height: 108px;
+                    height: 132px;
                     background: AppTheme.panel-soft;
                     border-radius: 10px;
+                    clip: true;
                     if AppState.account-sessions.length == 0: Text {
                         x: 14px;
                         width: parent.width - 28px;
@@ -62,14 +63,18 @@ export component ProfileDialog {
                         y: 8px;
                         width: parent.width - 16px;
                         height: parent.height - 16px;
-                        VerticalLayout {
+                        viewport-width: self.width;
+                        viewport-height: max(self.height, AppState.account-sessions.length * 46px);
+                        session-list := VerticalLayout {
+                            width: parent.viewport-width;
+                            height: parent.viewport-height;
                             spacing: 4px;
                             for session in AppState.account-sessions: Rectangle {
-                                height: 38px;
+                                height: 42px;
                                 border-radius: 8px;
                                 background: session.is-current ? AppTheme.panel : transparent;
                                 Text { x: 10px; width: parent.width - 118px; height: parent.height; text: session.device-name + " · " + session.platform + (session.is-current ? (AppState.en ? " · Current" : " · 当前设备") : ""); color: AppTheme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
-                                if !session.is-current: PillButton { x: parent.width - 94px; y: 4px; width: 86px; height: 30px; text: AppState.en ? "Revoke" : "撤销"; danger: true; clicked => { AppState.revoke-session(session.id); } }
+                                if !session.is-current: PillButton { x: parent.width - 94px; y: 6px; width: 86px; height: 30px; text: AppState.en ? "Revoke" : "撤销"; danger: true; clicked => { AppState.revoke-session(session.id); } }
                             }
                         }
                     }

@@ -7,11 +7,11 @@ export component AgreementViewerDialog {
     if AppState.agreement-viewer-open: Rectangle {
         background: #00000066;
         TouchArea { width: parent.width; height: parent.height; }
-        Rectangle {
-            x: (parent.width - 860px) / 2;
-            y: (parent.height - 680px) / 2;
-            width: 860px;
-            height: 680px;
+        dialog := Rectangle {
+            width: min(860px, root.width - 32px);
+            height: min(680px, root.height - 32px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
             background: AppTheme.panel;
             border-radius: 14px;
             border-width: 1px;
@@ -31,8 +31,8 @@ export component AgreementViewerDialog {
             Rectangle {
                 x: 30px;
                 y: 70px;
-                width: 800px;
-                height: 560px;
+                width: parent.width - 60px;
+                height: parent.height - 120px;
                 background: #ffffff;
                 border-radius: 8px;
                 border-width: 1px;
@@ -52,8 +52,8 @@ export component AgreementViewerDialog {
             }
             Text {
                 x: 30px;
-                y: 638px;
-                width: 800px;
+                y: parent.height - 42px;
+                width: parent.width - 60px;
                 height: 24px;
                 text: AppState.en ? "Agreement content is provided by the service." : "协议内容由服务端提供";
                 color: AppTheme.muted;

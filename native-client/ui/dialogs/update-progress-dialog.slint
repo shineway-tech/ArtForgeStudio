@@ -6,11 +6,11 @@ export component UpdateProgressDialog {
     if AppState.update-progress-open: Rectangle {
         background: #00000055;
         TouchArea { width: parent.width; height: parent.height; }
-        Rectangle {
-            x: (parent.width - 420px) / 2;
-            y: (parent.height - 230px) / 2;
-            width: 420px;
-            height: 230px;
+        dialog := Rectangle {
+            width: min(420px, root.width - 32px);
+            height: min(250px, root.height - 40px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
             background: AppTheme.panel;
             border-radius: 14px;
             border-width: 1px;
@@ -29,9 +29,9 @@ export component UpdateProgressDialog {
             }
             Text {
                 x: 24px;
-                y: 62px;
+                y: 58px;
                 width: parent.width - 48px;
-                height: 22px;
+                height: 42px;
                 text: AppState.update-ready ? (AppState.en ? "Update is ready. Restart now to apply it." : "更新已准备完成，立即更新后客户端将自动关闭并重启。")
                     : (AppState.en ? "Preparing update..." : "正在准备更新...");
                 color: AppTheme.muted;
@@ -43,7 +43,7 @@ export component UpdateProgressDialog {
             }
             Rectangle {
                 x: 34px;
-                y: 112px;
+                y: 116px;
                 width: parent.width - 68px;
                 height: 12px;
                 background: AppTheme.panel-soft;
@@ -61,7 +61,7 @@ export component UpdateProgressDialog {
             }
             Text {
                 x: 34px;
-                y: 132px;
+                y: 136px;
                 width: parent.width - 68px;
                 height: 20px;
                 text: AppState.update-progress + "%";
@@ -73,7 +73,7 @@ export component UpdateProgressDialog {
             }
             PillButton {
                 x: 34px;
-                y: 174px;
+                y: 190px;
                 width: parent.width - 68px;
                 height: 40px;
                 text: AppState.en ? "Restart Now" : "立即更新";

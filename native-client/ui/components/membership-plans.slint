@@ -38,11 +38,11 @@ export component MembershipPlans {
                     padding: 16px;
                     spacing: 10px;
                     if plan.code == "free": Rectangle { vertical-stretch: 1; background: transparent; }
-                    Text { height: 28px; text: plan.name; color: AppTheme.text; font-size: 18px; font-weight: 600; horizontal-alignment: center; }
-                    Text { height: 34px; text: plan.price; color: AppTheme.accent-dark; font-size: 24px; horizontal-alignment: center; }
+                    Text { height: 28px; text: plan.name; color: AppTheme.text; font-size: 18px; font-weight: 600; horizontal-alignment: center; overflow: elide; }
+                    Text { height: 34px; text: plan.price; color: AppTheme.accent-dark; font-size: 24px; horizontal-alignment: center; overflow: elide; }
                     Text { height: 22px; text: plan.period-days + (AppState.en ? " days" : " 天"); color: AppTheme.muted; font-size: 13px; horizontal-alignment: center; }
-                    Text { height: 40px; text: (AppState.en ? "Grant credits: " : "赠送积分：") + plan.grant-credits; color: AppTheme.text; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
-                    Text { height: 40px; text: (AppState.en ? "Max quality: " : "最高画质：") + plan.max-quality; color: AppTheme.text; font-size: 13px; horizontal-alignment: center; }
+                    Text { height: 40px; text: (AppState.en ? "Grant credits: " : "赠送积分：") + plan.grant-credits; color: AppTheme.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
+                    Text { height: 40px; text: (AppState.en ? "Max quality: " : "最高画质：") + plan.max-quality; color: AppTheme.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
                     Rectangle { vertical-stretch: 1; background: transparent; }
                     if plan.code != "free": PillButton {
                         height: 38px;

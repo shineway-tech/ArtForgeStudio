@@ -50,7 +50,11 @@ export component FontPicker {
             ScrollView {
                 width: parent.width;
                 height: parent.height;
+                viewport-width: self.width;
+                viewport-height: max(self.height, 12px + AppState.font-list.length * 42px);
                 VerticalLayout {
+                    width: parent.viewport-width;
+                    height: parent.viewport-height;
                     padding: 6px;
                     spacing: 4px;
                     for font in AppState.font-list: IconButton {

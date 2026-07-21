@@ -24,9 +24,11 @@ component AgreementChoice {
         }
         Text {
             text: root.title;
+            horizontal-stretch: 1;
             color: AppTheme.accent;
             font-size: 13px;
             vertical-alignment: center;
+            overflow: elide;
             TouchArea { mouse-cursor: pointer; clicked => { root.open(root.title, root.url); } }
         }
         Rectangle { horizontal-stretch: 1; background: transparent; }
@@ -46,11 +48,11 @@ export component AuthDialog {
     if AppState.auth-open: Rectangle {
         background: #00000066;
         TouchArea { width: parent.width; height: parent.height; }
-        Rectangle {
-            x: (parent.width - 440px) / 2;
-            y: (parent.height - 450px) / 2;
-            width: 440px;
-            height: 450px;
+        dialog := Rectangle {
+            width: min(440px, root.width - 32px);
+            height: min(480px, root.height - 40px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
             background: AppTheme.panel;
             border-radius: 14px;
             border-width: 1px;
