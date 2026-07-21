@@ -11,7 +11,6 @@ import { ThemeTile } from "../components/theme-tile.slint";
 import { AppTheme } from "../theme.slint";
 
 export component SettingsPage {
-    property <string> active-section: "basic";
     Rectangle {
         background: AppTheme.bg;
         ScrollView {
@@ -45,36 +44,36 @@ export component SettingsPage {
                         y: 86px;
                         width: parent.width - 32px;
                         height: 62px;
-                        background: root.active-section == "basic" ? AppTheme.panel-soft : transparent;
+                        background: AppState.settings-section == "basic" ? AppTheme.panel-soft : transparent;
                         border-radius: 10px;
-                        if root.active-section == "basic": Rectangle { x: 0px; y: 14px; width: 3px; height: 24px; border-radius: 2px; background: AppTheme.accent; }
-                        Text { x: 18px; y: 10px; text: AppState.en ? "Basic" : "基础设置"; color: root.active-section == "basic" ? AppTheme.text : AppTheme.muted; font-size: 14px; font-weight: 400; }
+                        if AppState.settings-section == "basic": Rectangle { x: 0px; y: 14px; width: 3px; height: 24px; border-radius: 2px; background: AppTheme.accent; }
+                        Text { x: 18px; y: 10px; text: AppState.en ? "Basic" : "基础设置"; color: AppState.settings-section == "basic" ? AppTheme.text : AppTheme.muted; font-size: 14px; font-weight: 400; }
                         Text { x: 18px; y: 34px; text: AppState.en ? "Theme, font, folders" : "主题、字体、目录"; color: AppTheme.weak; font-size: 12px; font-weight: 400; }
-                        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.active-section = "basic"; } }
+                        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.settings-section = "basic"; } }
                     }
                     Rectangle {
                         x: 16px;
                         y: 168px;
                         width: parent.width - 32px;
                         height: 62px;
-                        background: root.active-section == "prompts" ? AppTheme.panel-soft : transparent;
+                        background: AppState.settings-section == "prompts" ? AppTheme.panel-soft : transparent;
                         border-radius: 10px;
-                        if root.active-section == "prompts": Rectangle { x: 0px; y: 14px; width: 3px; height: 24px; border-radius: 2px; background: AppTheme.accent; }
-                        Text { x: 18px; y: 10px; text: AppState.en ? "Custom prompts" : "自定义提示词"; color: root.active-section == "prompts" ? AppTheme.text : AppTheme.muted; font-size: 14px; font-weight: 400; }
+                        if AppState.settings-section == "prompts": Rectangle { x: 0px; y: 14px; width: 3px; height: 24px; border-radius: 2px; background: AppTheme.accent; }
+                        Text { x: 18px; y: 10px; text: AppState.en ? "Custom prompts" : "自定义提示词"; color: AppState.settings-section == "prompts" ? AppTheme.text : AppTheme.muted; font-size: 14px; font-weight: 400; }
                         Text { x: 18px; y: 34px; text: AppState.en ? "Personal prompt library" : "个人提示词库"; color: AppTheme.weak; font-size: 12px; font-weight: 400; }
-                        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.active-section = "prompts"; } }
+                        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.settings-section = "prompts"; } }
                     }
                     Rectangle {
                         x: 16px;
                         y: 250px;
                         width: parent.width - 32px;
                         height: 62px;
-                        background: root.active-section == "about" ? AppTheme.panel-soft : transparent;
+                        background: AppState.settings-section == "about" ? AppTheme.panel-soft : transparent;
                         border-radius: 10px;
-                        if root.active-section == "about": Rectangle { x: 0px; y: 14px; width: 3px; height: 24px; border-radius: 2px; background: AppTheme.accent; }
-                        Text { x: 18px; y: 10px; text: AppState.en ? "About" : "关于"; color: root.active-section == "about" ? AppTheme.text : AppTheme.muted; font-size: 14px; font-weight: 400; }
+                        if AppState.settings-section == "about": Rectangle { x: 0px; y: 14px; width: 3px; height: 24px; border-radius: 2px; background: AppTheme.accent; }
+                        Text { x: 18px; y: 10px; text: AppState.en ? "About" : "关于"; color: AppState.settings-section == "about" ? AppTheme.text : AppTheme.muted; font-size: 14px; font-weight: 400; }
                         Text { x: 18px; y: 34px; text: AppState.en ? "Version and paths" : "版本与配置位置"; color: AppTheme.weak; font-size: 12px; font-weight: 400; }
-                        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.active-section = "about"; } }
+                        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.settings-section = "about"; } }
                     }
                 }
 
@@ -82,14 +81,14 @@ export component SettingsPage {
                     x: content-x;
                     y: 38px;
                     width: content-w;
-                    text: root.active-section == "about"
+                    text: AppState.settings-section == "about"
                         ? (AppState.en ? "About" : "关于")
-                        : (root.active-section == "prompts" ? (AppState.en ? "Custom prompts" : "自定义提示词") : (AppState.en ? "Basic Settings" : "基础设置"));
+                        : (AppState.settings-section == "prompts" ? (AppState.en ? "Custom prompts" : "自定义提示词") : (AppState.en ? "Basic Settings" : "基础设置"));
                     color: AppTheme.text;
                     font-size: 24px;
                     font-weight: 600;
                 }
-                if root.active-section == "basic": Rectangle {
+                if AppState.settings-section == "basic": Rectangle {
                     x: content-x;
                     y: 96px;
                     width: content-w;
@@ -109,7 +108,7 @@ export component SettingsPage {
                     ThemeTile { x: 0px; y: 206px; width: (parent.width - 16px) / 3; id: "system"; label: AppState.en ? "System" : "跟随系统"; color: #5b6472; }
                     ThemeTile { x: ((parent.width - 16px) / 3 + 8px); y: 206px; width: (parent.width - 16px) / 3; id: "user"; label: AppState.en ? "Custom" : "自定义"; color: #5b5fc7; }
                 }
-                if root.active-section == "basic": Rectangle {
+                if AppState.settings-section == "basic": Rectangle {
                     x: content-x;
                     y: 386px;
                     width: content-w;
@@ -130,7 +129,7 @@ export component SettingsPage {
                         Text { width: 72px; horizontal-stretch: 0; text: "10 - 24"; color: AppTheme.muted; font-size: 13px; font-weight: 400; vertical-alignment: center; }
                     }
                 }
-                if root.active-section == "basic": Rectangle {
+                if AppState.settings-section == "basic": Rectangle {
                     x: content-x;
                     y: 550px;
                     width: content-w;
@@ -148,16 +147,16 @@ export component SettingsPage {
                         CardStyleOption { horizontal-stretch: 1; id: "square"; label: AppState.en ? "Square" : "直角"; }
                     }
                 }
-                if root.active-section == "basic": DirRow { x: content-x; y: 714px; width: content-w; label: AppState.en ? "Input folder" : "输入素材目录"; value: AppState.input-dir; kind: "input"; }
-                if root.active-section == "basic": DirRow { x: content-x; y: 792px; width: content-w; label: AppState.en ? "Output folder" : "输出目录"; value: AppState.output-dir; kind: "output"; }
-                if root.active-section == "basic": DirRow { x: content-x; y: 870px; width: content-w; label: AppState.en ? "Prompt folder" : "提示词模板目录"; value: AppState.prompt-dir; kind: "prompt"; }
-                if root.active-section == "prompts": CustomPromptSettings {
+                if AppState.settings-section == "basic": DirRow { x: content-x; y: 714px; width: content-w; label: AppState.en ? "Input folder" : "输入素材目录"; value: AppState.input-dir; kind: "input"; }
+                if AppState.settings-section == "basic": DirRow { x: content-x; y: 792px; width: content-w; label: AppState.en ? "Output folder" : "输出目录"; value: AppState.output-dir; kind: "output"; }
+                if AppState.settings-section == "basic": DirRow { x: content-x; y: 870px; width: content-w; label: AppState.en ? "Prompt folder" : "提示词模板目录"; value: AppState.prompt-dir; kind: "prompt"; }
+                if AppState.settings-section == "prompts": CustomPromptSettings {
                     x: content-x;
                     y: 96px;
                     width: content-w;
                     height: parent.height - 126px;
                 }
-                if root.active-section == "about": Rectangle {
+                if AppState.settings-section == "about": Rectangle {
                     x: content-x;
                     y: 96px;
                     width: content-w;

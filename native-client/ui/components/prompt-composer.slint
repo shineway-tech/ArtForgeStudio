@@ -14,6 +14,17 @@ export component PromptComposer {
     in property <bool> generation: false;
     in property <bool> show-generate-button: true;
     height: AppState.references.length > 0 || AppState.quote-title != "" ? 480px : 430px;
+
+    function apply-selected-prompt(value: string) {
+        AppState.prompt-history-open = false;
+        AppState.custom-prompt-open = false;
+        history-popup.close();
+        custom-prompt-popup.close();
+        prompt-input.focus();
+        prompt-input.text = value;
+        AppState.prompt = value;
+    }
+
     Rectangle {
         background: AppTheme.panel-soft;
         border-radius: 16px;
@@ -265,10 +276,7 @@ export component PromptComposer {
                             height: parent.height;
                             mouse-cursor: pointer;
                             clicked => {
-                                AppState.prompt = AppState.prompt-history[index];
-                                AppState.prompt-history-open = false;
-                                history-popup.close();
-                                prompt-input.focus();
+                                root.apply-selected-prompt(AppState.prompt-history[index]);
                             }
                         }
                     }
@@ -289,15 +297,36 @@ export component PromptComposer {
             border-radius: 8px;
             border-width: 1px;
             border-color: AppTheme.border;
-            if AppState.custom-prompts.length == 0: Text {
-                x: 12px;
-                width: parent.width - 24px;
-                height: parent.height;
-                text: AppState.en ? "No custom prompts" : "暂无自定义提示词";
-                color: AppTheme.muted;
-                font-size: AppState.settings-font-size * 1px;
-                horizontal-alignment: left;
-                vertical-alignment: center;
+            if AppState.custom-prompts.length == 0: Rectangle {
+                x: 8px;
+                y: 8px;
+                width: parent.width - 16px;
+                height: parent.height - 16px;
+                background: create-prompt-touch.has-hover ? AppTheme.panel-soft : transparent;
+                border-radius: 6px;
+                Text {
+                    x: 10px;
+                    width: parent.width - 20px;
+                    height: parent.height;
+                    text: AppState.en ? "No custom prompts. Click to create one" : "暂无自定义提示词，点击创建";
+                    color: AppTheme.accent;
+                    font-size: AppState.settings-font-size * 1px;
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    wrap: no-wrap;
+                    overflow: elide;
+                }
+                create-prompt-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => {
+                        AppState.custom-prompt-open = false;
+                        custom-prompt-popup.close();
+                        AppState.settings-section = "prompts";
+                        AppState.navigate("settings");
+                    }
+                }
             }
             if AppState.custom-prompts.length > 0: ScrollView {
                 x: 8px;
@@ -330,10 +359,7 @@ export component PromptComposer {
                             height: parent.height;
                             mouse-cursor: pointer;
                             clicked => {
-                                AppState.prompt = AppState.custom-prompts[index];
-                                AppState.custom-prompt-open = false;
-                                custom-prompt-popup.close();
-                                prompt-input.focus();
+                                root.apply-selected-prompt(AppState.custom-prompts[index]);
                             }
                         }
                     }

@@ -132,7 +132,9 @@ mod tests {
         assert!(composer.contains("event.text == \"/\""));
         assert!(composer.contains("AppState.prompt == \"\""));
         assert!(composer.contains("AppState.prompt-history-open = true"));
-        assert!(composer.contains("AppState.prompt = AppState.prompt-history[index]"));
+        assert!(composer.contains(
+            "root.apply-selected-prompt(AppState.prompt-history[index])"
+        ));
         assert!(sync.contains("recent_prompt_history"));
         assert!(sync.contains("20"));
     }
@@ -274,11 +276,40 @@ mod tests {
 
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         assert_eq!(composer.matches("min(10, AppState.").count(), 2);
-        assert_eq!(composer.matches("wrap: no-wrap;").count(), 2);
-        assert!(composer.contains("AppState.prompt = AppState.prompt-history[index]"));
-        assert!(composer.contains("AppState.prompt = AppState.custom-prompts[index]"));
+        assert_eq!(composer.matches("wrap: no-wrap;").count(), 3);
+        assert!(composer.contains(
+            "root.apply-selected-prompt(AppState.prompt-history[index])"
+        ));
+        assert!(composer.contains(
+            "root.apply-selected-prompt(AppState.custom-prompts[index])"
+        ));
         assert!(composer.contains("viewport-height: AppState.prompt-history.length * 32px"));
         assert!(composer.contains("viewport-height: AppState.custom-prompts.length * 32px"));
+    }
+
+    #[test]
+    fn custom_prompt_selection_writes_after_focus_and_empty_state_links_to_creation() {
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let settings = include_str!("../../ui/pages/settings-page.slint");
+
+        let apply_prompt = composer
+            .split("function apply-selected-prompt(value: string)")
+            .nth(1)
+            .and_then(|value| value.split("function ").next())
+            .expect("selected prompt helper");
+        let focus_position = apply_prompt
+            .find("prompt-input.focus()")
+            .expect("prompt input focus");
+        let write_position = apply_prompt
+            .find("AppState.prompt = value")
+            .expect("prompt value assignment");
+        assert!(focus_position < write_position);
+        assert!(composer.contains("暂无自定义提示词，点击创建"));
+        assert!(composer.contains("AppState.settings-section = \"prompts\""));
+        assert!(composer.contains("AppState.navigate(\"settings\")"));
+        assert!(state.contains("in-out property <string> settings-section: \"basic\""));
+        assert!(settings.contains("AppState.settings-section"));
     }
 
     #[test]
