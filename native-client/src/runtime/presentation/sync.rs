@@ -242,9 +242,12 @@ pub(super) fn push_canvas_notes(app: &AppWindow, store: &Store) {
                 .iter()
                 .map(|note| CanvasNote {
                     id: note.id.clone().into(),
+                    kind: note.kind.clone().into(),
                     content: note.content.clone().into(),
                     x: note.x,
                     y: note.y,
+                    width: note.width,
+                    height: note.height,
                 })
                 .collect::<Vec<_>>(),
         )));

@@ -13,6 +13,7 @@ export component PillButton {
     Rectangle {
         width: root.width;
         height: root.height;
+        clip: true;
         opacity: root.disabled ? 0.45 : 1.0;
         background: root.primary || root.active ? AppTheme.accent : (touch.has-hover && !root.disabled ? AppTheme.panel-soft : AppTheme.panel);
         border-radius: 18px;
@@ -28,6 +29,7 @@ export component PillButton {
             font-weight: root.primary ? 500 : 400;
             horizontal-alignment: center;
             vertical-alignment: center;
+            wrap: no-wrap;
             overflow: elide;
         }
         touch := TouchArea {

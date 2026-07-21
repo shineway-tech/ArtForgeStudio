@@ -154,6 +154,36 @@ mod tests {
     }
 
     #[test]
+    fn prompt_popups_close_when_their_slash_trigger_is_removed() {
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let edited_handler = composer
+            .split("edited =>")
+            .nth(1)
+            .and_then(|value| value.split("key-pressed(event)").next())
+            .expect("prompt edited handler");
+
+        assert!(edited_handler.contains("self.text != \"/\""));
+        assert!(edited_handler.contains("AppState.prompt-history-open = false"));
+        assert!(edited_handler.contains("history-popup.close()"));
+        assert!(edited_handler.contains("self.text != \"//\""));
+        assert!(edited_handler.contains("AppState.custom-prompt-open = false"));
+        assert!(edited_handler.contains("custom-prompt-popup.close()"));
+    }
+
+    #[test]
+    fn prompt_action_status_wraps_below_controls_without_covering_the_editor() {
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let pill = include_str!("../../ui/components/pill-button.slint");
+
+        assert!(composer.contains("function action-status-wraps() -> bool"));
+        assert!(composer.contains("root.action-status-wraps() ? 48px : 20px"));
+        assert!(composer.contains("root.action-status-wraps() ? 84px"));
+        assert!(pill.contains("clip: true"));
+        assert!(pill.contains("wrap: no-wrap"));
+        assert!(pill.contains("overflow: elide"));
+    }
+
+    #[test]
     fn custom_prompts_are_normalized_deduplicated_and_bounded() {
         let normalized = normalize_custom_prompts(vec![
             "  first prompt  ".to_string(),
@@ -525,25 +555,41 @@ mod tests {
         assert!(app.contains("AppState.page == \"canvas\""));
         assert!(glyph.contains("root.kind == \"canvas\""));
         assert!(types.contains("export struct CanvasNote"));
+        assert!(types.contains("kind: string"));
+        assert!(types.contains("width: float"));
+        assert!(types.contains("height: float"));
         assert!(state.contains("in-out property <[CanvasNote]> canvas-notes"));
-        assert!(state.contains("callback add-canvas-note()"));
-        assert!(state.contains("callback update-canvas-note(string, string, float, float)"));
-        assert!(state.contains("callback remove-canvas-note(string)"));
+        assert!(state.contains("callback add-canvas-node(string, float, float)"));
+        assert!(state.contains("callback update-canvas-node(string, string, float, float)"));
+        assert!(state.contains("callback remove-canvas-node(string)"));
+        assert!(state.contains("callback undo-canvas()"));
+        assert!(state.contains("callback redo-canvas()"));
 
         assert!(page.contains("scroll-event(event)"));
         assert!(page.contains("root.zoom-percent"));
         assert!(page.contains("root.pan-x"));
         assert!(page.contains("root.pan-y"));
-        assert!(page.contains("AppState.add-canvas-note()"));
+        for kind in ["text", "image", "video", "audio", "group"] {
+            assert!(page.contains(&format!("root.add-node(\"{kind}\")")));
+        }
+        assert!(page.contains("AppState.undo-canvas()"));
+        assert!(page.contains("AppState.redo-canvas()"));
+        assert!(page.contains("canvas-minimap-open"));
+        assert!(page.contains("canvas-grid-style"));
+        assert!(page.contains("canvas-show-image-info"));
+        assert!(page.contains("zoom-track"));
         assert!(page.contains("for note in AppState.canvas-notes"));
-        assert!(page.contains("AppState.update-canvas-note"));
+        assert!(page.contains("AppState.update-canvas-node"));
         assert!(page.contains("AppState.pending-delete-kind = \"canvas-note\""));
         assert!(include_str!("../../ui/dialogs/delete-confirm.slint")
-            .contains("AppState.remove-canvas-note(AppState.pending-delete-id)"));
+            .contains("AppState.remove-canvas-node(AppState.pending-delete-id)"));
 
-        assert!(callbacks.contains("state.on_add_canvas_note"));
-        assert!(callbacks.contains("state.on_update_canvas_note"));
-        assert!(callbacks.contains("state.on_remove_canvas_note"));
+        assert!(callbacks.contains("state.on_add_canvas_node"));
+        assert!(callbacks.contains("state.on_update_canvas_node"));
+        assert!(callbacks.contains("state.on_remove_canvas_node"));
+        assert!(callbacks.contains("state.on_undo_canvas"));
+        assert!(callbacks.contains("state.on_redo_canvas"));
+        assert!(callbacks.contains("CanvasHistory"));
         assert!(callbacks.contains("save_local_store"));
         assert!(local_store.contains("canvas_notes: store.canvas_notes.clone()"));
         assert!(local_store.contains("store_mut.canvas_notes = data.canvas_notes"));

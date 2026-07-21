@@ -24,12 +24,30 @@ struct ModelGroupData {
     selected_model: String,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+fn default_canvas_node_kind() -> String {
+    "text".to_string()
+}
+
+fn default_canvas_node_width() -> f32 {
+    280.0
+}
+
+fn default_canvas_node_height() -> f32 {
+    176.0
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 struct CanvasNoteData {
     id: String,
+    #[serde(default = "default_canvas_node_kind")]
+    kind: String,
     content: String,
     x: f32,
     y: f32,
+    #[serde(default = "default_canvas_node_width")]
+    width: f32,
+    #[serde(default = "default_canvas_node_height")]
+    height: f32,
 }
 
 #[derive(Clone)]

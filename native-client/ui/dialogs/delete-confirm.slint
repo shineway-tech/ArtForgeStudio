@@ -19,7 +19,7 @@ export component DeleteConfirm {
         } else if AppState.pending-delete-kind == "notifications-all" {
             AppState.clear-all-notifications();
         } else if AppState.pending-delete-kind == "canvas-note" {
-            AppState.remove-canvas-note(AppState.pending-delete-id);
+            AppState.remove-canvas-node(AppState.pending-delete-id);
         } else {
             AppState.confirm-delete();
         }
@@ -46,7 +46,7 @@ export component DeleteConfirm {
                     text: AppState.pending-delete-kind == "custom-prompt"
                         ? (AppState.en ? "Delete this prompt?" : "确认删除这条提示词？")
                         : (AppState.pending-delete-kind == "canvas-note"
-                            ? (AppState.en ? "Delete this note?" : "确认删除这张便签？")
+                            ? (AppState.en ? "Delete this node?" : "确认删除这个节点？")
                             : (AppState.pending-delete-kind == "notification"
                             ? (AppState.en ? "Delete this notification?" : "确认删除这条通知？")
                             : (AppState.pending-delete-kind == "notifications-all"

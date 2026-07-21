@@ -32,10 +32,10 @@ export component PromptComposer {
         border-color: AppTheme.border;
         clip: false;
         if AppState.quote-title != "": Rectangle {
-            x: 112px;
-            y: 14px;
-            height: 32px;
-            width: parent.width - 136px;
+            x: 24px;
+            y: root.action-status-wraps() ? 76px : 50px;
+            height: 34px;
+            width: parent.width - 48px;
             background: AppTheme.panel-soft;
             border-radius: 8px;
             Text { x: 12px; width: parent.width - 54px; height: parent.height; text: (AppState.en ? "Quoted image: " : "引用图片：") + AppState.quote-title; color: AppTheme.muted; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; overflow: elide; }
@@ -57,7 +57,7 @@ export component PromptComposer {
         PillButton {
             x: 24px;
             y: 14px;
-            width: 78px;
+            width: 96px;
             height: 28px;
             text: AppState.optimizing-prompt ? (AppState.en ? "Optimizing..." : "正在优化...") : (AppState.en ? "AI Optimize" : "AI优化");
             primary: true;
@@ -65,9 +65,9 @@ export component PromptComposer {
             clicked => { AppState.optimize-current-prompt(); }
         }
         PillButton {
-            x: 110px;
+            x: 128px;
             y: 14px;
-            width: 88px;
+            width: 104px;
             height: 28px;
             text: AppState.en ? "Image+Text" : "图文优化";
             primary: true;
@@ -75,16 +75,16 @@ export component PromptComposer {
             clicked => { AppState.visual-optimize-current-prompt(); }
         }
         if AppState.optimizing-prompt: LoadingDots {
-            x: 204px;
+            x: 238px;
             y: 7px;
             width: 30px;
             height: 30px;
         }
         Text {
             visible: AppState.optimizing-prompt || AppState.translating-prompt;
-            x: 240px;
-            y: 20px;
-            width: parent.width - 264px;
+            x: root.action-status-wraps() ? 24px : 274px;
+            y: root.action-status-wraps() ? 48px : 20px;
+            width: root.action-status-wraps() ? parent.width - 48px : parent.width - 298px;
             height: 18px;
             text: AppState.optimizing-prompt ? (AppState.en ? "Optimizing prompt..." : "正在优化提示词...")
                 : (AppState.en ? "Translating prompt..." : "正在翻译提示词...");
@@ -113,6 +113,16 @@ export component PromptComposer {
                         prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, -position.y + 8px));
                     } else if position.y + prompt-scroll.viewport-y > prompt-scroll.visible-height - 28px {
                         prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, prompt-scroll.visible-height - position.y - 28px));
+                    }
+                }
+                edited => {
+                    if AppState.prompt-history-open && self.text != "/" {
+                        AppState.prompt-history-open = false;
+                        history-popup.close();
+                    }
+                    if AppState.custom-prompt-open && self.text != "//" {
+                        AppState.custom-prompt-open = false;
+                        custom-prompt-popup.close();
                     }
                 }
                 key-pressed(event) => {
@@ -399,7 +409,15 @@ export component PromptComposer {
     }
 
     function prompt-input-y() -> length {
-        return AppState.quote-title != "" ? 62px : 58px;
+        if AppState.quote-title != "" {
+            return root.action-status-wraps() ? 118px : 92px;
+        }
+        return root.action-status-wraps() ? 84px : 58px;
+    }
+
+    function action-status-wraps() -> bool {
+        return (AppState.optimizing-prompt || AppState.translating-prompt)
+            && (root.width < 680px || AppState.settings-font-size > 16);
     }
 
     function prompt-input-height() -> length {
