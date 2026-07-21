@@ -164,6 +164,7 @@ struct Store {
     notifications: Vec<NotificationData>,
     references: ReferenceGroups,
     prompt_drafts: PromptDrafts,
+    custom_prompts: Vec<String>,
     credit_ledger_pagination: CreditLedgerPagination,
 }
 
@@ -198,6 +199,8 @@ struct LocalStoreData {
     reasoning_model: String,
     #[serde(default)]
     prompt_drafts: PromptDrafts,
+    #[serde(default)]
+    custom_prompts: Vec<String>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

@@ -66,6 +66,10 @@ export global AppState {
     in-out property <string> prompt: "";
     in-out property <[string]> prompt-history: [];
     in-out property <bool> prompt-history-open: false;
+    in-out property <[string]> custom-prompts: [];
+    in-out property <string> custom-prompt-input: "";
+    in-out property <string> custom-prompt-message: "";
+    in-out property <bool> custom-prompt-open: false;
     in-out property <string> asset-type: "character";
     in-out property <string> ratio: "1:1";
     in-out property <bool> ratio-more-open: true;
@@ -268,6 +272,8 @@ export global AppState {
     callback check-version();
     callback start-update();
     callback restart-after-update();
+    callback add-custom-prompt(string);
+    callback remove-custom-prompt(string);
     callback select-image-model(string);
     callback select-reasoning-model(string);
     callback refresh-assets();

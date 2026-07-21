@@ -149,6 +149,7 @@ pub(super) fn push_all(app: &AppWindow, store: &Store) {
     push_model_groups(app, store);
     push_conversations(app, store);
     push_prompt_history(app, store);
+    push_custom_prompts(app, store);
     push_assets(app, store);
     push_generations(app, store);
     push_inspiration(app, store);
@@ -191,6 +192,17 @@ pub(super) fn push_prompt_history(app: &AppWindow, store: &Store) {
         state.set_prompt_history_open(false);
     }
     state.set_prompt_history(ModelRc::new(VecModel::from(history)));
+}
+
+pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
+    app.global::<AppState>().set_custom_prompts(ModelRc::new(VecModel::from(
+        store
+            .custom_prompts
+            .iter()
+            .cloned()
+            .map(SharedString::from)
+            .collect::<Vec<_>>(),
+    )));
 }
 
 pub(super) fn push_model_groups(app: &AppWindow, store: &Store) {

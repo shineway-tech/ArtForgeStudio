@@ -1,6 +1,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { AppState } from "../app-state.slint";
 import { CardStyleOption } from "../components/card-style-option.slint";
+import { CustomPromptSettings } from "../components/custom-prompt-settings.slint";
 import { DirRow } from "../components/dir-row.slint";
 import { FontPicker } from "../components/font-picker.slint";
 import { FontStepButton } from "../components/font-step-button.slint";
@@ -56,6 +57,18 @@ export component SettingsPage {
                         y: 168px;
                         width: parent.width - 32px;
                         height: 62px;
+                        background: root.active-section == "prompts" ? AppTheme.panel-soft : transparent;
+                        border-radius: 10px;
+                        if root.active-section == "prompts": Rectangle { x: 0px; y: 14px; width: 3px; height: 24px; border-radius: 2px; background: AppTheme.accent; }
+                        Text { x: 18px; y: 10px; text: AppState.en ? "Custom prompts" : "自定义提示词"; color: root.active-section == "prompts" ? AppTheme.text : AppTheme.muted; font-size: 14px; font-weight: 400; }
+                        Text { x: 18px; y: 34px; text: AppState.en ? "Personal prompt library" : "个人提示词库"; color: AppTheme.weak; font-size: 12px; font-weight: 400; }
+                        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.active-section = "prompts"; } }
+                    }
+                    Rectangle {
+                        x: 16px;
+                        y: 250px;
+                        width: parent.width - 32px;
+                        height: 62px;
                         background: root.active-section == "about" ? AppTheme.panel-soft : transparent;
                         border-radius: 10px;
                         if root.active-section == "about": Rectangle { x: 0px; y: 14px; width: 3px; height: 24px; border-radius: 2px; background: AppTheme.accent; }
@@ -69,7 +82,9 @@ export component SettingsPage {
                     x: content-x;
                     y: 38px;
                     width: content-w;
-                    text: root.active-section == "about" ? (AppState.en ? "About" : "关于") : (AppState.en ? "Basic Settings" : "基础设置");
+                    text: root.active-section == "about"
+                        ? (AppState.en ? "About" : "关于")
+                        : (root.active-section == "prompts" ? (AppState.en ? "Custom prompts" : "自定义提示词") : (AppState.en ? "Basic Settings" : "基础设置"));
                     color: AppTheme.text;
                     font-size: 24px;
                     font-weight: 600;
@@ -136,6 +151,12 @@ export component SettingsPage {
                 if root.active-section == "basic": DirRow { x: content-x; y: 714px; width: content-w; label: AppState.en ? "Input folder" : "输入素材目录"; value: AppState.input-dir; kind: "input"; }
                 if root.active-section == "basic": DirRow { x: content-x; y: 792px; width: content-w; label: AppState.en ? "Output folder" : "输出目录"; value: AppState.output-dir; kind: "output"; }
                 if root.active-section == "basic": DirRow { x: content-x; y: 870px; width: content-w; label: AppState.en ? "Prompt folder" : "提示词模板目录"; value: AppState.prompt-dir; kind: "prompt"; }
+                if root.active-section == "prompts": CustomPromptSettings {
+                    x: content-x;
+                    y: 96px;
+                    width: content-w;
+                    height: parent.height - 126px;
+                }
                 if root.active-section == "about": Rectangle {
                     x: content-x;
                     y: 96px;

@@ -1,0 +1,191 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { PillButton } from "pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component CustomPromptSettings {
+    Rectangle {
+        background: transparent;
+        Rectangle {
+            width: parent.width;
+            height: 154px;
+            background: AppTheme.panel;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            Text {
+                x: 16px;
+                y: 14px;
+                width: parent.width - 32px;
+                height: 22px;
+                text: AppState.en ? "Add prompt" : "添加提示词";
+                color: AppTheme.text;
+                font-size: 14px;
+                font-weight: 500;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                x: 16px;
+                y: 44px;
+                width: parent.width - 32px;
+                height: 62px;
+                background: AppTheme.bg;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: prompt-input.has-focus ? AppTheme.accent : AppTheme.border;
+                clip: true;
+                prompt-scroll := ScrollView {
+                    x: 12px;
+                    y: 8px;
+                    width: parent.width - 24px;
+                    height: parent.height - 16px;
+                    viewport-width: self.visible-width;
+                    viewport-height: max(self.visible-height, prompt-input.preferred-height);
+                    prompt-input := TextInput {
+                        text <=> AppState.custom-prompt-input;
+                        single-line: false;
+                        wrap: word-wrap;
+                        color: AppTheme.text;
+                        font-size: AppState.settings-font-size * 1px;
+                        page-height: prompt-scroll.visible-height;
+                        cursor-position-changed(position) => {
+                            if position.y + prompt-scroll.viewport-y < 4px {
+                                prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, -position.y + 4px));
+                            } else if position.y + prompt-scroll.viewport-y > prompt-scroll.visible-height - 24px {
+                                prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, prompt-scroll.visible-height - position.y - 24px));
+                            }
+                        }
+                        key-pressed(event) => {
+                            if event.text == Key.Return {
+                                if event.modifiers.alt {
+                                    return reject;
+                                }
+                                AppState.add-custom-prompt(AppState.custom-prompt-input);
+                                return accept;
+                            }
+                            return reject;
+                        }
+                    }
+                }
+                if AppState.custom-prompt-input == "" && !prompt-input.has-focus: Text {
+                    x: 12px;
+                    y: 8px;
+                    width: parent.width - 24px;
+                    height: parent.height - 16px;
+                    text: AppState.en ? "Enter a custom prompt" : "请输入自定义提示词";
+                    color: AppTheme.weak;
+                    font-size: AppState.settings-font-size * 1px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+            Text {
+                x: 16px;
+                y: 114px;
+                width: parent.width - 142px;
+                height: 28px;
+                text: AppState.custom-prompt-message;
+                color: AppTheme.danger;
+                font-size: 12px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            PillButton {
+                x: parent.width - 120px;
+                y: 112px;
+                width: 104px;
+                height: 32px;
+                text: AppState.en ? "Add" : "添加";
+                primary: true;
+                clicked => { AppState.add-custom-prompt(AppState.custom-prompt-input); }
+            }
+        }
+
+        Text {
+            x: 0px;
+            y: 178px;
+            width: parent.width;
+            height: 24px;
+            text: (AppState.en ? "Saved prompts " : "已保存提示词 ") + AppState.custom-prompts.length;
+            color: AppTheme.text;
+            font-size: 14px;
+            font-weight: 500;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            x: 0px;
+            y: 214px;
+            width: parent.width;
+            height: parent.height - 214px;
+            background: AppTheme.panel;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            clip: true;
+            if AppState.custom-prompts.length == 0: Text {
+                x: 20px;
+                width: parent.width - 40px;
+                height: parent.height;
+                text: AppState.en ? "No custom prompts" : "暂无自定义提示词";
+                color: AppTheme.muted;
+                font-size: 13px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            if AppState.custom-prompts.length > 0: ScrollView {
+                x: 8px;
+                y: 8px;
+                width: parent.width - 16px;
+                height: parent.height - 16px;
+                viewport-width: self.width;
+                viewport-height: max(self.height, AppState.custom-prompts.length * 62px);
+                VerticalLayout {
+                    width: parent.viewport-width;
+                    height: parent.viewport-height;
+                    spacing: 6px;
+                    for prompt in AppState.custom-prompts: Rectangle {
+                        height: 56px;
+                        background: row-touch.has-hover ? AppTheme.panel-soft : transparent;
+                        border-radius: 8px;
+                        Text {
+                            x: 12px;
+                            width: parent.width - 60px;
+                            height: parent.height;
+                            text: prompt;
+                            color: AppTheme.text;
+                            font-size: 13px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        row-touch := TouchArea {
+                            width: parent.width - 48px;
+                            height: parent.height;
+                        }
+                        Rectangle {
+                            x: parent.width - 42px;
+                            y: 10px;
+                            width: 34px;
+                            height: 34px;
+                            background: delete-touch.has-hover ? AppTheme.danger.with-alpha(0.12) : transparent;
+                            border-radius: 6px;
+                            Image {
+                                x: 9px;
+                                y: 9px;
+                                width: 16px;
+                                height: 16px;
+                                source: @image-url("../../assets/icons/trash.svg");
+                                colorize: AppTheme.danger;
+                            }
+                            delete-touch := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => { AppState.remove-custom-prompt(prompt); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

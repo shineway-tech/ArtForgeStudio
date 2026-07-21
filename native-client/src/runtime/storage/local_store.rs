@@ -112,6 +112,7 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
             .collect();
         store_mut.notifications = data.notifications;
         store_mut.prompt_drafts = data.prompt_drafts;
+        store_mut.custom_prompts = normalize_custom_prompts(data.custom_prompts);
     }
     let state = app.global::<AppState>();
     state.set_image_model("".into());
@@ -144,6 +145,51 @@ pub(super) fn set_prompt_draft_for_category(drafts: &mut PromptDrafts, category:
 pub(super) fn store_current_prompt_draft(app: &AppWindow, store: &Rc<RefCell<Store>>, category: &str) {
     let prompt = app.global::<AppState>().get_prompt().to_string();
     set_prompt_draft_for_category(&mut store.borrow_mut().prompt_drafts, category, prompt);
+}
+
+pub(super) const MAX_CUSTOM_PROMPTS: usize = 100;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum AddCustomPromptResult {
+    Added,
+    Empty,
+    Duplicate,
+}
+
+pub(super) fn add_custom_prompt_to_store(store: &mut Store, raw: &str) -> AddCustomPromptResult {
+    let prompt = raw.trim();
+    if prompt.is_empty() {
+        return AddCustomPromptResult::Empty;
+    }
+    if store.custom_prompts.iter().any(|item| item == prompt) {
+        return AddCustomPromptResult::Duplicate;
+    }
+    store.custom_prompts.insert(0, prompt.to_string());
+    store.custom_prompts.truncate(MAX_CUSTOM_PROMPTS);
+    AddCustomPromptResult::Added
+}
+
+pub(super) fn remove_custom_prompt_from_store(store: &mut Store, prompt: &str) -> bool {
+    let Some(index) = store.custom_prompts.iter().position(|item| item == prompt) else {
+        return false;
+    };
+    store.custom_prompts.remove(index);
+    true
+}
+
+pub(super) fn normalize_custom_prompts(prompts: Vec<String>) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for raw in prompts {
+        let prompt = raw.trim();
+        if prompt.is_empty() || normalized.iter().any(|item| item == prompt) {
+            continue;
+        }
+        normalized.push(prompt.to_string());
+        if normalized.len() == MAX_CUSTOM_PROMPTS {
+            break;
+        }
+    }
+    normalized
 }
 
 pub(super) fn references_for_category<'a>(
@@ -262,6 +308,7 @@ pub(super) fn save_local_store(app: &AppWindow, store: &Store) {
         image_model: state.get_image_model().to_string(),
         reasoning_model: state.get_reasoning_model().to_string(),
         prompt_drafts: store.prompt_drafts.clone(),
+        custom_prompts: store.custom_prompts.clone(),
     };
     if let Ok(text) = serde_json::to_string_pretty(&data) {
         let path = local_store_path();

@@ -105,6 +105,14 @@ export component PromptComposer {
                     }
                 }
                 key-pressed(event) => {
+                    if event.text == "/" && AppState.prompt == "/" {
+                        AppState.prompt = "";
+                        AppState.prompt-history-open = false;
+                        history-popup.close();
+                        AppState.custom-prompt-open = true;
+                        custom-prompt-popup.show();
+                        return accept;
+                    }
                     if event.text == Key.Return {
                         if event.modifiers.alt {
                             return reject;
@@ -257,6 +265,70 @@ export component PromptComposer {
                                 AppState.prompt = item;
                                 AppState.prompt-history-open = false;
                                 history-popup.close();
+                                prompt-input.focus();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    custom-prompt-popup := PopupWindow {
+        x: 24px;
+        y: root.prompt-input-y() + 32px;
+        width: root.width - 48px;
+        height: min(238px, max(54px, 16px + AppState.custom-prompts.length * 36px));
+        close-policy: close-on-click-outside;
+        Rectangle {
+            visible: AppState.custom-prompt-open;
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            if AppState.custom-prompts.length == 0: Text {
+                x: 12px;
+                width: parent.width - 24px;
+                height: parent.height;
+                text: AppState.en ? "No custom prompts" : "暂无自定义提示词";
+                color: AppTheme.muted;
+                font-size: AppState.settings-font-size * 1px;
+                horizontal-alignment: left;
+                vertical-alignment: center;
+            }
+            if AppState.custom-prompts.length > 0: ScrollView {
+                x: 8px;
+                y: 8px;
+                width: parent.width - 16px;
+                height: parent.height - 16px;
+                viewport-width: self.width;
+                viewport-height: AppState.custom-prompts.length * 36px;
+                VerticalLayout {
+                    width: parent.viewport-width;
+                    height: parent.viewport-height;
+                    for item in AppState.custom-prompts: Rectangle {
+                        height: 36px;
+                        background: custom-row.has-hover ? AppTheme.panel-soft : transparent;
+                        border-radius: 6px;
+                        Text {
+                            x: 10px;
+                            width: parent.width - 20px;
+                            height: parent.height;
+                            text: item;
+                            color: AppTheme.text;
+                            font-size: AppState.settings-font-size * 1px;
+                            horizontal-alignment: left;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        custom-row := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => {
+                                AppState.prompt = item;
+                                AppState.custom-prompt-open = false;
+                                custom-prompt-popup.close();
                                 prompt-input.focus();
                             }
                         }

@@ -36,6 +36,9 @@ use payment_callbacks::*;
 #[path = "callbacks/credits.rs"]
 mod credit_callbacks;
 use credit_callbacks::*;
+#[path = "callbacks/custom_prompt.rs"]
+mod custom_prompt_callbacks;
+use custom_prompt_callbacks::*;
 mod payment_window;
 use payment_window::*;
 mod agreement_window;

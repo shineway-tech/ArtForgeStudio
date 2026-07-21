@@ -152,6 +152,67 @@ mod tests {
     }
 
     #[test]
+    fn custom_prompts_are_normalized_deduplicated_and_bounded() {
+        let normalized = normalize_custom_prompts(vec![
+            "  first prompt  ".to_string(),
+            String::new(),
+            "first prompt".to_string(),
+            "second prompt".to_string(),
+        ]);
+        assert_eq!(normalized, vec!["first prompt", "second prompt"]);
+
+        let mut store = Store::default();
+        assert_eq!(
+            add_custom_prompt_to_store(&mut store, "  saved prompt  "),
+            AddCustomPromptResult::Added
+        );
+        assert_eq!(
+            add_custom_prompt_to_store(&mut store, "saved prompt"),
+            AddCustomPromptResult::Duplicate
+        );
+        assert_eq!(
+            add_custom_prompt_to_store(&mut store, "   "),
+            AddCustomPromptResult::Empty
+        );
+        for index in 0..110 {
+            let _ = add_custom_prompt_to_store(&mut store, &format!("prompt-{index}"));
+        }
+        assert_eq!(store.custom_prompts.len(), MAX_CUSTOM_PROMPTS);
+        assert!(remove_custom_prompt_from_store(&mut store, "prompt-109"));
+        assert!(!remove_custom_prompt_from_store(&mut store, "missing prompt"));
+    }
+
+    #[test]
+    fn double_slash_opens_locally_persisted_custom_prompts() {
+        let state = include_str!("../../ui/app-state.slint");
+        let settings = include_str!("../../ui/pages/settings-page.slint");
+        let custom_settings = include_str!("../../ui/components/custom-prompt-settings.slint");
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let local_store = include_str!("storage/local_store.rs");
+        let callbacks = include_str!("callbacks/custom_prompt.rs");
+
+        assert!(state.contains("in-out property <[string]> custom-prompts"));
+        assert!(state.contains("callback add-custom-prompt(string)"));
+        assert!(state.contains("callback remove-custom-prompt(string)"));
+        assert!(settings.contains("CustomPromptSettings"));
+        assert!(settings.contains("自定义提示词"));
+        assert!(custom_settings.contains("event.text == Key.Return"));
+        assert!(custom_settings.contains("event.modifiers.alt"));
+        assert!(custom_settings.contains("AppState.add-custom-prompt"));
+        assert!(custom_settings.contains("AppState.remove-custom-prompt"));
+
+        assert!(composer.contains("event.text == \"/\" && AppState.prompt == \"/\""));
+        assert!(composer.contains("history-popup.close()"));
+        assert!(composer.contains("custom-prompt-popup.show()"));
+        assert!(composer.contains("for item in AppState.custom-prompts"));
+        assert!(composer.contains("close-policy: close-on-click-outside"));
+
+        assert!(local_store.contains("custom_prompts: store.custom_prompts.clone()"));
+        assert!(local_store.contains("normalize_custom_prompts(data.custom_prompts)"));
+        assert!(callbacks.contains("save_local_store(&app, &store.borrow())"));
+    }
+
+    #[test]
     fn enter_confirms_inputs_and_alt_enter_keeps_prompt_line_breaks() {
         let field = include_str!("../../ui/components/field.slint");
         let auth = include_str!("../../ui/dialogs/auth-dialog.slint");

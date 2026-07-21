@@ -41,6 +41,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
     wire_auth_callbacks(app, context.clone());
     wire_payment_callbacks(app, context.clone());
     wire_credit_callbacks(app, context.clone());
+    wire_custom_prompt_callbacks(app, store.clone());
 
     {
         let app_weak = app.as_weak();
