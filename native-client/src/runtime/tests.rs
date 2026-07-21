@@ -597,6 +597,27 @@ mod tests {
     }
 
     #[test]
+    fn infinite_canvas_nodes_drag_from_their_entire_surface_until_editing() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .and_then(|value| value.split("export component InfiniteCanvasPage").next())
+            .expect("canvas node component");
+
+        assert!(node.contains("in-out property <bool> editing: false"));
+        assert!(node.contains("node-drag-touch := TouchArea"));
+        assert!(node.contains("width: parent.width"));
+        assert!(node.contains("height: parent.height"));
+        assert!(node.contains("root.drag-offset-x"));
+        assert!(node.contains("root.drag-offset-y"));
+        assert!(node.contains("root.commit-position()"));
+        assert!(node.contains("if !root.editing"));
+        assert!(node.contains("&& root.editing: TextInput"));
+        assert!(node.contains("source: @image-url(\"../../assets/icons/edit.svg\")"));
+    }
+
+    #[test]
     fn atomic_image_write_propagates_disk_errors_without_final_file() {
         let root = std::env::temp_dir().join(format!("artforge-atomic-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();

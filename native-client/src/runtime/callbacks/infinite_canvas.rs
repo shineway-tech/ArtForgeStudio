@@ -70,9 +70,9 @@ fn canvas_node_defaults(kind: &str, english: bool) -> (String, f32, f32) {
         ),
         _ => (
             if english {
-                "Double-click to edit text"
+                "Use the edit button to change text"
             } else {
-                "双击编辑文字"
+                "点击编辑按钮修改文字"
             }
             .to_string(),
             320.0,

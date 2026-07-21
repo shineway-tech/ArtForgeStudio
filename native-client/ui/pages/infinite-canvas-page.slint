@@ -136,6 +136,7 @@ component CanvasNodeCard {
     in-out property <length> drag-offset-x: 0px;
     in-out property <length> drag-offset-y: 0px;
     in-out property <string> current-content: root.note.content;
+    in-out property <bool> editing: false;
 
     x: root.pan-x + root.note.x * 1px * root.zoom-percent / 100 + root.drag-offset-x;
     y: root.pan-y + root.note.y * 1px * root.zoom-percent / 100 + root.drag-offset-y;
@@ -195,13 +196,36 @@ component CanvasNodeCard {
             border-color: AppTheme.accent;
         }
 
+        node-drag-touch := TouchArea {
+            property <length> start-pointer-x: 0px;
+            property <length> start-pointer-y: 0px;
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: root.editing ? default : move;
+            pointer-event(event) => {
+                if !root.editing && event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                    AppState.canvas-selected-id = root.note.id;
+                    self.start-pointer-x = self.absolute-position.x + self.mouse-x;
+                    self.start-pointer-y = self.absolute-position.y + self.mouse-y;
+                } else if !root.editing && event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
+                    root.commit-position();
+                }
+            }
+            moved => {
+                if self.pressed && !root.editing {
+                    root.drag-offset-x = self.absolute-position.x + self.mouse-x - self.start-pointer-x;
+                    root.drag-offset-y = self.absolute-position.y + self.mouse-y - self.start-pointer-y;
+                }
+            }
+        }
+
         header := Rectangle {
             height: max(18px, 36px * root.zoom-percent / 100);
             background: root.note.kind == "group" ? transparent : (root.dark-background ? #182235 : AppTheme.panel-soft);
             border-radius: root.note.kind == "group" ? 0px : 7px;
             Text {
                 x: max(6px, 12px * root.zoom-percent / 100);
-                width: parent.width - max(38px, 54px * root.zoom-percent / 100);
+                width: parent.width - max(62px, 88px * root.zoom-percent / 100);
                 height: parent.height;
                 text: root.node-title();
                 color: root.note.kind == "group" ? AppTheme.accent : (root.dark-background ? #dce7f8 : AppTheme.text);
@@ -211,25 +235,30 @@ component CanvasNodeCard {
                 wrap: no-wrap;
                 overflow: elide;
             }
-            drag-touch := TouchArea {
-                property <length> start-pointer-x: 0px;
-                property <length> start-pointer-y: 0px;
-                width: parent.width - max(24px, 38px * root.zoom-percent / 100);
-                height: parent.height;
-                mouse-cursor: move;
-                pointer-event(event) => {
-                    if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
-                        AppState.canvas-selected-id = root.note.id;
-                        self.start-pointer-x = self.absolute-position.x + self.mouse-x;
-                        self.start-pointer-y = self.absolute-position.y + self.mouse-y;
-                    } else if event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
-                        root.commit-position();
-                    }
+            if root.zoom-percent >= 35: Rectangle {
+                x: parent.width - max(44px, 64px * root.zoom-percent / 100);
+                y: (parent.height - max(18px, 26px * root.zoom-percent / 100)) / 2;
+                width: max(18px, 26px * root.zoom-percent / 100);
+                height: self.width;
+                background: edit-touch.has-hover ? AppTheme.accent.with-alpha(0.16) : transparent;
+                border-radius: 5px;
+                Image {
+                    x: (parent.width - max(10px, 14px * root.zoom-percent / 100)) / 2;
+                    y: self.x;
+                    width: max(10px, 14px * root.zoom-percent / 100);
+                    height: self.width;
+                    source: @image-url("../../assets/icons/edit.svg");
+                    colorize: AppTheme.accent;
+                    image-fit: contain;
                 }
-                moved => {
-                    if self.pressed {
-                        root.drag-offset-x = self.absolute-position.x + self.mouse-x - self.start-pointer-x;
-                        root.drag-offset-y = self.absolute-position.y + self.mouse-y - self.start-pointer-y;
+                edit-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => {
+                        AppState.canvas-selected-id = root.note.id;
+                        root.current-content = root.note.content;
+                        root.editing = true;
                     }
                 }
             }
@@ -264,7 +293,19 @@ component CanvasNodeCard {
             }
         }
 
-        if root.zoom-percent >= 30 && root.note.kind == "text": TextInput {
+        if root.zoom-percent >= 30 && root.note.kind == "text" && !root.editing: Text {
+            x: max(6px, 12px * root.zoom-percent / 100);
+            y: header.height + max(5px, 9px * root.zoom-percent / 100);
+            width: parent.width - 2 * self.x;
+            height: parent.height - self.y - max(6px, 12px * root.zoom-percent / 100);
+            text: root.current-content;
+            wrap: word-wrap;
+            overflow: elide;
+            color: root.dark-background ? #dce7f8 : AppTheme.text;
+            font-size: max(9px, AppState.settings-font-size * 1px * root.zoom-percent / 100);
+        }
+
+        if root.zoom-percent >= 30 && root.note.kind == "text" && root.editing: TextInput {
             x: max(6px, 12px * root.zoom-percent / 100);
             y: header.height + max(5px, 9px * root.zoom-percent / 100);
             width: parent.width - 2 * self.x;
@@ -279,13 +320,27 @@ component CanvasNodeCard {
                 if event.text == Key.Return {
                     if event.modifiers.alt { return reject; }
                     root.save-content();
+                    root.editing = false;
                     return accept;
                 }
                 return reject;
             }
         }
 
-        if root.zoom-percent >= 30 && root.note.kind == "group": TextInput {
+        if root.zoom-percent >= 30 && root.note.kind == "group" && !root.editing: Text {
+            x: max(6px, 12px * root.zoom-percent / 100);
+            y: header.height + max(4px, 8px * root.zoom-percent / 100);
+            width: min(parent.width - 2 * self.x, 280px * root.zoom-percent / 100);
+            height: max(24px, 36px * root.zoom-percent / 100);
+            text: root.current-content;
+            wrap: no-wrap;
+            overflow: elide;
+            vertical-alignment: center;
+            color: root.dark-background ? #dce7f8 : AppTheme.text;
+            font-size: max(9px, AppState.settings-font-size * 1px * root.zoom-percent / 100);
+        }
+
+        if root.zoom-percent >= 30 && root.note.kind == "group" && root.editing: TextInput {
             x: max(6px, 12px * root.zoom-percent / 100);
             y: header.height + max(4px, 8px * root.zoom-percent / 100);
             width: min(parent.width - 2 * self.x, 280px * root.zoom-percent / 100);
@@ -296,7 +351,11 @@ component CanvasNodeCard {
             font-size: max(9px, AppState.settings-font-size * 1px * root.zoom-percent / 100);
             key-pressed(event) => {
                 AppState.canvas-selected-id = root.note.id;
-                if event.text == Key.Return { root.save-content(); return accept; }
+                if event.text == Key.Return {
+                    root.save-content();
+                    root.editing = false;
+                    return accept;
+                }
                 return reject;
             }
         }
@@ -320,7 +379,19 @@ component CanvasNodeCard {
             }
         }
 
-        if root.zoom-percent >= 30 && (root.note.kind == "image" || root.note.kind == "video" || root.note.kind == "audio"): TextInput {
+        if root.zoom-percent >= 30 && (root.note.kind == "image" || root.note.kind == "video" || root.note.kind == "audio") && !root.editing: Text {
+            x: max(6px, 12px * root.zoom-percent / 100);
+            y: header.height + max(48px, 92px * root.zoom-percent / 100);
+            width: parent.width - 2 * self.x;
+            height: max(28px, parent.height - self.y - (root.show-image-info ? max(25px, 38px * root.zoom-percent / 100) : max(7px, 12px * root.zoom-percent / 100)));
+            text: root.current-content;
+            wrap: word-wrap;
+            overflow: elide;
+            color: root.dark-background ? #dce7f8 : AppTheme.text;
+            font-size: max(9px, AppState.settings-font-size * 1px * root.zoom-percent / 100);
+        }
+
+        if root.zoom-percent >= 30 && (root.note.kind == "image" || root.note.kind == "video" || root.note.kind == "audio") && root.editing: TextInput {
             x: max(6px, 12px * root.zoom-percent / 100);
             y: header.height + max(48px, 92px * root.zoom-percent / 100);
             width: parent.width - 2 * self.x;
@@ -335,6 +406,7 @@ component CanvasNodeCard {
                 if event.text == Key.Return {
                     if event.modifiers.alt { return reject; }
                     root.save-content();
+                    root.editing = false;
                     return accept;
                 }
                 return reject;
