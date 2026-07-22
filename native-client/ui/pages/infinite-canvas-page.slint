@@ -1828,6 +1828,8 @@ export component InfiniteCanvasPage {
                     clicked => { root.reset-view(); }
                 }
                 zoom-track := Rectangle {
+                    property <float> zoom-progress: max(0, min(1, (root.zoom-percent - 5) / 495));
+                    property <length> thumb-center-x: 7px + (self.width - 14px) * self.zoom-progress;
                     x: 80px;
                     y: 22px;
                     width: 82px;
@@ -1835,13 +1837,14 @@ export component InfiniteCanvasPage {
                     background: #6b6661;
                     border-radius: 2px;
                     Rectangle {
-                        width: max(4px, parent.width * (root.zoom-percent - 5) / 495);
+                        x: 0px;
+                        width: zoom-track.thumb-center-x;
                         height: parent.height;
                         background: #f2eee9;
                         border-radius: 2px;
                     }
                     Rectangle {
-                        x: (parent.width - 14px) * (root.zoom-percent - 5) / 495;
+                        x: zoom-track.thumb-center-x - 7px;
                         y: -5px;
                         width: 14px;
                         height: 14px;

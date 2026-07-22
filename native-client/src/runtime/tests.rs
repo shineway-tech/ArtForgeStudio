@@ -761,6 +761,11 @@ mod tests {
         assert!(zoom_panel.contains("help.svg"));
         assert!(zoom_panel.contains("height: 4px"));
         assert!(zoom_panel.contains("background: #f2eee9"));
+        assert!(zoom_panel.contains("property <length> thumb-center-x"));
+        assert!(zoom_panel.contains("x: 0px"));
+        assert!(zoom_panel.contains("width: zoom-track.thumb-center-x"));
+        assert!(zoom_panel.contains("x: zoom-track.thumb-center-x - 7px"));
+        assert!(!zoom_panel.contains("parent.width * (root.zoom-percent - 5) / 495"));
         assert!(!zoom_panel.contains("background: AppTheme.accent"));
     }
 
