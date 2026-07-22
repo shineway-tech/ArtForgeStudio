@@ -1,0 +1,198 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { DialogCloseButton } from "../components/dialog-close-button.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { SectionTitle } from "../components/section-title.slint";
+import { AppTheme } from "../theme.slint";
+import { InvoiceOrderView } from "../types.slint";
+
+component InvoiceOrderRow {
+    in property <InvoiceOrderView> item;
+    callback apply();
+    height: 86px;
+
+    Rectangle {
+        background: AppTheme.panel-soft;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+
+        Text {
+            x: 16px;
+            y: 12px;
+            width: parent.width - 250px;
+            height: 22px;
+            text: root.item.title;
+            color: AppTheme.text;
+            font-size: 14px;
+            font-weight: 500;
+            overflow: elide;
+        }
+        Text {
+            x: 16px;
+            y: 40px;
+            width: parent.width - 250px;
+            height: 18px;
+            text: root.item.time + "  ·  " + root.item.status;
+            color: root.item.eligible ? AppTheme.success : AppTheme.muted;
+            font-size: 12px;
+            font-weight: 400;
+            overflow: elide;
+        }
+        Text {
+            x: parent.width - 224px;
+            y: 17px;
+            width: 104px;
+            height: 32px;
+            text: root.item.amount;
+            color: AppTheme.text;
+            font-size: 15px;
+            font-weight: 500;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        PillButton {
+            x: parent.width - 104px;
+            y: 17px;
+            width: 88px;
+            height: 36px;
+            text: AppState.en ? "Invoice" : "开票";
+            primary: true;
+            disabled: !root.item.eligible;
+            clicked => { root.apply(); }
+        }
+    }
+}
+
+export component InvoiceOrderDialog {
+    in-out property <bool> open: false;
+    callback select-order(string, string, string, string);
+
+    function list-content-height() -> length {
+        return max(160px, AppState.invoice-orders.length * 96px);
+    }
+
+    if root.open: Rectangle {
+        background: #00000055;
+        TouchArea { width: parent.width; height: parent.height; }
+
+        dialog := Rectangle {
+            width: min(780px, parent.width - 32px);
+            height: min(620px, parent.height - 32px);
+            x: (parent.width - dialog.width) / 2;
+            y: (parent.height - dialog.height) / 2;
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            clip: true;
+
+            SectionTitle {
+                x: 24px;
+                y: 22px;
+                width: parent.width - 72px;
+                text: AppState.en ? "Select recharge order" : "选择充值订单";
+            }
+            DialogCloseButton {
+                x: parent.width - 42px;
+                y: 12px;
+                clicked => { root.open = false; }
+            }
+            Text {
+                x: 24px;
+                y: 62px;
+                width: parent.width - 48px;
+                height: 22px;
+                text: AppState.en
+                    ? "A single recharge of ¥100.00 or more can be invoiced."
+                    : "单次充值满 ¥100.00 可申请开票";
+                color: AppTheme.muted;
+                font-size: 12px;
+                font-weight: 400;
+                vertical-alignment: center;
+            }
+
+            Rectangle {
+                x: 24px;
+                y: 96px;
+                width: parent.width - 48px;
+                height: parent.height - 166px;
+                background: transparent;
+
+                if AppState.invoice-orders.length == 0: Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    background: AppTheme.panel-soft;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    Text {
+                        width: parent.width;
+                        height: parent.height;
+                        text: AppState.en ? "No recharge orders on this page" : "当前页暂无充值订单";
+                        color: AppTheme.muted;
+                        font-size: 14px;
+                        font-weight: 400;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                if AppState.invoice-orders.length > 0: ScrollView {
+                    width: parent.width;
+                    height: parent.height;
+                    viewport-width: self.width;
+                    viewport-height: root.list-content-height();
+                    VerticalLayout {
+                        width: parent.width;
+                        height: root.list-content-height();
+                        spacing: 10px;
+                        for order in AppState.invoice-orders: InvoiceOrderRow {
+                            item: order;
+                            apply => {
+                                root.select-order(order.id, order.title, order.amount, order.time);
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                x: 24px;
+                y: parent.height - 58px;
+                width: parent.width - 48px;
+                height: 42px;
+                background: transparent;
+                PillButton {
+                    x: parent.width / 2 - 166px;
+                    y: 3px;
+                    width: 104px;
+                    text: AppState.en ? "Previous" : "上一页";
+                    disabled: !AppState.credit-ledger-has-previous || AppState.credit-ledger-loading;
+                    clicked => { AppState.credit-ledger-previous-page(); }
+                }
+                Text {
+                    x: parent.width / 2 - 50px;
+                    width: 100px;
+                    height: parent.height;
+                    text: AppState.credit-ledger-loading
+                        ? (AppState.en ? "Loading..." : "加载中...")
+                        : (AppState.en ? ("Page " + AppState.credit-ledger-page) : ("第 " + AppState.credit-ledger-page + " 页"));
+                    color: AppTheme.muted;
+                    font-size: 12px;
+                    font-weight: 400;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                PillButton {
+                    x: parent.width / 2 + 62px;
+                    y: 3px;
+                    width: 104px;
+                    text: AppState.en ? "Next" : "下一页";
+                    disabled: !AppState.credit-ledger-has-next || AppState.credit-ledger-loading;
+                    clicked => { AppState.credit-ledger-next-page(); }
+                }
+            }
+        }
+    }
+}

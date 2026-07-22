@@ -1,4 +1,4 @@
-import { AccountSession, AssetGroup, AssetItem, CanvasLink, CanvasNote, CatalogModelView, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
+import { AccountSession, AssetGroup, AssetItem, CanvasLink, CanvasNote, CatalogModelView, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 
 export global AppState {
     callback close-payment-window();
@@ -27,6 +27,7 @@ export global AppState {
     in-out property <string> credit-balance: "0";
     in-out property <string> credit-reserved: "0";
     in-out property <[CreditRecord]> credit-records: [];
+    in-out property <[InvoiceOrderView]> invoice-orders: [];
     in-out property <int> credit-ledger-page: 1;
     in-out property <bool> credit-ledger-has-previous: false;
     in-out property <bool> credit-ledger-has-next: false;

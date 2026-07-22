@@ -10,7 +10,7 @@ import { SectionTitle } from "../components/section-title.slint";
 import { AppTheme } from "../theme.slint";
 
 export component CreditsPage {
-    callback open-invoice();
+    callback open-invoice-orders();
 
     function content-width() -> length {
         return root.width - 48px;
@@ -64,7 +64,7 @@ export component CreditsPage {
                             width: 116px;
                             height: parent.height;
                             mouse-cursor: pointer;
-                            clicked => { root.open-invoice(); }
+                            clicked => { root.open-invoice-orders(); }
                         }
                         Text {
                             x: parent.width - 92px;

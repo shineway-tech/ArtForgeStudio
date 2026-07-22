@@ -64,6 +64,10 @@ component InvoiceChoice {
 
 export component InvoiceDialog {
     in-out property <bool> open: false;
+    in property <string> selected-order-id: "";
+    in property <string> selected-order-title: "";
+    in property <string> selected-order-amount: "";
+    in property <string> selected-order-time: "";
     property <string> invoice-type: "vat-normal";
     property <string> invoice-title-type: "personal";
     property <string> invoice-title: "";
@@ -72,7 +76,8 @@ export component InvoiceDialog {
     callback submit-request(string, string, string, string, string);
 
     function form-valid() -> bool {
-        return root.invoice-type != ""
+        return root.selected-order-id != ""
+            && root.invoice-type != ""
             && root.invoice-title-type != ""
             && root.invoice-title != ""
             && (!root.requires-tax-id() || root.invoice-tax-id != "")
@@ -82,7 +87,7 @@ export component InvoiceDialog {
         return root.invoice-title-type == "enterprise";
     }
     function form-content-height() -> length {
-        return root.requires-tax-id() ? 636px : 552px;
+        return root.requires-tax-id() ? 712px : 628px;
     }
     function submit-form() {
         if !root.form-valid() {
@@ -127,6 +132,37 @@ export component InvoiceDialog {
                     height: root.form-content-height();
                     spacing: 6px;
                 SectionTitle { text: AppState.en ? "Apply for invoice" : "申请开票"; }
+
+                Rectangle {
+                    height: 68px;
+                    background: AppTheme.panel-soft;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    Text {
+                        x: 14px;
+                        y: 9px;
+                        width: parent.width - 28px;
+                        height: 20px;
+                        text: AppState.en ? "Selected order" : "所选订单";
+                        color: AppTheme.muted;
+                        font-size: 12px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        x: 14px;
+                        y: 31px;
+                        width: parent.width - 28px;
+                        height: 24px;
+                        text: root.selected-order-title + "  ·  " + root.selected-order-amount + "  ·  " + root.selected-order-time;
+                        color: AppTheme.text;
+                        font-size: 14px;
+                        font-weight: 500;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
 
                 RequiredLabel { text: AppState.en ? "Invoice type" : "发票类型"; }
                 HorizontalLayout {

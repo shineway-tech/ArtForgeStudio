@@ -947,18 +947,33 @@ mod tests {
         let credits = include_str!("../../ui/pages/credits-page.slint");
         let app = include_str!("../../ui/app.slint");
         let state = include_str!("../../ui/app-state.slint");
+        let order_dialog_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("ui/dialogs/invoice-order-dialog.slint");
+        let order_dialog = std::fs::read_to_string(order_dialog_path).unwrap_or_default();
         let dialog_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("ui/dialogs/invoice-dialog.slint");
         let dialog = std::fs::read_to_string(dialog_path).unwrap_or_default();
 
         assert!(credits.contains("申请开票"));
-        assert!(credits.contains("callback open-invoice()"));
-        assert!(credits.contains("root.open-invoice()"));
+        assert!(credits.contains("callback open-invoice-orders()"));
+        assert!(credits.contains("root.open-invoice-orders()"));
+        assert!(app.contains("InvoiceOrderDialog"));
+        assert!(app.contains("property <bool> invoice-orders-open"));
+        assert!(app.contains("root.invoice-orders-open = true"));
         assert!(app.contains("InvoiceDialog"));
         assert!(app.contains("property <bool> invoice-open"));
+        assert!(app.contains("root.invoice-orders-open = false"));
+        assert!(app.contains("root.invoice-open = true"));
         assert!(!state.contains("invoice-open"));
         assert!(!state.contains("submit-invoice-request"));
+        assert!(state.contains("in-out property <[InvoiceOrderView]> invoice-orders: []"));
+        assert!(order_dialog.contains("for order in AppState.invoice-orders"));
+        assert!(order_dialog.contains("disabled: !root.item.eligible"));
+        assert!(order_dialog.contains("select-order("));
+        assert!(order_dialog.contains("单次充值满 ¥100.00 可申请开票"));
         assert!(dialog.contains("in-out property <bool> open"));
+        assert!(dialog.contains("in property <string> selected-order-id"));
+        assert!(dialog.contains("所选订单"));
         assert!(!dialog.contains("AppState.invoice-"));
 
         for label in [

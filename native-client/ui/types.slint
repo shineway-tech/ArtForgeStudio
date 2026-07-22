@@ -66,7 +66,18 @@ export struct CreditPackView {
     name: string,
     credits: string,
     price: string,
+    price-cents: string,
     note: string,
+}
+
+export struct InvoiceOrderView {
+    id: string,
+    title: string,
+    amount: string,
+    amount-cents: string,
+    time: string,
+    eligible: bool,
+    status: string,
 }
 
 export struct MembershipPlanView {

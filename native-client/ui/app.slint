@@ -1,6 +1,6 @@
 import { AppState } from "app-state.slint";
 import { AppTheme } from "theme.slint";
-import { AccountSession, AssetGroup, AssetItem, CanvasNote, ConversationItem, CreditRecord, CustomPromptItem, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
+import { AccountSession, AssetGroup, AssetItem, CanvasNote, ConversationItem, CreditRecord, CustomPromptItem, InvoiceOrderView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 import { Sidebar } from "components/sidebar.slint";
 import { TopBar } from "components/top-bar.slint";
 import { AliPayQrDialog } from "dialogs/ali-pay-qr-dialog.slint";
@@ -8,6 +8,7 @@ import { AuthDialog } from "dialogs/auth-dialog.slint";
 import { CreditInsufficientDialog } from "dialogs/credit-insufficient-dialog.slint";
 import { CustomPromptDialog } from "dialogs/custom-prompt-dialog.slint";
 import { InvoiceDialog } from "dialogs/invoice-dialog.slint";
+import { InvoiceOrderDialog } from "dialogs/invoice-order-dialog.slint";
 import { DeleteConfirm } from "dialogs/delete-confirm.slint";
 import { ModelRequiredDialog } from "dialogs/model-required-dialog.slint";
 import { ProfileDialog } from "dialogs/profile-dialog.slint";
@@ -26,10 +27,15 @@ import { SettingsPage } from "pages/settings-page.slint";
 import { StudioSplitPage } from "pages/studio-split-page.slint";
 import { WelcomePage } from "pages/welcome-page.slint";
 
-export { AppState, AppTheme, AccountSession, ModelGroup, ModelOption, AssetItem, AssetGroup, CanvasNote, ConversationItem, NotificationItem, CreditRecord, CustomPromptItem, ReferenceItem }
+export { AppState, AppTheme, AccountSession, ModelGroup, ModelOption, AssetItem, AssetGroup, CanvasNote, ConversationItem, NotificationItem, CreditRecord, CustomPromptItem, InvoiceOrderView, ReferenceItem }
 
 export component AppWindow inherits Window {
     property <bool> invoice-open: false;
+    property <bool> invoice-orders-open: false;
+    property <string> invoice-order-id: "";
+    property <string> invoice-order-title: "";
+    property <string> invoice-order-amount: "";
+    property <string> invoice-order-time: "";
 
     title: "ArtForgeStudio";
     preferred-width: 1440px;
@@ -63,7 +69,7 @@ export component AppWindow inherits Window {
                 if AppState.page == "credits": CreditsPage {
                     width: parent.width;
                     height: parent.height;
-                    open-invoice => { root.invoice-open = true; }
+                    open-invoice-orders => { root.invoice-orders-open = true; }
                 }
                 if AppState.page == "settings": SettingsPage { width: parent.width; height: parent.height; }
             }
@@ -100,12 +106,31 @@ export component AppWindow inherits Window {
     ModelRequiredDialog { width: root.width; height: root.height; }
     CreditInsufficientDialog { width: root.width; height: root.height; }
     CustomPromptDialog { width: root.width; height: root.height; }
+    InvoiceOrderDialog {
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: root.height;
+        open <=> root.invoice-orders-open;
+        select-order(order-id, order-title, order-amount, order-time) => {
+            root.invoice-order-id = order-id;
+            root.invoice-order-title = order-title;
+            root.invoice-order-amount = order-amount;
+            root.invoice-order-time = order-time;
+            root.invoice-orders-open = false;
+            root.invoice-open = true;
+        }
+    }
     InvoiceDialog {
         x: 0px;
         y: 0px;
         width: root.width;
         height: root.height;
         open <=> root.invoice-open;
+        selected-order-id: root.invoice-order-id;
+        selected-order-title: root.invoice-order-title;
+        selected-order-amount: root.invoice-order-amount;
+        selected-order-time: root.invoice-order-time;
     }
     AgreementViewerDialog { width: root.width; height: root.height; }
 }

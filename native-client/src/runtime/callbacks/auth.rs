@@ -633,6 +633,7 @@ pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snap
         name: pack.name.clone().into(),
         credits: pack.credits.clone().into(),
         price: format_cents(credit_pack_price_cents(pack)).into(),
+        price_cents: credit_pack_price_cents(pack).into(),
         note: credit_pack_note(pack).into(),
     }).collect::<Vec<_>>();
     let selected_code = state.get_selected_credit_pack_code().to_string();

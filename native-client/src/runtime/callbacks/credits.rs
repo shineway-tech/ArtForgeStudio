@@ -121,12 +121,13 @@ pub(super) fn reset_credit_ledger(
     next_cursor: Option<String>,
 ) {
     let records = items.iter().map(credit_record).collect::<Vec<_>>();
+    let orders = invoice_orders(app, items);
     let (page, has_previous, has_next) = {
         let mut store = store.borrow_mut();
         store.credit_ledger_pagination.reset(next_cursor);
         pagination_view(&store.credit_ledger_pagination)
     };
-    apply_credit_ledger_view(app, records, page, has_previous, has_next);
+    apply_credit_ledger_view(app, records, orders, page, has_previous, has_next);
 }
 
 fn request_credit_ledger_page(
@@ -205,6 +206,7 @@ fn poll_credit_ledger_page(
         match result {
             Ok(page) => {
                 let records = page.items.iter().map(credit_record).collect::<Vec<_>>();
+                let orders = invoice_orders(&app, &page.items);
                 let (page_number, has_previous, has_next) = {
                     let mut store = store.borrow_mut();
                     store.credit_ledger_pagination.apply_page(
@@ -217,6 +219,7 @@ fn poll_credit_ledger_page(
                 apply_credit_ledger_view(
                     &app,
                     records,
+                    orders,
                     page_number,
                     has_previous,
                     has_next,
@@ -240,17 +243,82 @@ fn pagination_view(pagination: &CreditLedgerPagination) -> (i32, bool, bool) {
 fn apply_credit_ledger_view(
     app: &AppWindow,
     records: Vec<CreditRecord>,
+    orders: Vec<InvoiceOrderView>,
     page: i32,
     has_previous: bool,
     has_next: bool,
 ) {
     let state = app.global::<AppState>();
     state.set_credit_records(ModelRc::new(VecModel::from(records)));
+    state.set_invoice_orders(ModelRc::new(VecModel::from(orders)));
     state.set_credit_ledger_page(page);
     state.set_credit_ledger_has_previous(has_previous);
     state.set_credit_ledger_has_next(has_next);
     state.set_credit_ledger_loading(false);
     state.set_credit_ledger_message("".into());
+}
+
+fn invoice_orders(app: &AppWindow, items: &[CreditLedgerItem]) -> Vec<InvoiceOrderView> {
+    let packs = app
+        .global::<AppState>()
+        .get_credit_packs()
+        .iter()
+        .collect::<Vec<_>>();
+    items
+        .iter()
+        .filter_map(|item| invoice_order(item, &packs))
+        .collect()
+}
+
+fn invoice_order(
+    item: &CreditLedgerItem,
+    packs: &[CreditPackView],
+) -> Option<InvoiceOrderView> {
+    if item.entry_type != "grant" || item.business_type != "order" {
+        return None;
+    }
+
+    let credits = absolute_credit_amount(&item.available_delta);
+    let pack = packs.iter().find(|pack| pack.credits.as_str() == credits);
+    let (amount, amount_cents, eligible, status) = match pack {
+        Some(pack) => {
+            let eligible = decimal_at_least(pack.price_cents.as_str(), "10000");
+            (
+                pack.price.to_string(),
+                pack.price_cents.to_string(),
+                eligible,
+                if eligible {
+                    "可申请开票".to_string()
+                } else {
+                    "单次充值未满 ¥100.00".to_string()
+                },
+            )
+        }
+        None => (
+            "金额待确认".to_string(),
+            String::new(),
+            false,
+            "暂无法确认订单金额".to_string(),
+        ),
+    };
+
+    Some(InvoiceOrderView {
+        id: item.id.clone().into(),
+        title: format!("充值 {credits} 积分").into(),
+        amount: amount.into(),
+        amount_cents: amount_cents.into(),
+        time: format_ledger_time(&item.created_at).into(),
+        eligible,
+        status: status.into(),
+    })
+}
+
+fn decimal_at_least(value: &str, minimum: &str) -> bool {
+    let value = value.trim().trim_start_matches('0');
+    let minimum = minimum.trim().trim_start_matches('0');
+    let value = if value.is_empty() { "0" } else { value };
+    let minimum = if minimum.is_empty() { "0" } else { minimum };
+    value.len() > minimum.len() || (value.len() == minimum.len() && value >= minimum)
 }
 
 fn credit_record(item: &CreditLedgerItem) -> CreditRecord {
@@ -410,6 +478,55 @@ mod tests {
             description: "服务端技术描述".to_string(),
             created_at: "2026-07-15T12:44:40.734Z".to_string(),
         }
+    }
+
+    fn invoice_pack(credits: &str, price: &str, price_cents: &str) -> CreditPackView {
+        CreditPackView {
+            code: format!("pack_{credits}").into(),
+            name: format!("{credits} 积分").into(),
+            credits: credits.into(),
+            price: price.into(),
+            price_cents: price_cents.into(),
+            note: "".into(),
+        }
+    }
+
+    #[test]
+    fn invoice_order_is_enabled_at_exactly_one_hundred_yuan() {
+        let item = ledger_item("grant", "10000", "0", "order");
+        let order = invoice_order(
+            &item,
+            &[invoice_pack("10000", "¥ 100.00", "10000")],
+        )
+        .expect("credit recharge order");
+
+        assert!(order.eligible);
+        assert_eq!(order.amount.as_str(), "¥ 100.00");
+        assert_eq!(order.amount_cents.as_str(), "10000");
+        assert_eq!(order.status.as_str(), "可申请开票");
+    }
+
+    #[test]
+    fn invoice_order_below_one_hundred_yuan_is_disabled() {
+        let item = ledger_item("grant", "5000", "0", "order");
+        let order = invoice_order(
+            &item,
+            &[invoice_pack("5000", "¥ 99.99", "9999")],
+        )
+        .expect("credit recharge order");
+
+        assert!(!order.eligible);
+        assert_eq!(order.status.as_str(), "单次充值未满 ¥100.00");
+    }
+
+    #[test]
+    fn non_recharge_ledger_entries_are_not_invoice_orders() {
+        let item = ledger_item("grant", "10000", "0", "membership");
+        assert!(invoice_order(
+            &item,
+            &[invoice_pack("10000", "¥ 100.00", "10000")],
+        )
+        .is_none());
     }
 
     #[test]
