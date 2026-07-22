@@ -165,7 +165,7 @@ mod tests {
         assert!(edited_handler.contains("self.text != \"/\""));
         assert!(edited_handler.contains("AppState.prompt-history-open = false"));
         assert!(edited_handler.contains("history-popup.close()"));
-        assert!(edited_handler.contains("self.text != \"\""));
+        assert!(edited_handler.contains("self.text != \"//\""));
         assert!(edited_handler.contains("AppState.custom-prompt-open = false"));
         assert!(edited_handler.contains("custom-prompt-popup.close()"));
     }
@@ -272,23 +272,22 @@ mod tests {
         assert!(custom_dialog.contains("AppState.save-custom-prompt"));
 
         assert!(composer.contains("event.text == \"/\" && AppState.prompt == \"/\""));
-        assert!(composer.contains("AppState.prompt = \"\";"));
-        assert!(!composer.contains("AppState.prompt = \"//\";"));
+        assert!(composer.contains("AppState.prompt = \"//\";"));
         let double_slash_handler = composer
             .split("event.text == \"/\" && AppState.prompt == \"/\"")
             .nth(1)
             .and_then(|value| value.split("if event.text == Key.Return").next())
             .expect("double slash handler");
         assert!(double_slash_handler.contains("return accept;"));
-        assert!(double_slash_handler.contains("prompt-input.set-selection-offsets(0, 0);"));
+        assert!(double_slash_handler.contains("prompt-input.set-selection-offsets(2, 2);"));
         let write_position = double_slash_handler
-            .find("AppState.prompt = \"\";")
+            .find("AppState.prompt = \"//\";")
             .expect("double slash value assignment");
         let cursor_position = double_slash_handler
-            .find("prompt-input.set-selection-offsets(0, 0);")
+            .find("prompt-input.set-selection-offsets(2, 2);")
             .expect("double slash cursor assignment");
         assert!(write_position < cursor_position);
-        assert!(double_slash_handler.contains("event.text == Key.Backspace"));
+        assert!(!double_slash_handler.contains("event.text == Key.Backspace"));
         assert!(composer.contains("history-popup.close()"));
         assert!(composer.contains("custom-prompt-popup.show()"));
         let composer_normalized = composer.replace("\r\n", "\n");
