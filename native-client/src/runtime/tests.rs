@@ -165,7 +165,7 @@ mod tests {
         assert!(edited_handler.contains("self.text != \"/\""));
         assert!(edited_handler.contains("AppState.prompt-history-open = false"));
         assert!(edited_handler.contains("history-popup.close()"));
-        assert!(edited_handler.contains("self.text != \"//\""));
+        assert!(edited_handler.contains("self.text != \"\""));
         assert!(edited_handler.contains("AppState.custom-prompt-open = false"));
         assert!(edited_handler.contains("custom-prompt-popup.close()"));
     }
@@ -272,21 +272,23 @@ mod tests {
         assert!(custom_dialog.contains("AppState.save-custom-prompt"));
 
         assert!(composer.contains("event.text == \"/\" && AppState.prompt == \"/\""));
-        assert!(composer.contains("AppState.prompt = \"//\";"));
+        assert!(composer.contains("AppState.prompt = \"\";"));
+        assert!(!composer.contains("AppState.prompt = \"//\";"));
         let double_slash_handler = composer
             .split("event.text == \"/\" && AppState.prompt == \"/\"")
             .nth(1)
             .and_then(|value| value.split("if event.text == Key.Return").next())
             .expect("double slash handler");
         assert!(double_slash_handler.contains("return accept;"));
-        assert!(double_slash_handler.contains("prompt-input.set-selection-offsets(2, 2);"));
+        assert!(double_slash_handler.contains("prompt-input.set-selection-offsets(0, 0);"));
         let write_position = double_slash_handler
-            .find("AppState.prompt = \"//\";")
+            .find("AppState.prompt = \"\";")
             .expect("double slash value assignment");
         let cursor_position = double_slash_handler
-            .find("prompt-input.set-selection-offsets(2, 2);")
+            .find("prompt-input.set-selection-offsets(0, 0);")
             .expect("double slash cursor assignment");
         assert!(write_position < cursor_position);
+        assert!(double_slash_handler.contains("event.text == Key.Backspace"));
         assert!(composer.contains("history-popup.close()"));
         assert!(composer.contains("custom-prompt-popup.show()"));
         let composer_normalized = composer.replace("\r\n", "\n");
@@ -304,6 +306,20 @@ mod tests {
         assert!(callbacks.contains("save_local_store(&app, &store.borrow())"));
         assert!(callbacks.contains("state.on_save_custom_prompt"));
         assert!(callbacks.contains("state.set_custom_prompt_editor_open(false)"));
+    }
+
+    #[test]
+    fn legacy_double_slash_prompt_drafts_are_cleared_without_touching_real_prompts() {
+        let mut drafts = PromptDrafts {
+            scene: "//".to_string(),
+            ui: "keep // inside this prompt".to_string(),
+            ..PromptDrafts::default()
+        };
+
+        assert!(normalize_reserved_prompt_drafts(&mut drafts));
+        assert_eq!(drafts.scene, "");
+        assert_eq!(drafts.ui, "keep // inside this prompt");
+        assert!(!normalize_reserved_prompt_drafts(&mut drafts));
     }
 
     #[test]

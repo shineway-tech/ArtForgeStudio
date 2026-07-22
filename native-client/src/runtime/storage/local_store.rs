@@ -96,7 +96,7 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
         save_local_store(app, &store.borrow());
         return;
     };
-    let migrated_custom_prompt_times = {
+    let migrated_local_store = {
         let mut store_mut = store.borrow_mut();
         // Legacy provider endpoints and API keys are intentionally ignored.
         store_mut.model_groups.clear();
@@ -112,6 +112,7 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
             .collect();
         store_mut.notifications = data.notifications;
         store_mut.prompt_drafts = data.prompt_drafts;
+        let migrated_prompt_drafts = normalize_reserved_prompt_drafts(&mut store_mut.prompt_drafts);
         store_mut.custom_prompts = normalize_custom_prompts(data.custom_prompts);
         store_mut.custom_prompt_times = data.custom_prompt_times;
         store_mut.canvas_notes = data.canvas_notes;
@@ -132,7 +133,7 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
                 .entry(prompt)
                 .or_insert_with(|| migration_time.clone());
         }
-        store_mut.custom_prompt_times != original_prompt_times
+        migrated_prompt_drafts || store_mut.custom_prompt_times != original_prompt_times
     };
     let state = app.global::<AppState>();
     state.set_image_model("".into());
@@ -140,9 +141,26 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
     let category = resolve_category(&state.get_asset_type().to_string(), "");
     state.set_asset_type(category.clone().into());
     state.set_prompt(prompt_draft_for_category(&store.borrow().prompt_drafts, &category).into());
-    if migrated_custom_prompt_times {
+    if migrated_local_store {
         save_local_store(app, &store.borrow());
     }
+}
+
+pub(super) fn normalize_reserved_prompt_drafts(drafts: &mut PromptDrafts) -> bool {
+    let mut migrated = false;
+    for prompt in [
+        &mut drafts.character,
+        &mut drafts.scene,
+        &mut drafts.ui,
+        &mut drafts.effect,
+        &mut drafts.action_sequence,
+    ] {
+        if prompt.trim() == "//" {
+            prompt.clear();
+            migrated = true;
+        }
+    }
+    migrated
 }
 
 pub(super) fn prompt_draft_for_category(drafts: &PromptDrafts, category: &str) -> String {

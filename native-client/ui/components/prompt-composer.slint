@@ -120,20 +120,25 @@ export component PromptComposer {
                         AppState.prompt-history-open = false;
                         history-popup.close();
                     }
-                    if AppState.custom-prompt-open && self.text != "//" {
+                    if AppState.custom-prompt-open && self.text != "" {
                         AppState.custom-prompt-open = false;
                         custom-prompt-popup.close();
                     }
                 }
                 key-pressed(event) => {
                     if event.text == "/" && AppState.prompt == "/" {
-                        AppState.prompt = "//";
-                        prompt-input.set-selection-offsets(2, 2);
+                        AppState.prompt = "";
+                        prompt-input.set-selection-offsets(0, 0);
                         AppState.prompt-history-open = false;
                         history-popup.close();
                         AppState.custom-prompt-open = true;
                         custom-prompt-popup.show();
                         prompt-input.focus();
+                        return accept;
+                    }
+                    if AppState.custom-prompt-open && event.text == Key.Backspace && AppState.prompt == "" {
+                        AppState.custom-prompt-open = false;
+                        custom-prompt-popup.close();
                         return accept;
                     }
                     if event.text == Key.Return {
