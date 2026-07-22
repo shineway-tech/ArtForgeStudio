@@ -712,6 +712,16 @@ mod tests {
         assert!(node.contains("function is-visual-media()"));
         assert!(node.contains("media-action-bar := Rectangle"));
         assert!(node.contains("media-editor-panel := Rectangle"));
+        assert!(node.contains(
+            "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id: media-action-bar"
+        ));
+        assert!(node.contains(
+            "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id: media-editor-panel"
+        ));
+        assert!(!node.contains(
+            "AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 45: media-action-bar"
+        ));
+        assert!(node.contains("max(360px"));
         assert!(node.contains("image-model-popup := PopupWindow"));
         assert!(node.contains("image-settings-popup := PopupWindow"));
         assert!(node.contains("video-settings-popup := PopupWindow"));
@@ -732,6 +742,26 @@ mod tests {
         assert!(node.contains("audio-settings-scroll := Flickable"));
         assert!(page.contains("viewport-width: canvas.width"));
         assert!(node.contains("AppState.generate()"));
+    }
+
+    #[test]
+    fn infinite_canvas_zoom_control_matches_the_compact_reference_style() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let zoom_panel = page
+            .split("zoom-panel := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("toolbar := Rectangle").next())
+            .expect("zoom panel");
+
+        assert!(page.contains("component CanvasZoomButton"));
+        assert!(zoom_panel.contains("width: min(250px"));
+        assert!(zoom_panel.contains("height: 48px"));
+        assert!(zoom_panel.contains("compass.svg"));
+        assert!(zoom_panel.contains("focus.svg"));
+        assert!(zoom_panel.contains("help.svg"));
+        assert!(zoom_panel.contains("height: 4px"));
+        assert!(zoom_panel.contains("background: #f2eee9"));
+        assert!(!zoom_panel.contains("background: AppTheme.accent"));
     }
 
     #[test]
