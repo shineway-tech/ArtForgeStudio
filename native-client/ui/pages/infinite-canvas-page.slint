@@ -760,7 +760,7 @@ component CanvasNodeCard {
         }
 
         header := Rectangle {
-            visible: root.note.kind == "group";
+            visible: root.note.kind == "group" && root.zoom-percent >= 30;
             height: root.note.kind == "group" ? 36px * root.node-scale() : 0px;
             background: transparent;
             border-radius: 0px;
@@ -1009,7 +1009,7 @@ component CanvasNodeCard {
             }
         }
 
-        if root.is-visual-media() && AppState.canvas-selected-id == root.note.id: media-action-bar := Rectangle {
+        if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-action-bar := Rectangle {
             width: (root.note.kind == "video" ? 380px : 312px) * root.node-scale();
             height: 46px * root.node-scale();
             x: (parent.width - self.width) / 2;
@@ -1041,7 +1041,7 @@ component CanvasNodeCard {
             }
         }
 
-        if root.is-visual-media() && AppState.canvas-selected-id == root.note.id: media-editor-panel := Rectangle {
+        if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-editor-panel := Rectangle {
             x: (parent.width - root.media-editor-width()) / 2;
             y: root.media-editor-y();
             width: root.media-editor-width();

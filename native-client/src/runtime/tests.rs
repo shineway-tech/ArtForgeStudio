@@ -715,10 +715,10 @@ mod tests {
         assert!(node.contains("media-action-bar := Rectangle"));
         assert!(node.contains("media-editor-panel := Rectangle"));
         assert!(node.contains(
-            "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id: media-action-bar"
+            "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-action-bar"
         ));
         assert!(node.contains(
-            "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id: media-editor-panel"
+            "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-editor-panel"
         ));
         assert!(!node.contains(
             "AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 45: media-action-bar"
@@ -782,6 +782,26 @@ mod tests {
         assert!(node.contains("x: (parent.width - self.width) / 2"));
         assert!(!node.contains("max(312px, 312px * root.zoom-percent / 100)"));
         assert!(!node.contains("max(54px, 64px * root.zoom-percent / 100)"));
+    }
+
+    #[test]
+    fn infinite_canvas_hides_subpixel_node_details_at_minimum_zoom() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .and_then(|value| value.split("export component InfiniteCanvasPage").next())
+            .expect("canvas node component");
+
+        assert!(node.contains(
+            "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-action-bar"
+        ));
+        assert!(node.contains(
+            "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-editor-panel"
+        ));
+        assert!(node.contains(
+            "visible: root.note.kind == \"group\" && root.zoom-percent >= 30"
+        ));
     }
 
     #[test]
