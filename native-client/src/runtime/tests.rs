@@ -1072,6 +1072,26 @@ mod tests {
     }
 
     #[test]
+    fn rounded_thumbnail_image_fills_the_hover_outline() {
+        let card = include_str!("../../ui/components/thumbnail-card.slint");
+        let content_index = card
+            .find("content := Rectangle")
+            .expect("thumbnail image content");
+        let outline_index = card
+            .find("hover-outline := Rectangle")
+            .expect("thumbnail hover outline");
+
+        assert!(card.contains("property <length> outline-pad: 0px;"));
+        assert!(card.contains(
+            "border-radius: AppState.card-style == \"rounded\" ? 10px : 0px;"
+        ));
+        assert!(
+            content_index < outline_index,
+            "the outline must be painted over the full-bleed image"
+        );
+    }
+
+    #[test]
     fn recovered_pending_payment_reopens_the_embedded_surface() {
         let callbacks = include_str!("callbacks/payment.rs");
         assert!(!callbacks.contains(

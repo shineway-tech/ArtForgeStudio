@@ -9,7 +9,7 @@ export component ThumbnailCard {
     in property <length> card-gap: 18px;
     in property <string> source: "asset";
     in property <bool> active: true;
-    property <length> outline-pad: 4px;
+    property <length> outline-pad: 0px;
     property <bool> drag-armed: false;
     property <bool> system-drag-preview-started: false;
     width: root.card-width;
@@ -26,21 +26,13 @@ export component ThumbnailCard {
             height: root.card-width;
             visible: root.active;
             background: transparent;
-            if root.item.source-path != "failed" && hover.has-hover: Rectangle {
-                width: parent.width;
-                height: parent.height;
-                background: transparent;
-                border-radius: AppState.card-style == "rounded" ? 10px : 0px;
-                border-width: 2px;
-                border-color: AppTheme.accent;
-            }
             content := Rectangle {
                 x: root.outline-pad;
                 y: root.outline-pad;
                 width: root.visual-card-width();
                 height: root.visual-card-width();
                 background: root.item.source-path == "failed" || hover.has-hover ? AppTheme.panel-soft : transparent;
-                border-radius: AppState.card-style == "rounded" ? 8px : 0px;
+                border-radius: AppState.card-style == "rounded" ? 10px : 0px;
                 border-width: root.item.source-path == "failed" ? 1px : 0px;
                 border-color: AppTheme.border;
                 clip: true;
@@ -143,6 +135,14 @@ export component ThumbnailCard {
                     }
                 }
             }
+            if root.item.source-path != "failed" && hover.has-hover: hover-outline := Rectangle {
+                width: parent.width;
+                height: parent.height;
+                background: transparent;
+                border-radius: AppState.card-style == "rounded" ? 10px : 0px;
+                border-width: 2px;
+                border-color: AppTheme.accent;
+            }
             hover := TouchArea {
                 width: parent.width;
                 height: parent.height;
@@ -194,7 +194,7 @@ export component ThumbnailCard {
             width: root.visual-card-width();
             height: root.visual-card-width();
             background: AppTheme.panel-soft;
-            border-radius: AppState.card-style == "rounded" ? 8px : 0px;
+            border-radius: AppState.card-style == "rounded" ? 10px : 0px;
             border-width: 1px;
             border-color: AppTheme.border;
             Text {
