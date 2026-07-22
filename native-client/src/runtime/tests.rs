@@ -649,6 +649,43 @@ mod tests {
     }
 
     #[test]
+    fn infinite_canvas_links_are_selectable_and_backspace_requests_confirmation() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let curve = page
+            .split("component CanvasConnectionCurve")
+            .nth(1)
+            .and_then(|value| value.split("component CanvasNodeCard").next())
+            .expect("canvas connection component");
+
+        assert!(curve.contains("for hit-index in 42"));
+        assert!(curve.contains("callback link-selected(string)"));
+        assert!(curve.contains("root.link-selected(root.link.id)"));
+        assert!(page.contains("canvas-keyboard := FocusScope"));
+        assert!(page.contains("event.text == Key.Backspace"));
+        assert!(page.contains("root.request-selected-delete()"));
+        assert!(page.contains("AppState.canvas-selected-link-id = link-id"));
+        assert!(page.contains("canvas-keyboard.focus()"));
+    }
+
+    #[test]
+    fn infinite_canvas_text_nodes_match_the_reference_interaction_style() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .and_then(|value| value.split("export component InfiniteCanvasPage").next())
+            .expect("canvas node component");
+
+        assert!(node.contains("root.note.kind == \"text\" || root.is-visual-media()"));
+        assert!(node.contains("text-action-bar := Rectangle"));
+        assert!(node.contains("node-drag-touch := TouchArea"));
+        assert!(node.contains("double-clicked"));
+        assert!(node.contains("text-editor.focus()"));
+        assert!(node.contains("AppState.en ? \"Generate\" : \"生图\""));
+        assert!(node.contains("root.generate-from-text()"));
+    }
+
+    #[test]
     fn infinite_canvas_media_nodes_expand_reference_style_editors_when_selected() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
         let node = page

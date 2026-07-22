@@ -324,6 +324,8 @@ component CanvasConnectionCurve {
     in property <length> end-y;
     in property <bool> preview: false;
     in property <bool> dark-background: true;
+    property <bool> selected: !root.preview && AppState.canvas-selected-link-id == root.link.id;
+    callback link-selected(string);
 
     function control-offset() -> length {
         return max(72px, Math.abs((root.end-x - root.start-x) / 1px) * 0.42px);
@@ -353,15 +355,33 @@ component CanvasConnectionCurve {
     for dash-index in 42: Rectangle {
         property <float> t: (dash-index + 1) / 43;
         visible: Math.mod(dash-index, 2) == 0;
-        x: root.curve-x(self.t) - 3px;
-        y: root.curve-y(self.t) - 1.5px;
-        width: root.preview ? 5px : 6px;
-        height: 3px;
+        x: root.curve-x(self.t) - (root.selected ? 4px : 3px);
+        y: root.curve-y(self.t) - (root.selected ? 2px : 1.5px);
+        width: root.preview ? 5px : (root.selected ? 8px : 6px);
+        height: root.selected ? 4px : 3px;
         background: root.preview
             ? (root.dark-background ? #f7f7f7 : AppTheme.text)
-            : (AppState.canvas-selected-link-id == root.link.id ? AppTheme.accent : (root.dark-background ? #d6d9df : AppTheme.muted));
+            : (root.selected ? AppTheme.accent : (root.dark-background ? #d6d9df : AppTheme.muted));
         border-radius: 2px;
-        opacity: root.preview ? 0.92 : 0.78;
+        opacity: root.preview || root.selected ? 1 : 0.78;
+    }
+
+    if !root.preview: Rectangle {
+        background: transparent;
+        for hit-index in 42: Rectangle {
+            property <float> t: (hit-index + 1) / 43;
+            x: root.curve-x(self.t) - 9px;
+            y: root.curve-y(self.t) - 9px;
+            width: 18px;
+            height: 18px;
+            background: transparent;
+            hit-touch := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: pointer;
+                clicked => { root.link-selected(root.link.id); }
+            }
+        }
     }
 
     if !root.preview: Rectangle {
@@ -369,22 +389,21 @@ component CanvasConnectionCurve {
         y: root.curve-y(0.5) - 13px;
         width: 26px;
         height: 26px;
-        background: AppState.canvas-selected-link-id == root.link.id
+        background: root.selected
             ? AppTheme.panel.with-alpha(0.98)
             : (link-touch.has-hover ? AppTheme.panel.with-alpha(0.92) : transparent);
         border-radius: 13px;
-        border-width: AppState.canvas-selected-link-id == root.link.id ? 1px : 0px;
-        border-color: AppTheme.danger;
-        if AppState.canvas-selected-link-id == root.link.id: Image {
-            x: 6px;
-            y: 6px;
-            width: 14px;
-            height: 14px;
-            source: @image-url("../../assets/icons/trash.svg");
-            colorize: AppTheme.danger;
-            image-fit: contain;
+        border-width: root.selected ? 2px : 0px;
+        border-color: AppTheme.accent;
+        if root.selected: Rectangle {
+            x: 8px;
+            y: 8px;
+            width: 10px;
+            height: 10px;
+            border-radius: 5px;
+            background: AppTheme.accent;
         }
-        if AppState.canvas-selected-link-id != root.link.id && link-touch.has-hover: Rectangle {
+        if !root.selected && link-touch.has-hover: Rectangle {
             x: 10px;
             y: 10px;
             width: 6px;
@@ -396,17 +415,7 @@ component CanvasConnectionCurve {
             width: parent.width;
             height: parent.height;
             mouse-cursor: pointer;
-            clicked => {
-                if AppState.canvas-selected-link-id == root.link.id {
-                    AppState.pending-delete-kind = "canvas-link";
-                    AppState.pending-delete-id = root.link.id;
-                    AppState.pending-delete-source = "canvas";
-                    AppState.delete-confirm-open = true;
-                } else {
-                    AppState.canvas-selected-id = "";
-                    AppState.canvas-selected-link-id = root.link.id;
-                }
-            }
+            clicked => { root.link-selected(root.link.id); }
         }
     }
 }
@@ -464,14 +473,42 @@ component CanvasNodeCard {
             || root.current-content == "Describe the audio you want to generate";
     }
 
+    function is-default-text-prompt() -> bool {
+        return root.current-content == "点击编辑按钮修改文字"
+            || root.current-content == "Use the edit button to change text"
+            || root.current-content == "双击编辑文字"
+            || root.current-content == "Double-click to edit text";
+    }
+
     function local-prompt() -> string {
-        return root.is-default-media-prompt() ? "" : root.current-content;
+        return root.is-default-media-prompt() || root.is-default-text-prompt() ? "" : root.current-content;
     }
 
     function effective-prompt() -> string {
         if root.note.linked-input == "" { return root.local-prompt(); }
         if root.local-prompt() == "" { return root.note.linked-input; }
         return root.note.linked-input + "\n" + root.local-prompt();
+    }
+
+    function text-display-content() -> string {
+        if root.effective-prompt() != "" { return root.effective-prompt(); }
+        return AppState.en ? "Double-click to edit text" : "双击编辑文字";
+    }
+
+    function generate-from-text() {
+        if root.effective-prompt() == "" {
+            AppState.generation-status = AppState.en ? "Enter text before generating an image" : "请先输入文字内容";
+            return;
+        }
+        if AppState.image-model == "" {
+            AppState.generation-status = AppState.en ? "Select an image model first" : "请先选择生图模型";
+            return;
+        }
+        if !AppState.generating {
+            root.save-content();
+            AppState.prompt = root.effective-prompt();
+            AppState.generate();
+        }
     }
 
     function empty-media-label() -> string {
@@ -602,14 +639,14 @@ component CanvasNodeCard {
         clip: false;
         background: root.note.kind == "group"
             ? AppTheme.accent.with-alpha(AppState.canvas-selected-id == root.note.id ? 0.10 : 0.045)
-            : (root.is-visual-media() ? (root.dark-background ? #292522 : AppTheme.panel) : (root.dark-background ? #111927 : AppTheme.panel));
-        border-radius: root.note.kind == "group" ? 4px : (root.is-visual-media() ? max(10px, 20px * root.zoom-percent / 100) : 7px);
+            : (root.dark-background ? #292522 : AppTheme.panel);
+        border-radius: root.note.kind == "group" ? 4px : max(10px, 20px * root.zoom-percent / 100);
         border-width: AppState.canvas-selected-id == root.note.id || node-drag-touch.has-hover || output-connector-touch.has-hover ? 2px : 1px;
         border-color: AppState.canvas-selected-id == root.note.id
             ? AppTheme.accent
             : (node-drag-touch.has-hover || output-connector-touch.has-hover
                 ? AppTheme.accent.with-alpha(0.78)
-                : (root.note.kind == "group" ? AppTheme.accent.with-alpha(0.55) : (root.is-visual-media() ? #514c48 : AppTheme.border)));
+                : (root.note.kind == "group" ? AppTheme.accent.with-alpha(0.55) : #514c48));
 
         if root.note.kind != "group" && (node-drag-touch.has-hover || output-connector-touch.has-hover || AppState.canvas-selected-id == root.note.id || root.connection-source-id != ""): Rectangle {
             x: -5px;
@@ -657,13 +694,22 @@ component CanvasNodeCard {
                     AppState.canvas-drag-delta-y = root.drag-offset-y / 1px * 100 / root.zoom-percent;
                 }
             }
+            double-clicked => {
+                if root.note.kind == "text" {
+                    AppState.canvas-selected-id = root.note.id;
+                    AppState.canvas-selected-link-id = "";
+                    root.current-content = root.is-default-text-prompt() ? "" : root.note.content;
+                    root.editing = true;
+                    text-editor.focus();
+                }
+            }
         }
 
         header := Rectangle {
-            visible: !root.is-visual-media();
-            height: root.is-visual-media() ? 0px : max(18px, 36px * root.zoom-percent / 100);
-            background: root.note.kind == "group" ? transparent : (root.dark-background ? #182235 : AppTheme.panel-soft);
-            border-radius: root.note.kind == "group" ? 0px : 7px;
+            visible: root.note.kind == "group";
+            height: root.note.kind == "group" ? max(18px, 36px * root.zoom-percent / 100) : 0px;
+            background: transparent;
+            border-radius: 0px;
             Text {
                 x: max(6px, 12px * root.zoom-percent / 100);
                 width: parent.width - max(62px, 88px * root.zoom-percent / 100);
@@ -735,26 +781,27 @@ component CanvasNodeCard {
         }
 
         if root.zoom-percent >= 30 && root.note.kind == "text" && !root.editing: Text {
-            x: max(6px, 12px * root.zoom-percent / 100);
-            y: header.height + max(5px, 9px * root.zoom-percent / 100);
+            x: max(12px, 18px * root.zoom-percent / 100);
+            y: max(42px, 50px * root.zoom-percent / 100);
             width: parent.width - 2 * self.x;
-            height: parent.height - self.y - max(6px, 12px * root.zoom-percent / 100);
-            text: root.effective-prompt();
+            height: parent.height - self.y - max(12px, 18px * root.zoom-percent / 100);
+            text: root.text-display-content();
             wrap: word-wrap;
             overflow: elide;
-            color: root.dark-background ? #dce7f8 : AppTheme.text;
+            color: root.dark-background ? #ddd7d1 : AppTheme.text;
             font-size: max(9px, AppState.settings-font-size * 1px * root.zoom-percent / 100);
         }
 
-        if root.zoom-percent >= 30 && root.note.kind == "text" && root.editing: TextInput {
-            x: max(6px, 12px * root.zoom-percent / 100);
-            y: header.height + max(5px, 9px * root.zoom-percent / 100);
+        text-editor := TextInput {
+            visible: root.zoom-percent >= 30 && root.note.kind == "text" && root.editing;
+            x: max(12px, 18px * root.zoom-percent / 100);
+            y: max(42px, 50px * root.zoom-percent / 100);
             width: parent.width - 2 * self.x;
-            height: parent.height - self.y - max(6px, 12px * root.zoom-percent / 100);
+            height: parent.height - self.y - max(12px, 18px * root.zoom-percent / 100);
             text <=> root.current-content;
             single-line: false;
             wrap: word-wrap;
-            color: root.dark-background ? #dce7f8 : AppTheme.text;
+            color: root.dark-background ? #ddd7d1 : AppTheme.text;
             font-size: max(9px, AppState.settings-font-size * 1px * root.zoom-percent / 100);
             key-pressed(event) => {
                 AppState.canvas-selected-id = root.note.id;
@@ -801,7 +848,45 @@ component CanvasNodeCard {
             }
         }
 
-        if root.is-visual-media() && root.zoom-percent >= 30: Text {
+        if root.note.kind == "text" && root.zoom-percent >= 45 && !root.editing: Rectangle {
+            x: parent.width - max(72px, 84px * root.zoom-percent / 100);
+            y: max(10px, 14px * root.zoom-percent / 100);
+            width: max(62px, 72px * root.zoom-percent / 100);
+            height: max(26px, 30px * root.zoom-percent / 100);
+            background: text-generate-touch.has-hover ? AppTheme.accent.with-alpha(0.18) : transparent;
+            border-radius: self.height / 2;
+            border-width: 1px;
+            border-color: root.dark-background ? #514c48 : AppTheme.border;
+            Image {
+                x: max(7px, 9px * root.zoom-percent / 100);
+                y: (parent.height - max(12px, 14px * root.zoom-percent / 100)) / 2;
+                width: max(12px, 14px * root.zoom-percent / 100);
+                height: self.width;
+                source: @image-url("../../assets/icons/image.svg");
+                colorize: root.dark-background ? #eee9e4 : AppTheme.text;
+                image-fit: contain;
+            }
+            Text {
+                x: max(24px, 28px * root.zoom-percent / 100);
+                width: parent.width - self.x - 8px;
+                height: parent.height;
+                text: AppState.en ? "Generate" : "生图";
+                color: root.dark-background ? #eee9e4 : AppTheme.text;
+                font-size: max(9px, 12px * root.zoom-percent / 100);
+                font-weight: 500;
+                vertical-alignment: center;
+                wrap: no-wrap;
+                overflow: elide;
+            }
+            text-generate-touch := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: pointer;
+                clicked => { root.generate-from-text(); }
+            }
+        }
+
+        if (root.note.kind == "text" || root.is-visual-media()) && root.zoom-percent >= 30: Text {
             x: max(8px, 12px * root.zoom-percent / 100);
             y: root.y < max(34px, 40px * root.zoom-percent / 100) ? max(8px, 12px * root.zoom-percent / 100) : -max(30px, 34px * root.zoom-percent / 100);
             width: parent.width - 2 * self.x;
@@ -846,6 +931,28 @@ component CanvasNodeCard {
             vertical-alignment: center;
             wrap: no-wrap;
             overflow: elide;
+        }
+
+        if root.note.kind == "text" && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 45: text-action-bar := Rectangle {
+            width: max(320px, 320px * root.zoom-percent / 100);
+            height: max(42px, 46px * root.zoom-percent / 100);
+            x: max(8px - root.x, min((parent.width - self.width) / 2, root.viewport-width - self.width - root.x - 8px));
+            y: root.y < max(70px, 82px * root.zoom-percent / 100) ? max(42px, 48px * root.zoom-percent / 100) : -max(70px, 76px * root.zoom-percent / 100);
+            background: #f7f6f4;
+            border-radius: self.height / 2;
+            border-width: 1px;
+            border-color: #e2dfdc;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                padding-top: 4px;
+                padding-bottom: 4px;
+                spacing: 2px;
+                CanvasMediaAction { width: 70px; icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.canvas-show-image-info = !AppState.canvas-show-image-info; } }
+                CanvasMediaAction { width: 70px; icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
+                CanvasMediaAction { width: 70px; icon: @image-url("../../assets/icons/edit.svg"); text: AppState.en ? "Edit" : "编辑"; clicked => { root.current-content = root.is-default-text-prompt() ? "" : root.note.content; root.editing = true; text-editor.focus(); } }
+                CanvasMediaAction { width: 90px; icon: @image-url("../../assets/icons/image.svg"); text: AppState.en ? "Generate" : "生图"; clicked => { root.generate-from-text(); } }
+            }
         }
 
         if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 45: media-action-bar := Rectangle {
@@ -1498,6 +1605,19 @@ export component InfiniteCanvasPage {
                 }
             }
 
+            canvas-keyboard := FocusScope {
+                width: 1px;
+                height: 1px;
+                focus-on-click: false;
+                key-pressed(event) => {
+                    if AppState.canvas-selected-link-id != "" && (event.text == Key.Backspace || event.text == Key.Delete) {
+                        root.request-selected-delete();
+                        return accept;
+                    }
+                    return reject;
+                }
+            }
+
             for link in AppState.canvas-links: CanvasConnectionCurve {
                 link: link;
                 canvas-width: canvas.width;
@@ -1507,6 +1627,11 @@ export component InfiniteCanvasPage {
                 end-x: root.pan-x + (link.end-x + (AppState.canvas-drag-preview-id == link.target-id ? AppState.canvas-drag-delta-x : 0)) * 1px * root.zoom-percent / 100;
                 end-y: root.pan-y + (link.end-y + (AppState.canvas-drag-preview-id == link.target-id ? AppState.canvas-drag-delta-y : 0)) * 1px * root.zoom-percent / 100;
                 dark-background: AppState.canvas-dark-background;
+                link-selected(link-id) => {
+                    AppState.canvas-selected-id = "";
+                    AppState.canvas-selected-link-id = link-id;
+                    canvas-keyboard.focus();
+                }
             }
 
             if root.connection-dragging: CanvasConnectionCurve {

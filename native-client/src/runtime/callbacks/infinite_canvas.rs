@@ -101,16 +101,7 @@ fn canvas_node_defaults(kind: &str, english: bool) -> (String, f32, f32) {
             680.0,
             360.0,
         ),
-        _ => (
-            if english {
-                "Use the edit button to change text"
-            } else {
-                "点击编辑按钮修改文字"
-            }
-            .to_string(),
-            320.0,
-            210.0,
-        ),
+        _ => (String::new(), 320.0, 210.0),
     }
 }
 
