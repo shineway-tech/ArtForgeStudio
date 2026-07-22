@@ -657,7 +657,9 @@ mod tests {
         assert!(page.contains("function effective-prompt()"));
         assert!(page.contains("AppState.prompt = root.effective-prompt()"));
         assert!(page.contains("已连接输入："));
-        assert!(page.contains("node-drag-touch.has-hover || output-connector-touch.has-hover"));
+        assert!(page.contains(
+            "node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover"
+        ));
         assert!(page.contains("toolbar.y - self.height - 10px"));
         assert!(state.contains("canvas-drag-preview-id"));
         assert!(dialog.contains("确认删除这条连接？"));
@@ -721,7 +723,7 @@ mod tests {
         assert!(!node.contains(
             "AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 45: media-action-bar"
         ));
-        assert!(node.contains("max(360px"));
+        assert!(node.contains("540px : 580px) * root.node-scale()"));
         assert!(node.contains("image-model-popup := PopupWindow"));
         assert!(node.contains("image-settings-popup := PopupWindow"));
         assert!(node.contains("video-settings-popup := PopupWindow"));
@@ -742,6 +744,74 @@ mod tests {
         assert!(node.contains("audio-settings-scroll := Flickable"));
         assert!(page.contains("viewport-width: canvas.width"));
         assert!(node.contains("AppState.generate()"));
+    }
+
+    #[test]
+    fn infinite_canvas_node_visuals_and_overlays_share_zoom_scale() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let action = page
+            .split("component CanvasMediaAction")
+            .nth(1)
+            .and_then(|value| value.split("component CanvasMediaChip").next())
+            .expect("canvas media action component");
+        let node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .and_then(|value| value.split("export component InfiniteCanvasPage").next())
+            .expect("canvas node component");
+        let chip = page
+            .split("component CanvasMediaChip")
+            .nth(1)
+            .and_then(|value| value.split("component CanvasOptionPill").next())
+            .expect("canvas media chip component");
+
+        assert!(action.contains("in property <float> scale-factor"));
+        assert!(action.contains("height: 38px * root.scale-factor"));
+        assert!(action.contains("width: 16px * root.scale-factor"));
+        assert!(action.contains("font-size: 13px * root.scale-factor"));
+        assert!(chip.contains("in property <float> scale-factor"));
+        assert!(chip.contains("height: 38px * root.scale-factor"));
+        assert!(chip.contains("font-size: 13px * root.scale-factor"));
+        assert!(node.contains("function node-scale() -> float"));
+        assert!(node.contains("height: 46px * root.node-scale()"));
+        assert!(node.contains("scale-factor: root.node-scale()"));
+        assert!(node.contains("width: 64px * root.node-scale()"));
+        assert!(node.contains("width: 28px * root.node-scale()"));
+        assert!(node.contains("font-size: 13px * root.node-scale()"));
+        assert!(node.contains("return 180px * root.node-scale()"));
+        assert!(node.contains("x: (parent.width - self.width) / 2"));
+        assert!(!node.contains("max(312px, 312px * root.zoom-percent / 100)"));
+        assert!(!node.contains("max(54px, 64px * root.zoom-percent / 100)"));
+    }
+
+    #[test]
+    fn infinite_canvas_nodes_connect_from_both_sides() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .and_then(|value| value.split("export component InfiniteCanvasPage").next())
+            .expect("canvas node component");
+
+        let input_connector = node
+            .split("input-connector-touch := TouchArea")
+            .nth(1)
+            .and_then(|value| value.split("output-connector-touch := TouchArea").next())
+            .expect("left connector touch area");
+        let output_connector = node
+            .split("output-connector-touch := TouchArea")
+            .nth(1)
+            .and_then(|value| value.split("image-model-popup := PopupWindow").next())
+            .expect("right connector touch area");
+
+        assert!(input_connector.contains(
+            "root.connection-started(root.note.id, root.x, root.y + root.height / 2)"
+        ));
+        assert!(input_connector.contains("root.connection-finished"));
+        assert!(output_connector.contains(
+            "root.connection-started(root.note.id, root.x + root.width, root.y + root.height / 2)"
+        ));
+        assert!(output_connector.contains("root.connection-finished"));
     }
 
     #[test]

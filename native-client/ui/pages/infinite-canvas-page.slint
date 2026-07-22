@@ -178,27 +178,28 @@ component CanvasMediaAction {
     in property <image> icon;
     in property <string> text;
     in property <bool> danger: false;
+    in property <float> scale-factor: 1;
     callback clicked();
-    height: 38px;
+    height: 38px * root.scale-factor;
     Rectangle {
         background: action-touch.has-hover ? (root.danger ? #fee9e7 : #ebe9e7) : transparent;
-        border-radius: 6px;
+        border-radius: 6px * root.scale-factor;
         Image {
-            x: 8px;
-            y: (parent.height - 16px) / 2;
-            width: 16px;
-            height: 16px;
+            x: 8px * root.scale-factor;
+            y: (parent.height - 16px * root.scale-factor) / 2;
+            width: 16px * root.scale-factor;
+            height: self.width;
             source: root.icon;
             colorize: root.danger ? #d7473f : #302c29;
             image-fit: contain;
         }
         Text {
-            x: 30px;
-            width: parent.width - 36px;
+            x: 30px * root.scale-factor;
+            width: parent.width - 36px * root.scale-factor;
             height: parent.height;
             text: root.text;
             color: root.danger ? #d7473f : #302c29;
-            font-size: 13px;
+            font-size: 13px * root.scale-factor;
             vertical-alignment: center;
             wrap: no-wrap;
             overflow: elide;
@@ -217,40 +218,41 @@ component CanvasMediaChip {
     in property <string> text;
     in property <bool> active: false;
     in property <bool> disabled: false;
+    in property <float> scale-factor: 1;
     callback clicked();
-    height: 38px;
+    height: 38px * root.scale-factor;
     Rectangle {
         opacity: root.disabled ? 0.48 : 1;
         background: chip-touch.has-hover && !root.disabled ? #34302d : #292624;
-        border-radius: 19px;
-        border-width: 1px;
+        border-radius: 19px * root.scale-factor;
+        border-width: 1px * root.scale-factor;
         border-color: root.active ? #ddd7d1 : #4c4743;
         Image {
-            x: 12px;
-            y: (parent.height - 16px) / 2;
-            width: 16px;
-            height: 16px;
+            x: 12px * root.scale-factor;
+            y: (parent.height - 16px * root.scale-factor) / 2;
+            width: 16px * root.scale-factor;
+            height: self.width;
             source: root.icon;
             colorize: #eee9e4;
             image-fit: contain;
         }
         Text {
-            x: 36px;
-            width: parent.width - 58px;
+            x: 36px * root.scale-factor;
+            width: parent.width - 58px * root.scale-factor;
             height: parent.height;
             text: root.text;
             color: #eee9e4;
-            font-size: 13px;
+            font-size: 13px * root.scale-factor;
             font-weight: 500;
             vertical-alignment: center;
             wrap: no-wrap;
             overflow: elide;
         }
         Image {
-            x: parent.width - 22px;
-            y: (parent.height - 12px) / 2;
-            width: 12px;
-            height: 12px;
+            x: parent.width - 22px * root.scale-factor;
+            y: (parent.height - 12px * root.scale-factor) / 2;
+            width: 12px * root.scale-factor;
+            height: self.width;
             source: @image-url("../../assets/icons/dropdown.svg");
             colorize: #a9a29c;
             image-fit: contain;
@@ -500,6 +502,10 @@ component CanvasNodeCard {
     width: root.note.width * 1px * root.zoom-percent / 100;
     height: root.note.height * 1px * root.zoom-percent / 100;
 
+    function node-scale() -> float {
+        return root.zoom-percent / 100;
+    }
+
     function node-title() -> string {
         if root.note.kind == "image" { return AppState.en ? "Image" : "图片"; }
         if root.note.kind == "video" { return AppState.en ? "Video" : "视频"; }
@@ -572,15 +578,15 @@ component CanvasNodeCard {
     }
 
     function media-editor-width() -> length {
-        return max(root.width, max(360px, min(590px, (root.note.kind == "image" ? 540px : 580px) * root.zoom-percent / 100)));
+        return max(root.width, (root.note.kind == "image" ? 540px : 580px) * root.node-scale());
     }
 
     function media-editor-height() -> length {
-        return max(128px, 180px * root.zoom-percent / 100);
+        return 180px * root.node-scale();
     }
 
     function media-editor-y() -> length {
-        let gap = max(16px, 20px * root.zoom-percent / 100);
+        let gap = 20px * root.node-scale();
         let below = root.height + gap;
         if root.y + below + root.media-editor-height() <= root.viewport-height - 8px {
             return below;
@@ -589,12 +595,12 @@ component CanvasNodeCard {
     }
 
     function dropdown-popup-x(popup-width: length) -> length {
-        let preferred = (root.width - root.media-editor-width()) / 2 + max(54px, 64px * root.zoom-percent / 100);
+        let preferred = (root.width - root.media-editor-width()) / 2 + 64px * root.node-scale();
         return max(8px - root.x, min(preferred, root.viewport-width - popup-width - root.x - 8px));
     }
 
     function dropdown-popup-y(popup-height: length) -> length {
-        let preferred = root.media-editor-y() + root.media-editor-height() + max(10px, 16px * root.zoom-percent / 100);
+        let preferred = root.media-editor-y() + root.media-editor-height() + 16px * root.node-scale();
         return max(8px - root.y, min(preferred, root.viewport-height - popup-height - root.y - 8px));
     }
 
@@ -688,32 +694,32 @@ component CanvasNodeCard {
         background: root.note.kind == "group"
             ? AppTheme.accent.with-alpha(AppState.canvas-selected-id == root.note.id ? 0.10 : 0.045)
             : (root.dark-background ? #292522 : AppTheme.panel);
-        border-radius: root.note.kind == "group" ? 4px : max(10px, 20px * root.zoom-percent / 100);
-        border-width: AppState.canvas-selected-id == root.note.id || node-drag-touch.has-hover || output-connector-touch.has-hover ? 2px : 1px;
+        border-radius: (root.note.kind == "group" ? 4px : 20px) * root.node-scale();
+        border-width: (AppState.canvas-selected-id == root.note.id || node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover ? 2px : 1px) * root.node-scale();
         border-color: AppState.canvas-selected-id == root.note.id
             ? AppTheme.accent
-            : (node-drag-touch.has-hover || output-connector-touch.has-hover
+            : (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover
                 ? AppTheme.accent.with-alpha(0.78)
                 : (root.note.kind == "group" ? AppTheme.accent.with-alpha(0.55) : #514c48));
 
-        if root.note.kind != "group" && (node-drag-touch.has-hover || output-connector-touch.has-hover || AppState.canvas-selected-id == root.note.id || root.connection-source-id != ""): Rectangle {
-            x: -5px;
-            y: (parent.height - 10px) / 2;
-            width: 10px;
-            height: 10px;
+        if root.note.kind != "group" && (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover || AppState.canvas-selected-id == root.note.id || root.connection-source-id != ""): Rectangle {
+            x: -5px * root.node-scale();
+            y: (parent.height - 10px * root.node-scale()) / 2;
+            width: 10px * root.node-scale();
+            height: self.width;
             background: AppTheme.panel;
-            border-radius: 5px;
-            border-width: 2px;
+            border-radius: self.width / 2;
+            border-width: 2px * root.node-scale();
             border-color: root.connection-source-id != "" && root.connection-source-id != root.note.id ? #f7f7f7 : AppTheme.accent;
         }
-        if root.note.kind != "group" && (node-drag-touch.has-hover || output-connector-touch.has-hover || AppState.canvas-selected-id == root.note.id || root.connection-source-id == root.note.id): Rectangle {
-            x: parent.width - 5px;
-            y: (parent.height - 10px) / 2;
-            width: 10px;
-            height: 10px;
+        if root.note.kind != "group" && (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover || AppState.canvas-selected-id == root.note.id || root.connection-source-id == root.note.id): Rectangle {
+            x: parent.width - 5px * root.node-scale();
+            y: (parent.height - 10px * root.node-scale()) / 2;
+            width: 10px * root.node-scale();
+            height: self.width;
             background: AppTheme.panel;
-            border-radius: 5px;
-            border-width: 2px;
+            border-radius: self.width / 2;
+            border-width: 2px * root.node-scale();
             border-color: AppTheme.accent;
         }
 
@@ -755,32 +761,32 @@ component CanvasNodeCard {
 
         header := Rectangle {
             visible: root.note.kind == "group";
-            height: root.note.kind == "group" ? max(18px, 36px * root.zoom-percent / 100) : 0px;
+            height: root.note.kind == "group" ? 36px * root.node-scale() : 0px;
             background: transparent;
             border-radius: 0px;
             Text {
-                x: max(6px, 12px * root.zoom-percent / 100);
-                width: parent.width - max(62px, 88px * root.zoom-percent / 100);
+                x: 12px * root.node-scale();
+                width: parent.width - 88px * root.node-scale();
                 height: parent.height;
                 text: root.node-title();
                 color: root.note.kind == "group" ? AppTheme.accent : (root.dark-background ? #dce7f8 : AppTheme.text);
-                font-size: max(9px, (AppState.settings-font-size - 1) * 1px * root.zoom-percent / 100);
+                font-size: (AppState.settings-font-size - 1) * 1px * root.node-scale();
                 font-weight: 500;
                 vertical-alignment: center;
                 wrap: no-wrap;
                 overflow: elide;
             }
             if root.zoom-percent >= 35: Rectangle {
-                x: parent.width - max(44px, 64px * root.zoom-percent / 100);
-                y: (parent.height - max(18px, 26px * root.zoom-percent / 100)) / 2;
-                width: max(18px, 26px * root.zoom-percent / 100);
+                x: parent.width - 64px * root.node-scale();
+                y: (parent.height - 26px * root.node-scale()) / 2;
+                width: 26px * root.node-scale();
                 height: self.width;
                 background: edit-touch.has-hover ? AppTheme.accent.with-alpha(0.16) : transparent;
-                border-radius: 5px;
+                border-radius: 5px * root.node-scale();
                 Image {
-                    x: (parent.width - max(10px, 14px * root.zoom-percent / 100)) / 2;
+                    x: (parent.width - 14px * root.node-scale()) / 2;
                     y: self.x;
-                    width: max(10px, 14px * root.zoom-percent / 100);
+                    width: 14px * root.node-scale();
                     height: self.width;
                     source: @image-url("../../assets/icons/edit.svg");
                     colorize: AppTheme.accent;
@@ -798,16 +804,16 @@ component CanvasNodeCard {
                 }
             }
             if root.zoom-percent >= 35: Rectangle {
-                x: parent.width - max(22px, 32px * root.zoom-percent / 100);
-                y: (parent.height - max(18px, 26px * root.zoom-percent / 100)) / 2;
-                width: max(18px, 26px * root.zoom-percent / 100);
+                x: parent.width - 32px * root.node-scale();
+                y: (parent.height - 26px * root.node-scale()) / 2;
+                width: 26px * root.node-scale();
                 height: self.width;
                 background: delete-touch.has-hover ? AppTheme.danger.with-alpha(0.16) : transparent;
-                border-radius: 5px;
+                border-radius: 5px * root.node-scale();
                 Image {
-                    x: (parent.width - max(10px, 14px * root.zoom-percent / 100)) / 2;
+                    x: (parent.width - 14px * root.node-scale()) / 2;
                     y: self.x;
-                    width: max(10px, 14px * root.zoom-percent / 100);
+                    width: 14px * root.node-scale();
                     height: self.width;
                     source: @image-url("../../assets/icons/trash.svg");
                     colorize: AppTheme.danger;
@@ -829,28 +835,28 @@ component CanvasNodeCard {
         }
 
         if root.zoom-percent >= 30 && root.note.kind == "text" && !root.editing: Text {
-            x: max(12px, 18px * root.zoom-percent / 100);
-            y: max(42px, 50px * root.zoom-percent / 100);
+            x: 18px * root.node-scale();
+            y: 50px * root.node-scale();
             width: parent.width - 2 * self.x;
-            height: parent.height - self.y - max(12px, 18px * root.zoom-percent / 100);
+            height: parent.height - self.y - 18px * root.node-scale();
             text: root.text-display-content();
             wrap: word-wrap;
             overflow: elide;
             color: root.dark-background ? #ddd7d1 : AppTheme.text;
-            font-size: max(9px, AppState.settings-font-size * 1px * root.zoom-percent / 100);
+            font-size: AppState.settings-font-size * 1px * root.node-scale();
         }
 
         text-editor := TextInput {
             visible: root.zoom-percent >= 30 && root.note.kind == "text" && root.editing;
-            x: max(12px, 18px * root.zoom-percent / 100);
-            y: max(42px, 50px * root.zoom-percent / 100);
+            x: 18px * root.node-scale();
+            y: 50px * root.node-scale();
             width: parent.width - 2 * self.x;
-            height: parent.height - self.y - max(12px, 18px * root.zoom-percent / 100);
+            height: parent.height - self.y - 18px * root.node-scale();
             text <=> root.current-content;
             single-line: false;
             wrap: word-wrap;
             color: root.dark-background ? #ddd7d1 : AppTheme.text;
-            font-size: max(9px, AppState.settings-font-size * 1px * root.zoom-percent / 100);
+            font-size: AppState.settings-font-size * 1px * root.node-scale();
             key-pressed(event) => {
                 AppState.canvas-selected-id = root.note.id;
                 if event.text == Key.Return {
@@ -864,27 +870,27 @@ component CanvasNodeCard {
         }
 
         if root.zoom-percent >= 30 && root.note.kind == "group" && !root.editing: Text {
-            x: max(6px, 12px * root.zoom-percent / 100);
-            y: header.height + max(4px, 8px * root.zoom-percent / 100);
-            width: min(parent.width - 2 * self.x, 280px * root.zoom-percent / 100);
-            height: max(24px, 36px * root.zoom-percent / 100);
+            x: 12px * root.node-scale();
+            y: header.height + 8px * root.node-scale();
+            width: min(parent.width - 2 * self.x, 280px * root.node-scale());
+            height: 36px * root.node-scale();
             text: root.current-content;
             wrap: no-wrap;
             overflow: elide;
             vertical-alignment: center;
             color: root.dark-background ? #dce7f8 : AppTheme.text;
-            font-size: max(9px, AppState.settings-font-size * 1px * root.zoom-percent / 100);
+            font-size: AppState.settings-font-size * 1px * root.node-scale();
         }
 
         if root.zoom-percent >= 30 && root.note.kind == "group" && root.editing: TextInput {
-            x: max(6px, 12px * root.zoom-percent / 100);
-            y: header.height + max(4px, 8px * root.zoom-percent / 100);
-            width: min(parent.width - 2 * self.x, 280px * root.zoom-percent / 100);
-            height: max(24px, 36px * root.zoom-percent / 100);
+            x: 12px * root.node-scale();
+            y: header.height + 8px * root.node-scale();
+            width: min(parent.width - 2 * self.x, 280px * root.node-scale());
+            height: 36px * root.node-scale();
             text <=> root.current-content;
             single-line: true;
             color: root.dark-background ? #dce7f8 : AppTheme.text;
-            font-size: max(9px, AppState.settings-font-size * 1px * root.zoom-percent / 100);
+            font-size: AppState.settings-font-size * 1px * root.node-scale();
             key-pressed(event) => {
                 AppState.canvas-selected-id = root.note.id;
                 if event.text == Key.Return {
@@ -897,30 +903,30 @@ component CanvasNodeCard {
         }
 
         if root.note.kind == "text" && root.zoom-percent >= 45 && !root.editing: Rectangle {
-            x: parent.width - max(72px, 84px * root.zoom-percent / 100);
-            y: max(10px, 14px * root.zoom-percent / 100);
-            width: max(62px, 72px * root.zoom-percent / 100);
-            height: max(26px, 30px * root.zoom-percent / 100);
+            x: parent.width - 84px * root.node-scale();
+            y: 14px * root.node-scale();
+            width: 72px * root.node-scale();
+            height: 30px * root.node-scale();
             background: text-generate-touch.has-hover ? AppTheme.accent.with-alpha(0.18) : transparent;
             border-radius: self.height / 2;
             border-width: 1px;
             border-color: root.dark-background ? #514c48 : AppTheme.border;
             Image {
-                x: max(7px, 9px * root.zoom-percent / 100);
-                y: (parent.height - max(12px, 14px * root.zoom-percent / 100)) / 2;
-                width: max(12px, 14px * root.zoom-percent / 100);
+                x: 9px * root.node-scale();
+                y: (parent.height - 14px * root.node-scale()) / 2;
+                width: 14px * root.node-scale();
                 height: self.width;
                 source: @image-url("../../assets/icons/image.svg");
                 colorize: root.dark-background ? #eee9e4 : AppTheme.text;
                 image-fit: contain;
             }
             Text {
-                x: max(24px, 28px * root.zoom-percent / 100);
-                width: parent.width - self.x - 8px;
+                x: 28px * root.node-scale();
+                width: parent.width - self.x - 8px * root.node-scale();
                 height: parent.height;
                 text: AppState.en ? "Generate" : "生图";
                 color: root.dark-background ? #eee9e4 : AppTheme.text;
-                font-size: max(9px, 12px * root.zoom-percent / 100);
+                font-size: 12px * root.node-scale();
                 font-weight: 500;
                 vertical-alignment: center;
                 wrap: no-wrap;
@@ -935,13 +941,13 @@ component CanvasNodeCard {
         }
 
         if (root.note.kind == "text" || root.is-visual-media()) && root.zoom-percent >= 30: Text {
-            x: max(8px, 12px * root.zoom-percent / 100);
-            y: root.y < max(34px, 40px * root.zoom-percent / 100) ? max(8px, 12px * root.zoom-percent / 100) : -max(30px, 34px * root.zoom-percent / 100);
+            x: 12px * root.node-scale();
+            y: root.y < 40px * root.node-scale() ? 12px * root.node-scale() : -34px * root.node-scale();
             width: parent.width - 2 * self.x;
-            height: max(24px, 28px * root.zoom-percent / 100);
+            height: 28px * root.node-scale();
             text: root.node-title();
             color: root.dark-background ? #ddd7d1 : AppTheme.text;
-            font-size: max(11px, 15px * root.zoom-percent / 100);
+            font-size: 15px * root.node-scale();
             font-weight: 600;
             vertical-alignment: center;
             wrap: no-wrap;
@@ -949,16 +955,16 @@ component CanvasNodeCard {
         }
 
         if root.is-visual-media() && root.zoom-percent >= 30: Rectangle {
-            x: (parent.width - max(54px, 64px * root.zoom-percent / 100)) / 2;
-            y: (parent.height - max(88px, 104px * root.zoom-percent / 100)) / 2;
-            width: max(54px, 64px * root.zoom-percent / 100);
+            x: (parent.width - 64px * root.node-scale()) / 2;
+            y: (parent.height - 104px * root.node-scale()) / 2;
+            width: 64px * root.node-scale();
             height: self.width;
             background: root.dark-background ? #393532 : AppTheme.panel-soft;
-            border-radius: max(12px, 18px * root.zoom-percent / 100);
+            border-radius: 18px * root.node-scale();
             Image {
-                x: (parent.width - max(22px, 28px * root.zoom-percent / 100)) / 2;
+                x: (parent.width - 28px * root.node-scale()) / 2;
                 y: (parent.height - self.height) / 2;
-                width: max(22px, 28px * root.zoom-percent / 100);
+                width: 28px * root.node-scale();
                 height: self.width;
                 source: root.note.kind == "image" ? @image-url("../../assets/icons/image.svg")
                     : (root.note.kind == "video" ? @image-url("../../assets/icons/video.svg") : @image-url("../../assets/icons/audio.svg"));
@@ -968,13 +974,13 @@ component CanvasNodeCard {
         }
 
         if root.is-visual-media() && root.zoom-percent >= 30: Text {
-            x: 12px;
-            y: parent.height / 2 + max(18px, 28px * root.zoom-percent / 100);
-            width: parent.width - 24px;
-            height: max(24px, 30px * root.zoom-percent / 100);
+            x: 12px * root.node-scale();
+            y: parent.height / 2 + 28px * root.node-scale();
+            width: parent.width - 24px * root.node-scale();
+            height: 30px * root.node-scale();
             text: root.empty-media-label();
             color: root.dark-background ? #8b847e : AppTheme.muted;
-            font-size: max(10px, 13px * root.zoom-percent / 100);
+            font-size: 13px * root.node-scale();
             horizontal-alignment: center;
             vertical-alignment: center;
             wrap: no-wrap;
@@ -982,56 +988,56 @@ component CanvasNodeCard {
         }
 
         if root.note.kind == "text" && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 45: text-action-bar := Rectangle {
-            width: max(320px, 320px * root.zoom-percent / 100);
-            height: max(42px, 46px * root.zoom-percent / 100);
-            x: max(8px - root.x, min((parent.width - self.width) / 2, root.viewport-width - self.width - root.x - 8px));
-            y: root.y < max(70px, 82px * root.zoom-percent / 100) ? max(42px, 48px * root.zoom-percent / 100) : -max(70px, 76px * root.zoom-percent / 100);
+            width: 320px * root.node-scale();
+            height: 46px * root.node-scale();
+            x: (parent.width - self.width) / 2;
+            y: root.y < 82px * root.node-scale() ? 48px * root.node-scale() : -76px * root.node-scale();
             background: #f7f6f4;
             border-radius: self.height / 2;
-            border-width: 1px;
+            border-width: 1px * root.node-scale();
             border-color: #e2dfdc;
             HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
-                padding-top: 4px;
-                padding-bottom: 4px;
-                spacing: 2px;
-                CanvasMediaAction { width: 70px; icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.canvas-show-image-info = !AppState.canvas-show-image-info; } }
-                CanvasMediaAction { width: 70px; icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
-                CanvasMediaAction { width: 70px; icon: @image-url("../../assets/icons/edit.svg"); text: AppState.en ? "Edit" : "编辑"; clicked => { root.current-content = root.is-default-text-prompt() ? "" : root.note.content; root.editing = true; text-editor.focus(); } }
-                CanvasMediaAction { width: 90px; icon: @image-url("../../assets/icons/image.svg"); text: AppState.en ? "Generate" : "生图"; clicked => { root.generate-from-text(); } }
+                padding-left: 8px * root.node-scale();
+                padding-right: 8px * root.node-scale();
+                padding-top: 4px * root.node-scale();
+                padding-bottom: 4px * root.node-scale();
+                spacing: 2px * root.node-scale();
+                CanvasMediaAction { scale-factor: root.node-scale(); width: 70px * root.node-scale(); icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.canvas-show-image-info = !AppState.canvas-show-image-info; } }
+                CanvasMediaAction { scale-factor: root.node-scale(); width: 70px * root.node-scale(); icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
+                CanvasMediaAction { scale-factor: root.node-scale(); width: 70px * root.node-scale(); icon: @image-url("../../assets/icons/edit.svg"); text: AppState.en ? "Edit" : "编辑"; clicked => { root.current-content = root.is-default-text-prompt() ? "" : root.note.content; root.editing = true; text-editor.focus(); } }
+                CanvasMediaAction { scale-factor: root.node-scale(); width: 90px * root.node-scale(); icon: @image-url("../../assets/icons/image.svg"); text: AppState.en ? "Generate" : "生图"; clicked => { root.generate-from-text(); } }
             }
         }
 
         if root.is-visual-media() && AppState.canvas-selected-id == root.note.id: media-action-bar := Rectangle {
-            width: root.note.kind == "video" ? max(380px, 380px * root.zoom-percent / 100) : max(312px, 312px * root.zoom-percent / 100);
-            height: max(42px, 46px * root.zoom-percent / 100);
-            x: max(8px - root.x, min((parent.width - self.width) / 2, root.viewport-width - self.width - root.x - 8px));
-            y: root.y < max(70px, 82px * root.zoom-percent / 100) ? max(42px, 48px * root.zoom-percent / 100) : -max(70px, 76px * root.zoom-percent / 100);
+            width: (root.note.kind == "video" ? 380px : 312px) * root.node-scale();
+            height: 46px * root.node-scale();
+            x: (parent.width - self.width) / 2;
+            y: root.y < 82px * root.node-scale() ? 48px * root.node-scale() : -76px * root.node-scale();
             background: #f7f6f4;
             border-radius: self.height / 2;
-            border-width: 1px;
+            border-width: 1px * root.node-scale();
             border-color: #e2dfdc;
             if root.note.kind == "video": HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
-                padding-top: 4px;
-                padding-bottom: 4px;
-                spacing: 2px;
-                CanvasMediaAction { width: 76px; icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.canvas-show-image-info = !AppState.canvas-show-image-info; } }
-                CanvasMediaAction { width: 76px; icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
-                CanvasMediaAction { width: 76px; icon: @image-url("../../assets/icons/edit.svg"); text: AppState.en ? "Edit" : "编辑"; clicked => { root.editing = true; } }
-                CanvasMediaAction { width: 118px; icon: @image-url("../../assets/icons/upload.svg"); text: AppState.en ? "Upload video" : "上传视频"; clicked => { AppState.generation-status = AppState.en ? "Video upload requires a configured video provider" : "请先配置视频生成服务"; } }
+                padding-left: 8px * root.node-scale();
+                padding-right: 8px * root.node-scale();
+                padding-top: 4px * root.node-scale();
+                padding-bottom: 4px * root.node-scale();
+                spacing: 2px * root.node-scale();
+                CanvasMediaAction { scale-factor: root.node-scale(); width: 76px * root.node-scale(); icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.canvas-show-image-info = !AppState.canvas-show-image-info; } }
+                CanvasMediaAction { scale-factor: root.node-scale(); width: 76px * root.node-scale(); icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
+                CanvasMediaAction { scale-factor: root.node-scale(); width: 76px * root.node-scale(); icon: @image-url("../../assets/icons/edit.svg"); text: AppState.en ? "Edit" : "编辑"; clicked => { root.editing = true; } }
+                CanvasMediaAction { scale-factor: root.node-scale(); width: 118px * root.node-scale(); icon: @image-url("../../assets/icons/upload.svg"); text: AppState.en ? "Upload video" : "上传视频"; clicked => { AppState.generation-status = AppState.en ? "Video upload requires a configured video provider" : "请先配置视频生成服务"; } }
             }
             if root.note.kind != "video": HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
-                padding-top: 4px;
-                padding-bottom: 4px;
-                spacing: 2px;
-                CanvasMediaAction { width: 76px; icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.canvas-show-image-info = !AppState.canvas-show-image-info; } }
-                CanvasMediaAction { width: 76px; icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
-                CanvasMediaAction { width: 132px; icon: @image-url("../../assets/icons/upload.svg"); text: root.note.kind == "image" ? (AppState.en ? "Upload image" : "上传图片") : (AppState.en ? "Upload audio" : "上传音频"); clicked => { if root.note.kind == "image" { AppState.add-reference(); } else { AppState.generation-status = AppState.en ? "Audio upload requires a configured audio provider" : "请先配置音频生成服务"; } } }
+                padding-left: 8px * root.node-scale();
+                padding-right: 8px * root.node-scale();
+                padding-top: 4px * root.node-scale();
+                padding-bottom: 4px * root.node-scale();
+                spacing: 2px * root.node-scale();
+                CanvasMediaAction { scale-factor: root.node-scale(); width: 76px * root.node-scale(); icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.canvas-show-image-info = !AppState.canvas-show-image-info; } }
+                CanvasMediaAction { scale-factor: root.node-scale(); width: 76px * root.node-scale(); icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
+                CanvasMediaAction { scale-factor: root.node-scale(); width: 132px * root.node-scale(); icon: @image-url("../../assets/icons/upload.svg"); text: root.note.kind == "image" ? (AppState.en ? "Upload image" : "上传图片") : (AppState.en ? "Upload audio" : "上传音频"); clicked => { if root.note.kind == "image" { AppState.add-reference(); } else { AppState.generation-status = AppState.en ? "Audio upload requires a configured audio provider" : "请先配置音频生成服务"; } } }
             }
         }
 
@@ -1041,24 +1047,24 @@ component CanvasNodeCard {
             width: root.media-editor-width();
             height: root.media-editor-height();
             background: root.dark-background ? #211e1c : AppTheme.panel;
-            border-radius: max(10px, 16px * root.zoom-percent / 100);
-            border-width: 1px;
+            border-radius: 16px * root.node-scale();
+            border-width: 1px * root.node-scale();
             border-color: root.dark-background ? #4d4844 : AppTheme.border;
 
             if root.note.linked-input != "": Rectangle {
-                x: max(10px, 14px * root.zoom-percent / 100);
+                x: 14px * root.node-scale();
                 y: self.x;
                 width: parent.width - 2 * self.x;
-                height: max(24px, 28px * root.zoom-percent / 100);
+                height: 28px * root.node-scale();
                 background: AppTheme.accent.with-alpha(root.dark-background ? 0.14 : 0.10);
-                border-radius: 6px;
+                border-radius: 6px * root.node-scale();
                 Text {
-                    x: 9px;
-                    width: parent.width - 18px;
+                    x: 9px * root.node-scale();
+                    width: parent.width - 18px * root.node-scale();
                     height: parent.height;
                     text: (AppState.en ? "Connected input: " : "已连接输入：") + root.note.linked-input;
                     color: root.dark-background ? #d8e6ff : AppTheme.accent-dark;
-                    font-size: max(9px, 11px * root.zoom-percent / 100);
+                    font-size: 11px * root.node-scale();
                     vertical-alignment: center;
                     wrap: no-wrap;
                     overflow: elide;
@@ -1066,24 +1072,24 @@ component CanvasNodeCard {
             }
 
             prompt-frame := Rectangle {
-                x: max(10px, 14px * root.zoom-percent / 100);
-                y: root.note.linked-input == "" ? self.x : max(42px, 48px * root.zoom-percent / 100);
+                x: 14px * root.node-scale();
+                y: root.note.linked-input == "" ? self.x : 48px * root.node-scale();
                 width: parent.width - 2 * self.x;
-                height: root.note.linked-input == "" ? max(72px, 104px * root.zoom-percent / 100) : max(52px, 70px * root.zoom-percent / 100);
+                height: (root.note.linked-input == "" ? 104px : 70px) * root.node-scale();
                 background: root.dark-background ? #292522 : AppTheme.panel-soft;
-                border-radius: max(8px, 12px * root.zoom-percent / 100);
-                border-width: 1px;
+                border-radius: 12px * root.node-scale();
+                border-width: 1px * root.node-scale();
                 border-color: root.dark-background ? #514c48 : AppTheme.border;
                 media-prompt := TextInput {
-                    x: 12px;
-                    y: 10px;
-                    width: parent.width - 24px;
-                    height: parent.height - 20px;
+                    x: 12px * root.node-scale();
+                    y: 10px * root.node-scale();
+                    width: parent.width - 24px * root.node-scale();
+                    height: parent.height - 20px * root.node-scale();
                     text <=> root.current-content;
                     single-line: false;
                     wrap: word-wrap;
                     color: root.dark-background ? #eee9e4 : AppTheme.text;
-                    font-size: max(10px, 13px * root.zoom-percent / 100);
+                    font-size: 13px * root.node-scale();
                     key-pressed(event) => {
                         if event.text == Key.Return {
                             if event.modifiers.alt { return reject; }
@@ -1094,29 +1100,29 @@ component CanvasNodeCard {
                     }
                 }
                 if root.current-content == "" && !media-prompt.has-focus: Text {
-                    x: 12px;
-                    y: 10px;
-                    width: parent.width - 24px;
-                    height: 24px;
+                    x: 12px * root.node-scale();
+                    y: 10px * root.node-scale();
+                    width: parent.width - 24px * root.node-scale();
+                    height: 24px * root.node-scale();
                     text: root.media-prompt-placeholder();
                     color: root.dark-background ? #8f8882 : AppTheme.muted;
-                    font-size: max(10px, 13px * root.zoom-percent / 100);
+                    font-size: 13px * root.node-scale();
                     vertical-alignment: center;
                 }
             }
 
             Rectangle {
-                x: max(12px, 16px * root.zoom-percent / 100);
-                y: parent.height - max(46px, 52px * root.zoom-percent / 100);
-                width: max(32px, 38px * root.zoom-percent / 100);
+                x: 16px * root.node-scale();
+                y: parent.height - 52px * root.node-scale();
+                width: 38px * root.node-scale();
                 height: self.width;
                 background: prompt-library-touch.has-hover ? #34302d : transparent;
                 border-radius: self.height / 2;
                 Image {
-                    x: (parent.width - 17px) / 2;
-                    y: (parent.height - 17px) / 2;
-                    width: 17px;
-                    height: 17px;
+                    x: (parent.width - 17px * root.node-scale()) / 2;
+                    y: (parent.height - 17px * root.node-scale()) / 2;
+                    width: 17px * root.node-scale();
+                    height: self.width;
                     source: @image-url("../../assets/icons/book.svg");
                     colorize: root.dark-background ? #eee9e4 : AppTheme.text;
                     image-fit: contain;
@@ -1130,9 +1136,10 @@ component CanvasNodeCard {
             }
 
             media-model-chip := CanvasMediaChip {
-                x: max(54px, 64px * root.zoom-percent / 100);
-                y: parent.height - max(44px, 50px * root.zoom-percent / 100);
-                width: (parent.width - self.x - max(62px, 72px * root.zoom-percent / 100)) / 2;
+                scale-factor: root.node-scale();
+                x: 64px * root.node-scale();
+                y: parent.height - 50px * root.node-scale();
+                width: (parent.width - self.x - 72px * root.node-scale()) / 2;
                 icon: root.note.kind == "image" ? @image-url("../../assets/icons/image.svg") : (root.note.kind == "video" ? @image-url("../../assets/icons/video.svg") : @image-url("../../assets/icons/audio.svg"));
                 text: root.media-model-text();
                 active: root.media-model-open;
@@ -1140,9 +1147,10 @@ component CanvasNodeCard {
             }
 
             CanvasMediaChip {
-                x: media-model-chip.x + media-model-chip.width + max(5px, 8px * root.zoom-percent / 100);
-                y: parent.height - max(44px, 50px * root.zoom-percent / 100);
-                width: parent.width - self.x - max(56px, 64px * root.zoom-percent / 100);
+                scale-factor: root.node-scale();
+                x: media-model-chip.x + media-model-chip.width + 8px * root.node-scale();
+                y: parent.height - 50px * root.node-scale();
+                width: parent.width - self.x - 64px * root.node-scale();
                 icon: @image-url("../../assets/icons/controls.svg");
                 text: root.media-settings-text();
                 active: root.media-settings-open;
@@ -1155,20 +1163,20 @@ component CanvasNodeCard {
             }
 
             Rectangle {
-                x: parent.width - max(48px, 56px * root.zoom-percent / 100);
-                y: parent.height - max(45px, 51px * root.zoom-percent / 100);
-                width: max(38px, 44px * root.zoom-percent / 100);
+                x: parent.width - 56px * root.node-scale();
+                y: parent.height - 51px * root.node-scale();
+                width: 44px * root.node-scale();
                 height: self.width;
                 opacity: root.note.kind == "image" && root.effective-prompt() != "" && AppState.image-model != "" && !AppState.generating ? 1 : 0.42;
                 background: generate-touch.has-hover && root.note.kind == "image" && root.effective-prompt() != "" && AppState.image-model != "" && !AppState.generating ? AppTheme.accent : #4a4642;
                 border-radius: self.height / 2;
-                border-width: 1px;
+                border-width: 1px * root.node-scale();
                 border-color: root.dark-background ? #5a5550 : AppTheme.border;
                 Image {
-                    x: (parent.width - 18px) / 2;
-                    y: (parent.height - 18px) / 2;
-                    width: 18px;
-                    height: 18px;
+                    x: (parent.width - 18px * root.node-scale()) / 2;
+                    y: (parent.height - 18px * root.node-scale()) / 2;
+                    width: 18px * root.node-scale();
+                    height: self.width;
                     source: @image-url("../../assets/icons/arrow-up.svg");
                     colorize: #f5f2ee;
                     image-fit: contain;
@@ -1188,12 +1196,36 @@ component CanvasNodeCard {
             }
         }
 
+        input-connector-touch := TouchArea {
+            visible: root.note.kind != "group" && root.zoom-percent >= 30;
+            width: max(18px, 26px * root.node-scale());
+            height: self.width;
+            x: -self.width / 2;
+            y: (parent.height - self.height) / 2;
+            mouse-cursor: crosshair;
+            pointer-event(event) => {
+                if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                    AppState.canvas-selected-id = root.note.id;
+                    AppState.canvas-selected-link-id = "";
+                    root.connection-started(root.note.id, root.x, root.y + root.height / 2);
+                } else if event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
+                    root.connection-moved(root.x + self.x + self.mouse-x, root.y + self.y + self.mouse-y);
+                    root.connection-finished(root.note.id, root.x + self.x + self.mouse-x, root.y + self.y + self.mouse-y);
+                }
+            }
+            moved => {
+                if self.pressed {
+                    root.connection-moved(root.x + self.x + self.mouse-x, root.y + self.y + self.mouse-y);
+                }
+            }
+        }
+
         output-connector-touch := TouchArea {
             visible: root.note.kind != "group" && root.zoom-percent >= 30;
-            x: parent.width - 13px;
-            y: (parent.height - 26px) / 2;
-            width: 26px;
-            height: 26px;
+            width: max(18px, 26px * root.node-scale());
+            height: self.width;
+            x: parent.width - self.width / 2;
+            y: (parent.height - self.height) / 2;
             mouse-cursor: crosshair;
             pointer-event(event) => {
                 if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
