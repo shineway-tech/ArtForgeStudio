@@ -1,4 +1,4 @@
-import { AccountSession, AssetGroup, AssetItem, CanvasNote, CatalogModelView, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
+import { AccountSession, AssetGroup, AssetItem, CanvasLink, CanvasNote, CatalogModelView, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 
 export global AppState {
     callback close-payment-window();
@@ -76,7 +76,12 @@ export global AppState {
     in-out property <bool> custom-prompt-open: false;
     in-out property <bool> custom-prompt-editor-open: false;
     in-out property <[CanvasNote]> canvas-notes: [];
+    in-out property <[CanvasLink]> canvas-links: [];
     in-out property <string> canvas-selected-id: "";
+    in-out property <string> canvas-selected-link-id: "";
+    in-out property <string> canvas-drag-preview-id: "";
+    in-out property <float> canvas-drag-delta-x: 0;
+    in-out property <float> canvas-drag-delta-y: 0;
     in-out property <string> canvas-tool: "select";
     in-out property <string> canvas-grid-style: "line";
     in-out property <bool> canvas-dark-background: true;
@@ -293,6 +298,8 @@ export global AppState {
     callback add-canvas-node(string, float, float);
     callback update-canvas-node(string, string, float, float);
     callback remove-canvas-node(string);
+    callback finish-canvas-link(string, float, float, float);
+    callback remove-canvas-link(string);
     callback undo-canvas();
     callback redo-canvas();
     callback select-image-model(string);

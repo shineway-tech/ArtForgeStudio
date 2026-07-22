@@ -112,8 +112,19 @@ export struct CanvasNote {
     id: string,
     kind: string,
     content: string,
+    linked-input: string,
     x: float,
     y: float,
     width: float,
     height: float,
+}
+
+export struct CanvasLink {
+    id: string,
+    source-id: string,
+    target-id: string,
+    start-x: float,
+    start-y: float,
+    end-x: float,
+    end-y: float,
 }

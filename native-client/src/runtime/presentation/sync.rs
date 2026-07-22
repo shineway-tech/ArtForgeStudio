@@ -196,7 +196,10 @@ pub(super) fn push_prompt_history(app: &AppWindow, store: &Store) {
             .collect::<Vec<_>>(),
     )));
     state.set_prompt_history(ModelRc::new(VecModel::from(
-        history.into_iter().map(SharedString::from).collect::<Vec<_>>(),
+        history
+            .into_iter()
+            .map(SharedString::from)
+            .collect::<Vec<_>>(),
     )));
 }
 
@@ -235,22 +238,108 @@ pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
 }
 
 pub(super) fn push_canvas_notes(app: &AppWindow, store: &Store) {
-    app.global::<AppState>()
-        .set_canvas_notes(ModelRc::new(VecModel::from(
-            store
-                .canvas_notes
-                .iter()
-                .map(|note| CanvasNote {
-                    id: note.id.clone().into(),
-                    kind: note.kind.clone().into(),
-                    content: note.content.clone().into(),
-                    x: note.x,
-                    y: note.y,
-                    width: note.width,
-                    height: note.height,
+    let state = app.global::<AppState>();
+    state.set_canvas_notes(ModelRc::new(VecModel::from(
+        store
+            .canvas_notes
+            .iter()
+            .map(|note| CanvasNote {
+                id: note.id.clone().into(),
+                kind: note.kind.clone().into(),
+                content: note.content.clone().into(),
+                linked_input: canvas_linked_input(store, &note.id).into(),
+                x: note.x,
+                y: note.y,
+                width: note.width,
+                height: note.height,
+            })
+            .collect::<Vec<_>>(),
+    )));
+    state.set_canvas_links(ModelRc::new(VecModel::from(
+        store
+            .canvas_links
+            .iter()
+            .filter_map(|link| {
+                let source = store
+                    .canvas_notes
+                    .iter()
+                    .find(|note| note.id == link.source_id)?;
+                let target = store
+                    .canvas_notes
+                    .iter()
+                    .find(|note| note.id == link.target_id)?;
+                Some(CanvasLink {
+                    id: link.id.clone().into(),
+                    source_id: link.source_id.clone().into(),
+                    target_id: link.target_id.clone().into(),
+                    start_x: source.x + source.width,
+                    start_y: source.y + source.height / 2.0,
+                    end_x: target.x,
+                    end_y: target.y + target.height / 2.0,
                 })
-                .collect::<Vec<_>>(),
-        )));
+            })
+            .collect::<Vec<_>>(),
+    )));
+}
+
+fn canvas_linked_input(store: &Store, target_id: &str) -> String {
+    let mut visiting = BTreeSet::new();
+    let mut seen = BTreeSet::new();
+    store
+        .canvas_links
+        .iter()
+        .filter(|link| link.target_id == target_id)
+        .filter_map(|link| resolved_canvas_content(store, &link.source_id, &mut visiting))
+        .filter(|content| seen.insert(content.clone()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn resolved_canvas_content(
+    store: &Store,
+    node_id: &str,
+    visiting: &mut BTreeSet<String>,
+) -> Option<String> {
+    if !visiting.insert(node_id.to_string()) {
+        return None;
+    }
+    let Some(note) = store.canvas_notes.iter().find(|note| note.id == node_id) else {
+        visiting.remove(node_id);
+        return None;
+    };
+    let mut seen = BTreeSet::new();
+    let mut parts = store
+        .canvas_links
+        .iter()
+        .filter(|link| link.target_id == node_id)
+        .filter_map(|link| resolved_canvas_content(store, &link.source_id, visiting))
+        .filter(|content| seen.insert(content.clone()))
+        .collect::<Vec<_>>();
+    let own = meaningful_canvas_content(note);
+    if !own.is_empty() && seen.insert(own.to_string()) {
+        parts.push(own.to_string());
+    }
+    visiting.remove(node_id);
+    let resolved = parts.join("\n");
+    (!resolved.is_empty()).then_some(resolved)
+}
+
+fn meaningful_canvas_content(note: &CanvasNoteData) -> &str {
+    let content = note.content.trim();
+    let placeholder = matches!(
+        content,
+        "描述要生成的图片内容"
+            | "描述要生成的视频内容"
+            | "描述要生成的音频内容"
+            | "Describe the image you want to generate"
+            | "Describe the video you want to generate"
+            | "Describe the audio you want to generate"
+    );
+    if placeholder {
+        ""
+    } else {
+        content
+    }
 }
 
 pub(super) fn single_line_prompt_preview(prompt: &str) -> String {
@@ -561,11 +650,15 @@ pub(super) fn to_model_group_view(group: &ModelGroupData) -> ModelGroup {
         used_models: ModelRc::new(VecModel::from(
             normalized_used_models(
                 group.used_models.clone(),
-                &group.models.iter().map(|model| model.code.clone()).collect::<Vec<_>>(),
+                &group
+                    .models
+                    .iter()
+                    .map(|model| model.code.clone())
+                    .collect::<Vec<_>>(),
             )
-                .into_iter()
-                .map(SharedString::from)
-                .collect::<Vec<_>>(),
+            .into_iter()
+            .map(SharedString::from)
+            .collect::<Vec<_>>(),
         )),
         selected_model: group.selected_model.clone().into(),
     }
@@ -590,5 +683,51 @@ pub(super) fn to_asset_view(asset: &AssetData) -> AssetItem {
         cutout_done: asset.cutout_done,
         remove_black_done: asset.remove_black_done,
         upscale_done: asset.upscale_done,
+    }
+}
+
+#[cfg(test)]
+mod canvas_link_tests {
+    use super::*;
+
+    fn note(id: &str, kind: &str, content: &str) -> CanvasNoteData {
+        CanvasNoteData {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            content: content.to_string(),
+            width: 320.0,
+            height: 210.0,
+            ..CanvasNoteData::default()
+        }
+    }
+
+    #[test]
+    fn connected_nodes_resolve_upstream_content_in_dependency_order() {
+        let store = Store {
+            canvas_notes: vec![
+                note("brief", "text", "雨夜城市"),
+                note("style", "text", "电影感霓虹灯"),
+                note("image", "image", "描述要生成的图片内容"),
+            ],
+            canvas_links: vec![
+                CanvasLinkData {
+                    id: "one".to_string(),
+                    source_id: "brief".to_string(),
+                    target_id: "image".to_string(),
+                },
+                CanvasLinkData {
+                    id: "two".to_string(),
+                    source_id: "style".to_string(),
+                    target_id: "image".to_string(),
+                },
+            ],
+            ..Store::default()
+        };
+
+        assert_eq!(
+            canvas_linked_input(&store, "image"),
+            "雨夜城市\n电影感霓虹灯"
+        );
+        assert_eq!(meaningful_canvas_content(&store.canvas_notes[2]), "");
     }
 }

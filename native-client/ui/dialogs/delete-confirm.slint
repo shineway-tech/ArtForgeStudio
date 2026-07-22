@@ -20,6 +20,8 @@ export component DeleteConfirm {
             AppState.clear-all-notifications();
         } else if AppState.pending-delete-kind == "canvas-note" {
             AppState.remove-canvas-node(AppState.pending-delete-id);
+        } else if AppState.pending-delete-kind == "canvas-link" {
+            AppState.remove-canvas-link(AppState.pending-delete-id);
         } else {
             AppState.confirm-delete();
         }
@@ -47,11 +49,13 @@ export component DeleteConfirm {
                         ? (AppState.en ? "Delete this prompt?" : "确认删除这条提示词？")
                         : (AppState.pending-delete-kind == "canvas-note"
                             ? (AppState.en ? "Delete this node?" : "确认删除这个节点？")
-                            : (AppState.pending-delete-kind == "notification"
+                            : (AppState.pending-delete-kind == "canvas-link"
+                                ? (AppState.en ? "Delete this connection?" : "确认删除这条连接？")
+                                : (AppState.pending-delete-kind == "notification"
                             ? (AppState.en ? "Delete this notification?" : "确认删除这条通知？")
                             : (AppState.pending-delete-kind == "notifications-all"
                                 ? (AppState.en ? "Delete all notifications?" : "确认删除全部通知？")
-                                : (AppState.en ? "Delete this asset?" : "确认删除这个资产？"))));
+                                : (AppState.en ? "Delete this asset?" : "确认删除这个资产？")))));
                     color: AppTheme.text;
                     font-size: 18px;
                     font-weight: 600;
@@ -59,7 +63,7 @@ export component DeleteConfirm {
                 Text {
                     text: AppState.pending-delete-kind == "notifications-all"
                         ? (AppState.en ? "All notifications will be permanently deleted." : "所有通知都将被删除，且无法恢复。")
-                        : (AppState.pending-delete-kind == "custom-prompt" || AppState.pending-delete-kind == "notification" || AppState.pending-delete-kind == "canvas-note"
+                        : (AppState.pending-delete-kind == "custom-prompt" || AppState.pending-delete-kind == "notification" || AppState.pending-delete-kind == "canvas-note" || AppState.pending-delete-kind == "canvas-link"
                             ? (AppState.en ? "This action cannot be undone." : "删除后无法恢复。")
                             : (AppState.en ? "It will be removed from My Assets." : "删除后将从我的资产中移除。"));
                     color: AppTheme.muted;

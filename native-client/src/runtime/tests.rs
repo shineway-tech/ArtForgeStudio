@@ -487,9 +487,11 @@ mod tests {
         assert!(dialog.contains("AppState.pending-delete-kind == \"custom-prompt\""));
         assert!(dialog.contains("AppState.pending-delete-kind == \"notification\""));
         assert!(dialog.contains("AppState.pending-delete-kind == \"notifications-all\""));
+        assert!(dialog.contains("AppState.pending-delete-kind == \"canvas-link\""));
         assert!(dialog.contains("AppState.remove-custom-prompt(AppState.pending-delete-id)"));
         assert!(dialog.contains("AppState.delete-notification(AppState.pending-delete-id)"));
         assert!(dialog.contains("AppState.clear-all-notifications()"));
+        assert!(dialog.contains("AppState.remove-canvas-link(AppState.pending-delete-id)"));
         assert!(dialog.contains("AppState.confirm-delete()"));
 
         assert!(prompts.contains("AppState.pending-delete-kind = \"custom-prompt\""));
@@ -555,13 +557,18 @@ mod tests {
         assert!(app.contains("AppState.page == \"canvas\""));
         assert!(glyph.contains("root.kind == \"canvas\""));
         assert!(types.contains("export struct CanvasNote"));
+        assert!(types.contains("export struct CanvasLink"));
+        assert!(types.contains("linked-input: string"));
         assert!(types.contains("kind: string"));
         assert!(types.contains("width: float"));
         assert!(types.contains("height: float"));
         assert!(state.contains("in-out property <[CanvasNote]> canvas-notes"));
+        assert!(state.contains("in-out property <[CanvasLink]> canvas-links"));
         assert!(state.contains("callback add-canvas-node(string, float, float)"));
         assert!(state.contains("callback update-canvas-node(string, string, float, float)"));
         assert!(state.contains("callback remove-canvas-node(string)"));
+        assert!(state.contains("callback finish-canvas-link(string, float, float, float)"));
+        assert!(state.contains("callback remove-canvas-link(string)"));
         assert!(state.contains("callback undo-canvas()"));
         assert!(state.contains("callback redo-canvas()"));
 
@@ -579,6 +586,7 @@ mod tests {
         assert!(page.contains("canvas-show-image-info"));
         assert!(page.contains("zoom-track"));
         assert!(page.contains("for note in AppState.canvas-notes"));
+        assert!(page.contains("for link in AppState.canvas-links"));
         assert!(page.contains("AppState.update-canvas-node"));
         assert!(page.contains("AppState.pending-delete-kind = \"canvas-note\""));
         assert!(include_str!("../../ui/dialogs/delete-confirm.slint")
@@ -587,11 +595,14 @@ mod tests {
         assert!(callbacks.contains("state.on_add_canvas_node"));
         assert!(callbacks.contains("state.on_update_canvas_node"));
         assert!(callbacks.contains("state.on_remove_canvas_node"));
+        assert!(callbacks.contains("state.on_finish_canvas_link"));
+        assert!(callbacks.contains("state.on_remove_canvas_link"));
         assert!(callbacks.contains("state.on_undo_canvas"));
         assert!(callbacks.contains("state.on_redo_canvas"));
         assert!(callbacks.contains("CanvasHistory"));
         assert!(callbacks.contains("save_local_store"));
         assert!(local_store.contains("canvas_notes: store.canvas_notes.clone()"));
+        assert!(local_store.contains("canvas_links: store.canvas_links.clone()"));
         assert!(local_store.contains("store_mut.canvas_notes = data.canvas_notes"));
         assert!(sync.contains("push_canvas_notes(app, store)"));
     }
@@ -615,6 +626,26 @@ mod tests {
         assert!(node.contains("if !root.editing"));
         assert!(node.contains("&& root.editing: TextInput"));
         assert!(node.contains("source: @image-url(\"../../assets/icons/edit.svg\")"));
+    }
+
+    #[test]
+    fn infinite_canvas_links_nodes_and_feeds_upstream_prompts_downstream() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let dialog = include_str!("../../ui/dialogs/delete-confirm.slint");
+
+        assert!(page.contains("component CanvasConnectionCurve"));
+        assert!(page.contains("connection-started(string, length, length)"));
+        assert!(page.contains("root.begin-connection(source-id, start-x, start-y)"));
+        assert!(page.contains("AppState.finish-canvas-link(source-id"));
+        assert!(page.contains("for link in AppState.canvas-links"));
+        assert!(page.contains("function effective-prompt()"));
+        assert!(page.contains("AppState.prompt = root.effective-prompt()"));
+        assert!(page.contains("已连接输入："));
+        assert!(page.contains("node-drag-touch.has-hover || output-connector-touch.has-hover"));
+        assert!(page.contains("toolbar.y - self.height - 10px"));
+        assert!(state.contains("canvas-drag-preview-id"));
+        assert!(dialog.contains("确认删除这条连接？"));
     }
 
     #[test]

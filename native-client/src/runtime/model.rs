@@ -50,6 +50,13 @@ struct CanvasNoteData {
     height: f32,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+struct CanvasLinkData {
+    id: String,
+    source_id: String,
+    target_id: String,
+}
+
 #[derive(Clone)]
 struct AssetData {
     id: String,
@@ -193,6 +200,7 @@ struct Store {
     custom_prompts: Vec<String>,
     custom_prompt_times: BTreeMap<String, String>,
     canvas_notes: Vec<CanvasNoteData>,
+    canvas_links: Vec<CanvasLinkData>,
     credit_ledger_pagination: CreditLedgerPagination,
 }
 
@@ -233,6 +241,8 @@ struct LocalStoreData {
     custom_prompt_times: BTreeMap<String, String>,
     #[serde(default)]
     canvas_notes: Vec<CanvasNoteData>,
+    #[serde(default)]
+    canvas_links: Vec<CanvasLinkData>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
