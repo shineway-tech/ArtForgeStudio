@@ -1,6 +1,8 @@
 use super::*;
 use std::collections::BTreeSet;
 
+const PENDING_SUBMISSION_RECOVERY_TTL_MS: i64 = 15 * 60 * 1000;
+
 #[derive(Clone)]
 struct UpscaleSource {
     title: String,
@@ -43,6 +45,9 @@ pub(super) fn start_backend_generation(
         &state.get_quote_ratio().to_string(),
     );
     let quality = state.get_quality().to_string();
+    if !ensure_membership_quality_allowed(&state, &quality) {
+        return;
+    }
     let count = forced_count.unwrap_or_else(|| {
         if category == "action-sequence" { 1 } else { state.get_count().clamp(1, 4) }
     });
@@ -105,6 +110,7 @@ pub(super) fn start_backend_generation(
     let request_id = Uuid::new_v4().simple().to_string();
     let recovery_record = PendingGenerationRecord {
         schema_version: 1,
+        created_at_epoch_ms: Local::now().timestamp_millis(),
         client_request_id: request_id.clone(),
         local_task_id: local_task_id.clone(),
         server_task_id: String::new(),
@@ -220,13 +226,17 @@ pub(super) fn start_backend_generation(
         let mut detail = match api.create_task(&request) {
             Ok(detail) => detail,
             Err(error) => {
-                for file_id in &uploaded { api.delete_reference(file_id); }
                 if error.is_insufficient_credits() {
+                    for file_id in &uploaded { api.delete_reference(file_id); }
                     let _ = remove_pending_generation(&request.client_request_id);
                     let _ = sender.send(GenerationOutcome::CreditInsufficient {
                         message: "积分不足以支持本次生图，请前往充值".to_string(),
                     });
                     return;
+                }
+                if !error.should_preserve_generation_recovery() {
+                    for file_id in &uploaded { api.delete_reference(file_id); }
+                    let _ = remove_pending_generation(&request.client_request_id);
                 }
                 let _ = sender.send(GenerationOutcome::Failure {
                     reason: error.generation_message(),
@@ -423,6 +433,9 @@ pub(super) fn start_backend_upscale(
         target_long_edge,
     );
     let billing_quality = quality_for_target_dimensions(target_width, target_height);
+    if !ensure_membership_quality_allowed(&state, &billing_quality) {
+        return;
+    }
     let upload_path = match upscale_upload_path(app, &state, &source) {
         Ok(path) => path,
         Err(error) => {
@@ -455,6 +468,7 @@ pub(super) fn start_backend_upscale(
     let reference_path = upload_path.display().to_string();
     let recovery_record = PendingGenerationRecord {
         schema_version: 1,
+        created_at_epoch_ms: Local::now().timestamp_millis(),
         client_request_id: request_id.clone(),
         local_task_id: local_task_id.clone(),
         server_task_id: String::new(),
@@ -549,13 +563,17 @@ pub(super) fn start_backend_upscale(
         let mut detail = match api.create_upscale_task(&request) {
             Ok(detail) => detail,
             Err(error) => {
-                for file_id in &uploaded { api.delete_reference(file_id); }
                 if error.is_insufficient_credits() {
+                    for file_id in &uploaded { api.delete_reference(file_id); }
                     let _ = remove_pending_generation(&request.client_request_id);
                     let _ = sender.send(GenerationOutcome::CreditInsufficient {
                         message: "积分不足以支持本次放大，请前往充值".to_string(),
                     });
                     return;
+                }
+                if !error.should_preserve_generation_recovery() {
+                    for file_id in &uploaded { api.delete_reference(file_id); }
+                    let _ = remove_pending_generation(&request.client_request_id);
                 }
                 let _ = sender.send(GenerationOutcome::Failure {
                     reason: error.generation_message(),
@@ -752,6 +770,30 @@ fn quality_for_target_dimensions(width: u32, height: u32) -> String {
     }
 }
 
+fn ensure_membership_quality_allowed(state: &AppState, requested_quality: &str) -> bool {
+    let max_quality = normalized_quality(&state.get_membership_max_quality().to_string());
+    let requested_quality = normalized_quality(requested_quality);
+    if membership_allows_quality(max_quality, requested_quality) {
+        return true;
+    }
+
+    let plan_name = state.get_membership_plan_name().to_string();
+    let plan_label = if plan_name.trim().is_empty() {
+        "当前会员"
+    } else {
+        plan_name.trim()
+    };
+    state.set_quality_restricted_message(
+        format!(
+            "{}最高支持 {} 图片，请升级会员后使用 {} 图片。",
+            plan_label, max_quality, requested_quality
+        )
+        .into(),
+    );
+    state.set_quality_restricted_open(true);
+    false
+}
+
 fn upscale_upload_path(
     app: &AppWindow,
     state: &AppState,
@@ -838,7 +880,8 @@ fn cleanup_cancelled_generation(
 }
 
 pub(super) fn recover_pending_generations(app: &AppWindow, context: AppContext) {
-    if app.global::<AppState>().get_session_state().as_str() != "online" {
+    let state = app.global::<AppState>();
+    if state.get_session_state().as_str() != "online" {
         return;
     }
     let local_records = load_pending_generations();
@@ -846,8 +889,20 @@ pub(super) fn recover_pending_generations(app: &AppWindow, context: AppContext) 
         .filter(|record| !record.server_task_id.is_empty())
         .map(|record| record.server_task_id.clone())
         .collect::<BTreeSet<_>>();
+    let now_epoch_ms = Local::now().timestamp_millis();
     for record in local_records {
         if record.schema_version != 1 || record.client_request_id.trim().is_empty() {
+            let _ = remove_pending_generation(&record.client_request_id);
+            continue;
+        }
+        if record.server_task_id.is_empty()
+            && !ensure_membership_quality_allowed(&state, &record.quality)
+        {
+            let _ = remove_pending_generation(&record.client_request_id);
+            continue;
+        }
+        if pending_submission_recovery_expired(&record, now_epoch_ms) {
+            let _ = remove_pending_generation(&record.client_request_id);
             continue;
         }
         if category_is_generating(&context, &record.category) {
@@ -856,6 +911,18 @@ pub(super) fn recover_pending_generations(app: &AppWindow, context: AppContext) 
         resume_pending_generation(app, context.clone(), record);
     }
     recover_server_generation_tasks(app, context, known_server_ids);
+}
+
+fn pending_submission_recovery_expired(
+    record: &PendingGenerationRecord,
+    now_epoch_ms: i64,
+) -> bool {
+    if !record.server_task_id.is_empty() {
+        return false;
+    }
+    record.created_at_epoch_ms <= 0
+        || now_epoch_ms.saturating_sub(record.created_at_epoch_ms)
+            > PENDING_SUBMISSION_RECOVERY_TTL_MS
 }
 
 fn recover_server_generation_tasks(
@@ -890,6 +957,7 @@ fn recover_server_generation_tasks(
                     .unwrap_or_else(|| "1:1".to_string());
                 recovered.push(PendingGenerationRecord {
                     schema_version: 1,
+                    created_at_epoch_ms: Local::now().timestamp_millis(),
                     client_request_id: format!("recovered_{}", Uuid::new_v4().simple()),
                     local_task_id: Uuid::new_v4().to_string(),
                     server_task_id: detail.id.clone(),
@@ -1115,6 +1183,10 @@ fn run_recovered_generation_worker(
                         message: "积分不足以支持本次生图，请前往充值".to_string(),
                     });
                     return;
+                }
+                if !error.should_preserve_generation_recovery() {
+                    for file_id in &uploaded { api.delete_reference(file_id); }
+                    let _ = remove_pending_generation(&record.client_request_id);
                 }
                 let _ = sender.send(GenerationOutcome::Failure {
                     reason: format!("恢复任务提交失败：{}", error.generation_message()),

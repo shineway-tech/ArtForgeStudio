@@ -39,12 +39,16 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
     let store = context.store.clone();
 
     wire_auth_callbacks(app, context.clone());
+    wire_wechat_binding_callbacks(app, context.clone());
+    wire_email_binding_callbacks(app, context.clone());
     wire_payment_callbacks(app, context.clone());
     wire_credit_callbacks(app, context.clone());
     wire_custom_prompt_callbacks(app, store.clone());
 
     {
         let app_weak = app.as_weak();
+        let auth_context = context.clone();
+        let auth_backend = context.backend.clone();
         state.on_use_now(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -54,6 +58,14 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
                 navigate_to(&app, "generation");
             } else {
                 state.set_auth_open(true);
+                if state.get_auth_method().as_str() == "wechat"
+                    && !state.get_auth_wechat_busy()
+                    && !state.get_auth_wechat_qr_ready()
+                {
+                    if let Some(backend) = auth_backend.clone() {
+                        begin_wechat_login(&app, auth_context.clone(), backend);
+                    }
+                }
             }
         });
     }

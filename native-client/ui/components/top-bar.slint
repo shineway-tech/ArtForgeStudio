@@ -75,8 +75,18 @@ export component TopBar {
                 PillButton { width: 94px; text: AppState.language == "zh" ? "中文" : "English"; clicked => { AppState.set-language(AppState.language == "zh" ? "en" : "zh"); } }
                 ThemeMenuButton { width: 94px; }
                 if AppState.logged-in: PillButton { width: 104px; text: AppState.en ? ("Credits " + AppState.credit-balance) : ("积分 " + AppState.credit-balance); clicked => { AppState.navigate("credits"); } }
-                if AppState.logged-in: PillButton { width: 128px; text: AppState.nickname != "" ? AppState.nickname : AppState.email-mask; clicked => { AppState.profile-open = true; AppState.profile-name = AppState.nickname; } }
-                if !AppState.logged-in && AppState.page != "welcome": PillButton { width: 112px; text: AppState.en ? "Login" : "登录/注册"; primary: true; clicked => { AppState.auth-open = true; } }
+                if AppState.logged-in: PillButton { width: 128px; text: AppState.nickname != "" ? AppState.nickname : AppState.email-mask; clicked => { AppState.profile-section = "login"; AppState.profile-open = true; AppState.profile-name = AppState.nickname; } }
+                if !AppState.logged-in && AppState.page != "welcome": PillButton {
+                    width: 112px;
+                    text: AppState.en ? "Login" : "登录/注册";
+                    primary: true;
+                    clicked => {
+                        AppState.auth-open = true;
+                        if AppState.auth-method == "wechat" && !AppState.auth-wechat-busy && !AppState.auth-wechat-qr-ready {
+                            AppState.start-wechat-login();
+                        }
+                    }
+                }
             }
         }
     }

@@ -1,6 +1,7 @@
 use super::{ApiClient, ApiError, ApiResponse, CreditPack, PaymentApi};
 use reqwest::Method;
 use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -55,8 +56,83 @@ pub(crate) struct CreditAccount {
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct AccountSnapshot {
     pub(crate) user: AccountUser,
+    #[serde(default)]
+    pub(crate) auth_methods: AccountAuthMethods,
     pub(crate) membership: AccountMembership,
     pub(crate) credits: Option<CreditAccount>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(crate) struct AccountAuthMethods {
+    #[serde(default)]
+    pub(crate) email: AccountAuthMethod,
+    #[serde(default)]
+    pub(crate) wechat: WechatAuthMethod,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(crate) struct AccountAuthMethod {
+    pub(crate) bound: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(crate) struct WechatAuthMethod {
+    pub(crate) bound: bool,
+    pub(crate) can_unbind: bool,
+    pub(crate) nickname: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct WechatBindingStartResponse {
+    pub(crate) login_id: String,
+    pub(crate) authorization_url: String,
+    #[serde(default)]
+    pub(crate) qr_image_base64: String,
+    pub(crate) expires_in_seconds: u64,
+    pub(crate) poll_after_seconds: u64,
+    #[serde(default)]
+    pub(crate) poll_after_milliseconds: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct WechatBindingStatusResponse {
+    pub(crate) status: String,
+    #[serde(default)]
+    pub(crate) qr_status: Option<String>,
+    pub(crate) message: Option<String>,
+    #[serde(default)]
+    pub(crate) bound: bool,
+    pub(crate) can_unbind: Option<bool>,
+    pub(crate) nickname: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WechatBindingStatusRequest<'a> {
+    login_id: &'a str,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct EmailBindingCodeResponse {
+    pub(crate) email_masked: String,
+    pub(crate) expires_in_seconds: u64,
+    pub(crate) resend_after_seconds: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct EmailBindingResponse {
+    pub(crate) bound: bool,
+    pub(crate) email_masked: String,
+}
+
+#[derive(Serialize)]
+struct EmailBindingCodeRequest<'a> {
+    email: &'a str,
+}
+
+#[derive(Serialize)]
+struct EmailBindingRequest<'a> {
+    email: &'a str,
+    code: &'a str,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -217,6 +293,76 @@ impl AccountApi {
             None,
         )?;
         Ok(())
+    }
+
+    pub(crate) fn start_wechat_binding(&self) -> Result<WechatBindingStartResponse, ApiError> {
+        self.client.authenticated_json::<WechatBindingStartResponse>(
+            Method::POST,
+            "/v1/account/wechat/bind/session",
+            None,
+            None,
+        ).map(|response| response.data)
+    }
+
+    pub(crate) fn wechat_binding_status(
+        &self,
+        login_id: &str,
+    ) -> Result<WechatBindingStatusResponse, ApiError> {
+        let body = serde_json::to_value(WechatBindingStatusRequest { login_id })
+            .map_err(|error| ApiError::Protocol {
+                message: error.to_string(),
+                request_id: None,
+            })?;
+        self.client.authenticated_json::<WechatBindingStatusResponse>(
+            Method::POST,
+            "/v1/account/wechat/bind/session/status",
+            Some(body),
+            None,
+        ).map(|response| response.data)
+    }
+
+    pub(crate) fn unbind_wechat(&self) -> Result<WechatAuthMethod, ApiError> {
+        self.client.authenticated_json::<WechatAuthMethod>(
+            Method::DELETE,
+            "/v1/account/wechat",
+            None,
+            None,
+        ).map(|response| response.data)
+    }
+
+    pub(crate) fn request_email_binding_code(
+        &self,
+        email: &str,
+    ) -> Result<EmailBindingCodeResponse, ApiError> {
+        let body = serde_json::to_value(EmailBindingCodeRequest { email })
+            .map_err(|error| ApiError::Protocol {
+                message: error.to_string(),
+                request_id: None,
+            })?;
+        self.client.authenticated_json::<EmailBindingCodeResponse>(
+            Method::POST,
+            "/v1/account/email/code",
+            Some(body),
+            None,
+        ).map(|response| response.data)
+    }
+
+    pub(crate) fn bind_email(
+        &self,
+        email: &str,
+        code: &str,
+    ) -> Result<EmailBindingResponse, ApiError> {
+        let body = serde_json::to_value(EmailBindingRequest { email, code })
+            .map_err(|error| ApiError::Protocol {
+                message: error.to_string(),
+                request_id: None,
+            })?;
+        self.client.authenticated_json::<EmailBindingResponse>(
+            Method::POST,
+            "/v1/account/email/bind",
+            Some(body),
+            None,
+        ).map(|response| response.data)
     }
 }
 

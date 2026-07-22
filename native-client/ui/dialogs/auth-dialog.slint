@@ -35,6 +35,35 @@ component AgreementChoice {
     }
 }
 
+component AuthTab {
+    in property <string> text;
+    in property <bool> active: false;
+    callback clicked();
+    height: 48px;
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: transparent;
+        Text {
+            width: parent.width;
+            height: parent.height - 3px;
+            text: root.text;
+            color: root.active ? AppTheme.accent : AppTheme.muted;
+            font-size: 16px;
+            font-weight: root.active ? 600 : 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            y: parent.height - 2px;
+            width: parent.width;
+            height: 2px;
+            background: root.active ? AppTheme.accent : AppTheme.border;
+        }
+        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.clicked(); } }
+    }
+}
+
 export component AuthDialog {
     function confirm-auth() {
         if AppState.auth-code == "" {
@@ -49,25 +78,31 @@ export component AuthDialog {
         background: #00000066;
         TouchArea { width: parent.width; height: parent.height; }
         dialog := Rectangle {
-            width: min(440px, root.width - 32px);
-            height: min(480px, root.height - 40px);
+            width: min(620px, root.width - 32px);
+            height: min(700px, root.height - 40px);
             x: (root.width - self.width) / 2;
             y: (root.height - self.height) / 2;
             background: AppTheme.panel;
-            border-radius: 14px;
+            border-radius: 16px;
             border-width: 1px;
             border-color: AppTheme.border;
             DialogCloseButton {
-                x: parent.width - 42px;
+                z: 20;
+                x: parent.width - 44px;
                 y: 12px;
-                clicked => { AppState.auth-open = false; }
+                clicked => {
+                    AppState.auth-open = false;
+                    AppState.auth-wechat-login-id = "";
+                    AppState.auth-wechat-qr-ready = false;
+                    AppState.auth-wechat-scanned = false;
+                }
             }
             if AppState.session-state == "update_required": Rectangle {
                 z: 10;
                 width: parent.width;
                 height: parent.height;
                 background: AppTheme.panel;
-                border-radius: 14px;
+                border-radius: 16px;
                 VerticalLayout {
                     padding: 30px;
                     spacing: 18px;
@@ -79,104 +114,311 @@ export component AuthDialog {
                 }
             }
             VerticalLayout {
-                padding: 24px;
+                padding-left: 42px;
+                padding-right: 42px;
+                padding-top: 42px;
+                padding-bottom: 22px;
                 spacing: 10px;
-                SectionTitle { text: AppState.en ? "Login / Sign Up" : "登录/注册"; }
-                Text {
-                    height: 24px;
-                    text: AppState.en ? "Use your email to continue" : "使用邮箱验证码登录，首次登录将自动注册";
-                    color: AppTheme.muted;
-                    font-size: 13px;
-                    vertical-alignment: center;
-                }
-                Field {
-                    label: AppState.en ? "Email" : "邮箱";
-                    placeholder: AppState.en ? "Enter email address" : "请输入邮箱地址";
-                    value <=> AppState.auth-email;
-                    required: true;
-                    accepted => { root.confirm-auth(); }
-                }
-                Rectangle {
-                    height: 78px;
-                    background: transparent;
-                    Text { x: 0px; y: 0px; text: AppState.en ? "Code" : "验证码"; color: AppTheme.text; font-size: AppState.settings-font-size * 1px; }
-                    Rectangle {
-                        x: 0px;
-                        y: 32px;
-                        width: parent.width - 130px;
-                        height: 46px;
-                        background: AppTheme.panel;
-                        border-radius: 8px;
-                        border-width: 1px;
-                        border-color: code-input.has-focus ? AppTheme.accent : AppTheme.border;
-                        code-input := TextInput {
-                            x: 14px;
-                            width: parent.width - 28px;
-                            height: parent.height;
-                            text <=> AppState.auth-code;
-                            single-line: true;
-                            color: AppTheme.text;
-                            font-size: AppState.settings-font-size * 1px;
-                            vertical-alignment: center;
-                            accepted => { root.confirm-auth(); }
-                        }
-                        if (AppState.auth-code == "") && (!code-input.has-focus): Text {
-                            x: 14px;
-                            width: parent.width - 28px;
-                            height: parent.height;
-                            text: AppState.en ? "6-digit code" : "请输入 6 位验证码";
-                            color: AppTheme.weak;
-                            font-size: AppState.settings-font-size * 1px;
-                            vertical-alignment: center;
-                        }
-                    }
-                    PillButton {
-                        x: parent.width - 120px;
-                        y: 37px;
-                        width: 120px;
-                        disabled: AppState.auth-code-busy || AppState.auth-busy || AppState.auth-countdown > 0;
-                        text: AppState.auth-code-busy
-                            ? (AppState.en ? "Sending..." : "发送中...")
-                            : (AppState.auth-countdown > 0 ? (AppState.en ? "\{AppState.auth-countdown}s" : "\{AppState.auth-countdown}秒") : (AppState.en ? "Get Code" : "获取验证码"));
-                        clicked => { AppState.request-code(); }
-                    }
-                }
-                AgreementChoice {
-                    required: AppState.auth-user-terms-required;
-                    title: AppState.auth-user-terms-title;
-                    url: AppState.auth-user-terms-url;
-                    accepted <=> AppState.auth-user-terms-accepted;
-                    open(title, url) => { AppState.open-agreement(title, url); }
-                }
-                AgreementChoice {
-                    required: AppState.auth-privacy-required;
-                    title: AppState.auth-privacy-title;
-                    url: AppState.auth-privacy-url;
-                    accepted <=> AppState.auth-privacy-accepted;
-                    open(title, url) => { AppState.open-agreement(title, url); }
-                }
-                Text {
-                    height: 32px;
-                    text: AppState.auth-error;
-                    color: AppState.auth-error == "" ? transparent : AppTheme.danger;
-                    font-size: 13px;
-                    wrap: word-wrap;
-                    vertical-alignment: center;
-                }
                 HorizontalLayout {
-                    spacing: 10px;
-                    if AppState.offline-available: PillButton {
+                    height: 48px;
+                    spacing: 0px;
+                    AuthTab {
                         horizontal-stretch: 1;
-                        disabled: AppState.auth-busy;
-                        text: AppState.en ? "Use Offline" : "离线使用";
-                        clicked => { AppState.enter-offline(); }
+                        text: AppState.en ? "WeChat QR Login" : "微信扫码登录";
+                        active: AppState.auth-method == "wechat";
+                        clicked => {
+                            AppState.auth-method = "wechat";
+                            AppState.auth-error = "";
+                            if !AppState.auth-wechat-busy && !AppState.auth-wechat-qr-ready {
+                                AppState.start-wechat-login();
+                            }
+                        }
                     }
-                    PillButton {
+                    AuthTab {
                         horizontal-stretch: 1;
-                        disabled: AppState.auth-busy;
-                        text: AppState.auth-busy ? (AppState.en ? "Signing in..." : "登录中...") : (AppState.en ? "Login / Sign Up" : "登录/注册");
-                        primary: true;
-                        clicked => { AppState.login-or-register(); }
+                        text: AppState.en ? "Email Code Login" : "邮箱验证码登录";
+                        active: AppState.auth-method == "email";
+                        clicked => {
+                            AppState.auth-method = "email";
+                            AppState.auth-error = "";
+                            AppState.auth-wechat-login-id = "";
+                            AppState.auth-wechat-qr-ready = false;
+                            AppState.auth-wechat-scanned = false;
+                        }
+                    }
+                }
+
+                if AppState.auth-method == "wechat": VerticalLayout {
+                    spacing: 10px;
+                    Rectangle { height: 28px; background: transparent; }
+                    HorizontalLayout {
+                        height: 40px;
+                        spacing: 10px;
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        Image {
+                            width: 32px;
+                            height: 32px;
+                            source: AppState.icon-wechat;
+                            colorize: #07c160;
+                            image-fit: contain;
+                        }
+                        Text {
+                            text: AppState.en ? "Scan with WeChat to sign in" : "请使用微信扫码登录";
+                            color: AppTheme.text;
+                            font-size: 19px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                    }
+                    Rectangle {
+                        height: 286px;
+                        background: transparent;
+                        qr-frame := Rectangle {
+                            width: 282px;
+                            height: 282px;
+                            x: (parent.width - self.width) / 2;
+                            y: 2px;
+                            background: #ffffff;
+                            border-radius: 10px;
+                            border-width: 1px;
+                            border-color: AppTheme.border;
+                            if AppState.auth-wechat-qr-ready: Image {
+                                x: 12px;
+                                y: 12px;
+                                width: parent.width - 24px;
+                                height: parent.height - 24px;
+                                source: AppState.auth-wechat-qr-image;
+                                image-fit: contain;
+                            }
+                            if AppState.auth-wechat-qr-ready && AppState.auth-wechat-scanned: Rectangle {
+                                z: 2;
+                                x: 12px;
+                                y: 12px;
+                                width: parent.width - 24px;
+                                height: parent.height - 24px;
+                                background: #fffffff2;
+                                border-radius: 8px;
+                                Rectangle {
+                                    x: (parent.width - self.width) / 2;
+                                    y: 54px;
+                                    width: 64px;
+                                    height: 64px;
+                                    background: #07c160;
+                                    border-radius: 32px;
+                                    Image {
+                                        x: 16px;
+                                        y: 16px;
+                                        width: 32px;
+                                        height: 32px;
+                                        source: AppState.icon-check;
+                                        image-fit: contain;
+                                    }
+                                }
+                                Text {
+                                    y: 136px;
+                                    width: parent.width;
+                                    height: 30px;
+                                    text: AppState.auth-error == ""
+                                        ? (AppState.en ? "QR code scanned" : "已扫码")
+                                        : (AppState.en ? "Scan confirmed" : "扫码已完成");
+                                    color: AppTheme.text;
+                                    font-size: 19px;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    x: 18px;
+                                    y: 172px;
+                                    width: parent.width - 36px;
+                                    height: 48px;
+                                    text: AppState.auth-error == ""
+                                        ? (AppState.en ? "Confirm sign-in in WeChat on your phone" : "请在手机微信中确认登录")
+                                        : AppState.auth-wechat-status;
+                                    color: AppState.auth-error == "" ? AppTheme.muted : AppTheme.danger;
+                                    font-size: 13px;
+                                    wrap: word-wrap;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            if !AppState.auth-wechat-qr-ready: Text {
+                                x: 28px;
+                                width: parent.width - 56px;
+                                height: parent.height;
+                                text: AppState.auth-wechat-busy
+                                    ? (AppState.en ? "Loading QR code..." : "正在获取二维码...")
+                                    : (AppState.en ? "Click to get a new QR code" : "点击重新获取二维码");
+                                color: AppTheme.muted;
+                                font-size: 14px;
+                                wrap: word-wrap;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                mouse-cursor: AppState.auth-wechat-busy ? default : pointer;
+                                clicked => { if !AppState.auth-wechat-busy && !AppState.auth-wechat-qr-ready { AppState.start-wechat-login(); } }
+                            }
+                        }
+                    }
+                    Text {
+                        height: 28px;
+                        text: AppState.auth-wechat-scanned
+                            ? AppState.auth-wechat-status
+                            : AppState.auth-error != ""
+                            ? AppState.auth-wechat-status
+                            : (AppState.en ? "First login creates an account automatically" : "首次登录将自动注册");
+                        color: AppState.auth-error != ""
+                            ? AppTheme.danger
+                            : (AppState.auth-wechat-scanned ? AppTheme.success : AppTheme.muted);
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    AgreementChoice {
+                        required: AppState.auth-user-terms-required;
+                        title: AppState.auth-user-terms-title;
+                        url: AppState.auth-user-terms-url;
+                        accepted <=> AppState.auth-user-terms-accepted;
+                        open(title, url) => { AppState.open-agreement(title, url); }
+                    }
+                    AgreementChoice {
+                        required: AppState.auth-privacy-required;
+                        title: AppState.auth-privacy-title;
+                        url: AppState.auth-privacy-url;
+                        accepted <=> AppState.auth-privacy-accepted;
+                        open(title, url) => { AppState.open-agreement(title, url); }
+                    }
+                    Rectangle { height: 1px; background: AppTheme.border; }
+                    Text {
+                        height: 38px;
+                        text: AppState.auth-wechat-busy
+                            ? (AppState.en ? "Refreshing..." : "正在刷新...")
+                            : (AppState.auth-wechat-qr-ready
+                                ? (AppState.en ? "QR code expires in \{AppState.auth-wechat-expires-in}s · Refresh" : "二维码 \{AppState.auth-wechat-expires-in} 秒后失效 · 点击刷新")
+                                : (AppState.en ? "QR code expired? Refresh" : "二维码已失效？ 点击刷新"));
+                        color: AppState.auth-wechat-busy ? AppTheme.weak : AppTheme.accent;
+                        font-size: 14px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        TouchArea {
+                            mouse-cursor: AppState.auth-wechat-busy ? default : pointer;
+                            clicked => { if !AppState.auth-wechat-busy { AppState.start-wechat-login(); } }
+                        }
+                    }
+                    if AppState.offline-available: Text {
+                        height: 28px;
+                        text: AppState.en ? "Continue offline" : "暂不登录，离线使用";
+                        color: AppTheme.muted;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        TouchArea { mouse-cursor: pointer; clicked => { AppState.enter-offline(); } }
+                    }
+                }
+
+                if AppState.auth-method == "email": VerticalLayout {
+                    spacing: 12px;
+                    Text {
+                        height: 32px;
+                        text: AppState.en ? "Use your email to continue" : "使用邮箱验证码登录，首次登录将自动注册";
+                        color: AppTheme.muted;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                    Field {
+                        label: AppState.en ? "Email" : "邮箱";
+                        placeholder: AppState.en ? "Enter email address" : "请输入邮箱地址";
+                        value <=> AppState.auth-email;
+                        required: true;
+                        accepted => { root.confirm-auth(); }
+                    }
+                    Rectangle {
+                        height: 78px;
+                        background: transparent;
+                        Text { x: 0px; y: 0px; text: AppState.en ? "Code" : "验证码"; color: AppTheme.text; font-size: AppState.settings-font-size * 1px; }
+                        Rectangle {
+                            x: 0px;
+                            y: 32px;
+                            width: parent.width - 140px;
+                            height: 46px;
+                            background: AppTheme.panel;
+                            border-radius: 8px;
+                            border-width: 1px;
+                            border-color: code-input.has-focus ? AppTheme.accent : AppTheme.border;
+                            code-input := TextInput {
+                                x: 14px;
+                                width: parent.width - 28px;
+                                height: parent.height;
+                                text <=> AppState.auth-code;
+                                single-line: true;
+                                color: AppTheme.text;
+                                font-size: AppState.settings-font-size * 1px;
+                                vertical-alignment: center;
+                                accepted => { root.confirm-auth(); }
+                            }
+                            if (AppState.auth-code == "") && (!code-input.has-focus): Text {
+                                x: 14px;
+                                width: parent.width - 28px;
+                                height: parent.height;
+                                text: AppState.en ? "6-digit code" : "请输入 6 位验证码";
+                                color: AppTheme.weak;
+                                font-size: AppState.settings-font-size * 1px;
+                                vertical-alignment: center;
+                            }
+                        }
+                        PillButton {
+                            x: parent.width - 130px;
+                            y: 37px;
+                            width: 130px;
+                            disabled: AppState.auth-code-busy || AppState.auth-busy || AppState.auth-countdown > 0;
+                            text: AppState.auth-code-busy
+                                ? (AppState.en ? "Sending..." : "发送中...")
+                                : (AppState.auth-countdown > 0 ? (AppState.en ? "\{AppState.auth-countdown}s" : "\{AppState.auth-countdown}秒") : (AppState.en ? "Get Code" : "获取验证码"));
+                            clicked => { AppState.request-code(); }
+                        }
+                    }
+                    AgreementChoice {
+                        required: AppState.auth-user-terms-required;
+                        title: AppState.auth-user-terms-title;
+                        url: AppState.auth-user-terms-url;
+                        accepted <=> AppState.auth-user-terms-accepted;
+                        open(title, url) => { AppState.open-agreement(title, url); }
+                    }
+                    AgreementChoice {
+                        required: AppState.auth-privacy-required;
+                        title: AppState.auth-privacy-title;
+                        url: AppState.auth-privacy-url;
+                        accepted <=> AppState.auth-privacy-accepted;
+                        open(title, url) => { AppState.open-agreement(title, url); }
+                    }
+                    Text {
+                        height: 46px;
+                        text: AppState.auth-error;
+                        color: AppState.auth-error == "" ? transparent : AppTheme.danger;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                        vertical-alignment: center;
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        if AppState.offline-available: PillButton {
+                            horizontal-stretch: 1;
+                            disabled: AppState.auth-busy;
+                            text: AppState.en ? "Use Offline" : "离线使用";
+                            clicked => { AppState.enter-offline(); }
+                        }
+                        PillButton {
+                            horizontal-stretch: 1;
+                            disabled: AppState.auth-busy;
+                            text: AppState.auth-busy ? (AppState.en ? "Signing in..." : "登录中...") : (AppState.en ? "Login / Sign Up" : "登录/注册");
+                            primary: true;
+                            clicked => { AppState.login-or-register(); }
+                        }
                     }
                 }
             }

@@ -18,6 +18,8 @@ pub(super) struct PendingDeliveryRecord {
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct PendingGenerationRecord {
     pub(super) schema_version: u32,
+    #[serde(default)]
+    pub(super) created_at_epoch_ms: i64,
     pub(super) client_request_id: String,
     pub(super) local_task_id: String,
     #[serde(default)]
@@ -256,6 +258,7 @@ mod tests {
     fn pending_record() -> PendingGenerationRecord {
         PendingGenerationRecord {
             schema_version: 1,
+            created_at_epoch_ms: Local::now().timestamp_millis(),
             client_request_id: "request_123".to_string(),
             local_task_id: "local".to_string(),
             server_task_id: "server".to_string(),

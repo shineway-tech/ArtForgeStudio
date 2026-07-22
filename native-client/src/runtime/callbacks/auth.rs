@@ -11,6 +11,23 @@ type LoginResult = std::result::Result<
     ApiError,
 >;
 
+enum WechatPollOutcome {
+    Pending,
+    Scanned(String),
+    AgreementRequired(String),
+    Failed(String),
+    Completed(LoginResponse, std::result::Result<BackendSnapshot, ApiError>),
+}
+
+fn expire_wechat_login(state: &AppState) {
+    state.set_auth_wechat_login_id("".into());
+    state.set_auth_wechat_qr_ready(false);
+    state.set_auth_wechat_scanned(false);
+    state.set_auth_wechat_poll_elapsed_ms(0);
+    state.set_auth_wechat_status("微信二维码已失效，请点击刷新".into());
+    state.set_auth_error("微信二维码已失效，请点击刷新".into());
+}
+
 pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
     let Some(backend) = context.backend.clone() else {
         return;
@@ -55,6 +72,16 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
                     }
                 });
             });
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let backend = backend.clone();
+        let context = context.clone();
+        state.on_start_wechat_login(move || {
+            let Some(app) = app_weak.upgrade() else { return; };
+            begin_wechat_login(&app, context.clone(), backend.clone());
         });
     }
 
@@ -403,6 +430,280 @@ fn poll_network_recovery(
     });
 }
 
+fn selected_login_agreement_acceptances(state: &AppState) -> Vec<AgreementAcceptance> {
+    let mut acceptances = Vec::new();
+    if state.get_auth_user_terms_accepted() {
+        acceptances.push(AgreementAcceptance {
+            agreement_type: "user_terms".to_string(),
+            version: state.get_auth_user_terms_version().to_string(),
+        });
+    }
+    if state.get_auth_privacy_accepted() {
+        acceptances.push(AgreementAcceptance {
+            agreement_type: "privacy_policy".to_string(),
+            version: state.get_auth_privacy_version().to_string(),
+        });
+    }
+    acceptances
+}
+
+pub(super) fn begin_wechat_login(app: &AppWindow, context: AppContext, backend: Arc<BackendRuntime>) {
+    let state = app.global::<AppState>();
+    if state.get_auth_wechat_busy() || state.get_auth_busy() {
+        return;
+    }
+    let acceptances = selected_login_agreement_acceptances(&state);
+    state.set_auth_wechat_busy(true);
+    state.set_auth_wechat_qr_ready(false);
+    state.set_auth_wechat_scanned(false);
+    state.set_auth_wechat_poll_elapsed_ms(0);
+    state.set_auth_wechat_login_id("".into());
+    state.set_auth_wechat_status("正在获取二维码...".into());
+    state.set_auth_error("".into());
+    let api = AuthApi::new(backend.api.clone());
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(api.start_wechat_login(&acceptances));
+    });
+    poll_wechat_start_result(
+        app.as_weak(),
+        context,
+        Rc::new(RefCell::new(Some(receiver))),
+    );
+}
+
+fn poll_wechat_start_result(
+    app_weak: Weak<AppWindow>,
+    context: AppContext,
+    receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<WechatLoginStartResponse, ApiError>>>>>,
+) {
+    slint::Timer::single_shot(Duration::from_millis(80), move || {
+        let result = poll_receiver(&receiver);
+        let Some(result) = result else {
+            poll_wechat_start_result(app_weak, context, receiver);
+            return;
+        };
+        let Some(app) = app_weak.upgrade() else { return; };
+        let state = app.global::<AppState>();
+        state.set_auth_wechat_busy(false);
+        if !state.get_auth_open() || state.get_auth_method().as_str() != "wechat" {
+            return;
+        }
+        match result {
+            Ok(response) => match if response.qr_image_base64.trim().is_empty() {
+                qr_image(&response.authorization_url)
+            } else {
+                encoded_image(&response.qr_image_base64)
+            } {
+                Ok(image) => {
+                    let expires = response.expires_in_seconds.min(i32::MAX as u64) as i32;
+                    let poll_after_ms = response.poll_after_milliseconds
+                        .unwrap_or_else(|| response.poll_after_seconds.saturating_mul(1000))
+                        .clamp(250, 10_000) as i32;
+                    state.set_auth_wechat_qr_image(image);
+                    state.set_auth_wechat_qr_ready(true);
+                    state.set_auth_wechat_login_id(response.login_id.clone().into());
+                    state.set_auth_wechat_expires_in(expires);
+                    state.set_auth_wechat_poll_after_ms(poll_after_ms);
+                    state.set_auth_wechat_poll_elapsed_ms(0);
+                    state.set_auth_wechat_status(
+                        format!("等待扫码，二维码 {expires} 秒后失效").into(),
+                    );
+                    state.set_auth_error("".into());
+                    schedule_wechat_status_poll(
+                        app.as_weak(),
+                        context,
+                        response.login_id,
+                        poll_after_ms as u64,
+                    );
+                }
+                Err(_) => {
+                    state.set_auth_wechat_qr_ready(false);
+                    state.set_auth_wechat_status("二维码生成失败，请点击刷新".into());
+                    state.set_auth_error("二维码生成失败，请点击刷新".into());
+                }
+            },
+            Err(error) => {
+                let message = auth_error_message(&error);
+                state.set_auth_wechat_qr_ready(false);
+                state.set_auth_wechat_status(message.clone().into());
+                state.set_auth_error(message.into());
+            }
+        }
+    });
+}
+
+fn schedule_wechat_status_poll(
+    app_weak: Weak<AppWindow>,
+    context: AppContext,
+    login_id: String,
+    delay_milliseconds: u64,
+) {
+    slint::Timer::single_shot(Duration::from_millis(delay_milliseconds.max(250)), move || {
+        let Some(app) = app_weak.upgrade() else { return; };
+        let state = app.global::<AppState>();
+        if !state.get_auth_open()
+            || state.get_auth_method().as_str() != "wechat"
+            || state.get_auth_wechat_login_id().as_str() != login_id
+        {
+            return;
+        }
+        let Some(backend) = context.backend.clone() else { return; };
+        let api = AuthApi::new(backend.api.clone());
+        let account_api = AccountApi::new(backend.api.clone());
+        let request_login_id = login_id.clone();
+        let acceptances = selected_login_agreement_acceptances(&state);
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = api.wechat_login_status(&request_login_id, &acceptances).and_then(|status| {
+                match (status.status.as_str(), status.qr_status.as_deref()) {
+                    ("pending", Some("scanned")) | ("scanned", _) => Ok(WechatPollOutcome::Scanned(
+                        status.message.unwrap_or_else(|| "已扫码，请在手机微信中确认登录".to_string()),
+                    )),
+                    ("pending", _) => Ok(WechatPollOutcome::Pending),
+                    ("agreement_required", _) => Ok(WechatPollOutcome::AgreementRequired(
+                        status.message.unwrap_or_else(|| "请先阅读并同意用户协议和隐私政策".to_string()),
+                    )),
+                    ("failed", _) => Ok(WechatPollOutcome::Failed(
+                        status.message.unwrap_or_else(|| "微信登录未完成，请刷新二维码重试".to_string()),
+                    )),
+                    ("completed", _) => {
+                        let login = status.login.ok_or_else(|| ApiError::Protocol {
+                            message: "微信登录响应缺少登录信息".to_string(),
+                            request_id: None,
+                        })?;
+                        Ok(WechatPollOutcome::Completed(login, account_api.snapshot()))
+                    }
+                    _ => Err(ApiError::Protocol {
+                        message: "微信登录响应状态无效".to_string(),
+                        request_id: None,
+                    }),
+                }
+            });
+            let _ = sender.send(result);
+        });
+        poll_wechat_status_result(
+            app.as_weak(),
+            context,
+            login_id,
+            Rc::new(RefCell::new(Some(receiver))),
+        );
+    });
+}
+
+fn poll_wechat_status_result(
+    app_weak: Weak<AppWindow>,
+    context: AppContext,
+    login_id: String,
+    receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<WechatPollOutcome, ApiError>>>>>,
+) {
+    slint::Timer::single_shot(Duration::from_millis(80), move || {
+        let result = poll_receiver(&receiver);
+        let Some(result) = result else {
+            poll_wechat_status_result(app_weak, context, login_id, receiver);
+            return;
+        };
+        let Some(app) = app_weak.upgrade() else { return; };
+        let state = app.global::<AppState>();
+        if state.get_auth_wechat_login_id().as_str() != login_id {
+            return;
+        }
+        match result {
+            Ok(WechatPollOutcome::Pending) => {
+                let poll_after_ms = state.get_auth_wechat_poll_after_ms().max(250);
+                let (remaining, elapsed_ms) = advance_second_countdown(
+                    state.get_auth_wechat_expires_in(),
+                    state.get_auth_wechat_poll_elapsed_ms(),
+                    poll_after_ms,
+                );
+                state.set_auth_wechat_expires_in(remaining);
+                state.set_auth_wechat_poll_elapsed_ms(elapsed_ms);
+                if remaining == 0 {
+                    expire_wechat_login(&state);
+                    return;
+                }
+                state.set_auth_wechat_status(
+                    format!("等待扫码，二维码 {remaining} 秒后失效").into(),
+                );
+                schedule_wechat_status_poll(
+                    app.as_weak(),
+                    context,
+                    login_id,
+                    poll_after_ms as u64,
+                );
+            }
+            Ok(WechatPollOutcome::Scanned(message)) => {
+                let poll_after_ms = state.get_auth_wechat_poll_after_ms().max(250);
+                let (remaining, elapsed_ms) = advance_second_countdown(
+                    state.get_auth_wechat_expires_in(),
+                    state.get_auth_wechat_poll_elapsed_ms(),
+                    poll_after_ms,
+                );
+                state.set_auth_wechat_expires_in(remaining);
+                state.set_auth_wechat_poll_elapsed_ms(elapsed_ms);
+                if remaining == 0 {
+                    expire_wechat_login(&state);
+                    return;
+                }
+                state.set_auth_wechat_scanned(true);
+                state.set_auth_wechat_status(message.into());
+                state.set_auth_error("".into());
+                schedule_wechat_status_poll(
+                    app.as_weak(),
+                    context,
+                    login_id,
+                    poll_after_ms as u64,
+                );
+            }
+            Ok(WechatPollOutcome::AgreementRequired(message)) => {
+                let poll_after_ms = state.get_auth_wechat_poll_after_ms().max(250);
+                let (remaining, elapsed_ms) = advance_second_countdown(
+                    state.get_auth_wechat_expires_in(),
+                    state.get_auth_wechat_poll_elapsed_ms(),
+                    poll_after_ms,
+                );
+                state.set_auth_wechat_expires_in(remaining);
+                state.set_auth_wechat_poll_elapsed_ms(elapsed_ms);
+                if remaining == 0 {
+                    expire_wechat_login(&state);
+                    return;
+                }
+                state.set_auth_wechat_scanned(true);
+                state.set_auth_wechat_status(message.clone().into());
+                state.set_auth_error(message.into());
+                schedule_wechat_status_poll(
+                    app.as_weak(),
+                    context,
+                    login_id,
+                    poll_after_ms as u64,
+                );
+            }
+            Ok(WechatPollOutcome::Failed(message)) => {
+                state.set_auth_wechat_login_id("".into());
+                state.set_auth_wechat_qr_ready(false);
+                state.set_auth_wechat_scanned(false);
+                state.set_auth_wechat_status(message.clone().into());
+                state.set_auth_error(message.into());
+            }
+            Ok(WechatPollOutcome::Completed(response, snapshot)) => {
+                state.set_auth_wechat_login_id("".into());
+                state.set_auth_wechat_qr_ready(false);
+                state.set_auth_wechat_scanned(false);
+                state.set_auth_wechat_status("登录成功".into());
+                finish_login(&app, &context, response, snapshot);
+            }
+            Err(error) => {
+                let message = auth_error_message(&error);
+                state.set_auth_wechat_login_id("".into());
+                state.set_auth_wechat_qr_ready(false);
+                state.set_auth_wechat_scanned(false);
+                state.set_auth_wechat_status(message.clone().into());
+                state.set_auth_error(message.into());
+            }
+        }
+    });
+}
+
 fn poll_login_result(
     app_weak: Weak<AppWindow>,
     context: AppContext,
@@ -420,40 +721,48 @@ fn poll_login_result(
         let state = app.global::<AppState>();
         state.set_auth_busy(false);
         match result {
-            Ok((response, snapshot)) => {
-                state.set_logged_in(true);
-                state.set_offline_mode(false);
-                state.set_session_state("online".into());
-                state.set_ever_authenticated(true);
-                state.set_offline_available(true);
-                state.set_email_mask(response.user.email_masked.into());
-                state.set_nickname(response.user.nickname.unwrap_or_default().into());
-                state.set_auth_code("".into());
-                state.set_auth_error("".into());
-                state.set_auth_open(false);
-                if state.get_auth_user_terms_accepted() {
-                    state.set_accepted_user_terms_version(state.get_auth_user_terms_version());
-                }
-                if state.get_auth_privacy_accepted() {
-                    state.set_accepted_privacy_version(state.get_auth_privacy_version());
-                }
-                save_user_profile(&app);
-                match snapshot {
-                    Ok(snapshot) => apply_backend_snapshot(&app, &context, snapshot),
-                    Err(error) => state.set_generation_status(
-                        format!("账号数据同步失败：{}", auth_error_message(&error)).into(),
-                    ),
-                }
-                recover_pending_generations(&app, context.clone());
-                recover_pending_orders(&app, context.clone());
-                navigate_to(&app, "generation");
-            }
+            Ok((response, snapshot)) => finish_login(&app, &context, response, snapshot),
             Err(error) => {
                 state.set_session_state("signed_out".into());
                 apply_auth_error(&app, error);
             }
         }
     });
+}
+
+fn finish_login(
+    app: &AppWindow,
+    context: &AppContext,
+    response: LoginResponse,
+    snapshot: std::result::Result<BackendSnapshot, ApiError>,
+) {
+    let state = app.global::<AppState>();
+    state.set_logged_in(true);
+    state.set_offline_mode(false);
+    state.set_session_state("online".into());
+    state.set_ever_authenticated(true);
+    state.set_offline_available(true);
+    state.set_email_mask(response.user.email_masked.into());
+    state.set_nickname(response.user.nickname.unwrap_or_default().into());
+    state.set_auth_code("".into());
+    state.set_auth_error("".into());
+    state.set_auth_open(false);
+    if state.get_auth_user_terms_accepted() {
+        state.set_accepted_user_terms_version(state.get_auth_user_terms_version());
+    }
+    if state.get_auth_privacy_accepted() {
+        state.set_accepted_privacy_version(state.get_auth_privacy_version());
+    }
+    save_user_profile(app);
+    match snapshot {
+        Ok(snapshot) => apply_backend_snapshot(app, context, snapshot),
+        Err(error) => state.set_generation_status(
+            format!("账号数据同步失败：{}", auth_error_message(&error)).into(),
+        ),
+    }
+    recover_pending_generations(app, context.clone());
+    recover_pending_orders(app, context.clone());
+    navigate_to(app, "generation");
 }
 
 fn poll_startup_auth_result(
@@ -533,6 +842,11 @@ fn apply_startup_auth(app: &AppWindow, context: &AppContext, result: StartupAuth
                     state.set_session_state("signed_out".into());
                     state.set_auth_open(true);
                     state.set_auth_error("暂时无法连接服务端，可重试登录或离线使用".into());
+                    if state.get_auth_method().as_str() == "wechat" {
+                        if let Some(backend) = context.backend.clone() {
+                            begin_wechat_login(app, context.clone(), backend);
+                        }
+                    }
                 }
                 StartupErrorDisposition::TerminalSession => {
                     let _ = state;
@@ -542,6 +856,11 @@ fn apply_startup_auth(app: &AppWindow, context: &AppContext, result: StartupAuth
                     state.set_session_state("signed_out".into());
                     state.set_auth_open(true);
                     state.set_auth_error(auth_error_message(&error).into());
+                    if state.get_auth_method().as_str() == "wechat" {
+                        if let Some(backend) = context.backend.clone() {
+                            begin_wechat_login(app, context.clone(), backend);
+                        }
+                    }
                 }
             }
         }
@@ -549,6 +868,11 @@ fn apply_startup_auth(app: &AppWindow, context: &AppContext, result: StartupAuth
             state.set_session_state("signed_out".into());
             state.set_auth_open(true);
             state.set_auth_error(agreement_error.unwrap_or_default().into());
+            if state.get_auth_method().as_str() == "wechat" {
+                if let Some(backend) = context.backend.clone() {
+                    begin_wechat_login(app, context.clone(), backend);
+                }
+            }
         }
     }
 }
@@ -615,6 +939,12 @@ pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snap
     let state = app.global::<AppState>();
     state.set_email_mask(snapshot.account.user.email_masked.clone().into());
     state.set_nickname(snapshot.account.user.nickname.clone().unwrap_or_default().into());
+    state.set_email_bound(snapshot.account.auth_methods.email.bound);
+    state.set_wechat_bound(snapshot.account.auth_methods.wechat.bound);
+    state.set_wechat_can_unbind(snapshot.account.auth_methods.wechat.can_unbind);
+    state.set_wechat_bound_name(
+        snapshot.account.auth_methods.wechat.nickname.clone().unwrap_or_default().into(),
+    );
     if let Some(plan) = snapshot.account.membership.plan.as_ref() {
         state.set_membership_plan_code(plan.code.clone().into());
         state.set_membership_plan_name(plan.name.clone().into());
@@ -871,6 +1201,8 @@ pub(super) fn apply_agreements(app: &AppWindow, agreements: &[AgreementItem]) {
             _ => {}
         }
     }
+    state.set_auth_user_terms_accepted(true);
+    state.set_auth_privacy_accepted(true);
 }
 
 fn require_updated_agreements(app: &AppWindow) {
@@ -925,11 +1257,35 @@ fn sign_out_locally(app: &AppWindow, revoked: bool) {
     state.set_offline_available(false);
     state.set_auth_open(true);
     state.set_auth_code("".into());
+    state.set_auth_wechat_login_id("".into());
+    state.set_auth_wechat_qr_ready(false);
+    state.set_auth_wechat_scanned(false);
+    state.set_auth_wechat_busy(false);
+    state.set_auth_wechat_status("".into());
+    state.set_wechat_bound(false);
+    state.set_wechat_can_unbind(false);
+    state.set_wechat_bound_name("".into());
+    state.set_wechat_bind_open(false);
+    state.set_wechat_bind_login_id("".into());
+    state.set_wechat_bind_qr_ready(false);
+    state.set_wechat_bind_scanned(false);
+    state.set_wechat_unbind_confirm_open(false);
+    state.set_email_bound(false);
+    state.set_email_bind_open(false);
+    state.set_email_bind_email("".into());
+    state.set_email_bind_code("".into());
+    state.set_email_bind_code_busy(false);
+    state.set_email_bind_busy(false);
+    state.set_email_bind_countdown(0);
+    state.set_email_bind_status("".into());
     state.set_auth_error(if revoked { "登录状态已失效，请重新登录".into() } else { "".into() });
     state.set_page("welcome".into());
     state.set_profile_open(false);
     state.set_agreement_viewer_open(false);
     save_user_profile(app);
+    if state.get_auth_method().as_str() == "wechat" {
+        state.invoke_start_wechat_login();
+    }
 }
 
 pub(super) fn require_online_operation(app: &AppWindow, operation: &str) -> bool {
@@ -942,6 +1298,12 @@ pub(super) fn require_online_operation(app: &AppWindow, operation: &str) -> bool
     } else {
         state.set_generation_status(format!("请先登录后再{operation}").into());
         state.set_auth_open(true);
+        if state.get_auth_method().as_str() == "wechat"
+            && !state.get_auth_wechat_busy()
+            && !state.get_auth_wechat_qr_ready()
+        {
+            state.invoke_start_wechat_login();
+        }
     }
     false
 }

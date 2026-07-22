@@ -53,6 +53,8 @@ export global AppState {
     in-out property <string> purchase-credit-rules-url: "";
     in-out property <bool> credit-insufficient-open: false;
     in-out property <string> credit-insufficient-message: "积分不足以支持本次生图，请前往充值";
+    in-out property <bool> quality-restricted-open: false;
+    in-out property <string> quality-restricted-message: "当前会员不支持所选清晰度，请升级会员后使用";
 
     in-out property <[ModelGroup]> model-groups: [];
     in-out property <[ModelOption]> model-image-options: [];
@@ -145,6 +147,12 @@ export global AppState {
     in-out property <image> icon-empty: @image-url("../assets/icons/empty.svg");
     in-out property <image> icon-download: @image-url("../assets/icons/download.svg");
     in-out property <image> icon-check: @image-url("../assets/icons/check.svg");
+    in-out property <image> icon-wechat: @image-url("../assets/icons/wechat.svg");
+    in-out property <image> icon-account-person: @image-url("../assets/icons/account-person.svg");
+    in-out property <image> icon-account-shield-lock: @image-url("../assets/icons/account-shield-lock.svg");
+    in-out property <image> icon-account-display: @image-url("../assets/icons/account-display.svg");
+    in-out property <image> icon-account-envelope: @image-url("../assets/icons/account-envelope.svg");
+    in-out property <image> icon-account-shield-check: @image-url("../assets/icons/account-shield-check.svg");
 
     in-out property <string> asset-kind-filter: "game";
     in-out property <string> asset-category-filter: "all";
@@ -160,17 +168,27 @@ export global AppState {
     in-out property <bool> auth-open: false;
     in-out property <string> auth-email: "";
     in-out property <string> auth-code: "";
+    in-out property <string> auth-method: "wechat";
     in-out property <int> auth-countdown: 0;
     in-out property <string> auth-error: "";
     in-out property <bool> auth-busy: false;
     in-out property <bool> auth-code-busy: false;
+    in-out property <bool> auth-wechat-busy: false;
+    in-out property <bool> auth-wechat-qr-ready: false;
+    in-out property <bool> auth-wechat-scanned: false;
+    in-out property <string> auth-wechat-login-id: "";
+    in-out property <image> auth-wechat-qr-image;
+    in-out property <string> auth-wechat-status: "";
+    in-out property <int> auth-wechat-expires-in: 0;
+    in-out property <int> auth-wechat-poll-after-ms: 500;
+    in-out property <int> auth-wechat-poll-elapsed-ms: 0;
     in-out property <bool> auth-user-terms-required: false;
-    in-out property <bool> auth-user-terms-accepted: false;
+    in-out property <bool> auth-user-terms-accepted: true;
     in-out property <string> auth-user-terms-title: "用户协议";
     in-out property <string> auth-user-terms-version: "";
     in-out property <string> auth-user-terms-url: "";
     in-out property <bool> auth-privacy-required: false;
-    in-out property <bool> auth-privacy-accepted: false;
+    in-out property <bool> auth-privacy-accepted: true;
     in-out property <string> auth-privacy-title: "隐私政策";
     in-out property <string> auth-privacy-version: "";
     in-out property <string> auth-privacy-url: "";
@@ -186,6 +204,29 @@ export global AppState {
 
     in-out property <bool> profile-open: false;
     in-out property <string> profile-name: "";
+    in-out property <string> profile-section: "login";
+    in-out property <bool> email-bound: false;
+    in-out property <bool> email-bind-open: false;
+    in-out property <string> email-bind-email: "";
+    in-out property <string> email-bind-code: "";
+    in-out property <bool> email-bind-code-busy: false;
+    in-out property <bool> email-bind-busy: false;
+    in-out property <int> email-bind-countdown: 0;
+    in-out property <string> email-bind-status: "";
+    in-out property <bool> wechat-bound: false;
+    in-out property <bool> wechat-can-unbind: false;
+    in-out property <string> wechat-bound-name: "";
+    in-out property <bool> wechat-bind-open: false;
+    in-out property <bool> wechat-bind-busy: false;
+    in-out property <bool> wechat-bind-qr-ready: false;
+    in-out property <bool> wechat-bind-scanned: false;
+    in-out property <image> wechat-bind-qr-image;
+    in-out property <string> wechat-bind-login-id: "";
+    in-out property <string> wechat-bind-status: "";
+    in-out property <int> wechat-bind-expires-in: 0;
+    in-out property <int> wechat-bind-poll-after-ms: 500;
+    in-out property <int> wechat-bind-poll-elapsed-ms: 0;
+    in-out property <bool> wechat-unbind-confirm-open: false;
 
     in-out property <string> model-catalog-message: "";
 
@@ -254,10 +295,17 @@ export global AppState {
     callback use-now();
     callback login-or-register();
     callback request-code();
+    callback start-wechat-login();
     callback logout();
     callback logout-all();
     callback purchase-membership(string);
     callback revoke-session(string);
+    callback start-wechat-binding();
+    callback close-wechat-binding();
+    callback unbind-wechat();
+    callback request-email-binding-code();
+    callback bind-email();
+    callback close-email-binding();
     callback enter-offline();
     callback open-agreement(string, string);
     callback close-agreement();

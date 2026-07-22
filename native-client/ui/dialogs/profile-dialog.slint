@@ -5,86 +5,752 @@ import { PillButton } from "../components/pill-button.slint";
 import { SectionTitle } from "../components/section-title.slint";
 import { AppTheme } from "../theme.slint";
 
+component AccountNavItem {
+    in property <string> text;
+    in property <image> icon;
+    in property <bool> active: false;
+    callback clicked();
+    height: 58px;
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: root.active ? AppTheme.panel-soft : transparent;
+        border-radius: 9px;
+        if root.active: Rectangle {
+            x: 0px;
+            y: 8px;
+            width: 4px;
+            height: parent.height - 16px;
+            background: AppTheme.accent;
+            border-radius: 2px;
+        }
+        Image {
+            x: 30px;
+            y: (parent.height - 24px) / 2;
+            width: 24px;
+            height: 24px;
+            source: root.icon;
+            colorize: root.active ? AppTheme.accent : AppTheme.muted;
+            image-fit: contain;
+        }
+        Text {
+            x: 70px;
+            width: parent.width - 84px;
+            height: parent.height;
+            text: root.text;
+            color: root.active ? AppTheme.accent : AppTheme.muted;
+            font-size: 15px;
+            font-weight: root.active ? 600 : 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+component LoginMethodRow {
+    in property <image> icon;
+    in property <color> icon-color: AppTheme.accent;
+    in property <string> method-title;
+    in property <string> status;
+    in property <string> detail;
+    in property <string> action-text;
+    in property <bool> bound: false;
+    in property <bool> primary-action: false;
+    in property <bool> danger-action: false;
+    in property <bool> action-disabled: false;
+    in property <bool> last: false;
+    callback action();
+    height: 112px;
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: transparent;
+        Rectangle {
+            x: 0px;
+            y: 22px;
+            width: 44px;
+            height: 44px;
+            background: root.bound ? #eaf8ef : AppTheme.panel-soft;
+            border-radius: 22px;
+            Image {
+                x: 10px;
+                y: 10px;
+                width: 24px;
+                height: 24px;
+                source: root.icon;
+                colorize: root.icon-color;
+                image-fit: contain;
+            }
+        }
+        Text {
+            x: 66px;
+            y: 18px;
+            width: parent.width - 210px;
+            height: 26px;
+            text: root.method-title;
+            color: AppTheme.text;
+            font-size: 17px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        Text {
+            x: 66px;
+            y: 46px;
+            width: parent.width - 210px;
+            height: 22px;
+            text: root.status;
+            color: root.bound ? #14a451 : AppTheme.muted;
+            font-size: 14px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            x: 66px;
+            y: 70px;
+            width: parent.width - 210px;
+            height: 22px;
+            text: root.detail;
+            color: AppTheme.muted;
+            font-size: 13px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        if root.action-text != "": PillButton {
+            x: parent.width - 118px;
+            y: 35px;
+            width: 118px;
+            height: 40px;
+            text: root.action-text;
+            primary: root.primary-action;
+            danger: root.danger-action;
+            disabled: root.action-disabled;
+            clicked => { root.action(); }
+        }
+        if !root.last: Rectangle {
+            x: 0px;
+            y: parent.height - 1px;
+            width: parent.width;
+            height: 1px;
+            background: AppTheme.border;
+        }
+    }
+}
+
+component AccountOverviewRow {
+    in property <string> label;
+    in property <string> value;
+    in property <string> action-text;
+    in property <bool> last: false;
+    callback action();
+    height: 76px;
+
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: root.height;
+        background: transparent;
+
+        Text {
+            x: 0px;
+            y: 0px;
+            width: 120px;
+            height: parent.height;
+            text: root.label;
+            color: AppTheme.muted;
+            font-size: 14px;
+            horizontal-alignment: left;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            x: 136px;
+            y: 0px;
+            width: root.action-text == "" ? parent.width - 136px : parent.width - 268px;
+            height: parent.height;
+            text: root.value;
+            color: AppTheme.text;
+            font-size: 15px;
+            font-weight: 500;
+            horizontal-alignment: left;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        if root.action-text != "": PillButton {
+            x: parent.width - 120px;
+            y: 18px;
+            width: 120px;
+            height: 40px;
+            text: root.action-text;
+            clicked => { root.action(); }
+        }
+        if !root.last: Rectangle {
+            x: 0px;
+            y: parent.height - 1px;
+            width: parent.width;
+            height: 1px;
+            background: AppTheme.border;
+        }
+    }
+}
+
 export component ProfileDialog {
     if AppState.profile-open: Rectangle {
         background: #00000055;
         TouchArea { width: parent.width; height: parent.height; }
         dialog := Rectangle {
-            width: min(420px, root.width - 32px);
-            height: min(AppState.nickname == "" ? 540px : 604px, root.height - 40px);
+            width: min(920px, root.width - 48px);
+            height: min(650px, root.height - 48px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            background: AppTheme.panel;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            Text {
+                x: 38px;
+                y: 0px;
+                width: parent.width - 96px;
+                height: 84px;
+                text: AppState.en ? "Account Center" : "账号中心";
+                color: AppTheme.text;
+                font-size: 23px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+            DialogCloseButton { x: parent.width - 52px; y: 27px; clicked => { AppState.profile-open = false; } }
+            Rectangle { x: 0px; y: 83px; width: parent.width; height: 1px; background: AppTheme.border; }
+
+            Rectangle {
+                x: 0px;
+                y: 84px;
+                width: 288px;
+                height: parent.height - 84px;
+                background: AppTheme.panel;
+                border-width: 0px;
+                Rectangle { x: parent.width - 1px; width: 1px; height: parent.height; background: AppTheme.border; }
+                VerticalLayout {
+                    x: 14px;
+                    y: 22px;
+                    width: parent.width - 28px;
+                    spacing: 8px;
+                    AccountNavItem {
+                        text: AppState.en ? "Account overview" : "账户概览";
+                        icon: AppState.icon-account-person;
+                        active: AppState.profile-section == "overview";
+                        clicked => { AppState.profile-section = "overview"; }
+                    }
+                    AccountNavItem {
+                        text: AppState.en ? "Login methods" : "登录方式";
+                        icon: AppState.icon-account-shield-lock;
+                        active: AppState.profile-section == "login";
+                        clicked => { AppState.profile-section = "login"; }
+                    }
+                    AccountNavItem {
+                        text: AppState.en ? "Signed-in devices" : "登录设备";
+                        icon: AppState.icon-account-display;
+                        active: AppState.profile-section == "devices";
+                        clicked => { AppState.profile-section = "devices"; }
+                    }
+                }
+                Rectangle {
+                    x: 26px;
+                    y: parent.height - 94px;
+                    width: parent.width - 52px;
+                    height: 66px;
+                    background: transparent;
+                    Rectangle {
+                        x: 0px;
+                        y: 7px;
+                        width: 52px;
+                        height: 52px;
+                        background: AppTheme.panel-soft;
+                        border-radius: 26px;
+                        Image { x: 11px; y: 11px; width: 30px; height: 30px; source: AppState.app-logo; image-fit: contain; }
+                    }
+                    Text {
+                        x: 68px;
+                        y: 7px;
+                        width: parent.width - 68px;
+                        height: 26px;
+                        text: AppState.nickname != "" ? AppState.nickname : (AppState.en ? "ArtForge User" : "ArtForge 用户");
+                        color: AppTheme.text;
+                        font-size: 15px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Text {
+                        x: 68px;
+                        y: 34px;
+                        width: parent.width - 68px;
+                        height: 22px;
+                        text: AppState.membership-plan-name + " · " + AppState.membership-max-quality;
+                        color: AppTheme.muted;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            Rectangle {
+                x: 288px;
+                y: 84px;
+                width: parent.width - 288px;
+                height: parent.height - 84px;
+                background: AppTheme.panel;
+
+                if AppState.profile-section == "login": Rectangle {
+                    x: 44px;
+                    y: 20px;
+                    width: parent.width - 88px;
+                    height: parent.height - 100px;
+                    background: transparent;
+                    Text { x: 0px; y: 0px; width: parent.width; height: 42px; text: AppState.en ? "Login methods" : "登录方式"; color: AppTheme.text; font-size: 25px; font-weight: 700; vertical-alignment: center; }
+                    Text { y: 46px; width: parent.width; height: 28px; text: AppState.en ? "Manage the ways you can sign in to this account" : "管理可用于登录当前账号的方式"; color: AppTheme.muted; font-size: 14px; vertical-alignment: center; }
+                    Rectangle { y: 86px; width: parent.width; height: 1px; background: AppTheme.border; }
+                    LoginMethodRow {
+                        y: 94px;
+                        width: parent.width;
+                        icon: AppState.icon-wechat;
+                        icon-color: #07c160;
+                        method-title: AppState.en ? "WeChat" : "微信";
+                        status: AppState.wechat-bound
+                            ? (AppState.wechat-bound-name == "" ? (AppState.en ? "Bound" : "已绑定") : (AppState.en ? "Bound · " : "已绑定 · ") + AppState.wechat-bound-name)
+                            : (AppState.en ? "Not bound" : "未绑定");
+                        detail: AppState.wechat-bound ? "" : (AppState.en ? "Bind WeChat to use QR-code sign in" : "绑定后可使用微信扫码登录");
+                        action-text: AppState.wechat-bound
+                            ? (AppState.wechat-can-unbind ? (AppState.en ? "Unbind" : "解绑") : (AppState.en ? "Required" : "不可解绑"))
+                            : (AppState.en ? "Bind WeChat" : "绑定微信");
+                        bound: AppState.wechat-bound;
+                        primary-action: !AppState.wechat-bound;
+                        danger-action: AppState.wechat-bound && AppState.wechat-can-unbind;
+                        action-disabled: AppState.wechat-bind-busy || (AppState.wechat-bound && !AppState.wechat-can-unbind);
+                        action => {
+                            if AppState.wechat-bound {
+                                AppState.wechat-unbind-confirm-open = true;
+                            } else {
+                                AppState.start-wechat-binding();
+                            }
+                        }
+                    }
+                    LoginMethodRow {
+                        y: 206px;
+                        width: parent.width;
+                        icon: AppState.icon-account-envelope;
+                        icon-color: AppTheme.accent;
+                        method-title: AppState.en ? "Email" : "邮箱";
+                        status: AppState.email-bound ? AppState.email-mask : (AppState.en ? "Not bound" : "未绑定");
+                        detail: AppState.email-bound ? (AppState.en ? "Use an email verification code to sign in" : "可使用邮箱验证码登录") : (AppState.en ? "Bind to use email verification-code sign in" : "绑定后可使用邮箱验证码登录");
+                        action-text: AppState.email-bound ? "" : (AppState.en ? "Bind email" : "绑定邮箱");
+                        bound: AppState.email-bound;
+                        primary-action: !AppState.email-bound;
+                        action-disabled: AppState.email-bind-busy || AppState.email-bind-code-busy;
+                        last: true;
+                        action => { AppState.email-bind-open = true; }
+                    }
+                    Rectangle { y: 330px; width: parent.width; height: 1px; background: AppTheme.border; }
+                    Image { x: 0px; y: 354px; width: 19px; height: 19px; source: AppState.icon-account-shield-check; colorize: AppTheme.muted; image-fit: contain; }
+                    Text { x: 30px; y: 348px; width: parent.width - 30px; height: 32px; text: AppState.en ? "Keep at least one login method so you can always access your account" : "至少保留一种登录方式，避免账号无法登录"; color: AppTheme.muted; font-size: 13px; vertical-alignment: center; overflow: elide; }
+                }
+
+                if AppState.profile-section == "overview": Rectangle {
+                    x: 44px;
+                    y: 20px;
+                    width: parent.width - 88px;
+                    height: parent.height - 100px;
+                    background: transparent;
+                    Text { x: 0px; y: 0px; width: parent.width; height: 42px; text: AppState.en ? "Account overview" : "账户概览"; color: AppTheme.text; font-size: 25px; font-weight: 700; vertical-alignment: center; }
+                    Text { x: 0px; y: 46px; width: parent.width; height: 28px; text: AppState.en ? "Review your account and membership information" : "查看当前账号与会员信息"; color: AppTheme.muted; font-size: 14px; vertical-alignment: center; }
+                    Rectangle { x: 0px; y: 86px; width: parent.width; height: 1px; background: AppTheme.border; }
+                    AccountOverviewRow {
+                        y: 108px;
+                        width: parent.width;
+                        label: AppState.en ? "Account" : "账号";
+                        value: AppState.nickname != "" ? AppState.nickname : (AppState.wechat-bound ? (AppState.en ? "WeChat account" : "微信账号") : AppState.email-mask);
+                        action-text: "";
+                    }
+                    AccountOverviewRow {
+                        y: 184px;
+                        width: parent.width;
+                        label: AppState.en ? "Membership" : "当前会员";
+                        value: AppState.membership-plan-name + " · " + AppState.membership-max-quality;
+                        action-text: AppState.en ? "View plans" : "查看会员";
+                        action => { AppState.navigate("credits"); AppState.credits-tab = "membership"; AppState.profile-open = false; }
+                    }
+                    AccountOverviewRow {
+                        y: 260px;
+                        width: parent.width;
+                        label: AppState.en ? "Credits" : "积分余额";
+                        value: AppState.credit-balance;
+                        action-text: AppState.en ? "Recharge" : "前往充值";
+                        last: true;
+                        action => { AppState.navigate("credits"); AppState.credits-tab = "recharge"; AppState.profile-open = false; }
+                    }
+                }
+
+                if AppState.profile-section == "devices": Rectangle {
+                    x: 44px;
+                    y: 20px;
+                    width: parent.width - 88px;
+                    height: parent.height - 100px;
+                    background: transparent;
+                    Text { x: 0px; y: 0px; width: parent.width; height: 42px; text: AppState.en ? "Signed-in devices" : "登录设备"; color: AppTheme.text; font-size: 25px; font-weight: 700; vertical-alignment: center; }
+                    Text { x: 0px; y: 46px; width: parent.width; height: 28px; text: AppState.en ? "Review and revoke devices signed in to this account" : "查看并管理已登录当前账号的设备"; color: AppTheme.muted; font-size: 14px; vertical-alignment: center; }
+                    Rectangle { x: 0px; y: 86px; width: parent.width; height: 1px; background: AppTheme.border; }
+                    if AppState.account-sessions.length == 0: Text {
+                        y: 108px;
+                        width: parent.width;
+                        height: 160px;
+                        text: AppState.en ? "No device information" : "暂无登录设备信息";
+                        color: AppTheme.muted;
+                        font-size: 14px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    if AppState.account-sessions.length > 0: ScrollView {
+                        y: 102px;
+                        width: parent.width;
+                        height: 260px;
+                        viewport-width: self.width;
+                        viewport-height: max(self.height, AppState.account-sessions.length * 68px);
+                        session-list := VerticalLayout {
+                            width: parent.viewport-width;
+                            height: parent.viewport-height;
+                            spacing: 0px;
+                            for session in AppState.account-sessions: Rectangle {
+                                height: 68px;
+                                background: transparent;
+                                Image { x: 0px; y: 22px; width: 24px; height: 24px; source: AppState.icon-account-display; colorize: AppTheme.muted; image-fit: contain; }
+                                Text { x: 42px; width: parent.width - 170px; height: parent.height; text: session.device-name + " · " + session.platform + (session.is-current ? (AppState.en ? " · Current device" : " · 当前设备") : ""); color: AppTheme.text; font-size: 14px; vertical-alignment: center; overflow: elide; }
+                                if !session.is-current: PillButton { x: parent.width - 112px; y: 16px; width: 112px; text: AppState.en ? "Revoke" : "撤销登录"; danger: true; clicked => { AppState.revoke-session(session.id); } }
+                                Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: AppTheme.border; }
+                            }
+                        }
+                    }
+                    PillButton { x: parent.width - 142px; y: 386px; width: 142px; text: AppState.en ? "Logout all devices" : "退出全部设备"; danger: true; clicked => { AppState.logout-all(); } }
+                }
+
+                PillButton { x: parent.width - 276px; y: parent.height - 62px; width: 118px; text: AppState.en ? "Close" : "关闭"; clicked => { AppState.profile-open = false; } }
+                PillButton { x: parent.width - 142px; y: parent.height - 62px; width: 142px; text: AppState.en ? "Logout" : "退出登录"; danger: true; clicked => { AppState.logout(); } }
+            }
+        }
+    }
+
+    if AppState.email-bind-open: Rectangle {
+        background: #00000066;
+        TouchArea { width: parent.width; height: parent.height; }
+        email-dialog := Rectangle {
+            width: min(440px, root.width - 32px);
+            height: min(450px, root.height - 40px);
             x: (root.width - self.width) / 2;
             y: (root.height - self.height) / 2;
             background: AppTheme.panel;
             border-radius: 14px;
             border-width: 1px;
             border-color: AppTheme.border;
-            DialogCloseButton { x: parent.width - 42px; y: 12px; clicked => { AppState.profile-open = false; } }
+            DialogCloseButton {
+                x: parent.width - 42px;
+                y: 12px;
+                clicked => { AppState.close-email-binding(); }
+            }
             VerticalLayout {
-                padding: 24px;
-                spacing: 12px;
-                SectionTitle { text: AppState.en ? "Account" : "账号信息"; }
-                Rectangle {
-                    height: AppState.nickname == "" ? 150px : 214px;
-                    background: AppTheme.panel-soft;
-                    border-radius: 10px;
-                    VerticalLayout {
-                        padding: 16px;
-                        spacing: 8px;
-                        if AppState.nickname != "": Text { height: 20px; text: AppState.en ? "Nickname" : "昵称"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; }
-                        if AppState.nickname != "": Text { height: 28px; text: AppState.nickname; color: AppTheme.text; font-size: 16px; vertical-alignment: center; overflow: elide; }
-                        Text { height: 20px; text: AppState.en ? "Email" : "邮箱"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; }
-                        Text { height: 26px; text: AppState.email-mask; color: AppTheme.text; font-size: 14px; vertical-alignment: center; overflow: elide; }
-                        Rectangle {
-                            height: 56px;
-                            background: transparent;
-                            Text { width: parent.width; height: 20px; text: AppState.en ? "Membership" : "当前会员"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
-                            Text { y: 28px; width: parent.width; height: 26px; text: AppState.membership-plan-name + " · " + AppState.membership-max-quality; color: AppTheme.text; font-size: 14px; vertical-alignment: center; overflow: elide; }
-                            TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.navigate("credits"); AppState.credits-tab = "membership"; AppState.profile-open = false; } }
-                        }
-                    }
+                padding: 28px;
+                spacing: 14px;
+                SectionTitle { text: AppState.en ? "Bind Email" : "绑定邮箱"; }
+                Text {
+                    height: 42px;
+                    text: AppState.en
+                        ? "After binding, you can also sign in to this account with an email verification code."
+                        : "绑定后，可使用邮箱验证码登录当前账号。";
+                    color: AppTheme.muted;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
                 }
-                Text { height: 20px; text: AppState.en ? "Signed-in devices" : "登录设备"; color: AppTheme.muted; font-size: 13px; }
+                Text { height: 20px; text: AppState.en ? "Email" : "邮箱"; color: AppTheme.text; font-size: 13px; vertical-alignment: center; }
                 Rectangle {
-                    height: 132px;
-                    background: AppTheme.panel-soft;
-                    border-radius: 10px;
-                    clip: true;
-                    if AppState.account-sessions.length == 0: Text {
+                    height: 46px;
+                    background: AppTheme.panel;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: email-input.has-focus ? AppTheme.accent : AppTheme.border;
+                    email-input := TextInput {
                         x: 14px;
                         width: parent.width - 28px;
                         height: parent.height;
-                        text: AppState.en ? "No device information" : "暂无登录设备信息";
-                        color: AppTheme.muted;
-                        font-size: 12px;
+                        text <=> AppState.email-bind-email;
+                        single-line: true;
+                        color: AppTheme.text;
+                        font-size: 14px;
                         vertical-alignment: center;
                     }
-                    if AppState.account-sessions.length > 0: ScrollView {
-                        x: 8px;
-                        y: 8px;
-                        width: parent.width - 16px;
-                        height: parent.height - 16px;
-                        viewport-width: self.width;
-                        viewport-height: max(self.height, AppState.account-sessions.length * 46px);
-                        session-list := VerticalLayout {
-                            width: parent.viewport-width;
-                            height: parent.viewport-height;
-                            spacing: 4px;
-                            for session in AppState.account-sessions: Rectangle {
-                                height: 42px;
-                                border-radius: 8px;
-                                background: session.is-current ? AppTheme.panel : transparent;
-                                Text { x: 10px; width: parent.width - 118px; height: parent.height; text: session.device-name + " · " + session.platform + (session.is-current ? (AppState.en ? " · Current" : " · 当前设备") : ""); color: AppTheme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
-                                if !session.is-current: PillButton { x: parent.width - 94px; y: 6px; width: 86px; height: 30px; text: AppState.en ? "Revoke" : "撤销"; danger: true; clicked => { AppState.revoke-session(session.id); } }
+                    if AppState.email-bind-email == "" && !email-input.has-focus: Text {
+                        x: 14px;
+                        width: parent.width - 28px;
+                        height: parent.height;
+                        text: AppState.en ? "Enter email address" : "请输入邮箱地址";
+                        color: AppTheme.weak;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                }
+                Text { height: 20px; text: AppState.en ? "Verification code" : "验证码"; color: AppTheme.text; font-size: 13px; vertical-alignment: center; }
+                Rectangle {
+                    height: 46px;
+                    background: transparent;
+                    Rectangle {
+                        width: parent.width - 130px;
+                        height: parent.height;
+                        background: AppTheme.panel;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: code-input.has-focus ? AppTheme.accent : AppTheme.border;
+                        code-input := TextInput {
+                            x: 14px;
+                            width: parent.width - 28px;
+                            height: parent.height;
+                            text <=> AppState.email-bind-code;
+                            single-line: true;
+                            color: AppTheme.text;
+                            font-size: 14px;
+                            vertical-alignment: center;
+                            accepted => { AppState.bind-email(); }
+                        }
+                        if AppState.email-bind-code == "" && !code-input.has-focus: Text {
+                            x: 14px;
+                            width: parent.width - 28px;
+                            height: parent.height;
+                            text: AppState.en ? "6-digit code" : "请输入 6 位验证码";
+                            color: AppTheme.weak;
+                            font-size: 13px;
+                            vertical-alignment: center;
+                        }
+                    }
+                    PillButton {
+                        x: parent.width - 120px;
+                        y: 5px;
+                        width: 120px;
+                        height: 36px;
+                        disabled: AppState.email-bind-code-busy || AppState.email-bind-busy || AppState.email-bind-countdown > 0;
+                        text: AppState.email-bind-code-busy
+                            ? (AppState.en ? "Sending..." : "发送中...")
+                            : (AppState.email-bind-countdown > 0
+                                ? "\{AppState.email-bind-countdown}s"
+                                : (AppState.en ? "Get code" : "获取验证码"));
+                        clicked => { AppState.request-email-binding-code(); }
+                    }
+                }
+                Text {
+                    height: 48px;
+                    text: AppState.email-bind-status;
+                    color: AppState.email-bind-status == "" ? transparent : AppTheme.muted;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                }
+                PillButton {
+                    height: 40px;
+                    primary: true;
+                    disabled: AppState.email-bind-busy || AppState.email-bind-code-busy;
+                    text: AppState.email-bind-busy
+                        ? (AppState.en ? "Binding..." : "绑定中...")
+                        : (AppState.en ? "Bind email" : "绑定邮箱");
+                    clicked => { AppState.bind-email(); }
+                }
+            }
+        }
+    }
+
+    if AppState.wechat-bind-open: Rectangle {
+        background: #00000066;
+        TouchArea { width: parent.width; height: parent.height; }
+        bind-dialog := Rectangle {
+            width: min(440px, root.width - 32px);
+            height: min(580px, root.height - 40px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            background: AppTheme.panel;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            DialogCloseButton {
+                x: parent.width - 42px;
+                y: 12px;
+                clicked => { AppState.close-wechat-binding(); }
+            }
+            VerticalLayout {
+                padding: 28px;
+                spacing: 16px;
+                SectionTitle { text: AppState.en ? "Bind WeChat" : "绑定微信"; }
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 10px;
+                    Image {
+                        width: 30px;
+                        height: 30px;
+                        source: AppState.icon-wechat;
+                        image-fit: contain;
+                    }
+                    Text {
+                        text: AppState.en ? "Scan with WeChat" : "请使用微信扫码绑定";
+                        color: AppTheme.text;
+                        font-size: 17px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+                Rectangle {
+                    height: 300px;
+                    background: transparent;
+                    qr-card := Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        width: 300px;
+                        height: 300px;
+                        background: #ffffff;
+                        border-radius: 10px;
+                        border-width: 1px;
+                        border-color: AppTheme.border;
+                        if AppState.wechat-bind-qr-ready: Image {
+                            x: 14px;
+                            y: 14px;
+                            width: parent.width - 28px;
+                            height: parent.height - 28px;
+                            source: AppState.wechat-bind-qr-image;
+                            image-fit: contain;
+                        }
+                        if AppState.wechat-bind-qr-ready && AppState.wechat-bind-scanned: Rectangle {
+                            z: 2;
+                            x: 14px;
+                            y: 14px;
+                            width: parent.width - 28px;
+                            height: parent.height - 28px;
+                            background: #fffffff2;
+                            border-radius: 8px;
+                            Rectangle {
+                                x: (parent.width - self.width) / 2;
+                                y: 62px;
+                                width: 64px;
+                                height: 64px;
+                                background: #07c160;
+                                border-radius: 32px;
+                                Image {
+                                    x: 16px;
+                                    y: 16px;
+                                    width: 32px;
+                                    height: 32px;
+                                    source: AppState.icon-check;
+                                    image-fit: contain;
+                                }
                             }
+                            Text {
+                                y: 146px;
+                                width: parent.width;
+                                height: 30px;
+                                text: AppState.en ? "QR code scanned" : "已扫码";
+                                color: AppTheme.text;
+                                font-size: 19px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                x: 18px;
+                                y: 182px;
+                                width: parent.width - 36px;
+                                height: 46px;
+                                text: AppState.en ? "Confirm binding in WeChat on your phone" : "请在手机微信中确认绑定";
+                                color: AppTheme.muted;
+                                font-size: 13px;
+                                wrap: word-wrap;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        if !AppState.wechat-bind-qr-ready: Text {
+                            x: 20px;
+                            width: parent.width - 40px;
+                            height: parent.height;
+                            text: AppState.wechat-bind-busy
+                                ? (AppState.en ? "Loading QR code..." : "正在获取二维码...")
+                                : AppState.wechat-bind-status;
+                            color: AppTheme.muted;
+                            font-size: 13px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
                         }
                     }
                 }
-                HorizontalLayout {
-                    spacing: 10px;
-                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Close" : "关闭"; clicked => { AppState.profile-open = false; } }
-                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Logout" : "退出登录"; danger: true; clicked => { AppState.logout(); } }
+                Text {
+                    height: 42px;
+                    text: AppState.wechat-bind-status;
+                    color: AppState.wechat-bind-scanned ? AppTheme.success : AppTheme.muted;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
                 }
-                PillButton { height: 34px; text: AppState.en ? "Logout all devices" : "退出全部设备"; danger: true; clicked => { AppState.logout-all(); } }
+                PillButton {
+                    height: 38px;
+                    disabled: AppState.wechat-bind-busy;
+                    text: AppState.wechat-bind-busy
+                        ? (AppState.en ? "Loading..." : "获取中...")
+                        : (AppState.wechat-bind-qr-ready ? (AppState.en ? "Refresh QR code" : "刷新二维码") : (AppState.en ? "Get QR code" : "重新获取二维码"));
+                    clicked => { AppState.start-wechat-binding(); }
+                }
+            }
+        }
+    }
+
+    if AppState.wechat-unbind-confirm-open: Rectangle {
+        background: #00000066;
+        TouchArea { width: parent.width; height: parent.height; }
+        confirm-dialog := Rectangle {
+            width: min(380px, root.width - 32px);
+            height: 230px;
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            background: AppTheme.panel;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            VerticalLayout {
+                padding: 26px;
+                spacing: 18px;
+                SectionTitle { text: AppState.en ? "Unbind WeChat" : "解绑微信"; }
+                Text {
+                    vertical-stretch: 1;
+                    text: AppState.en
+                        ? "After unbinding, this WeChat account can no longer sign in to the current ArtForge account."
+                        : "解绑后，该微信将无法再登录当前 ArtForge 账号。";
+                    color: AppTheme.muted;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                }
+                HorizontalLayout {
+                    spacing: 12px;
+                    PillButton {
+                        horizontal-stretch: 1;
+                        text: AppState.en ? "Cancel" : "取消";
+                        clicked => { AppState.wechat-unbind-confirm-open = false; }
+                    }
+                    PillButton {
+                        horizontal-stretch: 1;
+                        danger: true;
+                        disabled: AppState.wechat-bind-busy;
+                        text: AppState.en ? "Confirm unbind" : "确认解绑";
+                        clicked => { AppState.unbind-wechat(); }
+                    }
+                }
             }
         }
     }

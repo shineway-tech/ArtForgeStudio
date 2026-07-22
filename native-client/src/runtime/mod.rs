@@ -18,6 +18,18 @@ use std::sync::{
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+fn advance_second_countdown(
+    remaining_seconds: i32,
+    elapsed_milliseconds: i32,
+    interval_milliseconds: i32,
+) -> (i32, i32) {
+    let elapsed = elapsed_milliseconds.saturating_add(interval_milliseconds.max(0));
+    (
+        (remaining_seconds - elapsed / 1000).max(0),
+        elapsed % 1000,
+    )
+}
+
 use crate::drag_preview;
 
 slint::include_modules!();
@@ -30,6 +42,12 @@ mod app;
 #[path = "callbacks/auth.rs"]
 mod auth_callbacks;
 use auth_callbacks::*;
+#[path = "callbacks/wechat_binding.rs"]
+mod wechat_binding_callbacks;
+use wechat_binding_callbacks::*;
+#[path = "callbacks/email_binding.rs"]
+mod email_binding_callbacks;
+use email_binding_callbacks::*;
 #[path = "callbacks/payment.rs"]
 mod payment_callbacks;
 use payment_callbacks::*;

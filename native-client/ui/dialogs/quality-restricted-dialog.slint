@@ -1,0 +1,59 @@
+import { AppState } from "../app-state.slint";
+import { DialogCloseButton } from "../components/dialog-close-button.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component QualityRestrictedDialog {
+    if AppState.quality-restricted-open: Rectangle {
+        background: #00000055;
+        TouchArea { width: parent.width; height: parent.height; }
+        dialog := Rectangle {
+            width: min(400px, root.width - 32px);
+            height: min(230px, root.height - 40px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            background: AppTheme.panel;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            DialogCloseButton {
+                x: parent.width - 42px;
+                y: 12px;
+                clicked => { AppState.quality-restricted-open = false; }
+            }
+            VerticalLayout {
+                padding: 22px;
+                spacing: 14px;
+                Text {
+                    text: AppState.en ? "Quality unavailable" : "当前会员不支持该清晰度";
+                    color: AppTheme.text;
+                    font-size: 18px;
+                    font-weight: 500;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    height: 62px;
+                    text: AppState.en
+                        ? "Your current plan supports up to " + AppState.membership-max-quality + ". Upgrade your membership to use higher quality."
+                        : AppState.quality-restricted-message;
+                    color: AppTheme.muted;
+                    font-size: 13px;
+                    font-weight: 400;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+                PillButton {
+                    horizontal-stretch: 1;
+                    text: AppState.en ? "View Membership" : "查看会员";
+                    primary: true;
+                    clicked => {
+                        AppState.quality-restricted-open = false;
+                        AppState.credits-tab = "membership";
+                        AppState.navigate("credits");
+                    }
+                }
+            }
+        }
+    }
+}
