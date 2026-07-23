@@ -285,6 +285,8 @@ pub(super) fn push_canvas_notes(app: &AppWindow, store: &Store) {
                     start_y: source.y + source.height / 2.0,
                     end_x: target.x,
                     end_y: target.y + target.height / 2.0,
+                    source_selected: source.selected,
+                    target_selected: target.selected,
                 })
             })
             .collect::<Vec<_>>(),

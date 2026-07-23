@@ -83,6 +83,10 @@ export global AppState {
     in-out property <string> canvas-selected-id: "";
     in-out property <string> canvas-selected-link-id: "";
     in-out property <int> canvas-selected-count: 0;
+    in-out property <float> canvas-focus-x: 0;
+    in-out property <float> canvas-focus-y: 0;
+    in-out property <float> canvas-focus-width: 0;
+    in-out property <float> canvas-focus-height: 0;
     in-out property <string> canvas-drag-preview-id: "";
     in-out property <float> canvas-drag-delta-x: 0;
     in-out property <float> canvas-drag-delta-y: 0;
@@ -361,6 +365,7 @@ export global AppState {
     callback remove-canvas-selection();
     callback group-canvas-selection(float, float);
     callback ungroup-canvas-selection();
+    callback prepare-canvas-focus(float, float) -> int;
     callback undo-canvas();
     callback redo-canvas();
     callback select-image-model(string);

@@ -676,6 +676,33 @@ mod tests {
     }
 
     #[test]
+    fn infinite_canvas_selection_and_pan_modes_use_desktop_shortcuts() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+
+        for interaction in [
+            "marquee-active",
+            "marquee-start-x",
+            "marquee-start-y",
+            "space-pan-active",
+            "temporary-pan-active",
+            "AppState.select-canvas-rect",
+            "AppState.move-canvas-selection",
+            "event.modifiers.control",
+            "Key.Backspace",
+            "Key.Delete",
+            "Key.Escape",
+            "Key.Space",
+            "root.focus-selection()",
+        ] {
+            assert!(page.contains(interaction), "missing {interaction}");
+        }
+        assert!(page.contains("AppState.canvas-tool == \"pan\""));
+        assert!(page.contains("AppState.canvas-tool == \"select\""));
+        assert!(page.contains("link.source-selected"));
+        assert!(page.contains("link.target-selected"));
+    }
+
+    #[test]
     fn invalid_canvas_group_relationships_are_removed_without_moving_nodes() {
         let mut notes = vec![
             CanvasNoteData {

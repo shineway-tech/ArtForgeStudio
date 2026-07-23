@@ -71,13 +71,17 @@ fn persist_canvas(app: &AppWindow, store: &Store) {
 
 fn sync_canvas_selection(app: &AppWindow, store: &Store) {
     let state = app.global::<AppState>();
-    state.set_canvas_selected_count(
-        store
-            .canvas_notes
-            .iter()
-            .filter(|note| note.selected)
-            .count() as i32,
-    );
+    let ids = selected_ids(&store.canvas_notes);
+    state.set_canvas_selected_count(ids.len() as i32);
+    if let Some(bounds) = selection_bounds(&store.canvas_notes, &ids) {
+        state.set_canvas_focus_x(bounds.x);
+        state.set_canvas_focus_y(bounds.y);
+        state.set_canvas_focus_width(bounds.width);
+        state.set_canvas_focus_height(bounds.height);
+    } else {
+        state.set_canvas_focus_width(0.0);
+        state.set_canvas_focus_height(0.0);
+    }
     push_canvas_notes(app, store);
 }
 
@@ -123,6 +127,35 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             sync_canvas_selection(&app, &store_mut);
             state.set_canvas_selected_id(id.into());
             sync_history_state(&app, &history.borrow());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        state.on_prepare_canvas_focus(move |viewport_width, viewport_height| {
+            let Some(app) = app_weak.upgrade() else {
+                return 100;
+            };
+            let store_ref = store.borrow();
+            let mut ids = selected_ids(&store_ref.canvas_notes);
+            if ids.is_empty() {
+                ids.extend(store_ref.canvas_notes.iter().map(|note| note.id.clone()));
+            }
+            let Some(bounds) = selection_bounds(&store_ref.canvas_notes, &ids) else {
+                return 100;
+            };
+            let state = app.global::<AppState>();
+            state.set_canvas_focus_x(bounds.x);
+            state.set_canvas_focus_y(bounds.y);
+            state.set_canvas_focus_width(bounds.width);
+            state.set_canvas_focus_height(bounds.height);
+            let safe_width = bounds.width.max(1.0);
+            let safe_height = bounds.height.max(1.0);
+            ((viewport_width.max(1.0) / safe_width).min(viewport_height.max(1.0) / safe_height)
+                * 84.0)
+                .clamp(5.0, 500.0)
+                .round() as i32
         });
     }
 

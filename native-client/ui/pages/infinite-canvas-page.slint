@@ -483,6 +483,7 @@ component CanvasNodeCard {
     callback connection-started(string, length, length);
     callback connection-moved(length, length);
     callback connection-finished(string, length, length);
+    callback selection-focused();
     in-out property <length> drag-offset-x: 0px;
     in-out property <length> drag-offset-y: 0px;
     in-out property <string> current-content: root.note.content;
@@ -497,8 +498,8 @@ component CanvasNodeCard {
     in-out property <string> audio-speed: "1x";
     in-out property <string> audio-instruction: "";
 
-    x: root.pan-x + root.note.x * 1px * root.zoom-percent / 100 + root.drag-offset-x;
-    y: root.pan-y + root.note.y * 1px * root.zoom-percent / 100 + root.drag-offset-y;
+    x: root.pan-x + (root.note.x + (root.note.selected ? AppState.canvas-drag-delta-x : 0)) * 1px * root.zoom-percent / 100;
+    y: root.pan-y + (root.note.y + (root.note.selected ? AppState.canvas-drag-delta-y : 0)) * 1px * root.zoom-percent / 100;
     width: root.note.width * 1px * root.zoom-percent / 100;
     height: root.note.height * 1px * root.zoom-percent / 100;
 
@@ -671,12 +672,11 @@ component CanvasNodeCard {
     }
 
     function commit-position() {
-        AppState.update-canvas-node(
-            root.note.id,
-            root.current-content,
-            root.note.x + root.drag-offset-x / 1px * 100 / root.zoom-percent,
-            root.note.y + root.drag-offset-y / 1px * 100 / root.zoom-percent
-        );
+        let dx = root.drag-offset-x / 1px * 100 / root.zoom-percent;
+        let dy = root.drag-offset-y / 1px * 100 / root.zoom-percent;
+        if dx != 0 || dy != 0 {
+            AppState.move-canvas-selection(dx, dy);
+        }
         root.drag-offset-x = 0px;
         root.drag-offset-y = 0px;
         AppState.canvas-drag-preview-id = "";
@@ -691,11 +691,11 @@ component CanvasNodeCard {
     Rectangle {
         clip: false;
         background: root.note.kind == "group"
-            ? AppTheme.accent.with-alpha(AppState.canvas-selected-id == root.note.id ? 0.10 : 0.045)
+            ? AppTheme.accent.with-alpha(root.note.selected ? 0.10 : 0.045)
             : (root.dark-background ? #292522 : AppTheme.panel);
         border-radius: (root.note.kind == "group" ? 4px : 20px) * root.node-scale();
-        border-width: (AppState.canvas-selected-id == root.note.id || node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover ? 2px : 1px) * root.node-scale();
-        border-color: AppState.canvas-selected-id == root.note.id
+        border-width: (root.note.selected || node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover ? 2px : 1px) * root.node-scale();
+        border-color: root.note.selected
             ? AppTheme.accent
             : (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover
                 ? AppTheme.accent.with-alpha(0.78)
@@ -730,8 +730,8 @@ component CanvasNodeCard {
             mouse-cursor: root.editing ? default : move;
             pointer-event(event) => {
                 if !root.editing && event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
-                    AppState.canvas-selected-id = root.note.id;
-                    AppState.canvas-selected-link-id = "";
+                    AppState.select-canvas-node(root.note.id, event.modifiers.control);
+                    root.selection-focused();
                     self.start-pointer-x = self.absolute-position.x + self.mouse-x;
                     self.start-pointer-y = self.absolute-position.y + self.mouse-y;
                 } else if !root.editing && event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
@@ -749,8 +749,8 @@ component CanvasNodeCard {
             }
             double-clicked => {
                 if root.note.kind == "text" {
-                    AppState.canvas-selected-id = root.note.id;
-                    AppState.canvas-selected-link-id = "";
+                    AppState.select-canvas-node(root.note.id, false);
+                    root.selection-focused();
                     root.current-content = root.is-default-text-prompt() ? "" : root.note.content;
                     root.editing = true;
                     text-editor.focus();
@@ -1516,6 +1516,14 @@ export component InfiniteCanvasPage {
     in-out property <length> connection-start-y: 0px;
     in-out property <length> connection-end-x: 0px;
     in-out property <length> connection-end-y: 0px;
+    in-out property <bool> marquee-active: false;
+    in-out property <length> marquee-start-x: 0px;
+    in-out property <length> marquee-start-y: 0px;
+    in-out property <length> marquee-end-x: 0px;
+    in-out property <length> marquee-end-y: 0px;
+    in-out property <bool> marquee-additive: false;
+    in-out property <bool> space-pan-active: false;
+    in-out property <bool> temporary-pan-active: false;
 
     function grid-spacing() -> length {
         return max(12px, 40px * root.zoom-percent / 100);
@@ -1544,6 +1552,16 @@ export component InfiniteCanvasPage {
         root.pan-x = 120px;
         root.pan-y = 92px;
         root.zoom-percent = 100;
+    }
+
+    function focus-selection() {
+        let target = AppState.prepare-canvas-focus(canvas.width / 1px * 0.84, canvas.height / 1px * 0.84);
+        if AppState.canvas-focus-width <= 0 || AppState.canvas-focus-height <= 0 {
+            return;
+        }
+        root.zoom-percent = max(5, min(500, target));
+        root.pan-x = canvas.width / 2 - (AppState.canvas-focus-x + AppState.canvas-focus-width / 2) * 1px * root.zoom-percent / 100;
+        root.pan-y = canvas.height / 2 - (AppState.canvas-focus-y + AppState.canvas-focus-height / 2) * 1px * root.zoom-percent / 100;
     }
 
     function add-node(kind: string) {
@@ -1583,7 +1601,12 @@ export component InfiniteCanvasPage {
     }
 
     function request-selected-delete() {
-        if AppState.canvas-selected-id != "" {
+        if AppState.canvas-selected-count > 1 {
+            AppState.pending-delete-kind = "canvas-selection";
+            AppState.pending-delete-id = "";
+            AppState.pending-delete-source = "canvas";
+            AppState.delete-confirm-open = true;
+        } else if AppState.canvas-selected-id != "" {
             AppState.pending-delete-kind = "canvas-note";
             AppState.pending-delete-id = AppState.canvas-selected-id;
             AppState.pending-delete-source = "canvas";
@@ -1657,22 +1680,54 @@ export component InfiniteCanvasPage {
             canvas-touch := TouchArea {
                 in-out property <length> start-pan-x: 0px;
                 in-out property <length> start-pan-y: 0px;
+                in-out property <length> start-pointer-x: 0px;
+                in-out property <length> start-pointer-y: 0px;
                 width: parent.width;
                 height: parent.height;
-                mouse-cursor: AppState.canvas-tool == "pan" ? move : default;
+                mouse-cursor: AppState.canvas-tool == "pan" || root.space-pan-active ? move : crosshair;
                 pointer-event(event) => {
-                    if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
-                        AppState.canvas-selected-id = "";
-                        AppState.canvas-selected-link-id = "";
+                    if event.kind == PointerEventKind.down && (event.button == PointerEventButton.left || event.button == PointerEventButton.middle) {
                         root.appearance-open = false;
-                        self.start-pan-x = root.pan-x;
-                        self.start-pan-y = root.pan-y;
+                        canvas-keyboard.focus();
+                        if event.button == PointerEventButton.middle || AppState.canvas-tool == "pan" || root.space-pan-active {
+                            root.temporary-pan-active = true;
+                            self.start-pan-x = root.pan-x;
+                            self.start-pan-y = root.pan-y;
+                            self.start-pointer-x = self.mouse-x;
+                            self.start-pointer-y = self.mouse-y;
+                        } else {
+                            root.marquee-active = true;
+                            root.marquee-additive = event.modifiers.control;
+                            root.marquee-start-x = self.mouse-x;
+                            root.marquee-start-y = self.mouse-y;
+                            root.marquee-end-x = self.mouse-x;
+                            root.marquee-end-y = self.mouse-y;
+                        }
+                    } else if event.kind == PointerEventKind.up {
+                        if root.marquee-active {
+                            let world-start-x = (root.marquee-start-x - root.pan-x) * 100 / root.zoom-percent;
+                            let world-start-y = (root.marquee-start-y - root.pan-y) * 100 / root.zoom-percent;
+                            let world-end-x = (root.marquee-end-x - root.pan-x) * 100 / root.zoom-percent;
+                            let world-end-y = (root.marquee-end-y - root.pan-y) * 100 / root.zoom-percent;
+                            AppState.select-canvas-rect(
+                                world-start-x / 1px,
+                                world-start-y / 1px,
+                                world-end-x / 1px,
+                                world-end-y / 1px,
+                                root.marquee-additive
+                            );
+                            root.marquee-active = false;
+                        }
+                        root.temporary-pan-active = false;
                     }
                 }
                 moved => {
-                    if self.pressed {
-                        root.pan-x = self.start-pan-x + self.mouse-x - self.pressed-x;
-                        root.pan-y = self.start-pan-y + self.mouse-y - self.pressed-y;
+                    if root.temporary-pan-active {
+                        root.pan-x = self.start-pan-x + self.mouse-x - self.start-pointer-x;
+                        root.pan-y = self.start-pan-y + self.mouse-y - self.start-pointer-y;
+                    } else if root.marquee-active {
+                        root.marquee-end-x = self.mouse-x;
+                        root.marquee-end-y = self.mouse-y;
                     }
                 }
                 scroll-event(event) => {
@@ -1689,8 +1744,65 @@ export component InfiniteCanvasPage {
                 height: 1px;
                 focus-on-click: false;
                 key-pressed(event) => {
-                    if AppState.canvas-selected-link-id != "" && (event.text == Key.Backspace || event.text == Key.Delete) {
+                    if event.text == Key.Space {
+                        root.space-pan-active = true;
+                        return accept;
+                    }
+                    if event.text == Key.Escape {
+                        root.marquee-active = false;
+                        root.temporary-pan-active = false;
+                        root.connection-dragging = false;
+                        root.connection-source-id = "";
+                        return accept;
+                    }
+                    if event.modifiers.control && (event.text == "a" || event.text == "A") {
+                        AppState.select-all-canvas-nodes();
+                        return accept;
+                    }
+                    if event.modifiers.control && (event.text == "c" || event.text == "C") {
+                        AppState.copy-canvas-selection();
+                        return accept;
+                    }
+                    if event.modifiers.control && (event.text == "v" || event.text == "V") {
+                        AppState.paste-canvas-selection(24, 24);
+                        return accept;
+                    }
+                    if event.modifiers.control && (event.text == "d" || event.text == "D") {
+                        AppState.duplicate-canvas-selection();
+                        return accept;
+                    }
+                    if event.modifiers.control && event.modifiers.shift && (event.text == "g" || event.text == "G") {
+                        AppState.ungroup-canvas-selection();
+                        return accept;
+                    }
+                    if event.modifiers.control && (event.text == "g" || event.text == "G") {
+                        let world-x = (canvas.width / 2 - root.pan-x) * 100 / root.zoom-percent;
+                        let world-y = (canvas.height / 2 - root.pan-y) * 100 / root.zoom-percent;
+                        AppState.group-canvas-selection(world-x / 1px, world-y / 1px);
+                        return accept;
+                    }
+                    if event.modifiers.control && (event.text == "z" || event.text == "Z") {
+                        AppState.undo-canvas();
+                        return accept;
+                    }
+                    if event.modifiers.control && (event.text == "y" || event.text == "Y") {
+                        AppState.redo-canvas();
+                        return accept;
+                    }
+                    if event.text == "f" || event.text == "F" {
+                        root.focus-selection();
+                        return accept;
+                    }
+                    if (AppState.canvas-selected-count > 0 || AppState.canvas-selected-link-id != "") && (event.text == Key.Backspace || event.text == Key.Delete) {
                         root.request-selected-delete();
+                        return accept;
+                    }
+                    return reject;
+                }
+                key-released(event) => {
+                    if event.text == Key.Space {
+                        root.space-pan-active = false;
+                        root.temporary-pan-active = false;
                         return accept;
                     }
                     return reject;
@@ -1701,10 +1813,10 @@ export component InfiniteCanvasPage {
                 link: link;
                 canvas-width: canvas.width;
                 canvas-height: canvas.height;
-                start-x: root.pan-x + (link.start-x + (AppState.canvas-drag-preview-id == link.source-id ? AppState.canvas-drag-delta-x : 0)) * 1px * root.zoom-percent / 100;
-                start-y: root.pan-y + (link.start-y + (AppState.canvas-drag-preview-id == link.source-id ? AppState.canvas-drag-delta-y : 0)) * 1px * root.zoom-percent / 100;
-                end-x: root.pan-x + (link.end-x + (AppState.canvas-drag-preview-id == link.target-id ? AppState.canvas-drag-delta-x : 0)) * 1px * root.zoom-percent / 100;
-                end-y: root.pan-y + (link.end-y + (AppState.canvas-drag-preview-id == link.target-id ? AppState.canvas-drag-delta-y : 0)) * 1px * root.zoom-percent / 100;
+                start-x: root.pan-x + (link.start-x + (link.source-selected ? AppState.canvas-drag-delta-x : 0)) * 1px * root.zoom-percent / 100;
+                start-y: root.pan-y + (link.start-y + (link.source-selected ? AppState.canvas-drag-delta-y : 0)) * 1px * root.zoom-percent / 100;
+                end-x: root.pan-x + (link.end-x + (link.target-selected ? AppState.canvas-drag-delta-x : 0)) * 1px * root.zoom-percent / 100;
+                end-y: root.pan-y + (link.end-y + (link.target-selected ? AppState.canvas-drag-delta-y : 0)) * 1px * root.zoom-percent / 100;
                 dark-background: AppState.canvas-dark-background;
                 link-selected(link-id) => {
                     AppState.canvas-selected-id = "";
@@ -1776,6 +1888,7 @@ export component InfiniteCanvasPage {
                 connection-started(source-id, start-x, start-y) => { root.begin-connection(source-id, start-x, start-y); }
                 connection-moved(end-x, end-y) => { root.move-connection(end-x, end-y); }
                 connection-finished(source-id, end-x, end-y) => { root.finish-connection(source-id, end-x, end-y); }
+                selection-focused => { canvas-keyboard.focus(); }
             }
 
             for note in AppState.canvas-notes: CanvasNodeCard {
@@ -1792,6 +1905,58 @@ export component InfiniteCanvasPage {
                 connection-started(source-id, start-x, start-y) => { root.begin-connection(source-id, start-x, start-y); }
                 connection-moved(end-x, end-y) => { root.move-connection(end-x, end-y); }
                 connection-finished(source-id, end-x, end-y) => { root.finish-connection(source-id, end-x, end-y); }
+                selection-focused => { canvas-keyboard.focus(); }
+            }
+
+            if root.marquee-active: Rectangle {
+                x: min(root.marquee-start-x, root.marquee-end-x);
+                y: min(root.marquee-start-y, root.marquee-end-y);
+                width: abs(root.marquee-end-x - root.marquee-start-x);
+                height: abs(root.marquee-end-y - root.marquee-start-y);
+                background: AppTheme.accent.with-alpha(0.12);
+                border-width: 1px;
+                border-color: AppTheme.accent;
+                border-radius: 2px;
+            }
+
+            if AppState.canvas-selected-count > 1: Rectangle {
+                x: root.pan-x + (AppState.canvas-focus-x + AppState.canvas-focus-width / 2) * 1px * root.zoom-percent / 100 - self.width / 2;
+                y: root.pan-y + AppState.canvas-focus-y * 1px * root.zoom-percent / 100 - 54px;
+                width: 216px;
+                height: 42px;
+                background: AppTheme.panel.with-alpha(0.98);
+                border-radius: 21px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+                HorizontalLayout {
+                    padding: 3px;
+                    spacing: 3px;
+                    CanvasToolButton {
+                        horizontal-stretch: 1;
+                        compact: true;
+                        icon: @image-url("../../assets/icons/assets.svg");
+                        label: AppState.en ? "Copy" : "复制";
+                        clicked => { AppState.copy-canvas-selection(); }
+                    }
+                    CanvasToolButton {
+                        horizontal-stretch: 1;
+                        compact: true;
+                        icon: @image-url("../../assets/icons/group.svg");
+                        label: AppState.en ? "Group" : "分组";
+                        clicked => {
+                            let world-x = (canvas.width / 2 - root.pan-x) * 100 / root.zoom-percent;
+                            let world-y = (canvas.height / 2 - root.pan-y) * 100 / root.zoom-percent;
+                            AppState.group-canvas-selection(world-x / 1px, world-y / 1px);
+                        }
+                    }
+                    CanvasToolButton {
+                        horizontal-stretch: 1;
+                        compact: true;
+                        icon: @image-url("../../assets/icons/trash.svg");
+                        label: AppState.en ? "Delete" : "删除";
+                        clicked => { root.request-selected-delete(); }
+                    }
+                }
             }
 
             if AppState.canvas-minimap-open: Rectangle {
@@ -1937,9 +2102,18 @@ export component InfiniteCanvasPage {
                     CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/image.svg"); label: AppState.en ? "Image node" : "图片节点"; clicked => { root.add-node("image"); } }
                     CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/video.svg"); label: AppState.en ? "Video node" : "视频节点"; clicked => { root.add-node("video"); } }
                     CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/audio.svg"); label: AppState.en ? "Audio node" : "音频节点"; clicked => { root.add-node("audio"); } }
-                    CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/group.svg"); label: AppState.en ? "Group" : "分组"; clicked => { root.add-node("group"); } }
+                    CanvasToolButton {
+                        compact: canvas.width < 620px;
+                        icon: @image-url("../../assets/icons/group.svg");
+                        label: AppState.en ? "Group" : "分组";
+                        clicked => {
+                            let world-x = (canvas.width / 2 - root.pan-x) * 100 / root.zoom-percent;
+                            let world-y = (canvas.height / 2 - root.pan-y) * 100 / root.zoom-percent;
+                            AppState.group-canvas-selection(world-x / 1px, world-y / 1px);
+                        }
+                    }
                     appearance-button := CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/palette.svg"); label: AppState.en ? "Canvas appearance" : "画布外观"; selected: root.appearance-open; clicked => { root.appearance-open = !root.appearance-open; } }
-                    CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/trash.svg"); label: AppState.en ? "Delete selected" : "删除所选"; disabled: AppState.canvas-selected-id == "" && AppState.canvas-selected-link-id == ""; clicked => { root.request-selected-delete(); } }
+                    CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/trash.svg"); label: AppState.en ? "Delete selected" : "删除所选"; disabled: AppState.canvas-selected-count == 0 && AppState.canvas-selected-link-id == ""; clicked => { root.request-selected-delete(); } }
                 }
             }
 
