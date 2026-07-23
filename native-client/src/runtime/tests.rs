@@ -616,6 +616,23 @@ mod tests {
     }
 
     #[test]
+    fn failed_generation_thumbnail_hover_requests_confirmed_delete() {
+        let card = include_str!("../../ui/components/thumbnail-card.slint");
+        let callbacks = include_str!("callbacks/viewer.rs");
+
+        assert!(card.contains("failed-hover := TouchArea"));
+        assert!(card.contains("failed-delete-touch := TouchArea"));
+        assert!(card.contains(
+            "visible: failed-hover.has-hover || failed-delete-touch.has-hover"
+        ));
+        assert!(card.contains(
+            "AppState.request-delete-thumbnail(root.item.id, \"generation\")"
+        ));
+        assert!(card.contains("visible: root.item.source-path != \"failed\";"));
+        assert!(callbacks.contains("store_mut.generations.retain(|a| a.id != id)"));
+    }
+
+    #[test]
     fn windows_uses_gpu_renderer_without_removing_software_override() {
         let app = include_str!("app.rs");
         let manifest = include_str!("../../Cargo.toml");
