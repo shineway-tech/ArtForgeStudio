@@ -2,53 +2,6 @@ use super::*;
 
 const MAX_CANVAS_NODES: usize = 200;
 const MAX_CANVAS_LINKS: usize = 400;
-const MAX_CANVAS_HISTORY: usize = 100;
-
-#[derive(Clone, Debug, Default, PartialEq)]
-struct CanvasSnapshot {
-    notes: Vec<CanvasNoteData>,
-    links: Vec<CanvasLinkData>,
-}
-
-#[derive(Default)]
-struct CanvasHistory {
-    undo: Vec<CanvasSnapshot>,
-    redo: Vec<CanvasSnapshot>,
-}
-
-impl CanvasHistory {
-    fn record(&mut self, snapshot: CanvasSnapshot) {
-        self.undo.push(snapshot);
-        if self.undo.len() > MAX_CANVAS_HISTORY {
-            self.undo.remove(0);
-        }
-        self.redo.clear();
-    }
-
-    fn undo(&mut self, current: CanvasSnapshot) -> Option<CanvasSnapshot> {
-        let previous = self.undo.pop()?;
-        self.redo.push(current);
-        Some(previous)
-    }
-
-    fn redo(&mut self, current: CanvasSnapshot) -> Option<CanvasSnapshot> {
-        let next = self.redo.pop()?;
-        self.undo.push(current);
-        Some(next)
-    }
-}
-
-fn canvas_snapshot(store: &Store) -> CanvasSnapshot {
-    CanvasSnapshot {
-        notes: store.canvas_notes.clone(),
-        links: store.canvas_links.clone(),
-    }
-}
-
-fn restore_canvas_snapshot(store: &mut Store, snapshot: CanvasSnapshot) {
-    store.canvas_notes = snapshot.notes;
-    store.canvas_links = snapshot.links;
-}
 
 fn target_at_input(
     store: &Store,
@@ -105,10 +58,10 @@ fn canvas_node_defaults(kind: &str, english: bool) -> (String, f32, f32) {
     }
 }
 
-fn sync_history_state(app: &AppWindow, history: &CanvasHistory) {
+fn sync_history_state(app: &AppWindow, history: &CanvasController) {
     let state = app.global::<AppState>();
-    state.set_canvas_can_undo(!history.undo.is_empty());
-    state.set_canvas_can_redo(!history.redo.is_empty());
+    state.set_canvas_can_undo(history.can_undo());
+    state.set_canvas_can_redo(history.can_redo());
 }
 
 fn persist_canvas(app: &AppWindow, store: &Store) {
@@ -118,7 +71,7 @@ fn persist_canvas(app: &AppWindow, store: &Store) {
 
 pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<Store>>) {
     let state = app.global::<AppState>();
-    let history = Rc::new(RefCell::new(CanvasHistory::default()));
+    let history = Rc::new(RefCell::new(CanvasController::default()));
 
     {
         let app_weak = app.as_weak();
@@ -373,7 +326,7 @@ mod tests {
 
     #[test]
     fn canvas_history_round_trips_undo_and_redo() {
-        let mut history = CanvasHistory::default();
+        let mut history = CanvasController::default();
         history.record(CanvasSnapshot {
             notes: vec![node("before")],
             links: Vec::new(),

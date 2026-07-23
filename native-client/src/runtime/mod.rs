@@ -36,6 +36,8 @@ slint::include_modules!();
 
 include!("model.rs");
 
+mod canvas_ops;
+use canvas_ops::*;
 mod api;
 use api::*;
 mod app;

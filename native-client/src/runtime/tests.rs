@@ -614,7 +614,7 @@ mod tests {
         assert!(callbacks.contains("state.on_remove_canvas_link"));
         assert!(callbacks.contains("state.on_undo_canvas"));
         assert!(callbacks.contains("state.on_redo_canvas"));
-        assert!(callbacks.contains("CanvasHistory"));
+        assert!(callbacks.contains("CanvasController"));
         assert!(callbacks.contains("save_local_store"));
         assert!(local_store.contains("canvas_notes: store.canvas_notes.clone()"));
         assert!(local_store.contains("canvas_links: store.canvas_links.clone()"));
