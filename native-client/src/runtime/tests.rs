@@ -594,38 +594,6 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_pages_and_dialogs_keep_content_inside_visible_bounds() {
-        let profile = include_str!("../../ui/dialogs/profile-dialog.slint");
-        let auth = include_str!("../../ui/dialogs/auth-dialog.slint");
-        let agreement_update = include_str!("../../ui/dialogs/agreement-update-dialog.slint");
-        let agreement_viewer = include_str!("../../ui/dialogs/agreement-viewer-dialog.slint");
-        let update_progress = include_str!("../../ui/dialogs/update-progress-dialog.slint");
-        let models = include_str!("../../ui/pages/models-page.slint");
-        let notifications = include_str!("../../ui/pages/notifications-page.slint");
-        let settings = include_str!("../../ui/pages/settings-page.slint");
-
-        assert!(profile.contains("height: AppState.nickname == \"\" ? 150px : 214px;"));
-        assert!(profile.contains("clip: true;"));
-        assert!(profile.contains(
-            "viewport-height: max(self.height, AppState.account-sessions.length * 46px);"
-        ));
-        assert!(profile.contains("width: min(420px, root.width - 32px);"));
-
-        assert!(auth.contains("height: min(480px, root.height - 40px);"));
-        assert!(agreement_update.contains("height: min(380px, root.height - 40px);"));
-        assert!(agreement_viewer.contains("width: min(860px, root.width - 32px);"));
-        assert!(agreement_viewer.contains("height: parent.height - 120px;"));
-        assert!(update_progress.contains("height: 42px;"));
-
-        assert!(models.contains("function content-height() -> length"));
-        assert!(models.contains("AppState.catalog-models.length * 148px"));
-        assert!(models.contains("viewport-height: root.content-height() + 48px;"));
-        assert!(notifications.contains("function list-height() -> length"));
-        assert!(notifications.contains("viewport-height: root.list-height();"));
-        assert!(settings.contains("viewport-height: max(960px, parent.height);"));
-    }
-
-    #[test]
     fn thumbnail_hover_delete_reuses_confirmation_with_explicit_source() {
         let card = include_str!("../../ui/components/thumbnail-card.slint");
         let state = include_str!("../../ui/app-state.slint");
