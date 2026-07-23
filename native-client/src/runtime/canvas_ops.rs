@@ -164,6 +164,82 @@ pub(super) fn restore_canvas_snapshot(store: &mut Store, snapshot: CanvasSnapsho
     store.canvas_links = snapshot.links;
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum CanvasConnectResult {
+    Connected {
+        link_id: String,
+        target_id: String,
+        replaced_link_id: Option<String>,
+    },
+    Rejected,
+}
+
+pub(super) fn link_reaches(links: &[CanvasLinkData], start: &str, target: &str) -> bool {
+    let mut pending = vec![start];
+    let mut visited = BTreeSet::new();
+    while let Some(node_id) = pending.pop() {
+        if node_id == target {
+            return true;
+        }
+        if !visited.insert(node_id.to_string()) {
+            continue;
+        }
+        pending.extend(
+            links
+                .iter()
+                .filter(|link| link.source_id == node_id)
+                .map(|link| link.target_id.as_str()),
+        );
+    }
+    false
+}
+
+pub(super) fn connection_allowed(
+    links: &[CanvasLinkData],
+    source_id: &str,
+    target_id: &str,
+) -> bool {
+    if source_id == target_id
+        || links
+            .iter()
+            .any(|link| link.source_id == source_id && link.target_id == target_id)
+    {
+        return false;
+    }
+    let candidate = links
+        .iter()
+        .filter(|link| link.target_id != target_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    !link_reaches(&candidate, target_id, source_id)
+}
+
+pub(super) fn connect_nodes(
+    links: &mut Vec<CanvasLinkData>,
+    source_id: &str,
+    target_id: &str,
+) -> CanvasConnectResult {
+    if !connection_allowed(links, source_id, target_id) {
+        return CanvasConnectResult::Rejected;
+    }
+    let replaced_link_id = links
+        .iter()
+        .find(|link| link.target_id == target_id)
+        .map(|link| link.id.clone());
+    links.retain(|link| link.target_id != target_id);
+    let link_id = Uuid::new_v4().to_string();
+    links.push(CanvasLinkData {
+        id: link_id.clone(),
+        source_id: source_id.to_string(),
+        target_id: target_id.to_string(),
+    });
+    CanvasConnectResult::Connected {
+        link_id,
+        target_id: target_id.to_string(),
+        replaced_link_id,
+    }
+}
+
 pub(super) fn selected_ids(notes: &[CanvasNoteData]) -> BTreeSet<String> {
     notes
         .iter()
@@ -683,5 +759,50 @@ mod tests {
         assert_eq!(notes[0].width, 300.0 + 100.0 + GROUP_PADDING);
         assert_eq!(notes[0].height, 220.0 + 80.0 + GROUP_PADDING);
         assert_eq!(notes[1], child_before);
+    }
+
+    #[test]
+    fn canvas_reconnect_replaces_an_occupied_input_atomically() {
+        let mut links = vec![CanvasLinkData {
+            id: "old".into(),
+            source_id: "old-source".into(),
+            target_id: "target".into(),
+        }];
+
+        let result = connect_nodes(&mut links, "new-source", "target");
+
+        assert!(matches!(
+            result,
+            CanvasConnectResult::Connected {
+                replaced_link_id: Some(ref id),
+                ..
+            } if id == "old"
+        ));
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].source_id, "new-source");
+        assert_eq!(links[0].target_id, "target");
+    }
+
+    #[test]
+    fn canvas_reconnect_rejects_cycles_without_mutation() {
+        let mut links = vec![
+            CanvasLinkData {
+                id: "ab".into(),
+                source_id: "a".into(),
+                target_id: "b".into(),
+            },
+            CanvasLinkData {
+                id: "bc".into(),
+                source_id: "b".into(),
+                target_id: "c".into(),
+            },
+        ];
+        let before = links.clone();
+
+        assert_eq!(
+            connect_nodes(&mut links, "c", "a"),
+            CanvasConnectResult::Rejected
+        );
+        assert_eq!(links, before);
     }
 }

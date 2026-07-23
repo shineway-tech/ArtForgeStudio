@@ -480,9 +480,12 @@ component CanvasNodeCard {
     in property <length> viewport-width;
     in property <length> viewport-height;
     in property <string> connection-source-id;
+    in property <string> connection-target-id;
     callback connection-started(string, length, length);
     callback connection-moved(length, length);
     callback connection-finished(string, length, length);
+    callback reconnect-started(string, length, length);
+    callback reconnect-finished(string, length, length);
     callback selection-focused();
     in-out property <length> drag-offset-x: 0px;
     in-out property <length> drag-offset-y: 0px;
@@ -711,9 +714,11 @@ component CanvasNodeCard {
             background: AppTheme.panel;
             border-radius: self.width / 2;
             border-width: 2px * root.node-scale();
-            border-color: root.connection-source-id != "" && root.connection-source-id != root.note.id ? #f7f7f7 : AppTheme.accent;
+            border-color: AppState.canvas-link-hover-target-id == root.note.id
+                ? (AppState.canvas-link-hover-valid ? AppTheme.accent : #e5484d)
+                : (root.connection-source-id != "" && root.connection-source-id != root.note.id ? AppTheme.accent.with-alpha(0.72) : AppTheme.accent);
         }
-        if root.note.kind != "group" && (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover || AppState.canvas-selected-id == root.note.id || root.connection-source-id == root.note.id): Rectangle {
+        if root.note.kind != "group" && (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover || AppState.canvas-selected-id == root.note.id || root.connection-source-id == root.note.id || root.connection-target-id != ""): Rectangle {
             x: parent.width - 5px * root.node-scale();
             y: (parent.height - 10px * root.node-scale()) / 2;
             width: 10px * root.node-scale();
@@ -1206,12 +1211,11 @@ component CanvasNodeCard {
             mouse-cursor: crosshair;
             pointer-event(event) => {
                 if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
-                    AppState.canvas-selected-id = root.note.id;
-                    AppState.canvas-selected-link-id = "";
-                    root.connection-started(root.note.id, root.x, root.y + root.height / 2);
+                    AppState.select-canvas-node(root.note.id, false);
+                    root.reconnect-started(root.note.id, root.x, root.y + root.height / 2);
                 } else if event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
                     root.connection-moved(root.x + self.x + self.mouse-x, root.y + self.y + self.mouse-y);
-                    root.connection-finished(root.note.id, root.x + self.x + self.mouse-x, root.y + self.y + self.mouse-y);
+                    root.reconnect-finished(root.note.id, root.x + self.x + self.mouse-x, root.y + self.y + self.mouse-y);
                 }
             }
             moved => {
@@ -1546,7 +1550,10 @@ export component InfiniteCanvasPage {
     in-out property <int> zoom-percent: 100;
     in-out property <bool> appearance-open: false;
     in-out property <bool> connection-dragging: false;
+    in-out property <string> connection-mode: "";
     in-out property <string> connection-source-id: "";
+    in-out property <string> connection-target-id: "";
+    in-out property <string> connection-replacing-link-id: "";
     in-out property <length> connection-start-x: 0px;
     in-out property <length> connection-start-y: 0px;
     in-out property <length> connection-end-x: 0px;
@@ -1607,12 +1614,32 @@ export component InfiniteCanvasPage {
     }
 
     function begin-connection(source-id: string, start-x: length, start-y: length) {
+        root.connection-mode = "output";
         root.connection-source-id = source-id;
+        root.connection-target-id = "";
+        root.connection-replacing-link-id = "";
         root.connection-start-x = start-x;
         root.connection-start-y = start-y;
         root.connection-end-x = start-x;
         root.connection-end-y = start-y;
         root.connection-dragging = true;
+        AppState.canvas-link-hover-target-id = "";
+        AppState.canvas-link-hover-valid = false;
+        AppState.canvas-tool = "select";
+    }
+
+    function begin-reconnect(target-id: string, start-x: length, start-y: length) {
+        root.connection-mode = "input";
+        root.connection-source-id = "";
+        root.connection-target-id = target-id;
+        root.connection-replacing-link-id = AppState.canvas-input-link(target-id);
+        root.connection-start-x = start-x;
+        root.connection-start-y = start-y;
+        root.connection-end-x = start-x;
+        root.connection-end-y = start-y;
+        root.connection-dragging = true;
+        AppState.canvas-link-hover-target-id = "";
+        AppState.canvas-link-hover-valid = false;
         AppState.canvas-tool = "select";
     }
 
@@ -1620,6 +1647,12 @@ export component InfiniteCanvasPage {
         if root.connection-dragging {
             root.connection-end-x = end-x;
             root.connection-end-y = end-y;
+            if root.connection-mode == "output" {
+                let world-x = (end-x - root.pan-x) * 100 / root.zoom-percent;
+                let world-y = (end-y - root.pan-y) * 100 / root.zoom-percent;
+                let tolerance = max(18, 30 * 100 / root.zoom-percent);
+                AppState.preview-canvas-link-target(root.connection-source-id, world-x / 1px, world-y / 1px, tolerance);
+            }
         }
     }
 
@@ -1633,6 +1666,28 @@ export component InfiniteCanvasPage {
         root.connection-dragging = false;
         root.connection-source-id = "";
         AppState.finish-canvas-link(source-id, world-x / 1px, world-y / 1px, tolerance);
+        root.connection-mode = "";
+        root.connection-target-id = "";
+        root.connection-replacing-link-id = "";
+        AppState.canvas-link-hover-target-id = "";
+        AppState.canvas-link-hover-valid = false;
+    }
+
+    function finish-reconnect(target-id: string, end-x: length, end-y: length) {
+        if !root.connection-dragging || root.connection-target-id != target-id {
+            return;
+        }
+        let world-x = (end-x - root.pan-x) * 100 / root.zoom-percent;
+        let world-y = (end-y - root.pan-y) * 100 / root.zoom-percent;
+        let tolerance = max(18, 30 * 100 / root.zoom-percent);
+        root.connection-dragging = false;
+        AppState.finish-canvas-reconnect(target-id, world-x / 1px, world-y / 1px, tolerance);
+        root.connection-mode = "";
+        root.connection-source-id = "";
+        root.connection-target-id = "";
+        root.connection-replacing-link-id = "";
+        AppState.canvas-link-hover-target-id = "";
+        AppState.canvas-link-hover-valid = false;
     }
 
     function request-selected-delete() {
@@ -1787,7 +1842,12 @@ export component InfiniteCanvasPage {
                         root.marquee-active = false;
                         root.temporary-pan-active = false;
                         root.connection-dragging = false;
+                        root.connection-mode = "";
                         root.connection-source-id = "";
+                        root.connection-target-id = "";
+                        root.connection-replacing-link-id = "";
+                        AppState.canvas-link-hover-target-id = "";
+                        AppState.canvas-link-hover-valid = false;
                         return accept;
                     }
                     if event.modifiers.control && (event.text == "a" || event.text == "A") {
@@ -1845,6 +1905,7 @@ export component InfiniteCanvasPage {
             }
 
             for link in AppState.canvas-links: CanvasConnectionCurve {
+                visible: link.id != root.connection-replacing-link-id;
                 link: link;
                 canvas-width: canvas.width;
                 canvas-height: canvas.height;
@@ -1920,9 +1981,12 @@ export component InfiniteCanvasPage {
                 viewport-width: canvas.width;
                 viewport-height: canvas.height;
                 connection-source-id: root.connection-source-id;
+                connection-target-id: root.connection-target-id;
                 connection-started(source-id, start-x, start-y) => { root.begin-connection(source-id, start-x, start-y); }
                 connection-moved(end-x, end-y) => { root.move-connection(end-x, end-y); }
                 connection-finished(source-id, end-x, end-y) => { root.finish-connection(source-id, end-x, end-y); }
+                reconnect-started(target-id, start-x, start-y) => { root.begin-reconnect(target-id, start-x, start-y); }
+                reconnect-finished(target-id, end-x, end-y) => { root.finish-reconnect(target-id, end-x, end-y); }
                 selection-focused => { canvas-keyboard.focus(); }
             }
 
@@ -1937,9 +2001,12 @@ export component InfiniteCanvasPage {
                 viewport-width: canvas.width;
                 viewport-height: canvas.height;
                 connection-source-id: root.connection-source-id;
+                connection-target-id: root.connection-target-id;
                 connection-started(source-id, start-x, start-y) => { root.begin-connection(source-id, start-x, start-y); }
                 connection-moved(end-x, end-y) => { root.move-connection(end-x, end-y); }
                 connection-finished(source-id, end-x, end-y) => { root.finish-connection(source-id, end-x, end-y); }
+                reconnect-started(target-id, start-x, start-y) => { root.begin-reconnect(target-id, start-x, start-y); }
+                reconnect-finished(target-id, end-x, end-y) => { root.finish-reconnect(target-id, end-x, end-y); }
                 selection-focused => { canvas-keyboard.focus(); }
             }
 

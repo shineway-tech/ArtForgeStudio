@@ -582,7 +582,7 @@ mod tests {
         assert!(state.contains("callback add-canvas-node(string, float, float)"));
         assert!(state.contains("callback update-canvas-node(string, string, float, float)"));
         assert!(state.contains("callback remove-canvas-node(string)"));
-        assert!(state.contains("callback finish-canvas-link(string, float, float, float)"));
+        assert!(state.contains("callback finish-canvas-link(string, float, float, float) -> string"));
         assert!(state.contains("callback remove-canvas-link(string)"));
         assert!(state.contains("callback undo-canvas()"));
         assert!(state.contains("callback redo-canvas()"));
@@ -717,6 +717,25 @@ mod tests {
         assert!(page.contains("AppState.group-canvas-selection"));
         assert!(page.contains("AppState.ungroup-canvas-selection"));
         assert!(sync.contains("group_depth"));
+    }
+
+    #[test]
+    fn infinite_canvas_supports_link_highlight_and_atomic_reconnect() {
+        let state = include_str!("../../ui/app-state.slint");
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+
+        assert!(state.contains("canvas-link-hover-target-id"));
+        assert!(state.contains("canvas-link-hover-valid"));
+        assert!(state.contains("callback preview-canvas-link-target"));
+        assert!(state.contains("callback canvas-input-link(string) -> string"));
+        assert!(state.contains("callback finish-canvas-reconnect"));
+        assert!(page.contains("root.begin-reconnect"));
+        assert!(page.contains("root.finish-reconnect"));
+        assert!(page.contains("connection-replacing-link-id"));
+        assert!(page.contains("AppState.canvas-link-hover-valid ? AppTheme.accent : #e5484d"));
+        assert!(callbacks.contains("connect_nodes"));
+        assert!(callbacks.contains("on_finish_canvas_reconnect"));
     }
 
     #[test]

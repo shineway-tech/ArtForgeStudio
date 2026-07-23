@@ -24,24 +24,25 @@ fn target_at_input(
         .map(|(_, id)| id)
 }
 
-fn link_reaches(links: &[CanvasLinkData], start: &str, target: &str) -> bool {
-    let mut pending = vec![start];
-    let mut visited = BTreeSet::new();
-    while let Some(node_id) = pending.pop() {
-        if node_id == target {
-            return true;
-        }
-        if !visited.insert(node_id.to_string()) {
-            continue;
-        }
-        pending.extend(
-            links
-                .iter()
-                .filter(|link| link.source_id == node_id)
-                .map(|link| link.target_id.as_str()),
-        );
-    }
-    false
+fn source_at_output(
+    store: &Store,
+    target_id: &str,
+    x: f32,
+    y: f32,
+    tolerance: f32,
+) -> Option<String> {
+    store
+        .canvas_notes
+        .iter()
+        .filter(|note| note.id != target_id && note.kind != "group")
+        .filter_map(|note| {
+            let dx = note.x + note.width - x;
+            let dy = note.y + note.height / 2.0 - y;
+            let distance = (dx * dx + dy * dy).sqrt();
+            (distance <= tolerance).then_some((distance, note.id.clone()))
+        })
+        .min_by(|left, right| left.0.total_cmp(&right.0))
+        .map(|(_, id)| id)
 }
 
 fn canvas_node_defaults(kind: &str, english: bool) -> (String, f32, f32) {
@@ -567,46 +568,85 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
     {
         let app_weak = app.as_weak();
         let store = store.clone();
-        let history = history.clone();
-        state.on_finish_canvas_link(move |source_id, x, y, tolerance| {
+        state.on_preview_canvas_link_target(move |source_id, x, y, tolerance| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            let store_ref = store.borrow();
+            let target_id =
+                target_at_input(&store_ref, source_id.as_str(), x, y, tolerance.max(8.0))
+                    .unwrap_or_default();
+            let valid = !target_id.is_empty()
+                && connection_allowed(
+                    &store_ref.canvas_links,
+                    source_id.as_str(),
+                    target_id.as_str(),
+                );
+            let state = app.global::<AppState>();
+            state.set_canvas_link_hover_target_id(target_id.into());
+            state.set_canvas_link_hover_valid(valid);
+        });
+    }
+
+    {
+        let store = store.clone();
+        state.on_canvas_input_link(move |target_id| {
+            store
+                .borrow()
+                .canvas_links
+                .iter()
+                .find(|link| link.target_id == target_id.as_str())
+                .map(|link| link.id.clone())
+                .unwrap_or_default()
+                .into()
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        let history = history.clone();
+        state.on_finish_canvas_link(move |source_id, x, y, tolerance| {
+            let Some(app) = app_weak.upgrade() else {
+                return "rejected".into();
+            };
             let mut store_mut = store.borrow_mut();
-            if store_mut.canvas_links.len() >= MAX_CANVAS_LINKS
-                || !store_mut
-                    .canvas_notes
-                    .iter()
-                    .any(|note| note.id == source_id.as_str() && note.kind != "group")
+            if !store_mut
+                .canvas_notes
+                .iter()
+                .any(|note| note.id == source_id.as_str() && note.kind != "group")
             {
-                return;
+                return "rejected".into();
             }
             let Some(target_id) =
                 target_at_input(&store_mut, source_id.as_str(), x, y, tolerance.max(8.0))
             else {
-                return;
+                return "empty".into();
             };
-            if store_mut
+            let replacing = store_mut
                 .canvas_links
                 .iter()
-                .any(|link| link.source_id == source_id.as_str() && link.target_id == target_id)
-                || link_reaches(&store_mut.canvas_links, &target_id, source_id.as_str())
-            {
-                return;
+                .any(|link| link.target_id == target_id);
+            if !replacing && store_mut.canvas_links.len() >= MAX_CANVAS_LINKS {
+                return "rejected".into();
             }
 
-            history.borrow_mut().record(canvas_snapshot(&store_mut));
-            let id = Uuid::new_v4().to_string();
-            store_mut.canvas_links.push(CanvasLinkData {
-                id: id.clone(),
-                source_id: source_id.to_string(),
-                target_id: target_id.clone(),
-            });
+            let before = canvas_snapshot(&store_mut);
+            let CanvasConnectResult::Connected {
+                link_id, target_id, ..
+            } = connect_nodes(
+                &mut store_mut.canvas_links,
+                source_id.as_str(),
+                target_id.as_str(),
+            )
+            else {
+                return "rejected".into();
+            };
+            history.borrow_mut().record(before);
             persist_canvas(&app, &store_mut);
-            drop(store_mut);
             let state = app.global::<AppState>();
             state.set_canvas_selected_id(target_id.into());
-            state.set_canvas_selected_link_id(id.into());
+            state.set_canvas_selected_link_id(link_id.into());
             state.set_generation_status(
                 if state.get_language().as_str() == "en" {
                     "Connected. Upstream content will be used during generation."
@@ -616,6 +656,42 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
                 .into(),
             );
             sync_history_state(&app, &history.borrow());
+            "connected".into()
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        let history = history.clone();
+        state.on_finish_canvas_reconnect(move |target_id, x, y, tolerance| {
+            let Some(app) = app_weak.upgrade() else {
+                return "rejected".into();
+            };
+            let mut store_mut = store.borrow_mut();
+            let Some(source_id) =
+                source_at_output(&store_mut, target_id.as_str(), x, y, tolerance.max(8.0))
+            else {
+                return "rejected".into();
+            };
+            let before = canvas_snapshot(&store_mut);
+            let CanvasConnectResult::Connected {
+                link_id, target_id, ..
+            } = connect_nodes(
+                &mut store_mut.canvas_links,
+                source_id.as_str(),
+                target_id.as_str(),
+            )
+            else {
+                return "rejected".into();
+            };
+            history.borrow_mut().record(before);
+            persist_canvas(&app, &store_mut);
+            let state = app.global::<AppState>();
+            state.set_canvas_selected_id(target_id.into());
+            state.set_canvas_selected_link_id(link_id.into());
+            sync_history_state(&app, &history.borrow());
+            "connected".into()
         });
     }
 
