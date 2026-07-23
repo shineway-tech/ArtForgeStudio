@@ -550,7 +550,7 @@ Expected: no obsolete current-state claims. Historical phrases are allowed only 
 Run:
 
 ```bash
-node -e 'const fs=require("fs"),path=require("path"),cp=require("child_process");const files=cp.execFileSync("rg",["--files","-g","*.md"],{encoding:"utf8"}).trim().split("\\n").filter(Boolean);let bad=0;for(const file of files){const text=fs.readFileSync(file,"utf8");for(const match of text.matchAll(/\\]\\(([^)]+)\\)/g)){const raw=match[1].split("#")[0];if(!raw||/^(https?:|mailto:)/.test(raw))continue;const target=path.resolve(path.dirname(file),decodeURI(raw));if(!fs.existsSync(target)){console.error(`${file}: missing ${match[1]}`);bad++;}}}process.exitCode=bad?1:0;'
+node -e 'const fs=require("fs"),path=require("path"),cp=require("child_process");const files=cp.execFileSync("rg",["--files","-g","*.md"],{encoding:"utf8"}).trim().split("\\n").filter(Boolean);let bad=0;for(const file of files){const text=fs.readFileSync(file,"utf8").replace(/```[\\s\\S]*?```/g,"");for(const match of text.matchAll(/\\]\\(([^)]+)\\)/g)){const raw=match[1].split("#")[0];if(!raw||/^(https?:|mailto:)/.test(raw))continue;const target=path.resolve(path.dirname(file),decodeURI(raw));if(!fs.existsSync(target)){console.error(`${file}: missing ${match[1]}`);bad++;}}}process.exitCode=bad?1:0;'
 ```
 
 Expected: exit code 0 and no missing-link output.
