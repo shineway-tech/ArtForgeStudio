@@ -52,12 +52,13 @@ mod tests {
     }
 
     #[test]
-    fn generated_images_are_clamped_to_selected_quality() {
+    fn generated_images_preserve_provider_bytes_and_dimensions() {
         let source = image::RgbaImage::from_pixel(1254, 1254, image::Rgba([40, 80, 120, 255]));
         let bytes = encode_png_rgba(&source, 1254, 1254).unwrap();
-        let (_, _, width, height) = generated_image_from_bytes(&bytes, "1K").unwrap();
+        let (saved, _, width, height) = generated_image_from_bytes(&bytes).unwrap();
 
-        assert_eq!((width, height), (1024, 1024));
+        assert_eq!(saved, bytes);
+        assert_eq!((width, height), (1254, 1254));
     }
 
     #[test]
@@ -1520,6 +1521,33 @@ mod tests {
             content_index < outline_index,
             "the outline must be painted over the full-bleed image"
         );
+    }
+
+    #[test]
+    fn failed_generation_thumbnail_hover_requests_confirmed_delete() {
+        let card = include_str!("../../ui/components/thumbnail-card.slint");
+        let callbacks = include_str!("callbacks/viewer.rs");
+
+        assert!(card.contains("failed-hover := TouchArea"));
+        assert!(card.contains("failed-delete-touch := TouchArea"));
+        assert!(card.contains(
+            "visible: failed-hover.has-hover || failed-delete-touch.has-hover"
+        ));
+        assert!(card.contains(
+            "AppState.request-delete-thumbnail(root.item.id, \"generation\")"
+        ));
+        assert!(card.contains("visible: root.item.source-path != \"failed\";"));
+        assert!(callbacks.contains("store_mut.generations.retain(|a| a.id != id)"));
+    }
+
+    #[test]
+    fn windows_uses_gpu_renderer_without_removing_software_override() {
+        let app = include_str!("app.rs");
+        let manifest = include_str!("../../Cargo.toml");
+        assert!(app.contains("winit-femtovg"));
+        assert!(app.contains("std::env::var_os(\"SLINT_BACKEND\")"));
+        assert!(manifest.contains("\"renderer-femtovg\""));
+        assert!(manifest.contains("\"renderer-software\""));
     }
 
     #[test]

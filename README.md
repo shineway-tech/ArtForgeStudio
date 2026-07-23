@@ -1,42 +1,62 @@
 # ArtForge Studio
 
-桌面端 AI 美术生产套件。当前 workspace 只包含正式产品客户端
-`native-client`，唯一应用二进制为 `ArtForgeStudio`。
+ArtForge Studio 是使用 Rust 与 Slint 构建的跨平台桌面 AI 美术生产客户端。根 Cargo workspace 只构建 `native-client`，并生成唯一应用二进制 `ArtForgeStudio`。应用版本以 `native-client/Cargo.toml` 为准。
 
-`crates/` 保留早期模块化迁移源码作为历史参考，但已排除在 workspace
-之外，不参与构建、测试或发布。
+## Supported platforms
 
-详见 `docs/rewrite/00-index.md`。
+- Windows x64
+- macOS Intel（x86_64）
+- macOS Apple Silicon（aarch64）
 
-客户端与服务端接入进度见
-[`docs/FRONTEND_BACKEND_INTEGRATION_EXECUTION_PLAN.md`](docs/FRONTEND_BACKEND_INTEGRATION_EXECUTION_PLAN.md)，
-旧版客户端迁移规则见 [`native-client/MIGRATION.md`](native-client/MIGRATION.md)。
+正式发布由对应平台 Runner 原生构建。Windows 版本依赖 MSVC、Windows SDK 和 WebView2；macOS 安装包要求 macOS 11 或更高版本。
 
-## 构建
+## Quick start
 
-```sh
-cargo build --release
+安装 Rust stable 工具链后，在仓库根目录运行：
+
+```bash
+cargo run -p artforge-studio-native --bin ArtForgeStudio
 ```
 
-输出为 `target/release/ArtForgeStudio`（Windows 下为 `.exe`）。
-即使使用 `cargo build --release --workspace`，也只会构建这个客户端。
+客户端默认连接生产 API。开发环境可通过 `ARTFORGE_API_BASE_URL` 覆盖服务地址，具体规则见 [开发指南](docs/DEVELOPMENT.md)。
 
-## 项目结构
+## Build and test
 
-- `native-client` — 当前 ArtForgeStudio 产品客户端和唯一 workspace 成员
-- `native-client/src/runtime` — 回调、生成流程、服务、存储和展示逻辑
-- `native-client/ui` — Slint 状态、组件、页面和弹窗
-- `native-client/MIGRATION.md` — 旧 Provider、本地账号/积分与作品数据的迁移说明
-- `crates` — 已排除的历史模块化源码
+```bash
+cargo check -p artforge-studio-native
+cargo test -p artforge-studio-native
+cargo build --release -p artforge-studio-native --bin ArtForgeStudio
+```
 
-## 平台
+Release 二进制位于 `target/release/ArtForgeStudio`，Windows 下为 `target/release/ArtForgeStudio.exe`。
 
-`ArtForgeStudio` 当前可在 Windows 和 macOS 构建。
+## Package
 
-正式支付窗口仅在 Windows 使用 WebView2；macOS 开发环境会使用系统浏览器打开同一服务端收银台 URL。
+macOS：
 
-## GitHub Actions 发布
+```bash
+./scripts/package-macos.sh x64
+./scripts/package-macos.sh aarch64
+```
 
-`.github/workflows/release-desktop.yml` 构建并上传三个独立制品：包含完整素材的 Windows x64 安装器 EXE、macOS Intel DMG 和 macOS Apple Silicon DMG。普通分支、Pull Request 和手动运行只上传 Actions 制品；`v*` 标签还会签名、公证 macOS 应用，并把三个安装文件上传 OSS。
+Windows PowerShell：
 
-Secrets、OSS 路径和发版步骤见 [`docs/GITHUB_ACTIONS_RELEASE_SETUP.md`](docs/GITHUB_ACTIONS_RELEASE_SETUP.md)。
+```powershell
+./scripts/package-native-client.ps1 -Target windows
+```
+
+本地 macOS 脚本在没有签名身份时生成未签名开发 DMG。正式签名、公证、Windows 安装器和发布制品流程见 [发布指南](docs/RELEASE.md)。
+
+## Repository layout
+
+- `native-client/`：当前产品客户端，也是唯一 Cargo workspace 成员。
+- `native-client/src/runtime/`：启动、API、账号、生成、支付、本地存储和展示同步。
+- `native-client/ui/`：当前 Slint 状态、组件、页面和弹窗。
+- `scripts/`：本地构建、打包和发布辅助脚本。
+- `.github/workflows/`：持续集成和桌面端标签发布。
+- `assets/sucai/`：随客户端分发的灵感素材。
+- `crates/`、根 `ui/`、`schemas/`、`themes/`：早期模块化客户端的历史源码，已排除在当前构建之外。
+
+## Documentation
+
+从 [docs/README.md](docs/README.md) 进入当前文档。历史规划、阶段状态和旧架构不再作为仓库文档保留，需要追溯时使用 Git 历史。
