@@ -32,6 +32,7 @@ Thumbs.db
 .env.local
 *.local.toml
 .cargo/
+.worktrees/
 
 # User runtime data (do not commit)
 /input
