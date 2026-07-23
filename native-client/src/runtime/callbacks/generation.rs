@@ -1,5 +1,24 @@
 use super::*;
 
+#[derive(Clone)]
+enum PromptResultTarget {
+    Composer,
+    CanvasNode {
+        store: Rc<RefCell<Store>>,
+        id: String,
+    },
+}
+
+struct PromptTaskRequest {
+    backend: Arc<BackendRuntime>,
+    model_code: String,
+    task_type: &'static str,
+    prompt: String,
+    target_language: Option<String>,
+    optimize: bool,
+    target: PromptResultTarget,
+}
+
 pub(super) fn wire_generation_callbacks(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
     let store = context.store.clone();
@@ -34,6 +53,17 @@ pub(super) fn wire_generation_callbacks(app: &AppWindow, context: AppContext) {
                 return;
             };
             optimize_current_prompt(&app, context.clone(), false);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let context = context.clone();
+        state.on_optimize_canvas_text_node(move |id, prompt| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            optimize_canvas_text_node(&app, context.clone(), id.to_string(), prompt.to_string());
         });
     }
 
@@ -174,12 +204,54 @@ pub(super) fn optimize_current_prompt(app: &AppWindow, context: AppContext, visu
     state.set_optimizing_prompt(true);
     start_backend_prompt_task(
         app,
-        backend,
-        model_code,
-        "prompt_optimize",
-        raw_prompt,
-        None,
-        true,
+        PromptTaskRequest {
+            backend,
+            model_code,
+            task_type: "prompt_optimize",
+            prompt: raw_prompt,
+            target_language: None,
+            optimize: true,
+            target: PromptResultTarget::Composer,
+        },
+    );
+}
+
+fn optimize_canvas_text_node(app: &AppWindow, context: AppContext, id: String, prompt: String) {
+    let state = app.global::<AppState>();
+    if !require_online_operation(app, "优化提示词") || state.get_optimizing_prompt() {
+        return;
+    }
+    let raw_prompt = prompt.trim().to_string();
+    if raw_prompt.is_empty() {
+        state.set_generation_status("请先输入需要优化的文字内容".into());
+        return;
+    }
+    let Some(backend) = context.backend.clone() else {
+        state.set_generation_status("服务端尚未初始化，请重启客户端后重试".into());
+        return;
+    };
+    let model_code = state.get_reasoning_model().to_string();
+    if model_code.trim().is_empty() {
+        state.set_generation_status("服务端没有可用的提示词模型".into());
+        return;
+    }
+
+    state.set_generation_status("正在优化文字节点提示词...".into());
+    state.set_optimizing_prompt(true);
+    start_backend_prompt_task(
+        app,
+        PromptTaskRequest {
+            backend,
+            model_code,
+            task_type: "prompt_optimize",
+            prompt: raw_prompt,
+            target_language: None,
+            optimize: true,
+            target: PromptResultTarget::CanvasNode {
+                store: context.store,
+                id,
+            },
+        },
     );
 }
 
@@ -212,24 +284,28 @@ pub(super) fn translate_current_prompt(app: &AppWindow, context: AppContext) {
     state.set_generation_status("正在翻译提示词...".into());
     start_backend_prompt_task(
         app,
-        backend,
-        model_code,
-        "prompt_translate",
-        raw_prompt,
-        Some("English".to_string()),
-        false,
+        PromptTaskRequest {
+            backend,
+            model_code,
+            task_type: "prompt_translate",
+            prompt: raw_prompt,
+            target_language: Some("English".to_string()),
+            optimize: false,
+            target: PromptResultTarget::Composer,
+        },
     );
 }
 
-fn start_backend_prompt_task(
-    app: &AppWindow,
-    backend: Arc<BackendRuntime>,
-    model_code: String,
-    task_type: &'static str,
-    prompt: String,
-    target_language: Option<String>,
-    optimize: bool,
-) {
+fn start_backend_prompt_task(app: &AppWindow, task: PromptTaskRequest) {
+    let PromptTaskRequest {
+        backend,
+        model_code,
+        task_type,
+        prompt,
+        target_language,
+        optimize,
+        target,
+    } = task;
     let (sender, receiver) = mpsc::channel::<std::result::Result<String, String>>();
     std::thread::spawn(move || {
         let api = GenerationApi::new(backend.api.clone());
@@ -246,14 +322,19 @@ fn start_backend_prompt_task(
             target_language,
         };
         let result = (|| {
-            let mut detail = api.create_task(&request).map_err(|error| error.user_message())?;
+            let mut detail = api
+                .create_task(&request)
+                .map_err(|error| error.user_message())?;
             loop {
                 if detail.terminal() {
                     if matches!(detail.status.as_str(), "completed" | "partially_completed") {
-                        return detail.result_prompt.filter(|value| !value.trim().is_empty())
+                        return detail
+                            .result_prompt
+                            .filter(|value| !value.trim().is_empty())
                             .ok_or_else(|| "服务端任务未返回提示词结果".to_string());
                     }
-                    return Err(detail.failure
+                    return Err(detail
+                        .failure
                         .map(|failure| failure.message)
                         .unwrap_or_else(|| "服务端提示词任务执行失败".to_string()));
                 }
@@ -267,6 +348,7 @@ fn start_backend_prompt_task(
         app.as_weak(),
         Rc::new(RefCell::new(Some(receiver))),
         optimize,
+        target,
     );
 }
 
@@ -274,13 +356,19 @@ fn poll_backend_prompt_result(
     app_weak: Weak<AppWindow>,
     receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<String, String>>>>>,
     optimize: bool,
+    target: PromptResultTarget,
 ) {
     slint::Timer::single_shot(Duration::from_millis(100), move || {
         let result = {
             let mut slot = receiver.borrow_mut();
-            let Some(rx) = slot.as_ref() else { return; };
+            let Some(rx) = slot.as_ref() else {
+                return;
+            };
             match rx.try_recv() {
-                Ok(result) => { slot.take(); Some(result) }
+                Ok(result) => {
+                    slot.take();
+                    Some(result)
+                }
                 Err(TryRecvError::Empty) => None,
                 Err(TryRecvError::Disconnected) => {
                     slot.take();
@@ -289,21 +377,45 @@ fn poll_backend_prompt_result(
             }
         };
         let Some(result) = result else {
-            poll_backend_prompt_result(app_weak, receiver, optimize);
+            poll_backend_prompt_result(app_weak, receiver, optimize, target);
             return;
         };
-        let Some(app) = app_weak.upgrade() else { return; };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
         let state = app.global::<AppState>();
         state.set_optimizing_prompt(false);
         state.set_translating_prompt(false);
         match result {
-            Ok(prompt) => {
-                state.set_prompt(prompt.into());
-                state.set_generation_status(if optimize { "提示词优化完成".into() } else { "提示词翻译完成".into() });
-            }
+            Ok(prompt) => match target {
+                PromptResultTarget::Composer => {
+                    state.set_prompt(prompt.into());
+                    state.set_generation_status(if optimize {
+                        "提示词优化完成".into()
+                    } else {
+                        "提示词翻译完成".into()
+                    });
+                }
+                PromptResultTarget::CanvasNode { store, id } => {
+                    let position = store
+                        .borrow()
+                        .canvas_notes
+                        .iter()
+                        .find(|node| node.id == id && node.kind == "text")
+                        .map(|node| (node.x, node.y));
+                    if let Some((x, y)) = position {
+                        state.invoke_update_canvas_node(id.into(), prompt.into(), x, y);
+                        state.set_generation_status("文字节点提示词优化完成".into());
+                    } else {
+                        state.set_generation_status("文字节点已不存在，未写入优化结果".into());
+                    }
+                }
+            },
             Err(reason) => {
                 state.set_generation_status(format!("提示词处理失败：{reason}").into());
-                if !optimize { state.set_translate_prompt(false); }
+                if !optimize {
+                    state.set_translate_prompt(false);
+                }
             }
         }
     });

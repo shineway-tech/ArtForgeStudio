@@ -283,6 +283,7 @@ pub(super) fn push_canvas_notes(app: &AppWindow, store: &Store) {
                 } else {
                     load_image(Path::new(&note.image_path)).unwrap_or_default()
                 },
+                font_size: note.font_size,
                 selected: note.selected,
             })
             .collect::<Vec<_>>(),

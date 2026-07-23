@@ -270,9 +270,11 @@ component CanvasMediaChip {
 component CanvasOptionPill {
     in property <string> text;
     in property <bool> selected: false;
+    in property <bool> disabled: false;
     callback clicked();
     height: 36px;
     Rectangle {
+        opacity: root.disabled ? 0.42 : 1;
         background: option-touch.has-hover ? #393532 : transparent;
         border-radius: 18px;
         border-width: root.selected ? 2px : 1px;
@@ -292,8 +294,8 @@ component CanvasOptionPill {
         option-touch := TouchArea {
             width: parent.width;
             height: parent.height;
-            mouse-cursor: pointer;
-            clicked => { root.clicked(); }
+            mouse-cursor: root.disabled ? default : pointer;
+            clicked => { if !root.disabled { root.clicked(); } }
         }
     }
 }
@@ -778,7 +780,7 @@ component CanvasNodeCard {
     }
 
     function media-settings-text() -> string {
-        if root.note.kind == "image" { return (AppState.en ? "Auto" : "自动") + " · " + AppState.ratio + " · " + AppState.count + (AppState.en ? " images" : "张"); }
+        if root.note.kind == "image" { return AppState.quality + " · " + AppState.ratio + " · " + AppState.count + (AppState.en ? " images" : "张"); }
         if root.note.kind == "video" { return root.video-quality + " · " + root.video-layout-label() + " · " + root.video-duration; }
         return root.audio-voice + " · " + root.audio-format + " · " + root.audio-speed;
     }
@@ -1001,7 +1003,7 @@ component CanvasNodeCard {
             wrap: word-wrap;
             overflow: elide;
             color: root.dark-background ? #ddd7d1 : AppTheme.text;
-            font-size: AppState.settings-font-size * 1px * root.node-scale();
+            font-size: root.note.font-size * 1px * root.node-scale();
         }
 
         text-editor := TextInput {
@@ -1014,7 +1016,7 @@ component CanvasNodeCard {
             single-line: false;
             wrap: word-wrap;
             color: root.dark-background ? #ddd7d1 : AppTheme.text;
-            font-size: AppState.settings-font-size * 1px * root.node-scale();
+            font-size: root.note.font-size * 1px * root.node-scale();
             key-pressed(event) => {
                 AppState.canvas-selected-id = root.note.id;
                 if event.text == Key.Return {
@@ -1057,6 +1059,51 @@ component CanvasNodeCard {
                     return accept;
                 }
                 return reject;
+            }
+        }
+
+        if root.note.kind == "text" && root.zoom-percent >= 45 && !root.editing: Rectangle {
+            x: 12px * root.node-scale();
+            y: 14px * root.node-scale();
+            width: 88px * root.node-scale();
+            height: 30px * root.node-scale();
+            opacity: AppState.reasoning-model == "" || AppState.optimizing-prompt ? 0.45 : 1;
+            background: text-optimize-touch.has-hover && AppState.reasoning-model != "" && !AppState.optimizing-prompt
+                ? AppTheme.accent.with-alpha(0.18)
+                : transparent;
+            border-radius: self.height / 2;
+            border-width: 1px;
+            border-color: root.dark-background ? #514c48 : AppTheme.border;
+            Image {
+                x: 9px * root.node-scale();
+                y: (parent.height - 14px * root.node-scale()) / 2;
+                width: 14px * root.node-scale();
+                height: self.width;
+                source: @image-url("../../assets/icons/inspiration.svg");
+                colorize: root.dark-background ? #eee9e4 : AppTheme.text;
+                image-fit: contain;
+            }
+            Text {
+                x: 28px * root.node-scale();
+                width: parent.width - self.x - 8px * root.node-scale();
+                height: parent.height;
+                text: AppState.optimizing-prompt ? (AppState.en ? "Optimizing" : "优化中") : (AppState.en ? "AI Optimize" : "AI优化");
+                color: root.dark-background ? #eee9e4 : AppTheme.text;
+                font-size: 12px * root.node-scale();
+                font-weight: 500;
+                vertical-alignment: center;
+                wrap: no-wrap;
+                overflow: elide;
+            }
+            text-optimize-touch := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: AppState.reasoning-model == "" || AppState.optimizing-prompt ? default : pointer;
+                clicked => {
+                    if AppState.reasoning-model != "" && !AppState.optimizing-prompt {
+                        AppState.optimize-canvas-text-node(root.note.id, root.local-prompt());
+                    }
+                }
             }
         }
 
@@ -1162,7 +1209,7 @@ component CanvasNodeCard {
         }
 
         if root.note.kind == "text" && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 45: text-action-bar := Rectangle {
-            width: 736px * root.node-scale();
+            width: 648px * root.node-scale();
             height: 48px * root.node-scale();
             x: (parent.width - self.width) / 2;
             y: root.action-bar-y();
@@ -1179,11 +1226,10 @@ component CanvasNodeCard {
                 CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.show-canvas-node-info(root.note.id); } }
                 CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
                 CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/assets.svg"); text: AppState.en ? "Save asset" : "存素材"; clicked => { root.save-content(); if root.current-content != "" { AppState.save-custom-prompt("", root.current-content); AppState.generation-status = AppState.en ? "Text asset saved locally" : "文字素材已保存到本地"; } } }
-                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/book.svg"); text: AppState.en ? "Edit" : "编辑"; clicked => { root.current-content = root.is-default-text-prompt() ? "" : root.note.content; root.editing = true; text-editor.focus(); } }
-                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/edit.svg"); text: AppState.en ? "Edit text" : "编辑文字"; clicked => { root.current-content = root.is-default-text-prompt() ? "" : root.note.content; root.editing = true; text-editor.focus(); } }
+                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/edit.svg"); text: AppState.en ? "Edit" : "编辑"; clicked => { root.current-content = root.is-default-text-prompt() ? "" : root.note.content; root.editing = true; text-editor.focus(); } }
                 CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/image.svg"); text: AppState.en ? "Generate" : "生图"; clicked => { root.generate-from-text(); } }
-                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/minus.svg"); text: AppState.en ? "Zoom out" : "缩小"; clicked => { AppState.scale-canvas-node(root.note.id, 0.9); } }
-                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/plus.svg"); text: AppState.en ? "Zoom in" : "放大"; clicked => { AppState.scale-canvas-node(root.note.id, 1.1); } }
+                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/minus.svg"); text: AppState.en ? "Smaller" : "缩小"; clicked => { AppState.adjust-canvas-text-font-size(root.note.id, -1); } }
+                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/plus.svg"); text: AppState.en ? "Larger" : "放大"; clicked => { AppState.adjust-canvas-text-font-size(root.note.id, 1); } }
             }
         }
 
@@ -1536,7 +1582,7 @@ component CanvasNodeCard {
 
         image-settings-popup := PopupWindow {
             width: 378px;
-            height: 418px;
+            height: 488px;
             x: root.settings-popup-x(self.width);
             y: root.settings-popup-y(self.height);
             close-policy: close-on-click-outside;
@@ -1549,10 +1595,21 @@ component CanvasNodeCard {
                 Rectangle { x: 18px; y: 44px; width: 154px; height: 36px; background: #2d2926; border-radius: 10px; Text { x: 12px; width: 26px; height: parent.height; text: "W"; color: #aaa39d; font-size: 12px; vertical-alignment: center; } Text { x: 48px; width: parent.width - 60px; height: parent.height; text: root.image-width-text(); color: #eee9e4; font-size: 13px; vertical-alignment: center; } }
                 Text { x: 177px; y: 44px; width: 24px; height: 36px; text: "↔"; color: #8d8680; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
                 Rectangle { x: 206px; y: 44px; width: 154px; height: 36px; background: #2d2926; border-radius: 10px; Text { x: 12px; width: 26px; height: parent.height; text: "H"; color: #aaa39d; font-size: 12px; vertical-alignment: center; } Text { x: 48px; width: parent.width - 60px; height: parent.height; text: root.image-height-text(); color: #eee9e4; font-size: 13px; vertical-alignment: center; } }
-                Text { x: 18px; y: 88px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Aspect ratio" : "宽高比"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
-                GridLayout {
+                Text { x: 18px; y: 88px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Quality" : "质量"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
+                HorizontalLayout {
                     x: 18px;
                     y: 114px;
+                    width: parent.width - 36px;
+                    height: 36px;
+                    spacing: 10px;
+                    CanvasOptionPill { text: "1K"; selected: AppState.quality == "1K"; clicked => { AppState.quality = "1K"; } }
+                    CanvasOptionPill { text: "2K"; selected: AppState.quality == "2K"; disabled: AppState.membership-max-quality == "1K"; clicked => { AppState.quality = "2K"; } }
+                    CanvasOptionPill { text: "4K"; selected: AppState.quality == "4K"; disabled: AppState.membership-max-quality != "4K"; clicked => { AppState.quality = "4K"; } }
+                }
+                Text { x: 18px; y: 158px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Aspect ratio" : "宽高比"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
+                GridLayout {
+                    x: 18px;
+                    y: 184px;
                     width: parent.width - 36px;
                     height: 208px;
                     spacing: 8px;
@@ -1574,10 +1631,10 @@ component CanvasNodeCard {
                         CanvasRatioOption { width: 78px; value: "9:21"; label: "9:21"; selected: AppState.ratio == "9:21"; clicked => { AppState.ratio = "9:21"; } }
                     }
                 }
-                Text { x: 18px; y: 332px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Generation count" : "生成张数"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
+                Text { x: 18px; y: 402px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Generation count" : "生成张数"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
                 HorizontalLayout {
                     x: 18px;
-                    y: 360px;
+                    y: 430px;
                     width: parent.width - 36px;
                     height: 36px;
                     spacing: 10px;
@@ -1811,7 +1868,7 @@ export component InfiniteCanvasPage {
         let world-x = (canvas.width / 2 - root.pan-x) * 100 / root.zoom-percent;
         let world-y = (canvas.height / 2 - root.pan-y) * 100 / root.zoom-percent;
         AppState.add-canvas-node(kind, world-x / 1px, world-y / 1px);
-        AppState.canvas-tool = "select";
+        AppState.canvas-tool = "pan";
     }
 
     function begin-connection(source-id: string, start-x: length, start-y: length) {
@@ -1826,7 +1883,7 @@ export component InfiniteCanvasPage {
         root.connection-dragging = true;
         AppState.canvas-link-hover-target-id = "";
         AppState.canvas-link-hover-valid = false;
-        AppState.canvas-tool = "select";
+        AppState.canvas-tool = "pan";
     }
 
     function begin-reconnect(target-id: string, start-x: length, start-y: length) {
@@ -1841,7 +1898,7 @@ export component InfiniteCanvasPage {
         root.connection-dragging = true;
         AppState.canvas-link-hover-target-id = "";
         AppState.canvas-link-hover-valid = false;
-        AppState.canvas-tool = "select";
+        AppState.canvas-tool = "pan";
     }
 
     function move-connection(end-x: length, end-y: length) {
@@ -2406,7 +2463,7 @@ export component InfiniteCanvasPage {
                 visible: !AppState.canvas-node-info-open;
                 x: max(16px, (parent.width - self.width) / 2);
                 y: parent.height - 62px;
-                width: min(parent.width - 32px, parent.width < 620px ? 332px : 436px);
+                width: min(parent.width - 32px, parent.width < 620px ? 300px : 388px);
                 height: parent.width < 620px ? 44px : 52px;
                 background: AppTheme.panel.with-alpha(0.98);
                 border-radius: 7px;
@@ -2415,7 +2472,6 @@ export component InfiniteCanvasPage {
                 HorizontalLayout {
                     padding: 4px;
                     spacing: 4px;
-                    CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/canvas.svg"); label: AppState.en ? "Select" : "选择"; selected: AppState.canvas-tool == "select"; clicked => { AppState.canvas-tool = "select"; } }
                     CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/move.svg"); label: AppState.en ? "Pan" : "移动画布"; selected: AppState.canvas-tool == "pan"; clicked => { AppState.canvas-tool = "pan"; } }
                     CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/undo.svg"); label: AppState.en ? "Undo" : "撤销"; disabled: !AppState.canvas-can-undo; clicked => { AppState.undo-canvas(); } }
                     CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/redo.svg"); label: AppState.en ? "Redo" : "重做"; disabled: !AppState.canvas-can-redo; clicked => { AppState.redo-canvas(); } }

@@ -175,6 +175,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
                 "parent_group_id": node.parent_group_id,
                 "z_index": node.z_index,
                 "image_path": node.image_path,
+                "font_size": node.font_size,
                 "status": "idle"
             }))
             .unwrap_or_else(|_| "{}".to_string());
@@ -308,7 +309,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
         let app_weak = app.as_weak();
         let store = store.clone();
         let history = history.clone();
-        state.on_scale_canvas_node(move |id, factor| {
+        state.on_adjust_canvas_text_font_size(move |id, delta| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -316,24 +317,19 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             let Some(index) = store_mut
                 .canvas_notes
                 .iter()
-                .position(|node| node.id == id.as_str() && node.kind != "group")
+                .position(|node| node.id == id.as_str() && node.kind == "text")
             else {
                 return;
             };
-            let factor = factor.clamp(0.5, 2.0);
-            let next_width = (store_mut.canvas_notes[index].width * factor).clamp(160.0, 1200.0);
-            let next_height = (store_mut.canvas_notes[index].height * factor).clamp(120.0, 900.0);
-            if next_width == store_mut.canvas_notes[index].width
-                && next_height == store_mut.canvas_notes[index].height
-            {
+            let next_font_size = (store_mut.canvas_notes[index].font_size + delta).clamp(8.0, 72.0);
+            if next_font_size == store_mut.canvas_notes[index].font_size {
                 return;
             }
 
             history.borrow_mut().record(canvas_snapshot(&store_mut));
-            store_mut.canvas_notes[index].width = next_width;
-            store_mut.canvas_notes[index].height = next_height;
+            store_mut.canvas_notes[index].font_size = next_font_size;
             persist_canvas(&app, &store_mut);
-            sync_canvas_selection_metrics(&app, &store_mut);
+            push_canvas_notes(&app, &store_mut);
             sync_history_state(&app, &history.borrow());
         });
     }
@@ -1104,6 +1100,7 @@ mod tests {
         assert_eq!(parsed.kind, "text");
         assert_eq!(parsed.width, 280.0);
         assert_eq!(parsed.height, 176.0);
+        assert_eq!(parsed.font_size, 12.0);
         assert_eq!(parsed.content, "old note");
     }
 

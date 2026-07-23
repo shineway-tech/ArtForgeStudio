@@ -701,7 +701,9 @@ mod tests {
             assert!(page.contains(interaction), "missing {interaction}");
         }
         assert!(page.contains("AppState.canvas-tool == \"pan\""));
-        assert!(page.contains("AppState.canvas-tool == \"select\""));
+        assert!(include_str!("../../ui/app-state.slint")
+            .contains("in-out property <string> canvas-tool: \"pan\""));
+        assert!(!page.contains("label: AppState.en ? \"Select\" : \"选择\""));
         assert!(page.contains("link.source-selected"));
         assert!(page.contains("link.target-selected"));
     }
@@ -969,6 +971,10 @@ mod tests {
     #[test]
     fn infinite_canvas_text_nodes_match_the_reference_interaction_style() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let canvas_callbacks = include_str!("callbacks/infinite_canvas.rs");
+        let generation_callbacks = include_str!("callbacks/generation.rs");
+        let model = include_str!("model.rs");
         let node = page
             .split("component CanvasNodeCard")
             .nth(1)
@@ -980,8 +986,18 @@ mod tests {
         assert!(node.contains("node-drag-touch := TouchArea"));
         assert!(node.contains("double-clicked"));
         assert!(node.contains("text-editor.focus()"));
+        assert!(node.contains("AppState.optimize-canvas-text-node"));
+        assert!(node.contains("AppState.en ? \"AI Optimize\" : \"AI优化\""));
         assert!(node.contains("AppState.en ? \"Generate\" : \"生图\""));
         assert!(node.contains("root.generate-from-text()"));
+        assert!(node.contains("font-size: root.note.font-size * 1px * root.node-scale()"));
+        assert!(state.contains("callback adjust-canvas-text-font-size(string, float)"));
+        assert!(state.contains("callback optimize-canvas-text-node(string, string)"));
+        assert!(canvas_callbacks.contains("on_adjust_canvas_text_font_size"));
+        assert!(canvas_callbacks.contains(".clamp(8.0, 72.0)"));
+        assert!(generation_callbacks.contains("on_optimize_canvas_text_node"));
+        assert!(generation_callbacks.contains("PromptResultTarget::CanvasNode"));
+        assert!(model.contains("default_canvas_font_size"));
     }
 
     #[test]
@@ -1018,6 +1034,10 @@ mod tests {
         assert!(node.contains("上传音频"));
         assert!(node.contains("AppState.model-image-options"));
         assert!(node.contains("AppState.count = 4"));
+        assert!(node.contains("AppState.quality = \"1K\""));
+        assert!(node.contains("AppState.quality = \"2K\""));
+        assert!(node.contains("AppState.quality = \"4K\""));
+        assert!(node.contains("AppState.quality + \" · \" + AppState.ratio"));
         assert!(node.contains("audio-voice: \"Alloy\""));
         assert!(node.contains("audio-format: \"MP3\""));
         assert!(node.contains("audio-speed: \"1x\""));
@@ -1154,15 +1174,14 @@ mod tests {
             text_bar
                 .matches("CanvasMediaAction { horizontal-stretch: 1;")
                 .count(),
-            8
+            7
         );
-        for label in [
-            "信息", "删除", "存素材", "编辑", "编辑文字", "生图", "缩小", "放大",
-        ] {
+        for label in ["信息", "删除", "存素材", "编辑", "生图", "缩小", "放大"] {
             assert!(text_bar.contains(label), "missing text node action: {label}");
         }
-        assert!(text_bar.contains("AppState.scale-canvas-node(root.note.id, 0.9)"));
-        assert!(text_bar.contains("AppState.scale-canvas-node(root.note.id, 1.1)"));
+        assert!(!text_bar.contains("编辑文字"));
+        assert!(text_bar.contains("AppState.adjust-canvas-text-font-size(root.note.id, -1)"));
+        assert!(text_bar.contains("AppState.adjust-canvas-text-font-size(root.note.id, 1)"));
         assert_eq!(
             video_actions
                 .matches("CanvasMediaAction { horizontal-stretch: 1;")

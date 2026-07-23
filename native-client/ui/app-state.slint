@@ -93,7 +93,7 @@ export global AppState {
     in-out property <string> canvas-drag-preview-id: "";
     in-out property <float> canvas-drag-delta-x: 0;
     in-out property <float> canvas-drag-delta-y: 0;
-    in-out property <string> canvas-tool: "select";
+    in-out property <string> canvas-tool: "pan";
     in-out property <string> canvas-grid-style: "line";
     in-out property <bool> canvas-dark-background: true;
     in-out property <bool> canvas-show-image-info: true;
@@ -383,7 +383,8 @@ export global AppState {
     callback remove-canvas-selection();
     callback group-canvas-selection(float, float);
     callback ungroup-canvas-selection();
-    callback scale-canvas-node(string, float);
+    callback adjust-canvas-text-font-size(string, float);
+    callback optimize-canvas-text-node(string, string);
     callback resize-canvas-group(string, float, float);
     callback prepare-canvas-focus(float, float) -> int;
     callback show-canvas-node-info(string);

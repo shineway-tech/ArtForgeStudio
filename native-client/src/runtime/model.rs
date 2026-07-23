@@ -36,7 +36,11 @@ fn default_canvas_node_height() -> f32 {
     176.0
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+fn default_canvas_font_size() -> f32 {
+    12.0
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 struct CanvasNoteData {
     id: String,
     #[serde(default = "default_canvas_node_kind")]
@@ -54,8 +58,29 @@ struct CanvasNoteData {
     z_index: i32,
     #[serde(default)]
     image_path: String,
+    #[serde(default = "default_canvas_font_size")]
+    font_size: f32,
     #[serde(skip)]
     selected: bool,
+}
+
+impl Default for CanvasNoteData {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            kind: default_canvas_node_kind(),
+            content: String::new(),
+            x: 0.0,
+            y: 0.0,
+            width: default_canvas_node_width(),
+            height: default_canvas_node_height(),
+            parent_group_id: String::new(),
+            z_index: 0,
+            image_path: String::new(),
+            font_size: default_canvas_font_size(),
+            selected: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
