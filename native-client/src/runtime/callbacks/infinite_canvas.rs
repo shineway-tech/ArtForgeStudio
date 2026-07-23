@@ -152,6 +152,119 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
     {
         let app_weak = app.as_weak();
         let store = store.clone();
+        state.on_show_canvas_node_info(move |id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let store_ref = store.borrow();
+            let Some(node) = store_ref
+                .canvas_notes
+                .iter()
+                .find(|node| node.id == id.as_str())
+            else {
+                return;
+            };
+            let json = serde_json::to_string_pretty(&serde_json::json!({
+                "id": node.id,
+                "type": node.kind,
+                "content": node.content,
+                "width": node.width,
+                "height": node.height,
+                "x": node.x,
+                "y": node.y,
+                "parent_group_id": node.parent_group_id,
+                "z_index": node.z_index,
+                "image_path": node.image_path,
+                "status": "idle"
+            }))
+            .unwrap_or_else(|_| "{}".to_string());
+
+            let state = app.global::<AppState>();
+            state.set_canvas_node_info_id(node.id.clone().into());
+            state.set_canvas_node_info_kind(node.kind.clone().into());
+            state.set_canvas_node_info_x(node.x);
+            state.set_canvas_node_info_y(node.y);
+            state.set_canvas_node_info_width(node.width);
+            state.set_canvas_node_info_height(node.height);
+            state.set_canvas_node_info_status("idle".into());
+            state.set_canvas_node_info_json(json.into());
+            state.set_canvas_node_info_tab("info".into());
+            state.set_canvas_node_info_open(true);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        let history = history.clone();
+        state.on_choose_canvas_node_image(move |id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let Some(source_path) = rfd::FileDialog::new()
+                .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
+                .pick_file()
+            else {
+                return;
+            };
+            if load_image(&source_path).is_err() {
+                let state = app.global::<AppState>();
+                state.set_generation_status(
+                    if state.get_language().as_str() == "en" {
+                        "The selected file is not a supported image"
+                    } else {
+                        "所选文件不是受支持的图片"
+                    }
+                    .into(),
+                );
+                return;
+            }
+            let Ok(bytes) = fs::read(&source_path) else {
+                return;
+            };
+            let upload_dir = app_data_dir().join("canvas").join("uploads");
+            if fs::create_dir_all(&upload_dir).is_err() {
+                return;
+            }
+            let destination = upload_dir.join(format!(
+                "{}-{}.{}",
+                id.as_str(),
+                Uuid::new_v4(),
+                image_extension(&bytes)
+            ));
+            if atomic_write_file(&destination, &bytes).is_err() {
+                return;
+            }
+
+            let mut store_mut = store.borrow_mut();
+            let Some(index) = store_mut
+                .canvas_notes
+                .iter()
+                .position(|node| node.id == id.as_str() && node.kind == "image")
+            else {
+                let _ = fs::remove_file(&destination);
+                return;
+            };
+            history.borrow_mut().record(canvas_snapshot(&store_mut));
+            store_mut.canvas_notes[index].image_path = destination.display().to_string();
+            persist_canvas(&app, &store_mut);
+            sync_history_state(&app, &history.borrow());
+
+            let state = app.global::<AppState>();
+            state.set_generation_status(
+                if state.get_language().as_str() == "en" {
+                    "Image added to the node"
+                } else {
+                    "图片已添加到节点"
+                }
+                .into(),
+            );
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
         let history = history.clone();
         state.on_add_canvas_node(move |kind, center_x, center_y| {
             let Some(app) = app_weak.upgrade() else {
@@ -187,6 +300,40 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             persist_canvas(&app, &store_mut);
             sync_canvas_selection(&app, &store_mut);
             state.set_canvas_selected_id(id.into());
+            sync_history_state(&app, &history.borrow());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        let history = history.clone();
+        state.on_scale_canvas_node(move |id, factor| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut store_mut = store.borrow_mut();
+            let Some(index) = store_mut
+                .canvas_notes
+                .iter()
+                .position(|node| node.id == id.as_str() && node.kind != "group")
+            else {
+                return;
+            };
+            let factor = factor.clamp(0.5, 2.0);
+            let next_width = (store_mut.canvas_notes[index].width * factor).clamp(160.0, 1200.0);
+            let next_height = (store_mut.canvas_notes[index].height * factor).clamp(120.0, 900.0);
+            if next_width == store_mut.canvas_notes[index].width
+                && next_height == store_mut.canvas_notes[index].height
+            {
+                return;
+            }
+
+            history.borrow_mut().record(canvas_snapshot(&store_mut));
+            store_mut.canvas_notes[index].width = next_width;
+            store_mut.canvas_notes[index].height = next_height;
+            persist_canvas(&app, &store_mut);
+            sync_canvas_selection_metrics(&app, &store_mut);
             sync_history_state(&app, &history.borrow());
         });
     }

@@ -52,6 +52,8 @@ struct CanvasNoteData {
     parent_group_id: String,
     #[serde(default)]
     z_index: i32,
+    #[serde(default)]
+    image_path: String,
     #[serde(skip)]
     selected: bool,
 }

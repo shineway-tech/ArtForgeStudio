@@ -277,6 +277,12 @@ pub(super) fn push_canvas_notes(app: &AppWindow, store: &Store) {
                 height: note.height,
                 parent_group_id: note.parent_group_id.clone().into(),
                 z_index: note.z_index,
+                image_path: note.image_path.clone().into(),
+                preview_image: if note.image_path.is_empty() {
+                    Image::default()
+                } else {
+                    load_image(Path::new(&note.image_path)).unwrap_or_default()
+                },
                 selected: note.selected,
             })
             .collect::<Vec<_>>(),

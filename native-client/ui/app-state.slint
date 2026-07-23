@@ -100,6 +100,16 @@ export global AppState {
     in-out property <bool> canvas-minimap-open: false;
     in-out property <bool> canvas-can-undo: false;
     in-out property <bool> canvas-can-redo: false;
+    in-out property <bool> canvas-node-info-open: false;
+    in-out property <string> canvas-node-info-tab: "info";
+    in-out property <string> canvas-node-info-id: "";
+    in-out property <string> canvas-node-info-kind: "";
+    in-out property <float> canvas-node-info-x: 0;
+    in-out property <float> canvas-node-info-y: 0;
+    in-out property <float> canvas-node-info-width: 0;
+    in-out property <float> canvas-node-info-height: 0;
+    in-out property <string> canvas-node-info-status: "idle";
+    in-out property <string> canvas-node-info-json: "";
     in-out property <string> asset-type: "character";
     in-out property <string> ratio: "1:1";
     in-out property <bool> ratio-more-open: true;
@@ -373,8 +383,11 @@ export global AppState {
     callback remove-canvas-selection();
     callback group-canvas-selection(float, float);
     callback ungroup-canvas-selection();
+    callback scale-canvas-node(string, float);
     callback resize-canvas-group(string, float, float);
     callback prepare-canvas-focus(float, float) -> int;
+    callback show-canvas-node-info(string);
+    callback choose-canvas-node-image(string);
     callback undo-canvas();
     callback redo-canvas();
     callback select-image-model(string);

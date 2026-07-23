@@ -878,6 +878,54 @@ mod tests {
     }
 
     #[test]
+    fn infinite_canvas_image_and_text_info_actions_open_the_shared_node_dialog() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+        let node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .and_then(|value| value.split("export component InfiniteCanvasPage").next())
+            .expect("canvas node component");
+
+        assert!(state.contains("callback show-canvas-node-info(string)"));
+        assert!(state.contains("canvas-node-info-open"));
+        assert!(page.contains("component CanvasNodeInfoDialog"));
+        assert!(page.contains("AppState.canvas-node-info-tab == \"json\""));
+        assert!(page.contains("AppState.canvas-node-info-width + \" x \""));
+        assert!(page.contains("AppState.canvas-node-info-x + \", \""));
+        assert!(node.matches("AppState.show-canvas-node-info(root.note.id)").count() >= 2);
+        assert!(callbacks.contains("state.on_show_canvas_node_info"));
+        assert!(callbacks.contains("serde_json::to_string_pretty"));
+        assert!(callbacks.contains("\"status\": \"idle\""));
+    }
+
+    #[test]
+    fn infinite_canvas_uploaded_image_preview_is_persisted_and_clipped_inside_the_node() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let types = include_str!("../../ui/types.slint");
+        let model = include_str!("model.rs");
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+        let sync = include_str!("presentation/sync.rs");
+
+        assert!(state.contains("callback choose-canvas-node-image(string)"));
+        assert!(types.contains("image-path: string"));
+        assert!(types.contains("preview-image: image"));
+        assert!(model.contains("image_path: String"));
+        assert!(callbacks.contains("state.on_choose_canvas_node_image"));
+        assert!(callbacks.contains("app_data_dir().join(\"canvas\").join(\"uploads\")"));
+        assert!(callbacks.contains("atomic_write_file(&destination, &bytes)"));
+        assert!(callbacks.contains("image_path = destination.display().to_string()"));
+        assert!(sync.contains("load_image(Path::new(&note.image_path))"));
+        assert!(page.contains("root.note.kind == \"image\" && root.note.image-path != \"\""));
+        assert!(page.contains("source: root.note.preview-image"));
+        assert!(page.contains("image-fit: contain"));
+        assert!(page.contains("clip: true"));
+        assert!(page.contains("AppState.choose-canvas-node-image(root.note.id)"));
+    }
+
+    #[test]
     fn infinite_canvas_links_nodes_and_feeds_upstream_prompts_downstream() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
         let state = include_str!("../../ui/app-state.slint");
@@ -1061,7 +1109,7 @@ mod tests {
             .and_then(|value| value.split("media-editor-panel := Rectangle").next())
             .expect("media action bar");
 
-        assert!(action_bar_y.contains("return -76px * root.node-scale();"));
+        assert!(action_bar_y.contains("return -62px * root.node-scale();"));
         assert!(!action_bar_y.contains("root.y"));
         assert!(!action_bar_y.contains("root.viewport-height"));
         assert!(text_bar.contains("y: root.action-bar-y();"));
@@ -1106,8 +1154,15 @@ mod tests {
             text_bar
                 .matches("CanvasMediaAction { horizontal-stretch: 1;")
                 .count(),
-            4
+            8
         );
+        for label in [
+            "信息", "删除", "存素材", "编辑", "编辑文字", "生图", "缩小", "放大",
+        ] {
+            assert!(text_bar.contains(label), "missing text node action: {label}");
+        }
+        assert!(text_bar.contains("AppState.scale-canvas-node(root.note.id, 0.9)"));
+        assert!(text_bar.contains("AppState.scale-canvas-node(root.note.id, 1.1)"));
         assert_eq!(
             video_actions
                 .matches("CanvasMediaAction { horizontal-stretch: 1;")

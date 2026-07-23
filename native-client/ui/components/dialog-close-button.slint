@@ -2,6 +2,7 @@ import { AppTheme } from "../theme.slint";
 
 export component DialogCloseButton {
     callback clicked();
+    in property <color> icon-color: AppTheme.muted;
     width: 30px;
     height: 30px;
     Rectangle {
@@ -13,7 +14,7 @@ export component DialogCloseButton {
             width: parent.width;
             height: parent.height;
                 text: "x";
-            color: AppTheme.muted;
+            color: root.icon-color;
             font-size: 18px;
             font-weight: 400;
             horizontal-alignment: center;
