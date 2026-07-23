@@ -586,12 +586,7 @@ component CanvasNodeCard {
     }
 
     function media-editor-y() -> length {
-        let gap = 20px * root.node-scale();
-        let below = root.height + gap;
-        if root.y + below + root.media-editor-height() <= root.viewport-height - 8px {
-            return below;
-        }
-        return max(8px - root.y, -root.media-editor-height() - gap);
+        return root.height + 20px * root.node-scale();
     }
 
     function dropdown-popup-x(popup-width: length) -> length {

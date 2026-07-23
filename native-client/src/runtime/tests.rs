@@ -785,6 +785,25 @@ mod tests {
     }
 
     #[test]
+    fn infinite_canvas_media_editor_stays_below_node_at_every_zoom() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .and_then(|value| value.split("export component InfiniteCanvasPage").next())
+            .expect("canvas node component");
+        let editor_y = node
+            .split("function media-editor-y()")
+            .nth(1)
+            .and_then(|value| value.split("function dropdown-popup-x").next())
+            .expect("media editor y function");
+
+        assert!(editor_y.contains("return root.height + 20px * root.node-scale();"));
+        assert!(!editor_y.contains("root.viewport-height"));
+        assert!(!editor_y.contains("-root.media-editor-height()"));
+    }
+
+    #[test]
     fn infinite_canvas_hides_subpixel_node_details_at_minimum_zoom() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
         let node = page
