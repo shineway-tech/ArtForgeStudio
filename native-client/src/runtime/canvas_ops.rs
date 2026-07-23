@@ -805,4 +805,23 @@ mod tests {
         );
         assert_eq!(links, before);
     }
+
+    #[test]
+    fn canvas_auto_connect_creates_one_link_for_a_new_node() {
+        let mut links = Vec::new();
+
+        let result = connect_nodes(&mut links, "source", "new-node");
+
+        assert!(matches!(
+            result,
+            CanvasConnectResult::Connected {
+                ref target_id,
+                replaced_link_id: None,
+                ..
+            } if target_id == "new-node"
+        ));
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].source_id, "source");
+        assert_eq!(links[0].target_id, "new-node");
+    }
 }

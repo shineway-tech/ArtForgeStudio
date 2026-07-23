@@ -1566,6 +1566,12 @@ export component InfiniteCanvasPage {
     in-out property <bool> marquee-additive: false;
     in-out property <bool> space-pan-active: false;
     in-out property <bool> temporary-pan-active: false;
+    in-out property <bool> node-search-open: false;
+    in-out property <string> node-search-query: "";
+    in-out property <string> node-search-source-id: "";
+    in-out property <float> node-search-world-x: 0;
+    in-out property <float> node-search-world-y: 0;
+    in-out property <int> node-search-index: 0;
 
     function grid-spacing() -> length {
         return max(12px, 40px * root.zoom-percent / 100);
@@ -1604,6 +1610,29 @@ export component InfiniteCanvasPage {
         root.zoom-percent = max(5, min(500, target));
         root.pan-x = canvas.width / 2 - (AppState.canvas-focus-x + AppState.canvas-focus-width / 2) * 1px * root.zoom-percent / 100;
         root.pan-y = canvas.height / 2 - (AppState.canvas-focus-y + AppState.canvas-focus-height / 2) * 1px * root.zoom-percent / 100;
+    }
+
+    function node-type-label(kind: string) -> string {
+        if kind == "image" { return AppState.en ? "Image node" : "图片节点"; }
+        if kind == "video" { return AppState.en ? "Video node" : "视频节点"; }
+        if kind == "audio" { return AppState.en ? "Audio node" : "音频节点"; }
+        return AppState.en ? "Text node" : "文本节点";
+    }
+
+    function create-searched-node(kind: string) {
+        if kind == "" {
+            return;
+        }
+        AppState.add-connected-canvas-node(
+            kind,
+            root.node-search-source-id,
+            root.node-search-world-x,
+            root.node-search-world-y
+        );
+        root.node-search-open = false;
+        root.node-search-query = "";
+        root.node-search-source-id = "";
+        canvas-keyboard.focus();
     }
 
     function add-node(kind: string) {
@@ -1665,7 +1694,17 @@ export component InfiniteCanvasPage {
         let tolerance = max(18, 30 * 100 / root.zoom-percent);
         root.connection-dragging = false;
         root.connection-source-id = "";
-        AppState.finish-canvas-link(source-id, world-x / 1px, world-y / 1px, tolerance);
+        let result = AppState.finish-canvas-link(source-id, world-x / 1px, world-y / 1px, tolerance);
+        if result == "empty" {
+            root.node-search-source-id = source-id;
+            root.node-search-world-x = world-x / 1px;
+            root.node-search-world-y = world-y / 1px;
+            root.node-search-query = "";
+            root.node-search-index = 0;
+            AppState.search-canvas-node-types("");
+            root.node-search-open = true;
+            node-search-input.focus();
+        }
         root.connection-mode = "";
         root.connection-target-id = "";
         root.connection-replacing-link-id = "";
@@ -1839,6 +1878,12 @@ export component InfiniteCanvasPage {
                         return accept;
                     }
                     if event.text == Key.Escape {
+                        if root.node-search-open {
+                            root.node-search-open = false;
+                            root.node-search-query = "";
+                            root.node-search-source-id = "";
+                            return accept;
+                        }
                         root.marquee-active = false;
                         root.temporary-pan-active = false;
                         root.connection-dragging = false;
@@ -2238,6 +2283,128 @@ export component InfiniteCanvasPage {
                 CanvasChoiceButton { x: 204px; y: 82px; width: parent.width - 218px; text: AppState.en ? "None" : "无"; selected: AppState.canvas-grid-style == "blank"; clicked => { AppState.canvas-grid-style = "blank"; } }
                 CanvasToggle { x: 14px; y: 126px; width: parent.width - 28px; text: AppState.en ? "Show media configuration" : "显示媒体配置信息"; checked: AppState.canvas-show-image-info; toggled => { AppState.canvas-show-image-info = !AppState.canvas-show-image-info; } }
                 CanvasToggle { x: 14px; y: 164px; width: parent.width - 28px; text: AppState.en ? "Show minimap" : "显示小地图"; checked: AppState.canvas-minimap-open; toggled => { AppState.canvas-minimap-open = !AppState.canvas-minimap-open; } }
+            }
+        }
+
+        node-search-popup := Rectangle {
+            visible: root.node-search-open;
+            x: canvas.x + root.pan-x + root.node-search-world-x * 1px * root.zoom-percent / 100;
+            y: canvas.y + root.pan-y + root.node-search-world-y * 1px * root.zoom-percent / 100;
+            width: 248px;
+            height: 58px + max(1, AppState.canvas-node-search-results.length) * 42px;
+            background: AppTheme.panel.with-alpha(0.99);
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+
+            Rectangle {
+                x: 8px;
+                y: 8px;
+                width: parent.width - 16px;
+                height: 38px;
+                background: AppTheme.panel-soft;
+                border-radius: 7px;
+                border-width: 1px;
+                border-color: node-search-input.has-focus ? AppTheme.accent : AppTheme.border;
+                node-search-input := TextInput {
+                    x: 10px;
+                    y: 7px;
+                    width: parent.width - 20px;
+                    height: parent.height - 14px;
+                    text <=> root.node-search-query;
+                    single-line: true;
+                    color: AppTheme.text;
+                    font-size: 13px;
+                    edited => {
+                        AppState.search-canvas-node-types(self.text);
+                        root.node-search-index = 0;
+                    }
+                    key-pressed(event) => {
+                        if event.text == Key.DownArrow && AppState.canvas-node-search-results.length > 0 {
+                            root.node-search-index = min(AppState.canvas-node-search-results.length - 1, root.node-search-index + 1);
+                            return accept;
+                        }
+                        if event.text == Key.UpArrow && AppState.canvas-node-search-results.length > 0 {
+                            root.node-search-index = max(0, root.node-search-index - 1);
+                            return accept;
+                        }
+                        if event.text == Key.Return && AppState.canvas-node-search-results.length > 0 {
+                            root.create-searched-node(AppState.canvas-node-search-results[root.node-search-index]);
+                            return accept;
+                        }
+                        if event.text == Key.Escape {
+                            root.node-search-open = false;
+                            root.node-search-query = "";
+                            root.node-search-source-id = "";
+                            canvas-keyboard.focus();
+                            return accept;
+                        }
+                        return reject;
+                    }
+                }
+                if root.node-search-query == "" && !node-search-input.has-focus: Text {
+                    x: 10px;
+                    y: 7px;
+                    width: parent.width - 20px;
+                    height: parent.height - 14px;
+                    text: AppState.en ? "Search nodes..." : "搜索节点...";
+                    color: AppTheme.muted;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                }
+            }
+
+            if AppState.canvas-node-search-results.length == 0: Text {
+                x: 12px;
+                y: 50px;
+                width: parent.width - 24px;
+                height: 40px;
+                text: AppState.en ? "No matching nodes" : "没有匹配节点";
+                color: AppTheme.muted;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            for kind[index] in AppState.canvas-node-search-results: Rectangle {
+                x: 8px;
+                y: 50px + index * 42px;
+                width: parent.width - 16px;
+                height: 38px;
+                background: index == root.node-search-index || node-type-touch.has-hover ? AppTheme.accent.with-alpha(0.14) : transparent;
+                border-radius: 7px;
+                Image {
+                    x: 10px;
+                    y: 9px;
+                    width: 20px;
+                    height: 20px;
+                    source: kind == "image"
+                        ? @image-url("../../assets/icons/image.svg")
+                        : (kind == "video"
+                            ? @image-url("../../assets/icons/video.svg")
+                            : (kind == "audio"
+                                ? @image-url("../../assets/icons/audio.svg")
+                                : @image-url("../../assets/icons/text.svg")));
+                    colorize: AppTheme.accent;
+                }
+                Text {
+                    x: 40px;
+                    width: parent.width - 50px;
+                    height: parent.height;
+                    text: root.node-type-label(kind);
+                    color: AppTheme.text;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                }
+                node-type-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.node-search-index = index;
+                        root.create-searched-node(kind);
+                    }
+                }
             }
         }
     }

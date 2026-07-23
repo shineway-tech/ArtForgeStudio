@@ -739,6 +739,35 @@ mod tests {
     }
 
     #[test]
+    fn infinite_canvas_connection_search_is_world_anchored_and_keyboard_accessible() {
+        let state = include_str!("../../ui/app-state.slint");
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+
+        for property in [
+            "node-search-open",
+            "node-search-query",
+            "node-search-source-id",
+            "node-search-world-x",
+            "node-search-world-y",
+            "node-search-index",
+        ] {
+            assert!(page.contains(property), "missing {property}");
+        }
+        assert!(state.contains("canvas-node-search-results"));
+        assert!(state.contains("callback search-canvas-node-types"));
+        assert!(state.contains("callback add-connected-canvas-node"));
+        assert!(page.contains("Key.DownArrow"));
+        assert!(page.contains("Key.UpArrow"));
+        assert!(page.contains("Key.Return"));
+        assert!(page.contains("Key.Escape"));
+        assert!(page.contains("root.pan-x + root.node-search-world-x"));
+        assert!(!page.contains("node-search-world-x, parent.width"));
+        assert!(callbacks.contains("on_search_canvas_node_types"));
+        assert!(callbacks.contains("on_add_connected_canvas_node"));
+    }
+
+    #[test]
     fn invalid_canvas_group_relationships_are_removed_without_moving_nodes() {
         let mut notes = vec![
             CanvasNoteData {

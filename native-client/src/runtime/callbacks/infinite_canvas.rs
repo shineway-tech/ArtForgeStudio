@@ -567,6 +567,88 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
 
     {
         let app_weak = app.as_weak();
+        state.on_search_canvas_node_types(move |query| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let query = query.trim().to_lowercase();
+            let options = [
+                ("text", ["text", "文本", "prompt", "提示词"]),
+                ("image", ["image", "图片", "picture", "图像"]),
+                ("video", ["video", "视频", "movie", "影片"]),
+                ("audio", ["audio", "音频", "sound", "声音"]),
+            ];
+            let results = options
+                .into_iter()
+                .filter(|(_, keywords)| {
+                    query.is_empty()
+                        || keywords
+                            .iter()
+                            .any(|keyword| keyword.to_lowercase().contains(&query))
+                })
+                .map(|(kind, _)| SharedString::from(kind))
+                .collect::<Vec<_>>();
+            app.global::<AppState>()
+                .set_canvas_node_search_results(ModelRc::new(VecModel::from(results)));
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        let history = history.clone();
+        state.on_add_connected_canvas_node(move |kind, source_id, x, y| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut store_mut = store.borrow_mut();
+            if store_mut.canvas_notes.len() >= MAX_CANVAS_NODES
+                || store_mut.canvas_links.len() >= MAX_CANVAS_LINKS
+                || !store_mut
+                    .canvas_notes
+                    .iter()
+                    .any(|note| note.id == source_id.as_str() && note.kind != "group")
+            {
+                return;
+            }
+            let node_kind = match kind.as_str() {
+                "image" | "video" | "audio" => kind.to_string(),
+                _ => "text".to_string(),
+            };
+            let state = app.global::<AppState>();
+            let (content, width, height) =
+                canvas_node_defaults(&node_kind, state.get_language().as_str() == "en");
+            let id = Uuid::new_v4().to_string();
+            let before = canvas_snapshot(&store_mut);
+            clear_selection(&mut store_mut.canvas_notes);
+            store_mut.canvas_notes.push(CanvasNoteData {
+                id: id.clone(),
+                kind: node_kind,
+                content,
+                x,
+                y,
+                width,
+                height,
+                selected: true,
+                ..CanvasNoteData::default()
+            });
+            let CanvasConnectResult::Connected { link_id, .. } =
+                connect_nodes(&mut store_mut.canvas_links, source_id.as_str(), &id)
+            else {
+                store_mut.canvas_notes.pop();
+                return;
+            };
+            history.borrow_mut().record(before);
+            persist_canvas(&app, &store_mut);
+            sync_canvas_selection(&app, &store_mut);
+            state.set_canvas_selected_id(id.into());
+            state.set_canvas_selected_link_id(link_id.into());
+            sync_history_state(&app, &history.borrow());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
         let store = store.clone();
         state.on_preview_canvas_link_target(move |source_id, x, y, tolerance| {
             let Some(app) = app_weak.upgrade() else {

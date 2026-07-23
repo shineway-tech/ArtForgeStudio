@@ -89,6 +89,7 @@ export global AppState {
     in-out property <float> canvas-focus-height: 0;
     in-out property <string> canvas-link-hover-target-id: "";
     in-out property <bool> canvas-link-hover-valid: false;
+    in-out property <[string]> canvas-node-search-results: [];
     in-out property <string> canvas-drag-preview-id: "";
     in-out property <float> canvas-drag-delta-x: 0;
     in-out property <float> canvas-drag-delta-y: 0;
@@ -358,6 +359,8 @@ export global AppState {
     callback finish-canvas-link(string, float, float, float) -> string;
     callback canvas-input-link(string) -> string;
     callback finish-canvas-reconnect(string, float, float, float) -> string;
+    callback search-canvas-node-types(string);
+    callback add-connected-canvas-node(string, string, float, float);
     callback remove-canvas-link(string);
     callback select-canvas-node(string, bool);
     callback select-canvas-rect(float, float, float, float, bool);
