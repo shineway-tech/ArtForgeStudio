@@ -1,176 +1,117 @@
-# ArtForge Studio — Agent 指南
+# ArtForge Studio — Agent Guide
 
-## 项目定位
+## Repository boundary
 
-ArtForge Studio 是桌面端 AI 美术生产套件。`native-client` 是唯一活动客户端，
-也是 workspace 的唯一成员，输出 `ArtForgeStudio.exe`。
+ArtForge Studio 是 Rust + Slint 桌面客户端。`native-client` 是唯一活动客户端和唯一 Cargo workspace 成员，包名为 `artforge-studio-native`，唯一应用二进制为 `ArtForgeStudio`。
 
-`crates/` 是早期模块化迁移源码，已排除在 workspace 之外，不参与构建、测试
-或发布。除非任务明确要求恢复迁移，不要修改或重新接入这些归档 crate。
+`crates/`、根 `ui/`、`schemas/` 和 `themes/` 是早期模块化客户端的历史源码，不参与当前构建、测试或发布。除非任务明确要求处理历史源码，不要修改、恢复或重新接入这些目录。
 
-## 架构
+当前技术基线：
 
-```
-crates/
-├── artait-model/         数据类型，零 IO、零异步
-├── artait-config/         TOML 配置 + secret_store（keyring）
-├── artait-provider/       Provider trait + Registry + HTTP 抽象
-├── artait-providers/      协议族实现（Mock / OpenAI兼容 / Volcengine Seedance）
-├── artait-task/           TaskRunner + 取消 + 事件总线
-├── artait-asset/          资产懒索引 + 缩略图 + 后处理
-├── artait-service/        业务编排（生成 / 脚本 / 提示词优化 / 任务历史）
-└── artait-app/            归档 UI 源码（无应用二进制目标）
+- Rust edition 2021。
+- 版本号来自 `native-client/Cargo.toml`。
+- Slint 1.16.1，使用自建组件，不引入标准 widgets。
+- HTTP 使用 `reqwest` 0.12 + rustls。
+- Windows 和 macOS 的嵌入式网页能力使用 `wry`。
 
-native-client/             当前产品客户端（ArtForgeStudio）
-```
+## Active architecture
 
-**依赖方向（禁止反向）**：
-```
-app → service → task → provider → config → model
-                  ↘ asset ↗
-```
+Rust 入口和运行时：
 
-- `model` 零依赖；`provider` 不感知 `service`/`task`；`app` 唯一引入 slint。
-- `artait-service` 是业务编排层，`app` 的 callback handler 只做参数转发。
-- `artait-providers` 内每个协议族是独立模块，通过 `ProviderRegistry` 注册。
+- `native-client/src/main.rs`：平台可执行入口。
+- `native-client/src/lib.rs`：应用库入口和测试入口。
+- `native-client/src/runtime/app.rs`：启动、渲染器选择和顶层 callback 接线。
+- `native-client/src/runtime/callbacks/`：按功能划分的 Slint callback 适配层。
+- `native-client/src/runtime/api/`：平台 API、认证会话、账号、会员、积分、订单、通知、上传和生成协议。
+- `native-client/src/runtime/generation/`：图片任务提交、轮询、取消、恢复和结果交付。
+- `native-client/src/runtime/storage/`：应用路径、本地展示数据和恢复记录。
+- `native-client/src/runtime/features/`：查看器、灵感等独立功能。
+- `native-client/src/runtime/presentation/`：Slint 模型同步和主题应用。
+- `native-client/src/runtime/services/image_processing.rs`：仅限本地图片处理。
 
-## 构建
+Slint UI：
 
-```sh
-cargo build --release -p artforge-studio-native --bin ArtForgeStudio
+- `native-client/ui/app.slint`：窗口与页面/弹窗组合。
+- `native-client/ui/app-state.slint`：全局展示状态和 callback 接口。
+- `native-client/ui/types.slint`：Rust 可见的 UI 数据结构。
+- `native-client/ui/theme.slint`：运行时调色板。
+- `native-client/ui/components/`：可复用组件。
+- `native-client/ui/pages/`：完整页面。
+- `native-client/ui/dialogs/`：模态流程和覆盖层。
+
+新增功能应进入职责最接近的模块。不要把业务逻辑堆到 `app.rs`、单个 callback 或 Slint 文件中。
+
+## Build and verification
+
+常用命令：
+
+```bash
+cargo run -p artforge-studio-native --bin ArtForgeStudio
 cargo check -p artforge-studio-native
 cargo test -p artforge-studio-native
-cargo clippy -p artforge-studio-native
+cargo build --release -p artforge-studio-native --bin ArtForgeStudio
 ```
 
-`build.bat` 封装了以上常用命令（菜单式选择），只处理 `ArtForgeStudio`。
+使用网络回环的 HTTP 单元测试可能需要允许本地监听端口。标记为 ignored 的跨栈测试要求后端 Mock API 已启动，不属于普通 `cargo test` 的外部依赖。
 
-## 技术栈
+Windows release 和目标平台验收必须在 Windows MSVC + Windows SDK 环境执行；macOS 构建不能替代 Windows 真机验证。打包命令和制品要求见 `docs/RELEASE.md`。
 
-| 项 | 值 |
-|----|-----|
-| Rust edition | 2021，MSRV 1.78 |
-| UI | Slint 1.8（自建组件，不引入 std-widgets） |
-| 异步 | tokio 1 |
-| HTTP | reqwest 0.12 + rustls |
-| 序列化 | serde 1 + serde_json 1 + toml 0.8 |
-| 错误 | thiserror（库）+ anyhow（应用） |
-| 日志 | tracing 0.1 + tracing-subscriber 0.3 + tracing-appender 0.2 |
+## Slint and Rust integration
 
-## Slint 代码组织
+- 全局展示状态通过 `AppState` 读写，用户事件通过 callback 进入 Rust。
+- callback 负责输入规范化、调用运行时能力和同步结果，不承担长时间网络或磁盘工作。
+- 网络、轮询、下载和图片处理不得阻塞 Slint UI 事件循环。
+- 后台结果必须通过 Slint 事件循环回到 UI 线程后再更新组件状态。
+- 长任务使用稳定的任务/请求标识和显式状态，避免重试创建重复业务。
+- 组件、页面和弹窗优先复用现有主题与控件，不使用 emoji 代替功能图标。
 
-```
-ui/
-├── main.slint               AppShell（路由、模态框）
-├── app-state.slint           AppState global（所有双向绑定属性+回调）
-├── theme.slint               Theme global（颜色/圆角/字体绑定）
-├── components/               自建轻量组件（11 个）
-│   ├── sidebar.slint         侧边栏（导航+功能开关）
-│   ├── top-bar.slint         顶栏（页面标题+模型选择）
-│   ├── status-bar.slint      底栏（状态文本+进度）
-│   ├── button.slint / input.slint / card.slint ...
-│   ├── asset-grid.slint      资产网格（缩略图+右键菜单）
-│   └── image-preview.slint   大图预览
-├── pages/                    页面（全部真实实现，无占位）
-│   ├── workspace.slint       通用创作工作台（7 种 mode 复用）
-│   ├── asset-browser.slint   图库浏览
-│   ├── tasks.slint           任务面板
-│   ├── settings.slint        设置（外观/Provider/目录/关于）
-│   ├── storyboard.slint      分镜板
-│   ├── script.slint          动画脚本
-│   ├── action-sequence.slint 动作序列批处理
-│   ├── runtime-log.slint     运行日志
-│   ├── welcome.slint         欢迎页
-│   ├── onboarding.slint      首启引导（3 步）
-│   └── onboarding-step{1,2}.slint + onboarding-step4.slint
-└── assets/icons/             27 个 SVG 图标（24×24，单色）
-```
+## Server-authoritative data
 
-### Slint ↔ Rust 桥接规则
+以下数据以 ArtForge 服务端为唯一权威：
 
-1. 全局状态用 `AppState` global，Rust 通过 `app.global::<AppState>()` 读写
-2. 用户事件通过 `Callback<Args, Ret>`，Rust 在 `main.rs` / `callbacks/` 注册 handler
-3. 后台任务事件通过 `invoke_from_event_loop` 回到 UI 线程
-4. handler 不直接写业务逻辑，转发到 `artait-service`
-5. 长列表用 `for` + `VecModel`，增量更新
+- 账号、认证会话、设备会话和协议接受状态。
+- 会员套餐、当前权益、积分余额与流水。
+- 积分包、订单、支付状态和权益发放结果。
+- 模型目录、支持能力、画质权限和计费。
+- 提示词任务、图片生成任务和远端任务状态。
 
-## Provider 架构
+客户端只缓存展示和恢复所需信息。禁止重新加入 Provider Endpoint、平台 API Key、供应商模型配置、客户端本地加积分或客户端自行判定支付到账的逻辑。
 
-```
-Provider trait（arait-provider/src/lib.rs）
-  ├── ImageGenerator      → generate()
-  ├── CharacterGenerator   → generate_character()
-  ├── Analyzer            → analyze()
-  ├── VideoGenerator      → generate_video()   [trait 就位，无实现]
-  └── Pollable            → poll()
+模型、会员、积分包和价格均由服务端动态下发。不要在文档、UI 或 Rust 中把当前商业数值当成长期常量，除非它只是服务端返回数据的展示或测试夹具。
 
-ProviderRegistry（HashMap<provider_id, Arc<dyn Provider>>）
-  └── build_registry() in artait-app/src/providers.rs
-```
+## Local persistence and recovery
 
-### 已有协议族
+客户端本地保存：
 
-| 协议族 | 模块 | 能力 |
-|--------|------|------|
-| Mock | `mock.rs` | 生成+分析（返回固定结果） |
-| OpenAI 兼容 | `openai_compatible/` | 生成+分析+媒体上传，内建 Gemini API 支持 |
-| Volcengine Seedance | `volcengine/` | 图片生成（异步提交+轮询），HMAC-SHA256 V4 签名 |
+- 已下载作品和展示所需元数据。
+- 提示词草稿、自定义提示词和界面偏好。
+- 设备标识、安全刷新会话和必要的恢复记录。
+- 未完成生成、交付确认和支付同步所需的稳定请求标识。
 
-### 添加新协议族
+涉及保存流程时保持“下载并校验 → 原子写入 → 更新本地元数据 → 确认服务端交付”的顺序。不要在写入失败时把任务误标为已完成，也不要删除用户现有作品目录。
 
-1. 在 `crates/artait-providers/src/` 下新建模块目录
-2. 实现 `Provider` trait + 至少一个能力子 trait
-3. 在 `artait-providers/src/lib.rs` 注册 `pub mod` + `pub use`
-4. 在 `artait-providers/Cargo.toml` 添加需要的依赖
-5. 在 `artait-app/src/providers.rs::build_registry()` 调用 `reg.register()`
-6. 如需快速添加模板，在 `settings.slint` 加按钮 + `main.rs` 加 `quick-add-provider` 分支
+## Platform behavior
 
-## UI 图标
+- Windows 默认使用 `winit-femtovg` GPU 渲染，降低最小化后恢复的重绘卡顿。
+- 非 Windows 默认使用 `winit-software`；显式设置 `SLINT_BACKEND` 时尊重用户覆盖。
+- Windows 使用 WebView2，macOS 使用 WKWebView 后端承载受信任的支付和协议内容。
+- 嵌入网页只允许 HTTPS 和代码中明确列出的可信主机；禁止任意新窗口、下载和第三方导航。
+- 与窗口、渲染器、拖拽和系统打开方式有关的改动必须分别考虑 Windows 与 macOS。
 
-- 统一使用 SVG，放在 `ui/assets/icons/`，Slint 中通过 `@image-url(...)` 引用
-- 单色功能图标用 `Image.colorize` 接入 `Theme.palette`，确保深浅主题一致
-- 优先复用已有 SVG；确需新增时保持 24×24 viewBox 和单色路径
-- 禁止 emoji 或纯文字作为功能图标
+## Security and logging
 
-## 主题
+- 不得提交或记录 API Key、Access Token、Refresh Token、验证码或签名材料。
+- Prompt、参考图内容、支付 URL、OSS 签名 URL 和协议正文不得进入普通日志。
+- 错误展示可以给出用户可理解的信息，但不得泄露内部业务码、请求标识或服务端响应正文。
+- 发布 Secrets 只记录变量名，不记录值；证书、私钥和 OSS 凭据不得写入仓库。
+- 所有支付和协议 URL 必须通过 HTTPS 与主机白名单校验。
 
-- 9 套预设 TOML（`themes/`） + 用户自定义（`user.toml`，notify watch 即时生效）
-- Slint 端通过 `Theme` global 单例绑定颜色/圆角/字体/间距
-- 主题切换：Rust 加载 TOML → 写入 `Theme` global → 全 UI 立即重绘
-- 系统深浅色跟随：读 Windows `AppsUseLightTheme` 注册表
+## Change guidelines
 
-## 首启引导
-
-3 步流程（`ui/pages/onboarding.slint`）：
-1. 功能预设（通用美术 / 动画短片 / 全功能 / 自定义）
-2. 工作目录 + 界面外观（4 张主题卡）
-3. Provider 配置（可跳过）
-
-引导写完后生成 `app_config.toml`，下次启动直接进主界面。
-
-## 配置与密钥
-
-- 配置格式 TOML，绿色版存放（`portable_data_dir()`）
-- 密钥通过 `secret_ref` 引用，可存系统凭据管理器（keyring）或 TOML 内 `api_key`
-- Provider 密钥在日志/错误中始终脱敏
-- `normalize_provider_secrets()` 启动时同步 keyring → 内存
-
-## 关键约定
-
-- **先功能闭环，再视觉细节。**
-- **模块间用 trait 解耦，不直接依赖具体实现。**
-- **Slint callback handler 不放业务逻辑，转发到 `artait-service`。**
-- **新增页面在 `main.slint` 的 `AppShell` 中注册路由。**
-- **Provider 实例由用户通过设置页配置，协议族编译期注册。**
-- **文件路径使用 `portable_data_dir()` 保证绿色版可移动。**
-- **错误信息不泄露 API Key。**
-
-## 重构原则
-
-- **渐进下沉，不一次全搬。** 每次修一个高频模块，顺手把业务逻辑沉到 `artait-service`。
-- **不从 UI 拆起，从数据源拆起。** settings service 和 asset metadata service 收益最大、风险最低。
-- **回调要轻。** UI callback 只做"取输入 → 调 service → 展示结果"，重的回调容易出现 RefCell 借用冲突、状态串场。
-- **统一状态来源。** 图库元数据、任务历史、运行中任务各自明确主数据源（如 metadata store、task_history.json），UI 只是显示缓存。
-- **watcher / runtime / event loop 边界要清。** 文件监听、TaskRunner、Slint 事件循环应封装为 service 负责启动/停止/刷新/错误返回。
-- **补充关键路径测试。** 配置保存、元数据读写、下载保存、任务历史——这些已经暴露过问题，service 层拆出来后天然更好测。
-- **保持文档与代码一致。** 架构文档里的模块如果不存在或已变化，及时同步。
+- 先核对当前代码，再更新文档；代码和脚本是当前事实来源。
+- 保持模块职责单一，避免跨层直接修改内部状态。
+- API 字段中的积分、金额、游标和其他 BIGINT 边界继续使用十进制字符串。
+- 对创建订单、提交生成和恢复任务等可能重复的操作保留幂等标识。
+- 修改生成、支付、会话或本地保存流程时补充对应测试。
+- 保留用户工作区中的未跟踪文件和无关改动；提交时只暂存本任务文件。
+- 已完成的计划、日期状态快照和后端数据库设计不进入当前客户端文档。
