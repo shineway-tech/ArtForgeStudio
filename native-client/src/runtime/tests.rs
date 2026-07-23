@@ -648,6 +648,16 @@ mod tests {
     }
 
     #[test]
+    fn windows_uses_gpu_renderer_without_removing_software_override() {
+        let app = include_str!("app.rs");
+        let manifest = include_str!("../../Cargo.toml");
+        assert!(app.contains("winit-femtovg"));
+        assert!(app.contains("std::env::var_os(\"SLINT_BACKEND\")"));
+        assert!(manifest.contains("\"renderer-femtovg\""));
+        assert!(manifest.contains("\"renderer-software\""));
+    }
+
+    #[test]
     fn recovered_pending_payment_reopens_the_embedded_surface() {
         let callbacks = include_str!("callbacks/payment.rs");
         assert!(!callbacks.contains(

@@ -2,7 +2,7 @@ use super::*;
 use crate::platform;
 
 pub(super) fn run() -> Result<()> {
-    std::env::set_var("SLINT_BACKEND", "winit-software");
+    configure_renderer_backend();
     let app = AppWindow::new()?;
     platform::schedule_application_icon_install();
     app.window().set_size(slint::PhysicalSize::new(1440, 900));
@@ -32,6 +32,16 @@ pub(super) fn run() -> Result<()> {
     save_user_profile(&app);
     save_local_store(&app, &store.borrow());
     Ok(())
+}
+
+fn configure_renderer_backend() {
+    if std::env::var_os("SLINT_BACKEND").is_some() {
+        return;
+    }
+    #[cfg(windows)]
+    std::env::set_var("SLINT_BACKEND", "winit-femtovg");
+    #[cfg(not(windows))]
+    std::env::set_var("SLINT_BACKEND", "winit-software");
 }
 
 pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
