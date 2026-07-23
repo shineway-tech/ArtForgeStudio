@@ -2232,7 +2232,7 @@ export component InfiniteCanvasPage {
             toolbar := Rectangle {
                 x: max(16px, (parent.width - self.width) / 2);
                 y: parent.height - 62px;
-                width: min(parent.width - 32px, parent.width < 620px ? 404px : 536px);
+                width: min(parent.width - 32px, parent.width < 620px ? 332px : 436px);
                 height: parent.width < 620px ? 44px : 52px;
                 background: AppTheme.panel.with-alpha(0.98);
                 border-radius: 7px;
@@ -2247,8 +2247,6 @@ export component InfiniteCanvasPage {
                     CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/redo.svg"); label: AppState.en ? "Redo" : "重做"; disabled: !AppState.canvas-can-redo; clicked => { AppState.redo-canvas(); } }
                     CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/text.svg"); label: AppState.en ? "Text node" : "文本节点"; clicked => { root.add-node("text"); } }
                     CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/image.svg"); label: AppState.en ? "Image node" : "图片节点"; clicked => { root.add-node("image"); } }
-                    CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/video.svg"); label: AppState.en ? "Video node" : "视频节点"; clicked => { root.add-node("video"); } }
-                    CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/audio.svg"); label: AppState.en ? "Audio node" : "音频节点"; clicked => { root.add-node("audio"); } }
                     CanvasToolButton {
                         compact: canvas.width < 620px;
                         icon: @image-url("../../assets/icons/group.svg");

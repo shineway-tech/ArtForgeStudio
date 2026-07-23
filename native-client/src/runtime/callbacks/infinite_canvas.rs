@@ -82,7 +82,7 @@ fn show_canvas_capacity_status(app: &AppWindow) {
     );
 }
 
-fn sync_canvas_selection(app: &AppWindow, store: &Store) {
+fn sync_canvas_selection_metrics(app: &AppWindow, store: &Store) {
     let state = app.global::<AppState>();
     let ids = selected_ids(&store.canvas_notes);
     state.set_canvas_selected_count(ids.len() as i32);
@@ -95,7 +95,54 @@ fn sync_canvas_selection(app: &AppWindow, store: &Store) {
         state.set_canvas_focus_width(0.0);
         state.set_canvas_focus_height(0.0);
     }
+}
+
+fn sync_canvas_selection(app: &AppWindow, store: &Store) {
+    sync_canvas_selection_metrics(app, store);
     push_canvas_notes(app, store);
+}
+
+fn sync_canvas_selection_rows(app: &AppWindow, store: &Store) {
+    sync_canvas_selection_metrics(app, store);
+
+    let state = app.global::<AppState>();
+    let canvas_notes = state.get_canvas_notes();
+    for row in 0..canvas_notes.row_count() {
+        let Some(mut note) = canvas_notes.row_data(row) else {
+            continue;
+        };
+        let selected = store
+            .canvas_notes
+            .iter()
+            .find(|stored| stored.id == note.id.as_str())
+            .is_some_and(|stored| stored.selected);
+        if note.selected != selected {
+            note.selected = selected;
+            canvas_notes.set_row_data(row, note);
+        }
+    }
+
+    let canvas_links = state.get_canvas_links();
+    for row in 0..canvas_links.row_count() {
+        let Some(mut link) = canvas_links.row_data(row) else {
+            continue;
+        };
+        let source_selected = store
+            .canvas_notes
+            .iter()
+            .find(|note| note.id == link.source_id.as_str())
+            .is_some_and(|note| note.selected);
+        let target_selected = store
+            .canvas_notes
+            .iter()
+            .find(|note| note.id == link.target_id.as_str())
+            .is_some_and(|note| note.selected);
+        if link.source_selected != source_selected || link.target_selected != target_selected {
+            link.source_selected = source_selected;
+            link.target_selected = target_selected;
+            canvas_links.set_row_data(row, link);
+        }
+    }
 }
 
 pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<Store>>) {
@@ -118,7 +165,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             }
 
             let node_kind = match kind.as_str() {
-                "image" | "video" | "audio" | "group" => kind.to_string(),
+                "image" | "group" => kind.to_string(),
                 _ => "text".to_string(),
             };
             let (content, width, height) =
@@ -250,7 +297,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             let state = app.global::<AppState>();
             state.set_canvas_selected_id(if selected { id } else { "".into() });
             state.set_canvas_selected_link_id("".into());
-            sync_canvas_selection(&app, &store_mut);
+            sync_canvas_selection_rows(&app, &store_mut);
         });
     }
 
@@ -591,8 +638,6 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             let options = [
                 ("text", ["text", "文本", "prompt", "提示词"]),
                 ("image", ["image", "图片", "picture", "图像"]),
-                ("video", ["video", "视频", "movie", "影片"]),
-                ("audio", ["audio", "音频", "sound", "声音"]),
             ];
             let results = options
                 .into_iter()
@@ -628,9 +673,10 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
                 show_canvas_capacity_status(&app);
                 return;
             }
-            let node_kind = match kind.as_str() {
-                "image" | "video" | "audio" => kind.to_string(),
-                _ => "text".to_string(),
+            let node_kind = if kind.as_str() == "image" {
+                "image".to_string()
+            } else {
+                "text".to_string()
             };
             let state = app.global::<AppState>();
             let (content, width, height) =

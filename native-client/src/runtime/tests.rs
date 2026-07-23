@@ -591,8 +591,11 @@ mod tests {
         assert!(page.contains("root.zoom-percent"));
         assert!(page.contains("root.pan-x"));
         assert!(page.contains("root.pan-y"));
-        for kind in ["text", "image", "video", "audio"] {
+        for kind in ["text", "image"] {
             assert!(page.contains(&format!("root.add-node(\"{kind}\")")));
+        }
+        for kind in ["video", "audio"] {
+            assert!(!page.contains(&format!("root.add-node(\"{kind}\")")));
         }
         assert!(page.contains("AppState.group-canvas-selection"));
         assert!(page.contains("AppState.undo-canvas()"));
@@ -834,6 +837,44 @@ mod tests {
         assert!(node.contains("if !root.editing"));
         assert!(node.contains("&& root.editing: TextInput"));
         assert!(node.contains("source: @image-url(\"../../assets/icons/edit.svg\")"));
+    }
+
+    #[test]
+    fn infinite_canvas_node_press_updates_selection_without_replacing_the_drag_source_model() {
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+        let handler = callbacks
+            .split("state.on_select_canvas_node")
+            .nth(1)
+            .and_then(|value| value.split("state.on_select_canvas_rect").next())
+            .expect("canvas node selection handler");
+
+        assert!(handler.contains("sync_canvas_selection_rows(&app, &store_mut)"));
+        assert!(!handler.contains("sync_canvas_selection(&app, &store_mut)"));
+        assert!(callbacks.contains("canvas_notes.set_row_data"));
+        assert!(callbacks.contains("canvas_links.set_row_data"));
+    }
+
+    #[test]
+    fn infinite_canvas_only_offers_text_and_image_media_nodes_for_new_work() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+        let toolbar = page
+            .split("toolbar := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("if root.appearance-open").next())
+            .expect("canvas toolbar");
+        let search = callbacks
+            .split("state.on_search_canvas_node_types")
+            .nth(1)
+            .and_then(|value| value.split("state.on_add_connected_canvas_node").next())
+            .expect("canvas node search handler");
+
+        assert!(!toolbar.contains("root.add-node(\"video\")"));
+        assert!(!toolbar.contains("root.add-node(\"audio\")"));
+        assert!(toolbar.contains("root.add-node(\"text\")"));
+        assert!(toolbar.contains("root.add-node(\"image\")"));
+        assert!(!search.contains("(\"video\","));
+        assert!(!search.contains("(\"audio\","));
     }
 
     #[test]
