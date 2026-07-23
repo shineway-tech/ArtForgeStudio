@@ -635,6 +635,47 @@ mod tests {
     }
 
     #[test]
+    fn infinite_canvas_exposes_multi_selection_commands() {
+        let state = include_str!("../../ui/app-state.slint");
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+
+        for declaration in [
+            "in-out property <int> canvas-selected-count: 0",
+            "callback select-canvas-node(string, bool)",
+            "callback select-canvas-rect(float, float, float, float, bool)",
+            "callback clear-canvas-selection()",
+            "callback select-all-canvas-nodes()",
+            "callback move-canvas-selection(float, float)",
+            "callback copy-canvas-selection()",
+            "callback paste-canvas-selection(float, float)",
+            "callback duplicate-canvas-selection()",
+            "callback remove-canvas-selection()",
+            "callback group-canvas-selection(float, float)",
+            "callback ungroup-canvas-selection()",
+        ] {
+            assert!(state.contains(declaration), "missing {declaration}");
+        }
+        for registration in [
+            "on_select_canvas_node",
+            "on_select_canvas_rect",
+            "on_clear_canvas_selection",
+            "on_select_all_canvas_nodes",
+            "on_move_canvas_selection",
+            "on_copy_canvas_selection",
+            "on_paste_canvas_selection",
+            "on_duplicate_canvas_selection",
+            "on_remove_canvas_selection",
+            "on_group_canvas_selection",
+            "on_ungroup_canvas_selection",
+        ] {
+            assert!(
+                callbacks.contains(registration),
+                "missing {registration}"
+            );
+        }
+    }
+
+    #[test]
     fn invalid_canvas_group_relationships_are_removed_without_moving_nodes() {
         let mut notes = vec![
             CanvasNoteData {

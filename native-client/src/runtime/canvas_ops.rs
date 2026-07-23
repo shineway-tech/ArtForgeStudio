@@ -93,6 +93,63 @@ impl CanvasController {
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
     }
+
+    pub fn copy_selection(&mut self, notes: &[CanvasNoteData], links: &[CanvasLinkData]) {
+        let ids = expanded_selection_ids(notes);
+        self.clipboard.notes = notes
+            .iter()
+            .filter(|note| ids.contains(&note.id))
+            .cloned()
+            .collect();
+        self.clipboard.links = links
+            .iter()
+            .filter(|link| ids.contains(&link.source_id) && ids.contains(&link.target_id))
+            .cloned()
+            .collect();
+    }
+
+    pub fn paste_clipboard(
+        &self,
+        offset_x: f32,
+        offset_y: f32,
+    ) -> (Vec<CanvasNoteData>, Vec<CanvasLinkData>) {
+        let id_map = self
+            .clipboard
+            .notes
+            .iter()
+            .map(|note| (note.id.clone(), Uuid::new_v4().to_string()))
+            .collect::<BTreeMap<_, _>>();
+        let notes = self
+            .clipboard
+            .notes
+            .iter()
+            .cloned()
+            .map(|mut note| {
+                note.id = id_map.get(&note.id).cloned().unwrap_or_default();
+                note.parent_group_id = id_map
+                    .get(&note.parent_group_id)
+                    .cloned()
+                    .unwrap_or_default();
+                note.x += offset_x;
+                note.y += offset_y;
+                note.selected = true;
+                note
+            })
+            .collect();
+        let links = self
+            .clipboard
+            .links
+            .iter()
+            .filter_map(|link| {
+                Some(CanvasLinkData {
+                    id: Uuid::new_v4().to_string(),
+                    source_id: id_map.get(&link.source_id)?.clone(),
+                    target_id: id_map.get(&link.target_id)?.clone(),
+                })
+            })
+            .collect();
+        (notes, links)
+    }
 }
 
 pub(super) fn canvas_snapshot(store: &Store) -> CanvasSnapshot {
@@ -327,6 +384,26 @@ pub(super) fn ungroup_selection(notes: &mut Vec<CanvasNoteData>) -> BTreeSet<Str
     removed
 }
 
+pub(super) fn remove_selection(
+    notes: &mut Vec<CanvasNoteData>,
+    links: &mut Vec<CanvasLinkData>,
+) -> BTreeSet<String> {
+    let removed = selected_ids(notes);
+    let group_parents = notes
+        .iter()
+        .filter(|note| removed.contains(&note.id) && note.kind == "group")
+        .map(|note| (note.id.clone(), note.parent_group_id.clone()))
+        .collect::<BTreeMap<_, _>>();
+    for note in notes.iter_mut() {
+        if let Some(parent_id) = group_parents.get(&note.parent_group_id) {
+            note.parent_group_id = parent_id.clone();
+        }
+    }
+    notes.retain(|note| !removed.contains(&note.id));
+    links.retain(|link| !removed.contains(&link.source_id) && !removed.contains(&link.target_id));
+    removed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,5 +495,108 @@ mod tests {
         };
         assert_eq!(controller.undo(current.clone()), Some(before));
         assert_eq!(controller.redo(CanvasSnapshot::default()), Some(current));
+    }
+
+    #[test]
+    fn canvas_clipboard_copies_internal_links_and_remaps_group_ids() {
+        let notes = vec![
+            CanvasNoteData {
+                selected: true,
+                ..note("group", "group", 0.0, 0.0)
+            },
+            CanvasNoteData {
+                parent_group_id: "group".into(),
+                ..note("a", "text", 20.0, 20.0)
+            },
+            CanvasNoteData {
+                parent_group_id: "group".into(),
+                ..note("b", "text", 160.0, 20.0)
+            },
+            note("outside", "text", 500.0, 20.0),
+        ];
+        let links = vec![
+            CanvasLinkData {
+                id: "internal".into(),
+                source_id: "a".into(),
+                target_id: "b".into(),
+            },
+            CanvasLinkData {
+                id: "external".into(),
+                source_id: "b".into(),
+                target_id: "outside".into(),
+            },
+        ];
+        let mut controller = CanvasController::default();
+
+        controller.copy_selection(&notes, &links);
+        let (pasted_notes, pasted_links) = controller.paste_clipboard(24.0, 24.0);
+
+        assert_eq!(pasted_notes.len(), 3);
+        assert_eq!(pasted_links.len(), 1);
+        let pasted_group = pasted_notes
+            .iter()
+            .find(|note| note.kind == "group")
+            .expect("pasted group");
+        assert!(pasted_notes
+            .iter()
+            .filter(|note| note.kind != "group")
+            .all(|note| note.parent_group_id == pasted_group.id));
+        assert!(pasted_notes.iter().all(|note| note.selected));
+    }
+
+    #[test]
+    fn canvas_delete_promotes_group_children_and_removes_node_links() {
+        let mut notes = vec![
+            CanvasNoteData {
+                selected: true,
+                ..note("group", "group", 0.0, 0.0)
+            },
+            CanvasNoteData {
+                parent_group_id: "group".into(),
+                ..note("child", "text", 20.0, 20.0)
+            },
+            CanvasNoteData {
+                selected: true,
+                ..note("removed", "text", 300.0, 20.0)
+            },
+        ];
+        let mut links = vec![CanvasLinkData {
+            id: "link".into(),
+            source_id: "child".into(),
+            target_id: "removed".into(),
+        }];
+
+        let removed = remove_selection(&mut notes, &mut links);
+
+        assert_eq!(removed, BTreeSet::from(["group".into(), "removed".into()]));
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].parent_group_id.is_empty());
+        assert!(links.is_empty());
+    }
+
+    #[test]
+    fn canvas_selection_rectangle_replaces_or_adds_to_the_selection() {
+        let mut notes = vec![
+            CanvasNoteData {
+                selected: true,
+                ..note("outside", "text", 400.0, 400.0)
+            },
+            note("inside", "text", 40.0, 40.0),
+        ];
+
+        select_in_rect(
+            &mut notes,
+            CanvasRect::normalized(0.0, 0.0, 180.0, 180.0),
+            false,
+        );
+        assert!(!notes[0].selected);
+        assert!(notes[1].selected);
+
+        select_in_rect(
+            &mut notes,
+            CanvasRect::normalized(350.0, 350.0, 550.0, 550.0),
+            true,
+        );
+        assert!(notes.iter().all(|note| note.selected));
     }
 }

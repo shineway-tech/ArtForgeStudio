@@ -82,6 +82,7 @@ export global AppState {
     in-out property <[CanvasLink]> canvas-links: [];
     in-out property <string> canvas-selected-id: "";
     in-out property <string> canvas-selected-link-id: "";
+    in-out property <int> canvas-selected-count: 0;
     in-out property <string> canvas-drag-preview-id: "";
     in-out property <float> canvas-drag-delta-x: 0;
     in-out property <float> canvas-drag-delta-y: 0;
@@ -349,6 +350,17 @@ export global AppState {
     callback remove-canvas-node(string);
     callback finish-canvas-link(string, float, float, float);
     callback remove-canvas-link(string);
+    callback select-canvas-node(string, bool);
+    callback select-canvas-rect(float, float, float, float, bool);
+    callback clear-canvas-selection();
+    callback select-all-canvas-nodes();
+    callback move-canvas-selection(float, float);
+    callback copy-canvas-selection();
+    callback paste-canvas-selection(float, float);
+    callback duplicate-canvas-selection();
+    callback remove-canvas-selection();
+    callback group-canvas-selection(float, float);
+    callback ungroup-canvas-selection();
     callback undo-canvas();
     callback redo-canvas();
     callback select-image-model(string);
