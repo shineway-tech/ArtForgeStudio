@@ -804,6 +804,96 @@ mod tests {
     }
 
     #[test]
+    fn infinite_canvas_action_bars_stay_above_nodes_at_every_zoom() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .and_then(|value| value.split("export component InfiniteCanvasPage").next())
+            .expect("canvas node component");
+        let action_bar_y = node
+            .split("function action-bar-y()")
+            .nth(1)
+            .and_then(|value| value.split("function dropdown-popup-x").next())
+            .expect("action bar y function");
+        let text_bar = node
+            .split("text-action-bar := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("media-action-bar := Rectangle").next())
+            .expect("text action bar");
+        let media_bar = node
+            .split("media-action-bar := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("media-editor-panel := Rectangle").next())
+            .expect("media action bar");
+
+        assert!(action_bar_y.contains("return -76px * root.node-scale();"));
+        assert!(!action_bar_y.contains("root.y"));
+        assert!(!action_bar_y.contains("root.viewport-height"));
+        assert!(text_bar.contains("y: root.action-bar-y();"));
+        assert!(media_bar.contains("y: root.action-bar-y();"));
+        assert!(!text_bar.contains("root.y <"));
+        assert!(!media_bar.contains("root.y <"));
+    }
+
+    #[test]
+    fn infinite_canvas_action_bar_buttons_evenly_fill_the_background() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .and_then(|value| value.split("export component InfiniteCanvasPage").next())
+            .expect("canvas node component");
+        let text_bar = node
+            .split("text-action-bar := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("media-action-bar := Rectangle").next())
+            .expect("text action bar");
+        let media_bar = node
+            .split("media-action-bar := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("media-editor-panel := Rectangle").next())
+            .expect("media action bar");
+        let video_actions = media_bar
+            .split("if root.note.kind == \"video\": HorizontalLayout")
+            .nth(1)
+            .and_then(|value| {
+                value
+                    .split("if root.note.kind != \"video\": HorizontalLayout")
+                    .next()
+            })
+            .expect("video action layout");
+        let other_actions = media_bar
+            .split("if root.note.kind != \"video\": HorizontalLayout")
+            .nth(1)
+            .expect("image and audio action layout");
+
+        assert_eq!(
+            text_bar
+                .matches("CanvasMediaAction { horizontal-stretch: 1;")
+                .count(),
+            4
+        );
+        assert_eq!(
+            video_actions
+                .matches("CanvasMediaAction { horizontal-stretch: 1;")
+                .count(),
+            4
+        );
+        assert_eq!(
+            other_actions
+                .matches("CanvasMediaAction { horizontal-stretch: 1;")
+                .count(),
+            3
+        );
+        assert!(
+            !text_bar.contains("CanvasMediaAction { scale-factor: root.node-scale(); width:")
+        );
+        assert!(!media_bar
+            .contains("CanvasMediaAction { scale-factor: root.node-scale(); width:"));
+    }
+
+    #[test]
     fn infinite_canvas_hides_subpixel_node_details_at_minimum_zoom() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
         let node = page

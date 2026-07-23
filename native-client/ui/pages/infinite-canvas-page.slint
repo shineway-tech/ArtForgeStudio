@@ -589,6 +589,10 @@ component CanvasNodeCard {
         return root.height + 20px * root.node-scale();
     }
 
+    function action-bar-y() -> length {
+        return -76px * root.node-scale();
+    }
+
     function dropdown-popup-x(popup-width: length) -> length {
         let preferred = (root.width - root.media-editor-width()) / 2 + 64px * root.node-scale();
         return max(8px - root.x, min(preferred, root.viewport-width - popup-width - root.x - 8px));
@@ -986,7 +990,7 @@ component CanvasNodeCard {
             width: 320px * root.node-scale();
             height: 46px * root.node-scale();
             x: (parent.width - self.width) / 2;
-            y: root.y < 82px * root.node-scale() ? 48px * root.node-scale() : -76px * root.node-scale();
+            y: root.action-bar-y();
             background: #f7f6f4;
             border-radius: self.height / 2;
             border-width: 1px * root.node-scale();
@@ -997,10 +1001,10 @@ component CanvasNodeCard {
                 padding-top: 4px * root.node-scale();
                 padding-bottom: 4px * root.node-scale();
                 spacing: 2px * root.node-scale();
-                CanvasMediaAction { scale-factor: root.node-scale(); width: 70px * root.node-scale(); icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.canvas-show-image-info = !AppState.canvas-show-image-info; } }
-                CanvasMediaAction { scale-factor: root.node-scale(); width: 70px * root.node-scale(); icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
-                CanvasMediaAction { scale-factor: root.node-scale(); width: 70px * root.node-scale(); icon: @image-url("../../assets/icons/edit.svg"); text: AppState.en ? "Edit" : "编辑"; clicked => { root.current-content = root.is-default-text-prompt() ? "" : root.note.content; root.editing = true; text-editor.focus(); } }
-                CanvasMediaAction { scale-factor: root.node-scale(); width: 90px * root.node-scale(); icon: @image-url("../../assets/icons/image.svg"); text: AppState.en ? "Generate" : "生图"; clicked => { root.generate-from-text(); } }
+                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.canvas-show-image-info = !AppState.canvas-show-image-info; } }
+                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
+                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/edit.svg"); text: AppState.en ? "Edit" : "编辑"; clicked => { root.current-content = root.is-default-text-prompt() ? "" : root.note.content; root.editing = true; text-editor.focus(); } }
+                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/image.svg"); text: AppState.en ? "Generate" : "生图"; clicked => { root.generate-from-text(); } }
             }
         }
 
@@ -1008,7 +1012,7 @@ component CanvasNodeCard {
             width: (root.note.kind == "video" ? 380px : 312px) * root.node-scale();
             height: 46px * root.node-scale();
             x: (parent.width - self.width) / 2;
-            y: root.y < 82px * root.node-scale() ? 48px * root.node-scale() : -76px * root.node-scale();
+            y: root.action-bar-y();
             background: #f7f6f4;
             border-radius: self.height / 2;
             border-width: 1px * root.node-scale();
@@ -1019,10 +1023,10 @@ component CanvasNodeCard {
                 padding-top: 4px * root.node-scale();
                 padding-bottom: 4px * root.node-scale();
                 spacing: 2px * root.node-scale();
-                CanvasMediaAction { scale-factor: root.node-scale(); width: 76px * root.node-scale(); icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.canvas-show-image-info = !AppState.canvas-show-image-info; } }
-                CanvasMediaAction { scale-factor: root.node-scale(); width: 76px * root.node-scale(); icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
-                CanvasMediaAction { scale-factor: root.node-scale(); width: 76px * root.node-scale(); icon: @image-url("../../assets/icons/edit.svg"); text: AppState.en ? "Edit" : "编辑"; clicked => { root.editing = true; } }
-                CanvasMediaAction { scale-factor: root.node-scale(); width: 118px * root.node-scale(); icon: @image-url("../../assets/icons/upload.svg"); text: AppState.en ? "Upload video" : "上传视频"; clicked => { AppState.generation-status = AppState.en ? "Video upload requires a configured video provider" : "请先配置视频生成服务"; } }
+                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.canvas-show-image-info = !AppState.canvas-show-image-info; } }
+                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
+                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/edit.svg"); text: AppState.en ? "Edit" : "编辑"; clicked => { root.editing = true; } }
+                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/upload.svg"); text: AppState.en ? "Upload video" : "上传视频"; clicked => { AppState.generation-status = AppState.en ? "Video upload requires a configured video provider" : "请先配置视频生成服务"; } }
             }
             if root.note.kind != "video": HorizontalLayout {
                 padding-left: 8px * root.node-scale();
@@ -1030,9 +1034,9 @@ component CanvasNodeCard {
                 padding-top: 4px * root.node-scale();
                 padding-bottom: 4px * root.node-scale();
                 spacing: 2px * root.node-scale();
-                CanvasMediaAction { scale-factor: root.node-scale(); width: 76px * root.node-scale(); icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.canvas-show-image-info = !AppState.canvas-show-image-info; } }
-                CanvasMediaAction { scale-factor: root.node-scale(); width: 76px * root.node-scale(); icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
-                CanvasMediaAction { scale-factor: root.node-scale(); width: 132px * root.node-scale(); icon: @image-url("../../assets/icons/upload.svg"); text: root.note.kind == "image" ? (AppState.en ? "Upload image" : "上传图片") : (AppState.en ? "Upload audio" : "上传音频"); clicked => { if root.note.kind == "image" { AppState.add-reference(); } else { AppState.generation-status = AppState.en ? "Audio upload requires a configured audio provider" : "请先配置音频生成服务"; } } }
+                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.canvas-show-image-info = !AppState.canvas-show-image-info; } }
+                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
+                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/upload.svg"); text: root.note.kind == "image" ? (AppState.en ? "Upload image" : "上传图片") : (AppState.en ? "Upload audio" : "上传音频"); clicked => { if root.note.kind == "image" { AppState.add-reference(); } else { AppState.generation-status = AppState.en ? "Audio upload requires a configured audio provider" : "请先配置音频生成服务"; } } }
             }
         }
 
