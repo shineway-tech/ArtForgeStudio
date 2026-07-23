@@ -43,6 +43,7 @@ Thumbs.db
 # Agent/codegraph
 .codegraph/
 .reasonix/
+/.worktrees/
 
 # Logs
 *.log
