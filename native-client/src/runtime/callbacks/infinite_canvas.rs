@@ -133,6 +133,31 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
     {
         let app_weak = app.as_weak();
         let store = store.clone();
+        let history = history.clone();
+        state.on_resize_canvas_group(move |id, width, height| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut store_mut = store.borrow_mut();
+            let before = canvas_snapshot(&store_mut);
+            if !resize_group(
+                &mut store_mut.canvas_notes,
+                id.as_str(),
+                width.max(1.0),
+                height.max(1.0),
+            ) {
+                return;
+            }
+            history.borrow_mut().record(before);
+            persist_canvas(&app, &store_mut);
+            sync_canvas_selection(&app, &store_mut);
+            sync_history_state(&app, &history.borrow());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
         state.on_prepare_canvas_focus(move |viewport_width, viewport_height| {
             let Some(app) = app_weak.upgrade() else {
                 return 100;
@@ -510,6 +535,20 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
                 return;
             }
             history.borrow_mut().record(canvas_snapshot(&store_mut));
+            let removed_parent = store_mut
+                .canvas_notes
+                .iter()
+                .find(|note| note.id == id.as_str() && note.kind == "group")
+                .map(|note| note.parent_group_id.clone());
+            if let Some(parent_id) = removed_parent {
+                for child in store_mut
+                    .canvas_notes
+                    .iter_mut()
+                    .filter(|note| note.parent_group_id == id.as_str())
+                {
+                    child.parent_group_id = parent_id.clone();
+                }
+            }
             store_mut.canvas_notes.retain(|note| note.id != id.as_str());
             store_mut
                 .canvas_links

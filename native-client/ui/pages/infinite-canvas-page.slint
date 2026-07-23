@@ -486,6 +486,8 @@ component CanvasNodeCard {
     callback selection-focused();
     in-out property <length> drag-offset-x: 0px;
     in-out property <length> drag-offset-y: 0px;
+    in-out property <length> resize-preview-width: 0px;
+    in-out property <length> resize-preview-height: 0px;
     in-out property <string> current-content: root.note.content;
     in-out property <bool> editing: false;
     in-out property <bool> media-model-open: false;
@@ -500,8 +502,8 @@ component CanvasNodeCard {
 
     x: root.pan-x + (root.note.x + (root.note.selected ? AppState.canvas-drag-delta-x : 0)) * 1px * root.zoom-percent / 100;
     y: root.pan-y + (root.note.y + (root.note.selected ? AppState.canvas-drag-delta-y : 0)) * 1px * root.zoom-percent / 100;
-    width: root.note.width * 1px * root.zoom-percent / 100;
-    height: root.note.height * 1px * root.zoom-percent / 100;
+    width: root.resize-preview-width > 0px ? root.resize-preview-width : root.note.width * 1px * root.zoom-percent / 100;
+    height: root.resize-preview-height > 0px ? root.resize-preview-height : root.note.height * 1px * root.zoom-percent / 100;
 
     function node-scale() -> float {
         return root.zoom-percent / 100;
@@ -1239,6 +1241,39 @@ component CanvasNodeCard {
             moved => {
                 if self.pressed {
                     root.connection-moved(root.x + self.x + self.mouse-x, root.y + self.y + self.mouse-y);
+                }
+            }
+        }
+
+        group-resize-touch := TouchArea {
+            in-out property <length> start-width: 0px;
+            in-out property <length> start-height: 0px;
+            in-out property <length> start-pointer-x: 0px;
+            in-out property <length> start-pointer-y: 0px;
+            visible: root.note.kind == "group" && root.note.selected && root.zoom-percent >= 30;
+            width: max(18px, 24px * root.node-scale());
+            height: self.width;
+            x: parent.width - self.width / 2;
+            y: parent.height - self.height / 2;
+            mouse-cursor: nwse-resize;
+            pointer-event(event) => {
+                if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                    self.start-width = root.width;
+                    self.start-height = root.height;
+                    self.start-pointer-x = self.absolute-position.x + self.mouse-x;
+                    self.start-pointer-y = self.absolute-position.y + self.mouse-y;
+                } else if event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
+                    let next-width = (root.resize-preview-width > 0px ? root.resize-preview-width : root.width) / 1px * 100 / root.zoom-percent;
+                    let next-height = (root.resize-preview-height > 0px ? root.resize-preview-height : root.height) / 1px * 100 / root.zoom-percent;
+                    AppState.resize-canvas-group(root.note.id, next-width, next-height);
+                    root.resize-preview-width = 0px;
+                    root.resize-preview-height = 0px;
+                }
+            }
+            moved => {
+                if self.pressed {
+                    root.resize-preview-width = max(160px * root.node-scale(), self.start-width + self.absolute-position.x + self.mouse-x - self.start-pointer-x);
+                    root.resize-preview-height = max(120px * root.node-scale(), self.start-height + self.absolute-position.y + self.mouse-y - self.start-pointer-y);
                 }
             }
         }

@@ -245,10 +245,27 @@ pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
 
 pub(super) fn push_canvas_notes(app: &AppWindow, store: &Store) {
     let state = app.global::<AppState>();
+    let mut canvas_notes = store.canvas_notes.iter().collect::<Vec<_>>();
+    canvas_notes.sort_by(|left, right| {
+        let left_group = left.kind == "group";
+        let right_group = right.kind == "group";
+        left_group
+            .cmp(&right_group)
+            .reverse()
+            .then_with(|| {
+                if left_group && right_group {
+                    group_depth(&store.canvas_notes, &left.id)
+                        .cmp(&group_depth(&store.canvas_notes, &right.id))
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
+            .then_with(|| left.z_index.cmp(&right.z_index))
+            .then_with(|| left.id.cmp(&right.id))
+    });
     state.set_canvas_notes(ModelRc::new(VecModel::from(
-        store
-            .canvas_notes
-            .iter()
+        canvas_notes
+            .into_iter()
             .map(|note| CanvasNote {
                 id: note.id.clone().into(),
                 kind: note.kind.clone().into(),

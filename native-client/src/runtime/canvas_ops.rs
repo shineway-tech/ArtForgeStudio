@@ -384,6 +384,44 @@ pub(super) fn ungroup_selection(notes: &mut Vec<CanvasNoteData>) -> BTreeSet<Str
     removed
 }
 
+pub(super) fn resize_group(
+    notes: &mut [CanvasNoteData],
+    group_id: &str,
+    requested_width: f32,
+    requested_height: f32,
+) -> bool {
+    let Some(group) = notes
+        .iter()
+        .find(|note| note.id == group_id && note.kind == "group")
+    else {
+        return false;
+    };
+    let group_x = group.x;
+    let group_y = group.y;
+    let descendants = descendant_ids(notes, group_id);
+    let required_width = notes
+        .iter()
+        .filter(|note| descendants.contains(&note.id))
+        .map(|note| note.x + note.width - group_x + GROUP_PADDING)
+        .fold(160.0_f32, f32::max);
+    let required_height = notes
+        .iter()
+        .filter(|note| descendants.contains(&note.id))
+        .map(|note| note.y + note.height - group_y + GROUP_PADDING)
+        .fold(120.0_f32, f32::max);
+    let Some(group) = notes.iter_mut().find(|note| note.id == group_id) else {
+        return false;
+    };
+    let width = requested_width.max(required_width);
+    let height = requested_height.max(required_height);
+    if group.width == width && group.height == height {
+        return false;
+    }
+    group.width = width;
+    group.height = height;
+    true
+}
+
 pub(super) fn remove_selection(
     notes: &mut Vec<CanvasNoteData>,
     links: &mut Vec<CanvasLinkData>,
@@ -598,5 +636,52 @@ mod tests {
             true,
         );
         assert!(notes.iter().all(|note| note.selected));
+    }
+
+    #[test]
+    fn canvas_group_selection_wraps_bounds_with_padding() {
+        let mut notes = vec![
+            CanvasNoteData {
+                selected: true,
+                ..note("a", "text", 40.0, 60.0)
+            },
+            CanvasNoteData {
+                selected: true,
+                ..note("b", "text", 220.0, 180.0)
+            },
+        ];
+
+        let group_id = group_selection(&mut notes, true).expect("group");
+        let group = notes
+            .iter()
+            .find(|note| note.id == group_id)
+            .expect("group note");
+
+        assert_eq!(group.x, 40.0 - GROUP_PADDING);
+        assert_eq!(group.y, 60.0 - GROUP_PADDING);
+        assert_eq!(group.width, 280.0 + GROUP_PADDING * 2.0);
+        assert_eq!(group.height, 200.0 + GROUP_PADDING * 2.0);
+    }
+
+    #[test]
+    fn canvas_group_resize_does_not_scale_children_and_respects_their_bounds() {
+        let mut notes = vec![
+            CanvasNoteData {
+                width: 500.0,
+                height: 400.0,
+                ..note("group", "group", 0.0, 0.0)
+            },
+            CanvasNoteData {
+                parent_group_id: "group".into(),
+                ..note("child", "text", 300.0, 220.0)
+            },
+        ];
+        let child_before = notes[1].clone();
+
+        assert!(resize_group(&mut notes, "group", 120.0, 90.0));
+
+        assert_eq!(notes[0].width, 300.0 + 100.0 + GROUP_PADDING);
+        assert_eq!(notes[0].height, 220.0 + 80.0 + GROUP_PADDING);
+        assert_eq!(notes[1], child_before);
     }
 }

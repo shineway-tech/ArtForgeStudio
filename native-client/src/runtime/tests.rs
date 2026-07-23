@@ -703,6 +703,23 @@ mod tests {
     }
 
     #[test]
+    fn infinite_canvas_groups_are_nested_resizable_containers() {
+        let state = include_str!("../../ui/app-state.slint");
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+        let sync = include_str!("presentation/sync.rs");
+
+        assert!(state.contains("callback resize-canvas-group(string, float, float)"));
+        assert!(callbacks.contains("on_resize_canvas_group"));
+        assert!(page.contains("group-resize-touch"));
+        assert!(page.contains("nwse-resize"));
+        assert!(page.contains("AppState.resize-canvas-group"));
+        assert!(page.contains("AppState.group-canvas-selection"));
+        assert!(page.contains("AppState.ungroup-canvas-selection"));
+        assert!(sync.contains("group_depth"));
+    }
+
+    #[test]
     fn invalid_canvas_group_relationships_are_removed_without_moving_nodes() {
         let mut notes = vec![
             CanvasNoteData {
