@@ -120,7 +120,7 @@ pub(super) fn add_stream_success_item(
     bytes: &[u8],
     upscale_done: bool,
 ) -> Result<(Image, String)> {
-    let (bytes, image, width, height) = generated_image_from_bytes(bytes, quality)?;
+    let (bytes, image, width, height) = generated_image_from_bytes(bytes)?;
     let source_path = save_generated_bytes(app, &bytes, raw_prompt)?;
     let item = AssetData {
         id: Uuid::new_v4().to_string(),
