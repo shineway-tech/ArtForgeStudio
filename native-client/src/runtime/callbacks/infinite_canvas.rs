@@ -70,6 +70,18 @@ fn persist_canvas(app: &AppWindow, store: &Store) {
     save_local_store(app, store);
 }
 
+fn show_canvas_capacity_status(app: &AppWindow) {
+    let state = app.global::<AppState>();
+    state.set_generation_status(
+        if state.get_language().as_str() == "en" {
+            "Canvas limit reached (200 nodes / 400 connections)."
+        } else {
+            "画布已达到上限（200 个节点 / 400 条连线）。"
+        }
+        .into(),
+    );
+}
+
 fn sync_canvas_selection(app: &AppWindow, store: &Store) {
     let state = app.global::<AppState>();
     let ids = selected_ids(&store.canvas_notes);
@@ -101,6 +113,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             let state = app.global::<AppState>();
             let mut store_mut = store.borrow_mut();
             if store_mut.canvas_notes.len() >= MAX_CANVAS_NODES {
+                show_canvas_capacity_status(&app);
                 return;
             }
 
@@ -360,6 +373,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             if store_mut.canvas_notes.len() + notes.len() > MAX_CANVAS_NODES
                 || store_mut.canvas_links.len() + links.len() > MAX_CANVAS_LINKS
             {
+                show_canvas_capacity_status(&app);
                 return;
             }
             history.borrow_mut().record(canvas_snapshot(&store_mut));
@@ -400,6 +414,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             if store_mut.canvas_notes.len() + notes.len() > MAX_CANVAS_NODES
                 || store_mut.canvas_links.len() + links.len() > MAX_CANVAS_LINKS
             {
+                show_canvas_capacity_status(&app);
                 return;
             }
             history.borrow_mut().record(canvas_snapshot(&store_mut));
@@ -454,6 +469,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             };
             let mut store_mut = store.borrow_mut();
             if store_mut.canvas_notes.len() >= MAX_CANVAS_NODES {
+                show_canvas_capacity_status(&app);
                 return;
             }
             history.borrow_mut().record(canvas_snapshot(&store_mut));
@@ -609,6 +625,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
                     .iter()
                     .any(|note| note.id == source_id.as_str() && note.kind != "group")
             {
+                show_canvas_capacity_status(&app);
                 return;
             }
             let node_kind = match kind.as_str() {
@@ -710,6 +727,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
                 .iter()
                 .any(|link| link.target_id == target_id);
             if !replacing && store_mut.canvas_links.len() >= MAX_CANVAS_LINKS {
+                show_canvas_capacity_status(&app);
                 return "rejected".into();
             }
 

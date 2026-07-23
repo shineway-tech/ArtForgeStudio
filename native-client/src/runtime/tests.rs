@@ -591,9 +591,10 @@ mod tests {
         assert!(page.contains("root.zoom-percent"));
         assert!(page.contains("root.pan-x"));
         assert!(page.contains("root.pan-y"));
-        for kind in ["text", "image", "video", "audio", "group"] {
+        for kind in ["text", "image", "video", "audio"] {
             assert!(page.contains(&format!("root.add-node(\"{kind}\")")));
         }
+        assert!(page.contains("AppState.group-canvas-selection"));
         assert!(page.contains("AppState.undo-canvas()"));
         assert!(page.contains("AppState.redo-canvas()"));
         assert!(page.contains("canvas-minimap-open"));
@@ -765,6 +766,19 @@ mod tests {
         assert!(!page.contains("node-search-world-x, parent.width"));
         assert!(callbacks.contains("on_search_canvas_node_types"));
         assert!(callbacks.contains("on_add_connected_canvas_node"));
+    }
+
+    #[test]
+    fn infinite_canvas_reports_capacity_without_mutating_the_server_contract() {
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+        let state = include_str!("../../ui/app-state.slint");
+
+        assert!(callbacks.contains("const MAX_CANVAS_NODES: usize = 200"));
+        assert!(callbacks.contains("const MAX_CANVAS_LINKS: usize = 400"));
+        assert!(callbacks.contains("Canvas limit reached (200 nodes / 400 connections)."));
+        assert!(callbacks.contains("画布已达到上限（200 个节点 / 400 条连线）。"));
+        assert!(!state.contains("server-canvas"));
+        assert!(!state.contains("upload-canvas"));
     }
 
     #[test]
@@ -1113,9 +1127,9 @@ mod tests {
             .expect("right connector touch area");
 
         assert!(input_connector.contains(
-            "root.connection-started(root.note.id, root.x, root.y + root.height / 2)"
+            "root.reconnect-started(root.note.id, root.x, root.y + root.height / 2)"
         ));
-        assert!(input_connector.contains("root.connection-finished"));
+        assert!(input_connector.contains("root.reconnect-finished"));
         assert!(output_connector.contains(
             "root.connection-started(root.note.id, root.x + root.width, root.y + root.height / 2)"
         ));

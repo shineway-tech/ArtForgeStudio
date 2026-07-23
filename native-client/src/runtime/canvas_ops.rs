@@ -824,4 +824,46 @@ mod tests {
         assert_eq!(links[0].source_id, "source");
         assert_eq!(links[0].target_id, "new-node");
     }
+
+    #[test]
+    fn canvas_target_scale_handles_two_hundred_nodes_and_four_hundred_links() {
+        let mut notes = (0..200)
+            .map(|index| CanvasNoteData {
+                id: format!("node-{index}"),
+                kind: "text".into(),
+                x: (index % 20) as f32 * 140.0,
+                y: (index / 20) as f32 * 110.0,
+                width: 100.0,
+                height: 80.0,
+                selected: index < 100,
+                ..CanvasNoteData::default()
+            })
+            .collect::<Vec<_>>();
+        let mut links = Vec::new();
+        for index in 0..400 {
+            let source = index % 199;
+            let target = (source + 1 + index / 199).min(199);
+            links.push(CanvasLinkData {
+                id: format!("link-{index}"),
+                source_id: format!("node-{source}"),
+                target_id: format!("node-{target}"),
+            });
+        }
+
+        select_in_rect(
+            &mut notes,
+            CanvasRect::normalized(0.0, 0.0, 3_000.0, 1_200.0),
+            false,
+        );
+        move_selection(&mut notes, 12.0, 18.0);
+        let snapshot = CanvasSnapshot {
+            notes: notes.clone(),
+            links: links.clone(),
+        };
+
+        assert_eq!(snapshot.notes.len(), 200);
+        assert_eq!(snapshot.links.len(), 400);
+        assert!(snapshot.notes.iter().all(|note| note.x >= 12.0));
+        assert!(!link_reaches(&links, "node-199", "node-0"));
+    }
 }
