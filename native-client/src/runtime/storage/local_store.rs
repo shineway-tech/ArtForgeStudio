@@ -116,6 +116,7 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
         store_mut.custom_prompts = normalize_custom_prompts(data.custom_prompts);
         store_mut.custom_prompt_times = data.custom_prompt_times;
         store_mut.canvas_notes = data.canvas_notes;
+        normalize_canvas_groups(&mut store_mut.canvas_notes);
         store_mut.canvas_links = data.canvas_links;
         let original_prompt_times = store_mut.custom_prompt_times.clone();
         let retained = store_mut
@@ -173,7 +174,11 @@ pub(super) fn prompt_draft_for_category(drafts: &PromptDrafts, category: &str) -
     }
 }
 
-pub(super) fn set_prompt_draft_for_category(drafts: &mut PromptDrafts, category: &str, prompt: String) {
+pub(super) fn set_prompt_draft_for_category(
+    drafts: &mut PromptDrafts,
+    category: &str,
+    prompt: String,
+) {
     match category {
         "scene" => drafts.scene = prompt,
         "ui" => drafts.ui = prompt,
@@ -183,7 +188,11 @@ pub(super) fn set_prompt_draft_for_category(drafts: &mut PromptDrafts, category:
     }
 }
 
-pub(super) fn store_current_prompt_draft(app: &AppWindow, store: &Rc<RefCell<Store>>, category: &str) {
+pub(super) fn store_current_prompt_draft(
+    app: &AppWindow,
+    store: &Rc<RefCell<Store>>,
+    category: &str,
+) {
     let prompt = app.global::<AppState>().get_prompt().to_string();
     set_prompt_draft_for_category(&mut store.borrow_mut().prompt_drafts, category, prompt);
 }
@@ -219,7 +228,11 @@ pub(super) fn save_custom_prompt_to_store(
     if original.is_empty() {
         store.custom_prompts.insert(0, prompt.to_string());
     } else {
-        let Some(index) = store.custom_prompts.iter().position(|item| item == original) else {
+        let Some(index) = store
+            .custom_prompts
+            .iter()
+            .position(|item| item == original)
+        else {
             return SaveCustomPromptResult::Missing;
         };
         store.custom_prompts[index] = prompt.to_string();
@@ -229,8 +242,14 @@ pub(super) fn save_custom_prompt_to_store(
         .custom_prompt_times
         .insert(prompt.to_string(), timestamp.to_string());
     store.custom_prompts.truncate(MAX_CUSTOM_PROMPTS);
-    let retained = store.custom_prompts.iter().cloned().collect::<BTreeSet<_>>();
-    store.custom_prompt_times.retain(|item, _| retained.contains(item));
+    let retained = store
+        .custom_prompts
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    store
+        .custom_prompt_times
+        .retain(|item, _| retained.contains(item));
     SaveCustomPromptResult::Saved
 }
 

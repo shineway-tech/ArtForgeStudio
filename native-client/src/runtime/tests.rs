@@ -623,6 +623,52 @@ mod tests {
     }
 
     #[test]
+    fn legacy_canvas_notes_default_to_top_level_and_unselected() {
+        let note: CanvasNoteData = serde_json::from_str(
+            r#"{"id":"n1","kind":"text","content":"","x":10.0,"y":20.0,"width":320.0,"height":210.0}"#,
+        )
+        .expect("legacy canvas note");
+
+        assert_eq!(note.parent_group_id, "");
+        assert_eq!(note.z_index, 0);
+        assert!(!note.selected);
+    }
+
+    #[test]
+    fn invalid_canvas_group_relationships_are_removed_without_moving_nodes() {
+        let mut notes = vec![
+            CanvasNoteData {
+                id: "group-a".into(),
+                kind: "group".into(),
+                parent_group_id: "group-b".into(),
+                x: 10.0,
+                y: 20.0,
+                ..CanvasNoteData::default()
+            },
+            CanvasNoteData {
+                id: "group-b".into(),
+                kind: "group".into(),
+                parent_group_id: "group-a".into(),
+                ..CanvasNoteData::default()
+            },
+            CanvasNoteData {
+                id: "node".into(),
+                parent_group_id: "missing".into(),
+                x: 30.0,
+                y: 40.0,
+                ..CanvasNoteData::default()
+            },
+        ];
+
+        normalize_canvas_groups(&mut notes);
+
+        assert!(notes[0].parent_group_id.is_empty() || notes[1].parent_group_id.is_empty());
+        assert!(notes[2].parent_group_id.is_empty());
+        assert_eq!((notes[0].x, notes[0].y), (10.0, 20.0));
+        assert_eq!((notes[2].x, notes[2].y), (30.0, 40.0));
+    }
+
+    #[test]
     fn infinite_canvas_nodes_drag_from_their_entire_surface_until_editing() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
         let node = page

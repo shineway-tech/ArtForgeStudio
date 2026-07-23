@@ -48,6 +48,12 @@ struct CanvasNoteData {
     width: f32,
     #[serde(default = "default_canvas_node_height")]
     height: f32,
+    #[serde(default)]
+    parent_group_id: String,
+    #[serde(default)]
+    z_index: i32,
+    #[serde(skip)]
+    selected: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -55,6 +61,36 @@ struct CanvasLinkData {
     id: String,
     source_id: String,
     target_id: String,
+}
+
+fn normalize_canvas_groups(notes: &mut [CanvasNoteData]) {
+    let group_ids = notes
+        .iter()
+        .filter(|note| note.kind == "group")
+        .map(|note| note.id.clone())
+        .collect::<BTreeSet<_>>();
+
+    for note in notes.iter_mut() {
+        if note.parent_group_id == note.id || !group_ids.contains(&note.parent_group_id) {
+            note.parent_group_id.clear();
+        }
+    }
+
+    let parents = notes
+        .iter()
+        .map(|note| (note.id.clone(), note.parent_group_id.clone()))
+        .collect::<BTreeMap<_, _>>();
+    for note in notes.iter_mut() {
+        let mut current = note.parent_group_id.as_str();
+        let mut visited = BTreeSet::from([note.id.as_str()]);
+        while !current.is_empty() {
+            if !visited.insert(current) {
+                note.parent_group_id.clear();
+                break;
+            }
+            current = parents.get(current).map(String::as_str).unwrap_or_default();
+        }
+    }
 }
 
 #[derive(Clone)]

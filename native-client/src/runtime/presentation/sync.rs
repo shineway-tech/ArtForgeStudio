@@ -258,6 +258,9 @@ pub(super) fn push_canvas_notes(app: &AppWindow, store: &Store) {
                 y: note.y,
                 width: note.width,
                 height: note.height,
+                parent_group_id: note.parent_group_id.clone().into(),
+                z_index: note.z_index,
+                selected: note.selected,
             })
             .collect::<Vec<_>>(),
     )));

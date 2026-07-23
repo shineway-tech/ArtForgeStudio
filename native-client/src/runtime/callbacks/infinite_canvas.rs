@@ -150,6 +150,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
                 y: center_y - height / 2.0,
                 width,
                 height,
+                ..CanvasNoteData::default()
             });
             persist_canvas(&app, &store_mut);
             drop(store_mut);
@@ -366,6 +367,7 @@ mod tests {
             y: 0.0,
             width: 320.0,
             height: 210.0,
+            ..CanvasNoteData::default()
         }
     }
 
