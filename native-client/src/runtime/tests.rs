@@ -52,12 +52,13 @@ mod tests {
     }
 
     #[test]
-    fn generated_images_are_clamped_to_selected_quality() {
+    fn generated_images_preserve_provider_bytes_and_dimensions() {
         let source = image::RgbaImage::from_pixel(1254, 1254, image::Rgba([40, 80, 120, 255]));
         let bytes = encode_png_rgba(&source, 1254, 1254).unwrap();
-        let (_, _, width, height) = generated_image_from_bytes(&bytes, "1K").unwrap();
+        let (saved, _, width, height) = generated_image_from_bytes(&bytes).unwrap();
 
-        assert_eq!((width, height), (1024, 1024));
+        assert_eq!(saved, bytes);
+        assert_eq!((width, height), (1254, 1254));
     }
 
     #[test]
