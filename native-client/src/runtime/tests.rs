@@ -1042,14 +1042,13 @@ mod tests {
         let notifications = include_str!("../../ui/pages/notifications-page.slint");
         let settings = include_str!("../../ui/pages/settings-page.slint");
 
-        assert!(profile.contains("height: AppState.nickname == \"\" ? 150px : 214px;"));
-        assert!(profile.contains("clip: true;"));
+        assert!(profile.contains("height: min(650px, root.height - 48px);"));
         assert!(profile.contains(
-            "viewport-height: max(self.height, AppState.account-sessions.length * 46px);"
+            "viewport-height: max(self.height, AppState.account-sessions.length * 68px);"
         ));
-        assert!(profile.contains("width: min(420px, root.width - 32px);"));
+        assert!(profile.contains("width: min(920px, root.width - 48px);"));
 
-        assert!(auth.contains("height: min(480px, root.height - 40px);"));
+        assert!(auth.contains("height: min(700px, root.height - 40px);"));
         assert!(agreement_update.contains("height: min(380px, root.height - 40px);"));
         assert!(agreement_viewer.contains("width: min(860px, root.width - 32px);"));
         assert!(agreement_viewer.contains("height: parent.height - 120px;"));

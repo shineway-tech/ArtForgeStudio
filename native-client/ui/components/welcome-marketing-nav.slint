@@ -33,7 +33,12 @@ export component WelcomeMarketingNav {
             width: 108px;
             text: AppState.en ? "Login" : "登录/注册";
             primary: true;
-            clicked => { AppState.auth-open = true; }
+            clicked => {
+                AppState.auth-open = true;
+                if AppState.auth-method == "wechat" && !AppState.auth-wechat-busy && !AppState.auth-wechat-qr-ready {
+                    AppState.start-wechat-login();
+                }
+            }
         }
     }
 }

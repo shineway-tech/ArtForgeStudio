@@ -11,6 +11,7 @@ import { InvoiceDialog } from "dialogs/invoice-dialog.slint";
 import { InvoiceOrderDialog } from "dialogs/invoice-order-dialog.slint";
 import { DeleteConfirm } from "dialogs/delete-confirm.slint";
 import { ModelRequiredDialog } from "dialogs/model-required-dialog.slint";
+import { QualityRestrictedDialog } from "dialogs/quality-restricted-dialog.slint";
 import { ProfileDialog } from "dialogs/profile-dialog.slint";
 import { AgreementUpdateDialog } from "dialogs/agreement-update-dialog.slint";
 import { AgreementViewerDialog } from "dialogs/agreement-viewer-dialog.slint";
@@ -105,6 +106,7 @@ export component AppWindow inherits Window {
     DeleteConfirm { width: root.width; height: root.height; }
     ModelRequiredDialog { width: root.width; height: root.height; }
     CreditInsufficientDialog { width: root.width; height: root.height; }
+    QualityRestrictedDialog { width: root.width; height: root.height; }
     CustomPromptDialog { width: root.width; height: root.height; }
     InvoiceOrderDialog {
         x: 0px;

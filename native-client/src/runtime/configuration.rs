@@ -85,6 +85,18 @@ pub(super) fn normalized_quality(quality: &str) -> &'static str {
     }
 }
 
+pub(super) fn membership_allows_quality(max_quality: &str, requested_quality: &str) -> bool {
+    fn quality_rank(quality: &str) -> u8 {
+        match normalized_quality(quality) {
+            "4K" => 3,
+            "2K" => 2,
+            _ => 1,
+        }
+    }
+
+    quality_rank(requested_quality) <= quality_rank(max_quality)
+}
+
 pub(super) fn pixel_dimensions_for(ratio: &str, quality: &str) -> (i32, i32) {
     let max_edge = match normalized_quality(quality) {
         "4K" => 4096,

@@ -1,4 +1,43 @@
 use super::*;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use qrcode::{Color as QrColor, QrCode};
+
+pub(super) fn qr_image(data: &str) -> Result<Image> {
+    let code = QrCode::new(data.as_bytes()).map_err(|error| anyhow!(error.to_string()))?;
+    let quiet_zone = 4usize;
+    let scale = 6usize;
+    let modules = code.width();
+    let size = (modules + quiet_zone * 2) * scale;
+    let mut rgba = image::RgbaImage::from_pixel(
+        size as u32,
+        size as u32,
+        image::Rgba([255, 255, 255, 255]),
+    );
+    let colors = code.to_colors();
+    for y in 0..modules {
+        for x in 0..modules {
+            if colors[y * modules + x] != QrColor::Dark {
+                continue;
+            }
+            let left = (x + quiet_zone) * scale;
+            let top = (y + quiet_zone) * scale;
+            for py in top..top + scale {
+                for px in left..left + scale {
+                    rgba.put_pixel(px as u32, py as u32, image::Rgba([0, 0, 0, 255]));
+                }
+            }
+        }
+    }
+    Ok(slint_image_from_rgba(&rgba, size as u32, size as u32))
+}
+
+pub(super) fn encoded_image(data: &str) -> Result<Image> {
+    let encoded = data.split_once(',').map_or(data, |(_, payload)| payload);
+    let bytes = STANDARD.decode(encoded.trim())?;
+    let rgba = image::load_from_memory(&bytes)?.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    Ok(slint_image_from_rgba(&rgba, width, height))
+}
 
 pub(super) fn generated_image_from_bytes(bytes: &[u8], quality: &str) -> Result<(Vec<u8>, Image, i32, i32)> {
     let mut img = image::load_from_memory(bytes)?.to_rgba8();

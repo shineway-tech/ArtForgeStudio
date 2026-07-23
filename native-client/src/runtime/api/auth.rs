@@ -59,6 +59,27 @@ pub(crate) struct LogoutResponse {
     pub(crate) logged_out_all: bool,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct WechatLoginStartResponse {
+    pub(crate) login_id: String,
+    pub(crate) authorization_url: String,
+    #[serde(default)]
+    pub(crate) qr_image_base64: String,
+    pub(crate) expires_in_seconds: u64,
+    pub(crate) poll_after_seconds: u64,
+    #[serde(default)]
+    pub(crate) poll_after_milliseconds: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct WechatLoginStatusResponse {
+    pub(crate) status: String,
+    #[serde(default)]
+    pub(crate) qr_status: Option<String>,
+    pub(crate) message: Option<String>,
+    pub(crate) login: Option<LoginResponse>,
+}
+
 #[derive(Serialize)]
 struct EmailCodeRequest<'a> {
     email: &'a str,
@@ -73,6 +94,21 @@ struct LoginRequest<'a> {
     device_name: &'a str,
     platform: &'a str,
     app_version: &'a str,
+    agreement_acceptances: &'a [AgreementAcceptance],
+}
+
+#[derive(Serialize)]
+struct WechatLoginStartRequest<'a> {
+    device_id: &'a str,
+    device_name: &'a str,
+    platform: &'a str,
+    app_version: &'a str,
+    agreement_acceptances: &'a [AgreementAcceptance],
+}
+
+#[derive(Serialize)]
+struct WechatLoginStatusRequest<'a> {
+    login_id: &'a str,
     agreement_acceptances: &'a [AgreementAcceptance],
 }
 
@@ -139,6 +175,51 @@ impl AuthApi {
             .public_json(Method::POST, "/v1/auth/email/login", Some(body))?;
         let response: ApiResponse<LoginResponse> = response;
         self.client.session().install_tokens(&response.data.tokens)?;
+        Ok(response.data)
+    }
+
+    pub(crate) fn start_wechat_login(
+        &self,
+        acceptances: &[AgreementAcceptance],
+    ) -> Result<WechatLoginStartResponse, ApiError> {
+        let device = self.client.device();
+        let body = serde_json::to_value(WechatLoginStartRequest {
+            device_id: &device.id,
+            device_name: &device.name,
+            platform: &device.platform,
+            app_version: self.client.app_version(),
+            agreement_acceptances: acceptances,
+        })
+        .map_err(|error| ApiError::Protocol {
+            message: error.to_string(),
+            request_id: None,
+        })?;
+        self.client
+            .public_json(Method::POST, "/v1/auth/wechat/session", Some(body))
+            .map(|response: ApiResponse<WechatLoginStartResponse>| response.data)
+    }
+
+    pub(crate) fn wechat_login_status(
+        &self,
+        login_id: &str,
+        acceptances: &[AgreementAcceptance],
+    ) -> Result<WechatLoginStatusResponse, ApiError> {
+        let body = serde_json::to_value(WechatLoginStatusRequest {
+            login_id,
+            agreement_acceptances: acceptances,
+        })
+            .map_err(|error| ApiError::Protocol {
+                message: error.to_string(),
+                request_id: None,
+            })?;
+        let response: ApiResponse<WechatLoginStatusResponse> = self.client.public_json(
+            Method::POST,
+            "/v1/auth/wechat/session/status",
+            Some(body),
+        )?;
+        if let Some(login) = response.data.login.as_ref() {
+            self.client.session().install_tokens(&login.tokens)?;
+        }
         Ok(response.data)
     }
 

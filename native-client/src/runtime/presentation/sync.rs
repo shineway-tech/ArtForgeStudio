@@ -128,6 +128,12 @@ pub(super) fn navigate_to(app: &AppWindow, page: &str) {
     let state = app.global::<AppState>();
     if page != "welcome" && !state.get_logged_in() {
         state.set_auth_open(true);
+        if state.get_auth_method().as_str() == "wechat"
+            && !state.get_auth_wechat_busy()
+            && !state.get_auth_wechat_qr_ready()
+        {
+            state.invoke_start_wechat_login();
+        }
         return;
     }
     state.set_page(page.into());

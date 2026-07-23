@@ -78,6 +78,14 @@ impl ApiError {
         self.code() == Some("insufficient_credits")
     }
 
+    pub(crate) fn should_preserve_generation_recovery(&self) -> bool {
+        match self {
+            Self::Network { .. } | Self::Protocol { .. } => true,
+            Self::Http { status, .. } => *status >= 500 || matches!(*status, 408 | 425 | 429),
+            _ => false,
+        }
+    }
+
     pub(crate) fn user_message(&self) -> String {
         match self.code() {
             Some("email_code_invalid" | "verification_code_invalid") => {
@@ -86,6 +94,28 @@ impl ApiError {
             Some("email_code_rate_limited" | "rate_limited") => {
                 "操作过于频繁，请稍后再试".to_string()
             }
+            Some("email_already_bound") => "当前账号已经绑定邮箱".to_string(),
+            Some("email_identity_conflict") => {
+                "该邮箱已属于其他账号，不能直接绑定".to_string()
+            }
+            Some("email_delivery_failed") => "验证码发送失败，请稍后重试".to_string(),
+            Some("wechat_login_unavailable") => "微信登录暂未开放，请使用邮箱登录".to_string(),
+            Some("wechat_login_expired") => "二维码已失效，请点击刷新".to_string(),
+            Some("wechat_code_invalid" | "wechat_profile_unavailable") => {
+                "微信授权未完成，请刷新二维码重试".to_string()
+            }
+            Some("wechat_provider_unavailable") => {
+                "微信服务暂时不可用，请稍后重试".to_string()
+            }
+            Some("wechat_already_bound") => "当前账号已经绑定微信".to_string(),
+            Some("wechat_identity_conflict") => {
+                "该微信已绑定其他账号，请更换微信后重试".to_string()
+            }
+            Some("wechat_binding_expired") => "绑定二维码已失效，请点击刷新".to_string(),
+            Some("wechat_unbind_not_allowed") => {
+                "当前账号只能使用微信登录，不能解绑唯一登录方式".to_string()
+            }
+            Some("wechat_not_bound") => "当前账号尚未绑定微信".to_string(),
             Some("agreement_acceptance_required") => {
                 "请阅读并同意最新协议后重试".to_string()
             }
