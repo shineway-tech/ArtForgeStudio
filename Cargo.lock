@@ -190,6 +190,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "qrcode",
+ "raw-window-handle",
  "reqwest",
  "rfd",
  "serde",

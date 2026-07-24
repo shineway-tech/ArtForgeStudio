@@ -392,27 +392,32 @@ pub(super) fn drag_data_to_path(data: &str) -> Option<PathBuf> {
 }
 
 pub(super) fn external_image_url(data: &str) -> Option<String> {
-    let raw = data
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty() && !line.starts_with('#'))?;
-    let candidate = if raw.starts_with('<') {
-        let source = raw
-            .split_once("src=\"")
-            .and_then(|(_, tail)| tail.split_once('"').map(|(value, _)| value))
-            .or_else(|| {
-                raw.split_once("src='")
-                    .and_then(|(_, tail)| tail.split_once('\'').map(|(value, _)| value))
-            })?;
-        source
-    } else {
-        raw
-    };
-    let url = reqwest::Url::parse(candidate).ok()?;
-    if !matches!(url.scheme(), "http" | "https") || !url.username().is_empty() {
-        return None;
+    let html_source = data
+        .split_once("src=\"")
+        .and_then(|(_, tail)| tail.split_once('"').map(|(value, _)| value))
+        .or_else(|| {
+            data.split_once("src='")
+                .and_then(|(_, tail)| tail.split_once('\'').map(|(value, _)| value))
+        });
+    let candidates = html_source.into_iter().chain(
+        data.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .filter_map(|line| {
+                line.strip_prefix("SourceURL:")
+                    .map(str::trim)
+                    .or_else(|| line.starts_with("http").then_some(line))
+            }),
+    );
+    for candidate in candidates {
+        let Ok(url) = reqwest::Url::parse(candidate) else {
+            continue;
+        };
+        if matches!(url.scheme(), "http" | "https") && url.username().is_empty() {
+            return Some(url.to_string());
+        }
     }
-    Some(url.to_string())
+    None
 }
 
 pub(super) fn file_uri_for_path(path: &str) -> String {

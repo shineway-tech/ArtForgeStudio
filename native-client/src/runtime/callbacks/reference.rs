@@ -1,4 +1,5 @@
 use super::*;
+use crate::platform::{self, ExternalImageDrop};
 use std::io::Read;
 
 const MAX_DROPPED_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
@@ -170,6 +171,36 @@ pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>
             state.set_viewer_open(true);
         });
     }
+
+    poll_external_image_drops(app.as_weak(), store);
+}
+
+fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>>) {
+    slint::Timer::single_shot(Duration::from_millis(80), move || {
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
+        let drops = platform::take_external_image_drops();
+        if app.global::<AppState>().get_page().as_str() == "generation" {
+            for drop in drops {
+                match drop {
+                    ExternalImageDrop::Paths(paths) => {
+                        for path in paths {
+                            add_reference_from_path(&app, &store, &path);
+                        }
+                    }
+                    ExternalImageDrop::Text(data) => {
+                        if let Some(url) = external_image_url(&data) {
+                            start_external_reference_import(&app, store.clone(), url);
+                        } else {
+                            add_reference_from_drag_data(&app, &store, TEXT_PLAIN_MIME, &data);
+                        }
+                    }
+                }
+            }
+        }
+        poll_external_image_drops(app.as_weak(), store);
+    });
 }
 
 fn start_external_reference_import(

@@ -459,6 +459,8 @@ mod tests {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         let callbacks = include_str!("callbacks/reference.rs");
         let viewer = include_str!("callbacks/viewer.rs");
+        let platform = include_str!("../platform.rs");
+        let app = include_str!("app.rs");
 
         assert!(composer.contains("reference-drop := DropArea"));
         assert!(composer.contains("event.mime-type == \"text/uri-list\""));
@@ -467,7 +469,16 @@ mod tests {
         assert!(callbacks.contains("external_image_url(data.as_str())"));
         assert!(callbacks.contains("start_external_reference_import"));
         assert!(callbacks.contains("download_external_reference"));
+        assert!(callbacks.contains("take_external_image_drops"));
+        assert!(callbacks.contains("ExternalImageDrop::Paths"));
+        assert!(callbacks.contains("ExternalImageDrop::Text"));
         assert!(viewer.contains("pub(super) fn external_image_url"));
+        assert!(platform.contains("IDropTarget"));
+        assert!(platform.contains("RegisterDragDrop"));
+        assert!(platform.contains("CF_HDROP"));
+        assert!(platform.contains("\"text/uri-list\""));
+        assert!(platform.contains("\"text/html\""));
+        assert!(app.contains("schedule_external_image_drop_install"));
     }
 
     #[test]
@@ -482,6 +493,13 @@ mod tests {
             )
             .as_deref(),
             Some("https://cdn.example.com/reference.webp")
+        );
+        assert_eq!(
+            external_image_url(
+                "Version:0.9\r\nSourceURL:https://cdn.example.com/reference.jpg\r\n<html></html>"
+            )
+            .as_deref(),
+            Some("https://cdn.example.com/reference.jpg")
         );
         assert!(external_image_url("file:///C:/images/reference.png").is_none());
         assert!(external_image_url("C:\\images\\reference.png").is_none());

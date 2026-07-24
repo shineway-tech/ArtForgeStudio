@@ -5,6 +5,7 @@ pub(super) fn run() -> Result<()> {
     configure_renderer_backend();
     let app = AppWindow::new()?;
     platform::schedule_application_icon_install();
+    schedule_external_image_drop_install(app.as_weak(), 20);
     app.window().set_size(slint::PhysicalSize::new(1440, 900));
     init_version_state(&app);
     apply_theme(&app, "light");
@@ -33,6 +34,27 @@ pub(super) fn run() -> Result<()> {
     save_user_profile(&app);
     save_local_store(&app, &store.borrow());
     Ok(())
+}
+
+fn schedule_external_image_drop_install(app_weak: Weak<AppWindow>, attempts_left: u8) {
+    let delay = if attempts_left == 20 {
+        Duration::ZERO
+    } else {
+        Duration::from_millis(50)
+    };
+    slint::Timer::single_shot(delay, move || {
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
+        if platform::install_external_image_drop_target(app.window()) {
+            return;
+        }
+        if attempts_left > 1 {
+            schedule_external_image_drop_install(app.as_weak(), attempts_left - 1);
+        } else {
+            eprintln!("failed to install native external image drop target");
+        }
+    });
 }
 
 fn configure_renderer_backend() {

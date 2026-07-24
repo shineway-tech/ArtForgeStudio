@@ -18,6 +18,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 fontdb = "0.23"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 qrcode = { version = "0.14", default-features = false }
+raw-window-handle = "0.6"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls"] }
 rfd = "0.15"
 serde = { version = "1", features = ["derive"] }
