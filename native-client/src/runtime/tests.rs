@@ -1149,8 +1149,10 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(state.contains("canvas-group-name-dialog-open"));
         assert!(state.contains("callback rename-canvas-group(string, string) -> bool;"));
         assert!(state.contains("callback ungroup-canvas-node(string);"));
+        assert!(state.contains("callback remove-canvas-group-with-children(string);"));
         assert!(callbacks.contains("state.on_rename_canvas_group"));
         assert!(callbacks.contains("state.on_ungroup_canvas_node"));
+        assert!(callbacks.contains("state.on_remove_canvas_group_with_children"));
         assert!(page.contains("return max(0.75, root.node-scale());"));
         assert!(page.contains("width: 34px * root.group-control-scale();"));
         assert!(page.contains("width: 20px * root.group-control-scale();"));
@@ -1162,9 +1164,9 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(page.contains("AppState.pending-delete-kind = \"canvas-group\";"));
         assert!(dialog.contains("init => { group-name-input.focus(); }"));
         assert!(dialog.contains("AppState.rename-canvas-group("));
-        assert!(delete.contains("确认删除当前组？"));
+        assert!(delete.contains("是否删除当前分组以及组内节点？"));
         assert!(delete.contains(
-            "AppState.pending-delete-kind == \"canvas-note\" || AppState.pending-delete-kind == \"canvas-group\""
+            "AppState.remove-canvas-group-with-children(AppState.pending-delete-id)"
         ));
     }
 
@@ -1406,6 +1408,9 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(curve.contains("function estimated-curve-length()"));
         assert!(curve.contains("property <int> dash-count:"));
         assert!(curve.contains("property <int> hit-count:"));
+        assert!(curve.contains("in property <float> flow-phase: 0;"));
+        assert!(curve.contains("function flow-distance(t: float)"));
+        assert!(curve.contains("property <bool> in-sweep:"));
         assert!(curve.contains("for dash-index in root.dash-count"));
         assert!(curve.contains("for hit-index in root.hit-count"));
         assert!(!curve.contains("for dash-index in 42"));
@@ -1417,6 +1422,9 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(page.contains("root.request-selected-delete()"));
         assert!(page.contains("AppState.canvas-selected-link-id = link-id"));
         assert!(page.contains("canvas-keyboard.focus()"));
+        assert!(page.contains("interval: 32ms;"));
+        assert!(page.contains("root.link-flow-step = Math.mod(root.link-flow-step + 1, 100)"));
+        assert!(page.contains("flow-phase: root.link-flow-step / 100;"));
     }
 
     #[test]

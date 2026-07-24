@@ -531,6 +531,7 @@ component CanvasConnectionCurve {
     in property <length> end-y;
     in property <bool> preview: false;
     in property <bool> dark-background: true;
+    in property <float> flow-phase: 0;
     property <bool> selected: !root.preview && AppState.canvas-selected-link-id == root.link.id;
     property <int> dash-count: max(8, min(220, Math.ceil(root.estimated-curve-length() / 12px)));
     property <int> hit-count: max(12, min(180, Math.ceil(root.estimated-curve-length() / 16px)));
@@ -568,20 +569,27 @@ component CanvasConnectionCurve {
         return (chord + control-polygon) / 2 * 1px;
     }
 
+    function flow-distance(t: float) -> float {
+        return Math.abs(t - root.flow-phase);
+    }
+
     width: root.canvas-width;
     height: root.canvas-height;
 
     for dash-index in root.dash-count: Rectangle {
         property <float> t: (dash-index + 0.5) / root.dash-count;
+        property <bool> in-sweep: !root.preview && root.flow-distance(self.t) < 0.075;
         x: root.curve-x(self.t) - (root.selected ? 4px : 3px);
         y: root.curve-y(self.t) - (root.selected ? 2px : 1.5px);
-        width: root.preview ? 5px : (root.selected ? 8px : 6px);
-        height: root.selected ? 4px : 3px;
+        width: root.preview ? 5px : (self.in-sweep || root.selected ? 8px : 6px);
+        height: self.in-sweep || root.selected ? 4px : 3px;
         background: root.preview
             ? (root.dark-background ? #f7f7f7 : AppTheme.text)
-            : (root.selected ? AppTheme.accent : (root.dark-background ? #d6d9df : AppTheme.muted));
+            : (self.in-sweep
+                ? (root.dark-background ? #ffffff : AppTheme.accent)
+                : (root.selected ? AppTheme.accent : (root.dark-background ? #d6d9df : AppTheme.muted)));
         border-radius: 2px;
-        opacity: root.preview || root.selected ? 1 : 0.78;
+        opacity: root.preview || root.selected || self.in-sweep ? 1 : 0.78;
     }
 
     if !root.preview: Rectangle {
@@ -1825,6 +1833,13 @@ export component InfiniteCanvasPage {
     in-out property <float> node-search-world-x: 0;
     in-out property <float> node-search-world-y: 0;
     in-out property <int> node-search-index: 0;
+    in-out property <int> link-flow-step: 0;
+
+    Timer {
+        interval: 32ms;
+        running: AppState.canvas-links.length > 0;
+        triggered => { root.link-flow-step = Math.mod(root.link-flow-step + 1, 100); }
+    }
 
     function grid-spacing() -> length {
         return max(12px, 40px * root.zoom-percent / 100);
@@ -2223,6 +2238,7 @@ export component InfiniteCanvasPage {
                 end-x: root.pan-x + (link.end-x + (link.target-selected ? AppState.canvas-drag-delta-x : 0)) * 1px * root.zoom-percent / 100;
                 end-y: root.pan-y + (link.end-y + (link.target-selected ? AppState.canvas-drag-delta-y : 0)) * 1px * root.zoom-percent / 100;
                 dark-background: AppState.canvas-dark-background;
+                flow-phase: root.link-flow-step / 100;
                 link-selected(link-id) => {
                     AppState.canvas-selected-id = "";
                     AppState.canvas-selected-link-id = link-id;

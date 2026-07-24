@@ -18,7 +18,9 @@ export component DeleteConfirm {
             AppState.delete-notification(AppState.pending-delete-id);
         } else if AppState.pending-delete-kind == "notifications-all" {
             AppState.clear-all-notifications();
-        } else if AppState.pending-delete-kind == "canvas-note" || AppState.pending-delete-kind == "canvas-group" {
+        } else if AppState.pending-delete-kind == "canvas-group" {
+            AppState.remove-canvas-group-with-children(AppState.pending-delete-id);
+        } else if AppState.pending-delete-kind == "canvas-note" {
             AppState.remove-canvas-node(AppState.pending-delete-id);
         } else if AppState.pending-delete-kind == "canvas-selection" {
             AppState.remove-canvas-selection();
@@ -50,7 +52,7 @@ export component DeleteConfirm {
                     text: AppState.pending-delete-kind == "custom-prompt"
                         ? (AppState.en ? "Delete this prompt?" : "确认删除这条提示词？")
                         : (AppState.pending-delete-kind == "canvas-group"
-                            ? (AppState.en ? "Delete this group?" : "确认删除当前组？")
+                            ? (AppState.en ? "Delete this group and all nodes inside it?" : "是否删除当前分组以及组内节点？")
                             : (AppState.pending-delete-kind == "canvas-note"
                             ? (AppState.en ? "Delete this node?" : "确认删除这个节点？")
                             : (AppState.pending-delete-kind == "canvas-selection"
@@ -69,9 +71,11 @@ export component DeleteConfirm {
                 Text {
                     text: AppState.pending-delete-kind == "notifications-all"
                         ? (AppState.en ? "All notifications will be permanently deleted." : "所有通知都将被删除，且无法恢复。")
-                        : (AppState.pending-delete-kind == "custom-prompt" || AppState.pending-delete-kind == "notification" || AppState.pending-delete-kind == "canvas-note" || AppState.pending-delete-kind == "canvas-group" || AppState.pending-delete-kind == "canvas-selection" || AppState.pending-delete-kind == "canvas-link"
+                        : (AppState.pending-delete-kind == "canvas-group"
+                            ? (AppState.en ? "You can restore it with Undo." : "可通过画布撤销恢复。")
+                            : (AppState.pending-delete-kind == "custom-prompt" || AppState.pending-delete-kind == "notification" || AppState.pending-delete-kind == "canvas-note" || AppState.pending-delete-kind == "canvas-selection" || AppState.pending-delete-kind == "canvas-link"
                             ? (AppState.en ? "This action cannot be undone." : "删除后无法恢复。")
-                            : (AppState.en ? "It will be removed from My Assets." : "删除后将从我的资产中移除。"));
+                            : (AppState.en ? "It will be removed from My Assets." : "删除后将从我的资产中移除。")));
                     color: AppTheme.muted;
                     font-size: 13px;
                     font-weight: 400;

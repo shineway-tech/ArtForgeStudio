@@ -382,6 +382,7 @@ export global AppState {
     callback update-canvas-node(string, string, float, float);
     callback rename-canvas-group(string, string) -> bool;
     callback remove-canvas-node(string);
+    callback remove-canvas-group-with-children(string);
     callback preview-canvas-link-target(string, float, float, float);
     callback finish-canvas-link(string, float, float, float) -> string;
     callback canvas-input-link(string) -> string;

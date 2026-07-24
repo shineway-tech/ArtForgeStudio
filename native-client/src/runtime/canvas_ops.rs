@@ -526,6 +526,25 @@ pub(super) fn remove_selection(
     removed
 }
 
+pub(super) fn remove_group_with_descendants(
+    notes: &mut Vec<CanvasNoteData>,
+    links: &mut Vec<CanvasLinkData>,
+    group_id: &str,
+) -> BTreeSet<String> {
+    if !notes
+        .iter()
+        .any(|note| note.id == group_id && note.kind == "group")
+    {
+        return BTreeSet::new();
+    }
+
+    let mut removed = descendant_ids(notes, group_id);
+    removed.insert(group_id.to_string());
+    notes.retain(|note| !removed.contains(&note.id));
+    links.retain(|link| !removed.contains(&link.source_id) && !removed.contains(&link.target_id));
+    removed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -673,6 +692,75 @@ mod tests {
         assert_eq!(notes.len(), 1);
         assert!(notes[0].parent_group_id.is_empty());
         assert!(links.is_empty());
+    }
+
+    #[test]
+    fn canvas_delete_group_removes_nested_descendants_and_related_links() {
+        let mut notes = vec![
+            note("group", "group", 0.0, 0.0),
+            CanvasNoteData {
+                parent_group_id: "group".into(),
+                ..note("child", "text", 20.0, 20.0)
+            },
+            CanvasNoteData {
+                parent_group_id: "group".into(),
+                ..note("nested-group", "group", 180.0, 20.0)
+            },
+            CanvasNoteData {
+                parent_group_id: "nested-group".into(),
+                ..note("nested-child", "image", 200.0, 40.0)
+            },
+            note("outside", "image", 500.0, 40.0),
+            note("outside-two", "text", 700.0, 40.0),
+        ];
+        let mut links = vec![
+            CanvasLinkData {
+                id: "inside".into(),
+                source_id: "child".into(),
+                target_id: "nested-child".into(),
+            },
+            CanvasLinkData {
+                id: "crossing".into(),
+                source_id: "nested-child".into(),
+                target_id: "outside".into(),
+            },
+            CanvasLinkData {
+                id: "outside-link".into(),
+                source_id: "outside".into(),
+                target_id: "outside-two".into(),
+            },
+        ];
+
+        let removed = remove_group_with_descendants(&mut notes, &mut links, "group");
+
+        assert_eq!(
+            removed,
+            BTreeSet::from([
+                "child".into(),
+                "group".into(),
+                "nested-child".into(),
+                "nested-group".into(),
+            ])
+        );
+        assert_eq!(
+            notes
+                .iter()
+                .map(|note| note.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["outside", "outside-two"]
+        );
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].id, "outside-link");
+    }
+
+    #[test]
+    fn canvas_delete_group_ignores_unknown_or_non_group_nodes() {
+        let mut notes = vec![note("text", "text", 0.0, 0.0)];
+        let mut links = Vec::new();
+
+        assert!(remove_group_with_descendants(&mut notes, &mut links, "missing").is_empty());
+        assert!(remove_group_with_descendants(&mut notes, &mut links, "text").is_empty());
+        assert_eq!(notes.len(), 1);
     }
 
     #[test]

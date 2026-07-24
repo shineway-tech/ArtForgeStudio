@@ -804,6 +804,40 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
         let app_weak = app.as_weak();
         let store = store.clone();
         let history = history.clone();
+        state.on_remove_canvas_group_with_children(move |id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut store_mut = store.borrow_mut();
+            let before = canvas_snapshot(&store_mut);
+            let mut links = std::mem::take(&mut store_mut.canvas_links);
+            let removed =
+                remove_group_with_descendants(&mut store_mut.canvas_notes, &mut links, id.as_str());
+            store_mut.canvas_links = links;
+            if removed.is_empty() {
+                return;
+            }
+            history.borrow_mut().record(before);
+            fit_groups_to_children(&mut store_mut.canvas_notes);
+            persist_canvas(&app, &store_mut);
+            let primary = store_mut
+                .canvas_notes
+                .iter()
+                .find(|note| note.selected)
+                .map(|note| note.id.clone())
+                .unwrap_or_default();
+            let state = app.global::<AppState>();
+            state.set_canvas_selected_id(primary.into());
+            state.set_canvas_selected_link_id("".into());
+            sync_canvas_selection(&app, &store_mut);
+            sync_history_state(&app, &history.borrow());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        let history = history.clone();
         state.on_remove_canvas_node(move |id| {
             let Some(app) = app_weak.upgrade() else {
                 return;
