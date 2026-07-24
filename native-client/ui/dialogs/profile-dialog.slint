@@ -279,7 +279,7 @@ export component ProfileDialog {
                         y: 7px;
                         width: parent.width - 68px;
                         height: 26px;
-                        text: AppState.nickname != "" ? AppState.nickname : (AppState.en ? "ArtForge User" : "ArtForge 用户");
+                        text: AppState.nickname;
                         color: AppTheme.text;
                         font-size: 15px;
                         font-weight: 600;
@@ -374,7 +374,7 @@ export component ProfileDialog {
                         y: 108px;
                         width: parent.width;
                         label: AppState.en ? "Account" : "账号";
-                        value: AppState.nickname != "" ? AppState.nickname : (AppState.wechat-bound ? (AppState.en ? "WeChat account" : "微信账号") : AppState.email-mask);
+                        value: AppState.nickname;
                         action-text: "";
                     }
                     AccountOverviewRow {

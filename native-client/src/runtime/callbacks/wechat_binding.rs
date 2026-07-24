@@ -258,7 +258,12 @@ fn poll_binding_status_result(
             Ok(BindingPollOutcome::Completed(status)) => {
                 state.set_wechat_bound(status.bound);
                 state.set_wechat_can_unbind(status.can_unbind.unwrap_or(true));
-                state.set_wechat_bound_name(status.nickname.unwrap_or_default().into());
+                let nickname = status.nickname.unwrap_or_default();
+                state.set_wechat_bound_name(nickname.clone().into());
+                if !nickname.trim().is_empty() {
+                    state.set_nickname(nickname.into());
+                    save_user_profile(&app);
+                }
                 state.set_wechat_bind_login_id("".into());
                 state.set_wechat_bind_qr_ready(false);
                 state.set_wechat_bind_scanned(false);

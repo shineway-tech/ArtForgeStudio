@@ -179,13 +179,14 @@ fn prompt_request(request_id: String, prompt: &str) -> CreateGenerationTask {
 #[ignore = "requires the dev Mock API server"]
 fn cross_stack_happy_path_and_dto_contract() {
     let (client, login) = login_new_user();
-    assert!(login.user.nickname.is_none());
+    let nickname = login.user.nickname.as_deref().expect("email nickname");
+    assert!(nickname.starts_with("client-stack-"));
 
     let snapshot = AccountApi::new(client.clone())
         .snapshot()
         .expect("deserialize account snapshot");
     assert_eq!(snapshot.account.user.id, login.user.id);
-    assert!(snapshot.account.user.nickname.is_none());
+    assert_eq!(snapshot.account.user.nickname.as_deref(), Some(nickname));
     assert_eq!(
         snapshot
             .account
