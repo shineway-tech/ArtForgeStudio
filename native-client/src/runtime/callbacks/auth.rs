@@ -424,6 +424,7 @@ fn poll_network_recovery(
                 state.set_session_state("update_required".into());
                 state.set_auth_open(true);
                 state.set_auth_error(update_required_message(&error).into());
+                show_required_update_prompt(&app, minimum_version_from_error(&error));
             }
             Err(_) => {}
         }
@@ -837,6 +838,7 @@ fn apply_startup_auth(app: &AppWindow, context: &AppContext, result: StartupAuth
                     state.set_session_state("update_required".into());
                     state.set_auth_open(true);
                     state.set_auth_error(update_required_message(&error).into());
+                    show_required_update_prompt(app, minimum_version_from_error(&error));
                 }
                 StartupErrorDisposition::OfferOffline => {
                     state.set_session_state("signed_out".into());
@@ -1224,6 +1226,7 @@ fn apply_auth_error(app: &AppWindow, error: ApiError) {
     let state = app.global::<AppState>();
     if error.is_client_update_required() {
         state.set_session_state("update_required".into());
+        show_required_update_prompt(app, minimum_version_from_error(&error));
     }
     let message = if error.is_client_update_required() {
         update_required_message(&error)
@@ -1234,14 +1237,20 @@ fn apply_auth_error(app: &AppWindow, error: ApiError) {
 }
 
 fn update_required_message(error: &ApiError) -> String {
-    let minimum = match error {
+    format!(
+        "当前客户端版本过旧，在线功能要求至少升级到 {}",
+        minimum_version_from_error(error)
+    )
+}
+
+fn minimum_version_from_error(error: &ApiError) -> &str {
+    match error {
         ApiError::Http { details: Some(details), .. } => details
             .get("minimum_version")
             .and_then(Value::as_str)
             .unwrap_or("最新版本"),
         _ => "最新版本",
-    };
-    format!("当前客户端版本过旧，在线功能要求至少升级到 {minimum}")
+    }
 }
 
 fn auth_error_message(error: &ApiError) -> String {

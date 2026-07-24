@@ -1,5 +1,9 @@
 use super::*;
 
+const DEFAULT_UPDATE_MANIFEST_URL: &str =
+    "https://cdn.honeykid.cn/public/artforge_studio/update-manifest.json";
+const DEFAULT_UPDATE_NOTES: &str = "本次更新包含功能优化与问题修复。";
+
 pub(super) fn app_dir() -> PathBuf {
     std::env::current_exe()
         .ok()
@@ -10,26 +14,124 @@ pub(super) fn app_dir() -> PathBuf {
 
 pub(super) fn init_version_state(app: &AppWindow) {
     let state = app.global::<AppState>();
-    state.set_current_version(env!("CARGO_PKG_VERSION").into());
-    refresh_update_state(app);
-}
-
-pub(super) fn refresh_update_state(app: &AppWindow) -> bool {
-    let state = app.global::<AppState>();
     let current = env!("CARGO_PKG_VERSION");
-    let latest = read_update_manifest_version().unwrap_or_else(|| current.to_string());
-    let available = compare_versions(&latest, current).is_gt();
-    state.set_latest_version(latest.clone().into());
-    state.set_update_available(available);
-    if available {
-        state.set_update_message(format!("发现新版本 {latest}").into());
-    } else if state.get_update_message().is_empty() {
-        state.set_update_message("当前已经是最新版本".into());
-    }
-    available
+    state.set_current_version(current.into());
+    state.set_latest_version(current.into());
+    state.set_update_download_url(default_update_download_url().into());
+    state.set_update_message("".into());
 }
 
-pub(super) fn read_update_manifest_version() -> Option<String> {
+pub(super) fn begin_update_check(app: &AppWindow, manual: bool) {
+    let state = app.global::<AppState>();
+    if state.get_update_checking() {
+        return;
+    }
+    state.set_update_checking(true);
+    if manual {
+        state.set_update_result_open(false);
+    }
+
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = fetch_update_manifest().map_err(|error| error.to_string());
+        let _ = sender.send(result);
+    });
+    poll_update_check(
+        app.as_weak(),
+        manual,
+        Rc::new(RefCell::new(Some(receiver))),
+    );
+}
+
+fn poll_update_check(
+    app_weak: Weak<AppWindow>,
+    manual: bool,
+    receiver: Rc<
+        RefCell<
+            Option<
+                mpsc::Receiver<std::result::Result<UpdateManifest, String>>,
+            >,
+        >,
+    >,
+) {
+    slint::Timer::single_shot(Duration::from_millis(100), move || {
+        let result = {
+            let mut slot = receiver.borrow_mut();
+            let Some(channel) = slot.as_ref() else {
+                return;
+            };
+            match channel.try_recv() {
+                Ok(result) => {
+                    slot.take();
+                    Some(result)
+                }
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => {
+                    slot.take();
+                    Some(Err("版本服务暂时不可用".to_string()))
+                }
+            }
+        };
+        let Some(result) = result else {
+            poll_update_check(app_weak, manual, receiver);
+            return;
+        };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
+        let state = app.global::<AppState>();
+        state.set_update_checking(false);
+        match result {
+            Ok(manifest) => apply_update_manifest(&app, manifest, manual),
+            Err(_) if manual => {
+                state.set_update_available(false);
+                state.set_update_required(false);
+                state.set_update_message("暂时无法检查更新，请稍后重试".into());
+                state.set_update_result_open(true);
+            }
+            Err(_) => {}
+        }
+    });
+}
+
+fn fetch_update_manifest() -> Result<UpdateManifest> {
+    match fetch_remote_update_manifest() {
+        Ok(manifest) => Ok(manifest),
+        Err(remote_error) => read_local_update_manifest().ok_or(remote_error),
+    }
+}
+
+fn fetch_remote_update_manifest() -> Result<UpdateManifest> {
+    let configured = if cfg!(debug_assertions) {
+        std::env::var("ARTFORGE_UPDATE_MANIFEST_URL")
+            .unwrap_or_else(|_| DEFAULT_UPDATE_MANIFEST_URL.to_string())
+    } else {
+        DEFAULT_UPDATE_MANIFEST_URL.to_string()
+    };
+    let url = reqwest::Url::parse(configured.trim()).context("更新清单地址无效")?;
+    if !cfg!(debug_assertions) && url.scheme() != "https" {
+        anyhow::bail!("生产环境更新清单必须使用 HTTPS");
+    }
+    let response = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .user_agent(format!("ArtForgeStudio/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .context("无法创建版本检查请求")?
+        .get(url)
+        .send()
+        .context("无法连接版本服务")?
+        .error_for_status()
+        .context("版本服务返回错误")?;
+    let manifest = response
+        .json::<UpdateManifest>()
+        .context("更新清单格式无效")?;
+    if manifest.version.trim().is_empty() {
+        anyhow::bail!("更新清单缺少版本号");
+    }
+    Ok(manifest)
+}
+
+fn read_local_update_manifest() -> Option<UpdateManifest> {
     for base in resource_base_dirs() {
         for path in [
             base.join("update-manifest.json"),
@@ -41,13 +143,139 @@ pub(super) fn read_update_manifest_version() -> Option<String> {
             let Ok(manifest) = serde_json::from_str::<UpdateManifest>(&text) else {
                 continue;
             };
-            let version = manifest.version.trim();
-            if !version.is_empty() {
-                return Some(version.to_string());
+            if !manifest.version.trim().is_empty() {
+                return Some(manifest);
             }
         }
     }
     None
+}
+
+fn apply_update_manifest(app: &AppWindow, manifest: UpdateManifest, manual: bool) {
+    let state = app.global::<AppState>();
+    let current = env!("CARGO_PKG_VERSION");
+    let manifest_version = manifest.version.trim();
+    let required = state.get_update_required();
+    let required_version = state.get_latest_version().to_string();
+    let latest = if required && compare_versions(&required_version, manifest_version).is_gt() {
+        required_version
+    } else {
+        manifest_version.to_string()
+    };
+    let available = required || compare_versions(&latest, current).is_gt();
+    state.set_latest_version(latest.clone().into());
+    state.set_update_available(available);
+    state.set_update_required(required);
+    state.set_update_published_at(manifest.published_at.trim().into());
+    state.set_update_release_notes(
+        if manifest.notes.trim().is_empty() {
+            DEFAULT_UPDATE_NOTES
+        } else {
+            manifest.notes.trim()
+        }
+        .into(),
+    );
+    let download_url = manifest_download_url(&manifest)
+        .filter(|url| validated_update_download_url(url).is_ok())
+        .unwrap_or_else(default_update_download_url);
+    state.set_update_download_url(download_url.into());
+    state.set_update_message(
+        if required {
+            format!("在线功能要求升级到 {latest}")
+        } else if available {
+            format!("发现新版本 {latest}")
+        } else {
+            "当前已经是最新版本".to_string()
+        }
+        .into(),
+    );
+    if available || manual {
+        state.set_update_result_open(true);
+    }
+}
+
+fn manifest_download_url(manifest: &UpdateManifest) -> Option<String> {
+    let value = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        &manifest.downloads.macos_aarch64
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        &manifest.downloads.macos_x64
+    } else if cfg!(target_os = "windows") {
+        &manifest.downloads.windows_x64
+    } else {
+        ""
+    };
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn default_update_download_url() -> String {
+    let file_name = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "ArtForgeStudio_macos_aarch64.dmg"
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        "ArtForgeStudio_macos_x64.dmg"
+    } else if cfg!(target_os = "windows") {
+        "ArtForgeStudio_windows_x64_setup.exe"
+    } else {
+        return String::new();
+    };
+    format!("https://cdn.honeykid.cn/public/artforge_studio/{file_name}")
+}
+
+pub(super) fn validated_update_download_url(candidate: &str) -> Result<reqwest::Url> {
+    let url = reqwest::Url::parse(candidate.trim()).context("更新下载地址无效")?;
+    if url.scheme() != "https" || url.host_str().is_none() || !url.username().is_empty() {
+        anyhow::bail!("更新下载地址必须是安全的 HTTPS 地址");
+    }
+    Ok(url)
+}
+
+pub(super) fn open_update_download(app: &AppWindow) {
+    let state = app.global::<AppState>();
+    let candidate = state.get_update_download_url().to_string();
+    let result = validated_update_download_url(&candidate).and_then(|url| {
+        #[cfg(target_os = "macos")]
+        {
+            Command::new("open")
+                .arg(url.as_str())
+                .spawn()
+                .context("无法打开下载地址")?;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Command::new("rundll32")
+                .arg("url.dll,FileProtocolHandler")
+                .arg(url.as_str())
+                .spawn()
+                .context("无法打开下载地址")?;
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            Command::new("xdg-open")
+                .arg(url.as_str())
+                .spawn()
+                .context("无法打开下载地址")?;
+        }
+        Ok(())
+    });
+    if let Err(error) = result {
+        state.set_update_release_notes(format!("无法打开下载地址：{error}").into());
+    }
+}
+
+pub(super) fn show_required_update_prompt(app: &AppWindow, minimum_version: &str) {
+    let state = app.global::<AppState>();
+    let minimum = minimum_version.trim();
+    let latest = state.get_latest_version().to_string();
+    if latest.is_empty() || compare_versions(minimum, &latest).is_gt() {
+        state.set_latest_version(minimum.into());
+    }
+    if state.get_update_download_url().is_empty() {
+        state.set_update_download_url(default_update_download_url().into());
+    }
+    state.set_update_available(true);
+    state.set_update_required(true);
+    state.set_update_message(format!("在线功能要求至少升级到 {minimum}").into());
+    state.set_update_result_open(true);
 }
 
 pub(super) fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
@@ -71,31 +299,6 @@ pub(super) fn version_parts(version: &str) -> Vec<i32> {
         .filter(|part| !part.is_empty())
         .map(|part| part.parse::<i32>().unwrap_or(0))
         .collect()
-}
-
-pub(super) fn advance_update_progress(app_weak: Weak<AppWindow>) {
-    slint::Timer::single_shot(Duration::from_millis(180), move || {
-        let Some(app) = app_weak.upgrade() else {
-            return;
-        };
-        let state = app.global::<AppState>();
-        if !state.get_update_progress_open() || state.get_update_ready() {
-            return;
-        }
-        let next = (state.get_update_progress() + 8).min(100);
-        state.set_update_progress(next);
-        if next >= 100 {
-            state.set_update_ready(true);
-            return;
-        }
-        advance_update_progress(app.as_weak());
-    });
-}
-
-pub(super) fn relaunch_current_exe() -> Result<()> {
-    let exe = std::env::current_exe().context("无法获取当前客户端路径")?;
-    Command::new(exe).spawn().context("无法重启客户端")?;
-    Ok(())
 }
 
 pub(super) fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {

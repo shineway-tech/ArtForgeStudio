@@ -328,9 +328,10 @@ export global AppState {
     in-out property <bool> update-available: false;
     in-out property <bool> update-checking: false;
     in-out property <bool> update-result-open: false;
-    in-out property <bool> update-progress-open: false;
-    in-out property <int> update-progress: 0;
-    in-out property <bool> update-ready: false;
+    in-out property <bool> update-required: false;
+    in-out property <string> update-release-notes: "";
+    in-out property <string> update-published-at: "";
+    in-out property <string> update-download-url: "";
     in-out property <string> update-message: "";
 
     callback use-now();
@@ -365,7 +366,6 @@ export global AppState {
     callback load-fonts();
     callback check-version();
     callback start-update();
-    callback restart-after-update();
     callback save-custom-prompt(string, string);
     callback remove-custom-prompt(string);
     callback begin-new-custom-prompt();

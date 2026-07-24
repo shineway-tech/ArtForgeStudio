@@ -240,7 +240,7 @@ export component SettingsPage {
                         }
                         PillButton {
                             horizontal-stretch: 1;
-                            text: AppState.en ? "Update" : "更新";
+                            text: AppState.en ? "Download" : "下载更新";
                             primary: AppState.update-available;
                             disabled: !AppState.update-available || AppState.update-checking;
                             clicked => { AppState.start-update(); }

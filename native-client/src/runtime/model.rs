@@ -392,7 +392,23 @@ fn default_card_style() -> String {
     "rounded".to_string()
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 struct UpdateManifest {
     version: String,
+    #[serde(default)]
+    notes: String,
+    #[serde(default)]
+    published_at: String,
+    #[serde(default)]
+    downloads: UpdateDownloads,
+}
+
+#[derive(Clone, Default, Deserialize)]
+struct UpdateDownloads {
+    #[serde(default)]
+    macos_aarch64: String,
+    #[serde(default)]
+    macos_x64: String,
+    #[serde(default)]
+    windows_x64: String,
 }

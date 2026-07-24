@@ -68,6 +68,8 @@ function contentTypeFor(filePath) {
       return 'application/vnd.microsoft.portable-executable';
     case '.zip':
       return 'application/zip';
+    case '.json':
+      return 'application/json; charset=utf-8';
     default:
       return 'application/octet-stream';
   }

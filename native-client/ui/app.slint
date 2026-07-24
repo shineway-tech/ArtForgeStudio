@@ -15,7 +15,6 @@ import { QualityRestrictedDialog } from "dialogs/quality-restricted-dialog.slint
 import { ProfileDialog } from "dialogs/profile-dialog.slint";
 import { AgreementUpdateDialog } from "dialogs/agreement-update-dialog.slint";
 import { AgreementViewerDialog } from "dialogs/agreement-viewer-dialog.slint";
-import { UpdateProgressDialog } from "dialogs/update-progress-dialog.slint";
 import { UpscaleDialog } from "dialogs/upscale-dialog.slint";
 import { VersionCheckDialog } from "dialogs/version-check-dialog.slint";
 import { ViewerOverlay } from "dialogs/viewer-overlay.slint";
@@ -82,7 +81,6 @@ export component AppWindow inherits Window {
     AgreementUpdateDialog { width: root.width; height: root.height; }
     AliPayQrDialog { width: root.width; height: root.height; }
     VersionCheckDialog { width: root.width; height: root.height; }
-    UpdateProgressDialog { width: root.width; height: root.height; }
     ViewerOverlay { width: root.width; height: root.height; }
     UpscaleDialog { width: root.width; height: root.height; }
     if AppState.thumbnail-drag-preview-visible: Rectangle {

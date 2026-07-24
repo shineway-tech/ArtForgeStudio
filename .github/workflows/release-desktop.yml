@@ -307,3 +307,35 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Failed to upload Windows portable package to OSS."
           }
+
+  publish-update-manifest:
+    name: Publish update manifest
+    needs:
+      - build-macos
+      - build-windows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Create and upload update manifest
+        env:
+          ALIYUN_OSS_REGION: ${{ secrets.ALIYUN_OSS_REGION }}
+          ALIYUN_OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
+          ALIYUN_OSS_ACCESS_KEY_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
+          ALIYUN_OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
+          ALIYUN_OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
+          ALIYUN_OSS_PUBLIC_BASE_URL: ${{ secrets.ALIYUN_OSS_PUBLIC_BASE_URL || 'https://cdn.honeykid.cn' }}
+          ALIYUN_OSS_PREFIX: ${{ secrets.ALIYUN_OSS_PREFIX || 'public/artforge_studio' }}
+          ALIYUN_OSS_OBJECT_ACL: ${{ secrets.ALIYUN_OSS_OBJECT_ACL }}
+        run: |
+          set -euo pipefail
+          APP_VERSION="${GITHUB_REF_NAME#v}"
+          node scripts/create-update-manifest.js \
+            --version "$APP_VERSION" \
+            --output dist/update-manifest.json
+          node scripts/upload-release-assets.js \
+            --file dist/update-manifest.json \
+            --version "$APP_VERSION"
