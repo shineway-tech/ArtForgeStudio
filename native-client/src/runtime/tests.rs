@@ -1104,6 +1104,7 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
     #[test]
     fn infinite_canvas_grouping_is_explicit_and_uses_a_dedicated_title_row() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let dialog = include_str!("../../ui/dialogs/canvas-group-name-dialog.slint");
         let callbacks = include_str!("callbacks/infinite_canvas.rs");
         let ops = include_str!("canvas_ops.rs");
         let move_handler = callbacks
@@ -1129,10 +1130,42 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(group_header.contains("y: 0px;"));
         assert!(group_header.contains("width: parent.width;"));
         assert!(group_header.contains("text: root.current-content"));
-        assert!(group_header.contains("text <=> root.current-content"));
-        assert!(group_header.contains("x: parent.width - 64px * root.node-scale()"));
-        assert!(group_header.contains("x: parent.width - 32px * root.node-scale()"));
+        assert!(group_header.contains("font-size: 18px * root.group-control-scale()"));
+        assert!(dialog.contains("text <=> AppState.canvas-group-name-edit-value"));
         assert!(!group_header.contains("text: root.node-title()"));
+    }
+
+    #[test]
+    fn infinite_canvas_group_header_has_large_actions_and_dedicated_dialogs() {
+        let app = include_str!("../../ui/app.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let dialog = include_str!("../../ui/dialogs/canvas-group-name-dialog.slint");
+        let delete = include_str!("../../ui/dialogs/delete-confirm.slint");
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+
+        assert!(app.contains("import { CanvasGroupNameDialog }"));
+        assert!(app.contains("CanvasGroupNameDialog {"));
+        assert!(state.contains("canvas-group-name-dialog-open"));
+        assert!(state.contains("callback rename-canvas-group(string, string) -> bool;"));
+        assert!(state.contains("callback ungroup-canvas-node(string);"));
+        assert!(callbacks.contains("state.on_rename_canvas_group"));
+        assert!(callbacks.contains("state.on_ungroup_canvas_node"));
+        assert!(page.contains("return max(0.75, root.node-scale());"));
+        assert!(page.contains("width: 34px * root.group-control-scale();"));
+        assert!(page.contains("width: 20px * root.group-control-scale();"));
+        assert!(page.contains("@image-url(\"../../assets/icons/edit.svg\")"));
+        assert!(page.contains("@image-url(\"../../assets/icons/ungroup.svg\")"));
+        assert!(page.contains("@image-url(\"../../assets/icons/trash.svg\")"));
+        assert!(page.contains("AppState.canvas-group-name-dialog-open = true;"));
+        assert!(page.contains("AppState.ungroup-canvas-node(root.note.id);"));
+        assert!(page.contains("AppState.pending-delete-kind = \"canvas-group\";"));
+        assert!(dialog.contains("init => { group-name-input.focus(); }"));
+        assert!(dialog.contains("AppState.rename-canvas-group("));
+        assert!(delete.contains("确认删除当前组？"));
+        assert!(delete.contains(
+            "AppState.pending-delete-kind == \"canvas-note\" || AppState.pending-delete-kind == \"canvas-group\""
+        ));
     }
 
     #[test]
@@ -1248,7 +1281,8 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(node.contains("root.commit-position()"));
         assert!(node.contains("if !root.editing"));
         assert!(node.contains("&& root.editing"));
-        assert!(node.contains("&& AppState.canvas-selected-id == root.note.id: TextInput"));
+        assert!(node.contains("text-editor := TextInput"));
+        assert!(node.contains("&& AppState.canvas-selected-id == root.note.id;"));
         assert!(node.contains("source: @image-url(\"../../assets/icons/edit.svg\")"));
     }
 

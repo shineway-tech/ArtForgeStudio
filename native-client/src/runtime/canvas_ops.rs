@@ -449,6 +449,25 @@ pub(super) fn ungroup_selection(notes: &mut Vec<CanvasNoteData>) -> BTreeSet<Str
     removed
 }
 
+pub(super) fn ungroup_node(notes: &mut Vec<CanvasNoteData>, group_id: &str) -> bool {
+    let Some(parent_group_id) = notes
+        .iter()
+        .find(|note| note.id == group_id && note.kind == "group")
+        .map(|note| note.parent_group_id.clone())
+    else {
+        return false;
+    };
+    for child in notes
+        .iter_mut()
+        .filter(|note| note.parent_group_id == group_id)
+    {
+        child.parent_group_id = parent_group_id.clone();
+        child.selected = true;
+    }
+    notes.retain(|note| note.id != group_id);
+    true
+}
+
 pub(super) fn resize_group(
     notes: &mut [CanvasNoteData],
     group_id: &str,
@@ -730,6 +749,37 @@ mod tests {
 
         assert_eq!(next_group_name(&notes, false), "分组2");
         assert_eq!(next_group_name(&notes, true), "Group 1");
+    }
+
+    #[test]
+    fn canvas_ungroup_node_only_removes_the_requested_group() {
+        let mut notes = vec![
+            note("group-1", "group", 0.0, 0.0),
+            note("group-2", "group", 500.0, 0.0),
+            CanvasNoteData {
+                parent_group_id: "group-1".into(),
+                ..note("child-1", "text", 40.0, 80.0)
+            },
+            CanvasNoteData {
+                parent_group_id: "group-2".into(),
+                ..note("child-2", "image", 540.0, 80.0)
+            },
+        ];
+
+        assert!(ungroup_node(&mut notes, "group-1"));
+        assert!(!notes.iter().any(|note| note.id == "group-1"));
+        assert!(notes.iter().any(|note| note.id == "group-2"));
+        let child_1 = notes
+            .iter()
+            .find(|note| note.id == "child-1")
+            .expect("first child");
+        let child_2 = notes
+            .iter()
+            .find(|note| note.id == "child-2")
+            .expect("second child");
+        assert!(child_1.parent_group_id.is_empty());
+        assert!(child_1.selected);
+        assert_eq!(child_2.parent_group_id, "group-2");
     }
 
     #[test]

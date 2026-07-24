@@ -109,6 +109,9 @@ export global AppState {
     in-out property <bool> canvas-can-undo: false;
     in-out property <bool> canvas-can-redo: false;
     in-out property <bool> canvas-node-info-open: false;
+    in-out property <bool> canvas-group-name-dialog-open: false;
+    in-out property <string> canvas-group-name-edit-id: "";
+    in-out property <string> canvas-group-name-edit-value: "";
     in-out property <string> canvas-node-info-tab: "info";
     in-out property <string> canvas-node-info-id: "";
     in-out property <string> canvas-node-info-kind: "";
@@ -377,6 +380,7 @@ export global AppState {
     callback clear-custom-prompt-reference();
     callback add-canvas-node(string, float, float);
     callback update-canvas-node(string, string, float, float);
+    callback rename-canvas-group(string, string) -> bool;
     callback remove-canvas-node(string);
     callback preview-canvas-link-target(string, float, float, float);
     callback finish-canvas-link(string, float, float, float) -> string;
@@ -396,6 +400,7 @@ export global AppState {
     callback remove-canvas-selection();
     callback group-canvas-selection(float, float);
     callback ungroup-canvas-selection();
+    callback ungroup-canvas-node(string);
     callback adjust-canvas-text-font-size(string, float);
     callback optimize-canvas-text-node(string, string);
     callback resize-canvas-group(string, float, float);

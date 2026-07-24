@@ -1,0 +1,122 @@
+import { AppState } from "../app-state.slint";
+import { DialogCloseButton } from "../components/dialog-close-button.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component CanvasGroupNameDialog {
+    function close-dialog() {
+        AppState.canvas-group-name-dialog-open = false;
+        AppState.canvas-group-name-edit-id = "";
+        AppState.canvas-group-name-edit-value = "";
+    }
+
+    function save-name() {
+        if AppState.rename-canvas-group(
+            AppState.canvas-group-name-edit-id,
+            AppState.canvas-group-name-edit-value,
+        ) {
+            root.close-dialog();
+        }
+    }
+
+    if AppState.canvas-group-name-dialog-open: Rectangle {
+        background: #00000066;
+        TouchArea { width: parent.width; height: parent.height; }
+
+        dialog := Rectangle {
+            width: min(430px, root.width - 32px);
+            height: min(236px, root.height - 40px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            background: AppTheme.panel;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            init => { group-name-input.focus(); }
+
+            Text {
+                x: 24px;
+                y: 18px;
+                width: parent.width - 80px;
+                height: 28px;
+                text: AppState.en ? "Edit group name" : "编辑分组名称";
+                color: AppTheme.text;
+                font-size: 18px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+
+            DialogCloseButton {
+                x: parent.width - 42px;
+                y: 12px;
+                clicked => { root.close-dialog(); }
+            }
+
+            Text {
+                x: 24px;
+                y: 62px;
+                width: parent.width - 48px;
+                height: 22px;
+                text: AppState.en ? "Group name" : "分组名称";
+                color: AppTheme.text;
+                font-size: 14px;
+                font-weight: 400;
+                vertical-alignment: center;
+            }
+
+            input-shell := Rectangle {
+                x: 24px;
+                y: 90px;
+                width: parent.width - 48px;
+                height: 50px;
+                background: AppTheme.panel-soft;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: group-name-input.has-focus ? AppTheme.accent : AppTheme.border;
+
+                group-name-input := TextInput {
+                    x: 14px;
+                    y: 8px;
+                    width: parent.width - 28px;
+                    height: parent.height - 16px;
+                    text <=> AppState.canvas-group-name-edit-value;
+                    single-line: true;
+                    color: AppTheme.text;
+                    font-size: 16px;
+                    key-pressed(event) => {
+                        if event.text == Key.Return {
+                            root.save-name();
+                            return accept;
+                        }
+                        if event.text == Key.Escape {
+                            root.close-dialog();
+                            return accept;
+                        }
+                        return reject;
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                x: 24px;
+                y: parent.height - 58px;
+                width: parent.width - 48px;
+                height: 36px;
+                spacing: 10px;
+                Rectangle { horizontal-stretch: 1; }
+                PillButton {
+                    width: 104px;
+                    text: AppState.en ? "Cancel" : "取消";
+                    clicked => { root.close-dialog(); }
+                }
+                PillButton {
+                    width: 104px;
+                    text: AppState.en ? "Save" : "保存";
+                    primary: true;
+                    disabled: AppState.canvas-group-name-edit-value == "";
+                    clicked => { root.save-name(); }
+                }
+            }
+        }
+    }
+}

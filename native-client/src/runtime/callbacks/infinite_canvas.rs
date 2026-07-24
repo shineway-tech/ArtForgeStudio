@@ -344,6 +344,39 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
         let app_weak = app.as_weak();
         let store = store.clone();
         let history = history.clone();
+        state.on_rename_canvas_group(move |id, name| {
+            let Some(app) = app_weak.upgrade() else {
+                return false;
+            };
+            let name = name.trim();
+            if name.is_empty() {
+                app.global::<AppState>()
+                    .set_generation_status("分组名称不能为空".into());
+                return false;
+            }
+            let mut store_mut = store.borrow_mut();
+            let Some(index) = store_mut
+                .canvas_notes
+                .iter()
+                .position(|note| note.id == id.as_str() && note.kind == "group")
+            else {
+                return false;
+            };
+            if store_mut.canvas_notes[index].content == name {
+                return true;
+            }
+            history.borrow_mut().record(canvas_snapshot(&store_mut));
+            store_mut.canvas_notes[index].content = name.to_string();
+            persist_canvas(&app, &store_mut);
+            sync_history_state(&app, &history.borrow());
+            true
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        let history = history.clone();
         state.on_resize_canvas_group(move |id, width, height| {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -697,6 +730,36 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             persist_canvas(&app, &store_mut);
             let state = app.global::<AppState>();
             state.set_canvas_selected_id(id.into());
+            state.set_canvas_selected_link_id("".into());
+            sync_canvas_selection(&app, &store_mut);
+            sync_history_state(&app, &history.borrow());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        let history = history.clone();
+        state.on_ungroup_canvas_node(move |id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut store_mut = store.borrow_mut();
+            let before = canvas_snapshot(&store_mut);
+            if !ungroup_node(&mut store_mut.canvas_notes, id.as_str()) {
+                return;
+            }
+            history.borrow_mut().record(before);
+            fit_groups_to_children(&mut store_mut.canvas_notes);
+            persist_canvas(&app, &store_mut);
+            let primary = store_mut
+                .canvas_notes
+                .iter()
+                .find(|note| note.selected)
+                .map(|note| note.id.clone())
+                .unwrap_or_default();
+            let state = app.global::<AppState>();
+            state.set_canvas_selected_id(primary.into());
             state.set_canvas_selected_link_id("".into());
             sync_canvas_selection(&app, &store_mut);
             sync_history_state(&app, &history.borrow());

@@ -6,6 +6,7 @@ import { TopBar } from "components/top-bar.slint";
 import { AliPayQrDialog } from "dialogs/ali-pay-qr-dialog.slint";
 import { AuthDialog } from "dialogs/auth-dialog.slint";
 import { CreditInsufficientDialog } from "dialogs/credit-insufficient-dialog.slint";
+import { CanvasGroupNameDialog } from "dialogs/canvas-group-name-dialog.slint";
 import { CustomPromptDialog } from "dialogs/custom-prompt-dialog.slint";
 import { InvoiceDialog } from "dialogs/invoice-dialog.slint";
 import { InvoiceOrderDialog } from "dialogs/invoice-order-dialog.slint";
@@ -102,6 +103,7 @@ export component AppWindow inherits Window {
         }
     }
     DeleteConfirm { width: root.width; height: root.height; }
+    CanvasGroupNameDialog { width: root.width; height: root.height; }
     ModelRequiredDialog { width: root.width; height: root.height; }
     CreditInsufficientDialog { width: root.width; height: root.height; }
     QualityRestrictedDialog { width: root.width; height: root.height; }
