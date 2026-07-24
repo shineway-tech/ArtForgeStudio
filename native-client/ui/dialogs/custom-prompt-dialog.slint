@@ -237,21 +237,11 @@ export component CustomPromptDialog {
                         PillButton {
                             width: 158px;
                             height: 36px;
-                            text: AppState.en ? "AI style analysis" : "AI 分析生成风格";
-                            disabled: AppState.custom-prompt-reference-path == "";
+                            text: AppState.custom-prompt-analyzing
+                                ? (AppState.en ? "Analyzing..." : "分析中...")
+                                : (AppState.en ? "AI style analysis" : "AI 分析生成风格");
+                            disabled: AppState.custom-prompt-reference-path == "" || AppState.custom-prompt-analyzing;
                             clicked => { AppState.analyze-custom-prompt-reference(); }
-                        }
-                        Text {
-                            horizontal-stretch: 1;
-                            height: 36px;
-                            text: AppState.en
-                                ? "Analyzed locally; the image is not uploaded"
-                                : "由本地客户端分析，不会上传参考图";
-                            color: AppTheme.weak;
-                            font-size: 11px;
-                            font-weight: 400;
-                            vertical-alignment: center;
-                            overflow: elide;
                         }
                     }
                     Rectangle {

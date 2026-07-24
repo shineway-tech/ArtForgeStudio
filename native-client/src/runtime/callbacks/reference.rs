@@ -1,4 +1,7 @@
 use super::*;
+use std::io::Read;
+
+const MAX_DROPPED_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 
 pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>>) {
     let state = app.global::<AppState>();
@@ -86,6 +89,10 @@ pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>
             let Some(app) = app_weak.upgrade() else {
                 return false;
             };
+            if let Some(url) = external_image_url(data.as_str()) {
+                start_external_reference_import(&app, store.clone(), url);
+                return true;
+            }
             add_reference_from_drag_data(&app, &store, mime_type.as_str(), data.as_str())
         });
     }
@@ -156,4 +163,111 @@ pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>
             state.set_viewer_open(true);
         });
     }
+}
+
+fn start_external_reference_import(
+    app: &AppWindow,
+    store: Rc<RefCell<Store>>,
+    url: String,
+) {
+    let state = app.global::<AppState>();
+    state.set_generation_status(
+        if state.get_language().as_str() == "en" {
+            "Importing the dropped image..."
+        } else {
+            "正在导入拖入的图片..."
+        }
+        .into(),
+    );
+    let (sender, receiver) = mpsc::channel::<std::result::Result<PathBuf, String>>();
+    std::thread::spawn(move || {
+        let _ = sender.send(download_external_reference(&url));
+    });
+    poll_external_reference_import(
+        app.as_weak(),
+        store,
+        Rc::new(RefCell::new(Some(receiver))),
+    );
+}
+
+fn poll_external_reference_import(
+    app_weak: Weak<AppWindow>,
+    store: Rc<RefCell<Store>>,
+    receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<PathBuf, String>>>>>,
+) {
+    slint::Timer::single_shot(Duration::from_millis(100), move || {
+        let result = {
+            let mut slot = receiver.borrow_mut();
+            let Some(rx) = slot.as_ref() else {
+                return;
+            };
+            match rx.try_recv() {
+                Ok(result) => {
+                    slot.take();
+                    Some(result)
+                }
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => {
+                    slot.take();
+                    Some(Err("图片导入任务已中断，请重试".to_string()))
+                }
+            }
+        };
+        let Some(result) = result else {
+            poll_external_reference_import(app_weak, store, receiver);
+            return;
+        };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
+        match result {
+            Ok(path) => {
+                add_reference_from_path(&app, &store, &path);
+            }
+            Err(error) => app
+                .global::<AppState>()
+                .set_generation_status(error.into()),
+        }
+    });
+}
+
+fn download_external_reference(url: &str) -> std::result::Result<PathBuf, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .user_agent("ArtForgeStudio/1.0")
+        .build()
+        .map_err(|_| "无法创建图片下载请求".to_string())?;
+    let response = client
+        .get(url)
+        .send()
+        .map_err(|_| "无法下载拖入的网页图片".to_string())?
+        .error_for_status()
+        .map_err(|_| "网页图片地址不可访问".to_string())?;
+    if response.content_length().unwrap_or(0) > MAX_DROPPED_IMAGE_BYTES {
+        return Err("拖入的图片超过 25 MB 限制".to_string());
+    }
+    let mut bytes = Vec::new();
+    response
+        .take(MAX_DROPPED_IMAGE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "读取网页图片失败".to_string())?;
+    if bytes.len() as u64 > MAX_DROPPED_IMAGE_BYTES {
+        return Err("拖入的图片超过 25 MB 限制".to_string());
+    }
+    let format = image::guess_format(&bytes).map_err(|_| "拖入的网址不是有效图片".to_string())?;
+    image::load_from_memory(&bytes).map_err(|_| "拖入的网址不是受支持的图片".to_string())?;
+    let extension = match format {
+        image::ImageFormat::Jpeg => "jpg",
+        image::ImageFormat::WebP => "webp",
+        image::ImageFormat::Gif => "gif",
+        image::ImageFormat::Bmp => "bmp",
+        image::ImageFormat::Tiff => "tiff",
+        _ => "png",
+    };
+    let directory = app_data_dir().join("references").join("imports");
+    fs::create_dir_all(&directory).map_err(|_| "无法创建参考图目录".to_string())?;
+    let destination = directory.join(format!("dragged-{}.{}", Uuid::new_v4(), extension));
+    atomic_write_file(&destination, &bytes).map_err(|_| "无法保存拖入的图片".to_string())?;
+    Ok(destination)
 }

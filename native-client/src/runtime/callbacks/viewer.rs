@@ -94,6 +94,25 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         let store = store.clone();
+        state.on_start_viewer_file_drag(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return false;
+            };
+            let state = app.global::<AppState>();
+            let id = state.get_viewer_id().to_string();
+            let source = state.get_viewer_source().to_string();
+            let path = viewer_item(&store.borrow(), &id, &source)
+                .map(|item| PathBuf::from(item.source_path.trim()));
+            let Some(path) = path else {
+                return false;
+            };
+            drag_preview::start_thumbnail_file_drag(path)
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
         state.on_viewer_cutout_image(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -368,6 +387,30 @@ pub(super) fn drag_data_to_path(data: &str) -> Option<PathBuf> {
     #[cfg(windows)]
     let decoded = decoded.trim_start_matches('/').replace('/', "\\");
     Some(PathBuf::from(decoded))
+}
+
+pub(super) fn external_image_url(data: &str) -> Option<String> {
+    let raw = data
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))?;
+    let candidate = if raw.starts_with('<') {
+        let source = raw
+            .split_once("src=\"")
+            .and_then(|(_, tail)| tail.split_once('"').map(|(value, _)| value))
+            .or_else(|| {
+                raw.split_once("src='")
+                    .and_then(|(_, tail)| tail.split_once('\'').map(|(value, _)| value))
+            })?;
+        source
+    } else {
+        raw
+    };
+    let url = reqwest::Url::parse(candidate).ok()?;
+    if !matches!(url.scheme(), "http" | "https") || !url.username().is_empty() {
+        return None;
+    }
+    Some(url.to_string())
 }
 
 pub(super) fn file_uri_for_path(path: &str) -> String {

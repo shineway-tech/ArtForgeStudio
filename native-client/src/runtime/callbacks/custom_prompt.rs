@@ -1,7 +1,9 @@
 use super::*;
 
-pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, store: Rc<RefCell<Store>>) {
+pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
+    let store = context.store.clone();
+    let analysis_backend = context.backend.clone();
 
     {
         let app_weak = app.as_weak();
@@ -111,11 +113,18 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, store: Rc<RefCell<St
 
     {
         let app_weak = app.as_weak();
+        let backend = analysis_backend.clone();
         state.on_analyze_custom_prompt_reference(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             let state = app.global::<AppState>();
+            if state.get_custom_prompt_analyzing() {
+                return;
+            }
+            if !require_online_operation(&app, "分析参考图风格") {
+                return;
+            }
             if state.get_custom_prompt_reference_path().is_empty() {
                 state.set_custom_prompt_message(
                     if state.get_language().as_str() == "en" {
@@ -127,50 +136,58 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, store: Rc<RefCell<St
                 );
                 return;
             }
-            let image = state.get_custom_prompt_reference_image();
-            let Some(buffer) = image.to_rgba8() else {
+            let Some(backend) = backend.clone() else {
                 state.set_custom_prompt_message(
                     if state.get_language().as_str() == "en" {
-                        "The reference image cannot be analyzed"
+                        "The model service is unavailable"
                     } else {
-                        "无法分析该参考图"
+                        "模型服务暂不可用"
                     }
                     .into(),
                 );
                 return;
             };
-            let Some(analysis) = analyze_reference_style(
-                buffer.as_bytes(),
-                buffer.width(),
-                buffer.height(),
-                state.get_language().as_str() == "en",
-            ) else {
+            let reference_path =
+                PathBuf::from(state.get_custom_prompt_reference_path().to_string());
+            if !reference_path.is_file() {
                 state.set_custom_prompt_message(
                     if state.get_language().as_str() == "en" {
-                        "The reference image cannot be analyzed"
+                        "The reference image file no longer exists"
                     } else {
-                        "无法分析该参考图"
+                        "参考图文件已不存在"
                     }
                     .into(),
                 );
                 return;
-            };
-            let current = state.get_custom_prompt_input().trim().to_string();
-            state.set_custom_prompt_input(
-                if current.is_empty() {
-                    analysis
+            }
+            let model_code = state.get_reasoning_model().to_string();
+            if model_code.trim().is_empty() {
+                state.set_custom_prompt_message(
+                    if state.get_language().as_str() == "en" {
+                        "Select a reasoning model first"
+                    } else {
+                        "请先选择推理模型"
+                    }
+                    .into(),
+                );
+                return;
+            }
+            let english = state.get_language().as_str() == "en";
+            state.set_custom_prompt_analyzing(true);
+            state.set_custom_prompt_message(
+                if english {
+                    "Analyzing the reference image..."
                 } else {
-                    format!("{current}\n\n{analysis}")
+                    "正在分析参考图风格..."
                 }
                 .into(),
             );
-            state.set_custom_prompt_message(
-                if state.get_language().as_str() == "en" {
-                    "Style analyzed locally"
-                } else {
-                    "已在本地完成图片风格分析"
-                }
-                .into(),
+            start_custom_prompt_reference_analysis(
+                &app,
+                backend,
+                model_code,
+                reference_path,
+                english,
             );
         });
     }
@@ -278,6 +295,141 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, store: Rc<RefCell<St
     }
 }
 
+fn start_custom_prompt_reference_analysis(
+    app: &AppWindow,
+    backend: Arc<BackendRuntime>,
+    model_code: String,
+    reference_path: PathBuf,
+    english: bool,
+) {
+    let (sender, receiver) = mpsc::channel::<std::result::Result<String, String>>();
+    std::thread::spawn(move || {
+        let api = GenerationApi::new(backend.api.clone());
+        let result = (|| {
+            let file_id = api
+                .upload_reference(&reference_path)
+                .map_err(|error| error.user_message())?;
+            let request = CreateGenerationTask {
+                client_request_id: Uuid::new_v4().simple().to_string(),
+                task_type: "prompt_optimize".to_string(),
+                model_code,
+                prompt: if english {
+                    "Analyze the uploaded image's visual style. Return only one concise, reusable \
+                     English image-generation style description covering composition, palette, \
+                     lighting, rendering medium, texture, detail, and atmosphere. Do not describe \
+                     file metadata and do not add headings."
+                        .to_string()
+                } else {
+                    "分析上传参考图的视觉风格。只输出一段可直接复用的中文生图风格描述，覆盖构图、\
+                     配色、光影、绘制媒介、纹理、细节与氛围；不要描述文件元数据，不要添加标题。"
+                        .to_string()
+                },
+                quality: None,
+                count: None,
+                aspect_ratio: None,
+                reference_file_ids: Some(vec![file_id.clone()]),
+                target_language: None,
+            };
+            let task_result = (|| {
+                let mut detail = api
+                    .create_task(&request)
+                    .map_err(|error| error.user_message())?;
+                loop {
+                    if detail.terminal() {
+                        if matches!(detail.status.as_str(), "completed" | "partially_completed") {
+                            return detail
+                                .result_prompt
+                                .filter(|value| !value.trim().is_empty())
+                                .ok_or_else(|| {
+                                    if english {
+                                        "The model did not return a style description".to_string()
+                                    } else {
+                                        "模型未返回风格描述".to_string()
+                                    }
+                                });
+                        }
+                        return Err(detail
+                            .failure
+                            .map(|failure| failure.message)
+                            .unwrap_or_else(|| {
+                                if english {
+                                    "Image style analysis failed".to_string()
+                                } else {
+                                    "图片风格分析失败".to_string()
+                                }
+                            }));
+                    }
+                    std::thread::sleep(Duration::from_millis(IMAGE_POLL_INTERVAL_MS));
+                    detail = api.task(&detail.id).map_err(|error| error.user_message())?;
+                }
+            })();
+            api.delete_reference(&file_id);
+            task_result
+        })();
+        let _ = sender.send(result);
+    });
+    poll_custom_prompt_reference_analysis(
+        app.as_weak(),
+        Rc::new(RefCell::new(Some(receiver))),
+    );
+}
+
+fn poll_custom_prompt_reference_analysis(
+    app_weak: Weak<AppWindow>,
+    receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<String, String>>>>>,
+) {
+    slint::Timer::single_shot(Duration::from_millis(100), move || {
+        let result = {
+            let mut slot = receiver.borrow_mut();
+            let Some(rx) = slot.as_ref() else {
+                return;
+            };
+            match rx.try_recv() {
+                Ok(result) => {
+                    slot.take();
+                    Some(result)
+                }
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => {
+                    slot.take();
+                    Some(Err("图片风格分析任务已中断，请重试".to_string()))
+                }
+            }
+        };
+        let Some(result) = result else {
+            poll_custom_prompt_reference_analysis(app_weak, receiver);
+            return;
+        };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
+        let state = app.global::<AppState>();
+        state.set_custom_prompt_analyzing(false);
+        match result {
+            Ok(analysis) => {
+                let current = state.get_custom_prompt_input().trim().to_string();
+                state.set_custom_prompt_input(
+                    if current.is_empty() {
+                        analysis
+                    } else {
+                        format!("{current}\n\n{analysis}")
+                    }
+                    .into(),
+                );
+                state.set_custom_prompt_message(
+                    if state.get_language().as_str() == "en" {
+                        "Image style analysis completed"
+                    } else {
+                        "图片风格分析完成"
+                    }
+                    .into(),
+                );
+            }
+            Err(error) => state.set_custom_prompt_message(error.into()),
+        }
+    });
+}
+
 fn reset_custom_prompt_editor(app: &AppWindow) {
     let state = app.global::<AppState>();
     state.set_custom_prompt_name("".into());
@@ -288,6 +440,7 @@ fn reset_custom_prompt_editor(app: &AppWindow) {
     state.set_custom_prompt_reference_path("".into());
     state.set_custom_prompt_reference_image(Image::default());
     state.set_custom_prompt_message("".into());
+    state.set_custom_prompt_analyzing(false);
     state.set_custom_prompt_editing_original("".into());
 }
 
@@ -306,7 +459,8 @@ pub(super) fn normalized_custom_prompt_format(value: &str) -> String {
     }
 }
 
-pub(super) fn analyze_reference_style(
+#[allow(dead_code)]
+fn legacy_reference_style(
     rgba: &[u8],
     width: u32,
     height: u32,

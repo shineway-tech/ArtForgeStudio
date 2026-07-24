@@ -82,6 +82,7 @@ export global AppState {
     in-out property <string> custom-prompt-reference-path: "";
     in-out property <image> custom-prompt-reference-image;
     in-out property <string> custom-prompt-message: "";
+    in-out property <bool> custom-prompt-analyzing: false;
     in-out property <string> custom-prompt-editing-original: "";
     in-out property <bool> custom-prompt-open: false;
     in-out property <bool> custom-prompt-editor-open: false;
@@ -411,6 +412,7 @@ export global AppState {
     callback add-reference-from-drag(string, string) -> bool;
     callback start-thumbnail-drag-preview(string) -> bool;
     callback start-thumbnail-file-drag(string) -> bool;
+    callback start-viewer-file-drag() -> bool;
     callback paste-reference() -> bool;
     callback remove-reference(string);
     callback open-reference(string);

@@ -275,7 +275,10 @@ export component PromptComposer {
             width: parent.width;
             height: parent.height;
             can-drop(event) => {
-                return event.mime-type == "text/uri-list" || event.mime-type == "text/plain" || event.mime-type == "application/x-artforge-image-path";
+                return event.mime-type == "text/uri-list"
+                    || event.mime-type == "text/plain"
+                    || event.mime-type == "text/html"
+                    || event.mime-type == "application/x-artforge-image-path";
             }
             dropped(event) => {
                 AppState.add-reference-from-drag(event.mime-type, event.data);

@@ -54,7 +54,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
     wire_email_binding_callbacks(app, context.clone());
     wire_payment_callbacks(app, context.clone());
     wire_credit_callbacks(app, context.clone());
-    wire_custom_prompt_callbacks(app, store.clone());
+    wire_custom_prompt_callbacks(app, context.clone());
     wire_infinite_canvas_callbacks(app, store.clone());
 
     {

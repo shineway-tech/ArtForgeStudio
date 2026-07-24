@@ -428,26 +428,63 @@ mod tests {
         assert!(state.contains("callback analyze-custom-prompt-reference();"));
         assert!(dialog.contains("AppState.analyze-custom-prompt-reference();"));
         assert!(dialog.contains(
-            "disabled: AppState.custom-prompt-reference-path == \"\";"
+            "disabled: AppState.custom-prompt-reference-path == \"\" || AppState.custom-prompt-analyzing;"
         ));
         assert!(!dialog.contains("等待服务端开放图片风格分析"));
         assert!(callbacks.contains("state.on_analyze_custom_prompt_reference"));
-        assert!(callbacks.contains("analyze_reference_style("));
-        assert!(callbacks.contains("已在本地完成图片风格分析"));
+        assert!(!dialog.contains("Analyzed locally; the image is not uploaded"));
+        assert!(!dialog.contains("由本地客户端分析，不会上传参考图"));
+        assert!(state.contains("custom-prompt-analyzing"));
+        assert!(callbacks.contains("state.get_reasoning_model()"));
+        assert!(callbacks.contains("GenerationApi::new(backend.api.clone())"));
+        assert!(callbacks.contains(".upload_reference(&reference_path)"));
+        assert!(callbacks.contains("reference_file_ids: Some(vec![file_id.clone()])"));
+        assert!(callbacks.contains("result_prompt"));
+        assert!(!callbacks.contains("analyze_reference_style("));
     }
 
     #[test]
-    fn local_reference_style_analysis_describes_visual_characteristics() {
-        let pixels = [
-            240, 80, 40, 255, 220, 60, 30, 255, 250, 100, 50, 255, 210, 40, 20, 255,
-        ];
+    fn custom_prompt_reference_analysis_uses_the_selected_server_model() {
+        let callbacks = include_str!("callbacks/custom_prompt.rs");
 
-        let analysis =
-            analyze_reference_style(&pixels, 2, 2, false).expect("local style analysis");
+        assert!(callbacks.contains("task_type: \"prompt_optimize\".to_string()"));
+        assert!(callbacks.contains("model_code"));
+        assert!(callbacks.contains("reference_file_ids: Some(vec![file_id.clone()])"));
+        assert!(callbacks.contains("api.delete_reference(&file_id)"));
+        assert!(callbacks.contains("IMAGE_POLL_INTERVAL_MS"));
+    }
 
-        assert!(analysis.contains("参考图风格"));
-        assert!(analysis.contains("暖"));
-        assert!(analysis.contains("色彩"));
+    #[test]
+    fn prompt_composer_accepts_local_and_browser_image_drops() {
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let callbacks = include_str!("callbacks/reference.rs");
+        let viewer = include_str!("callbacks/viewer.rs");
+
+        assert!(composer.contains("reference-drop := DropArea"));
+        assert!(composer.contains("event.mime-type == \"text/uri-list\""));
+        assert!(composer.contains("event.mime-type == \"text/plain\""));
+        assert!(composer.contains("AppState.add-reference-from-drag(event.mime-type, event.data)"));
+        assert!(callbacks.contains("external_image_url(data.as_str())"));
+        assert!(callbacks.contains("start_external_reference_import"));
+        assert!(callbacks.contains("download_external_reference"));
+        assert!(viewer.contains("pub(super) fn external_image_url"));
+    }
+
+    #[test]
+    fn external_image_drop_extracts_plain_and_html_urls() {
+        assert_eq!(
+            external_image_url("https://cdn.example.com/reference.png?size=large").as_deref(),
+            Some("https://cdn.example.com/reference.png?size=large")
+        );
+        assert_eq!(
+            external_image_url(
+                "<img alt=\"reference\" src=\"https://cdn.example.com/reference.webp\">"
+            )
+            .as_deref(),
+            Some("https://cdn.example.com/reference.webp")
+        );
+        assert!(external_image_url("file:///C:/images/reference.png").is_none());
+        assert!(external_image_url("C:\\images\\reference.png").is_none());
     }
 
     #[test]
@@ -1862,6 +1899,20 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(callbacks.contains("open_viewer_image(&app, &store.borrow())"));
         assert!(feature.contains("pub(super) fn open_viewer_image"));
         assert!(feature.contains("open_path_with_default_app(&source)"));
+    }
+
+    #[test]
+    fn viewer_image_can_start_a_native_file_drag() {
+        let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let callbacks = include_str!("callbacks/viewer.rs");
+
+        assert!(state.contains("callback start-viewer-file-drag() -> bool;"));
+        assert!(viewer.contains("property <bool> image-drag-armed: false;"));
+        assert!(viewer.contains("AppState.start-viewer-file-drag();"));
+        assert!(callbacks.contains("state.on_start_viewer_file_drag"));
+        assert!(callbacks.contains("viewer_item(&store.borrow(), &id, &source)"));
+        assert!(callbacks.contains("drag_preview::start_thumbnail_file_drag"));
     }
 
     #[test]
