@@ -18,7 +18,7 @@
 - `native-client/src/runtime/features/`：灵感素材与作品查看器等独立功能。
 - `native-client/src/runtime/presentation/`：服务端/本地模型到 Slint 的同步，以及主题应用。
 - `native-client/src/runtime/services/image_processing.rs`：仅处理本地图片；模型请求和支付请求不能绕过平台 API。
-- `native-client/src/runtime/payment_window.rs`、`agreement_window.rs`：受信任 HTTPS 内容的嵌入式窗口与导航白名单。
+- `native-client/src/runtime/payment_checkout.rs`：校验服务端支付中转地址并调用系统浏览器；`agreement_window.rs`：受信任 HTTPS 协议内容的嵌入式窗口与导航白名单。
 
 依赖方向以“Slint callback → 运行时能力 → 平台 API 或本地存储 → UI 同步”为主。API 层不读取 Slint 状态，Slint 文件也不直接发起 HTTP 请求。
 
@@ -67,11 +67,12 @@
 会员购买、续费、升级和积分充值共用服务端订单流程：
 
 1. 客户端使用稳定请求标识创建订单，并持久化待恢复记录。
-2. 服务端返回通过白名单校验的 HTTPS 收银台地址。
-3. 客户端在嵌入式 WebView 中显示支付内容，同时继续同步订单状态。
-4. 关闭支付窗口不取消订单；重启后仍可恢复未完成订单。
-5. 只有服务端订单与权益结果可以更新会员或积分展示。
-6. `paid` 但权益仍在重试时保持“处理中”，不能降级为失败。
+2. 服务端返回同源 HTTPS 支付中转页地址；短期签名会话只放在 URL fragment 中。
+3. 客户端先打开等待支付窗口，再使用系统默认浏览器访问中转页。
+4. 中转页通过同源 POST 校验支付会话，并以顶层 303 跳转进入支付宝网站。
+5. 客户端每 3 秒同步服务端订单状态；关闭等待窗口只隐藏界面，不取消订单或停止同步，重启后仍可恢复未完成订单。
+6. 只有服务端订单与权益结果可以更新会员或积分展示。
+7. `paid` 但权益仍在重试时保持“处理中”，不能降级为失败。
 
 ## Result delivery and local recovery
 
@@ -94,7 +95,7 @@
 - Windows 默认设置 `SLINT_BACKEND=winit-femtovg`，使用 GPU 渲染改善最小化后恢复体验。
 - 非 Windows 默认设置 `SLINT_BACKEND=winit-software`。
 - 用户显式设置 `SLINT_BACKEND` 时，客户端不覆盖该值。
-- Windows 的 `wry` 后端使用 WebView2，macOS 使用 WKWebView；支付和协议窗口均限制为 HTTPS 与明确的可信主机。
+- Windows 的 `wry` 后端使用 WebView2，macOS 使用 WKWebView 承载协议内容；支付流程使用系统默认浏览器，并且只接受当前 API 同源的 HTTPS 支付中转地址。
 - Windows 拖拽、窗口和安装器行为需要 Windows MSVC、Windows SDK 与真机验证。
 - macOS 分别发布 Intel 与 Apple Silicon 安装包，最低系统版本由打包脚本写入应用元数据。
 
@@ -104,7 +105,7 @@
 - Access Token 只保存在内存；Refresh Token 使用系统安全凭据或受限的本地安全存储。
 - API Key、Token、验证码、Prompt、参考图内容、支付 URL、签名 URL 和协议正文不得进入普通日志。
 - HTTP 错误向用户展示可理解的消息，不泄露内部业务码、请求 ID 或原始服务端响应。
-- 支付和协议 WebView 拒绝 HTTP、非白名单主机、下载和任意新窗口导航。
+- 支付中转地址拒绝 HTTP 和非当前 API 同源主机；协议 WebView 拒绝 HTTP、非白名单主机、下载和任意新窗口导航。
 - 账号、会员、积分、订单、模型和任务的远端状态不能由本地文件直接修改。
 
 ## Historical source boundary

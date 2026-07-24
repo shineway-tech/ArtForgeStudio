@@ -25,7 +25,7 @@ function required(value, label) {
 }
 
 function normalizePrefix(prefix) {
-  return String(prefix || 'public/artforge_studio')
+  return String(prefix || 'public/art_forge')
     .replace(/^\/+|\/+$/g, '')
     .replace(/\/+/g, '/');
 }

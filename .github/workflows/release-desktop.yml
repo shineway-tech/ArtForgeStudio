@@ -171,7 +171,7 @@ jobs:
           ALIYUN_OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
           ALIYUN_OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
           ALIYUN_OSS_PUBLIC_BASE_URL: ${{ secrets.ALIYUN_OSS_PUBLIC_BASE_URL || 'https://cdn.honeykid.cn' }}
-          ALIYUN_OSS_PREFIX: ${{ secrets.ALIYUN_OSS_PREFIX || 'public/artforge_studio' }}
+          ALIYUN_OSS_PREFIX: ${{ secrets.ALIYUN_OSS_PREFIX || 'public/art_forge' }}
           ALIYUN_OSS_OBJECT_ACL: ${{ secrets.ALIYUN_OSS_OBJECT_ACL }}
         run: |
           set -euo pipefail
@@ -291,7 +291,7 @@ jobs:
           ALIYUN_OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
           ALIYUN_OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
           ALIYUN_OSS_PUBLIC_BASE_URL: ${{ secrets.ALIYUN_OSS_PUBLIC_BASE_URL || 'https://cdn.honeykid.cn' }}
-          ALIYUN_OSS_PREFIX: ${{ secrets.ALIYUN_OSS_PREFIX || 'public/artforge_studio' }}
+          ALIYUN_OSS_PREFIX: ${{ secrets.ALIYUN_OSS_PREFIX || 'public/art_forge' }}
           ALIYUN_OSS_OBJECT_ACL: ${{ secrets.ALIYUN_OSS_OBJECT_ACL }}
         run: |
           & node scripts/upload-release-assets.js `
@@ -328,7 +328,7 @@ jobs:
           ALIYUN_OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
           ALIYUN_OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
           ALIYUN_OSS_PUBLIC_BASE_URL: ${{ secrets.ALIYUN_OSS_PUBLIC_BASE_URL || 'https://cdn.honeykid.cn' }}
-          ALIYUN_OSS_PREFIX: ${{ secrets.ALIYUN_OSS_PREFIX || 'public/artforge_studio' }}
+          ALIYUN_OSS_PREFIX: ${{ secrets.ALIYUN_OSS_PREFIX || 'public/art_forge' }}
           ALIYUN_OSS_OBJECT_ACL: ${{ secrets.ALIYUN_OSS_OBJECT_ACL }}
         run: |
           set -euo pipefail

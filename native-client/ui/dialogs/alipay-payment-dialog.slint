@@ -1,0 +1,241 @@
+import { AppState } from "../app-state.slint";
+import { DialogCloseButton } from "../components/dialog-close-button.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component AlipayPaymentDialog {
+    if AppState.payment-dialog-open: Rectangle {
+        background: #00000055;
+        TouchArea { width: parent.width; height: parent.height; }
+
+        dialog := Rectangle {
+            width: min(448px, root.width - 32px);
+            height: min(
+                AppState.payment-dialog-mode == "success" ? 292px : 258px,
+                root.height - 40px
+            );
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            background: AppTheme.panel;
+            border-radius: 18px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+
+            DialogCloseButton {
+                x: parent.width - 44px;
+                y: 15px;
+                clicked => {
+                    if AppState.payment-dialog-mode == "success" {
+                        AppState.confirm-payment-success();
+                    } else {
+                        AppState.dismiss-payment();
+                    }
+                }
+            }
+
+            if AppState.payment-dialog-mode == "waiting": VerticalLayout {
+                padding-left: 24px;
+                padding-right: 24px;
+                padding-top: 26px;
+                padding-bottom: 16px;
+                spacing: 0px;
+
+                HorizontalLayout {
+                    height: 66px;
+                    spacing: 14px;
+                    alignment: start;
+
+                    Image {
+                        width: 46px;
+                        height: 46px;
+                        source: AppState.icon-alipay;
+                        image-fit: contain;
+                    }
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 2px;
+
+                        HorizontalLayout {
+                            height: 27px;
+                            spacing: 8px;
+
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                y: 9px;
+                                border-radius: 4px;
+                                background: AppState.payment-active ? AppTheme.accent : AppTheme.weak;
+                            }
+
+                            Text {
+                                width: 300px;
+                                text: AppState.en
+                                    ? "Waiting for Alipay payment"
+                                    : (AppState.payment-kind == "membership"
+                                        ? "等待会员购买付款"
+                                        : "等待积分充值付款");
+                                color: AppTheme.text;
+                                font-size: 18px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Text {
+                            height: 37px;
+                            text: AppState.payment-kind == "membership"
+                                ? (AppState.en
+                                    ? "Complete payment in your browser. Membership will activate automatically."
+                                    : "请在浏览器中完成付款，支付成功后会员权益会自动生效")
+                                : (AppState.en
+                                    ? "Complete payment in your browser. Credits will arrive automatically."
+                                    : "请在浏览器中完成付款，支付成功后积分会自动到账");
+                            color: AppTheme.muted;
+                            font-size: 12px;
+                            vertical-alignment: top;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 32px;
+                    background: AppTheme.panel-soft;
+                    border-radius: 10px;
+
+                    Text {
+                        width: parent.width;
+                        height: parent.height;
+                        text: AppState.en
+                            ? "Checking every 3 seconds · Order valid for about 5 minutes"
+                            : "每 3 秒自动检测支付结果 · 订单约 5 分钟内有效";
+                        color: AppTheme.muted;
+                        font-size: 11px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Rectangle { height: 12px; background: transparent; }
+
+                PillButton {
+                    height: 40px;
+                    text: AppState.en ? "Open Alipay again" : "重新打开支付宝";
+                    primary: true;
+                    disabled: !AppState.payment-browser-ready;
+                    clicked => { AppState.retry-payment-browser(); }
+                }
+
+                Rectangle {
+                    height: 38px;
+                    background: transparent;
+
+                    Text {
+                        width: parent.width;
+                        height: parent.height;
+                        text: AppState.en ? "Cancel and return" : "取消支付并返回";
+                        color: AppTheme.accent;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    exit-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => { AppState.dismiss-payment(); }
+                    }
+                }
+
+                Text {
+                    height: 16px;
+                    text: AppState.en
+                        ? "You can create a new order after exiting"
+                        : (AppState.payment-kind == "membership"
+                            ? "取消后可重新发起会员购买"
+                            : "取消后可重新发起积分充值");
+                    color: AppTheme.weak;
+                    font-size: 10px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            if AppState.payment-dialog-mode == "success": VerticalLayout {
+                padding-left: 28px;
+                padding-right: 28px;
+                padding-top: 28px;
+                padding-bottom: 18px;
+                spacing: 0px;
+
+                HorizontalLayout {
+                    height: 84px;
+                    alignment: center;
+
+                    Rectangle {
+                        width: 84px;
+                        height: 84px;
+                        background: AppTheme.panel-soft;
+                        border-radius: 42px;
+
+                        Rectangle {
+                            width: 50px;
+                            height: 50px;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            background: AppTheme.accent;
+                            border-radius: 25px;
+
+                            Image {
+                                width: 28px;
+                                height: 28px;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                source: AppState.icon-check;
+                                image-fit: contain;
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    height: 45px;
+                    text: AppState.en ? "Payment successful" : "支付成功";
+                    color: AppTheme.text;
+                    font-size: 23px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: bottom;
+                }
+
+                Text {
+                    height: 36px;
+                    text: AppState.payment-success-message;
+                    color: AppTheme.text;
+                    font-size: 16px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                Text {
+                    height: 32px;
+                    text: AppState.payment-success-detail;
+                    color: AppTheme.weak;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    vertical-alignment: top;
+                }
+
+                PillButton {
+                    height: 42px;
+                    text: AppState.en ? "Done" : "完成";
+                    primary: true;
+                    clicked => { AppState.confirm-payment-success(); }
+                }
+            }
+        }
+    }
+}

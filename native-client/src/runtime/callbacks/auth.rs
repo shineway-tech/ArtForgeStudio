@@ -954,7 +954,7 @@ pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snap
         state.set_membership_tier_rank(plan.tier_rank);
     }
     let membership_ends_at = snapshot.account.membership.ends_at.clone().unwrap_or_default();
-    state.set_membership_ends_at(membership_ends_at.clone().into());
+    state.set_membership_ends_at(format_membership_ends_at(&membership_ends_at).into());
     state.set_membership_expiry_message(membership_expiry_message(&membership_ends_at).into());
     if let Some(credits) = snapshot.account.credits.as_ref() {
         state.set_credit_balance(credits.available.clone().into());
@@ -1110,6 +1110,16 @@ fn membership_expiry_message(ends_at: &str) -> String {
         return format!("会员将在 {} 天内到期，请及时续费", remaining.num_days() + 1);
     }
     String::new()
+}
+
+fn format_membership_ends_at(ends_at: &str) -> String {
+    let Ok(ends_at) = chrono::DateTime::parse_from_rfc3339(ends_at) else {
+        return ends_at.to_string();
+    };
+    ends_at
+        .with_timezone(&Local)
+        .format("%Y-%m-%d %H:%M")
+        .to_string()
 }
 
 fn format_cents(value: &str) -> String {
@@ -1345,6 +1355,21 @@ mod tests {
         assert!(membership_expiry_message(&later).is_empty());
         assert!(membership_expiry_message(&expired).contains("已到期"));
         assert!(membership_expiry_message("not-a-date").is_empty());
+    }
+
+    #[test]
+    fn membership_expiry_is_displayed_in_local_time_without_utc_syntax() {
+        let source = "2026-08-16T13:31:07.000Z";
+        let expected = chrono::DateTime::parse_from_rfc3339(source)
+            .unwrap()
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string();
+        let displayed = format_membership_ends_at(source);
+
+        assert_eq!(displayed, expected);
+        assert!(!displayed.contains('T'));
+        assert!(!displayed.ends_with('Z'));
     }
 
     #[test]

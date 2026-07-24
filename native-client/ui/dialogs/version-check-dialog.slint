@@ -8,56 +8,60 @@ export component VersionCheckDialog {
         background: #00000066;
         TouchArea { width: parent.width; height: parent.height; }
         dialog := Rectangle {
-            width: min(520px, root.width - 32px);
+            width: AppState.update-available
+                ? min(500px, root.width - 32px)
+                : (AppState.update-check-failed
+                    ? min(440px, root.width - 32px)
+                    : min(420px, root.width - 32px));
             height: AppState.update-available
-                ? min(360px, root.height - 40px)
-                : min(230px, root.height - 40px);
+                ? min(390px, root.height - 40px)
+                : (AppState.update-check-failed
+                    ? min(270px, root.height - 40px)
+                    : min(240px, root.height - 40px));
             x: (root.width - self.width) / 2;
             y: (root.height - self.height) / 2;
             background: AppTheme.panel;
-            border-radius: 16px;
+            border-radius: 18px;
             border-width: 1px;
             border-color: AppTheme.border;
 
             if !AppState.update-required: DialogCloseButton {
                 z: 10;
-                x: parent.width - 44px;
-                y: 14px;
+                x: parent.width - 46px;
+                y: 16px;
                 clicked => { AppState.update-result-open = false; }
             }
 
-            VerticalLayout {
-                padding-left: 28px;
-                padding-right: 28px;
-                padding-top: 26px;
-                padding-bottom: 24px;
-                spacing: 14px;
+            if AppState.update-available: VerticalLayout {
+                padding-left: 30px;
+                padding-right: 30px;
+                padding-top: 28px;
+                padding-bottom: 26px;
+                spacing: 12px;
 
                 Text {
-                    height: 22px;
-                    text: AppState.en ? "Software update" : "软件更新";
+                    height: 18px;
+                    text: AppState.en ? "VERSION UPDATE" : "版本更新";
                     color: AppTheme.muted;
-                    font-size: 13px;
-                    font-weight: 400;
+                    font-size: 11px;
+                    font-weight: 500;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
 
                 Text {
-                    height: 32px;
+                    height: 30px;
                     text: AppState.update-required
                         ? (AppState.en ? "Update required to continue" : "需要更新后继续")
-                        : (AppState.update-available
-                            ? (AppState.en ? "A new version is available" : "发现新版本")
-                            : (AppState.en ? "You're up to date" : "当前已是最新版本"));
+                        : (AppState.en ? "A new version is available" : "发现新版本");
                     color: AppTheme.text;
-                    font-size: 22px;
+                    font-size: 21px;
                     font-weight: 600;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
 
-                if AppState.update-available: HorizontalLayout {
+                HorizontalLayout {
                     height: 72px;
                     spacing: 12px;
                     Rectangle {
@@ -110,7 +114,7 @@ export component VersionCheckDialog {
                     }
                 }
 
-                if AppState.update-available: Rectangle {
+                Rectangle {
                     height: AppState.update-required ? 92px : 72px;
                     background: AppState.update-required
                         ? AppTheme.warning.with-alpha(0.10)
@@ -141,20 +145,9 @@ export component VersionCheckDialog {
                     }
                 }
 
-                if !AppState.update-available: Text {
-                    height: 54px;
-                    text: AppState.update-message;
-                    color: AppTheme.muted;
-                    font-size: 13px;
-                    font-weight: 400;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    wrap: word-wrap;
-                }
-
                 Rectangle { vertical-stretch: 1; background: transparent; }
 
-                if AppState.update-available: HorizontalLayout {
+                HorizontalLayout {
                     height: 42px;
                     spacing: 10px;
                     if !AppState.update-required: PillButton {
@@ -175,19 +168,150 @@ export component VersionCheckDialog {
                     PillButton {
                         horizontal-stretch: 1;
                         height: 42px;
-                        text: AppState.en ? "Download update" : "下载更新";
+                        text: AppState.en ? "Update" : "更新";
                         primary: true;
                         disabled: AppState.update-download-url == "";
                         clicked => { AppState.start-update(); }
                     }
                 }
+            }
 
-                if !AppState.update-available: PillButton {
+            if !AppState.update-available && AppState.update-check-failed: VerticalLayout {
+                padding-left: 28px;
+                padding-right: 28px;
+                padding-top: 26px;
+                padding-bottom: 24px;
+                spacing: 10px;
+
+                Rectangle {
+                    height: 44px;
+                    background: transparent;
+                    Rectangle {
+                        width: 44px;
+                        height: 44px;
+                        x: (parent.width - self.width) / 2;
+                        border-radius: 22px;
+                        background: AppTheme.warning.with-alpha(0.14);
+                        Text {
+                            width: parent.width;
+                            height: parent.height;
+                            text: "!";
+                            color: AppTheme.warning;
+                            font-size: 22px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                Text {
+                    height: 30px;
+                    text: AppState.en ? "Unable to check for updates" : "未能检查更新";
+                    color: AppTheme.text;
+                    font-size: 20px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    height: 38px;
+                    text: AppState.update-message;
+                    color: AppTheme.muted;
+                    font-size: 13px;
+                    font-weight: 400;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+
+                Rectangle { vertical-stretch: 1; background: transparent; }
+
+                HorizontalLayout {
                     height: 40px;
-                    horizontal-stretch: 1;
-                    text: AppState.en ? "OK" : "知道了";
-                    primary: true;
-                    clicked => { AppState.update-result-open = false; }
+                    spacing: 10px;
+                    PillButton {
+                        horizontal-stretch: 1;
+                        text: AppState.en ? "Cancel" : "取消";
+                        clicked => { AppState.update-result-open = false; }
+                    }
+                    PillButton {
+                        horizontal-stretch: 1;
+                        text: AppState.en ? "Try again" : "重新检查";
+                        primary: true;
+                        clicked => {
+                            AppState.update-result-open = false;
+                            AppState.check-version();
+                        }
+                    }
+                }
+            }
+
+            if !AppState.update-available && !AppState.update-check-failed: VerticalLayout {
+                padding-left: 28px;
+                padding-right: 28px;
+                padding-top: 24px;
+                padding-bottom: 22px;
+                spacing: 10px;
+
+                Rectangle {
+                    height: 44px;
+                    background: transparent;
+                    Rectangle {
+                        width: 44px;
+                        height: 44px;
+                        x: (parent.width - self.width) / 2;
+                        border-radius: 22px;
+                        background: AppTheme.accent.with-alpha(0.12);
+                        Text {
+                            width: parent.width;
+                            height: parent.height;
+                            text: "✓";
+                            color: AppTheme.accent-dark;
+                            font-size: 22px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                Text {
+                    height: 30px;
+                    text: AppState.en ? "You're up to date" : "已是最新版本";
+                    color: AppTheme.text;
+                    font-size: 20px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    height: 26px;
+                    text: AppState.en
+                        ? ("Version v" + AppState.current-version + " is the latest available.")
+                        : ("当前版本 v" + AppState.current-version + "，无需更新。");
+                    color: AppTheme.muted;
+                    font-size: 13px;
+                    font-weight: 400;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                Rectangle { vertical-stretch: 1; background: transparent; }
+
+                HorizontalLayout {
+                    height: 40px;
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    PillButton {
+                        width: 160px;
+                        horizontal-stretch: 0;
+                        text: AppState.en ? "Close" : "关闭";
+                        primary: true;
+                        clicked => { AppState.update-result-open = false; }
+                    }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
                 }
             }
         }

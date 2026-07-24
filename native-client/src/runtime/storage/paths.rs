@@ -1,7 +1,7 @@
 use super::*;
 
 const DEFAULT_UPDATE_MANIFEST_URL: &str =
-    "https://cdn.honeykid.cn/public/artforge_studio/update-manifest.json";
+    "https://cdn.honeykid.cn/public/art_forge/update-manifest.json";
 const DEFAULT_UPDATE_NOTES: &str = "本次更新包含功能优化与问题修复。";
 
 pub(super) fn app_dir() -> PathBuf {
@@ -18,6 +18,7 @@ pub(super) fn init_version_state(app: &AppWindow) {
     state.set_current_version(current.into());
     state.set_latest_version(current.into());
     state.set_update_download_url(default_update_download_url().into());
+    state.set_update_check_failed(false);
     state.set_update_message("".into());
 }
 
@@ -28,6 +29,8 @@ pub(super) fn begin_update_check(app: &AppWindow, manual: bool) {
     }
     state.set_update_checking(true);
     if manual {
+        state.set_update_check_failed(false);
+        state.set_update_message("".into());
         state.set_update_result_open(false);
     }
 
@@ -86,7 +89,8 @@ fn poll_update_check(
             Err(_) if manual => {
                 state.set_update_available(false);
                 state.set_update_required(false);
-                state.set_update_message("暂时无法检查更新，请稍后重试".into());
+                state.set_update_check_failed(true);
+                state.set_update_message("当前无法连接更新服务，请检查网络后重试。".into());
                 state.set_update_result_open(true);
             }
             Err(_) => {}
@@ -154,6 +158,7 @@ fn read_local_update_manifest() -> Option<UpdateManifest> {
 fn apply_update_manifest(app: &AppWindow, manifest: UpdateManifest, manual: bool) {
     let state = app.global::<AppState>();
     let current = env!("CARGO_PKG_VERSION");
+    state.set_update_check_failed(false);
     let manifest_version = manifest.version.trim();
     let required = state.get_update_required();
     let required_version = state.get_latest_version().to_string();
@@ -218,7 +223,7 @@ fn default_update_download_url() -> String {
     } else {
         return String::new();
     };
-    format!("https://cdn.honeykid.cn/public/artforge_studio/{file_name}")
+    format!("https://cdn.honeykid.cn/public/art_forge/{file_name}")
 }
 
 pub(super) fn validated_update_download_url(candidate: &str) -> Result<reqwest::Url> {
@@ -274,6 +279,7 @@ pub(super) fn show_required_update_prompt(app: &AppWindow, minimum_version: &str
     }
     state.set_update_available(true);
     state.set_update_required(true);
+    state.set_update_check_failed(false);
     state.set_update_message(format!("在线功能要求至少升级到 {minimum}").into());
     state.set_update_result_open(true);
 }

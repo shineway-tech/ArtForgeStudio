@@ -3,7 +3,7 @@ import { AppTheme } from "theme.slint";
 import { AccountSession, AssetGroup, AssetItem, CanvasNote, ConversationItem, CreditRecord, CustomPromptItem, InvoiceOrderView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 import { Sidebar } from "components/sidebar.slint";
 import { TopBar } from "components/top-bar.slint";
-import { AliPayQrDialog } from "dialogs/ali-pay-qr-dialog.slint";
+import { AlipayPaymentDialog } from "dialogs/alipay-payment-dialog.slint";
 import { AuthDialog } from "dialogs/auth-dialog.slint";
 import { CreditInsufficientDialog } from "dialogs/credit-insufficient-dialog.slint";
 import { CanvasGroupNameDialog } from "dialogs/canvas-group-name-dialog.slint";
@@ -80,7 +80,7 @@ export component AppWindow inherits Window {
     AuthDialog { width: root.width; height: root.height; }
     ProfileDialog { width: root.width; height: root.height; }
     AgreementUpdateDialog { width: root.width; height: root.height; }
-    AliPayQrDialog { width: root.width; height: root.height; }
+    AlipayPaymentDialog { width: root.width; height: root.height; }
     VersionCheckDialog { width: root.width; height: root.height; }
     ViewerOverlay { width: root.width; height: root.height; }
     UpscaleDialog { width: root.width; height: root.height; }
