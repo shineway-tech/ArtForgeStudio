@@ -2042,6 +2042,93 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
     }
 
     #[test]
+    fn viewer_cutout_opens_the_server_configured_frontend_workspace() {
+        let app = include_str!("../../ui/app.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+        let cutout = include_str!("../../ui/pages/cutout-page.slint");
+        let callbacks = include_str!("callbacks/viewer.rs");
+        let feature = include_str!("features/viewer.rs");
+
+        assert!(app.contains("import { CutoutPage }"));
+        assert!(app.contains("CutoutPage {"));
+        assert!(state.contains("in-out property <bool> cutout-open: false;"));
+        assert!(state.contains("in-out property <string> cutout-type: \"general\";"));
+        assert!(state.contains("callback close-cutout();"));
+        assert!(state.contains("callback submit-cutout(string);"));
+        assert!(viewer.contains("AppState.viewer-cutout-image();"));
+        assert!(callbacks.contains("state.on_viewer_cutout_image"));
+        assert!(callbacks.contains("state.set_viewer_open(false);"));
+        assert!(callbacks.contains("state.set_cutout_open(true);"));
+        assert!(callbacks.contains("state.on_close_cutout"));
+        assert!(callbacks.contains("state.set_viewer_open(true);"));
+        assert!(callbacks.contains("state.on_submit_cutout"));
+        assert!(callbacks.contains("抠图能力由服务端配置，当前仅完成前端界面"));
+
+        assert!(cutout.contains("if AppState.cutout-open: Rectangle"));
+        assert!(cutout.contains("text: AppState.en ? \"Original\" : \"原图\""));
+        assert!(cutout.contains("source: AppState.viewer-image;"));
+        for (value, label) in [
+            ("general", "通用"),
+            ("portrait", "人像"),
+            ("avatar", "头像"),
+            ("skin", "皮肤"),
+            ("product", "商品"),
+            ("clothing", "服饰"),
+            ("sky", "天空"),
+        ] {
+            assert!(cutout.contains(&format!("value: \"{value}\"")));
+            assert!(cutout.contains(label));
+        }
+        assert!(cutout.contains("AppState.submit-cutout(AppState.cutout-type)"));
+        assert!(!callbacks.contains("ProcessImageMode::Cutout"));
+        assert!(!feature.contains("ProcessImageMode::Cutout"));
+        assert!(!feature.contains("cutout_edge_background"));
+    }
+
+    #[test]
+    fn viewer_processing_actions_use_two_compact_two_column_cards() {
+        let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+        let tools = viewer
+            .split("cutout-tools-card := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("viewer-repeat-card := Rectangle").next())
+            .expect("viewer processing tools card");
+        let repeat = viewer
+            .split("viewer-repeat-card := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("if AppState.viewer-source == \"inspiration\"").next())
+            .expect("viewer repeat card");
+        let spacer_index = viewer
+            .find("Rectangle { vertical-stretch: 1; }")
+            .expect("viewer action spacer");
+        let tools_index = viewer
+            .find("cutout-tools-card := Rectangle")
+            .expect("viewer processing tools");
+        let repeat_index = viewer
+            .find("viewer-repeat-card := Rectangle")
+            .expect("viewer repeat tools");
+
+        assert!(viewer.contains("component ViewerToolActionButton inherits Rectangle"));
+        assert!(spacer_index < tools_index);
+        assert!(tools_index < repeat_index);
+        assert!(tools.contains("GridLayout"));
+        assert_eq!(tools.matches("Row {").count(), 2);
+        assert!(tools.contains("label: AppState.en ? \"Cutout\" : \"抠图\""));
+        assert!(tools.contains("label: AppState.en ? \"Remove Black\" : \"去黑\""));
+        assert!(tools.contains("label: AppState.en ? \"Clear Upscale\" : \"清晰放大\""));
+        assert!(tools.contains("@image-url(\"../../assets/icons/fit.svg\")"));
+        assert!(tools.contains("@image-url(\"../../assets/icons/palette.svg\")"));
+        assert!(tools.contains("@image-url(\"../../assets/icons/focus.svg\")"));
+        assert!(repeat.contains("HorizontalLayout"));
+        assert_eq!(repeat.matches("ViewerToolActionButton {").count(), 2);
+        assert!(repeat.contains("label: AppState.en ? \"Edit Again\" : \"重新编辑\""));
+        assert!(repeat.contains("label: AppState.en ? \"Generate Again\" : \"再次生成\""));
+        assert!(repeat.contains("@image-url(\"../../assets/icons/edit.svg\")"));
+        assert!(repeat.contains("@image-url(\"../../assets/icons/redo.svg\")"));
+    }
+
+    #[test]
     fn viewer_image_can_start_a_native_file_drag() {
         let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
         let state = include_str!("../../ui/app-state.slint");

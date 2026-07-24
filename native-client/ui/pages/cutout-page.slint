@@ -1,0 +1,204 @@
+import { AppState } from "../app-state.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+component CutoutTypeButton {
+    in property <string> value;
+    in property <string> label;
+    property <bool> selected: AppState.cutout-type == root.value;
+    callback clicked();
+    height: 48px;
+
+    Rectangle {
+        background: root.selected ? AppTheme.accent.with-alpha(0.16) : (type-touch.has-hover ? AppTheme.panel-soft : transparent);
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: root.selected ? AppTheme.accent : AppTheme.border;
+
+        Text {
+            x: 12px;
+            width: parent.width - 24px;
+            height: parent.height;
+            text: root.label;
+            color: root.selected ? AppTheme.accent-dark : AppTheme.text;
+            font-size: 14px;
+            font-weight: root.selected ? 500 : 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        type-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+export component CutoutPage {
+    if AppState.cutout-open: Rectangle {
+        background: AppTheme.bg;
+
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: 76px;
+            background: AppTheme.panel;
+            border-width: 1px;
+            border-color: AppTheme.border;
+
+            PillButton {
+                x: 24px;
+                y: 20px;
+                width: 88px;
+                text: AppState.en ? "← Back" : "← 返回";
+                clicked => { AppState.close-cutout(); }
+            }
+
+            Text {
+                x: 132px;
+                y: 0px;
+                width: 220px;
+                height: parent.height;
+                text: AppState.en ? "Image Cutout" : "智能抠图";
+                color: AppTheme.text;
+                font-size: 20px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+
+            Text {
+                x: 360px;
+                y: 0px;
+                width: parent.width - 384px;
+                height: parent.height;
+                text: AppState.viewer-title;
+                color: AppTheme.muted;
+                font-size: 13px;
+                font-weight: 400;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        HorizontalLayout {
+            x: 24px;
+            y: 96px;
+            width: parent.width - 48px;
+            height: parent.height - 120px;
+            spacing: 20px;
+
+            Rectangle {
+                horizontal-stretch: 1;
+                background: AppTheme.panel;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+
+                Text {
+                    x: 20px;
+                    y: 16px;
+                    width: parent.width - 40px;
+                    height: 28px;
+                    text: AppState.en ? "Original" : "原图";
+                    color: AppTheme.text;
+                    font-size: 16px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                Rectangle {
+                    x: 20px;
+                    y: 56px;
+                    width: parent.width - 40px;
+                    height: parent.height - 76px;
+                    background: AppTheme.bg;
+                    border-radius: 8px;
+                    clip: true;
+
+                    Image {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: parent.height;
+                        source: AppState.viewer-image;
+                        image-fit: contain;
+                    }
+                }
+            }
+
+            Rectangle {
+                width: 360px;
+                background: AppTheme.panel;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+
+                VerticalLayout {
+                    padding: 24px;
+                    spacing: 14px;
+
+                    Text {
+                        text: AppState.en ? "Cutout type" : "选择抠图类型";
+                        color: AppTheme.text;
+                        font-size: 18px;
+                        font-weight: 600;
+                    }
+
+                    Text {
+                        text: AppState.en
+                            ? "Choose the subject category. Processing is provided by the server."
+                            : "请选择主体类型，实际抠图能力由服务端提供。";
+                        color: AppTheme.muted;
+                        font-size: 13px;
+                        font-weight: 400;
+                        wrap: word-wrap;
+                    }
+
+                    GridLayout {
+                        height: 234px;
+                        spacing: 10px;
+                        Row {
+                            CutoutTypeButton { value: "general"; label: AppState.en ? "General" : "通用"; clicked => { AppState.cutout-type = "general"; AppState.cutout-message = ""; } }
+                            CutoutTypeButton { value: "portrait"; label: AppState.en ? "Portrait" : "人像"; clicked => { AppState.cutout-type = "portrait"; AppState.cutout-message = ""; } }
+                        }
+                        Row {
+                            CutoutTypeButton { value: "avatar"; label: AppState.en ? "Avatar" : "头像"; clicked => { AppState.cutout-type = "avatar"; AppState.cutout-message = ""; } }
+                            CutoutTypeButton { value: "skin"; label: AppState.en ? "Skin" : "皮肤"; clicked => { AppState.cutout-type = "skin"; AppState.cutout-message = ""; } }
+                        }
+                        Row {
+                            CutoutTypeButton { value: "product"; label: AppState.en ? "Product" : "商品"; clicked => { AppState.cutout-type = "product"; AppState.cutout-message = ""; } }
+                            CutoutTypeButton { value: "clothing"; label: AppState.en ? "Clothing" : "服饰"; clicked => { AppState.cutout-type = "clothing"; AppState.cutout-message = ""; } }
+                        }
+                        Row {
+                            CutoutTypeButton { value: "sky"; label: AppState.en ? "Sky" : "天空"; clicked => { AppState.cutout-type = "sky"; AppState.cutout-message = ""; } }
+                            Rectangle { background: transparent; }
+                        }
+                    }
+
+                    Rectangle { vertical-stretch: 1; }
+
+                    if AppState.cutout-message != "": Text {
+                        text: AppState.cutout-message;
+                        color: AppTheme.muted;
+                        font-size: 12px;
+                        font-weight: 400;
+                        wrap: word-wrap;
+                        horizontal-alignment: center;
+                    }
+
+                    PillButton {
+                        height: 44px;
+                        text: AppState.en ? "Start Cutout" : "开始抠图";
+                        primary: true;
+                        clicked => { AppState.submit-cutout(AppState.cutout-type); }
+                    }
+                }
+            }
+        }
+    }
+}

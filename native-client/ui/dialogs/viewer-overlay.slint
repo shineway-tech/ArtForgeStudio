@@ -83,6 +83,48 @@ component ViewerFooterActionButton inherits Rectangle {
     }
 }
 
+component ViewerToolActionButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> disabled: false;
+    callback clicked();
+    height: 44px;
+    opacity: root.disabled ? 0.42 : 1;
+    background: tool-touch.has-hover && !root.disabled ? AppTheme.accent.with-alpha(0.10) : transparent;
+    border-radius: 7px;
+
+    Image {
+        x: 12px;
+        y: (parent.height - 17px) / 2;
+        width: 17px;
+        height: 17px;
+        source: root.icon;
+        colorize: AppTheme.text;
+        image-fit: contain;
+    }
+    Text {
+        x: 39px;
+        width: parent.width - 50px;
+        height: parent.height;
+        text: root.label;
+        color: AppTheme.text;
+        font-size: 13px;
+        font-weight: 400;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    tool-touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: root.disabled ? default : pointer;
+        clicked => {
+            if !root.disabled {
+                root.clicked();
+            }
+        }
+    }
+}
+
 export component ViewerOverlay {
     property <length> viewer-message-width: min(360px, max(220px, root.width - 80px));
     property <length> detail-panel-width: AppState.viewer-source == "reference" ? 0px : 460px;
@@ -307,17 +349,69 @@ export component ViewerOverlay {
                 }
                 Text { text: AppState.viewer-time; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
                 Rectangle { height: 1px; background: AppTheme.border; }
-                if AppState.viewer-source != "inspiration": HorizontalLayout {
-                    spacing: 10px;
-                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Cutout" : "抠图"; primary: true; disabled: AppState.viewer-processing || AppState.viewer-cutout-done; clicked => { AppState.viewer-cutout-image(); } }
-                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Remove Black" : "去黑"; primary: true; disabled: AppState.viewer-processing || AppState.viewer-remove-black-done; clicked => { AppState.viewer-remove-black(); } }
-                }
-                if AppState.viewer-source != "inspiration": PillButton { horizontal-stretch: 1; text: AppState.en ? "Clear Upscale" : "清晰放大"; primary: true; disabled: AppState.viewer-processing || AppState.viewer-upscale-done; clicked => { AppState.open-upscale-dialog(); } }
                 Rectangle { vertical-stretch: 1; }
-                if AppState.viewer-source != "inspiration": HorizontalLayout {
-                    spacing: 10px;
-                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Edit Again" : "重新编辑"; primary: true; clicked => { AppState.viewer-edit(); } }
-                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Generate Again" : "再次生成"; primary: true; clicked => { AppState.viewer-regenerate(); } }
+                if AppState.viewer-source != "inspiration": cutout-tools-card := Rectangle {
+                    height: 112px;
+                    background: AppTheme.panel-soft;
+                    border-radius: 10px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    GridLayout {
+                        x: 8px;
+                        y: 8px;
+                        width: parent.width - 16px;
+                        height: parent.height - 16px;
+                        spacing: 4px;
+                        Row {
+                            ViewerToolActionButton {
+                                icon: @image-url("../../assets/icons/fit.svg");
+                                label: AppState.en ? "Cutout" : "抠图";
+                                disabled: AppState.viewer-processing || AppState.viewer-cutout-done;
+                                clicked => { AppState.viewer-cutout-image(); }
+                            }
+                            ViewerToolActionButton {
+                                icon: @image-url("../../assets/icons/palette.svg");
+                                label: AppState.en ? "Remove Black" : "去黑";
+                                disabled: AppState.viewer-processing || AppState.viewer-remove-black-done;
+                                clicked => { AppState.viewer-remove-black(); }
+                            }
+                        }
+                        Row {
+                            ViewerToolActionButton {
+                                icon: @image-url("../../assets/icons/focus.svg");
+                                label: AppState.en ? "Clear Upscale" : "清晰放大";
+                                disabled: AppState.viewer-processing || AppState.viewer-upscale-done;
+                                clicked => { AppState.open-upscale-dialog(); }
+                            }
+                            Rectangle { background: transparent; }
+                        }
+                    }
+                }
+                if AppState.viewer-source != "inspiration": viewer-repeat-card := Rectangle {
+                    height: 62px;
+                    background: AppTheme.panel-soft;
+                    border-radius: 10px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    HorizontalLayout {
+                        x: 8px;
+                        y: 8px;
+                        width: parent.width - 16px;
+                        height: parent.height - 16px;
+                        spacing: 4px;
+                        ViewerToolActionButton {
+                            horizontal-stretch: 1;
+                            icon: @image-url("../../assets/icons/edit.svg");
+                            label: AppState.en ? "Edit Again" : "重新编辑";
+                            clicked => { AppState.viewer-edit(); }
+                        }
+                        ViewerToolActionButton {
+                            horizontal-stretch: 1;
+                            icon: @image-url("../../assets/icons/redo.svg");
+                            label: AppState.en ? "Generate Again" : "再次生成";
+                            clicked => { AppState.viewer-regenerate(); }
+                        }
+                    }
                 }
                 if AppState.viewer-source == "inspiration": HorizontalLayout {
                     spacing: 10px;

@@ -304,6 +304,9 @@ export global AppState {
     in-out property <bool> viewer-cutout-done: false;
     in-out property <bool> viewer-remove-black-done: false;
     in-out property <bool> viewer-upscale-done: false;
+    in-out property <bool> cutout-open: false;
+    in-out property <string> cutout-type: "general";
+    in-out property <string> cutout-message: "";
     in-out property <bool> upscale-open: false;
     in-out property <int> upscale-scale: 2;
     in-out property <string> upscale-quality: "2K";
@@ -455,6 +458,8 @@ export global AppState {
     callback viewer-download-image();
     callback viewer-open-image();
     callback viewer-cutout-image();
+    callback close-cutout();
+    callback submit-cutout(string);
     callback viewer-remove-black();
     callback open-upscale-dialog();
     callback close-upscale-dialog();

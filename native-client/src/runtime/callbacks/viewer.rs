@@ -114,12 +114,47 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
-        let store = store.clone();
         state.on_viewer_cutout_image(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            start_viewer_image_processing(&app, store.clone(), ProcessImageMode::Cutout);
+            let state = app.global::<AppState>();
+            state.set_cutout_type("general".into());
+            state.set_cutout_message("".into());
+            state.set_viewer_open(false);
+            state.set_cutout_open(true);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_close_cutout(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            state.set_cutout_open(false);
+            state.set_cutout_message("".into());
+            state.set_viewer_open(true);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_submit_cutout(move |kind| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let kind = kind.as_str();
+            let supported = [
+                "general", "portrait", "avatar", "skin", "product", "clothing", "sky",
+            ];
+            let state = app.global::<AppState>();
+            if !supported.contains(&kind) {
+                state.set_cutout_message("请选择有效的抠图类型".into());
+                return;
+            }
+            state.set_cutout_message("抠图能力由服务端配置，当前仅完成前端界面".into());
         });
     }
 

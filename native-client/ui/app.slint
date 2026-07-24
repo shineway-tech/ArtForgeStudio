@@ -19,6 +19,7 @@ import { AgreementViewerDialog } from "dialogs/agreement-viewer-dialog.slint";
 import { UpscaleDialog } from "dialogs/upscale-dialog.slint";
 import { VersionCheckDialog } from "dialogs/version-check-dialog.slint";
 import { ViewerOverlay } from "dialogs/viewer-overlay.slint";
+import { CutoutPage } from "pages/cutout-page.slint";
 import { AssetsPage } from "pages/assets-page.slint";
 import { CreditsPage } from "pages/credits-page.slint";
 import { InspirationPage } from "pages/inspiration-page.slint";
@@ -83,6 +84,7 @@ export component AppWindow inherits Window {
     AlipayPaymentDialog { width: root.width; height: root.height; }
     VersionCheckDialog { width: root.width; height: root.height; }
     ViewerOverlay { width: root.width; height: root.height; }
+    CutoutPage { width: root.width; height: root.height; }
     UpscaleDialog { width: root.width; height: root.height; }
     if AppState.thumbnail-drag-preview-visible: Rectangle {
         x: max(0px, min(AppState.thumbnail-drag-preview-x - AppState.thumbnail-drag-preview-size / 2, root.width - AppState.thumbnail-drag-preview-size));

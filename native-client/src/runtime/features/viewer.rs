@@ -172,7 +172,6 @@ pub(super) fn download_asset(app: &AppWindow, store: &Rc<RefCell<Store>>, id: St
 
 #[derive(Clone, Copy)]
 pub(super) enum ProcessImageMode {
-    Cutout,
     RemoveBlack,
     Upscale { scale: u32, target_long_edge: u32 },
 }
@@ -187,7 +186,6 @@ pub(super) fn start_viewer_image_processing(
         return;
     }
     let already_done = match mode {
-        ProcessImageMode::Cutout => state.get_viewer_cutout_done(),
         ProcessImageMode::RemoveBlack => state.get_viewer_remove_black_done(),
         ProcessImageMode::Upscale { .. } => state.get_viewer_upscale_done(),
     };
@@ -238,7 +236,7 @@ pub(super) fn start_viewer_image_processing(
 
 pub(super) fn viewer_processing_duration_ms(mode: ProcessImageMode) -> u64 {
     match mode {
-        ProcessImageMode::Cutout | ProcessImageMode::RemoveBlack => 3000,
+        ProcessImageMode::RemoveBlack => 3000,
         ProcessImageMode::Upscale { .. } => 560,
     }
 }
@@ -258,13 +256,6 @@ pub(super) fn schedule_viewer_processing_progress(app: Weak<AppWindow>, delay_ms
 pub(super) fn processing_label(app: &AppWindow, mode: ProcessImageMode) -> &'static str {
     let en = app.global::<AppState>().get_language().as_str() == "en";
     match mode {
-        ProcessImageMode::Cutout => {
-            if en {
-                "Cutting out"
-            } else {
-                "正在抠图"
-            }
-        }
         ProcessImageMode::RemoveBlack => {
             if en {
                 "Removing black"
@@ -285,13 +276,6 @@ pub(super) fn processing_label(app: &AppWindow, mode: ProcessImageMode) -> &'sta
 pub(super) fn processing_done_message(app: &AppWindow, mode: ProcessImageMode) -> &'static str {
     let en = app.global::<AppState>().get_language().as_str() == "en";
     match mode {
-        ProcessImageMode::Cutout => {
-            if en {
-                "This image has already been cut out."
-            } else {
-                "当前图片已抠图"
-            }
-        }
         ProcessImageMode::RemoveBlack => {
             if en {
                 "Black has already been removed from this image."
@@ -335,7 +319,6 @@ pub(super) fn process_viewer_image(
     }
     let mut rgba = buffer.as_bytes().to_vec();
     match mode {
-        ProcessImageMode::Cutout => cutout_edge_background(&mut rgba, width, height),
         ProcessImageMode::RemoveBlack => remove_black_pixels(&mut rgba),
         ProcessImageMode::Upscale {
             scale,
@@ -383,107 +366,6 @@ pub(super) fn upscale_dimensions(width: u32, height: u32, scale: u32, target_lon
     (target_width as u32, target_height as u32)
 }
 
-pub(super) fn cutout_edge_background(rgba: &mut [u8], width: u32, height: u32) {
-    let corners = [
-        (0, 0),
-        (width.saturating_sub(1), 0),
-        (0, height.saturating_sub(1)),
-        (width.saturating_sub(1), height.saturating_sub(1)),
-    ];
-    let mut bg = [0u32; 3];
-    for &(x, y) in &corners {
-        let idx = pixel_index(width, x, y);
-        bg[0] += rgba[idx] as u32;
-        bg[1] += rgba[idx + 1] as u32;
-        bg[2] += rgba[idx + 2] as u32;
-    }
-    let bg = [
-        (bg[0] / corners.len() as u32) as u8,
-        (bg[1] / corners.len() as u32) as u8,
-        (bg[2] / corners.len() as u32) as u8,
-    ];
-    let mut visited = vec![false; (width as usize).saturating_mul(height as usize)];
-    let mut queue = Vec::new();
-    for x in 0..width {
-        enqueue_background_pixel(rgba, width, height, x, 0, bg, &mut visited, &mut queue);
-        enqueue_background_pixel(
-            rgba,
-            width,
-            height,
-            x,
-            height.saturating_sub(1),
-            bg,
-            &mut visited,
-            &mut queue,
-        );
-    }
-    for y in 0..height {
-        enqueue_background_pixel(rgba, width, height, 0, y, bg, &mut visited, &mut queue);
-        enqueue_background_pixel(
-            rgba,
-            width,
-            height,
-            width.saturating_sub(1),
-            y,
-            bg,
-            &mut visited,
-            &mut queue,
-        );
-    }
-
-    let mut cursor = 0usize;
-    while cursor < queue.len() {
-        let (x, y) = queue[cursor];
-        cursor += 1;
-        if x > 0 {
-            enqueue_background_pixel(rgba, width, height, x - 1, y, bg, &mut visited, &mut queue);
-        }
-        if x + 1 < width {
-            enqueue_background_pixel(rgba, width, height, x + 1, y, bg, &mut visited, &mut queue);
-        }
-        if y > 0 {
-            enqueue_background_pixel(rgba, width, height, x, y - 1, bg, &mut visited, &mut queue);
-        }
-        if y + 1 < height {
-            enqueue_background_pixel(rgba, width, height, x, y + 1, bg, &mut visited, &mut queue);
-        }
-    }
-
-    for y in 0..height {
-        for x in 0..width {
-            let flat = (y * width + x) as usize;
-            if visited[flat] {
-                rgba[pixel_index(width, x, y) + 3] = 0;
-            }
-        }
-    }
-}
-
-pub(super) fn enqueue_background_pixel(
-    rgba: &[u8],
-    width: u32,
-    height: u32,
-    x: u32,
-    y: u32,
-    bg: [u8; 3],
-    visited: &mut [bool],
-    queue: &mut Vec<(u32, u32)>,
-) {
-    if x >= width || y >= height {
-        return;
-    }
-    let flat = (y * width + x) as usize;
-    if visited[flat] {
-        return;
-    }
-    let idx = pixel_index(width, x, y);
-    if color_distance_sq([rgba[idx], rgba[idx + 1], rgba[idx + 2]], bg) > 55 * 55 {
-        return;
-    }
-    visited[flat] = true;
-    queue.push((x, y));
-}
-
 pub(super) fn remove_black_pixels(rgba: &mut [u8]) {
     let lut = unmult_lut();
     for pixel in rgba.chunks_exact_mut(4) {
@@ -518,17 +400,6 @@ fn unmult_lut() -> &'static [u8] {
     })
 }
 
-pub(super) fn pixel_index(width: u32, x: u32, y: u32) -> usize {
-    ((y * width + x) * 4) as usize
-}
-
-pub(super) fn color_distance_sq(a: [u8; 3], b: [u8; 3]) -> i32 {
-    let dr = a[0] as i32 - b[0] as i32;
-    let dg = a[1] as i32 - b[1] as i32;
-    let db = a[2] as i32 - b[2] as i32;
-    dr * dr + dg * dg + db * db
-}
-
 pub(super) fn save_processed_viewer_image(
     app: &AppWindow,
     store: &Rc<RefCell<Store>>,
@@ -539,7 +410,6 @@ pub(super) fn save_processed_viewer_image(
 ) -> Result<()> {
     let state = app.global::<AppState>();
     let (suffix, title_suffix) = match mode {
-        ProcessImageMode::Cutout => ("cutout", "抠图"),
         ProcessImageMode::RemoveBlack => ("remove-black", "去黑"),
         ProcessImageMode::Upscale { scale, .. } => {
             if scale >= 4 {
@@ -641,7 +511,7 @@ pub(super) fn save_processed_viewer_image(
         height: height as i32,
         image,
         source_path: path.display().to_string(),
-        cutout_done: base_cutout_done || matches!(mode, ProcessImageMode::Cutout),
+        cutout_done: base_cutout_done,
         remove_black_done: base_remove_black_done || matches!(mode, ProcessImageMode::RemoveBlack),
         upscale_done: base_upscale_done || matches!(mode, ProcessImageMode::Upscale { .. }),
     };
