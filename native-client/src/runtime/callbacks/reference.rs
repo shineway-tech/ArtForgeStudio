@@ -104,12 +104,19 @@ pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>
         drag_preview::start_thumbnail_drag_preview(path)
     });
 
-    state.on_start_thumbnail_file_drag(move |data| {
-        let Some(path) = drag_data_to_path(data.as_str()) else {
-            return false;
-        };
-        drag_preview::start_thumbnail_file_drag(path)
-    });
+    {
+        let app_weak = app.as_weak();
+        state.on_start_thumbnail_file_drag(move |data| {
+            let Some(path) = drag_data_to_path(data.as_str()) else {
+                return false;
+            };
+            let result = drag_preview::start_thumbnail_file_drag(path);
+            if let Some(app) = app_weak.upgrade() {
+                reset_pointer_after_native_drag(&app);
+            }
+            result
+        });
+    }
 
     {
         let app_weak = app.as_weak();

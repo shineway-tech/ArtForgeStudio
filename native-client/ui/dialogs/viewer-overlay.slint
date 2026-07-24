@@ -171,6 +171,8 @@ export component ViewerOverlay {
                             || Math.abs(self.mouse-y - root.image-pressed-y) >= 7px) {
                         root.image-system-drag-started = true;
                         AppState.start-viewer-file-drag();
+                        root.image-drag-armed = false;
+                        root.image-system-drag-started = false;
                     } else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
                         root.image-drag-armed = false;
                         root.image-system-drag-started = false;

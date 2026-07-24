@@ -24,7 +24,11 @@ pub fn start_thumbnail_file_drag(path: PathBuf) -> bool {
     unsafe {
         windows_sys::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture();
     }
-    windows_file_drag::run(path).is_ok()
+    let result = windows_file_drag::run(path).is_ok();
+    unsafe {
+        windows_sys::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture();
+    }
+    result
 }
 
 #[cfg(not(target_os = "windows"))]

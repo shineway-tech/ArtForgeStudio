@@ -524,16 +524,23 @@ mod tests {
     #[test]
     fn windows_file_drag_runs_on_the_pointer_thread_after_releasing_capture() {
         let drag = include_str!("../drag_preview.rs");
+        let runtime = include_str!("mod.rs");
+        let references = include_str!("callbacks/reference.rs");
+        let viewer = include_str!("callbacks/viewer.rs");
         let handler = drag
             .split("pub fn start_thumbnail_file_drag(path: PathBuf) -> bool")
             .nth(1)
             .and_then(|value| value.split("#[cfg(not(target_os = \"windows\"))]").next())
             .expect("Windows file drag handler");
 
-        assert!(handler.contains("ReleaseCapture()"));
+        assert_eq!(handler.matches("ReleaseCapture()").count(), 2);
         assert!(handler.contains("windows_file_drag::run(path).is_ok()"));
         assert!(!handler.contains("std::thread::spawn"));
         assert!(drag.contains("DoDragDrop(&data_object, &drop_source, DROPEFFECT_COPY, &mut effect).ok()"));
+        assert!(runtime.contains("fn reset_pointer_after_native_drag"));
+        assert!(runtime.contains("WindowEvent::PointerExited"));
+        assert!(references.contains("reset_pointer_after_native_drag(&app)"));
+        assert!(viewer.contains("reset_pointer_after_native_drag(&app)"));
     }
 
     #[test]
@@ -543,6 +550,13 @@ mod tests {
         assert!(!thumbnail.contains("DragArea {"));
         assert!(thumbnail.contains("Math.abs(hover.mouse-x - hover.pressed-x) < 7px"));
         assert!(thumbnail.contains("AppState.start-thumbnail-file-drag(drag-data)"));
+        let native_drag = thumbnail
+            .find("AppState.start-thumbnail-file-drag(drag-data)")
+            .expect("native drag call");
+        let cleanup = thumbnail[native_drag..]
+            .find("root.hide-drag-preview();")
+            .expect("post-drag cleanup");
+        assert!(cleanup > 0);
     }
 
     #[test]
@@ -1910,6 +1924,12 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(state.contains("callback start-viewer-file-drag() -> bool;"));
         assert!(viewer.contains("property <bool> image-drag-armed: false;"));
         assert!(viewer.contains("AppState.start-viewer-file-drag();"));
+        let native_drag = viewer
+            .find("AppState.start-viewer-file-drag();")
+            .expect("viewer native drag call");
+        let cleanup = &viewer[native_drag..];
+        assert!(cleanup.contains("root.image-drag-armed = false;"));
+        assert!(cleanup.contains("root.image-system-drag-started = false;"));
         assert!(callbacks.contains("state.on_start_viewer_file_drag"));
         assert!(callbacks.contains("viewer_item(&store.borrow(), &id, &source)"));
         assert!(callbacks.contains("drag_preview::start_thumbnail_file_drag"));

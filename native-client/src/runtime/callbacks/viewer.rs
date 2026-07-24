@@ -106,7 +106,9 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
             let Some(path) = path else {
                 return false;
             };
-            drag_preview::start_thumbnail_file_drag(path)
+            let result = drag_preview::start_thumbnail_file_drag(path);
+            reset_pointer_after_native_drag(&app);
+            result
         });
     }
 

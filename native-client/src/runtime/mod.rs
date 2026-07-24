@@ -30,6 +30,20 @@ fn advance_second_countdown(
     )
 }
 
+fn reset_pointer_after_native_drag(app: &AppWindow) {
+    app.global::<AppState>()
+        .set_thumbnail_drag_preview_visible(false);
+    let app_weak = app.as_weak();
+    slint::Timer::single_shot(Duration::from_millis(0), move || {
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
+        let _ = app
+            .window()
+            .try_dispatch_event(slint::platform::WindowEvent::PointerExited);
+    });
+}
+
 use crate::drag_preview;
 
 slint::include_modules!();

@@ -304,6 +304,7 @@ export component ThumbnailCard {
         AppState.start-thumbnail-drag-preview(drag-data);
         AppState.thumbnail-drag-preview-visible = false;
         AppState.start-thumbnail-file-drag(drag-data);
+        root.hide-drag-preview();
     }
     function category-label(id: string) -> string {
         if id == "character" { return AppState.en ? "Character" : "角色"; }
