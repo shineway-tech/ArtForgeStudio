@@ -74,6 +74,33 @@ pub(super) fn reveal_path_in_file_manager(path: &Path) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn open_path_with_default_app(path: &Path) -> Result<()> {
+    if !path.is_file() {
+        return Err(anyhow!("图片文件不存在"));
+    }
+    let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+
+    #[cfg(target_os = "windows")]
+    Command::new("explorer")
+        .arg(&target)
+        .spawn()
+        .with_context(|| format!("无法打开图片：{}", target.display()))?;
+
+    #[cfg(target_os = "macos")]
+    Command::new("open")
+        .arg(&target)
+        .spawn()
+        .with_context(|| format!("无法打开图片：{}", target.display()))?;
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    Command::new("xdg-open")
+        .arg(&target)
+        .spawn()
+        .with_context(|| format!("无法打开图片：{}", target.display()))?;
+
+    Ok(())
+}
+
 pub(super) fn download_viewer_image(app: &AppWindow, store: &Store) {
     let state = app.global::<AppState>();
     let id = state.get_viewer_id().to_string();
@@ -92,6 +119,26 @@ pub(super) fn download_viewer_image(app: &AppWindow, store: &Store) {
     match reveal_path_in_file_manager(&source) {
         Ok(_) => state.set_viewer_message("已打开图片所在文件夹".into()),
         Err(error) => state.set_viewer_message(format!("打开文件夹失败：{error}").into()),
+    }
+}
+
+pub(super) fn open_viewer_image(app: &AppWindow, store: &Store) {
+    let state = app.global::<AppState>();
+    let id = state.get_viewer_id().to_string();
+    let source = state.get_viewer_source().to_string();
+    let Some(item) = viewer_item(store, &id, &source) else {
+        state.set_viewer_message("没有可打开的原始图片".into());
+        return;
+    };
+    let source_path = item.source_path.trim();
+    if source_path.is_empty() || source_path == "failed" || source_path == "asset" {
+        state.set_viewer_message("没有可打开的原始图片".into());
+        return;
+    }
+    let source = PathBuf::from(source_path);
+    match open_path_with_default_app(&source) {
+        Ok(_) => state.set_viewer_message("已打开原图".into()),
+        Err(error) => state.set_viewer_message(format!("打开原图失败：{error}").into()),
     }
 }
 

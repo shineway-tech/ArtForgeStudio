@@ -111,6 +111,72 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, store: Rc<RefCell<St
 
     {
         let app_weak = app.as_weak();
+        state.on_analyze_custom_prompt_reference(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            if state.get_custom_prompt_reference_path().is_empty() {
+                state.set_custom_prompt_message(
+                    if state.get_language().as_str() == "en" {
+                        "Upload a style reference image first"
+                    } else {
+                        "请先上传风格参考图"
+                    }
+                    .into(),
+                );
+                return;
+            }
+            let image = state.get_custom_prompt_reference_image();
+            let Some(buffer) = image.to_rgba8() else {
+                state.set_custom_prompt_message(
+                    if state.get_language().as_str() == "en" {
+                        "The reference image cannot be analyzed"
+                    } else {
+                        "无法分析该参考图"
+                    }
+                    .into(),
+                );
+                return;
+            };
+            let Some(analysis) = analyze_reference_style(
+                buffer.as_bytes(),
+                buffer.width(),
+                buffer.height(),
+                state.get_language().as_str() == "en",
+            ) else {
+                state.set_custom_prompt_message(
+                    if state.get_language().as_str() == "en" {
+                        "The reference image cannot be analyzed"
+                    } else {
+                        "无法分析该参考图"
+                    }
+                    .into(),
+                );
+                return;
+            };
+            let current = state.get_custom_prompt_input().trim().to_string();
+            state.set_custom_prompt_input(
+                if current.is_empty() {
+                    analysis
+                } else {
+                    format!("{current}\n\n{analysis}")
+                }
+                .into(),
+            );
+            state.set_custom_prompt_message(
+                if state.get_language().as_str() == "en" {
+                    "Style analyzed locally"
+                } else {
+                    "已在本地完成图片风格分析"
+                }
+                .into(),
+            );
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
         let store = store.clone();
         state.on_save_custom_prompt(move |original, prompt| {
             let Some(app) = app_weak.upgrade() else {
@@ -225,17 +291,142 @@ fn reset_custom_prompt_editor(app: &AppWindow) {
     state.set_custom_prompt_editing_original("".into());
 }
 
-fn normalized_custom_prompt_category(value: &str) -> String {
+pub(super) fn normalized_custom_prompt_category(value: &str) -> String {
     match value {
         "character" | "scene" | "ui" | "effect" => value.to_string(),
         _ => "default".to_string(),
     }
 }
 
-fn normalized_custom_prompt_format(value: &str) -> String {
+pub(super) fn normalized_custom_prompt_format(value: &str) -> String {
     if value == "txt" {
         "txt".to_string()
     } else {
         "json".to_string()
     }
+}
+
+pub(super) fn analyze_reference_style(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    english: bool,
+) -> Option<String> {
+    let pixel_count = rgba.len() / 4;
+    if pixel_count == 0 || width == 0 || height == 0 {
+        return None;
+    }
+
+    let sample_step = (pixel_count / 50_000).max(1);
+    let mut samples = 0_f64;
+    let mut red = 0_f64;
+    let mut green = 0_f64;
+    let mut blue = 0_f64;
+    let mut luminance = 0_f64;
+    let mut luminance_squared = 0_f64;
+    let mut saturation = 0_f64;
+
+    for pixel in rgba.chunks_exact(4).step_by(sample_step) {
+        if pixel[3] == 0 {
+            continue;
+        }
+        let r = pixel[0] as f64 / 255.0;
+        let g = pixel[1] as f64 / 255.0;
+        let b = pixel[2] as f64 / 255.0;
+        let maximum = r.max(g).max(b);
+        let minimum = r.min(g).min(b);
+        let value = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+        samples += 1.0;
+        red += r;
+        green += g;
+        blue += b;
+        luminance += value;
+        luminance_squared += value * value;
+        saturation += if maximum <= f64::EPSILON {
+            0.0
+        } else {
+            (maximum - minimum) / maximum
+        };
+    }
+
+    if samples == 0.0 {
+        return None;
+    }
+
+    let average_red = red / samples;
+    let average_green = green / samples;
+    let average_blue = blue / samples;
+    let average_luminance = luminance / samples;
+    let average_saturation = saturation / samples;
+    let variance =
+        (luminance_squared / samples - average_luminance * average_luminance).max(0.0);
+    let contrast = variance.sqrt();
+    let warm_balance =
+        average_red - average_blue + (average_green - average_blue) * 0.12;
+
+    let orientation = if width > height.saturating_mul(6) / 5 {
+        if english { "landscape" } else { "横向" }
+    } else if height > width.saturating_mul(6) / 5 {
+        if english { "portrait" } else { "竖向" }
+    } else if english {
+        "square"
+    } else {
+        "方形"
+    };
+    let brightness = if average_luminance > 0.68 {
+        if english { "bright and airy" } else { "明亮通透" }
+    } else if average_luminance < 0.34 {
+        if english { "deep low-key lighting" } else { "低调暗部" }
+    } else if english {
+        "balanced lighting"
+    } else {
+        "明暗均衡"
+    };
+    let temperature = if warm_balance > 0.07 {
+        if english { "warm palette" } else { "暖色调" }
+    } else if warm_balance < -0.06 {
+        if english { "cool palette" } else { "冷色调" }
+    } else if english {
+        "neutral palette"
+    } else {
+        "中性色调"
+    };
+    let chroma = if average_saturation > 0.55 {
+        if english { "vivid saturated color" } else { "色彩高饱和鲜明" }
+    } else if average_saturation < 0.20 {
+        if english { "soft restrained color" } else { "色彩低饱和柔和" }
+    } else if english {
+        "natural color saturation"
+    } else {
+        "色彩饱和度自然"
+    };
+    let tonal_contrast = if contrast > 0.24 {
+        if english { "strong tonal contrast" } else { "强对比光影" }
+    } else if contrast < 0.11 {
+        if english { "soft low contrast" } else { "柔和低对比光影" }
+    } else if english {
+        "balanced tonal contrast"
+    } else {
+        "均衡对比光影"
+    };
+    let detail = if width.max(height) >= 2_000 {
+        if english { "fine detailed texture" } else { "细节与纹理丰富" }
+    } else if english {
+        "clean controlled detail"
+    } else {
+        "细节简洁克制"
+    };
+
+    Some(if english {
+        format!(
+            "Reference style: {orientation} composition, {brightness}, {temperature}, \
+             {chroma}, {tonal_contrast}, {detail}."
+        )
+    } else {
+        format!(
+            "参考图风格：{orientation}构图，{brightness}，{temperature}，{chroma}，\
+             {tonal_contrast}，{detail}。"
+        )
+    })
 }

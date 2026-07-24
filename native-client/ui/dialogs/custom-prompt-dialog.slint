@@ -238,12 +238,15 @@ export component CustomPromptDialog {
                             width: 158px;
                             height: 36px;
                             text: AppState.en ? "AI style analysis" : "AI 分析生成风格";
-                            disabled: true;
+                            disabled: AppState.custom-prompt-reference-path == "";
+                            clicked => { AppState.analyze-custom-prompt-reference(); }
                         }
                         Text {
                             horizontal-stretch: 1;
                             height: 36px;
-                            text: AppState.en ? "Awaiting server support" : "等待服务端开放图片风格分析";
+                            text: AppState.en
+                                ? "Analyzed locally; the image is not uploaded"
+                                : "由本地客户端分析，不会上传参考图";
                             color: AppTheme.weak;
                             font-size: 11px;
                             font-weight: 400;

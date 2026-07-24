@@ -51,7 +51,7 @@ export component CategoryWorkspaceMenu {
                 mouse-cursor: pointer;
                 clicked => {
                     if root.collapsed {
-                        AppState.navigate("generation");
+                        collapsed-popup.show();
                     } else {
                         root.open = !root.open;
                     }
@@ -62,6 +62,46 @@ export component CategoryWorkspaceMenu {
         if !root.collapsed && root.open: CategoryWorkspaceOption { category: "scene"; label: AppState.en ? "Scene" : "场景"; }
         if !root.collapsed && root.open: CategoryWorkspaceOption { category: "ui"; label: "UI"; }
         if !root.collapsed && root.open: CategoryWorkspaceOption { category: "effect"; label: AppState.en ? "Effect" : "特效"; }
+    }
+
+    collapsed-popup := PopupWindow {
+        x: root.width + 8px;
+        y: 0px;
+        width: 188px;
+        height: 148px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            background: AppTheme.panel;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #0000002d;
+            VerticalLayout {
+                padding: 6px;
+                spacing: 4px;
+                CategoryWorkspaceOption {
+                    category: "character";
+                    label: AppState.en ? "Character" : "角色";
+                    picked => { collapsed-popup.close(); }
+                }
+                CategoryWorkspaceOption {
+                    category: "scene";
+                    label: AppState.en ? "Scene" : "场景";
+                    picked => { collapsed-popup.close(); }
+                }
+                CategoryWorkspaceOption {
+                    category: "ui";
+                    label: "UI";
+                    picked => { collapsed-popup.close(); }
+                }
+                CategoryWorkspaceOption {
+                    category: "effect";
+                    label: AppState.en ? "Effect" : "特效";
+                    picked => { collapsed-popup.close(); }
+                }
+            }
+        }
     }
 
     function current-label() -> string {

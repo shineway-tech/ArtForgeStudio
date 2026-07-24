@@ -43,6 +43,46 @@ component ViewerInfoTag inherits Rectangle {
     }
 }
 
+component ViewerFooterActionButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <color> foreground: AppTheme.text;
+    height: 44px;
+    background: action-touch.has-hover ? AppTheme.panel-soft : AppTheme.panel;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: action-touch.has-hover ? root.foreground.with-alpha(0.55) : AppTheme.border;
+    callback clicked();
+
+    Image {
+        x: 14px;
+        y: (parent.height - 18px) / 2;
+        width: 18px;
+        height: 18px;
+        source: root.icon;
+        colorize: root.foreground;
+        image-fit: contain;
+    }
+    Text {
+        x: 40px;
+        width: parent.width - 52px;
+        height: parent.height;
+        text: root.label;
+        color: root.foreground;
+        font-size: 13px;
+        font-weight: 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    action-touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 export component ViewerOverlay {
     property <length> viewer-message-width: min(360px, max(220px, root.width - 80px));
     property <length> detail-panel-width: AppState.viewer-source == "reference" ? 0px : 460px;
@@ -94,7 +134,7 @@ export component ViewerOverlay {
             x: AppState.viewer-source == "reference" ? 128px : root.viewer-padding + root.viewer-nav-lane;
             y: 78px;
             width: AppState.viewer-source == "reference" ? parent.width - 256px : root.viewer-content-right - root.viewer-padding * 2 - root.viewer-nav-lane * 2;
-            height: parent.height - 112px;
+            height: AppState.viewer-source == "reference" ? parent.height - 112px : parent.height - 172px;
             background: transparent;
             Image {
                 x: 0px;
@@ -143,9 +183,56 @@ export component ViewerOverlay {
             direction: "next";
             clicked => { AppState.viewer-next(); }
         }
+        if AppState.viewer-source != "reference": Rectangle {
+            x: 0px;
+            y: parent.height - 76px;
+            width: root.viewer-content-right;
+            height: 76px;
+            background: AppTheme.bg;
+            viewer-footer-actions := HorizontalLayout {
+                x: 24px;
+                y: 12px;
+                width: parent.width - 48px;
+                height: 44px;
+                spacing: 10px;
+                ViewerFooterActionButton {
+                    horizontal-stretch: 1;
+                    icon: @image-url("../../assets/icons/download.svg");
+                    label: AppState.en ? "Open Folder" : "打开文件夹";
+                    clicked => { AppState.viewer-download-image(); }
+                }
+                ViewerFooterActionButton {
+                    horizontal-stretch: 1;
+                    icon: @image-url("../../assets/icons/image.svg");
+                    label: AppState.en ? "Open Original" : "打开原图";
+                    clicked => { AppState.viewer-open-image(); }
+                }
+                ViewerFooterActionButton {
+                    horizontal-stretch: 1;
+                    icon: @image-url("../../assets/icons/upload.svg");
+                    label: AppState.en ? "Add as Reference" : "添加到参考图";
+                    foreground: AppTheme.success;
+                    clicked => { AppState.viewer-use-reference(); }
+                }
+                ViewerFooterActionButton {
+                    horizontal-stretch: 1;
+                    icon: @image-url("../../assets/icons/text.svg");
+                    label: AppState.en ? "Use Prompt" : "使用提示词";
+                    foreground: AppTheme.warning;
+                    clicked => { AppState.viewer-edit(); }
+                }
+                ViewerFooterActionButton {
+                    horizontal-stretch: 1;
+                    icon: @image-url("../../assets/icons/trash.svg");
+                    label: AppState.en ? "Delete" : "删除";
+                    foreground: AppTheme.danger;
+                    clicked => { AppState.request-delete-asset(AppState.viewer-id); }
+                }
+            }
+        }
         if AppState.viewer-message != "": Rectangle {
             x: (parent.width - root.viewer-message-width) / 2;
-            y: parent.height - 74px;
+            y: parent.height - 130px;
             width: root.viewer-message-width;
             height: 42px;
             background: #111827d8;

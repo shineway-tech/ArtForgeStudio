@@ -83,6 +83,17 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         let store = store.clone();
+        state.on_viewer_open_image(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            open_viewer_image(&app, &store.borrow());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
         state.on_viewer_cutout_image(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;

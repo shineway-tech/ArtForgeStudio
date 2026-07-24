@@ -372,6 +372,7 @@ export global AppState {
     callback begin-new-custom-prompt();
     callback begin-edit-custom-prompt(string);
     callback choose-custom-prompt-reference();
+    callback analyze-custom-prompt-reference();
     callback clear-custom-prompt-reference();
     callback add-canvas-node(string, float, float);
     callback update-canvas-node(string, string, float, float);
@@ -433,6 +434,7 @@ export global AppState {
     callback viewer-use-reference();
     callback viewer-copy-image();
     callback viewer-download-image();
+    callback viewer-open-image();
     callback viewer-cutout-image();
     callback viewer-remove-black();
     callback open-upscale-dialog();

@@ -33,10 +33,7 @@ export component CustomPromptSettings {
             y: 48px;
             width: parent.width;
             height: parent.height - 48px;
-            background: AppTheme.panel;
-            border-radius: 12px;
-            border-width: 1px;
-            border-color: AppTheme.border;
+            background: transparent;
             clip: true;
             if AppState.custom-prompt-items.length == 0: Text {
                 x: 20px;
@@ -49,25 +46,27 @@ export component CustomPromptSettings {
                 vertical-alignment: center;
             }
             if AppState.custom-prompt-items.length > 0: ScrollView {
-                x: 8px;
-                y: 8px;
-                width: parent.width - 16px;
-                height: parent.height - 16px;
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
                 viewport-width: self.width;
-                viewport-height: max(self.height, AppState.custom-prompt-items.length * 78px);
+                viewport-height: max(self.height, AppState.custom-prompt-items.length * 76px);
                 VerticalLayout {
                     width: parent.viewport-width;
                     height: parent.viewport-height;
-                    spacing: 6px;
+                    spacing: 8px;
                     for item in AppState.custom-prompt-items: Rectangle {
-                        height: 72px;
-                        background: row-touch.has-hover ? AppTheme.panel-soft : transparent;
+                        height: 68px;
+                        background: row-touch.has-hover ? AppTheme.panel-soft : AppTheme.panel;
                         border-radius: 8px;
+                        border-width: 1px;
+                        border-color: AppTheme.border;
                         clip: true;
                         Text {
-                            x: 12px;
-                            y: 7px;
-                            width: parent.width - 104px;
+                            x: 16px;
+                            y: 8px;
+                            width: parent.width - 436px;
                             height: 20px;
                             text: item.name;
                             color: AppTheme.text;
@@ -77,10 +76,47 @@ export component CustomPromptSettings {
                             wrap: no-wrap;
                             overflow: elide;
                         }
+                        Rectangle {
+                            x: parent.width - 412px;
+                            y: 8px;
+                            width: 52px;
+                            height: 20px;
+                            background: AppTheme.accent.with-alpha(0.10);
+                            border-radius: 10px;
+                            Text {
+                                width: parent.width;
+                                height: parent.height;
+                                text: item.format == "json" ? "JSON" : "TXT";
+                                color: AppTheme.accent-dark;
+                                font-size: 10px;
+                                font-weight: 500;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Rectangle {
+                            x: parent.width - 352px;
+                            y: 8px;
+                            width: 76px;
+                            height: 20px;
+                            background: AppTheme.panel-soft;
+                            border-radius: 10px;
+                            Text {
+                                width: parent.width;
+                                height: parent.height;
+                                text: root.category-label(item.category);
+                                color: AppTheme.muted;
+                                font-size: 10px;
+                                font-weight: 400;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
                         Text {
-                            x: 12px;
-                            y: 29px;
-                            width: parent.width - 104px;
+                            x: 16px;
+                            y: 36px;
+                            width: parent.width - 120px;
                             height: 18px;
                             text: item.preview;
                             color: AppTheme.muted;
@@ -91,10 +127,10 @@ export component CustomPromptSettings {
                             overflow: elide;
                         }
                         Text {
-                            x: 12px;
-                            y: 49px;
-                            width: parent.width - 104px;
-                            height: 16px;
+                            x: parent.width - 284px;
+                            y: 9px;
+                            width: 184px;
+                            height: 18px;
                             text: item.time;
                             color: AppTheme.weak;
                             font-size: 11px;
@@ -102,6 +138,7 @@ export component CustomPromptSettings {
                             vertical-alignment: center;
                             wrap: no-wrap;
                             overflow: elide;
+                            horizontal-alignment: right;
                         }
                         row-touch := TouchArea {
                             width: parent.width - 92px;
@@ -109,7 +146,7 @@ export component CustomPromptSettings {
                         }
                         Rectangle {
                             x: parent.width - 84px;
-                            y: 19px;
+                            y: 17px;
                             width: 34px;
                             height: 34px;
                             background: edit-touch.has-hover ? AppTheme.accent.with-alpha(0.12) : transparent;
@@ -133,7 +170,7 @@ export component CustomPromptSettings {
                         }
                         Rectangle {
                             x: parent.width - 42px;
-                            y: 19px;
+                            y: 17px;
                             width: 34px;
                             height: 34px;
                             background: delete-touch.has-hover ? AppTheme.danger.with-alpha(0.12) : transparent;
@@ -162,5 +199,13 @@ export component CustomPromptSettings {
                 }
             }
         }
+    }
+
+    function category-label(category: string) -> string {
+        if category == "character" { return AppState.en ? "Character" : "角色"; }
+        if category == "scene" { return AppState.en ? "Scene" : "场景"; }
+        if category == "ui" { return "UI"; }
+        if category == "effect" { return AppState.en ? "Effect" : "特效"; }
+        return AppState.en ? "Default" : "默认";
     }
 }

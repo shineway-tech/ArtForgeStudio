@@ -227,6 +227,14 @@ pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
                     name: name.into(),
                     preview: preview.into(),
                     content: prompt.clone().into(),
+                    category: normalized_custom_prompt_category(
+                        profile.map(|profile| profile.category.as_str()).unwrap_or("default"),
+                    )
+                    .into(),
+                    format: normalized_custom_prompt_format(
+                        profile.map(|profile| profile.format.as_str()).unwrap_or("json"),
+                    )
+                    .into(),
                     time: store
                         .custom_prompt_times
                         .get(prompt)

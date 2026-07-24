@@ -404,6 +404,7 @@ mod tests {
     fn custom_prompt_editor_uses_the_structured_reference_form() {
         let dialog = include_str!("../../ui/dialogs/custom-prompt-dialog.slint");
         let state = include_str!("../../ui/app-state.slint");
+        let callbacks = include_str!("callbacks/custom_prompt.rs");
 
         for field in [
             "custom-prompt-name",
@@ -424,6 +425,48 @@ mod tests {
         assert!(dialog.contains("反向提示词（仅 JSON 格式有效）"));
         assert!(dialog.contains("AppState.choose-custom-prompt-reference()"));
         assert!(dialog.contains("AppState.clear-custom-prompt-reference()"));
+        assert!(state.contains("callback analyze-custom-prompt-reference();"));
+        assert!(dialog.contains("AppState.analyze-custom-prompt-reference();"));
+        assert!(dialog.contains(
+            "disabled: AppState.custom-prompt-reference-path == \"\";"
+        ));
+        assert!(!dialog.contains("等待服务端开放图片风格分析"));
+        assert!(callbacks.contains("state.on_analyze_custom_prompt_reference"));
+        assert!(callbacks.contains("analyze_reference_style("));
+        assert!(callbacks.contains("已在本地完成图片风格分析"));
+    }
+
+    #[test]
+    fn local_reference_style_analysis_describes_visual_characteristics() {
+        let pixels = [
+            240, 80, 40, 255, 220, 60, 30, 255, 250, 100, 50, 255, 210, 40, 20, 255,
+        ];
+
+        let analysis =
+            analyze_reference_style(&pixels, 2, 2, false).expect("local style analysis");
+
+        assert!(analysis.contains("参考图风格"));
+        assert!(analysis.contains("暖"));
+        assert!(analysis.contains("色彩"));
+    }
+
+    #[test]
+    fn custom_prompt_page_uses_compact_bordered_list_rows() {
+        let settings = include_str!("../../ui/components/custom-prompt-settings.slint");
+        let types = include_str!("../../ui/types.slint");
+        let sync = include_str!("presentation/sync.rs");
+
+        assert!(settings.contains("for item in AppState.custom-prompt-items"));
+        assert!(settings.contains("height: 68px;"));
+        assert!(settings.contains("border-width: 1px;"));
+        assert!(settings.contains("border-color: AppTheme.border;"));
+        assert!(settings.contains("text: item.format == \"json\" ? \"JSON\" : \"TXT\""));
+        assert!(settings.contains("root.category-label(item.category)"));
+        assert!(settings.contains("background: transparent;"));
+        assert!(types.contains("category: string"));
+        assert!(types.contains("format: string"));
+        assert!(sync.contains("category: normalized_custom_prompt_category"));
+        assert!(sync.contains("format: normalized_custom_prompt_format"));
     }
 
     #[test]
@@ -1775,7 +1818,9 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
     fn viewer_metadata_is_four_compact_tags_in_the_top_row() {
         let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
         let tag_start = viewer.find("component ViewerInfoTag").expect("viewer info tag");
-        let tag_end = viewer.find("export component ViewerOverlay").expect("viewer overlay");
+        let tag_end = viewer
+            .find("component ViewerFooterActionButton")
+            .expect("viewer footer action button");
         let tag = &viewer[tag_start..tag_end];
 
         assert!(viewer.contains("component ViewerInfoTag"));
@@ -1792,6 +1837,34 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
     }
 
     #[test]
+    fn viewer_footer_exposes_the_primary_image_actions() {
+        let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let callbacks = include_str!("callbacks/viewer.rs");
+        let feature = include_str!("features/viewer.rs");
+
+        assert!(viewer.contains("component ViewerFooterActionButton"));
+        assert!(viewer.contains("viewer-footer-actions := HorizontalLayout"));
+        assert_eq!(viewer.matches("ViewerFooterActionButton {").count(), 5);
+        assert!(viewer.contains("AppState.viewer-download-image();"));
+        assert!(viewer.contains("AppState.viewer-open-image();"));
+        assert!(viewer.contains("AppState.viewer-use-reference();"));
+        assert!(viewer.contains("AppState.viewer-edit();"));
+        assert!(viewer.contains("AppState.request-delete-asset(AppState.viewer-id);"));
+        assert!(viewer.contains("@image-url(\"../../assets/icons/download.svg\")"));
+        assert!(viewer.contains("@image-url(\"../../assets/icons/image.svg\")"));
+        assert!(viewer.contains("@image-url(\"../../assets/icons/upload.svg\")"));
+        assert!(viewer.contains("@image-url(\"../../assets/icons/text.svg\")"));
+        assert!(viewer.contains("@image-url(\"../../assets/icons/trash.svg\")"));
+
+        assert!(state.contains("callback viewer-open-image();"));
+        assert!(callbacks.contains("state.on_viewer_open_image"));
+        assert!(callbacks.contains("open_viewer_image(&app, &store.borrow())"));
+        assert!(feature.contains("pub(super) fn open_viewer_image"));
+        assert!(feature.contains("open_path_with_default_app(&source)"));
+    }
+
+    #[test]
     fn sidebar_can_collapse_to_icon_only_navigation() {
         let app_state = include_str!("../../ui/app-state.slint");
         let sidebar = include_str!("../../ui/components/sidebar.slint");
@@ -1805,6 +1878,26 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(nav_item.contains("if !root.collapsed: Text"));
         assert!(workspace.contains("in property <bool> collapsed: false;"));
         assert!(workspace.contains("if !root.collapsed && root.open"));
+    }
+
+    #[test]
+    fn collapsed_workspace_button_opens_a_category_popup_to_the_right() {
+        let workspace = include_str!("../../ui/components/category-workspace-menu.slint");
+
+        assert!(workspace.contains("collapsed-popup := PopupWindow"));
+        assert!(workspace.contains("x: root.width + 8px;"));
+        assert!(workspace.contains("close-policy: close-on-click-outside;"));
+        assert!(workspace.contains("if root.collapsed"));
+        assert!(workspace.contains("collapsed-popup.show();"));
+        assert_eq!(
+            workspace
+                .matches("picked => { collapsed-popup.close(); }")
+                .count(),
+            4
+        );
+        for category in ["character", "scene", "ui", "effect"] {
+            assert!(workspace.contains(&format!("category: \"{category}\";")));
+        }
     }
 
     #[test]
