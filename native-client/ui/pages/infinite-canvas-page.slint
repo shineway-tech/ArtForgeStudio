@@ -945,17 +945,35 @@ component CanvasNodeCard {
             height: root.note.kind == "group" ? 36px * root.node-scale() : 0px;
             background: transparent;
             border-radius: 0px;
-            Text {
+            if !root.editing: Text {
                 x: 12px * root.node-scale();
                 width: parent.width - 88px * root.node-scale();
                 height: parent.height;
-                text: root.node-title();
+                text: root.current-content;
                 color: root.note.kind == "group" ? AppTheme.accent : (root.dark-background ? #dce7f8 : AppTheme.text);
                 font-size: (AppState.settings-font-size - 1) * 1px * root.node-scale();
                 font-weight: 500;
                 vertical-alignment: center;
                 wrap: no-wrap;
                 overflow: elide;
+            }
+            if root.editing && AppState.canvas-selected-id == root.note.id: TextInput {
+                x: 12px * root.node-scale();
+                width: parent.width - 88px * root.node-scale();
+                height: parent.height;
+                text <=> root.current-content;
+                single-line: true;
+                color: root.dark-background ? #dce7f8 : AppTheme.text;
+                font-size: (AppState.settings-font-size - 1) * 1px * root.node-scale();
+                key-pressed(event) => {
+                    AppState.canvas-selected-id = root.note.id;
+                    if event.text == Key.Return {
+                        root.save-content();
+                        root.editing = false;
+                        return accept;
+                    }
+                    return reject;
+                }
             }
             if root.zoom-percent >= 35: Rectangle {
                 x: parent.width - 64px * root.node-scale();
@@ -1045,42 +1063,6 @@ component CanvasNodeCard {
                 AppState.canvas-selected-id = root.note.id;
                 if event.text == Key.Return {
                     if event.modifiers.alt { return reject; }
-                    root.save-content();
-                    root.editing = false;
-                    return accept;
-                }
-                return reject;
-            }
-        }
-
-        if root.zoom-percent >= 30 && root.note.kind == "group" && !root.editing: Text {
-            x: 12px * root.node-scale();
-            y: header.height + 8px * root.node-scale();
-            width: min(parent.width - 2 * self.x, 280px * root.node-scale());
-            height: 36px * root.node-scale();
-            text: root.current-content;
-            wrap: no-wrap;
-            overflow: elide;
-            vertical-alignment: center;
-            color: root.dark-background ? #dce7f8 : AppTheme.text;
-            font-size: AppState.settings-font-size * 1px * root.node-scale();
-        }
-
-        if root.zoom-percent >= 30
-            && root.note.kind == "group"
-            && root.editing
-            && AppState.canvas-selected-id == root.note.id: TextInput {
-            x: 12px * root.node-scale();
-            y: header.height + 8px * root.node-scale();
-            width: min(parent.width - 2 * self.x, 280px * root.node-scale());
-            height: 36px * root.node-scale();
-            text <=> root.current-content;
-            single-line: true;
-            color: root.dark-background ? #dce7f8 : AppTheme.text;
-            font-size: AppState.settings-font-size * 1px * root.node-scale();
-            key-pressed(event) => {
-                AppState.canvas-selected-id = root.note.id;
-                if event.text == Key.Return {
                     root.save-content();
                     root.editing = false;
                     return accept;

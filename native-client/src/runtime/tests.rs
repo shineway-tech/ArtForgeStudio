@@ -401,6 +401,21 @@ mod tests {
     }
 
     #[test]
+    fn populated_custom_prompt_popup_exposes_a_create_action() {
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let popup = composer
+            .split("custom-prompt-popup := PopupWindow")
+            .nth(1)
+            .and_then(|value| value.split("function scroll-prompt-history-selection").next())
+            .expect("custom prompt popup");
+
+        assert!(popup.contains("if AppState.custom-prompts.length > 0: PillButton"));
+        assert!(popup.contains("text: AppState.en ? \"Create\" : \"创建\""));
+        assert!(popup.contains("AppState.begin-new-custom-prompt()"));
+        assert!(popup.contains("height: parent.height - 52px"));
+    }
+
+    #[test]
     fn custom_prompt_editor_uses_the_structured_reference_form() {
         let dialog = include_str!("../../ui/dialogs/custom-prompt-dialog.slint");
         let state = include_str!("../../ui/app-state.slint");
@@ -1084,6 +1099,34 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(page.contains("AppState.group-canvas-selection"));
         assert!(page.contains("AppState.ungroup-canvas-selection"));
         assert!(sync.contains("group_depth"));
+    }
+
+    #[test]
+    fn infinite_canvas_grouping_is_explicit_and_uses_a_dedicated_title_row() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+        let ops = include_str!("canvas_ops.rs");
+        let move_handler = callbacks
+            .split("state.on_move_canvas_selection")
+            .nth(1)
+            .and_then(|value| value.split("state.on_copy_canvas_selection").next())
+            .expect("move canvas selection handler");
+        let canvas_node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .expect("canvas node card");
+        let group_header = canvas_node
+            .split("header := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("if root.note.kind == \"text\"").next())
+            .expect("group header");
+
+        assert!(!move_handler.contains("assign_deepest_group"));
+        assert!(ops.contains("pub(super) const GROUP_TOP_PADDING: f32 = 72.0"));
+        assert!(ops.contains("y: bounds.y - GROUP_TOP_PADDING"));
+        assert!(group_header.contains("text: root.current-content"));
+        assert!(group_header.contains("text <=> root.current-content"));
+        assert!(!group_header.contains("text: root.node-title()"));
     }
 
     #[test]

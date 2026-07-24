@@ -2,6 +2,7 @@ use super::*;
 
 const MAX_CANVAS_HISTORY: usize = 100;
 pub(super) const GROUP_PADDING: f32 = 36.0;
+pub(super) const GROUP_TOP_PADDING: f32 = 72.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct CanvasRect {
@@ -26,14 +27,6 @@ impl CanvasRect {
             && self.x + self.width >= other.x
             && self.y <= other.y + other.height
             && self.y + self.height >= other.y
-    }
-
-    fn contains_point(self, x: f32, y: f32) -> bool {
-        x >= self.x && x <= self.x + self.width && y >= self.y && y <= self.y + self.height
-    }
-
-    fn area(self) -> f32 {
-        self.width.max(0.0) * self.height.max(0.0)
     }
 }
 
@@ -353,67 +346,6 @@ pub(super) fn group_depth(notes: &[CanvasNoteData], group_id: &str) -> usize {
     depth
 }
 
-pub(super) fn would_create_group_cycle(
-    notes: &[CanvasNoteData],
-    child_id: &str,
-    parent_id: &str,
-) -> bool {
-    child_id == parent_id || descendant_ids(notes, child_id).contains(parent_id)
-}
-
-pub(super) fn deepest_containing_group(
-    notes: &[CanvasNoteData],
-    node: &CanvasNoteData,
-    excluded_ids: &BTreeSet<String>,
-) -> Option<String> {
-    let center_x = node.x + node.width / 2.0;
-    let center_y = node.y + node.height / 2.0;
-    notes
-        .iter()
-        .filter(|group| {
-            group.kind == "group"
-                && !excluded_ids.contains(&group.id)
-                && note_rect(group).contains_point(center_x, center_y)
-                && !would_create_group_cycle(notes, &node.id, &group.id)
-        })
-        .min_by(|left, right| {
-            let left_depth = group_depth(notes, &left.id);
-            let right_depth = group_depth(notes, &right.id);
-            right_depth
-                .cmp(&left_depth)
-                .then_with(|| note_rect(left).area().total_cmp(&note_rect(right).area()))
-        })
-        .map(|group| group.id.clone())
-}
-
-pub(super) fn assign_deepest_group(notes: &mut [CanvasNoteData], moved_ids: &BTreeSet<String>) {
-    let assignments = notes
-        .iter()
-        .filter(|note| moved_ids.contains(&note.id))
-        .filter(|note| {
-            note.parent_group_id.is_empty() || !moved_ids.contains(&note.parent_group_id)
-        })
-        .map(|note| {
-            let current_parent = if note.parent_group_id.is_empty()
-                || moved_ids.contains(&note.parent_group_id)
-            {
-                String::new()
-            } else {
-                note.parent_group_id.clone()
-            };
-            (
-                note.id.clone(),
-                deepest_containing_group(notes, note, moved_ids).unwrap_or(current_parent),
-            )
-        })
-        .collect::<Vec<_>>();
-    for (id, parent_id) in assignments {
-        if let Some(note) = notes.iter_mut().find(|note| note.id == id) {
-            note.parent_group_id = parent_id;
-        }
-    }
-}
-
 pub(super) fn fit_groups_to_children(notes: &mut [CanvasNoteData]) -> bool {
     let mut groups = notes
         .iter()
@@ -436,9 +368,9 @@ pub(super) fn fit_groups_to_children(notes: &mut [CanvasNoteData]) -> bool {
             continue;
         };
         let x = bounds.x - GROUP_PADDING;
-        let y = bounds.y - GROUP_PADDING;
+        let y = bounds.y - GROUP_TOP_PADDING;
         let width = bounds.width + GROUP_PADDING * 2.0;
-        let height = bounds.height + GROUP_PADDING * 2.0;
+        let height = bounds.height + GROUP_TOP_PADDING + GROUP_PADDING;
         if group.x != x || group.y != y || group.width != width || group.height != height {
             group.x = x;
             group.y = y;
@@ -470,9 +402,9 @@ pub(super) fn group_selection(notes: &mut Vec<CanvasNoteData>, english: bool) ->
         kind: "group".into(),
         content: if english { "Group" } else { "分组" }.into(),
         x: bounds.x - GROUP_PADDING,
-        y: bounds.y - GROUP_PADDING,
+        y: bounds.y - GROUP_TOP_PADDING,
         width: bounds.width + GROUP_PADDING * 2.0,
-        height: bounds.height + GROUP_PADDING * 2.0,
+        height: bounds.height + GROUP_TOP_PADDING + GROUP_PADDING,
         parent_group_id,
         selected: true,
         ..CanvasNoteData::default()
@@ -598,43 +530,22 @@ mod tests {
     }
 
     #[test]
-    fn canvas_ops_grouping_uses_the_deepest_valid_container() {
+    fn canvas_ops_moving_a_node_over_a_group_keeps_it_ungrouped() {
         let mut notes = vec![
             CanvasNoteData {
                 width: 500.0,
                 height: 500.0,
-                ..note("outer", "group", 0.0, 0.0)
-            },
-            CanvasNoteData {
-                parent_group_id: "outer".into(),
-                width: 250.0,
-                height: 250.0,
-                ..note("inner", "group", 50.0, 50.0)
+                ..note("group", "group", 0.0, 0.0)
             },
             CanvasNoteData {
                 selected: true,
-                ..note("node", "text", 100.0, 100.0)
-            },
-        ];
-        let moved = selected_ids(&notes);
-
-        assign_deepest_group(&mut notes, &moved);
-
-        assert_eq!(notes[2].parent_group_id, "inner");
-    }
-
-    #[test]
-    fn canvas_ops_group_cannot_be_parented_to_its_descendant() {
-        let notes = vec![
-            note("outer", "group", 0.0, 0.0),
-            CanvasNoteData {
-                parent_group_id: "outer".into(),
-                ..note("inner", "group", 20.0, 20.0)
+                ..note("node", "text", 600.0, 100.0)
             },
         ];
 
-        assert!(would_create_group_cycle(&notes, "outer", "inner"));
-        assert!(!would_create_group_cycle(&notes, "inner", "outer"));
+        move_selection(&mut notes, -500.0, 0.0);
+
+        assert!(notes[1].parent_group_id.is_empty());
     }
 
     #[test]
@@ -777,9 +688,12 @@ mod tests {
             .expect("group note");
 
         assert_eq!(group.x, 40.0 - GROUP_PADDING);
-        assert_eq!(group.y, 60.0 - GROUP_PADDING);
+        assert_eq!(group.y, 60.0 - GROUP_TOP_PADDING);
         assert_eq!(group.width, 280.0 + GROUP_PADDING * 2.0);
-        assert_eq!(group.height, 200.0 + GROUP_PADDING * 2.0);
+        assert_eq!(
+            group.height,
+            200.0 + GROUP_TOP_PADDING + GROUP_PADDING
+        );
     }
 
     #[test]
@@ -830,9 +744,12 @@ mod tests {
 
         let group = &notes[0];
         assert_eq!(group.x, 120.0 - GROUP_PADDING);
-        assert_eq!(group.y, 90.0 - GROUP_PADDING);
+        assert_eq!(group.y, 90.0 - GROUP_TOP_PADDING);
         assert_eq!(group.width, 440.0 + GROUP_PADDING * 2.0);
-        assert_eq!(group.height, 230.0 + GROUP_PADDING * 2.0);
+        assert_eq!(
+            group.height,
+            230.0 + GROUP_TOP_PADDING + GROUP_PADDING
+        );
     }
 
     #[test]
@@ -849,17 +766,17 @@ mod tests {
                 ..note("child", "text", 50.0, 50.0)
             },
         ];
-        let moved = selected_ids(&notes);
-
         move_selection(&mut notes, 400.0, 180.0);
-        assign_deepest_group(&mut notes, &moved);
         assert!(fit_groups_to_children(&mut notes));
 
         assert_eq!(notes[1].parent_group_id, "group");
         assert_eq!(notes[0].x, notes[1].x - GROUP_PADDING);
-        assert_eq!(notes[0].y, notes[1].y - GROUP_PADDING);
+        assert_eq!(notes[0].y, notes[1].y - GROUP_TOP_PADDING);
         assert_eq!(notes[0].width, notes[1].width + GROUP_PADDING * 2.0);
-        assert_eq!(notes[0].height, notes[1].height + GROUP_PADDING * 2.0);
+        assert_eq!(
+            notes[0].height,
+            notes[1].height + GROUP_TOP_PADDING + GROUP_PADDING
+        );
     }
 
     #[test]

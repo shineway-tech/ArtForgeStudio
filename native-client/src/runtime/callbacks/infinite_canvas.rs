@@ -527,7 +527,6 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             }
             history.borrow_mut().record(canvas_snapshot(&store_mut));
             move_selection(&mut store_mut.canvas_notes, dx, dy);
-            assign_deepest_group(&mut store_mut.canvas_notes, &moved);
             fit_groups_to_children(&mut store_mut.canvas_notes);
             persist_canvas(&app, &store_mut);
             sync_canvas_selection(&app, &store_mut);

@@ -366,7 +366,9 @@ export component PromptComposer {
         x: 24px;
         y: root.prompt-input-y() + 32px;
         width: root.width - 48px;
-        height: max(54px, 16px + min(10, AppState.custom-prompts.length) * 32px);
+        height: AppState.custom-prompts.length > 0
+            ? max(86px, 52px + min(10, AppState.custom-prompts.length) * 32px)
+            : 54px;
         close-policy: close-on-click-outside;
         Rectangle {
             visible: AppState.custom-prompt-open;
@@ -411,7 +413,7 @@ export component PromptComposer {
                 x: 8px;
                 y: 8px;
                 width: parent.width - 16px;
-                height: parent.height - 16px;
+                height: parent.height - 52px;
                 viewport-width: self.width;
                 viewport-height: AppState.custom-prompts.length * 32px;
                 VerticalLayout {
@@ -444,6 +446,19 @@ export component PromptComposer {
                             }
                         }
                     }
+                }
+            }
+            if AppState.custom-prompts.length > 0: PillButton {
+                x: parent.width - 80px;
+                y: parent.height - 36px;
+                width: 72px;
+                height: 28px;
+                text: AppState.en ? "Create" : "创建";
+                primary: true;
+                clicked => {
+                    AppState.custom-prompt-open = false;
+                    custom-prompt-popup.close();
+                    AppState.begin-new-custom-prompt();
                 }
             }
         }
