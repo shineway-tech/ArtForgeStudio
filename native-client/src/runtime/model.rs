@@ -262,6 +262,7 @@ struct Store {
     prompt_drafts: PromptDrafts,
     custom_prompts: Vec<String>,
     custom_prompt_times: BTreeMap<String, String>,
+    custom_prompt_profiles: BTreeMap<String, CustomPromptProfile>,
     canvas_notes: Vec<CanvasNoteData>,
     canvas_links: Vec<CanvasLinkData>,
     credit_ledger_pagination: CreditLedgerPagination,
@@ -303,9 +304,25 @@ struct LocalStoreData {
     #[serde(default)]
     custom_prompt_times: BTreeMap<String, String>,
     #[serde(default)]
+    custom_prompt_profiles: BTreeMap<String, CustomPromptProfile>,
+    #[serde(default)]
     canvas_notes: Vec<CanvasNoteData>,
     #[serde(default)]
     canvas_links: Vec<CanvasLinkData>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct CustomPromptProfile {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    category: String,
+    #[serde(default)]
+    format: String,
+    #[serde(default)]
+    negative_prompt: String,
+    #[serde(default)]
+    reference_path: String,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

@@ -115,6 +115,7 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
         let migrated_prompt_drafts = normalize_reserved_prompt_drafts(&mut store_mut.prompt_drafts);
         store_mut.custom_prompts = normalize_custom_prompts(data.custom_prompts);
         store_mut.custom_prompt_times = data.custom_prompt_times;
+        store_mut.custom_prompt_profiles = data.custom_prompt_profiles;
         store_mut.canvas_notes = data.canvas_notes;
         normalize_canvas_groups(&mut store_mut.canvas_notes);
         store_mut.canvas_links = data.canvas_links;
@@ -126,6 +127,9 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
             .collect::<BTreeSet<_>>();
         store_mut
             .custom_prompt_times
+            .retain(|prompt, _| retained.contains(prompt));
+        store_mut
+            .custom_prompt_profiles
             .retain(|prompt, _| retained.contains(prompt));
         let migration_time = Local::now().format("%Y-%m-%d %H:%M").to_string();
         for prompt in store_mut.custom_prompts.clone() {
@@ -259,7 +263,32 @@ pub(super) fn remove_custom_prompt_from_store(store: &mut Store, prompt: &str) -
     };
     store.custom_prompts.remove(index);
     store.custom_prompt_times.remove(prompt);
+    store.custom_prompt_profiles.remove(prompt);
     true
+}
+
+pub(super) fn save_custom_prompt_profile(
+    store: &mut Store,
+    original: &str,
+    prompt: &str,
+    profile: CustomPromptProfile,
+) {
+    let original = original.trim();
+    let prompt = prompt.trim();
+    if !original.is_empty() && original != prompt {
+        store.custom_prompt_profiles.remove(original);
+    }
+    store
+        .custom_prompt_profiles
+        .insert(prompt.to_string(), profile);
+    let retained = store
+        .custom_prompts
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    store
+        .custom_prompt_profiles
+        .retain(|item, _| retained.contains(item));
 }
 
 pub(super) fn normalize_custom_prompts(prompts: Vec<String>) -> Vec<String> {
@@ -395,6 +424,7 @@ pub(super) fn save_local_store(app: &AppWindow, store: &Store) {
         prompt_drafts: store.prompt_drafts.clone(),
         custom_prompts: store.custom_prompts.clone(),
         custom_prompt_times: store.custom_prompt_times.clone(),
+        custom_prompt_profiles: store.custom_prompt_profiles.clone(),
         canvas_notes: store.canvas_notes.clone(),
         canvas_links: store.canvas_links.clone(),
     };

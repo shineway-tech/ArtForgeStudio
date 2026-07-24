@@ -2,135 +2,496 @@ import { ScrollView } from "std-widgets.slint";
 import { AppState } from "../app-state.slint";
 import { DialogCloseButton } from "../components/dialog-close-button.slint";
 import { PillButton } from "../components/pill-button.slint";
-import { SectionTitle } from "../components/section-title.slint";
 import { AppTheme } from "../theme.slint";
+
+component PromptCategorySelect {
+    in-out property <string> value: "default";
+    property <bool> open: false;
+    height: 42px;
+
+    Rectangle {
+        background: AppTheme.bg;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: root.open ? AppTheme.accent : AppTheme.border;
+        Text {
+            x: 12px;
+            width: parent.width - 44px;
+            height: parent.height;
+            text: root.category-label(root.value);
+            color: AppTheme.text;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Image {
+            x: parent.width - 30px;
+            y: (parent.height - 12px) / 2;
+            width: 12px;
+            height: 12px;
+            source: @image-url("../../assets/icons/dropdown.svg");
+            colorize: AppTheme.muted;
+            image-fit: contain;
+        }
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => {
+                root.open = true;
+                category-popup.show();
+            }
+        }
+    }
+
+    category-popup := PopupWindow {
+        x: 0px;
+        y: 46px;
+        width: root.width;
+        height: 210px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            visible: root.open;
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            VerticalLayout {
+                padding: 5px;
+                spacing: 2px;
+                for option in [
+                    { value: "default", label: AppState.en ? "Default" : "默认" },
+                    { value: "character", label: AppState.en ? "Character" : "角色" },
+                    { value: "scene", label: AppState.en ? "Scene" : "场景" },
+                    { value: "ui", label: "UI" },
+                    { value: "effect", label: AppState.en ? "Effect" : "特效" },
+                ]: Rectangle {
+                    height: 38px;
+                    background: option-touch.has-hover || root.value == option.value
+                        ? AppTheme.panel-soft
+                        : transparent;
+                    border-radius: 6px;
+                    Text {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        height: parent.height;
+                        text: option.label;
+                        color: root.value == option.value ? AppTheme.accent : AppTheme.text;
+                        font-size: AppState.settings-font-size * 1px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                    }
+                    option-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.value = option.value;
+                            root.open = false;
+                            category-popup.close();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    function category-label(value: string) -> string {
+        if value == "character" { return AppState.en ? "Character" : "角色"; }
+        if value == "scene" { return AppState.en ? "Scene" : "场景"; }
+        if value == "ui" { return "UI"; }
+        if value == "effect" { return AppState.en ? "Effect" : "特效"; }
+        return AppState.en ? "Default" : "默认";
+    }
+}
 
 export component CustomPromptDialog {
     function close-dialog() {
         AppState.custom-prompt-editor-open = false;
-        AppState.custom-prompt-input = "";
         AppState.custom-prompt-message = "";
-        AppState.custom-prompt-editing-original = "";
+    }
+
+    function save-prompt() {
+        AppState.save-custom-prompt(
+            AppState.custom-prompt-editing-original,
+            AppState.custom-prompt-input,
+        );
     }
 
     if AppState.custom-prompt-editor-open: Rectangle {
-        background: #00000055;
+        background: #00000066;
         TouchArea { width: parent.width; height: parent.height; }
+
         dialog := Rectangle {
-            width: min(560px, root.width - 32px);
-            height: min(420px, root.height - 40px);
+            width: min(760px, root.width - 32px);
+            height: min(820px, root.height - 40px);
             x: (root.width - self.width) / 2;
             y: (root.height - self.height) / 2;
             background: AppTheme.panel;
             border-radius: 14px;
             border-width: 1px;
             border-color: AppTheme.border;
+            clip: true;
+
+            Text {
+                x: 24px;
+                y: 16px;
+                width: parent.width - 80px;
+                height: 28px;
+                text: AppState.custom-prompt-editing-original == ""
+                    ? (AppState.en ? "Create prompt" : "创建提示词")
+                    : (AppState.en ? "Edit prompt" : "编辑提示词");
+                color: AppTheme.text;
+                font-size: 17px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
             DialogCloseButton {
                 x: parent.width - 42px;
                 y: 12px;
                 clicked => { root.close-dialog(); }
             }
-            VerticalLayout {
-                padding: 24px;
-                spacing: 12px;
-                SectionTitle {
-                    text: AppState.custom-prompt-editing-original == ""
-                        ? (AppState.en ? "Add custom prompt" : "新增自定义提示词")
-                        : (AppState.en ? "Edit custom prompt" : "编辑自定义提示词");
-                }
-                Text {
-                    height: 20px;
-                    text: AppState.en ? "Prompt" : "提示词";
-                    color: AppTheme.text;
-                    font-size: 13px;
-                    vertical-alignment: center;
-                }
-                Rectangle {
-                    height: 190px;
-                    background: AppTheme.bg;
-                    border-radius: 8px;
-                    border-width: 1px;
-                    border-color: prompt-input.has-focus ? AppTheme.accent : AppTheme.border;
-                    clip: true;
-                    prompt-scroll := ScrollView {
-                        x: 12px;
-                        y: 10px;
-                        width: parent.width - 24px;
-                        height: parent.height - 20px;
-                        viewport-width: self.visible-width;
-                        viewport-height: max(self.visible-height, prompt-input.preferred-height);
-                        prompt-input := TextInput {
-                            text <=> AppState.custom-prompt-input;
+
+            form-scroll := ScrollView {
+                x: 24px;
+                y: 56px;
+                width: parent.width - 48px;
+                height: parent.height - 124px;
+                viewport-width: self.visible-width;
+                viewport-height: 704px;
+
+                form := VerticalLayout {
+                    width: parent.viewport-width;
+                    height: 704px;
+                    spacing: 8px;
+
+                    Text {
+                        height: 18px;
+                        text: AppState.en ? "Prompt name *" : "提示词名称 *";
+                        color: AppTheme.text;
+                        font-size: 13px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        height: 42px;
+                        background: AppTheme.bg;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: prompt-name-input.has-focus ? AppTheme.accent : AppTheme.border;
+                        prompt-name-input := TextInput {
+                            x: 12px;
+                            width: parent.width - 24px;
+                            height: parent.height;
+                            text <=> AppState.custom-prompt-name;
+                            single-line: true;
+                            color: AppTheme.text;
+                            font-size: AppState.settings-font-size * 1px;
+                            font-weight: 400;
+                            vertical-alignment: center;
+                        }
+                        if AppState.custom-prompt-name == "" && !prompt-name-input.has-focus: Text {
+                            x: 12px;
+                            width: parent.width - 24px;
+                            height: parent.height;
+                            text: AppState.en ? "Name this prompt" : "输入提示词名称";
+                            color: AppTheme.weak;
+                            font-size: AppState.settings-font-size * 1px;
+                            font-weight: 400;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Text {
+                        height: 18px;
+                        text: AppState.en ? "Category" : "分类";
+                        color: AppTheme.text;
+                        font-size: 13px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                    }
+                    PromptCategorySelect {
+                        value <=> AppState.custom-prompt-category;
+                    }
+
+                    Text {
+                        height: 18px;
+                        text: AppState.en ? "Style reference" : "风格参考";
+                        color: AppTheme.text;
+                        font-size: 13px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                    }
+                    HorizontalLayout {
+                        height: 36px;
+                        spacing: 10px;
+                        PillButton {
+                            width: 132px;
+                            height: 36px;
+                            text: AppState.en ? "Upload image" : "上传风格参考图";
+                            clicked => { AppState.choose-custom-prompt-reference(); }
+                        }
+                        PillButton {
+                            width: 158px;
+                            height: 36px;
+                            text: AppState.en ? "AI style analysis" : "AI 分析生成风格";
+                            disabled: true;
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            height: 36px;
+                            text: AppState.en ? "Awaiting server support" : "等待服务端开放图片风格分析";
+                            color: AppTheme.weak;
+                            font-size: 11px;
+                            font-weight: 400;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                    Rectangle {
+                        height: 88px;
+                        background: AppTheme.bg;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: AppTheme.border;
+                        clip: true;
+                        if AppState.custom-prompt-reference-path == "": Text {
+                            x: 12px;
+                            width: parent.width - 24px;
+                            height: parent.height;
+                            text: AppState.en ? "The uploaded reference image will appear here." : "已上传参考图会显示在这里。";
+                            color: AppTheme.weak;
+                            font-size: 12px;
+                            font-weight: 400;
+                            vertical-alignment: center;
+                        }
+                        if AppState.custom-prompt-reference-path != "": Image {
+                            x: 8px;
+                            y: 8px;
+                            width: 72px;
+                            height: 72px;
+                            source: AppState.custom-prompt-reference-image;
+                            image-fit: contain;
+                        }
+                        if AppState.custom-prompt-reference-path != "": Text {
+                            x: 92px;
+                            y: 12px;
+                            width: parent.width - 196px;
+                            height: 24px;
+                            text: AppState.custom-prompt-reference-path;
+                            color: AppTheme.text;
+                            font-size: 12px;
+                            font-weight: 400;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        if AppState.custom-prompt-reference-path != "": PillButton {
+                            x: parent.width - 92px;
+                            y: 26px;
+                            width: 76px;
+                            height: 36px;
+                            text: AppState.en ? "Remove" : "移除";
+                            clicked => { AppState.clear-custom-prompt-reference(); }
+                        }
+                    }
+
+                    Text {
+                        height: 18px;
+                        text: AppState.en ? "Save format" : "保存格式";
+                        color: AppTheme.text;
+                        font-size: 13px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                    }
+                    HorizontalLayout {
+                        height: 38px;
+                        spacing: 10px;
+                        Rectangle {
+                            width: 86px;
+                            background: AppState.custom-prompt-format == "json" ? AppTheme.accent : AppTheme.bg;
+                            border-radius: 8px;
+                            border-width: 1px;
+                            border-color: AppState.custom-prompt-format == "json" ? AppTheme.accent : AppTheme.border;
+                            Text {
+                                width: parent.width;
+                                height: parent.height;
+                                text: "JSON";
+                                color: AppState.custom-prompt-format == "json" ? #ffffff : AppTheme.text;
+                                font-size: 12px;
+                                font-weight: 500;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => { AppState.custom-prompt-format = "json"; }
+                            }
+                        }
+                        Rectangle {
+                            width: 86px;
+                            background: AppState.custom-prompt-format == "txt" ? AppTheme.accent : AppTheme.bg;
+                            border-radius: 8px;
+                            border-width: 1px;
+                            border-color: AppState.custom-prompt-format == "txt" ? AppTheme.accent : AppTheme.border;
+                            Text {
+                                width: parent.width;
+                                height: parent.height;
+                                text: "TXT";
+                                color: AppState.custom-prompt-format == "txt" ? #ffffff : AppTheme.text;
+                                font-size: 12px;
+                                font-weight: 500;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => { AppState.custom-prompt-format = "txt"; }
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                    }
+
+                    Text {
+                        height: 18px;
+                        text: AppState.en ? "Prompt content *" : "提示词内容 *";
+                        color: AppTheme.text;
+                        font-size: 13px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        height: 118px;
+                        background: AppTheme.bg;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: prompt-input.has-focus ? AppTheme.accent : AppTheme.border;
+                        clip: true;
+                        prompt-scroll := ScrollView {
+                            x: 12px;
+                            y: 10px;
+                            width: parent.width - 24px;
+                            height: parent.height - 20px;
+                            viewport-width: self.visible-width;
+                            viewport-height: max(self.visible-height, prompt-input.preferred-height);
+                            prompt-input := TextInput {
+                                text <=> AppState.custom-prompt-input;
+                                single-line: false;
+                                wrap: word-wrap;
+                                color: AppTheme.text;
+                                font-size: AppState.settings-font-size * 1px;
+                                font-weight: 400;
+                                page-height: prompt-scroll.visible-height;
+                                key-pressed(event) => {
+                                    if event.text == Key.Return && !event.modifiers.alt {
+                                        root.save-prompt();
+                                        return accept;
+                                    }
+                                    return reject;
+                                }
+                            }
+                        }
+                        if AppState.custom-prompt-input == "" && !prompt-input.has-focus: Text {
+                            x: 12px;
+                            y: 10px;
+                            width: parent.width - 24px;
+                            height: parent.height - 20px;
+                            text: AppState.en ? "Enter the reusable prompt content" : "输入可复用的提示词内容";
+                            color: AppTheme.weak;
+                            font-size: AppState.settings-font-size * 1px;
+                            font-weight: 400;
+                            vertical-alignment: top;
+                        }
+                    }
+
+                    Text {
+                        height: 18px;
+                        text: AppState.en
+                            ? "Negative prompt (JSON only)"
+                            : "反向提示词（仅 JSON 格式有效）";
+                        color: AppState.custom-prompt-format == "json" ? AppTheme.text : AppTheme.weak;
+                        font-size: 13px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        height: 86px;
+                        background: AppTheme.bg;
+                        opacity: AppState.custom-prompt-format == "json" ? 1 : 0.55;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: negative-input.has-focus ? AppTheme.accent : AppTheme.border;
+                        clip: true;
+                        negative-input := TextInput {
+                            x: 12px;
+                            y: 10px;
+                            width: parent.width - 24px;
+                            height: parent.height - 20px;
+                            enabled: AppState.custom-prompt-format == "json";
+                            text <=> AppState.custom-prompt-negative;
                             single-line: false;
                             wrap: word-wrap;
                             color: AppTheme.text;
                             font-size: AppState.settings-font-size * 1px;
-                            page-height: prompt-scroll.visible-height;
-                            cursor-position-changed(position) => {
-                                if position.y + prompt-scroll.viewport-y < 4px {
-                                    prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, -position.y + 4px));
-                                } else if position.y + prompt-scroll.viewport-y > prompt-scroll.visible-height - 24px {
-                                    prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, prompt-scroll.visible-height - position.y - 24px));
-                                }
-                            }
-                            key-pressed(event) => {
-                                if event.text == Key.Return {
-                                    if event.modifiers.alt {
-                                        return reject;
-                                    }
-                                    AppState.save-custom-prompt(
-                                        AppState.custom-prompt-editing-original,
-                                        AppState.custom-prompt-input,
-                                    );
-                                    return accept;
-                                }
-                                return reject;
-                            }
+                            font-weight: 400;
+                        }
+                        if AppState.custom-prompt-negative == "" && !negative-input.has-focus: Text {
+                            x: 12px;
+                            y: 10px;
+                            width: parent.width - 24px;
+                            height: parent.height - 20px;
+                            text: AppState.en ? "Optional negative prompt" : "可选：输入反向提示词";
+                            color: AppTheme.weak;
+                            font-size: AppState.settings-font-size * 1px;
+                            font-weight: 400;
+                            vertical-alignment: top;
                         }
                     }
-                    if AppState.custom-prompt-input == "" && !prompt-input.has-focus: Text {
-                        x: 12px;
-                        y: 10px;
-                        width: parent.width - 24px;
-                        height: parent.height - 20px;
-                        text: AppState.en ? "Enter a custom prompt" : "请输入自定义提示词";
-                        color: AppTheme.weak;
-                        font-size: AppState.settings-font-size * 1px;
-                        vertical-alignment: top;
+
+                    Text {
+                        height: 22px;
+                        text: AppState.custom-prompt-message;
+                        color: AppTheme.danger;
+                        font-size: 12px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                        overflow: elide;
                     }
                 }
-                Text {
-                    height: 24px;
-                    text: AppState.custom-prompt-message;
-                    color: AppTheme.danger;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                    overflow: elide;
-                }
-                HorizontalLayout {
+            }
+
+            Rectangle {
+                x: 0px;
+                y: parent.height - 60px;
+                width: parent.width;
+                height: 1px;
+                background: AppTheme.border;
+            }
+            HorizontalLayout {
+                x: 24px;
+                y: parent.height - 50px;
+                width: parent.width - 48px;
+                height: 38px;
+                spacing: 10px;
+                Rectangle { horizontal-stretch: 1; background: transparent; }
+                PillButton {
+                    width: 104px;
                     height: 38px;
-                    spacing: 10px;
-                    Rectangle { horizontal-stretch: 1; background: transparent; }
-                    PillButton {
-                        width: 104px;
-                        height: 38px;
-                        text: AppState.en ? "Cancel" : "取消";
-                        clicked => { root.close-dialog(); }
-                    }
-                    PillButton {
-                        width: 124px;
-                        height: 38px;
-                        text: AppState.custom-prompt-editing-original == ""
-                            ? (AppState.en ? "Add" : "确认新增")
-                            : (AppState.en ? "Save" : "保存修改");
-                        primary: true;
-                        clicked => {
-                            AppState.save-custom-prompt(
-                                AppState.custom-prompt-editing-original,
-                                AppState.custom-prompt-input,
-                            );
-                        }
-                    }
+                    text: AppState.en ? "Cancel" : "取消";
+                    clicked => { root.close-dialog(); }
+                }
+                PillButton {
+                    width: 124px;
+                    height: 38px;
+                    text: AppState.custom-prompt-editing-original == ""
+                        ? (AppState.en ? "Save" : "保存")
+                        : (AppState.en ? "Save changes" : "保存修改");
+                    primary: true;
+                    clicked => { root.save-prompt(); }
                 }
             }
         }

@@ -73,7 +73,13 @@ export global AppState {
     in-out property <[string]> custom-prompts: [];
     in-out property <[string]> custom-prompt-previews: [];
     in-out property <[CustomPromptItem]> custom-prompt-items: [];
+    in-out property <string> custom-prompt-name: "";
     in-out property <string> custom-prompt-input: "";
+    in-out property <string> custom-prompt-category: "default";
+    in-out property <string> custom-prompt-format: "json";
+    in-out property <string> custom-prompt-negative: "";
+    in-out property <string> custom-prompt-reference-path: "";
+    in-out property <image> custom-prompt-reference-image;
     in-out property <string> custom-prompt-message: "";
     in-out property <string> custom-prompt-editing-original: "";
     in-out property <bool> custom-prompt-open: false;
@@ -362,6 +368,10 @@ export global AppState {
     callback restart-after-update();
     callback save-custom-prompt(string, string);
     callback remove-custom-prompt(string);
+    callback begin-new-custom-prompt();
+    callback begin-edit-custom-prompt(string);
+    callback choose-custom-prompt-reference();
+    callback clear-custom-prompt-reference();
     callback add-canvas-node(string, float, float);
     callback update-canvas-node(string, string, float, float);
     callback remove-canvas-node(string);

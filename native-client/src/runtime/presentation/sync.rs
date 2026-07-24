@@ -215,14 +215,25 @@ pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
         store
             .custom_prompts
             .iter()
-            .map(|prompt| CustomPromptItem {
-                content: prompt.clone().into(),
-                time: store
-                    .custom_prompt_times
-                    .get(prompt)
-                    .cloned()
-                    .unwrap_or_default()
-                    .into(),
+            .map(|prompt| {
+                let profile = store.custom_prompt_profiles.get(prompt);
+                let preview = single_line_prompt_preview(prompt);
+                let name = profile
+                    .map(|profile| profile.name.trim())
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| preview.chars().take(48).collect());
+                CustomPromptItem {
+                    name: name.into(),
+                    preview: preview.into(),
+                    content: prompt.clone().into(),
+                    time: store
+                        .custom_prompt_times
+                        .get(prompt)
+                        .cloned()
+                        .unwrap_or_default()
+                        .into(),
+                }
             })
             .collect::<Vec<_>>(),
     )));

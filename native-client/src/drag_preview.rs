@@ -18,10 +18,13 @@ pub fn start_thumbnail_file_drag(path: PathBuf) -> bool {
     if !path.is_file() {
         return false;
     }
-    std::thread::spawn(move || {
-        let _ = windows_file_drag::run(path);
-    });
-    true
+    // OLE drag-and-drop must begin on the STA/UI thread that received the
+    // pointer event. The winit GPU backend captures the mouse while dragging,
+    // so release that capture before handing control to DoDragDrop.
+    unsafe {
+        windows_sys::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture();
+    }
+    windows_file_drag::run(path).is_ok()
 }
 
 #[cfg(not(target_os = "windows"))]

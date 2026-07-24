@@ -25,10 +25,7 @@ export component CustomPromptSettings {
             text: AppState.en ? "Add" : "新增";
             primary: true;
             clicked => {
-                AppState.custom-prompt-input = "";
-                AppState.custom-prompt-message = "";
-                AppState.custom-prompt-editing-original = "";
-                AppState.custom-prompt-editor-open = true;
+                AppState.begin-new-custom-prompt();
             }
         }
         Rectangle {
@@ -66,26 +63,42 @@ export component CustomPromptSettings {
                         height: 72px;
                         background: row-touch.has-hover ? AppTheme.panel-soft : transparent;
                         border-radius: 8px;
+                        clip: true;
                         Text {
                             x: 12px;
-                            y: 10px;
+                            y: 7px;
                             width: parent.width - 104px;
-                            height: 24px;
-                            text: item.content;
+                            height: 20px;
+                            text: item.name;
                             color: AppTheme.text;
                             font-size: 13px;
+                            font-weight: 500;
                             vertical-alignment: center;
                             wrap: no-wrap;
                             overflow: elide;
                         }
                         Text {
                             x: 12px;
-                            y: 38px;
+                            y: 29px;
                             width: parent.width - 104px;
-                            height: 20px;
-                            text: item.time;
+                            height: 18px;
+                            text: item.preview;
                             color: AppTheme.muted;
                             font-size: 12px;
+                            font-weight: 400;
+                            vertical-alignment: center;
+                            wrap: no-wrap;
+                            overflow: elide;
+                        }
+                        Text {
+                            x: 12px;
+                            y: 49px;
+                            width: parent.width - 104px;
+                            height: 16px;
+                            text: item.time;
+                            color: AppTheme.weak;
+                            font-size: 11px;
+                            font-weight: 400;
                             vertical-alignment: center;
                             wrap: no-wrap;
                             overflow: elide;
@@ -114,10 +127,7 @@ export component CustomPromptSettings {
                                 height: parent.height;
                                 mouse-cursor: pointer;
                                 clicked => {
-                                    AppState.custom-prompt-input = item.content;
-                                    AppState.custom-prompt-editing-original = item.content;
-                                    AppState.custom-prompt-message = "";
-                                    AppState.custom-prompt-editor-open = true;
+                                    AppState.begin-edit-custom-prompt(item.content);
                                 }
                             }
                         }

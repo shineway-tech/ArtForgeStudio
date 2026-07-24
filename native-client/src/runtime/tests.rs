@@ -224,6 +224,25 @@ mod tests {
             store.custom_prompt_times.get("saved prompt").map(String::as_str),
             Some("2026-07-21 10:00")
         );
+        save_custom_prompt_profile(
+            &mut store,
+            "",
+            "saved prompt",
+            CustomPromptProfile {
+                name: "Saved name".to_string(),
+                category: "scene".to_string(),
+                format: "json".to_string(),
+                negative_prompt: "blur".to_string(),
+                reference_path: "reference.png".to_string(),
+            },
+        );
+        assert_eq!(
+            store
+                .custom_prompt_profiles
+                .get("saved prompt")
+                .map(|profile| profile.name.as_str()),
+            Some("Saved name")
+        );
         assert_eq!(
             save_custom_prompt_to_store(&mut store, "", "saved prompt", "2026-07-21 10:01"),
             SaveCustomPromptResult::Duplicate
@@ -245,6 +264,23 @@ mod tests {
         assert_eq!(
             store.custom_prompt_times.get("edited prompt").map(String::as_str),
             Some("2026-07-21 10:03")
+        );
+        save_custom_prompt_profile(
+            &mut store,
+            "saved prompt",
+            "edited prompt",
+            CustomPromptProfile {
+                name: "Edited name".to_string(),
+                ..CustomPromptProfile::default()
+            },
+        );
+        assert!(!store.custom_prompt_profiles.contains_key("saved prompt"));
+        assert_eq!(
+            store
+                .custom_prompt_profiles
+                .get("edited prompt")
+                .map(|profile| profile.name.as_str()),
+            Some("Edited name")
         );
         assert_eq!(
             save_custom_prompt_to_store(&mut store, "missing", "other", "2026-07-21 10:04"),
@@ -283,8 +319,11 @@ mod tests {
         assert!(settings.contains("CustomPromptSettings"));
         assert!(settings.contains("自定义提示词"));
         assert!(custom_settings.contains("text: AppState.en ? \"Add\" : \"新增\""));
-        assert!(custom_settings.contains("AppState.custom-prompt-editor-open = true"));
+        assert!(custom_settings.contains("AppState.begin-new-custom-prompt()"));
         assert!(custom_settings.contains("for item in AppState.custom-prompt-items"));
+        assert!(custom_settings.contains("text: item.name"));
+        assert!(custom_settings.contains("text: item.preview"));
+        assert!(custom_settings.contains("clip: true"));
         assert!(custom_settings.contains("text: item.time"));
         assert!(custom_settings.contains("assets/icons/edit.svg"));
         assert!(custom_settings.contains("AppState.pending-delete-kind = \"custom-prompt\""));
@@ -327,6 +366,52 @@ mod tests {
         assert!(callbacks.contains("save_local_store(&app, &store.borrow())"));
         assert!(callbacks.contains("state.on_save_custom_prompt"));
         assert!(callbacks.contains("state.set_custom_prompt_editor_open(false)"));
+        assert!(callbacks.contains("state.on_begin_new_custom_prompt"));
+        assert!(callbacks.contains("state.on_begin_edit_custom_prompt"));
+        assert!(callbacks.contains("state.on_choose_custom_prompt_reference"));
+        assert!(local_store.contains(
+            "custom_prompt_profiles: store.custom_prompt_profiles.clone()"
+        ));
+    }
+
+    #[test]
+    fn custom_prompt_editor_uses_the_structured_reference_form() {
+        let dialog = include_str!("../../ui/dialogs/custom-prompt-dialog.slint");
+        let state = include_str!("../../ui/app-state.slint");
+
+        for field in [
+            "custom-prompt-name",
+            "custom-prompt-category",
+            "custom-prompt-format",
+            "custom-prompt-negative",
+            "custom-prompt-reference-path",
+            "custom-prompt-reference-image",
+        ] {
+            assert!(state.contains(field), "missing state field {field}");
+        }
+        assert!(dialog.contains("提示词名称 *"));
+        assert!(dialog.contains("PromptCategorySelect"));
+        assert!(dialog.contains("上传风格参考图"));
+        assert!(dialog.contains("AI 分析生成风格"));
+        assert!(dialog.contains("保存格式"));
+        assert!(dialog.contains("提示词内容 *"));
+        assert!(dialog.contains("反向提示词（仅 JSON 格式有效）"));
+        assert!(dialog.contains("AppState.choose-custom-prompt-reference()"));
+        assert!(dialog.contains("AppState.clear-custom-prompt-reference()"));
+    }
+
+    #[test]
+    fn windows_file_drag_runs_on_the_pointer_thread_after_releasing_capture() {
+        let drag = include_str!("../drag_preview.rs");
+        let handler = drag
+            .split("pub fn start_thumbnail_file_drag(path: PathBuf) -> bool")
+            .nth(1)
+            .and_then(|value| value.split("#[cfg(not(target_os = \"windows\"))]").next())
+            .expect("Windows file drag handler");
+
+        assert!(handler.contains("ReleaseCapture()"));
+        assert!(handler.contains("windows_file_drag::run(path).is_ok()"));
+        assert!(!handler.contains("std::thread::spawn"));
     }
 
     #[test]
