@@ -466,6 +466,31 @@ mod tests {
     }
 
     #[test]
+fn generation_loading_thumbnail_exposes_a_stop_button() {
+    let card = include_str!("../../ui/components/generation-loading-card.slint");
+    let state = include_str!("../../ui/app-state.slint");
+    let callbacks = include_str!("callbacks/generation.rs");
+
+        assert!(card.contains("stop-button := Rectangle"));
+        assert!(card.contains("stop-touch := TouchArea"));
+        assert!(card.contains("AppState.stop-generation()"));
+        assert!(card.contains("AppTheme.danger"));
+    assert!(state.contains("callback stop-generation();"));
+    assert!(callbacks.contains("state.on_stop_generation"));
+}
+
+#[test]
+fn loading_dots_use_staggered_bouncing_motion() {
+    let dots = include_str!("../../ui/components/loading-dots.slint");
+
+    assert!(dots.contains("dot-one := Rectangle"));
+    assert!(dots.contains("dot-two := Rectangle"));
+    assert!(dots.contains("dot-three := Rectangle"));
+    assert!(dots.contains("interval: 120ms"));
+    assert!(dots.matches("animate y").count() >= 3);
+}
+
+    #[test]
     fn legacy_double_slash_prompt_drafts_are_cleared_without_touching_real_prompts() {
         let mut drafts = PromptDrafts {
             scene: "//".to_string(),
@@ -758,7 +783,7 @@ mod tests {
         let local_store = include_str!("storage/local_store.rs");
         let sync = include_str!("presentation/sync.rs");
 
-        let workbench = sidebar.find("CategoryWorkspaceMenu {}").expect("workbench menu");
+        let workbench = sidebar.find("CategoryWorkspaceMenu {").expect("workbench menu");
         let canvas = sidebar.find("page: \"canvas\"").expect("canvas nav item");
         let assets = sidebar.find("page: \"assets\"").expect("assets nav item");
         assert!(workbench < canvas && canvas < assets);
@@ -1710,6 +1735,46 @@ mod tests {
 
         assert!(state.contains("callback request-delete-asset(string);"));
         assert!(viewer.contains("AppState.request-delete-asset(AppState.viewer-id)"));
+    }
+
+    #[test]
+    fn completed_generation_opens_its_image_viewer() {
+        let model = include_str!("model.rs");
+        let poll = include_str!("generation/poll.rs");
+        let state = include_str!("generation/state.rs");
+
+        assert!(model.contains("latest_success_id: Option<String>"));
+        assert!(state.contains("task.latest_success_id = success_id;"));
+        assert!(poll.contains("open-viewer-after-finish"));
+        assert!(poll.contains("open_viewer(&app, &store.borrow(), &viewer_id, \"generation\")"));
+    }
+
+    #[test]
+    fn viewer_metadata_is_four_compact_tags_in_the_top_row() {
+        let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+
+        assert!(viewer.contains("component ViewerInfoTag"));
+        assert!(viewer.contains("info-tags := HorizontalLayout"));
+        assert!(viewer.contains("y: 24px;"));
+        assert_eq!(viewer.matches("ViewerInfoTag {").count(), 4);
+        assert!(!viewer.contains("InfoCard"));
+        assert!(!viewer.contains("图像信息"));
+    }
+
+    #[test]
+    fn sidebar_can_collapse_to_icon_only_navigation() {
+        let app_state = include_str!("../../ui/app-state.slint");
+        let sidebar = include_str!("../../ui/components/sidebar.slint");
+        let nav_item = include_str!("../../ui/components/nav-item.slint");
+        let workspace = include_str!("../../ui/components/category-workspace-menu.slint");
+
+        assert!(app_state.contains("in-out property <bool> sidebar-collapsed: false;"));
+        assert!(sidebar.contains("width: AppState.sidebar-collapsed ? 72px : 204px;"));
+        assert!(sidebar.contains("AppState.sidebar-collapsed = !AppState.sidebar-collapsed"));
+        assert!(nav_item.contains("in property <bool> collapsed: false;"));
+        assert!(nav_item.contains("if !root.collapsed: Text"));
+        assert!(workspace.contains("in property <bool> collapsed: false;"));
+        assert!(workspace.contains("if !root.collapsed && root.open"));
     }
 
     #[test]

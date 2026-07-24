@@ -4,19 +4,43 @@ export component LoadingDots {
     in-out property <int> step: 0;
     width: 42px;
     height: 42px;
+
     Timer {
-        interval: 420ms;
+        interval: 120ms;
         running: true;
-        triggered => { root.step = Math.mod(root.step + 1, 3); }
+        triggered => { root.step = Math.mod(root.step + 1, 6); }
     }
-    Text {
-        width: parent.width;
-        height: parent.height;
-        text: root.step == 0 ? "." : (root.step == 1 ? ".." : "...");
-        color: AppTheme.accent;
-        font-size: 18px;
-        font-weight: 500;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+
+    dot-one := Rectangle {
+        x: root.width / 2 - 15px;
+        y: root.height / 2 - (root.step == 0 ? 8px : (root.step == 1 ? 4px : 0px));
+        width: root.step == 0 ? 7px : 6px;
+        height: self.width;
+        border-radius: self.width / 2;
+        background: AppTheme.accent;
+        opacity: root.step == 0 || root.step == 1 ? 1 : 0.72;
+        animate y, width, height, opacity { duration: 110ms; easing: ease-in-out; }
+    }
+
+    dot-two := Rectangle {
+        x: root.width / 2 - 3px;
+        y: root.height / 2 - (root.step == 2 ? 8px : (root.step == 3 ? 4px : 0px));
+        width: root.step == 2 ? 7px : 6px;
+        height: self.width;
+        border-radius: self.width / 2;
+        background: AppTheme.accent;
+        opacity: root.step == 2 || root.step == 3 ? 1 : 0.72;
+        animate y, width, height, opacity { duration: 110ms; easing: ease-in-out; }
+    }
+
+    dot-three := Rectangle {
+        x: root.width / 2 + 9px;
+        y: root.height / 2 - (root.step == 4 ? 8px : (root.step == 5 ? 4px : 0px));
+        width: root.step == 4 ? 7px : 6px;
+        height: self.width;
+        border-radius: self.width / 2;
+        background: AppTheme.accent;
+        opacity: root.step == 4 || root.step == 5 ? 1 : 0.72;
+        animate y, width, height, opacity { duration: 110ms; easing: ease-in-out; }
     }
 }

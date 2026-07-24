@@ -4,33 +4,67 @@ import { NavItem } from "nav-item.slint";
 import { AppTheme } from "../theme.slint";
 
 export component Sidebar {
-    width: 204px;
+    width: AppState.sidebar-collapsed ? 72px : 204px;
+    animate width { duration: 160ms; easing: ease-in-out; }
     Rectangle {
         background: AppTheme.panel;
         border-color: AppTheme.border;
         border-width: 1px;
         VerticalLayout {
-            padding: 14px;
+            padding: AppState.sidebar-collapsed ? 8px : 14px;
             spacing: 10px;
             Rectangle {
                 height: 56px;
-                HorizontalLayout {
-                    spacing: 10px;
-                    Image { width: 36px; height: 36px; source: AppState.app-logo; image-fit: contain; }
-                    VerticalLayout {
-                        Text { text: "ArtForgeStudio"; color: AppTheme.text; font-size: 18px; font-weight: 600; }
-                        Text { text: "AI Art Studio"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
+                Image {
+                    x: 0px;
+                    y: AppState.sidebar-collapsed ? 14px : 10px;
+                    width: AppState.sidebar-collapsed ? 28px : 36px;
+                    height: self.width;
+                    source: AppState.app-logo;
+                    image-fit: contain;
+                }
+                if !AppState.sidebar-collapsed: VerticalLayout {
+                    x: 46px;
+                    y: 8px;
+                    width: parent.width - 76px;
+                    height: 40px;
+                    spacing: 1px;
+                    Text { text: "ArtForgeStudio"; color: AppTheme.text; font-size: 18px; font-weight: 600; overflow: elide; }
+                    Text { text: "AI Art Studio"; color: AppTheme.muted; font-size: 12px; font-weight: 400; overflow: elide; }
+                }
+                collapse-button := Rectangle {
+                    x: parent.width - 22px;
+                    y: 17px;
+                    width: 22px;
+                    height: 22px;
+                    border-radius: 6px;
+                    background: collapse-touch.has-hover ? AppTheme.panel-soft : transparent;
+                    Text {
+                        width: parent.width;
+                        height: parent.height;
+                        text: AppState.sidebar-collapsed ? "›" : "‹";
+                        color: AppTheme.muted;
+                        font-size: 18px;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    collapse-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => { AppState.sidebar-collapsed = !AppState.sidebar-collapsed; }
                     }
                 }
             }
             Rectangle { height: 1px; background: AppTheme.border; }
-            CategoryWorkspaceMenu {}
-            NavItem { icon: "canvas"; label: AppState.en ? "Infinite Canvas" : "无限画布"; page: "canvas"; }
-            NavItem { icon: "assets"; label: AppState.en ? "My Assets" : "我的资产"; page: "assets"; }
-            NavItem { icon: "inspiration"; label: AppState.en ? "Inspiration" : "灵感广场"; page: "inspiration"; }
-            NavItem { icon: "notifications"; label: AppState.en ? "Notifications" : "通知"; page: "notifications"; show-dot: AppState.has-unread; }
+            CategoryWorkspaceMenu { collapsed: AppState.sidebar-collapsed; }
+            NavItem { collapsed: AppState.sidebar-collapsed; icon: "canvas"; label: AppState.en ? "Infinite Canvas" : "无限画布"; page: "canvas"; }
+            NavItem { collapsed: AppState.sidebar-collapsed; icon: "assets"; label: AppState.en ? "My Assets" : "我的资产"; page: "assets"; }
+            NavItem { collapsed: AppState.sidebar-collapsed; icon: "inspiration"; label: AppState.en ? "Inspiration" : "灵感广场"; page: "inspiration"; }
+            NavItem { collapsed: AppState.sidebar-collapsed; icon: "notifications"; label: AppState.en ? "Notifications" : "通知"; page: "notifications"; show-dot: AppState.has-unread; }
             Rectangle { vertical-stretch: 1; }
-            NavItem { icon: "settings"; label: AppState.en ? "Settings" : "设置"; page: "settings"; }
+            NavItem { collapsed: AppState.sidebar-collapsed; icon: "settings"; label: AppState.en ? "Settings" : "设置"; page: "settings"; }
         }
     }
 }

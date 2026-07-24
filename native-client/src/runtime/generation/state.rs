@@ -89,6 +89,7 @@ pub(super) fn mark_active_generation_image_completed(
     category: &str,
     task_id: &str,
     success: bool,
+    success_id: Option<String>,
 ) -> Option<ActiveGeneration> {
     let active = {
         let mut tasks = context.generations.active.borrow_mut();
@@ -100,6 +101,7 @@ pub(super) fn mark_active_generation_image_completed(
         task.loading_count = (task.total_count - task.completed_count).max(0);
         if success {
             task.success_count += 1;
+            task.latest_success_id = success_id;
         } else {
             task.failed_count += 1;
         }

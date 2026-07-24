@@ -119,7 +119,7 @@ pub(super) fn add_stream_success_item(
     time: &str,
     bytes: &[u8],
     upscale_done: bool,
-) -> Result<(Image, String)> {
+) -> Result<(Image, String, String)> {
     let (bytes, image, width, height) = generated_image_from_bytes(bytes)?;
     let source_path = save_generated_bytes(app, &bytes, raw_prompt)?;
     let item = AssetData {
@@ -142,6 +142,7 @@ pub(super) fn add_stream_success_item(
         upscale_done,
     };
     let conversation_image = item.image.clone();
+    let generated_id = item.id.clone();
     let mut store_mut = store.borrow_mut();
     store_mut.assets.insert(0, item.clone());
     store_mut.generations.insert(0, item);
@@ -159,7 +160,7 @@ pub(super) fn add_stream_success_item(
     );
     save_local_store(app, &store_mut);
     push_all(app, &store_mut);
-    Ok((conversation_image, source_path))
+    Ok((conversation_image, source_path, generated_id))
 }
 
 pub(super) fn add_stream_failure_item(

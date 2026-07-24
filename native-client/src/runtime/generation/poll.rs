@@ -126,7 +126,7 @@ pub(super) fn poll_generation_stream(
                 &bytes,
                 upscale_done,
             ) {
-                Ok((conversation_image, source_path)) => {
+                Ok((conversation_image, source_path, generated_id)) => {
                     if let (Some(backend), Some(delivery)) = (context.backend.clone(), delivery) {
                         let _ = pending_delivery_saved(
                             &delivery.client_request_id,
@@ -144,7 +144,12 @@ pub(super) fn poll_generation_stream(
                         );
                     }
                     if let Some(active) = mark_active_generation_image_completed(
-                        &context, &app, &category, &task_id, true,
+                        &context,
+                        &app,
+                        &category,
+                        &task_id,
+                        true,
+                        Some(generated_id),
                     ) {
                         if active.loading_count > 0 {
                             set_generation_status_for_category(
@@ -173,7 +178,7 @@ pub(super) fn poll_generation_stream(
                         &time,
                     );
                     mark_active_generation_image_completed(
-                        &context, &app, &category, &task_id, false,
+                        &context, &app, &category, &task_id, false, None,
                     );
                 }
             },
@@ -192,7 +197,7 @@ pub(super) fn poll_generation_stream(
                     &time,
                 );
                 if let Some(active) = mark_active_generation_image_completed(
-                    &context, &app, &category, &task_id, false,
+                    &context, &app, &category, &task_id, false, None,
                 ) {
                     if active.loading_count > 0 {
                         set_generation_status_for_category(
@@ -230,6 +235,10 @@ pub(super) fn poll_generation_stream(
                     task.failed_count,
                 );
                 sync_generation_state_for_current_category(&context, &app);
+                // open-viewer-after-finish
+                if let Some(viewer_id) = task.latest_success_id.clone() {
+                    open_viewer(&app, &store.borrow(), &viewer_id, "generation");
+                }
                 if context.backend.is_some() {
                     refresh_backend_snapshot(&app, context.clone());
                 }
@@ -302,6 +311,9 @@ pub(super) fn poll_generation_stream(
                     task.failed_count + remaining,
                 );
                 sync_generation_state_for_current_category(&context, &app);
+                if let Some(viewer_id) = task.latest_success_id.clone() {
+                    open_viewer(&app, &store.borrow(), &viewer_id, "generation");
+                }
                 if context.backend.is_some() {
                     refresh_backend_snapshot(&app, context.clone());
                 }

@@ -152,6 +152,7 @@ pub(super) fn start_backend_generation(
         failed_count: 0,
         progress: 1,
         eta: 0,
+        latest_success_id: None,
     });
     set_generation_status_for_category(&context, app, &category, "正在上传参考图...");
     sync_generation_state_for_current_category(&context, app);
@@ -510,6 +511,7 @@ pub(super) fn start_backend_upscale(
         failed_count: 0,
         progress: 1,
         eta: 0,
+        latest_success_id: None,
     });
     state.set_viewer_processing(true);
     state.set_viewer_processing_progress(0);
@@ -1043,6 +1045,7 @@ fn resume_pending_generation(
         failed_count: 0,
         progress: if saved_count > 0 { 50 } else { 1 },
         eta: 0,
+        latest_success_id: None,
     });
     let state = app.global::<AppState>();
     if record.create_conversation

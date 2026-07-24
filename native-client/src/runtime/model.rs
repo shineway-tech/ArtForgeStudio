@@ -249,6 +249,7 @@ struct ActiveGeneration {
     failed_count: i32,
     progress: i32,
     eta: i32,
+    latest_success_id: Option<String>,
 }
 
 #[derive(Default)]

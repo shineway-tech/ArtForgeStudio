@@ -3,6 +3,7 @@ import { AccountSession, AssetGroup, AssetItem, CanvasLink, CanvasNote, CatalogM
 export global AppState {
     callback close-payment-window();
     in-out property <string> page: "welcome";
+    in-out property <bool> sidebar-collapsed: false;
     in-out property <string> language: "zh";
     out property <bool> en: language == "en";
     in-out property <string> theme-id: "light";
