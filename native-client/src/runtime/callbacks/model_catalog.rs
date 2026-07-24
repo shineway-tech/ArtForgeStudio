@@ -25,6 +25,7 @@ pub(super) fn wire_model_catalog_callbacks(app: &AppWindow, store: Rc<RefCell<St
 
     {
         let app_weak = app.as_weak();
+        let store = store.clone();
         state.on_select_image_model(move |model| {
             if let Some(app) = app_weak.upgrade() {
                 let state = app.global::<AppState>();
@@ -35,6 +36,10 @@ pub(super) fn wire_model_catalog_callbacks(app: &AppWindow, store: Rc<RefCell<St
                 if let Some(selected) = selected {
                     state.set_image_model(selected.code);
                     state.set_image_model_name(selected.name);
+                    state.set_image_price_1k(selected.price_1k);
+                    state.set_image_price_2k(selected.price_2k);
+                    state.set_image_price_4k(selected.price_4k);
+                    save_local_store(&app, &store.borrow());
                 }
             }
         });
@@ -42,6 +47,7 @@ pub(super) fn wire_model_catalog_callbacks(app: &AppWindow, store: Rc<RefCell<St
 
     {
         let app_weak = app.as_weak();
+        let store = store.clone();
         state.on_select_reasoning_model(move |model| {
             if let Some(app) = app_weak.upgrade() {
                 let state = app.global::<AppState>();
@@ -52,6 +58,7 @@ pub(super) fn wire_model_catalog_callbacks(app: &AppWindow, store: Rc<RefCell<St
                 if let Some(selected) = selected {
                     state.set_reasoning_model(selected.code);
                     state.set_reasoning_model_name(selected.name);
+                    save_local_store(&app, &store.borrow());
                 }
             }
         });

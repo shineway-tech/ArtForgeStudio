@@ -134,6 +134,15 @@ impl ApiError {
             Some("model_quality_unavailable") => {
                 "当前模型暂不支持所选清晰度，请更换清晰度".to_string()
             }
+            Some("model_aspect_ratio_unsupported") => {
+                "当前模型不支持所选画面比例，请更换比例后重试".to_string()
+            }
+            Some("model_references_unsupported") => {
+                "当前模型不支持参考图，请移除参考图或更换模型".to_string()
+            }
+            Some("model_task_type_unsupported") => {
+                "当前模型不支持这项图片操作，请更换模型".to_string()
+            }
             Some("image_target_size_invalid") => {
                 "放大尺寸超过所选清晰度上限，请调整清晰度后重试".to_string()
             }
@@ -193,6 +202,15 @@ impl ApiError {
             }
             Some("model_quality_unavailable") => {
                 "当前模型暂不支持所选清晰度，请更换清晰度".to_string()
+            }
+            Some("model_aspect_ratio_unsupported") => {
+                "当前模型不支持所选画面比例，请更换比例后重试".to_string()
+            }
+            Some("model_references_unsupported") => {
+                "当前模型不支持参考图，请移除参考图或更换模型".to_string()
+            }
+            Some("model_task_type_unsupported") => {
+                "当前模型不支持这项图片操作，请更换模型".to_string()
             }
             Some("image_target_size_invalid") => {
                 "放大尺寸超过所选清晰度上限，请调整清晰度后重试".to_string()
@@ -293,6 +311,9 @@ mod tests {
         assert!(http_error("model_unavailable")
             .generation_message()
             .contains("刷新模型目录"));
+        assert!(http_error("model_aspect_ratio_unsupported")
+            .generation_message()
+            .contains("画面比例"));
     }
 
     #[test]

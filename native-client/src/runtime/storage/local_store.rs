@@ -96,6 +96,8 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
         save_local_store(app, &store.borrow());
         return;
     };
+    let saved_image_model = data.image_model.clone();
+    let saved_reasoning_model = data.reasoning_model.clone();
     let migrated_local_store = {
         let mut store_mut = store.borrow_mut();
         // Legacy provider endpoints and API keys are intentionally ignored.
@@ -144,8 +146,8 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
             || store_mut.custom_prompt_times != original_prompt_times
     };
     let state = app.global::<AppState>();
-    state.set_image_model("".into());
-    state.set_reasoning_model("".into());
+    state.set_image_model(saved_image_model.into());
+    state.set_reasoning_model(saved_reasoning_model.into());
     let category = resolve_category(&state.get_asset_type().to_string(), "");
     state.set_asset_type(category.clone().into());
     state.set_prompt(prompt_draft_for_category(&store.borrow().prompt_drafts, &category).into());
