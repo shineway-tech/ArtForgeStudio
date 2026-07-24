@@ -212,8 +212,8 @@ export component SettingsPage {
                         background: AppTheme.danger;
                     }
                     Text {
-                        visible: AppState.update-available || AppState.update-checking || AppState.update-message != "";
-                        x: 34px;
+                        visible: AppState.update-available || AppState.update-checking;
+                        x: AppState.update-available ? 34px : 18px;
                         y: 110px;
                         width: parent.width - 300px;
                         height: 22px;
@@ -240,7 +240,7 @@ export component SettingsPage {
                         }
                         PillButton {
                             horizontal-stretch: 1;
-                            text: AppState.en ? "Download" : "下载更新";
+                            text: AppState.en ? "Update" : "更新";
                             primary: AppState.update-available;
                             disabled: !AppState.update-available || AppState.update-checking;
                             clicked => { AppState.start-update(); }

@@ -67,10 +67,10 @@ export component TopBar {
                 height: 36px;
                 spacing: 8px;
                 alignment: center;
-                if AppState.payment-qr-open: PillButton {
+                if AppState.payment-active: PillButton {
                     width: 112px;
-                    text: AppState.en ? "Hide payment QR" : "关闭支付码";
-                    clicked => { AppState.close-payment-window(); AppState.payment-qr-open = false; }
+                    text: AppState.en ? "Payment status" : "查看支付状态";
+                    clicked => { AppState.payment-dialog-open = true; }
                 }
                 PillButton { width: 94px; text: AppState.language == "zh" ? "中文" : "English"; clicked => { AppState.set-language(AppState.language == "zh" ? "en" : "zh"); } }
                 ThemeMenuButton { width: 94px; }
@@ -91,7 +91,7 @@ export component TopBar {
         }
     }
     function actions-width() -> length {
-        return (AppState.logged-in ? 446px : 318px) + (AppState.payment-qr-open ? 120px : 0px);
+        return (AppState.logged-in ? 446px : 318px) + (AppState.payment-active ? 120px : 0px);
     }
     function model-picker-width() -> length {
         return min(330px, max(180px, (root.width - 18px - root.actions-width() - 70px) / 2));

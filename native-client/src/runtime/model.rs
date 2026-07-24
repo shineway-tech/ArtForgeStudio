@@ -275,13 +275,18 @@ struct GenerationRegistry {
     statuses: RefCell<BTreeMap<String, String>>,
 }
 
+#[derive(Clone)]
+struct ActivePaymentSession {
+    client_request_id: String,
+    checkout_url: Option<String>,
+}
+
 #[derive(Clone, Default)]
 struct AppContext {
     store: Rc<RefCell<Store>>,
     generations: Rc<GenerationRegistry>,
     recovering_orders: Rc<RefCell<BTreeSet<String>>>,
-    active_payment_request: Rc<RefCell<Option<String>>>,
-    cancelled_payment_requests: Rc<RefCell<BTreeSet<String>>>,
+    active_payment: Rc<RefCell<Option<ActivePaymentSession>>>,
     cancelled_generation_requests: Arc<Mutex<BTreeSet<String>>>,
     backend: Option<Arc<BackendRuntime>>,
 }

@@ -17,7 +17,7 @@ export component CreditsPage {
     }
     function content-height() -> length {
         return AppState.credits-tab == "membership"
-            ? max(root.height + 80px, 760px)
+            ? max(root.height + 80px, 860px)
             : max(root.height + 80px, 860px + max(1, AppState.credit-records.length) * 96px);
     }
     Rectangle {

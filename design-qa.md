@@ -93,3 +93,37 @@
 - 未发现 P0、P1、P2 级问题；主题颜色差异来自当前 QA 预览使用 Sprite Green，而视觉基准使用紫色主题，属于预期状态差异。
 
 final result: passed
+
+---
+
+# Payment Dialog Design QA
+
+## Scope
+
+- Waiting-for-payment dialog: selected Product Design option 3
+- Payment-success dialog: selected Product Design option 1
+- Content variants: credit recharge and membership purchase
+
+## Visual comparison
+
+- Waiting reference: `call_tgG0Kmg2rXlo7FuWqRx5hseG.png`
+- Waiting rendered capture: `/private/tmp/artforge-payment-waiting-final-v2.png`
+- Waiting combined comparison: `/private/tmp/artforge-payment-waiting-comparison.png`
+- Success reference: `call_mnL5igajMqCZSBRJ2rCQGh1f.png`
+- Success rendered capture: `/private/tmp/artforge-payment-success.png`
+- Success combined comparison: `/private/tmp/artforge-payment-success-comparison.png`
+
+## Review
+
+- Hierarchy: passed. Both states retain the selected icon/title/message/action hierarchy.
+- Layout and spacing: passed. Dialog proportions, rounded container, primary action, close control, and low-emphasis secondary text remain visually balanced at the production desktop viewport.
+- Typography: passed. Titles, body copy, metadata, and button labels have clear scale and contrast.
+- Assets: passed. The waiting state uses a project image asset for the Alipay badge; the success state reuses the existing check icon.
+- State clarity: passed. Waiting and success states are visually distinct, and success remains visible until explicit confirmation.
+- Product-specific copy: passed. Credit recharge shows credited points and balance status; membership purchase shows the activated plan and membership entitlement status.
+- Accessibility: passed. Primary controls have sufficient target size and contrast; all visible controls have text labels.
+- Build validation: `cargo check --manifest-path native-client/Cargo.toml` passed.
+- Copy-state validation: the focused Rust test for credit and membership payment presentations passed.
+- Severity review: no P0, P1, or P2 issues remain.
+
+final result: passed

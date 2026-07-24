@@ -1,7 +1,9 @@
 import { AccountSession, AssetGroup, AssetItem, CanvasLink, CanvasNote, CatalogModelView, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 
 export global AppState {
-    callback close-payment-window();
+    callback dismiss-payment();
+    callback confirm-payment-success();
+    callback retry-payment-browser();
     in-out property <string> page: "welcome";
     in-out property <bool> sidebar-collapsed: false;
     in-out property <string> language: "zh";
@@ -41,15 +43,22 @@ export global AppState {
     in-out property <bool> credit-payment-busy: false;
     in-out property <string> credit-payment-message: "";
     in-out property <string> credits-tab: "recharge";
-    in-out property <bool> payment-qr-open: false;
-    in-out property <string> payment-qr-message: "";
+    in-out property <bool> payment-active: false;
+    in-out property <bool> payment-dialog-open: false;
+    in-out property <string> payment-dialog-mode: "waiting";
+    in-out property <bool> payment-browser-ready: false;
+    in-out property <string> payment-kind: "credit";
+    in-out property <string> payment-waiting-message: "";
+    in-out property <string> payment-status-message: "";
+    in-out property <string> payment-success-message: "";
+    in-out property <string> payment-success-detail: "";
     in-out property <bool> purchase-membership-required: false;
-    in-out property <bool> purchase-membership-accepted: false;
+    in-out property <bool> purchase-membership-accepted: true;
     in-out property <string> purchase-membership-title: "会员服务协议";
     in-out property <string> purchase-membership-version: "";
     in-out property <string> purchase-membership-url: "";
     in-out property <bool> purchase-credit-rules-required: false;
-    in-out property <bool> purchase-credit-rules-accepted: false;
+    in-out property <bool> purchase-credit-rules-accepted: true;
     in-out property <string> purchase-credit-rules-title: "积分规则";
     in-out property <string> purchase-credit-rules-version: "";
     in-out property <string> purchase-credit-rules-url: "";
@@ -189,6 +198,7 @@ export global AppState {
     in-out property <image> icon-download: @image-url("../assets/icons/download.svg");
     in-out property <image> icon-check: @image-url("../assets/icons/check.svg");
     in-out property <image> icon-wechat: @image-url("../assets/icons/wechat.svg");
+    in-out property <image> icon-alipay: @image-url("../assets/icons/alipay-official.png");
     in-out property <image> icon-account-person: @image-url("../assets/icons/account-person.svg");
     in-out property <image> icon-account-shield-lock: @image-url("../assets/icons/account-shield-lock.svg");
     in-out property <image> icon-account-display: @image-url("../assets/icons/account-display.svg");
@@ -329,6 +339,7 @@ export global AppState {
     in-out property <string> latest-version: "";
     in-out property <bool> update-available: false;
     in-out property <bool> update-checking: false;
+    in-out property <bool> update-check-failed: false;
     in-out property <bool> update-result-open: false;
     in-out property <bool> update-required: false;
     in-out property <string> update-release-notes: "";

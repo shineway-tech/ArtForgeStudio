@@ -104,7 +104,11 @@ fn assert_trusted_mock_checkout(order: &OrderDetail) {
         .as_ref()
         .and_then(|payment| payment.checkout_url.as_deref())
         .expect("pending payment exposes checkout URL");
-    assert!(checkout_url.starts_with("https://openapi.alipay.com/gateway.do?mock_order="));
+    let checkout = reqwest::Url::parse(checkout_url).expect("hosted payment checkout URL");
+    assert_eq!(checkout.path(), "/v1/payments/alipay/checkout");
+    let fragment = checkout.fragment().expect("payment checkout fragment");
+    assert!(fragment.contains("order_id="));
+    assert!(fragment.contains("token="));
 }
 
 fn assert_http_error_field<T>(

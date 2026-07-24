@@ -22,7 +22,7 @@ mod tests {
         assert!(compare_versions("1.0.4", "1.0.5").is_lt());
 
         assert!(validated_update_download_url(
-            "https://cdn.honeykid.cn/public/artforge_studio/ArtForgeStudio_macos_aarch64.dmg"
+            "https://cdn.honeykid.cn/public/art_forge/ArtForgeStudio_macos_aarch64.dmg"
         )
         .is_ok());
         assert!(validated_update_download_url("http://cdn.honeykid.cn/update.dmg").is_err());
@@ -37,9 +37,16 @@ mod tests {
 
         assert!(dialog.contains("AppState.update-required"));
         assert!(dialog.contains("\"稍后再说\""));
-        assert!(dialog.contains("\"下载更新\""));
+        assert!(dialog.contains("\"更新\""));
         assert!(dialog.contains("\"离线使用\""));
+        assert!(dialog.contains("\"重新检查\""));
+        assert!(dialog.contains("\"已是最新版本\""));
+        assert!(dialog.contains("\"关闭\""));
+        assert!(dialog.contains("min(420px, root.width - 32px)"));
+        assert!(dialog.contains("min(240px, root.height - 40px)"));
+        assert!(dialog.contains("width: 160px;"));
         assert!(state.contains("in-out property <string> update-download-url"));
+        assert!(state.contains("in-out property <bool> update-check-failed"));
         assert!(!app.contains("UpdateProgressDialog"));
     }
 
@@ -1643,13 +1650,13 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
     }
 
     #[test]
-    fn payment_ui_uses_direct_alipay_qr_flow() {
+    fn payment_ui_uses_external_alipay_website_flow() {
         let credit_page = include_str!("../../ui/pages/credits-page.slint");
-        let checkout = include_str!("../../ui/dialogs/ali-pay-qr-dialog.slint");
+        let checkout = include_str!("../../ui/dialogs/alipay-payment-dialog.slint");
         let membership = include_str!("../../ui/components/membership-plans.slint");
         let purchase_agreements = include_str!("../../ui/components/purchase-agreements.slint");
         let callbacks = include_str!("callbacks/payment.rs");
-        let payment_window = include_str!("payment_window.rs");
+        let payment_checkout = include_str!("payment_checkout.rs");
         let top_bar = include_str!("../../ui/components/top-bar.slint");
 
         assert!(credit_page.contains(
@@ -1658,15 +1665,20 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(!credit_page.contains("AppState.credit-pay-open = true"));
         assert!(membership.contains("clicked => { AppState.purchase-membership(plan.code); }"));
 
-        assert!(checkout.contains("AppState.payment-qr-open"));
-        assert!(checkout.contains("支付宝扫码支付"));
-        assert!(checkout.contains("正在等待支付宝付款结果"));
-        assert!(!checkout.contains("payment-qr-summary"));
+        assert!(checkout.contains("AppState.payment-dialog-open"));
+        assert!(checkout.contains("请在浏览器中完成付款"));
+        assert!(checkout.contains("每 3 秒自动检测支付结果"));
+        assert!(checkout.contains("取消后可重新发起"));
+        assert!(checkout.contains("AppState.retry-payment-browser()"));
         assert!(!checkout.contains("PurchaseAgreement"));
-        assert!(!checkout.contains("生成支付二维码"));
-        assert!(payment_window.contains(".with_html(config.checkout_html)"));
-        assert!(!payment_window.contains(".with_url(config.checkout.to_string())"));
-        assert!(!callbacks.contains("state.set_payment_qr_message(message.clone().into());"));
+        assert!(!checkout.contains("二维码"));
+        assert!(payment_checkout.contains("Command::new(\"open\")"));
+        assert!(payment_checkout.contains("Command::new(\"rundll32.exe\")"));
+        assert!(payment_checkout.contains("Command::new(\"xdg-open\")"));
+        assert!(!payment_checkout.contains("WebViewBuilder"));
+        assert!(callbacks.contains("open_payment_checkout"));
+        assert!(callbacks.contains("Duration::from_secs(3)"));
+        assert!(callbacks.contains("continue_payment_order(&app, context, backend, started, false)"));
         assert!(callbacks.contains("暂时无法确认支付结果，请稍后查看订单状态"));
         assert!(membership.contains("PurchaseAgreements"));
         assert!(credit_page.contains("PurchaseAgreements"));
@@ -1675,15 +1687,16 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(callbacks.contains("agreements_api.accept_agreements(&acceptances)?;"));
         assert!(callbacks.contains("apply_agreements_from_payment_error"));
         assert!(callbacks.contains("agreement_acceptance_required"));
-        assert!(callbacks.contains("cancel_active_payment"));
-        assert!(callbacks.contains("支付已取消，可重新发起支付"));
+        assert!(!callbacks.contains("cancel_active_payment"));
+        assert!(!callbacks.contains("cancelled_payment_requests"));
+        assert!(checkout.contains("clicked => { AppState.dismiss-payment(); }"));
         assert!(!callbacks.contains(
             "if started.kind == PaymentOrderKind::Membership {\n            state.set_membership_open(false);"
         ));
-        assert!(top_bar.contains("关闭支付码"));
+        assert!(top_bar.contains("查看支付状态"));
 
         let combined = format!("{checkout}\n{membership}\n{top_bar}");
-        for removed in ["支付宝收银台", "打开支付宝支付", "关闭收银台"] {
+        for removed in ["支付宝扫码支付", "关闭支付码", "加载支付二维码"] {
             assert!(!combined.contains(removed), "obsolete payment copy: {removed}");
         }
     }
@@ -1790,11 +1803,11 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
     }
 
     #[test]
-    fn free_membership_copy_is_vertically_centered_without_an_action_button() {
+    fn membership_cards_keep_free_copy_and_paid_actions_aligned() {
         let membership = include_str!("../../ui/components/membership-plans.slint");
 
-        assert!(membership.contains("if plan.code == \"free\": Rectangle { vertical-stretch: 1;"));
-        assert!(membership.contains("Rectangle { vertical-stretch: 1; background: transparent; }"));
+        assert!(membership.contains("text: AppState.en ? \"Free forever\" : \"永久免费\";"));
+        assert!(membership.contains("height: 244px;"));
         assert!(membership.contains("if plan.code != \"free\": PillButton"));
     }
 
@@ -1819,8 +1832,12 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(agreement_update.contains("height: min(380px, root.height - 40px);"));
         assert!(agreement_viewer.contains("width: min(860px, root.width - 32px);"));
         assert!(agreement_viewer.contains("height: parent.height - 120px;"));
-        assert!(update_prompt.contains("width: min(520px, root.width - 32px);"));
-        assert!(update_prompt.contains("min(360px, root.height - 40px)"));
+        assert!(update_prompt.contains("? min(500px, root.width - 32px)"));
+        assert!(update_prompt.contains("min(390px, root.height - 40px)"));
+        assert!(settings.contains(
+            "visible: AppState.update-available || AppState.update-checking;"
+        ));
+        assert!(!settings.contains("AppState.update-message != \"\""));
 
         assert!(!models.contains("ScrollView"));
         assert!(settings.contains("function models-height() -> length"));
@@ -2019,11 +2036,12 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
     }
 
     #[test]
-    fn recovered_pending_payment_reopens_the_embedded_surface() {
+    fn recovered_pending_payment_does_not_launch_the_browser_automatically() {
         let callbacks = include_str!("callbacks/payment.rs");
-        assert!(!callbacks.contains(
+        assert!(callbacks.contains(
             "continue_payment_order(&app, context, backend, started, false);"
         ));
+        assert!(callbacks.contains("已恢复未完成订单，可重新打开支付宝继续支付"));
     }
 
     #[test]
