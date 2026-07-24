@@ -356,8 +356,6 @@ mod tests {
         assert!(custom_settings.contains("assets/icons/edit.svg"));
         assert!(custom_settings.contains("AppState.pending-delete-kind = \"custom-prompt\""));
         assert!(custom_settings.contains("AppState.delete-confirm-open = true"));
-        assert!(custom_dialog.contains("event.text == Key.Return"));
-        assert!(custom_dialog.contains("event.modifiers.alt"));
         assert!(custom_dialog.contains("AppState.save-custom-prompt"));
 
         assert!(composer.contains("event.text == \"/\" && AppState.prompt == \"/\""));
@@ -426,6 +424,21 @@ mod tests {
         assert!(dialog.contains("反向提示词（仅 JSON 格式有效）"));
         assert!(dialog.contains("AppState.choose-custom-prompt-reference()"));
         assert!(dialog.contains("AppState.clear-custom-prompt-reference()"));
+    }
+
+    #[test]
+    fn custom_prompt_editor_allows_ime_to_handle_composition_keys() {
+        let dialog = include_str!("../../ui/dialogs/custom-prompt-dialog.slint");
+        let prompt_input = dialog
+            .split("prompt-input := TextInput")
+            .nth(1)
+            .and_then(|value| value.split("if AppState.custom-prompt-input").next())
+            .expect("custom prompt content input");
+
+        assert!(dialog.contains("init => { prompt-name-input.focus(); }"));
+        assert!(dialog.matches("input-type: text;").count() >= 3);
+        assert!(!prompt_input.contains("key-pressed(event)"));
+        assert!(!prompt_input.contains("root.save-prompt()"));
     }
 
     #[test]
@@ -1802,5 +1815,20 @@ mod tests {
         assert!(dialog.contains("积分不足"));
         assert!(dialog.contains("前往充值"));
         assert!(dialog.contains("AppState.navigate(\"credits\")"));
+    }
+
+    #[test]
+    fn generation_keeps_prompt_text_until_the_user_clears_it() {
+        let backend = include_str!("generation/backend.rs");
+        let controller = include_str!("generation/controller.rs");
+
+        assert!(!backend.contains("state.set_prompt(\"\".into());"));
+        let restore_inputs = controller
+            .split("pub(super) fn restore_stream_inputs")
+            .nth(1)
+            .and_then(|value| value.split("pub(super) fn set_stream_final_status").next())
+            .expect("stream input restore helper");
+        assert!(!restore_inputs.contains("state.set_prompt("));
+        assert!(!restore_inputs.contains("set_prompt_draft_for_category("));
     }
 }

@@ -133,6 +133,7 @@ export component CustomPromptDialog {
             border-width: 1px;
             border-color: AppTheme.border;
             clip: true;
+            init => { prompt-name-input.focus(); }
 
             Text {
                 x: 24px;
@@ -185,6 +186,7 @@ export component CustomPromptDialog {
                             width: parent.width - 24px;
                             height: parent.height;
                             text <=> AppState.custom-prompt-name;
+                            input-type: text;
                             single-line: true;
                             color: AppTheme.text;
                             font-size: AppState.settings-font-size * 1px;
@@ -380,19 +382,13 @@ export component CustomPromptDialog {
                             viewport-height: max(self.visible-height, prompt-input.preferred-height);
                             prompt-input := TextInput {
                                 text <=> AppState.custom-prompt-input;
+                                input-type: text;
                                 single-line: false;
                                 wrap: word-wrap;
                                 color: AppTheme.text;
                                 font-size: AppState.settings-font-size * 1px;
                                 font-weight: 400;
                                 page-height: prompt-scroll.visible-height;
-                                key-pressed(event) => {
-                                    if event.text == Key.Return && !event.modifiers.alt {
-                                        root.save-prompt();
-                                        return accept;
-                                    }
-                                    return reject;
-                                }
                             }
                         }
                         if AppState.custom-prompt-input == "" && !prompt-input.has-focus: Text {
@@ -433,6 +429,7 @@ export component CustomPromptDialog {
                             height: parent.height - 20px;
                             enabled: AppState.custom-prompt-format == "json";
                             text <=> AppState.custom-prompt-negative;
+                            input-type: text;
                             single-line: false;
                             wrap: word-wrap;
                             color: AppTheme.text;

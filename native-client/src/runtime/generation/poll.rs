@@ -217,7 +217,6 @@ pub(super) fn poll_generation_stream(
                     restore_stream_inputs(
                         &app,
                         &store,
-                        &raw_prompt,
                         &category,
                         original_references.clone(),
                         original_quote.clone(),
@@ -248,7 +247,6 @@ pub(super) fn poll_generation_stream(
                     restore_stream_inputs(
                         &app,
                         &store,
-                        &raw_prompt,
                         &category,
                         original_references.clone(),
                         original_quote.clone(),
@@ -291,7 +289,6 @@ pub(super) fn poll_generation_stream(
                     restore_stream_inputs(
                         &app,
                         &store,
-                        &raw_prompt,
                         &category,
                         original_references.clone(),
                         original_quote.clone(),

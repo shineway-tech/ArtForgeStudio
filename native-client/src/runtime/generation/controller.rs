@@ -217,7 +217,6 @@ pub(super) fn add_stream_failure_item(
 pub(super) fn restore_stream_inputs(
     app: &AppWindow,
     store: &Rc<RefCell<Store>>,
-    raw_prompt: &str,
     category: &str,
     original_references: Vec<ReferenceData>,
     original_quote: QuoteContext,
@@ -225,19 +224,12 @@ pub(super) fn restore_stream_inputs(
     let state = app.global::<AppState>();
     let mut store_mut = store.borrow_mut();
     if current_workspace_category(app) == category {
-        state.set_prompt(raw_prompt.to_string().into());
         state.set_quote_title(original_quote.title.into());
         state.set_quote_prompt(original_quote.prompt.into());
         state.set_quote_ratio(original_quote.ratio.into());
         state.set_quote_quality(original_quote.quality.into());
         state.set_quote_width(original_quote.width);
         state.set_quote_height(original_quote.height);
-    } else {
-        set_prompt_draft_for_category(
-            &mut store_mut.prompt_drafts,
-            category,
-            raw_prompt.to_string(),
-        );
     }
     *references_for_category_mut(&mut store_mut.references, category) = original_references;
     save_local_store(app, &store_mut);

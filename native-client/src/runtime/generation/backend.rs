@@ -157,7 +157,6 @@ pub(super) fn start_backend_generation(
     sync_generation_state_for_current_category(&context, app);
     navigate_to(app, "generation");
 
-    state.set_prompt("".into());
     state.set_quote_title("".into());
     state.set_quote_prompt("".into());
     state.set_quote_ratio("".into());
