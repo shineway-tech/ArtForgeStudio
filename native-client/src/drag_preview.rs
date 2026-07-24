@@ -330,8 +330,7 @@ mod windows_file_drag {
         let data_object: IDataObject = FileDataObject { path }.into();
         let drop_source: IDropSource = FileDropSource.into();
         let mut effect = DROPEFFECT_NONE;
-        let _ = DoDragDrop(&data_object, &drop_source, DROPEFFECT_COPY, &mut effect);
-        Ok(())
+        DoDragDrop(&data_object, &drop_source, DROPEFFECT_COPY, &mut effect).ok()
     }
 
     fn absolute_display_path(path: PathBuf) -> Result<PathBuf> {

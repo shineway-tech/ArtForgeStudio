@@ -412,6 +412,16 @@ mod tests {
         assert!(handler.contains("ReleaseCapture()"));
         assert!(handler.contains("windows_file_drag::run(path).is_ok()"));
         assert!(!handler.contains("std::thread::spawn"));
+        assert!(drag.contains("DoDragDrop(&data_object, &drop_source, DROPEFFECT_COPY, &mut effect).ok()"));
+    }
+
+    #[test]
+    fn thumbnail_file_drag_is_not_intercepted_by_slint_internal_drag_area() {
+        let thumbnail = include_str!("../../ui/components/thumbnail-card.slint");
+
+        assert!(!thumbnail.contains("DragArea {"));
+        assert!(thumbnail.contains("Math.abs(hover.mouse-x - hover.pressed-x) < 7px"));
+        assert!(thumbnail.contains("AppState.start-thumbnail-file-drag(drag-data)"));
     }
 
     #[test]

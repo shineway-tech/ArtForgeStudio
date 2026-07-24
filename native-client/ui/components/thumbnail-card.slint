@@ -14,13 +14,11 @@ export component ThumbnailCard {
     property <bool> system-drag-preview-started: false;
     width: root.card-width;
     height: root.active ? root.card-width + root.card-gap : 0px;
-    DragArea {
+    Rectangle {
         width: root.card-width;
         height: root.card-width;
         visible: root.item.source-path != "failed";
-        enabled: root.can-drag-preview();
-        mime-type: "application/x-artforge-image-path";
-        data: root.item.source-path;
+        background: transparent;
         Rectangle {
             width: root.card-width;
             height: root.card-width;
@@ -294,7 +292,11 @@ export component ThumbnailCard {
         root.system-drag-preview-started = false;
     }
     function start-system-drag-preview() {
-        if !root.can-drag-preview() || !root.drag-armed || root.system-drag-preview-started {
+        if !root.can-drag-preview()
+            || !root.drag-armed
+            || root.system-drag-preview-started
+            || (Math.abs(hover.mouse-x - hover.pressed-x) < 7px
+                && Math.abs(hover.mouse-y - hover.pressed-y) < 7px) {
             return;
         }
         root.system-drag-preview-started = true;
