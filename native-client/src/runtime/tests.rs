@@ -16,6 +16,34 @@ mod tests {
     }
 
     #[test]
+    fn update_versions_and_download_urls_are_checked_before_prompting() {
+        assert!(compare_versions("1.0.6", "1.0.5").is_gt());
+        assert!(compare_versions("1.0.5", "1.0.5").is_eq());
+        assert!(compare_versions("1.0.4", "1.0.5").is_lt());
+
+        assert!(validated_update_download_url(
+            "https://cdn.honeykid.cn/public/artforge_studio/ArtForgeStudio_macos_aarch64.dmg"
+        )
+        .is_ok());
+        assert!(validated_update_download_url("http://cdn.honeykid.cn/update.dmg").is_err());
+        assert!(validated_update_download_url("not-a-url").is_err());
+    }
+
+    #[test]
+    fn update_prompt_has_optional_and_required_paths() {
+        let dialog = include_str!("../../ui/dialogs/version-check-dialog.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let app = include_str!("../../ui/app.slint");
+
+        assert!(dialog.contains("AppState.update-required"));
+        assert!(dialog.contains("\"稍后再说\""));
+        assert!(dialog.contains("\"下载更新\""));
+        assert!(dialog.contains("\"离线使用\""));
+        assert!(state.contains("in-out property <string> update-download-url"));
+        assert!(!app.contains("UpdateProgressDialog"));
+    }
+
+    #[test]
     fn generation_api_preserves_exact_aspect_ratios() {
         for ratio in [
             "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "2:1",
@@ -1622,7 +1650,7 @@ mod tests {
         let auth = include_str!("../../ui/dialogs/auth-dialog.slint");
         let agreement_update = include_str!("../../ui/dialogs/agreement-update-dialog.slint");
         let agreement_viewer = include_str!("../../ui/dialogs/agreement-viewer-dialog.slint");
-        let update_progress = include_str!("../../ui/dialogs/update-progress-dialog.slint");
+        let update_prompt = include_str!("../../ui/dialogs/version-check-dialog.slint");
         let models = include_str!("../../ui/pages/models-page.slint");
         let notifications = include_str!("../../ui/pages/notifications-page.slint");
         let settings = include_str!("../../ui/pages/settings-page.slint");
@@ -1637,7 +1665,8 @@ mod tests {
         assert!(agreement_update.contains("height: min(380px, root.height - 40px);"));
         assert!(agreement_viewer.contains("width: min(860px, root.width - 32px);"));
         assert!(agreement_viewer.contains("height: parent.height - 120px;"));
-        assert!(update_progress.contains("height: 42px;"));
+        assert!(update_prompt.contains("width: min(520px, root.width - 32px);"));
+        assert!(update_prompt.contains("min(360px, root.height - 40px)"));
 
         assert!(!models.contains("ScrollView"));
         assert!(settings.contains("function models-height() -> length"));

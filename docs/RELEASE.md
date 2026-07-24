@@ -48,6 +48,7 @@ Windows PowerShell：
 - macOS 导入 Developer ID Application 证书，签名应用，提交公证并 staple DMG。
 - 四个制品上传为 GitHub Actions artifacts。
 - 四个制品同时上传到 OSS 的版本路径和稳定路径。
+- 所有平台制品上传成功后，生成并发布固定地址的 `update-manifest.json`，客户端据此在启动时提示新版本。
 
 普通 `master` push、目标为 `master` 的 Pull Request 和手动验证由 `.github/workflows/ci.yml` 处理，只执行三平台 check/test，不发布制品。
 
@@ -70,6 +71,15 @@ Windows portable ZIP 包含 `ArtForgeStudio.exe`、随包素材和初始 `data` 
 ```
 
 稳定文件名会移除文件名中的版本号，供固定下载入口使用。
+
+更新清单同时发布到版本路径和稳定路径：
+
+```text
+<prefix>/<version>/update-manifest.json
+<prefix>/update-manifest.json
+```
+
+客户端启动和手动检查版本时读取稳定路径。普通更新可以稍后处理；服务端返回最低版本限制时，客户端会显示不可关闭的更新提示，并保留已登录设备的离线入口。
 
 ## Required secrets
 

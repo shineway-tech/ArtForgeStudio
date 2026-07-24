@@ -22,6 +22,7 @@ pub(super) fn run() -> Result<()> {
     push_all(&app, &store.borrow());
 
     wire_callbacks(&app, context.clone());
+    begin_update_check(&app, false);
     initialize_auth(&app, context.clone());
     app.run()?;
     store_current_prompt_draft(
@@ -241,70 +242,18 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         state.on_check_version(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let state = app.global::<AppState>();
-            if state.get_update_checking() {
-                return;
+            if let Some(app) = app_weak.upgrade() {
+                begin_update_check(&app, true);
             }
-            state.set_update_checking(true);
-            state.set_update_result_open(false);
-            let app_weak = app.as_weak();
-            slint::Timer::single_shot(Duration::from_millis(700), move || {
-                let Some(app) = app_weak.upgrade() else {
-                    return;
-                };
-                let has_update = refresh_update_state(&app);
-                let state = app.global::<AppState>();
-                state.set_update_checking(false);
-                if has_update {
-                    state.set_update_message(
-                        format!("发现新版本 {}，可点击更新。", state.get_latest_version()).into(),
-                    );
-                } else {
-                    state.set_update_message("当前已经是最新版本".into());
-                }
-                state.set_update_result_open(true);
-            });
         });
     }
 
     {
         let app_weak = app.as_weak();
         state.on_start_update(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let state = app.global::<AppState>();
-            if !state.get_update_available() {
-                state.set_update_message("当前没有可更新的版本".into());
-                state.set_update_result_open(true);
-                return;
+            if let Some(app) = app_weak.upgrade() {
+                open_update_download(&app);
             }
-            state.set_update_progress(0);
-            state.set_update_ready(false);
-            state.set_update_progress_open(true);
-            advance_update_progress(app.as_weak());
-        });
-    }
-
-    {
-        let app_weak = app.as_weak();
-        state.on_restart_after_update(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let state = app.global::<AppState>();
-            if !state.get_update_ready() {
-                return;
-            }
-            if relaunch_current_exe().is_ok() {
-                std::process::exit(0);
-            }
-            state.set_update_progress_open(false);
-            state.set_update_message("重启失败，请手动重新打开客户端。".into());
-            state.set_update_result_open(true);
         });
     }
 
