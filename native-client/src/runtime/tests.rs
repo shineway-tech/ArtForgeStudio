@@ -518,6 +518,28 @@ mod tests {
     }
 
     #[test]
+    fn studio_generation_settings_use_three_compact_dropdowns_and_a_taller_prompt() {
+        let chooser = include_str!("../../ui/components/inline-card-chooser.slint");
+        let panel = include_str!("../../ui/components/studio-work-panel.slint");
+        let prompt = include_str!("../../ui/components/prompt-composer.slint");
+
+        assert_eq!(chooser.matches("\n        CompactSelectButton {").count(), 3);
+        assert!(chooser.contains("ratio-popup := PopupWindow"));
+        assert!(chooser.contains("quality-popup := PopupWindow"));
+        assert!(chooser.contains("count-popup := PopupWindow"));
+        assert!(chooser.contains("\"比例 · \""));
+        assert!(chooser.contains("\"清晰度 · \""));
+        assert!(chooser.contains("\"张数 · \""));
+        assert!(chooser.contains("disabled: AppState.asset-type == \"action-sequence\""));
+        assert!(chooser.contains("AppState.membership-max-quality == \"1K\""));
+        assert!(chooser.contains("AppState.membership-max-quality != \"4K\""));
+        assert!(panel.contains("InlineCardChooser {"));
+        assert!(!panel.contains("viewport-height: AppState.ratio-more-open"));
+        assert!(panel.contains("parent.height - 254px"));
+        assert!(prompt.contains("? 570px : 520px"));
+    }
+
+    #[test]
     fn auth_dialog_can_be_closed_without_changing_auth_state_contract() {
         let auth = include_str!("../../ui/dialogs/auth-dialog.slint");
         assert!(auth.contains("import { DialogCloseButton }"));

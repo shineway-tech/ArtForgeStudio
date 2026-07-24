@@ -1,4 +1,3 @@
-import { ScrollView } from "std-widgets.slint";
 import { AppState } from "../app-state.slint";
 import { GenerateActionButton } from "generate-action-button.slint";
 import { InlineCardChooser } from "inline-card-chooser.slint";
@@ -51,20 +50,18 @@ export component StudioWorkPanel {
             x: 22px;
             y: 66px;
             width: parent.width - 44px;
+            height: min(
+                AppState.references.length > 0 || AppState.quote-title != "" ? 570px : 520px,
+                parent.height - 254px,
+            );
             generation: root.generation;
             show-generate-button: false;
         }
-        ScrollView {
+        InlineCardChooser {
             x: 22px;
             y: composer.y + composer.height + 14px;
             width: parent.width - 44px;
-            height: max(80px, parent.height - (composer.y + composer.height + 132px));
-            viewport-width: parent.width - 44px;
-            viewport-height: AppState.ratio-more-open ? 344px : 244px;
-            InlineCardChooser {
-                width: parent.viewport-width;
-                height: AppState.ratio-more-open ? 344px : 244px;
-            }
+            height: 42px;
         }
         GenerateActionButton {
             x: 22px;

@@ -1,87 +1,243 @@
 import { AppState } from "../app-state.slint";
-import { InlineChoiceCard } from "inline-choice-card.slint";
-import { InlineToggleCard } from "inline-toggle-card.slint";
+import { DropdownIcon } from "dropdown-icon.slint";
 import { AppTheme } from "../theme.slint";
 
-export component InlineCardChooser {
-    height: root.content-height();
+component CompactSelectButton {
+    in property <string> text;
+    in property <bool> disabled: false;
+    callback clicked();
+    height: 42px;
+    horizontal-stretch: 1;
+
     Rectangle {
-        background: transparent;
-        Text { x: 0px; y: 0px; width: parent.width; height: 18px; text: AppState.en ? "Canvas" : "画布"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
-        if !AppState.ratio-more-open: GridLayout {
-            x: 0px;
-            y: 20px;
-            spacing: 8px;
-            Row {
-                InlineChoiceCard { group: "ratio"; value: "1:1"; label: "1:1"; }
-                InlineChoiceCard { group: "ratio"; value: "3:2"; label: "3:2"; }
-                InlineChoiceCard { group: "ratio"; value: "2:3"; label: "2:3"; }
-                InlineChoiceCard { group: "ratio"; value: "4:3"; label: "4:3"; }
-                InlineToggleCard { label: AppState.en ? "More" : "更多"; clicked => { AppState.ratio-more-open = true; } }
-            }
-        }
-        if AppState.ratio-more-open: GridLayout {
-            x: 0px;
-            y: 20px;
-            spacing: 8px;
-            Row {
-                InlineChoiceCard { group: "ratio"; value: "1:1"; label: "1:1"; }
-                InlineChoiceCard { group: "ratio"; value: "3:2"; label: "3:2"; }
-                InlineChoiceCard { group: "ratio"; value: "2:3"; label: "2:3"; }
-                InlineChoiceCard { group: "ratio"; value: "4:3"; label: "4:3"; }
-                InlineChoiceCard { group: "ratio"; value: "3:4"; label: "3:4"; }
-                InlineChoiceCard { group: "ratio"; value: "5:4"; label: "5:4"; }
-            }
-            Row {
-                InlineChoiceCard { group: "ratio"; value: "4:5"; label: "4:5"; }
-                InlineChoiceCard { group: "ratio"; value: "16:9"; label: "16:9"; }
-                InlineChoiceCard { group: "ratio"; value: "9:16"; label: "9:16"; }
-                InlineChoiceCard { group: "ratio"; value: "2:1"; label: "2:1"; }
-                InlineChoiceCard { group: "ratio"; value: "1:2"; label: "1:2"; }
-                InlineChoiceCard { group: "ratio"; value: "21:9"; label: "21:9"; }
-            }
-            Row {
-                InlineChoiceCard { group: "ratio"; value: "9:21"; label: "9:21"; }
-                InlineToggleCard { label: AppState.en ? "Close" : "收起"; clicked => { AppState.ratio-more-open = false; } }
-            }
-        }
+        opacity: root.disabled ? 0.45 : 1;
+        background: selector-touch.has-hover && !root.disabled ? AppTheme.panel-soft : AppTheme.panel;
+        border-radius: 18px;
+        border-width: 1px;
+        border-color: selector-touch.has-hover && !root.disabled ? AppTheme.accent : AppTheme.border;
 
-        Text { x: 0px; y: root.quality-y(); width: parent.width; height: 18px; text: AppState.en ? "Resolution" : "清晰度"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
-        GridLayout {
-            x: 0px;
-            y: root.quality-y() + 20px;
-            spacing: 8px;
-            Row {
-                InlineChoiceCard { group: "quality"; value: "1K"; label: "1K"; }
-                InlineChoiceCard { group: "quality"; value: "2K"; label: "2K"; disabled: AppState.membership-max-quality == "1K"; }
-                InlineChoiceCard { group: "quality"; value: "4K"; label: "4K"; disabled: AppState.membership-max-quality != "4K"; }
+        Text {
+            x: 14px;
+            width: parent.width - 42px;
+            height: parent.height;
+            text: root.text;
+            color: AppTheme.text;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 400;
+            vertical-alignment: center;
+            wrap: no-wrap;
+            overflow: elide;
+        }
+        DropdownIcon {
+            x: parent.width - 26px;
+            y: (parent.height - 12px) / 2;
+        }
+        selector-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: root.disabled ? default : pointer;
+            clicked => {
+                if !root.disabled {
+                    root.clicked();
+                }
             }
         }
+    }
+}
 
-        if AppState.asset-type != "action-sequence": Text { x: 0px; y: root.count-y(); width: parent.width; height: 18px; text: AppState.en ? "Count" : "张数"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
-        if AppState.asset-type != "action-sequence": GridLayout {
-            x: 0px;
-            y: root.count-y() + 20px;
-            spacing: 8px;
-            Row {
-                InlineChoiceCard { group: "count"; value: "1"; label: AppState.en ? "1 img" : "1张"; }
-                InlineChoiceCard { group: "count"; value: "2"; label: AppState.en ? "2 imgs" : "2张"; }
-                InlineChoiceCard { group: "count"; value: "4"; label: AppState.en ? "4 imgs" : "4张"; }
+component CompactSelectOption {
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> disabled: false;
+    callback clicked();
+    height: 32px;
+
+    Rectangle {
+        opacity: root.disabled ? 0.4 : 1;
+        background: root.active ? AppTheme.accent : (option-touch.has-hover && !root.disabled ? AppTheme.panel-soft : transparent);
+        border-radius: 6px;
+
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.text;
+            color: root.active ? #ffffff : AppTheme.text;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: root.active ? 500 : 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: no-wrap;
+            overflow: elide;
+        }
+        option-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: root.disabled ? default : pointer;
+            clicked => {
+                if !root.disabled {
+                    root.clicked();
+                }
+            }
+        }
+    }
+}
+
+export component InlineCardChooser {
+    height: 42px;
+
+    HorizontalLayout {
+        spacing: 8px;
+
+        CompactSelectButton {
+            text: (AppState.en ? "Ratio · " : "比例 · ") + AppState.ratio;
+            clicked => {
+                quality-popup.close();
+                count-popup.close();
+                ratio-popup.show();
+            }
+        }
+        CompactSelectButton {
+            text: (AppState.en ? "Quality · " : "清晰度 · ") + AppState.quality;
+            clicked => {
+                ratio-popup.close();
+                count-popup.close();
+                quality-popup.show();
+            }
+        }
+        CompactSelectButton {
+            text: AppState.en
+                ? "Count · " + AppState.count
+                : "张数 · " + AppState.count + "张";
+            disabled: AppState.asset-type == "action-sequence";
+            clicked => {
+                ratio-popup.close();
+                quality-popup.close();
+                count-popup.show();
             }
         }
     }
 
-    function ratio-rows-height() -> length {
-        return AppState.ratio-more-open ? 142px : 42px;
+    ratio-popup := PopupWindow {
+        x: 0px;
+        y: 48px;
+        width: root.width;
+        height: 164px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: AppTheme.panel;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+
+            GridLayout {
+                x: 8px;
+                y: 8px;
+                width: parent.width - 16px;
+                height: parent.height - 16px;
+                spacing: 4px;
+
+                Row {
+                    CompactSelectOption { text: "1:1"; active: AppState.ratio == "1:1"; clicked => { AppState.ratio = "1:1"; ratio-popup.close(); } }
+                    CompactSelectOption { text: "3:2"; active: AppState.ratio == "3:2"; clicked => { AppState.ratio = "3:2"; ratio-popup.close(); } }
+                    CompactSelectOption { text: "2:3"; active: AppState.ratio == "2:3"; clicked => { AppState.ratio = "2:3"; ratio-popup.close(); } }
+                    CompactSelectOption { text: "4:3"; active: AppState.ratio == "4:3"; clicked => { AppState.ratio = "4:3"; ratio-popup.close(); } }
+                }
+                Row {
+                    CompactSelectOption { text: "3:4"; active: AppState.ratio == "3:4"; clicked => { AppState.ratio = "3:4"; ratio-popup.close(); } }
+                    CompactSelectOption { text: "5:4"; active: AppState.ratio == "5:4"; clicked => { AppState.ratio = "5:4"; ratio-popup.close(); } }
+                    CompactSelectOption { text: "4:5"; active: AppState.ratio == "4:5"; clicked => { AppState.ratio = "4:5"; ratio-popup.close(); } }
+                    CompactSelectOption { text: "16:9"; active: AppState.ratio == "16:9"; clicked => { AppState.ratio = "16:9"; ratio-popup.close(); } }
+                }
+                Row {
+                    CompactSelectOption { text: "9:16"; active: AppState.ratio == "9:16"; clicked => { AppState.ratio = "9:16"; ratio-popup.close(); } }
+                    CompactSelectOption { text: "2:1"; active: AppState.ratio == "2:1"; clicked => { AppState.ratio = "2:1"; ratio-popup.close(); } }
+                    CompactSelectOption { text: "1:2"; active: AppState.ratio == "1:2"; clicked => { AppState.ratio = "1:2"; ratio-popup.close(); } }
+                    CompactSelectOption { text: "21:9"; active: AppState.ratio == "21:9"; clicked => { AppState.ratio = "21:9"; ratio-popup.close(); } }
+                }
+                Row {
+                    CompactSelectOption { text: "9:21"; active: AppState.ratio == "9:21"; clicked => { AppState.ratio = "9:21"; ratio-popup.close(); } }
+                    Rectangle { background: transparent; }
+                    Rectangle { background: transparent; }
+                    Rectangle { background: transparent; }
+                }
+            }
+        }
     }
-    function quality-y() -> length {
-        return 20px + root.ratio-rows-height() + 22px;
+
+    quality-popup := PopupWindow {
+        x: root.button-width() + 8px;
+        y: 48px;
+        width: root.button-width();
+        height: 116px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: AppTheme.panel;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+
+            VerticalLayout {
+                padding: 8px;
+                spacing: 2px;
+                CompactSelectOption {
+                    text: "1K";
+                    active: AppState.quality == "1K";
+                    clicked => { AppState.quality = "1K"; quality-popup.close(); }
+                }
+                CompactSelectOption {
+                    text: "2K";
+                    active: AppState.quality == "2K";
+                    disabled: AppState.membership-max-quality == "1K";
+                    clicked => { AppState.quality = "2K"; quality-popup.close(); }
+                }
+                CompactSelectOption {
+                    text: "4K";
+                    active: AppState.quality == "4K";
+                    disabled: AppState.membership-max-quality != "4K";
+                    clicked => { AppState.quality = "4K"; quality-popup.close(); }
+                }
+            }
+        }
     }
-    function count-y() -> length {
-        return root.quality-y() + 84px;
+
+    count-popup := PopupWindow {
+        x: (root.button-width() + 8px) * 2;
+        y: 48px;
+        width: root.button-width();
+        height: 116px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: AppTheme.panel;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+
+            VerticalLayout {
+                padding: 8px;
+                spacing: 2px;
+                CompactSelectOption {
+                    text: AppState.en ? "1 img" : "1张";
+                    active: AppState.count == 1;
+                    clicked => { AppState.count = 1; count-popup.close(); }
+                }
+                CompactSelectOption {
+                    text: AppState.en ? "2 imgs" : "2张";
+                    active: AppState.count == 2;
+                    clicked => { AppState.count = 2; count-popup.close(); }
+                }
+                CompactSelectOption {
+                    text: AppState.en ? "4 imgs" : "4张";
+                    active: AppState.count == 4;
+                    clicked => { AppState.count = 4; count-popup.close(); }
+                }
+            }
+        }
     }
-    function content-height() -> length {
-        if AppState.asset-type == "action-sequence" { return root.quality-y() + 64px; }
-        return root.count-y() + 64px;
+
+    function button-width() -> length {
+        return (root.width - 16px) / 3;
     }
 }

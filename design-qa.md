@@ -67,4 +67,15 @@
 4. 本轮第二遍对比确认 AI 优化与生图左右分布、7 项工具栏、移动画布默认状态和质量选择层级均符合基准意图。
 5. 最终对比未发现 P0、P1、P2 级问题；来源截图与实现截图的桌面密度差异，以及复用既有图标造成的细微造型差异归为 P3。
 
+## 工作台参数下拉与输入区增高
+
+- 视觉基准：`C:\Users\deyx1\AppData\Local\Temp\codex-clipboard-7612a0d3-0591-4054-a241-8f53ac40e5c1.png`
+- 实现截图：`C:\Users\deyx1\AppData\Local\Temp\artforge-selector-implementation.png`
+- 同屏对比：`C:\Users\deyx1\AppData\Local\Temp\artforge-selector-comparison.png`
+- 比例、清晰度、张数已收敛为三个等宽横排按钮，各自点击后打开独立下拉弹窗。
+- 比例保留 13 个既有选项；清晰度继续遵守 1K、2K、4K 会员权限；动作序列保留第三个张数按钮但禁用。
+- 提示词输入容器在常规窗口增加 90px；最小窗口和参考图状态使用自适应高度上限，不与生成按钮重叠。
+- 视觉检查覆盖 2164 × 1397 窗口，按钮间距、文本省略、主题色和输入区纵向节奏均符合现有组件体系。
+- 编译和针对性回归测试通过，未发现 P0、P1、P2、P3 级视觉问题。
+
 final result: passed
