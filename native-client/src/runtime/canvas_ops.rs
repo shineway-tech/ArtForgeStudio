@@ -382,10 +382,24 @@ pub(super) fn fit_groups_to_children(notes: &mut [CanvasNoteData]) -> bool {
     changed
 }
 
+pub(super) fn next_group_name(notes: &[CanvasNoteData], english: bool) -> String {
+    let prefix = if english { "Group " } else { "分组" };
+    let used = notes
+        .iter()
+        .filter(|note| note.kind == "group")
+        .filter_map(|note| note.content.strip_prefix(prefix))
+        .filter_map(|suffix| suffix.parse::<usize>().ok())
+        .filter(|index| *index > 0)
+        .collect::<BTreeSet<_>>();
+    let index = (1..).find(|index| !used.contains(index)).unwrap_or(1);
+    format!("{prefix}{index}")
+}
+
 pub(super) fn group_selection(notes: &mut Vec<CanvasNoteData>, english: bool) -> Option<String> {
     let ids = expanded_selection_ids(notes);
     let bounds = selection_bounds(notes, &ids)?;
     let id = Uuid::new_v4().to_string();
+    let content = next_group_name(notes, english);
     let parent_group_id = notes
         .iter()
         .find(|note| ids.contains(&note.id))
@@ -400,7 +414,7 @@ pub(super) fn group_selection(notes: &mut Vec<CanvasNoteData>, english: bool) ->
     notes.push(CanvasNoteData {
         id: id.clone(),
         kind: "group".into(),
-        content: if english { "Group" } else { "分组" }.into(),
+        content,
         x: bounds.x - GROUP_PADDING,
         y: bounds.y - GROUP_TOP_PADDING,
         width: bounds.width + GROUP_PADDING * 2.0,
@@ -694,6 +708,28 @@ mod tests {
             group.height,
             200.0 + GROUP_TOP_PADDING + GROUP_PADDING
         );
+        assert_eq!(group.content, "Group 1");
+    }
+
+    #[test]
+    fn canvas_group_names_use_the_next_available_number() {
+        let notes = vec![
+            CanvasNoteData {
+                content: "分组1".into(),
+                ..note("group-1", "group", 0.0, 0.0)
+            },
+            CanvasNoteData {
+                content: "分组3".into(),
+                ..note("group-3", "group", 0.0, 0.0)
+            },
+            CanvasNoteData {
+                content: "自定义名称".into(),
+                ..note("custom", "group", 0.0, 0.0)
+            },
+        ];
+
+        assert_eq!(next_group_name(&notes, false), "分组2");
+        assert_eq!(next_group_name(&notes, true), "Group 1");
     }
 
     #[test]

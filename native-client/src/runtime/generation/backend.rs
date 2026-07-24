@@ -154,7 +154,7 @@ pub(super) fn start_backend_generation(
         eta: 0,
         latest_success_id: None,
     });
-    set_generation_status_for_category(&context, app, &category, "正在上传参考图...");
+    set_generation_status_for_category(&context, app, &category, "正在优化并上传参考图...");
     sync_generation_state_for_current_category(&context, app);
     navigate_to(app, "generation");
 

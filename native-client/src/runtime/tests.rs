@@ -1124,8 +1124,14 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(!move_handler.contains("assign_deepest_group"));
         assert!(ops.contains("pub(super) const GROUP_TOP_PADDING: f32 = 72.0"));
         assert!(ops.contains("y: bounds.y - GROUP_TOP_PADDING"));
+        assert!(callbacks.contains("next_group_name(&store_mut.canvas_notes"));
+        assert!(group_header.contains("x: 0px;"));
+        assert!(group_header.contains("y: 0px;"));
+        assert!(group_header.contains("width: parent.width;"));
         assert!(group_header.contains("text: root.current-content"));
         assert!(group_header.contains("text <=> root.current-content"));
+        assert!(group_header.contains("x: parent.width - 64px * root.node-scale()"));
+        assert!(group_header.contains("x: parent.width - 32px * root.node-scale()"));
         assert!(!group_header.contains("text: root.node-title()"));
     }
 
@@ -1994,6 +2000,29 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(callbacks.contains("state.on_start_viewer_file_drag"));
         assert!(callbacks.contains("viewer_item(&store.borrow(), &id, &source)"));
         assert!(callbacks.contains("drag_preview::start_thumbnail_file_drag"));
+    }
+
+    #[test]
+    fn viewer_remove_black_matches_the_unmult_reference_algorithm() {
+        let mut pixels = vec![
+            0, 0, 0, 255, 64, 32, 16, 255, 128, 128, 128, 128, 255, 255, 255, 255,
+        ];
+
+        remove_black_pixels(&mut pixels);
+
+        assert_eq!(&pixels[0..4], &[0, 0, 0, 0]);
+        assert_eq!(&pixels[4..8], &[255, 128, 64, 63]);
+        assert_eq!(&pixels[8..12], &[255, 255, 255, 64]);
+        assert_eq!(&pixels[12..16], &[255, 255, 255, 254]);
+    }
+
+    #[test]
+    fn viewer_remove_black_preserves_hue_ratios_and_existing_transparency() {
+        let mut pixel = vec![50, 100, 200, 64];
+
+        remove_black_pixels(&mut pixel);
+
+        assert_eq!(pixel, vec![64, 128, 255, 50]);
     }
 
     #[test]

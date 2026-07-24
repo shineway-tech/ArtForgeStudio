@@ -485,16 +485,37 @@ pub(super) fn enqueue_background_pixel(
 }
 
 pub(super) fn remove_black_pixels(rgba: &mut [u8]) {
+    let lut = unmult_lut();
     for pixel in rgba.chunks_exact_mut(4) {
-        let luma =
-            (54u32 * pixel[0] as u32 + 183u32 * pixel[1] as u32 + 19u32 * pixel[2] as u32) / 256;
-        if luma <= 34 {
-            pixel[3] = 0;
-        } else if luma < 84 {
-            let scale = (luma - 34) as f32 / 50.0;
-            pixel[3] = (pixel[3] as f32 * scale) as u8;
+        let red = pixel[0];
+        let green = pixel[1];
+        let blue = pixel[2];
+        let original_alpha = pixel[3];
+        let alpha = red.max(green).max(blue);
+        if alpha == 0 {
+            pixel.copy_from_slice(&[0, 0, 0, 0]);
+            continue;
         }
+        let base = alpha as usize * 256;
+        pixel[0] = lut[base + red as usize];
+        pixel[1] = lut[base + green as usize];
+        pixel[2] = lut[base + blue as usize];
+        pixel[3] = ((original_alpha as u16 * alpha as u16) >> 8) as u8;
     }
+}
+
+fn unmult_lut() -> &'static [u8] {
+    static LUT: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    LUT.get_or_init(|| {
+        let mut values = vec![0u8; 256 * 256];
+        for alpha in 1usize..256 {
+            let base = alpha * 256;
+            for color in 0usize..256 {
+                values[base + color] = ((color * 256) / alpha).min(255) as u8;
+            }
+        }
+        values
+    })
 }
 
 pub(super) fn pixel_index(width: u32, x: u32, y: u32) -> usize {

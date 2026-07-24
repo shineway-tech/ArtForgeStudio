@@ -2,7 +2,7 @@ use super::*;
 use crate::platform::{self, ExternalImageDrop};
 use std::io::Read;
 
-const MAX_DROPPED_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
+const MAX_DROPPED_IMAGE_BYTES: u64 = 100 * 1024 * 1024;
 
 pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>>) {
     let state = app.global::<AppState>();
@@ -283,7 +283,7 @@ fn download_external_reference(url: &str) -> std::result::Result<PathBuf, String
         .error_for_status()
         .map_err(|_| "网页图片地址不可访问".to_string())?;
     if response.content_length().unwrap_or(0) > MAX_DROPPED_IMAGE_BYTES {
-        return Err("拖入的图片超过 25 MB 限制".to_string());
+        return Err("拖入的图片超过 100 MB 安全限制".to_string());
     }
     let mut bytes = Vec::new();
     response
@@ -291,7 +291,7 @@ fn download_external_reference(url: &str) -> std::result::Result<PathBuf, String
         .read_to_end(&mut bytes)
         .map_err(|_| "读取网页图片失败".to_string())?;
     if bytes.len() as u64 > MAX_DROPPED_IMAGE_BYTES {
-        return Err("拖入的图片超过 25 MB 限制".to_string());
+        return Err("拖入的图片超过 100 MB 安全限制".to_string());
     }
     let format = image::guess_format(&bytes).map_err(|_| "拖入的网址不是有效图片".to_string())?;
     image::load_from_memory(&bytes).map_err(|_| "拖入的网址不是受支持的图片".to_string())?;

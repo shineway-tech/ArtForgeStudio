@@ -942,6 +942,9 @@ component CanvasNodeCard {
 
         header := Rectangle {
             visible: root.note.kind == "group" && root.zoom-percent >= 30;
+            x: 0px;
+            y: 0px;
+            width: parent.width;
             height: root.note.kind == "group" ? 36px * root.node-scale() : 0px;
             background: transparent;
             border-radius: 0px;

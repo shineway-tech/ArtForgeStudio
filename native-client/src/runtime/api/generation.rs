@@ -163,6 +163,11 @@ impl GenerationApi {
     }
 
     pub(crate) fn upload_reference(&self, path: &Path) -> Result<String, ApiError> {
+        let prepared =
+            super::super::prepare_reference_for_upload(path).map_err(|_| ApiError::LocalState {
+                message: "无法在本地处理参考图，请更换图片后重试".to_string(),
+            })?;
+        let path = prepared.path();
         let bytes = fs::read(path).map_err(|error| ApiError::LocalState {
             message: format!("无法读取参考图：{error}"),
         })?;

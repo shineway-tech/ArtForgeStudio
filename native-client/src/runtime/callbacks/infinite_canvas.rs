@@ -282,8 +282,14 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
                 "image" | "group" => kind.to_string(),
                 _ => "text".to_string(),
             };
-            let (content, width, height) =
+            let (mut content, width, height) =
                 canvas_node_defaults(&node_kind, state.get_language().as_str() == "en");
+            if node_kind == "group" {
+                content = next_group_name(
+                    &store_mut.canvas_notes,
+                    state.get_language().as_str() == "en",
+                );
+            }
             let id = Uuid::new_v4().to_string();
             history.borrow_mut().record(canvas_snapshot(&store_mut));
             clear_selection(&mut store_mut.canvas_notes);
@@ -670,7 +676,8 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             let id = if let Some(id) = group_selection(&mut store_mut.canvas_notes, english) {
                 id
             } else {
-                let (content, width, height) = canvas_node_defaults("group", english);
+                let (_, width, height) = canvas_node_defaults("group", english);
+                let content = next_group_name(&store_mut.canvas_notes, english);
                 clear_selection(&mut store_mut.canvas_notes);
                 let id = Uuid::new_v4().to_string();
                 store_mut.canvas_notes.push(CanvasNoteData {
