@@ -13,6 +13,10 @@ import { AppTheme } from "../theme.slint";
 export component PromptComposer {
     in property <bool> generation: false;
     in property <bool> show-generate-button: true;
+    property <int> prompt-history-selected-index: 0;
+    property <int> custom-prompt-selected-index: 0;
+    property <length> prompt-history-scroll-y: 0px;
+    property <length> custom-prompt-scroll-y: 0px;
     height: AppState.references.length > 0 || AppState.quote-title != "" ? 480px : 430px;
 
     function apply-selected-prompt(value: string) {
@@ -131,10 +135,64 @@ export component PromptComposer {
                         prompt-input.set-selection-offsets(2, 2);
                         AppState.prompt-history-open = false;
                         history-popup.close();
+                        root.custom-prompt-selected-index = 0;
+                        root.custom-prompt-scroll-y = 0px;
                         AppState.custom-prompt-open = true;
                         custom-prompt-popup.show();
                         prompt-input.focus();
                         return accept;
+                    }
+                    if AppState.prompt-history-open && AppState.prompt-history.length > 0 {
+                        if event.text == Key.DownArrow {
+                            root.prompt-history-selected-index = min(
+                                AppState.prompt-history.length - 1,
+                                root.prompt-history-selected-index + 1,
+                            );
+                            root.scroll-prompt-history-selection-into-view();
+                            return accept;
+                        }
+                        if event.text == Key.UpArrow {
+                            root.prompt-history-selected-index = max(0, root.prompt-history-selected-index - 1);
+                            root.scroll-prompt-history-selection-into-view();
+                            return accept;
+                        }
+                        if event.text == Key.Return && !event.modifiers.alt {
+                            root.apply-selected-prompt(
+                                AppState.prompt-history[root.prompt-history-selected-index],
+                            );
+                            return accept;
+                        }
+                        if event.text == Key.Escape {
+                            AppState.prompt-history-open = false;
+                            history-popup.close();
+                            return accept;
+                        }
+                    }
+                    if AppState.custom-prompt-open && AppState.custom-prompts.length > 0 {
+                        if event.text == Key.DownArrow {
+                            root.custom-prompt-selected-index = min(
+                                AppState.custom-prompts.length - 1,
+                                root.custom-prompt-selected-index + 1,
+                            );
+                            root.scroll-custom-prompt-selection-into-view();
+                            return accept;
+                        }
+                        if event.text == Key.UpArrow {
+                            root.custom-prompt-selected-index = max(0, root.custom-prompt-selected-index - 1);
+                            root.scroll-custom-prompt-selection-into-view();
+                            return accept;
+                        }
+                        if event.text == Key.Return && !event.modifiers.alt {
+                            root.apply-selected-prompt(
+                                AppState.custom-prompts[root.custom-prompt-selected-index],
+                            );
+                            return accept;
+                        }
+                        if event.text == Key.Escape {
+                            AppState.custom-prompt-open = false;
+                            custom-prompt-popup.close();
+                            return accept;
+                        }
                     }
                     if event.text == Key.Return {
                         if event.modifiers.alt {
@@ -146,6 +204,8 @@ export component PromptComposer {
                         return accept;
                     }
                     if event.text == "/" && AppState.prompt == "" && AppState.prompt-history.length > 0 {
+                        root.prompt-history-selected-index = 0;
+                        root.prompt-history-scroll-y = 0px;
                         AppState.prompt-history-open = true;
                         history-popup.show();
                         prompt-input.focus();
@@ -255,7 +315,8 @@ export component PromptComposer {
             border-radius: 8px;
             border-width: 1px;
             border-color: AppTheme.border;
-            ScrollView {
+            history-scroll := ScrollView {
+                viewport-y <=> root.prompt-history-scroll-y;
                 x: 8px;
                 y: 8px;
                 width: parent.width - 16px;
@@ -267,14 +328,16 @@ export component PromptComposer {
                     height: AppState.prompt-history.length * 32px;
                     for preview[index] in AppState.prompt-history-previews: Rectangle {
                         height: 32px;
-                        background: history-row.has-hover ? AppTheme.panel-soft : transparent;
+                        background: history-row.has-hover || index == root.prompt-history-selected-index
+                            ? AppTheme.panel-soft
+                            : transparent;
                         border-radius: 6px;
                         Text {
                             x: 10px;
                             width: parent.width - 20px;
                             height: parent.height;
                             text: preview;
-                            color: AppTheme.text;
+                            color: index == root.prompt-history-selected-index ? AppTheme.accent : AppTheme.text;
                             font-size: AppState.settings-font-size * 1px;
                             font-weight: 400;
                             horizontal-alignment: left;
@@ -339,7 +402,9 @@ export component PromptComposer {
                     }
                 }
             }
-            if AppState.custom-prompts.length > 0: ScrollView {
+            custom-prompt-scroll := ScrollView {
+                visible: AppState.custom-prompts.length > 0;
+                viewport-y <=> root.custom-prompt-scroll-y;
                 x: 8px;
                 y: 8px;
                 width: parent.width - 16px;
@@ -351,14 +416,16 @@ export component PromptComposer {
                     height: parent.viewport-height;
                     for preview[index] in AppState.custom-prompt-previews: Rectangle {
                         height: 32px;
-                        background: custom-row.has-hover ? AppTheme.panel-soft : transparent;
+                        background: custom-row.has-hover || index == root.custom-prompt-selected-index
+                            ? AppTheme.panel-soft
+                            : transparent;
                         border-radius: 6px;
                         Text {
                             x: 10px;
                             width: parent.width - 20px;
                             height: parent.height;
                             text: preview;
-                            color: AppTheme.text;
+                            color: index == root.custom-prompt-selected-index ? AppTheme.accent : AppTheme.text;
                             font-size: AppState.settings-font-size * 1px;
                             horizontal-alignment: left;
                             vertical-alignment: center;
@@ -376,6 +443,28 @@ export component PromptComposer {
                     }
                 }
             }
+        }
+    }
+
+    function scroll-prompt-history-selection-into-view() {
+        let selected-top = root.prompt-history-selected-index * 32px;
+        let selected-bottom = selected-top + 32px;
+        let visible-height = min(10, AppState.prompt-history.length) * 32px;
+        if selected-top + root.prompt-history-scroll-y < 0px {
+            root.prompt-history-scroll-y = -selected-top;
+        } else if selected-bottom + root.prompt-history-scroll-y > visible-height {
+            root.prompt-history-scroll-y = visible-height - selected-bottom;
+        }
+    }
+
+    function scroll-custom-prompt-selection-into-view() {
+        let selected-top = root.custom-prompt-selected-index * 32px;
+        let selected-bottom = selected-top + 32px;
+        let visible-height = min(10, AppState.custom-prompts.length) * 32px;
+        if selected-top + root.custom-prompt-scroll-y < 0px {
+            root.custom-prompt-scroll-y = -selected-top;
+        } else if selected-bottom + root.custom-prompt-scroll-y > visible-height {
+            root.custom-prompt-scroll-y = visible-height - selected-bottom;
         }
     }
 
