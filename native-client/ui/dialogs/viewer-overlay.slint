@@ -37,11 +37,15 @@ component ViewerInfoTag inherits Rectangle {
         vertical-alignment: center;
         overflow: elide;
     }
+    tag-hit-blocker := TouchArea {
+        width: parent.width;
+        height: parent.height;
+    }
 }
 
 export component ViewerOverlay {
     property <length> viewer-message-width: min(360px, max(220px, root.width - 80px));
-    property <length> detail-panel-width: AppState.viewer-source == "reference" ? 0px : 396px;
+    property <length> detail-panel-width: AppState.viewer-source == "reference" ? 0px : 460px;
     property <length> viewer-content-right: root.width - root.detail-panel-width;
     property <length> viewer-padding: 24px;
     property <length> viewer-nav-lane: AppState.viewer-source == "reference" ? 0px : 84px;

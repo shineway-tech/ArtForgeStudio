@@ -5,8 +5,16 @@ import { AppTheme } from "../theme.slint";
 export component GenerationLoadingCard {
     in property <length> card-width: 188px;
     in property <length> card-gap: 10px;
+    property <bool> pulse-bright: false;
     width: root.card-width;
     height: root.card-width + root.card-gap;
+
+    Timer {
+        interval: 900ms;
+        running: true;
+        triggered => { root.pulse-bright = !root.pulse-bright; }
+    }
+
     Rectangle {
         width: root.width;
         height: root.card-width;
@@ -32,11 +40,26 @@ export component GenerationLoadingCard {
             horizontal-alignment: center;
             vertical-alignment: center;
         }
+        breathing-border := Rectangle {
+            width: parent.width;
+            height: parent.height;
+            background: transparent;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: AppTheme.accent;
+            opacity: root.pulse-bright ? 0.78 : 0.18;
+            animate opacity { duration: 900ms; easing: ease-in-out; }
+        }
+        card-hover := TouchArea {
+            width: parent.width;
+            height: parent.height;
+        }
         stop-button := Rectangle {
             x: parent.width - 38px;
             y: 10px;
             width: 28px;
             height: 28px;
+            visible: card-hover.has-hover || stop-touch.has-hover;
             background: stop-touch.has-hover ? AppTheme.danger : AppTheme.panel.with-alpha(0.94);
             border-radius: 14px;
             border-width: 1px;

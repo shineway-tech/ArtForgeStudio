@@ -473,10 +473,22 @@ fn generation_loading_thumbnail_exposes_a_stop_button() {
 
         assert!(card.contains("stop-button := Rectangle"));
         assert!(card.contains("stop-touch := TouchArea"));
+        assert!(card.contains("card-hover := TouchArea"));
+        assert!(card.contains("visible: card-hover.has-hover || stop-touch.has-hover;"));
         assert!(card.contains("AppState.stop-generation()"));
         assert!(card.contains("AppTheme.danger"));
     assert!(state.contains("callback stop-generation();"));
     assert!(callbacks.contains("state.on_stop_generation"));
+}
+
+#[test]
+fn generation_loading_thumbnail_has_a_breathing_border() {
+    let card = include_str!("../../ui/components/generation-loading-card.slint");
+
+    assert!(card.contains("property <bool> pulse-bright: false;"));
+    assert!(card.contains("interval: 900ms;"));
+    assert!(card.contains("breathing-border := Rectangle"));
+    assert!(card.contains("animate opacity { duration: 900ms; easing: ease-in-out; }"));
 }
 
 #[test]
@@ -488,6 +500,16 @@ fn loading_dots_use_staggered_bouncing_motion() {
     assert!(dots.contains("dot-three := Rectangle"));
     assert!(dots.contains("interval: 120ms"));
     assert!(dots.matches("animate y").count() >= 3);
+}
+
+#[test]
+fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
+    let page = include_str!("../../ui/pages/studio-split-page.slint");
+
+    assert!(page.contains("width: 480px;"));
+    assert!(page.contains("Rectangle { x: 480px;"));
+    assert!(page.contains("x: 481px;"));
+    assert!(page.contains("width: parent.width - 481px;"));
 }
 
     #[test]
@@ -1752,11 +1774,19 @@ fn loading_dots_use_staggered_bouncing_motion() {
     #[test]
     fn viewer_metadata_is_four_compact_tags_in_the_top_row() {
         let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+        let tag_start = viewer.find("component ViewerInfoTag").expect("viewer info tag");
+        let tag_end = viewer.find("export component ViewerOverlay").expect("viewer overlay");
+        let tag = &viewer[tag_start..tag_end];
 
         assert!(viewer.contains("component ViewerInfoTag"));
         assert!(viewer.contains("info-tags := HorizontalLayout"));
         assert!(viewer.contains("y: 24px;"));
+        assert!(viewer.contains(
+            "property <length> detail-panel-width: AppState.viewer-source == \"reference\" ? 0px : 460px;"
+        ));
         assert_eq!(viewer.matches("ViewerInfoTag {").count(), 4);
+        assert!(tag.contains("tag-hit-blocker := TouchArea"));
+        assert!(!tag.contains("clicked =>"));
         assert!(!viewer.contains("InfoCard"));
         assert!(!viewer.contains("图像信息"));
     }
