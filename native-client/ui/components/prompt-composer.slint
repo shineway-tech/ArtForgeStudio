@@ -17,7 +17,7 @@ export component PromptComposer {
     property <int> custom-prompt-selected-index: 0;
     property <length> prompt-history-scroll-y: 0px;
     property <length> custom-prompt-scroll-y: 0px;
-    height: AppState.references.length > 0 || AppState.quote-title != "" ? 570px : 520px;
+    height: AppState.references.length > 0 || AppState.quote-title != "" ? 650px : 600px;
 
     function apply-selected-prompt(value: string) {
         AppState.prompt-history-open = false;

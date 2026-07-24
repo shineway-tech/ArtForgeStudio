@@ -387,7 +387,10 @@ component CanvasNodeInfoDialog {
         overlay-touch := TouchArea {
             width: parent.width;
             height: parent.height;
-            clicked => { root.close-dialog(); }
+            clicked => {
+                root.close-dialog();
+                AppState.clear-canvas-selection();
+            }
         }
 
         dialog := Rectangle {
@@ -890,6 +893,13 @@ component CanvasNodeCard {
             height: parent.height;
             mouse-cursor: root.editing ? default : move;
             pointer-event(event) => {
+                if event.button == PointerEventButton.left
+                    && event.kind == PointerEventKind.down
+                    && AppState.canvas-selected-id != root.note.id {
+                    root.editing = false;
+                    root.media-model-open = false;
+                    root.media-settings-open = false;
+                }
                 if !root.editing && event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
                     AppState.select-canvas-node(root.note.id, event.modifiers.control);
                     root.selection-focused();
@@ -1007,7 +1017,10 @@ component CanvasNodeCard {
         }
 
         text-editor := TextInput {
-            visible: root.zoom-percent >= 30 && root.note.kind == "text" && root.editing;
+            visible: root.zoom-percent >= 30
+                && root.note.kind == "text"
+                && root.editing
+                && AppState.canvas-selected-id == root.note.id;
             x: 18px * root.node-scale();
             y: 50px * root.node-scale();
             width: parent.width - 2 * self.x;
@@ -1042,7 +1055,10 @@ component CanvasNodeCard {
             font-size: AppState.settings-font-size * 1px * root.node-scale();
         }
 
-        if root.zoom-percent >= 30 && root.note.kind == "group" && root.editing: TextInput {
+        if root.zoom-percent >= 30
+            && root.note.kind == "group"
+            && root.editing
+            && AppState.canvas-selected-id == root.note.id: TextInput {
             x: 12px * root.node-scale();
             y: header.height + 8px * root.node-scale();
             width: min(parent.width - 2 * self.x, 280px * root.node-scale());
@@ -1831,6 +1847,12 @@ export component InfiniteCanvasPage {
         root.zoom-percent = 100;
     }
 
+    function clear-node-interaction() {
+        AppState.canvas-node-info-open = false;
+        AppState.canvas-node-info-tab = "info";
+        AppState.clear-canvas-selection();
+    }
+
     function focus-selection() {
         let target = AppState.prepare-canvas-focus(canvas.width / 1px * 0.84, canvas.height / 1px * 0.84);
         if AppState.canvas-focus-width <= 0 || AppState.canvas-focus-height <= 0 {
@@ -2075,6 +2097,11 @@ export component InfiniteCanvasPage {
                                 root.marquee-additive
                             );
                             root.marquee-active = false;
+                        } else if root.temporary-pan-active
+                            && event.button == PointerEventButton.left
+                            && Math.abs(self.mouse-x - self.start-pointer-x) < 4px
+                            && Math.abs(self.mouse-y - self.start-pointer-y) < 4px {
+                            root.clear-node-interaction();
                         }
                         root.temporary-pan-active = false;
                     }

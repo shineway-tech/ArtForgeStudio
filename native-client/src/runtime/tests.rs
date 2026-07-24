@@ -536,7 +536,21 @@ mod tests {
         assert!(panel.contains("InlineCardChooser {"));
         assert!(!panel.contains("viewport-height: AppState.ratio-more-open"));
         assert!(panel.contains("parent.height - 254px"));
-        assert!(prompt.contains("? 570px : 520px"));
+        assert!(prompt.contains("? 650px : 600px"));
+    }
+
+    #[test]
+    fn infinite_canvas_blank_click_clears_node_interactions_without_breaking_pan() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+
+        assert!(page.contains("function clear-node-interaction()"));
+        assert!(page.contains("AppState.canvas-node-info-open = false"));
+        assert!(page.contains("AppState.clear-canvas-selection()"));
+        assert!(page.contains("Math.abs(self.mouse-x - self.start-pointer-x) < 4px"));
+        assert!(page.contains("Math.abs(self.mouse-y - self.start-pointer-y) < 4px"));
+        assert!(page.contains("} else if root.temporary-pan-active"));
+        assert!(page.contains("root.clear-node-interaction();"));
+        assert!(page.contains("&& AppState.canvas-selected-id == root.note.id"));
     }
 
     #[test]
@@ -976,7 +990,8 @@ mod tests {
         assert!(node.contains("root.drag-offset-y"));
         assert!(node.contains("root.commit-position()"));
         assert!(node.contains("if !root.editing"));
-        assert!(node.contains("&& root.editing: TextInput"));
+        assert!(node.contains("&& root.editing"));
+        assert!(node.contains("&& AppState.canvas-selected-id == root.note.id: TextInput"));
         assert!(node.contains("source: @image-url(\"../../assets/icons/edit.svg\")"));
     }
 

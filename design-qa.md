@@ -78,4 +78,18 @@
 - 视觉检查覆盖 2164 × 1397 窗口，按钮间距、文本省略、主题色和输入区纵向节奏均符合现有组件体系。
 - 编译和针对性回归测试通过，未发现 P0、P1、P2、P3 级视觉问题。
 
+## 工作台输入区二次增高与画布空白取消选中
+
+- 工作台视觉基准：`C:\Users\deyx1\AppData\Local\Temp\codex-clipboard-bd4a0526-f157-429e-bcd3-bbc67c86e56f.png`
+- 无限画布交互基准：`C:\Users\deyx1\AppData\Local\Temp\codex-clipboard-f419531c-f4b9-4798-9ab9-df17b3d5303d.png`
+- 实现截图：`C:\Users\deyx1\AppData\Local\Temp\artforge-taller-input-implementation.png`
+- 同屏对比：`C:\Users\deyx1\AppData\Local\Temp\artforge-taller-input-comparison.png`
+- 实现窗口为 2164 × 1397；同屏对比裁取工作台区域并归一化到 618 × 1404，与视觉基准等尺寸比较。
+- 提示词容器再次增加 80px，在当前窗口下由可用高度上限控制，参数按钮与生成按钮之间只保留必要间距。
+- 三个参数菜单继续使用 `PopupWindow`，作为独立浮层显示，可覆盖生成按钮，不参与普通布局高度计算。
+- 无限画布空白单击清除节点、连线和节点信息状态；拖动画布超过 4px 不取消选择，保留原有平移交互。
+- 节点信息弹窗的遮罩空白处关闭弹窗并清除选择；文本和分组编辑器在节点失选后隐藏，重新点击节点可正常恢复选中。
+- 字体、间距、主题令牌、图标与文案均继续复用现有组件体系；未新增或替换任何图片资产。
+- 未发现 P0、P1、P2 级问题；主题颜色差异来自当前 QA 预览使用 Sprite Green，而视觉基准使用紫色主题，属于预期状态差异。
+
 final result: passed
