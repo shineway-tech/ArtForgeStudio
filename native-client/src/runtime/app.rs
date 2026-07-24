@@ -87,11 +87,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
             if let Some(app) = app_weak.upgrade() {
                 let state = app.global::<AppState>();
                 let name = state.get_profile_name().trim().to_string();
-                state.set_nickname(if name.is_empty() {
-                    state.get_email_mask()
-                } else {
-                    name.into()
-                });
+                state.set_nickname(name.into());
                 state.set_profile_open(false);
                 save_user_profile(&app);
             }
