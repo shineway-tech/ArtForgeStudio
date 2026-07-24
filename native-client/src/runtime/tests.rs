@@ -857,6 +857,14 @@ mod tests {
         assert!(include_str!("../../ui/app-state.slint")
             .contains("in-out property <string> canvas-tool: \"pan\""));
         assert!(!page.contains("label: AppState.en ? \"Select\" : \"选择\""));
+        assert!(page.contains(
+            "AppState.select-canvas-node(root.note.id, event.modifiers.shift);"
+        ));
+        assert!(page.contains("root.marquee-additive = event.modifiers.shift;"));
+        assert!(!page.contains(
+            "AppState.select-canvas-node(root.note.id, event.modifiers.control);"
+        ));
+        assert!(!page.contains("root.marquee-additive = event.modifiers.control;"));
         assert!(page.contains("link.source-selected"));
         assert!(page.contains("link.target-selected"));
     }
@@ -1112,7 +1120,13 @@ mod tests {
             .and_then(|value| value.split("component CanvasNodeCard").next())
             .expect("canvas connection component");
 
-        assert!(curve.contains("for hit-index in 42"));
+        assert!(curve.contains("function estimated-curve-length()"));
+        assert!(curve.contains("property <int> dash-count:"));
+        assert!(curve.contains("property <int> hit-count:"));
+        assert!(curve.contains("for dash-index in root.dash-count"));
+        assert!(curve.contains("for hit-index in root.hit-count"));
+        assert!(!curve.contains("for dash-index in 42"));
+        assert!(!curve.contains("for hit-index in 42"));
         assert!(curve.contains("callback link-selected(string)"));
         assert!(curve.contains("root.link-selected(root.link.id)"));
         assert!(page.contains("canvas-keyboard := FocusScope"));

@@ -532,6 +532,8 @@ component CanvasConnectionCurve {
     in property <bool> preview: false;
     in property <bool> dark-background: true;
     property <bool> selected: !root.preview && AppState.canvas-selected-link-id == root.link.id;
+    property <int> dash-count: max(8, min(220, Math.ceil(root.estimated-curve-length() / 12px)));
+    property <int> hit-count: max(12, min(180, Math.ceil(root.estimated-curve-length() / 16px)));
     callback link-selected(string);
 
     function control-offset() -> length {
@@ -556,12 +558,21 @@ component CanvasConnectionCurve {
             + t * t * t * root.end-y;
     }
 
+    function estimated-curve-length() -> length {
+        let dx = (root.end-x - root.start-x) / 1px;
+        let dy = (root.end-y - root.start-y) / 1px;
+        let offset = root.control-offset() / 1px;
+        let chord = Math.sqrt(dx * dx + dy * dy);
+        let middle-dx = dx - 2 * offset;
+        let control-polygon = offset * 2 + Math.sqrt(middle-dx * middle-dx + dy * dy);
+        return (chord + control-polygon) / 2 * 1px;
+    }
+
     width: root.canvas-width;
     height: root.canvas-height;
 
-    for dash-index in 42: Rectangle {
-        property <float> t: (dash-index + 1) / 43;
-        visible: Math.mod(dash-index, 2) == 0;
+    for dash-index in root.dash-count: Rectangle {
+        property <float> t: (dash-index + 0.5) / root.dash-count;
         x: root.curve-x(self.t) - (root.selected ? 4px : 3px);
         y: root.curve-y(self.t) - (root.selected ? 2px : 1.5px);
         width: root.preview ? 5px : (root.selected ? 8px : 6px);
@@ -575,8 +586,8 @@ component CanvasConnectionCurve {
 
     if !root.preview: Rectangle {
         background: transparent;
-        for hit-index in 42: Rectangle {
-            property <float> t: (hit-index + 1) / 43;
+        for hit-index in root.hit-count: Rectangle {
+            property <float> t: (hit-index + 0.5) / root.hit-count;
             x: root.curve-x(self.t) - 9px;
             y: root.curve-y(self.t) - 9px;
             width: 18px;
@@ -901,7 +912,7 @@ component CanvasNodeCard {
                     root.media-settings-open = false;
                 }
                 if !root.editing && event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
-                    AppState.select-canvas-node(root.note.id, event.modifiers.control);
+                    AppState.select-canvas-node(root.note.id, event.modifiers.shift);
                     root.selection-focused();
                     self.start-pointer-x = self.absolute-position.x + self.mouse-x;
                     self.start-pointer-y = self.absolute-position.y + self.mouse-y;
@@ -2077,7 +2088,7 @@ export component InfiniteCanvasPage {
                             self.start-pointer-y = self.mouse-y;
                         } else {
                             root.marquee-active = true;
-                            root.marquee-additive = event.modifiers.control;
+                            root.marquee-additive = event.modifiers.shift;
                             root.marquee-start-x = self.mouse-x;
                             root.marquee-start-y = self.mouse-y;
                             root.marquee-end-x = self.mouse-x;

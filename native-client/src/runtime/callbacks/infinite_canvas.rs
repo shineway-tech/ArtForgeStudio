@@ -528,6 +528,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             history.borrow_mut().record(canvas_snapshot(&store_mut));
             move_selection(&mut store_mut.canvas_notes, dx, dy);
             assign_deepest_group(&mut store_mut.canvas_notes, &moved);
+            fit_groups_to_children(&mut store_mut.canvas_notes);
             persist_canvas(&app, &store_mut);
             sync_canvas_selection(&app, &store_mut);
             sync_history_state(&app, &history.borrow());
@@ -574,6 +575,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
                 .unwrap_or_default();
             store_mut.canvas_notes.extend(notes);
             store_mut.canvas_links.extend(links);
+            fit_groups_to_children(&mut store_mut.canvas_notes);
             persist_canvas(&app, &store_mut);
             let state = app.global::<AppState>();
             state.set_canvas_selected_id(primary.into());
@@ -615,6 +617,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
                 .unwrap_or_default();
             store_mut.canvas_notes.extend(notes);
             store_mut.canvas_links.extend(links);
+            fit_groups_to_children(&mut store_mut.canvas_notes);
             persist_canvas(&app, &store_mut);
             let state = app.global::<AppState>();
             state.set_canvas_selected_id(primary.into());
@@ -640,6 +643,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             let mut links = std::mem::take(&mut store_mut.canvas_links);
             remove_selection(&mut store_mut.canvas_notes, &mut links);
             store_mut.canvas_links = links;
+            fit_groups_to_children(&mut store_mut.canvas_notes);
             persist_canvas(&app, &store_mut);
             let state = app.global::<AppState>();
             state.set_canvas_selected_id("".into());
@@ -683,6 +687,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
                 });
                 id
             };
+            fit_groups_to_children(&mut store_mut.canvas_notes);
             persist_canvas(&app, &store_mut);
             let state = app.global::<AppState>();
             state.set_canvas_selected_id(id.into());
@@ -710,6 +715,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             }
             history.borrow_mut().record(canvas_snapshot(&store_mut));
             ungroup_selection(&mut store_mut.canvas_notes);
+            fit_groups_to_children(&mut store_mut.canvas_notes);
             persist_canvas(&app, &store_mut);
             let primary = store_mut
                 .canvas_notes
@@ -757,6 +763,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
                 }
             }
             store_mut.canvas_notes.retain(|note| note.id != id.as_str());
+            fit_groups_to_children(&mut store_mut.canvas_notes);
             store_mut
                 .canvas_links
                 .retain(|link| link.source_id != id.as_str() && link.target_id != id.as_str());

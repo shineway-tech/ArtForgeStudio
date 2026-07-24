@@ -118,6 +118,7 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
         store_mut.custom_prompt_profiles = data.custom_prompt_profiles;
         store_mut.canvas_notes = data.canvas_notes;
         normalize_canvas_groups(&mut store_mut.canvas_notes);
+        let fitted_canvas_groups = fit_groups_to_children(&mut store_mut.canvas_notes);
         store_mut.canvas_links = data.canvas_links;
         let original_prompt_times = store_mut.custom_prompt_times.clone();
         let retained = store_mut
@@ -138,7 +139,9 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
                 .entry(prompt)
                 .or_insert_with(|| migration_time.clone());
         }
-        migrated_prompt_drafts || store_mut.custom_prompt_times != original_prompt_times
+        migrated_prompt_drafts
+            || fitted_canvas_groups
+            || store_mut.custom_prompt_times != original_prompt_times
     };
     let state = app.global::<AppState>();
     state.set_image_model("".into());
