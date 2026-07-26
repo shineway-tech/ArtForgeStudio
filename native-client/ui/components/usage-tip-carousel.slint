@@ -1,0 +1,54 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component UsageTipCarousel {
+    property <int> active-tip: 0;
+    height: 18px;
+
+    Timer {
+        interval: 4200ms;
+        running: true;
+        triggered => {
+            root.active-tip = Math.mod(root.active-tip + 1, 2);
+        }
+    }
+
+    clipper := Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: transparent;
+        clip: true;
+
+        first-tip := Text {
+            y: root.active-tip == 0 ? 0px : -root.height;
+            width: parent.width;
+            height: root.height;
+            text: AppState.en
+                ? "Tip 1 · Enter “/” to view recent prompt history"
+                : "1、输入“/”可查看最近的提示词记录";
+            color: AppTheme.weak;
+            font-size: 12px;
+            font-weight: 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+            animate y { duration: 260ms; easing: ease-in-out; }
+        }
+
+        second-tip := Text {
+            y: root.active-tip == 0 ? root.height : 0px;
+            width: parent.width;
+            height: root.height;
+            text: AppState.en
+                ? "Tip 2 · Enter “//” to view custom prompts"
+                : "2、输入“//”可查看自定义提示词";
+            color: AppTheme.weak;
+            font-size: 12px;
+            font-weight: 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+            animate y { duration: 260ms; easing: ease-in-out; }
+        }
+    }
+}

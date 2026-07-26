@@ -4,6 +4,7 @@ import { InlineCardChooser } from "inline-card-chooser.slint";
 import { PromptComposer } from "prompt-composer.slint";
 import { SmallToggle } from "small-toggle.slint";
 import { TranslateTipArea } from "translate-tip-area.slint";
+import { UsageTipCarousel } from "usage-tip-carousel.slint";
 import { AppTheme } from "../theme.slint";
 
 export component StudioWorkPanel {
@@ -76,6 +77,15 @@ export component StudioWorkPanel {
                     AppState.generate();
                 }
             }
+        }
+        UsageTipCarousel {
+            visible: !AppState.optimizing-prompt
+                && !AppState.translating-prompt
+                && !AppState.generating
+                && AppState.generation-status == "";
+            x: 22px;
+            y: parent.height - 48px;
+            width: parent.width - 44px;
         }
         Text {
             visible: AppState.optimizing-prompt || AppState.translating-prompt || AppState.generating || AppState.generation-status != "";

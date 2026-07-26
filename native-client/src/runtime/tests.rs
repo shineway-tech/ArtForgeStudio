@@ -827,6 +827,20 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
     assert!(page.contains("width: parent.width - 481px;"));
 }
 
+#[test]
+fn idle_generation_area_rotates_slash_usage_tips() {
+    let panel = include_str!("../../ui/components/studio-work-panel.slint");
+    let tips = include_str!("../../ui/components/usage-tip-carousel.slint");
+
+    assert!(panel.contains("UsageTipCarousel"));
+    assert!(panel.contains("AppState.generation-status == \"\""));
+    assert!(tips.contains("interval: 4200ms"));
+    assert!(tips.contains("Math.mod(root.active-tip + 1, 2)"));
+    assert!(tips.contains("输入“/”可查看最近的提示词记录"));
+    assert!(tips.contains("输入“//”可查看自定义提示词"));
+    assert_eq!(tips.matches("animate y").count(), 2);
+}
+
     #[test]
     fn legacy_double_slash_prompt_drafts_are_cleared_without_touching_real_prompts() {
         let mut drafts = PromptDrafts {

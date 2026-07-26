@@ -1,37 +1,37 @@
 # Design QA
 
-- source visual truth: `C:/Users/deyx1/AppData/Local/Temp/codex-clipboard-12f1edae-4f99-4a4c-9c97-796edef0af91.png`
-- implementation screenshot: `C:/Users/deyx1/AppData/Local/Temp/artforge-horizontal-custom-prompt-tags.png`
-- combined comparison: `C:/Users/deyx1/AppData/Local/Temp/artforge-horizontal-tags-comparison.png`
-- source pixels: 660 × 303
+- source visual truth: `C:/Users/deyx1/AppData/Local/Temp/codex-clipboard-bb78ba2e-46e2-401b-88fd-cd296a64957a.png`
+- implementation screenshot: `C:/Users/deyx1/AppData/Local/Temp/artforge-usage-tip.png`
+- combined comparison: `C:/Users/deyx1/AppData/Local/Temp/artforge-usage-tip-comparison.png`
+- source pixels: 755 × 93
 - implementation pixels: 2582 × 1550 at 144 DPI
 - implementation viewport: maximized Windows desktop window
-- density normalization: the focused implementation region was cropped from the 144-DPI capture and placed beside the source screenshot at comparable visual scale
-- state: dark theme, character workspace, `//` custom-prompt popup open with “Q版” and “你好”
+- density normalization: the bottom generation-control region was cropped from the 144-DPI native capture and placed beside the source at comparable scale
+- state: dark theme, character workspace, idle generation state, second usage tip visible
 
 ## Findings
 
 - No actionable P0, P1, or P2 findings remain.
-- The source screenshot records the reported incorrect vertical stacking. The requested visual truth is that the same tags occupy one horizontal row, which the implementation now does.
+- The requested usage-tip line occupies the previously empty area below the generation button without moving or covering persistent controls.
 
 ## Required fidelity surfaces
 
-- Fonts and typography: passed. Tag labels keep the existing application font, regular weight, centered alignment, and single-line truncation.
-- Spacing and layout rhythm: passed. Tags use a consistent 108 px width and 8 px horizontal gap; the footer buttons remain separated beneath the tag row.
-- Colors and visual tokens: passed. Selected, hover, border, panel, and text colors continue to use the existing theme tokens.
-- Image quality and assets: not applicable; this popup contains no raster or decorative image assets.
-- Copy and content: passed. Only prompt titles are shown; prompt contents remain hidden.
+- Fonts and typography: passed. The tip uses 12 px regular-weight text and remains subordinate to the generation button.
+- Spacing and layout rhythm: passed. The tip is centered in the existing status slot with clear separation from the button.
+- Colors and visual tokens: passed. The text uses the existing weak foreground token and preserves dark-theme contrast.
+- Image quality and assets: not applicable; the feature introduces no image assets.
+- Copy and content: passed. Both `/` recent-history and `//` custom-prompt instructions are included, with localized English equivalents.
 
 ## Comparison evidence
 
-- Full view: the popup stays inside the prompt composer and no persistent controls are covered.
-- Focused region: the combined comparison clearly shows the former vertical arrangement on the left and the corrected “Q版 / 你好” horizontal row on the right.
-- Interaction: the popup was opened in the packaged native client by entering `//`; selection, management, and creation controls remained present.
+- Full view: the complete native application shows the tip inside the work panel and no overflow at the bottom edge.
+- Focused region: the combined comparison shows the former empty region on the left and the added tip below the unchanged generation button on the right.
+- Interaction: the 4.2-second timer rotates two vertically animated lines; active generation, optimization, translation, or status text hides the tips.
 
 ## Comparison history
 
-1. Initial reported state: each title occupied its own vertical row.
-2. Fix: replaced the vertical repeater layout with a responsive fixed-width tag grid and row-aware scrolling.
-3. Post-fix evidence: both titles render on one row; additional titles wrap only when the available width is exhausted.
+1. Initial state: the area below the generation button was empty while idle.
+2. Fix: added a clipped vertical carousel that reuses the status-text slot.
+3. Post-fix evidence: the second tip is visible below the button; source-level tests verify both messages and both slide animations.
 
 final result: passed
