@@ -467,11 +467,12 @@ mod tests {
     }
 
     #[test]
-    fn double_slash_custom_prompts_are_multi_select_title_tags() {
+    fn double_slash_custom_prompts_are_single_select_title_tags() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         let state = include_str!("../../ui/app-state.slint");
         let types = include_str!("../../ui/types.slint");
         let callbacks = include_str!("callbacks/custom_prompt.rs");
+        let local_store = include_str!("storage/local_store.rs");
         let controller = include_str!("generation/controller.rs");
         let popup = composer
             .split("custom-prompt-popup := PopupWindow")
@@ -487,6 +488,8 @@ mod tests {
         assert!(callbacks.contains("state.on_toggle_custom_prompt_selection"));
         assert!(callbacks.contains("current_workspace_category(&app)"));
         assert!(callbacks.contains("toggle_custom_prompt_selection_for_category"));
+        assert!(local_store.contains("let was_selected = store"));
+        assert!(local_store.contains("selected.clear();"));
         assert!(composer.contains("for item in AppState.selected-custom-prompt-items"));
         assert!(popup.contains("text: item.name"));
         assert!(popup.contains("item.selected ? AppTheme.accent"));
@@ -508,7 +511,11 @@ mod tests {
     #[test]
     fn custom_prompt_selections_are_isolated_by_workspace_category() {
         let mut store = Store {
-            custom_prompts: vec!["角色提示词".to_string(), "场景提示词".to_string()],
+            custom_prompts: vec![
+                "角色提示词".to_string(),
+                "角色提示词二".to_string(),
+                "场景提示词".to_string(),
+            ],
             ..Store::default()
         };
 
@@ -529,6 +536,12 @@ mod tests {
         );
         assert!(selected_custom_prompts_for_category(&store, "scene").is_empty());
 
+        toggle_custom_prompt_selection_for_category(&mut store, "character", "角色提示词二");
+        assert_eq!(
+            selected_custom_prompts_for_category(&store, "character"),
+            vec!["角色提示词二".to_string()]
+        );
+
         toggle_custom_prompt_selection_for_category(&mut store, "scene", "场景提示词");
         assert_eq!(
             selected_custom_prompts_for_category(&store, "scene"),
@@ -536,7 +549,14 @@ mod tests {
         );
         assert_eq!(
             selected_custom_prompts_for_category(&store, "character"),
-            vec!["角色提示词".to_string()]
+            vec!["角色提示词二".to_string()]
+        );
+
+        toggle_custom_prompt_selection_for_category(&mut store, "character", "角色提示词二");
+        assert!(selected_custom_prompts_for_category(&store, "character").is_empty());
+        assert_eq!(
+            selected_custom_prompts_for_category(&store, "scene"),
+            vec!["场景提示词".to_string()]
         );
     }
 
@@ -853,7 +873,12 @@ fn sidebar_toolbox_opens_a_six_tool_page() {
         assert!(page.contains(title), "missing toolbox card: {title}");
     }
     assert_eq!(page.matches("tool-id: ").count(), 6);
+    assert_eq!(page.matches("target-page: \"toolbox-watermark\"").count(), 1);
     assert!(page.contains("AppState.toolbox-selected-tool = root.tool-id"));
+    assert!(state.contains("toolbox-coming-soon-open"));
+    assert!(page.contains("AppState.toolbox-coming-soon-open = true"));
+    assert!(page.contains("AppState.en ? \"Coming soon\" : \"即将开放\""));
+    assert!(page.contains("AppState.en ? \"Got it\" : \"知道了\""));
     assert!(!page.contains("\"选择工具\""));
     assert!(!page.contains("\"已选择\""));
 }

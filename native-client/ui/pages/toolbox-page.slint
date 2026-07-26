@@ -1,4 +1,5 @@
 import { AppState } from "../app-state.slint";
+import { PillButton } from "../components/pill-button.slint";
 import { AppTheme } from "../theme.slint";
 
 component ToolboxCard {
@@ -66,7 +67,10 @@ component ToolboxCard {
             clicked => {
                 AppState.toolbox-selected-tool = root.tool-id;
                 if root.target-page != "" {
+                    AppState.toolbox-coming-soon-open = false;
                     AppState.navigate(root.target-page);
+                } else {
+                    AppState.toolbox-coming-soon-open = true;
                 }
             }
         }
@@ -186,6 +190,50 @@ export component ToolboxPage {
                 title: AppState.en ? "Compress Image" : "图片压缩";
                 description: AppState.en ? "Reduce file size while retaining image quality" : "在保留画质的同时减小图片体积";
                 icon: @image-url("../../assets/icons/download.svg");
+            }
+        }
+
+        if AppState.toolbox-coming-soon-open: Rectangle {
+            background: #00000066;
+
+            TouchArea {
+                width: parent.width;
+                height: parent.height;
+                clicked => { AppState.toolbox-coming-soon-open = false; }
+            }
+
+            Rectangle {
+                width: min(360px, parent.width - 32px);
+                height: 180px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                background: AppTheme.panel;
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+
+                Text {
+                    x: 24px;
+                    y: 36px;
+                    width: parent.width - 48px;
+                    height: 36px;
+                    text: AppState.en ? "Coming soon" : "即将开放";
+                    color: AppTheme.text;
+                    font-size: 22px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                PillButton {
+                    width: 120px;
+                    height: 38px;
+                    x: (parent.width - self.width) / 2;
+                    y: parent.height - 62px;
+                    text: AppState.en ? "Got it" : "知道了";
+                    primary: true;
+                    clicked => { AppState.toolbox-coming-soon-open = false; }
+                }
             }
         }
     }

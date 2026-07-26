@@ -366,16 +366,17 @@ pub(super) fn toggle_custom_prompt_selection_for_category(
     prompt: &str,
 ) {
     let category = resolve_category(category, "");
-    let selected = store
+    let was_selected = store
         .selected_custom_prompts
-        .entry(category.clone())
-        .or_default();
-    if !selected.remove(prompt) {
-        selected.insert(prompt.to_string());
-    }
-    if selected.is_empty() {
+        .get(&category)
+        .is_some_and(|selected| selected.contains(prompt));
+    if was_selected {
         store.selected_custom_prompts.remove(&category);
+        return;
     }
+    let selected = store.selected_custom_prompts.entry(category).or_default();
+    selected.clear();
+    selected.insert(prompt.to_string());
 }
 
 pub(super) fn custom_prompt_selected_for_category(
@@ -418,11 +419,13 @@ fn normalize_selected_custom_prompts(
     let mut normalized = BTreeMap::<String, BTreeSet<String>>::new();
     for (category, mut selected) in std::mem::take(selected_by_category) {
         selected.retain(|prompt| retained_prompts.contains(prompt));
-        if !selected.is_empty() {
-            normalized
+        if let Some(prompt) = selected.into_iter().next() {
+            let normalized_selection = normalized
                 .entry(resolve_category(&category, ""))
-                .or_default()
-                .extend(selected);
+                .or_default();
+            if normalized_selection.is_empty() {
+                normalized_selection.insert(prompt);
+            }
         }
     }
     *selected_by_category = normalized;
