@@ -992,21 +992,34 @@ pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snap
             max_quality: plan.max_quality.clone().into(),
         }).collect::<Vec<_>>(),
     )));
-    state.set_catalog_models(ModelRc::new(VecModel::from(
-        snapshot.models.iter().map(|model| CatalogModelView {
+    let catalog_models = snapshot
+        .models
+        .iter()
+        .map(|model| CatalogModelView {
             code: model.code.clone().into(),
             name: model.name.clone().into(),
             purpose: model.purpose.clone().into(),
             version: model.version.min(i32::MAX as u32) as i32,
             capabilities: model_capabilities_text(model).into(),
-            pricing: model.prices.iter().map(|price| {
-                match price.max_long_edge {
-                    Some(edge) => format!("{}：{} 积分（最长边 {}）", price.quality, price.credit_cost, edge),
+            pricing: model
+                .prices
+                .iter()
+                .map(|price| match price.max_long_edge {
+                    Some(edge) => format!(
+                        "{}：{} 积分（最长边 {}）",
+                        price.quality, price.credit_cost, edge
+                    ),
                     None => format!("{}：{} 积分", price.quality, price.credit_cost),
-                }
-            }).collect::<Vec<_>>().join(" · ").into(),
-        }).collect::<Vec<_>>(),
-    )));
+                })
+                .collect::<Vec<_>>()
+                .join(" · ")
+                .into(),
+            price_1k: model_price(model, "1K"),
+            price_2k: model_price(model, "2K"),
+            price_4k: model_price(model, "4K"),
+        })
+        .collect::<Vec<_>>();
+    state.set_catalog_models(ModelRc::new(VecModel::from(catalog_models)));
     reset_credit_ledger(
         app,
         &context.store,
@@ -1042,15 +1055,49 @@ pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snap
             name: item.name.clone(),
         })
         .collect::<Vec<_>>();
+    let selected_image_code = state.get_image_model().to_string();
+    let selected_image = snapshot
+        .models
+        .iter()
+        .find(|item| item.purpose == "image_generation" && item.code == selected_image_code)
+        .or_else(|| {
+            snapshot
+                .models
+                .iter()
+                .find(|item| item.code == "openai_image")
+        })
+        .or_else(|| {
+            snapshot
+                .models
+                .iter()
+                .find(|item| item.purpose == "image_generation")
+        });
+    let selected_prompt_code = state.get_reasoning_model().to_string();
+    let selected_prompt = snapshot
+        .models
+        .iter()
+        .find(|item| item.purpose == "prompt_processing" && item.code == selected_prompt_code)
+        .or_else(|| {
+            snapshot
+                .models
+                .iter()
+                .find(|item| item.purpose == "prompt_processing")
+        });
     let mut model_groups = Vec::new();
     if !image_models.is_empty() {
-        model_groups.push(model_group("image", "平台图像模型", image_models.clone()));
+        model_groups.push(model_group(
+            "image",
+            "平台图像模型",
+            image_models.clone(),
+            selected_image.map(|model| model.code.as_str()).unwrap_or_default(),
+        ));
     }
     if !prompt_models.is_empty() {
         model_groups.push(model_group(
             "reasoning",
             "平台提示词模型",
             prompt_models.clone(),
+            selected_prompt.map(|model| model.code.as_str()).unwrap_or_default(),
         ));
     }
     {
@@ -1058,37 +1105,56 @@ pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snap
         store.model_groups = model_groups;
         push_model_groups(app, &store);
     }
-    if let Some(model) = image_models.first() {
-        state.set_image_model(model.code.clone().into());
-        state.set_image_model_name(model.name.clone().into());
-        if let Some(catalog_model) = snapshot.models.iter().find(|item| item.code == model.code) {
-            for price in &catalog_model.prices {
-                let value = decimal_to_i32(&price.credit_cost);
-                match price.quality.as_str() {
-                    "1K" => state.set_image_price_1k(value),
-                    "2K" => state.set_image_price_2k(value),
-                    "4K" => state.set_image_price_4k(value),
-                    _ => {}
-                }
-            }
-        }
+    if let Some(model) = selected_image {
+        apply_image_model(&state, model);
     }
-    if let Some(model) = prompt_models.first() {
+    if let Some(model) = selected_prompt {
         state.set_reasoning_model(model.code.clone().into());
         state.set_reasoning_model_name(model.name.clone().into());
     }
     save_user_profile(app);
 }
 
-fn model_group(kind: &str, name: &str, models: Vec<ModelOptionData>) -> ModelGroupData {
-    let model_codes = models.iter().map(|model| model.code.clone()).collect::<Vec<_>>();
+fn model_group(
+    kind: &str,
+    name: &str,
+    models: Vec<ModelOptionData>,
+    selected_model: &str,
+) -> ModelGroupData {
+    let model_codes = models
+        .iter()
+        .map(|model| model.code.clone())
+        .collect::<Vec<_>>();
+    let selected_model = model_codes
+        .iter()
+        .find(|code| code.as_str() == selected_model)
+        .cloned()
+        .or_else(|| model_codes.first().cloned())
+        .unwrap_or_default();
     ModelGroupData {
         kind: kind.to_string(),
         name: name.to_string(),
-        selected_model: model_codes.first().cloned().unwrap_or_default(),
+        selected_model,
         used_models: model_codes,
         models,
     }
+}
+
+fn model_price(model: &ModelCatalogItem, quality: &str) -> i32 {
+    model
+        .prices
+        .iter()
+        .find(|price| price.quality == quality)
+        .map(|price| decimal_to_i32(&price.credit_cost))
+        .unwrap_or(0)
+}
+
+fn apply_image_model(state: &AppState, model: &ModelCatalogItem) {
+    state.set_image_model(model.code.clone().into());
+    state.set_image_model_name(model.name.clone().into());
+    state.set_image_price_1k(model_price(model, "1K"));
+    state.set_image_price_2k(model_price(model, "2K"));
+    state.set_image_price_4k(model_price(model, "4K"));
 }
 
 fn decimal_to_i32(value: &str) -> i32 {
@@ -1443,5 +1509,37 @@ mod tests {
 
         let original = credit_pack(None);
         assert_eq!(format_cents(credit_pack_price_cents(&original)), "¥ 10.00");
+    }
+
+    #[test]
+    fn image_model_prices_follow_the_selected_catalog_model() {
+        let model = ModelCatalogItem {
+            code: "nano_banana".to_string(),
+            version: 1,
+            purpose: "image_generation".to_string(),
+            name: "nano-banana".to_string(),
+            capabilities: serde_json::json!({}),
+            prices: vec![
+                ModelPrice {
+                    quality: "1K".to_string(),
+                    max_long_edge: Some(1024),
+                    credit_cost: "35".to_string(),
+                },
+                ModelPrice {
+                    quality: "2K".to_string(),
+                    max_long_edge: Some(2048),
+                    credit_cost: "45".to_string(),
+                },
+                ModelPrice {
+                    quality: "4K".to_string(),
+                    max_long_edge: Some(4096),
+                    credit_cost: "60".to_string(),
+                },
+            ],
+        };
+
+        assert_eq!(model_price(&model, "1K"), 35);
+        assert_eq!(model_price(&model, "2K"), 45);
+        assert_eq!(model_price(&model, "4K"), 60);
     }
 }
