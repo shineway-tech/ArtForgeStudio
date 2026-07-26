@@ -60,6 +60,7 @@ export component Sidebar {
             Rectangle { height: 1px; background: AppTheme.border; }
             CategoryWorkspaceMenu { collapsed: AppState.sidebar-collapsed; }
             NavItem { collapsed: AppState.sidebar-collapsed; icon: "canvas"; label: AppState.en ? "Infinite Canvas" : "无限画布"; page: "canvas"; }
+            NavItem { collapsed: AppState.sidebar-collapsed; icon: "toolbox"; label: AppState.en ? "Toolbox" : "工具箱"; page: "toolbox"; }
             NavItem { collapsed: AppState.sidebar-collapsed; icon: "assets"; label: AppState.en ? "My Assets" : "我的资产"; page: "assets"; }
             NavItem { collapsed: AppState.sidebar-collapsed; icon: "inspiration"; label: AppState.en ? "Inspiration" : "灵感广场"; page: "inspiration"; }
             NavItem { collapsed: AppState.sidebar-collapsed; icon: "notifications"; label: AppState.en ? "Notifications" : "通知"; page: "notifications"; show-dot: AppState.has-unread; }

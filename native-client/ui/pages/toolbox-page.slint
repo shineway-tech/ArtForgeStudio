@@ -1,0 +1,187 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+component ToolboxCard {
+    in property <string> tool-id;
+    in property <string> title;
+    in property <string> description;
+    in property <image> icon;
+    property <bool> active: AppState.toolbox-selected-tool == root.tool-id;
+
+    Rectangle {
+        background: root.active || card-touch.has-hover ? AppTheme.panel-soft : AppTheme.panel;
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: root.active ? AppTheme.accent : AppTheme.border;
+
+        Rectangle {
+            x: 22px;
+            y: 22px;
+            width: 44px;
+            height: 44px;
+            border-radius: 10px;
+            background: AppTheme.panel-soft;
+            Image {
+                x: 10px;
+                y: 10px;
+                width: 24px;
+                height: 24px;
+                source: root.icon;
+                colorize: AppTheme.accent-dark;
+                image-fit: contain;
+            }
+        }
+
+        Text {
+            x: 82px;
+            y: 24px;
+            width: parent.width - 104px;
+            height: 24px;
+            text: root.title;
+            color: AppTheme.text;
+            font-size: 17px;
+            font-weight: 600;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            x: 82px;
+            y: 54px;
+            width: parent.width - 104px;
+            height: 42px;
+            text: root.description;
+            color: AppTheme.muted;
+            font-size: 12px;
+            font-weight: 400;
+            wrap: word-wrap;
+            overflow: elide;
+        }
+
+        card-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => {
+                AppState.toolbox-selected-tool = root.tool-id;
+            }
+        }
+    }
+}
+
+export component ToolboxPage {
+    function content-width() -> length {
+        return max(640px, root.width - 64px);
+    }
+
+    function card-gap() -> length {
+        return 16px;
+    }
+
+    function card-width() -> length {
+        return (root.content-width() - root.card-gap()) / 2;
+    }
+
+    function card-height() -> length {
+        return 154px;
+    }
+
+    Rectangle {
+        background: AppTheme.bg;
+
+        Text {
+            x: 32px;
+            y: 28px;
+            width: parent.width - 64px;
+            height: 32px;
+            text: AppState.en ? "Toolbox" : "工具箱";
+            color: AppTheme.text;
+            font-size: 24px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: 32px;
+            y: 68px;
+            width: parent.width - 64px;
+            height: 22px;
+            text: AppState.en
+                ? "Choose an image-processing tool"
+                : "选择需要使用的图片处理工具";
+            color: AppTheme.muted;
+            font-size: 13px;
+            font-weight: 400;
+            vertical-alignment: center;
+        }
+
+        tools := Rectangle {
+            x: 32px;
+            y: 112px;
+            width: root.content-width();
+            height: root.card-height() * 3 + root.card-gap() * 2;
+            background: transparent;
+
+            ToolboxCard {
+                x: 0px;
+                y: 0px;
+                width: root.card-width();
+                height: root.card-height();
+                tool-id: "remove-watermark";
+                title: AppState.en ? "Remove Watermark" : "去水印";
+                description: AppState.en ? "Remove unwanted watermarks or text from an image" : "移除图片中的水印、文字或干扰元素";
+                icon: @image-url("../../assets/icons/trash.svg");
+            }
+            ToolboxCard {
+                x: root.card-width() + root.card-gap();
+                y: 0px;
+                width: root.card-width();
+                height: root.card-height();
+                tool-id: "enhance";
+                title: AppState.en ? "Image Enhance" : "图片清晰";
+                description: AppState.en ? "Improve image sharpness and visible detail" : "增强图片清晰度，恢复模糊细节";
+                icon: @image-url("../../assets/icons/focus.svg");
+            }
+            ToolboxCard {
+                x: 0px;
+                y: root.card-height() + root.card-gap();
+                width: root.card-width();
+                height: root.card-height();
+                tool-id: "colorize";
+                title: AppState.en ? "Old Photo Colorization" : "老照片上色";
+                description: AppState.en ? "Add natural color to black-and-white photos" : "为黑白老照片还原自然色彩";
+                icon: @image-url("../../assets/icons/palette.svg");
+            }
+            ToolboxCard {
+                x: root.card-width() + root.card-gap();
+                y: root.card-height() + root.card-gap();
+                width: root.card-width();
+                height: root.card-height();
+                tool-id: "crop";
+                title: AppState.en ? "Crop Image" : "图片裁剪";
+                description: AppState.en ? "Crop an image to the desired size and composition" : "按所需尺寸与构图裁剪图片";
+                icon: @image-url("../../assets/icons/fit.svg");
+            }
+            ToolboxCard {
+                x: 0px;
+                y: (root.card-height() + root.card-gap()) * 2;
+                width: root.card-width();
+                height: root.card-height();
+                tool-id: "convert";
+                title: AppState.en ? "Convert Format" : "图片转格式";
+                description: AppState.en ? "Convert images between common file formats" : "在常用图片文件格式之间转换";
+                icon: @image-url("../../assets/icons/image.svg");
+            }
+            ToolboxCard {
+                x: root.card-width() + root.card-gap();
+                y: (root.card-height() + root.card-gap()) * 2;
+                width: root.card-width();
+                height: root.card-height();
+                tool-id: "compress";
+                title: AppState.en ? "Compress Image" : "图片压缩";
+                description: AppState.en ? "Reduce file size while retaining image quality" : "在保留画质的同时减小图片体积";
+                icon: @image-url("../../assets/icons/download.svg");
+            }
+        }
+    }
+}

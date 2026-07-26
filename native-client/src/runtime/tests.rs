@@ -828,6 +828,37 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
 }
 
 #[test]
+fn sidebar_toolbox_opens_a_six_tool_page() {
+    let sidebar = include_str!("../../ui/components/sidebar.slint");
+    let glyph = include_str!("../../ui/components/nav-glyph.slint");
+    let app = include_str!("../../ui/app.slint");
+    let state = include_str!("../../ui/app-state.slint");
+    let page = include_str!("../../ui/pages/toolbox-page.slint");
+
+    let canvas = sidebar.find("page: \"canvas\"").expect("canvas nav");
+    let toolbox = sidebar.find("page: \"toolbox\"").expect("toolbox nav");
+    let assets = sidebar.find("page: \"assets\"").expect("assets nav");
+    assert!(canvas < toolbox && toolbox < assets);
+    assert!(glyph.contains("root.kind == \"toolbox\""));
+    assert!(app.contains("AppState.page == \"toolbox\""));
+    assert!(state.contains("toolbox-selected-tool"));
+    for title in [
+        "去水印",
+        "图片清晰",
+        "老照片上色",
+        "图片裁剪",
+        "图片转格式",
+        "图片压缩",
+    ] {
+        assert!(page.contains(title), "missing toolbox card: {title}");
+    }
+    assert_eq!(page.matches("tool-id: ").count(), 6);
+    assert!(page.contains("AppState.toolbox-selected-tool = root.tool-id"));
+    assert!(!page.contains("\"选择工具\""));
+    assert!(!page.contains("\"已选择\""));
+}
+
+#[test]
 fn idle_generation_area_rotates_slash_usage_tips() {
     let panel = include_str!("../../ui/components/studio-work-panel.slint");
     let tips = include_str!("../../ui/components/usage-tip-carousel.slint");
