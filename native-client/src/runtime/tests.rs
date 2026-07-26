@@ -162,9 +162,13 @@ mod tests {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         let state = include_str!("../../ui/app-state.slint");
         let sync = include_str!("presentation/sync.rs");
+        let callbacks = include_str!("callbacks/generation.rs");
+        let local_store = include_str!("storage/local_store.rs");
 
         assert!(state.contains("in-out property <[string]> prompt-history"));
         assert!(state.contains("in-out property <bool> prompt-history-open"));
+        assert!(state.contains("callback remove-prompt-history(string)"));
+        assert!(state.contains("callback clear-prompt-history()"));
         assert!(composer.contains("event.text == \"/\""));
         assert!(composer.contains("AppState.prompt == \"\""));
         assert!(composer.contains("AppState.prompt-history-open = true"));
@@ -172,7 +176,45 @@ mod tests {
             "root.apply-selected-prompt(AppState.prompt-history[index])"
         ));
         assert!(sync.contains("recent_prompt_history"));
+        assert!(sync.contains("dismissed_prompt_history"));
         assert!(sync.contains("20"));
+        assert!(callbacks.contains("state.on_remove_prompt_history"));
+        assert!(callbacks.contains("state.on_clear_prompt_history"));
+        assert!(local_store.contains("dismissed_prompt_history: store.dismissed_prompt_history.clone()"));
+        assert!(local_store
+            .contains("store_mut.dismissed_prompt_history = data.dismissed_prompt_history"));
+    }
+
+    #[test]
+    fn prompt_history_dismissal_is_independent_and_reversible() {
+        let mut store = Store::default();
+
+        assert!(dismiss_prompt_history_entry(&mut store, "  keep me hidden  "));
+        assert!(store.dismissed_prompt_history.contains("keep me hidden"));
+        assert!(!dismiss_prompt_history_entry(&mut store, "keep me hidden"));
+        assert!(reveal_prompt_history_entry(&mut store, "keep me hidden"));
+        assert!(store.dismissed_prompt_history.is_empty());
+    }
+
+    #[test]
+    fn local_json_replacement_overwrites_existing_files_and_recovers_backups() {
+        let directory = std::env::temp_dir().join(format!(
+            "artforge-local-json-replacement-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("local-store.json");
+        fs::write(&path, "old").unwrap();
+
+        replace_json_file(&path, "new").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+        assert!(!json_backup_path(&path).exists());
+        assert!(!path.with_extension("json.tmp").exists());
+
+        fs::rename(&path, json_backup_path(&path)).unwrap();
+        restore_json_backup_if_needed(&path);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -187,6 +229,10 @@ mod tests {
         assert!(!composer.contains("最近提示词"));
         assert!(!composer.contains("history-close"));
         assert!(composer.contains("horizontal-alignment: left"));
+        assert!(composer.contains("@image-url(\"../../assets/icons/trash.svg\")"));
+        assert!(composer.contains("AppState.remove-prompt-history(AppState.prompt-history[index])"));
+        assert!(composer.contains("text: AppState.en ? \"Clear all\" : \"全部清空\""));
+        assert!(composer.contains("AppState.clear-prompt-history()"));
     }
 
     #[test]
@@ -219,7 +265,7 @@ mod tests {
             "AppState.prompt-history[root.prompt-history-selected-index]"
         ));
         assert!(composer.contains(
-            "AppState.custom-prompts[root.custom-prompt-selected-index]"
+            "AppState.custom-prompt-items[root.custom-prompt-selected-index].content"
         ));
         assert!(composer.contains("root.scroll-prompt-history-selection-into-view()"));
         assert!(composer.contains("root.scroll-custom-prompt-selection-into-view()"));
@@ -390,7 +436,9 @@ mod tests {
         ));
         assert!(composer_normalized
             .contains("history-popup.show();\n                        prompt-input.focus();"));
-        assert!(composer.contains("for preview[index] in AppState.custom-prompt-previews"));
+        assert!(composer.contains("for item[index] in AppState.custom-prompt-items"));
+        assert!(composer.contains("text: item.name"));
+        assert!(composer.contains("root.apply-selected-prompt(item.content)"));
         assert!(composer.contains("close-policy: close-on-click-outside"));
 
         assert!(local_store.contains("custom_prompts: store.custom_prompts.clone()"));
@@ -418,7 +466,7 @@ mod tests {
 
         assert_eq!(
             popup
-                .matches("if AppState.custom-prompts.length > 0: PillButton")
+                .matches("if AppState.custom-prompt-items.length > 0: PillButton")
                 .count(),
             2
         );
@@ -670,7 +718,7 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
     }
 
     #[test]
-    fn prompt_popups_show_ten_single_line_previews_without_losing_full_values() {
+    fn prompt_popups_show_ten_single_line_rows_without_losing_full_values() {
         assert_eq!(
             single_line_prompt_preview("first line\nsecond\tline  end"),
             "first line second line end"
@@ -683,10 +731,12 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
             "root.apply-selected-prompt(AppState.prompt-history[index])"
         ));
         assert!(composer.contains(
-            "root.apply-selected-prompt(AppState.custom-prompts[index])"
+            "root.apply-selected-prompt(item.content)"
         ));
         assert!(composer.contains("viewport-height: AppState.prompt-history.length * 32px"));
-        assert!(composer.contains("viewport-height: AppState.custom-prompts.length * 32px"));
+        assert!(composer.contains("viewport-height: AppState.custom-prompt-items.length * 32px"));
+        assert!(composer.contains("for item[index] in AppState.custom-prompt-items"));
+        assert!(composer.contains("text: item.name"));
     }
 
     #[test]

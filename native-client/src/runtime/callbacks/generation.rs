@@ -47,6 +47,36 @@ pub(super) fn wire_generation_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
+        let store = store.clone();
+        state.on_remove_prompt_history(move |prompt| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut store_mut = store.borrow_mut();
+            if dismiss_prompt_history_entry(&mut store_mut, prompt.as_str()) {
+                save_local_store(&app, &store_mut);
+            }
+            push_prompt_history(&app, &store_mut);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        state.on_clear_prompt_history(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut store_mut = store.borrow_mut();
+            if clear_prompt_history_entries(&mut store_mut) {
+                save_local_store(&app, &store_mut);
+            }
+            push_prompt_history(&app, &store_mut);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
         let context = context.clone();
         state.on_optimize_current_prompt(move || {
             let Some(app) = app_weak.upgrade() else {

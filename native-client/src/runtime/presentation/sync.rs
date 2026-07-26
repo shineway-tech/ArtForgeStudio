@@ -189,7 +189,11 @@ pub(super) fn recent_prompt_history<'a>(
 pub(super) fn push_prompt_history(app: &AppWindow, store: &Store) {
     let state = app.global::<AppState>();
     let history = recent_prompt_history(
-        store.generations.iter().map(|item| item.prompt.as_str()),
+        store
+            .generations
+            .iter()
+            .map(|item| item.prompt.as_str())
+            .filter(|prompt| !store.dismissed_prompt_history.contains(prompt.trim())),
         20,
     );
     if history.is_empty() {

@@ -263,6 +263,7 @@ struct Store {
     notifications: Vec<NotificationData>,
     references: ReferenceGroups,
     prompt_drafts: PromptDrafts,
+    dismissed_prompt_history: BTreeSet<String>,
     custom_prompts: Vec<String>,
     custom_prompt_times: BTreeMap<String, String>,
     custom_prompt_profiles: BTreeMap<String, CustomPromptProfile>,
@@ -307,6 +308,8 @@ struct LocalStoreData {
     reasoning_model: String,
     #[serde(default)]
     prompt_drafts: PromptDrafts,
+    #[serde(default)]
+    dismissed_prompt_history: BTreeSet<String>,
     #[serde(default)]
     custom_prompts: Vec<String>,
     #[serde(default)]

@@ -168,10 +168,10 @@ export component PromptComposer {
                             return accept;
                         }
                     }
-                    if AppState.custom-prompt-open && AppState.custom-prompts.length > 0 {
+                    if AppState.custom-prompt-open && AppState.custom-prompt-items.length > 0 {
                         if event.text == Key.DownArrow {
                             root.custom-prompt-selected-index = min(
-                                AppState.custom-prompts.length - 1,
+                                AppState.custom-prompt-items.length - 1,
                                 root.custom-prompt-selected-index + 1,
                             );
                             root.scroll-custom-prompt-selection-into-view();
@@ -184,7 +184,7 @@ export component PromptComposer {
                         }
                         if event.text == Key.Return && !event.modifiers.alt {
                             root.apply-selected-prompt(
-                                AppState.custom-prompts[root.custom-prompt-selected-index],
+                                AppState.custom-prompt-items[root.custom-prompt-selected-index].content,
                             );
                             return accept;
                         }
@@ -310,7 +310,7 @@ export component PromptComposer {
         x: 24px;
         y: root.prompt-input-y() + 32px;
         width: root.width - 48px;
-        height: 16px + min(10, AppState.prompt-history.length) * 32px;
+        height: 52px + min(10, AppState.prompt-history.length) * 32px;
         close-policy: close-on-click-outside;
         Rectangle {
             visible: AppState.prompt-history-open && AppState.prompt-history.length > 0;
@@ -323,7 +323,7 @@ export component PromptComposer {
                 x: 8px;
                 y: 8px;
                 width: parent.width - 16px;
-                height: parent.height - 16px;
+                height: parent.height - 52px;
                 viewport-width: self.width;
                 viewport-height: AppState.prompt-history.length * 32px;
                 VerticalLayout {
@@ -337,7 +337,7 @@ export component PromptComposer {
                         border-radius: 6px;
                         Text {
                             x: 10px;
-                            width: parent.width - 20px;
+                            width: parent.width - 48px;
                             height: parent.height;
                             text: preview;
                             color: index == root.prompt-history-selected-index ? AppTheme.accent : AppTheme.text;
@@ -349,14 +349,61 @@ export component PromptComposer {
                             overflow: elide;
                         }
                         history-row := TouchArea {
-                            width: parent.width;
+                            width: parent.width - 36px;
                             height: parent.height;
                             mouse-cursor: pointer;
                             clicked => {
                                 root.apply-selected-prompt(AppState.prompt-history[index]);
                             }
                         }
+                        Rectangle {
+                            x: parent.width - 30px;
+                            y: 4px;
+                            width: 24px;
+                            height: 24px;
+                            background: history-delete.has-hover ? AppTheme.panel : transparent;
+                            border-radius: 6px;
+                            Image {
+                                x: 5px;
+                                y: 5px;
+                                width: 14px;
+                                height: 14px;
+                                source: @image-url("../../assets/icons/trash.svg");
+                                colorize: AppTheme.danger;
+                            }
+                            history-delete := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    AppState.remove-prompt-history(AppState.prompt-history[index]);
+                                    if AppState.prompt-history.length == 0 {
+                                        AppState.prompt-history-open = false;
+                                        history-popup.close();
+                                    } else {
+                                        root.prompt-history-selected-index = min(
+                                            root.prompt-history-selected-index,
+                                            AppState.prompt-history.length - 1,
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
+                }
+            }
+            PillButton {
+                x: parent.width - 112px;
+                y: parent.height - 36px;
+                width: 104px;
+                height: 28px;
+                text: AppState.en ? "Clear all" : "全部清空";
+                primary: false;
+                danger: true;
+                clicked => {
+                    AppState.clear-prompt-history();
+                    AppState.prompt-history-open = false;
+                    history-popup.close();
                 }
             }
         }
@@ -366,8 +413,8 @@ export component PromptComposer {
         x: 24px;
         y: root.prompt-input-y() + 32px;
         width: root.width - 48px;
-        height: AppState.custom-prompts.length > 0
-            ? max(86px, 52px + min(10, AppState.custom-prompts.length) * 32px)
+        height: AppState.custom-prompt-items.length > 0
+            ? max(86px, 52px + min(10, AppState.custom-prompt-items.length) * 32px)
             : 54px;
         close-policy: close-on-click-outside;
         Rectangle {
@@ -376,7 +423,7 @@ export component PromptComposer {
             border-radius: 8px;
             border-width: 1px;
             border-color: AppTheme.border;
-            if AppState.custom-prompts.length == 0: Rectangle {
+            if AppState.custom-prompt-items.length == 0: Rectangle {
                 x: 8px;
                 y: 8px;
                 width: parent.width - 16px;
@@ -408,18 +455,18 @@ export component PromptComposer {
                 }
             }
             custom-prompt-scroll := ScrollView {
-                visible: AppState.custom-prompts.length > 0;
+                visible: AppState.custom-prompt-items.length > 0;
                 viewport-y <=> root.custom-prompt-scroll-y;
                 x: 8px;
                 y: 8px;
                 width: parent.width - 16px;
                 height: parent.height - 52px;
                 viewport-width: self.width;
-                viewport-height: AppState.custom-prompts.length * 32px;
+                viewport-height: AppState.custom-prompt-items.length * 32px;
                 VerticalLayout {
                     width: parent.viewport-width;
                     height: parent.viewport-height;
-                    for preview[index] in AppState.custom-prompt-previews: Rectangle {
+                    for item[index] in AppState.custom-prompt-items: Rectangle {
                         height: 32px;
                         background: custom-row.has-hover || index == root.custom-prompt-selected-index
                             ? AppTheme.panel-soft
@@ -429,7 +476,7 @@ export component PromptComposer {
                             x: 10px;
                             width: parent.width - 20px;
                             height: parent.height;
-                            text: preview;
+                            text: item.name;
                             color: index == root.custom-prompt-selected-index ? AppTheme.accent : AppTheme.text;
                             font-size: AppState.settings-font-size * 1px;
                             horizontal-alignment: left;
@@ -442,13 +489,13 @@ export component PromptComposer {
                             height: parent.height;
                             mouse-cursor: pointer;
                             clicked => {
-                                root.apply-selected-prompt(AppState.custom-prompts[index]);
+                                root.apply-selected-prompt(item.content);
                             }
                         }
                     }
                 }
             }
-            if AppState.custom-prompts.length > 0: PillButton {
+            if AppState.custom-prompt-items.length > 0: PillButton {
                 x: parent.width - 160px;
                 y: parent.height - 36px;
                 width: 72px;
@@ -462,7 +509,7 @@ export component PromptComposer {
                     AppState.navigate("settings");
                 }
             }
-            if AppState.custom-prompts.length > 0: PillButton {
+            if AppState.custom-prompt-items.length > 0: PillButton {
                 x: parent.width - 80px;
                 y: parent.height - 36px;
                 width: 72px;
@@ -492,7 +539,7 @@ export component PromptComposer {
     function scroll-custom-prompt-selection-into-view() {
         let selected-top = root.custom-prompt-selected-index * 32px;
         let selected-bottom = selected-top + 32px;
-        let visible-height = min(10, AppState.custom-prompts.length) * 32px;
+        let visible-height = min(10, AppState.custom-prompt-items.length) * 32px;
         if selected-top + root.custom-prompt-scroll-y < 0px {
             root.custom-prompt-scroll-y = -selected-top;
         } else if selected-bottom + root.custom-prompt-scroll-y > visible-height {

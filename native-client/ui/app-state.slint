@@ -385,6 +385,8 @@ export global AppState {
     callback load-fonts();
     callback check-version();
     callback start-update();
+    callback remove-prompt-history(string);
+    callback clear-prompt-history();
     callback save-custom-prompt(string, string);
     callback remove-custom-prompt(string);
     callback begin-new-custom-prompt();

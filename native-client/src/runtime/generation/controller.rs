@@ -143,7 +143,9 @@ pub(super) fn add_stream_success_item(
     };
     let conversation_image = item.image.clone();
     let generated_id = item.id.clone();
+    let history_prompt = item.prompt.clone();
     let mut store_mut = store.borrow_mut();
+    reveal_prompt_history_entry(&mut store_mut, &history_prompt);
     store_mut.assets.insert(0, item.clone());
     store_mut.generations.insert(0, item);
     store_mut.notifications.insert(
@@ -177,6 +179,7 @@ pub(super) fn add_stream_failure_item(
     time: &str,
 ) {
     let mut store_mut = store.borrow_mut();
+    reveal_prompt_history_entry(&mut store_mut, raw_prompt);
     store_mut.generations.insert(
         0,
         AssetData {

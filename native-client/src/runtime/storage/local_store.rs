@@ -1,11 +1,71 @@
 use super::*;
 
+pub(super) fn json_backup_path(path: &Path) -> PathBuf {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("json");
+    path.with_extension(format!("{extension}.bak"))
+}
+
+pub(super) fn restore_json_backup_if_needed(path: &Path) {
+    if path.exists() {
+        return;
+    }
+    let backup = json_backup_path(path);
+    if backup.exists() {
+        let _ = fs::rename(backup, path);
+    }
+}
+
+pub(super) fn replace_json_file(path: &Path, text: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension("json.tmp");
+    fs::write(&temporary, text)?;
+
+    #[cfg(windows)]
+    {
+        let backup = json_backup_path(path);
+        if path.exists() {
+            match fs::remove_file(&backup) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    let _ = fs::remove_file(&temporary);
+                    return Err(error);
+                }
+            }
+            if let Err(error) = fs::rename(path, &backup) {
+                let _ = fs::remove_file(&temporary);
+                return Err(error);
+            }
+            if let Err(error) = fs::rename(&temporary, path) {
+                let _ = fs::rename(&backup, path);
+                let _ = fs::remove_file(&temporary);
+                return Err(error);
+            }
+            let _ = fs::remove_file(backup);
+            return Ok(());
+        }
+    }
+
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    Ok(())
+}
+
 pub(super) fn user_profile_path() -> PathBuf {
     app_data_dir().join("user-profile.json")
 }
 
 pub(super) fn load_user_profile(app: &AppWindow) {
-    let Ok(text) = fs::read_to_string(user_profile_path()) else {
+    let path = user_profile_path();
+    restore_json_backup_if_needed(&path);
+    let Ok(text) = fs::read_to_string(path) else {
         return;
     };
     let Ok(profile) = serde_json::from_str::<UserProfileData>(&text) else {
@@ -71,13 +131,7 @@ pub(super) fn save_user_profile(app: &AppWindow) {
     };
     if let Ok(text) = serde_json::to_string_pretty(&profile) {
         let path = user_profile_path();
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let temporary = path.with_extension("json.tmp");
-        if fs::write(&temporary, text).is_ok() {
-            let _ = fs::rename(temporary, path);
-        }
+        let _ = replace_json_file(&path, &text);
     }
 }
 
@@ -86,7 +140,9 @@ pub(super) fn local_store_path() -> PathBuf {
 }
 
 pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
-    let Ok(text) = fs::read_to_string(local_store_path()) else {
+    let path = local_store_path();
+    restore_json_backup_if_needed(&path);
+    let Ok(text) = fs::read_to_string(path) else {
         recover_output_assets(app, store);
         save_local_store(app, &store.borrow());
         return;
@@ -112,6 +168,7 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
             .collect();
         store_mut.notifications = data.notifications;
         store_mut.prompt_drafts = data.prompt_drafts;
+        store_mut.dismissed_prompt_history = data.dismissed_prompt_history;
         let migrated_prompt_drafts = normalize_reserved_prompt_drafts(&mut store_mut.prompt_drafts);
         store_mut.custom_prompts = normalize_custom_prompts(data.custom_prompts);
         store_mut.custom_prompt_times = data.custom_prompt_times;
@@ -169,6 +226,28 @@ pub(super) fn normalize_reserved_prompt_drafts(drafts: &mut PromptDrafts) -> boo
         }
     }
     migrated
+}
+
+pub(super) fn dismiss_prompt_history_entry(store: &mut Store, prompt: &str) -> bool {
+    let prompt = prompt.trim();
+    !prompt.is_empty() && store.dismissed_prompt_history.insert(prompt.to_string())
+}
+
+pub(super) fn clear_prompt_history_entries(store: &mut Store) -> bool {
+    let prompts = store
+        .generations
+        .iter()
+        .map(|item| item.prompt.trim())
+        .filter(|prompt| !prompt.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let previous_len = store.dismissed_prompt_history.len();
+    store.dismissed_prompt_history.extend(prompts);
+    store.dismissed_prompt_history.len() != previous_len
+}
+
+pub(super) fn reveal_prompt_history_entry(store: &mut Store, prompt: &str) -> bool {
+    store.dismissed_prompt_history.remove(prompt.trim())
 }
 
 pub(super) fn prompt_draft_for_category(drafts: &PromptDrafts, category: &str) -> String {
@@ -425,6 +504,7 @@ pub(super) fn save_local_store(app: &AppWindow, store: &Store) {
         image_model: state.get_image_model().to_string(),
         reasoning_model: state.get_reasoning_model().to_string(),
         prompt_drafts: store.prompt_drafts.clone(),
+        dismissed_prompt_history: store.dismissed_prompt_history.clone(),
         custom_prompts: store.custom_prompts.clone(),
         custom_prompt_times: store.custom_prompt_times.clone(),
         custom_prompt_profiles: store.custom_prompt_profiles.clone(),
@@ -433,13 +513,7 @@ pub(super) fn save_local_store(app: &AppWindow, store: &Store) {
     };
     if let Ok(text) = serde_json::to_string_pretty(&data) {
         let path = local_store_path();
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let temporary = path.with_extension("json.tmp");
-        if fs::write(&temporary, text).is_ok() {
-            let _ = fs::rename(temporary, path);
-        }
+        let _ = replace_json_file(&path, &text);
     }
 }
 
