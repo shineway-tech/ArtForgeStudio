@@ -171,6 +171,7 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
         store_mut.dismissed_prompt_history = data.dismissed_prompt_history;
         let migrated_prompt_drafts = normalize_reserved_prompt_drafts(&mut store_mut.prompt_drafts);
         store_mut.custom_prompts = normalize_custom_prompts(data.custom_prompts);
+        store_mut.selected_custom_prompts = data.selected_custom_prompts;
         store_mut.custom_prompt_times = data.custom_prompt_times;
         store_mut.custom_prompt_profiles = data.custom_prompt_profiles;
         store_mut.canvas_notes = data.canvas_notes;
@@ -183,6 +184,7 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
             .iter()
             .cloned()
             .collect::<BTreeSet<_>>();
+        normalize_selected_custom_prompts(&mut store_mut.selected_custom_prompts, &retained);
         store_mut
             .custom_prompt_times
             .retain(|prompt, _| retained.contains(prompt));
@@ -333,6 +335,7 @@ pub(super) fn save_custom_prompt_to_store(
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
+    normalize_selected_custom_prompts(&mut store.selected_custom_prompts, &retained);
     store
         .custom_prompt_times
         .retain(|item, _| retained.contains(item));
@@ -344,10 +347,83 @@ pub(super) fn remove_custom_prompt_from_store(store: &mut Store, prompt: &str) -
         return false;
     };
     store.custom_prompts.remove(index);
-    store.selected_custom_prompts.remove(prompt);
+    for selected in store.selected_custom_prompts.values_mut() {
+        selected.remove(prompt);
+    }
+    store
+        .selected_custom_prompts
+        .retain(|_, selected| !selected.is_empty());
     store.custom_prompt_times.remove(prompt);
     store.custom_prompt_profiles.remove(prompt);
     true
+}
+
+pub(super) fn toggle_custom_prompt_selection_for_category(
+    store: &mut Store,
+    category: &str,
+    prompt: &str,
+) {
+    let category = resolve_category(category, "");
+    let selected = store
+        .selected_custom_prompts
+        .entry(category.clone())
+        .or_default();
+    if !selected.remove(prompt) {
+        selected.insert(prompt.to_string());
+    }
+    if selected.is_empty() {
+        store.selected_custom_prompts.remove(&category);
+    }
+}
+
+pub(super) fn custom_prompt_selected_for_category(
+    store: &Store,
+    category: &str,
+    prompt: &str,
+) -> bool {
+    let category = resolve_category(category, "");
+    store
+        .selected_custom_prompts
+        .get(&category)
+        .is_some_and(|selected| selected.contains(prompt))
+}
+
+pub(super) fn selected_custom_prompts_for_category(store: &Store, category: &str) -> Vec<String> {
+    store
+        .custom_prompts
+        .iter()
+        .filter(|prompt| custom_prompt_selected_for_category(store, category, prompt))
+        .cloned()
+        .collect()
+}
+
+pub(super) fn replace_selected_custom_prompt(
+    store: &mut Store,
+    original_prompt: &str,
+    replacement_prompt: &str,
+) {
+    for selected in store.selected_custom_prompts.values_mut() {
+        if selected.remove(original_prompt) {
+            selected.insert(replacement_prompt.to_string());
+        }
+    }
+}
+
+fn normalize_selected_custom_prompts(
+    selected_by_category: &mut BTreeMap<String, BTreeSet<String>>,
+    retained_prompts: &BTreeSet<String>,
+) {
+    let mut normalized = BTreeMap::<String, BTreeSet<String>>::new();
+    for (category, mut selected) in std::mem::take(selected_by_category) {
+        selected.retain(|prompt| retained_prompts.contains(prompt));
+        if !selected.is_empty() {
+            normalized
+                .entry(resolve_category(&category, ""))
+                .or_default()
+                .extend(selected);
+        }
+    }
+    *selected_by_category = normalized;
 }
 
 pub(super) fn save_custom_prompt_profile(
@@ -507,6 +583,7 @@ pub(super) fn save_local_store(app: &AppWindow, store: &Store) {
         prompt_drafts: store.prompt_drafts.clone(),
         dismissed_prompt_history: store.dismissed_prompt_history.clone(),
         custom_prompts: store.custom_prompts.clone(),
+        selected_custom_prompts: store.selected_custom_prompts.clone(),
         custom_prompt_times: store.custom_prompt_times.clone(),
         custom_prompt_profiles: store.custom_prompt_profiles.clone(),
         canvas_notes: store.canvas_notes.clone(),

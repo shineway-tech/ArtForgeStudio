@@ -13,12 +13,7 @@ pub(super) fn start_generation(
     let raw_prompt = if override_prompt.is_none() {
         let selected_prompts = {
             let store = context.store.borrow();
-            store
-                .custom_prompts
-                .iter()
-                .filter(|prompt| store.selected_custom_prompts.contains(*prompt))
-                .cloned()
-                .collect::<Vec<_>>()
+            selected_custom_prompts_for_category(&store, &current_workspace_category(app))
         };
         compose_selected_custom_prompts(&input_prompt, &selected_prompts)
     } else if !input_prompt.is_empty() {

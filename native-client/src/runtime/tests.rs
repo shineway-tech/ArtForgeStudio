@@ -449,6 +449,8 @@ mod tests {
         assert!(composer.contains("close-policy: close-on-click-outside"));
 
         assert!(local_store.contains("custom_prompts: store.custom_prompts.clone()"));
+        assert!(local_store
+            .contains("selected_custom_prompts: store.selected_custom_prompts.clone()"));
         assert!(local_store.contains("custom_prompt_times: store.custom_prompt_times.clone()"));
         assert!(local_store.contains("normalize_custom_prompts(data.custom_prompts)"));
         assert!(callbacks.contains("save_local_store(&app, &store.borrow())"));
@@ -481,7 +483,8 @@ mod tests {
         ));
         assert!(state.contains("callback toggle-custom-prompt-selection(string)"));
         assert!(callbacks.contains("state.on_toggle_custom_prompt_selection"));
-        assert!(callbacks.contains("store_mut.selected_custom_prompts"));
+        assert!(callbacks.contains("current_workspace_category(&app)"));
+        assert!(callbacks.contains("toggle_custom_prompt_selection_for_category"));
         assert!(composer.contains("for item in AppState.selected-custom-prompt-items"));
         assert!(popup.contains("text: item.name"));
         assert!(popup.contains("item.selected ? AppTheme.accent"));
@@ -490,6 +493,42 @@ mod tests {
         assert!(!popup.contains("text: item.content"));
         assert!(!popup.contains("text: item.preview"));
         assert!(controller.contains("compose_selected_custom_prompts"));
+        assert!(controller.contains("selected_custom_prompts_for_category"));
+    }
+
+    #[test]
+    fn custom_prompt_selections_are_isolated_by_workspace_category() {
+        let mut store = Store {
+            custom_prompts: vec!["角色提示词".to_string(), "场景提示词".to_string()],
+            ..Store::default()
+        };
+
+        toggle_custom_prompt_selection_for_category(&mut store, "character", "角色提示词");
+        assert!(custom_prompt_selected_for_category(
+            &store,
+            "character",
+            "角色提示词"
+        ));
+        assert!(!custom_prompt_selected_for_category(
+            &store,
+            "scene",
+            "角色提示词"
+        ));
+        assert_eq!(
+            selected_custom_prompts_for_category(&store, "character"),
+            vec!["角色提示词".to_string()]
+        );
+        assert!(selected_custom_prompts_for_category(&store, "scene").is_empty());
+
+        toggle_custom_prompt_selection_for_category(&mut store, "scene", "场景提示词");
+        assert_eq!(
+            selected_custom_prompts_for_category(&store, "scene"),
+            vec!["场景提示词".to_string()]
+        );
+        assert_eq!(
+            selected_custom_prompts_for_category(&store, "character"),
+            vec!["角色提示词".to_string()]
+        );
     }
 
     #[test]

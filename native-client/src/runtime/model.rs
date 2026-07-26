@@ -265,7 +265,7 @@ struct Store {
     prompt_drafts: PromptDrafts,
     dismissed_prompt_history: BTreeSet<String>,
     custom_prompts: Vec<String>,
-    selected_custom_prompts: BTreeSet<String>,
+    selected_custom_prompts: BTreeMap<String, BTreeSet<String>>,
     custom_prompt_times: BTreeMap<String, String>,
     custom_prompt_profiles: BTreeMap<String, CustomPromptProfile>,
     canvas_notes: Vec<CanvasNoteData>,
@@ -313,6 +313,8 @@ struct LocalStoreData {
     dismissed_prompt_history: BTreeSet<String>,
     #[serde(default)]
     custom_prompts: Vec<String>,
+    #[serde(default)]
+    selected_custom_prompts: BTreeMap<String, BTreeSet<String>>,
     #[serde(default)]
     custom_prompt_times: BTreeMap<String, String>,
     #[serde(default)]

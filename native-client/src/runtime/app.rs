@@ -220,6 +220,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
                 let prompt = prompt_draft_for_category(&store.borrow().prompt_drafts, &category);
                 state.set_prompt(prompt.into());
             }
+            push_custom_prompts(&app, &store.borrow());
             push_references(&app, &store.borrow());
             save_local_store(&app, &store.borrow());
             save_user_profile(&app);

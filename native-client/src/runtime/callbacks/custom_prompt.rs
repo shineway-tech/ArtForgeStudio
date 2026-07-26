@@ -18,15 +18,15 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                 if !store_mut.custom_prompts.contains(&prompt) {
                     return;
                 }
-                if !store_mut.selected_custom_prompts.remove(&prompt) {
-                    store_mut.selected_custom_prompts.insert(prompt);
-                }
+                let category = current_workspace_category(&app);
+                toggle_custom_prompt_selection_for_category(&mut store_mut, &category, &prompt);
             }
             let state = app.global::<AppState>();
             if state.get_prompt().trim() == "//" {
                 state.set_prompt("".into());
             }
             push_custom_prompts(&app, &store.borrow());
+            save_local_store(&app, &store.borrow());
         });
     }
 
@@ -257,17 +257,16 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
             let result = {
                 let mut store = store.borrow_mut();
                 let original_prompt = original.trim().to_string();
-                let was_selected = !original_prompt.is_empty()
-                    && store.selected_custom_prompts.contains(&original_prompt);
                 let result =
                     save_custom_prompt_to_store(&mut store, &original, &prompt, &timestamp);
                 if result == SaveCustomPromptResult::Saved {
                     save_custom_prompt_profile(&mut store, &original, &prompt, profile);
-                    if was_selected {
-                        store.selected_custom_prompts.remove(&original_prompt);
-                        store
-                            .selected_custom_prompts
-                            .insert(prompt.trim().to_string());
+                    if !original_prompt.is_empty() {
+                        replace_selected_custom_prompt(
+                            &mut store,
+                            &original_prompt,
+                            prompt.trim(),
+                        );
                     }
                 }
                 result

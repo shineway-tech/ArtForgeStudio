@@ -215,6 +215,7 @@ pub(super) fn push_prompt_history(app: &AppWindow, store: &Store) {
 
 pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
     let state = app.global::<AppState>();
+    let category = current_workspace_category(app);
     let items = store
         .custom_prompts
         .iter()
@@ -230,7 +231,7 @@ pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
                 name: name.into(),
                 preview: preview.into(),
                 content: prompt.clone().into(),
-                selected: store.selected_custom_prompts.contains(prompt),
+                selected: custom_prompt_selected_for_category(store, &category, prompt),
                 category: normalized_custom_prompt_category(
                     profile.map(|profile| profile.category.as_str()).unwrap_or("default"),
                 )
