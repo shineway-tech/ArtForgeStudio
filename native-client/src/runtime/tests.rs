@@ -491,6 +491,13 @@ mod tests {
         assert!(popup.contains("text: item.name"));
         assert!(popup.contains("item.selected ? AppTheme.accent"));
         assert!(popup.contains("AppState.toggle-custom-prompt-selection(item.content)"));
+        assert!(popup.contains(
+            "x: Math.mod(index, root.custom-prompt-column-count())"
+        ));
+        assert!(popup.contains(
+            "y: floor(index / root.custom-prompt-column-count()) * 36px"
+        ));
+        assert!(composer.contains("function custom-prompt-row-count() -> int"));
         assert!(!popup.contains("root.apply-selected-prompt(item.content)"));
         assert!(!popup.contains("text: item.content"));
         assert!(!popup.contains("text: item.preview"));
@@ -849,7 +856,9 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         ));
         assert!(composer.contains("AppState.toggle-custom-prompt-selection(item.content)"));
         assert!(composer.contains("viewport-height: AppState.prompt-history.length * 32px"));
-        assert!(composer.contains("viewport-height: AppState.custom-prompt-items.length * 36px"));
+        assert!(composer.contains(
+            "viewport-height: root.custom-prompt-row-count() * 36px"
+        ));
         assert!(composer.contains("for item[index] in AppState.custom-prompt-items"));
         assert!(composer.contains("text: item.name"));
     }

@@ -460,7 +460,7 @@ export component PromptComposer {
         y: root.prompt-input-y() + (AppState.selected-custom-prompt-items.length > 0 ? 66px : 32px);
         width: root.width - 48px;
         height: AppState.custom-prompt-items.length > 0
-            ? max(88px, 52px + min(10, AppState.custom-prompt-items.length) * 36px)
+            ? max(88px, 52px + min(10, root.custom-prompt-row-count()) * 36px)
             : 54px;
         close-policy: close-on-click-outside;
         Rectangle {
@@ -508,17 +508,20 @@ export component PromptComposer {
                 width: parent.width - 16px;
                 height: parent.height - 52px;
                 viewport-width: self.width;
-                viewport-height: AppState.custom-prompt-items.length * 36px;
-                VerticalLayout {
+                viewport-height: root.custom-prompt-row-count() * 36px;
+                Rectangle {
                     width: parent.viewport-width;
                     height: parent.viewport-height;
                     for item[index] in AppState.custom-prompt-items: Rectangle {
+                        x: Math.mod(index, root.custom-prompt-column-count()) * (root.custom-prompt-tag-width() + 8px);
+                        y: floor(index / root.custom-prompt-column-count()) * 36px;
+                        width: min(root.custom-prompt-tag-width(), parent.width - self.x);
                         height: 36px;
                         background: transparent;
                         Rectangle {
                             x: 0px;
                             y: 4px;
-                            width: min(parent.width, max(72px, tag-title.preferred-width + 28px));
+                            width: parent.width;
                             height: 28px;
                             background: item.selected || custom-row.has-hover || index == root.custom-prompt-selected-index
                                 ? AppTheme.panel-soft
@@ -596,14 +599,36 @@ export component PromptComposer {
     }
 
     function scroll-custom-prompt-selection-into-view() {
-        let selected-top = root.custom-prompt-selected-index * 36px;
+        let selected-top = floor(root.custom-prompt-selected-index / root.custom-prompt-column-count()) * 36px;
         let selected-bottom = selected-top + 36px;
-        let visible-height = min(10, AppState.custom-prompt-items.length) * 36px;
+        let visible-height = min(10, root.custom-prompt-row-count()) * 36px;
         if selected-top + root.custom-prompt-scroll-y < 0px {
             root.custom-prompt-scroll-y = -selected-top;
         } else if selected-bottom + root.custom-prompt-scroll-y > visible-height {
             root.custom-prompt-scroll-y = visible-height - selected-bottom;
         }
+    }
+
+    function custom-prompt-tag-width() -> length {
+        return 108px;
+    }
+
+    function custom-prompt-column-count() -> int {
+        return max(
+            1,
+            min(
+                AppState.custom-prompt-items.length,
+                floor((root.width - 56px) / (root.custom-prompt-tag-width() + 8px)),
+            ),
+        );
+    }
+
+    function custom-prompt-row-count() -> int {
+        return max(
+            1,
+            (AppState.custom-prompt-items.length + root.custom-prompt-column-count() - 1)
+                / root.custom-prompt-column-count(),
+        );
     }
 
     function reference-visible-count() -> int {
