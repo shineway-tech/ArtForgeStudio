@@ -261,7 +261,9 @@ export component PromptComposer {
             }
         }
         Text {
-            visible: prompt-input.text == "" && !prompt-input.has-focus;
+            visible: prompt-input.text == ""
+                && AppState.selected-custom-prompt-items.length == 0
+                && !prompt-input.has-focus;
             x: 24px;
             y: root.prompt-input-y();
             width: parent.width - 48px;

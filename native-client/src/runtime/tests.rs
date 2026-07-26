@@ -493,6 +493,20 @@ mod tests {
     }
 
     #[test]
+    fn selected_custom_prompt_tags_keep_the_default_placeholder_hidden_without_focus() {
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let placeholder = composer
+            .split("text: root.prompt-placeholder()")
+            .next()
+            .and_then(|value| value.rsplit("Text {").next())
+            .expect("prompt placeholder");
+
+        assert!(placeholder.contains("prompt-input.text == \"\""));
+        assert!(placeholder.contains("AppState.selected-custom-prompt-items.length == 0"));
+        assert!(placeholder.contains("!prompt-input.has-focus"));
+    }
+
+    #[test]
     fn selected_custom_prompt_contents_are_composed_only_for_interactive_generation() {
         let selected = vec![
             "portrait lighting".to_string(),
