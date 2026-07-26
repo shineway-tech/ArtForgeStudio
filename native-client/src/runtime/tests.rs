@@ -875,7 +875,9 @@ fn watermark_tool_uses_a_local_result_workspace_without_assets() {
         1
     );
     assert!(page.contains("x: 32px + root.panel-width() - 166px;"));
-    assert!(page.contains("结果仅保存在本地，不进入“我的资产”"));
+    assert!(!page.contains("Upload an image. The processed file stays local"));
+    assert!(!page.contains("结果仅保存在本地"));
+    assert_eq!(page.matches("y: 76px;").count(), 2);
     assert!(page.contains("查看图片"));
     assert!(page.contains("去水印中("));
     assert!(state.contains("watermark-result-path"));

@@ -145,26 +145,11 @@ export component ToolboxWatermarkPage {
             vertical-alignment: center;
         }
 
-        Text {
-            x: 32px;
-            y: 68px;
-            width: parent.width - 64px;
-            height: 22px;
-            text: AppState.en
-                ? "Upload an image. The processed file stays local and is not added to My Assets."
-                : "上传图片后进行处理，结果仅保存在本地，不进入“我的资产”。";
-            color: AppTheme.muted;
-            font-size: 13px;
-            font-weight: 400;
-            vertical-alignment: center;
-            overflow: elide;
-        }
-
         source-panel := PreviewPanel {
             x: 32px;
-            y: 116px;
+            y: 76px;
             width: root.panel-width();
-            height: parent.height - 222px;
+            height: parent.height - 182px;
             title: AppState.en ? "Original" : "原图";
             detail: AppState.watermark-source-name;
             preview: AppState.watermark-source-image;
@@ -174,9 +159,9 @@ export component ToolboxWatermarkPage {
 
         result-panel := PreviewPanel {
             x: 32px + root.panel-width() + root.panel-gap();
-            y: 116px;
+            y: 76px;
             width: root.panel-width();
-            height: parent.height - 222px;
+            height: parent.height - 182px;
             title: AppState.watermark-result-path != ""
                 ? (AppState.en ? "Processed image" : "去水印结果")
                 : (AppState.en ? "Waiting for processing" : "等待处理");
