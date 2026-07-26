@@ -7,6 +7,31 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
 
     {
         let app_weak = app.as_weak();
+        let store = store.clone();
+        state.on_toggle_custom_prompt_selection(move |prompt| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let prompt = prompt.to_string();
+            {
+                let mut store_mut = store.borrow_mut();
+                if !store_mut.custom_prompts.contains(&prompt) {
+                    return;
+                }
+                if !store_mut.selected_custom_prompts.remove(&prompt) {
+                    store_mut.selected_custom_prompts.insert(prompt);
+                }
+            }
+            let state = app.global::<AppState>();
+            if state.get_prompt().trim() == "//" {
+                state.set_prompt("".into());
+            }
+            push_custom_prompts(&app, &store.borrow());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
         state.on_begin_new_custom_prompt(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -231,10 +256,19 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
             };
             let result = {
                 let mut store = store.borrow_mut();
+                let original_prompt = original.trim().to_string();
+                let was_selected = !original_prompt.is_empty()
+                    && store.selected_custom_prompts.contains(&original_prompt);
                 let result =
                     save_custom_prompt_to_store(&mut store, &original, &prompt, &timestamp);
                 if result == SaveCustomPromptResult::Saved {
                     save_custom_prompt_profile(&mut store, &original, &prompt, profile);
+                    if was_selected {
+                        store.selected_custom_prompts.remove(&original_prompt);
+                        store
+                            .selected_custom_prompts
+                            .insert(prompt.trim().to_string());
+                    }
                 }
                 result
             };

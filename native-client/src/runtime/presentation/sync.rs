@@ -215,40 +215,47 @@ pub(super) fn push_prompt_history(app: &AppWindow, store: &Store) {
 
 pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
     let state = app.global::<AppState>();
-    state.set_custom_prompt_items(ModelRc::new(VecModel::from(
-        store
-            .custom_prompts
+    let items = store
+        .custom_prompts
+        .iter()
+        .map(|prompt| {
+            let profile = store.custom_prompt_profiles.get(prompt);
+            let preview = single_line_prompt_preview(prompt);
+            let name = profile
+                .map(|profile| profile.name.trim())
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| preview.chars().take(48).collect());
+            CustomPromptItem {
+                name: name.into(),
+                preview: preview.into(),
+                content: prompt.clone().into(),
+                selected: store.selected_custom_prompts.contains(prompt),
+                category: normalized_custom_prompt_category(
+                    profile.map(|profile| profile.category.as_str()).unwrap_or("default"),
+                )
+                .into(),
+                format: normalized_custom_prompt_format(
+                    profile.map(|profile| profile.format.as_str()).unwrap_or("json"),
+                )
+                .into(),
+                time: store
+                    .custom_prompt_times
+                    .get(prompt)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into(),
+            }
+        })
+        .collect::<Vec<_>>();
+    state.set_selected_custom_prompt_items(ModelRc::new(VecModel::from(
+        items
             .iter()
-            .map(|prompt| {
-                let profile = store.custom_prompt_profiles.get(prompt);
-                let preview = single_line_prompt_preview(prompt);
-                let name = profile
-                    .map(|profile| profile.name.trim())
-                    .filter(|name| !name.is_empty())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| preview.chars().take(48).collect());
-                CustomPromptItem {
-                    name: name.into(),
-                    preview: preview.into(),
-                    content: prompt.clone().into(),
-                    category: normalized_custom_prompt_category(
-                        profile.map(|profile| profile.category.as_str()).unwrap_or("default"),
-                    )
-                    .into(),
-                    format: normalized_custom_prompt_format(
-                        profile.map(|profile| profile.format.as_str()).unwrap_or("json"),
-                    )
-                    .into(),
-                    time: store
-                        .custom_prompt_times
-                        .get(prompt)
-                        .cloned()
-                        .unwrap_or_default()
-                        .into(),
-                }
-            })
+            .filter(|item| item.selected)
+            .cloned()
             .collect::<Vec<_>>(),
     )));
+    state.set_custom_prompt_items(ModelRc::new(VecModel::from(items)));
     state.set_custom_prompt_previews(ModelRc::new(VecModel::from(
         store
             .custom_prompts

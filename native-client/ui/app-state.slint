@@ -83,6 +83,7 @@ export global AppState {
     in-out property <[string]> custom-prompts: [];
     in-out property <[string]> custom-prompt-previews: [];
     in-out property <[CustomPromptItem]> custom-prompt-items: [];
+    in-out property <[CustomPromptItem]> selected-custom-prompt-items: [];
     in-out property <string> custom-prompt-name: "";
     in-out property <string> custom-prompt-input: "";
     in-out property <string> custom-prompt-category: "default";
@@ -387,6 +388,7 @@ export global AppState {
     callback start-update();
     callback remove-prompt-history(string);
     callback clear-prompt-history();
+    callback toggle-custom-prompt-selection(string);
     callback save-custom-prompt(string, string);
     callback remove-custom-prompt(string);
     callback begin-new-custom-prompt();

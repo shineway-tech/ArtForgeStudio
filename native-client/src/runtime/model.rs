@@ -265,6 +265,7 @@ struct Store {
     prompt_drafts: PromptDrafts,
     dismissed_prompt_history: BTreeSet<String>,
     custom_prompts: Vec<String>,
+    selected_custom_prompts: BTreeSet<String>,
     custom_prompt_times: BTreeMap<String, String>,
     custom_prompt_profiles: BTreeMap<String, CustomPromptProfile>,
     canvas_notes: Vec<CanvasNoteData>,

@@ -222,7 +222,9 @@ mod tests {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         assert!(composer.contains("history-popup := PopupWindow"));
         assert!(composer.contains("close-policy: close-on-click-outside"));
-        assert!(composer.contains("y: root.prompt-input-y() + 32px;"));
+        assert!(composer.contains(
+            "y: root.prompt-input-y() + (AppState.selected-custom-prompt-items.length > 0 ? 66px : 32px);"
+        ));
         assert!(composer.contains("width: root.width - 48px"));
         assert!(composer.contains("history-popup.show()"));
         assert!(composer.contains("history-popup.close()"));
@@ -233,6 +235,10 @@ mod tests {
         assert!(composer.contains("AppState.remove-prompt-history(AppState.prompt-history[index])"));
         assert!(composer.contains("text: AppState.en ? \"Clear all\" : \"全部清空\""));
         assert!(composer.contains("AppState.clear-prompt-history()"));
+        assert!(composer.contains("label-font-size: AppState.settings-font-size * 1px - 2px"));
+        assert!(composer.contains("visual-opacity: 0.62"));
+        assert!(composer.contains("width: 88px;"));
+        assert!(composer.contains("height: 24px;"));
     }
 
     #[test]
@@ -265,12 +271,13 @@ mod tests {
             "AppState.prompt-history[root.prompt-history-selected-index]"
         ));
         assert!(composer.contains(
-            "AppState.custom-prompt-items[root.custom-prompt-selected-index].content"
+            "AppState.toggle-custom-prompt-selection("
         ));
         assert!(composer.contains("root.scroll-prompt-history-selection-into-view()"));
         assert!(composer.contains("root.scroll-custom-prompt-selection-into-view()"));
         assert!(composer.contains("index == root.prompt-history-selected-index"));
         assert!(composer.contains("index == root.custom-prompt-selected-index"));
+        assert!(composer.contains("root.custom-prompt-selected-index = index"));
     }
 
     #[test]
@@ -438,7 +445,7 @@ mod tests {
             .contains("history-popup.show();\n                        prompt-input.focus();"));
         assert!(composer.contains("for item[index] in AppState.custom-prompt-items"));
         assert!(composer.contains("text: item.name"));
-        assert!(composer.contains("root.apply-selected-prompt(item.content)"));
+        assert!(composer.contains("AppState.toggle-custom-prompt-selection(item.content)"));
         assert!(composer.contains("close-policy: close-on-click-outside"));
 
         assert!(local_store.contains("custom_prompts: store.custom_prompts.clone()"));
@@ -453,6 +460,54 @@ mod tests {
         assert!(local_store.contains(
             "custom_prompt_profiles: store.custom_prompt_profiles.clone()"
         ));
+    }
+
+    #[test]
+    fn double_slash_custom_prompts_are_multi_select_title_tags() {
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let types = include_str!("../../ui/types.slint");
+        let callbacks = include_str!("callbacks/custom_prompt.rs");
+        let controller = include_str!("generation/controller.rs");
+        let popup = composer
+            .split("custom-prompt-popup := PopupWindow")
+            .nth(1)
+            .and_then(|value| value.split("function scroll-prompt-history-selection").next())
+            .expect("custom prompt popup");
+
+        assert!(types.contains("selected: bool"));
+        assert!(state.contains(
+            "in-out property <[CustomPromptItem]> selected-custom-prompt-items"
+        ));
+        assert!(state.contains("callback toggle-custom-prompt-selection(string)"));
+        assert!(callbacks.contains("state.on_toggle_custom_prompt_selection"));
+        assert!(callbacks.contains("store_mut.selected_custom_prompts"));
+        assert!(composer.contains("for item in AppState.selected-custom-prompt-items"));
+        assert!(popup.contains("text: item.name"));
+        assert!(popup.contains("item.selected ? AppTheme.accent"));
+        assert!(popup.contains("AppState.toggle-custom-prompt-selection(item.content)"));
+        assert!(!popup.contains("root.apply-selected-prompt(item.content)"));
+        assert!(!popup.contains("text: item.content"));
+        assert!(!popup.contains("text: item.preview"));
+        assert!(controller.contains("compose_selected_custom_prompts"));
+    }
+
+    #[test]
+    fn selected_custom_prompt_contents_are_composed_only_for_interactive_generation() {
+        let selected = vec![
+            "portrait lighting".to_string(),
+            "  ink texture  ".to_string(),
+        ];
+
+        assert_eq!(
+            compose_selected_custom_prompts("main subject", &selected),
+            "portrait lighting\n\nink texture\n\nmain subject"
+        );
+        assert_eq!(
+            compose_selected_custom_prompts("//", &selected),
+            "portrait lighting\n\nink texture"
+        );
+        assert_eq!(compose_selected_custom_prompts("", &[]), "");
     }
 
     #[test]
@@ -730,11 +785,9 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(composer.contains(
             "root.apply-selected-prompt(AppState.prompt-history[index])"
         ));
-        assert!(composer.contains(
-            "root.apply-selected-prompt(item.content)"
-        ));
+        assert!(composer.contains("AppState.toggle-custom-prompt-selection(item.content)"));
         assert!(composer.contains("viewport-height: AppState.prompt-history.length * 32px"));
-        assert!(composer.contains("viewport-height: AppState.custom-prompt-items.length * 32px"));
+        assert!(composer.contains("viewport-height: AppState.custom-prompt-items.length * 36px"));
         assert!(composer.contains("for item[index] in AppState.custom-prompt-items"));
         assert!(composer.contains("text: item.name"));
     }

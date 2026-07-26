@@ -344,6 +344,7 @@ pub(super) fn remove_custom_prompt_from_store(store: &mut Store, prompt: &str) -
         return false;
     };
     store.custom_prompts.remove(index);
+    store.selected_custom_prompts.remove(prompt);
     store.custom_prompt_times.remove(prompt);
     store.custom_prompt_profiles.remove(prompt);
     true

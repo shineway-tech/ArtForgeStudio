@@ -10,7 +10,18 @@ pub(super) fn start_generation(
 ) {
     let state = app.global::<AppState>();
     let input_prompt = state.get_prompt().trim().to_string();
-    let raw_prompt = if !input_prompt.is_empty() {
+    let raw_prompt = if override_prompt.is_none() {
+        let selected_prompts = {
+            let store = context.store.borrow();
+            store
+                .custom_prompts
+                .iter()
+                .filter(|prompt| store.selected_custom_prompts.contains(*prompt))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        compose_selected_custom_prompts(&input_prompt, &selected_prompts)
+    } else if !input_prompt.is_empty() {
         input_prompt
     } else {
         override_prompt.unwrap_or_default().trim().to_string()
@@ -34,6 +45,23 @@ pub(super) fn start_generation(
         retry_failed_id,
         forced_count,
     );
+}
+
+pub(super) fn compose_selected_custom_prompts(
+    input_prompt: &str,
+    selected_prompts: &[String],
+) -> String {
+    let mut parts = selected_prompts
+        .iter()
+        .map(|prompt| prompt.trim())
+        .filter(|prompt| !prompt.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let input_prompt = input_prompt.trim();
+    if !input_prompt.is_empty() && input_prompt != "//" {
+        parts.push(input_prompt.to_string());
+    }
+    parts.join("\n\n")
 }
 
 pub(super) fn retry_failed_generation(app: &AppWindow, context: AppContext, id: String) {
