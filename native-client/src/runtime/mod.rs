@@ -76,6 +76,9 @@ use custom_prompt_callbacks::*;
 #[path = "callbacks/infinite_canvas.rs"]
 mod infinite_canvas_callbacks;
 use infinite_canvas_callbacks::*;
+#[path = "callbacks/toolbox.rs"]
+mod toolbox_callbacks;
+use toolbox_callbacks::*;
 mod payment_checkout;
 use payment_checkout::*;
 mod agreement_window;

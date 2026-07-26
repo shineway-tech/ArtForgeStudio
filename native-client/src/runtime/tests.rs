@@ -859,6 +859,32 @@ fn sidebar_toolbox_opens_a_six_tool_page() {
 }
 
 #[test]
+fn watermark_tool_uses_a_local_result_workspace_without_assets() {
+    let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
+    let page = include_str!("../../ui/pages/toolbox-watermark-page.slint");
+    let state = include_str!("../../ui/app-state.slint");
+    let app = include_str!("app.rs");
+    let callbacks = include_str!("callbacks/toolbox.rs");
+
+    assert!(toolbox.contains("target-page: \"toolbox-watermark\""));
+    assert!(page.contains("AppState.choose-watermark-source()"));
+    assert!(page.contains("AppState.start-watermark-removal()"));
+    assert!(page.contains("AppState.reveal-watermark-result()"));
+    assert!(page.contains("结果仅保存在本地，不进入“我的资产”"));
+    assert!(page.contains("查看图片"));
+    assert!(page.contains("去水印中("));
+    assert!(state.contains("watermark-result-path"));
+    assert!(callbacks.contains("rfd::FileDialog::new()"));
+    assert!(callbacks.contains("reveal_path_in_file_manager(&path)"));
+    assert!(callbacks.contains("去水印服务等待后端配置"));
+    assert!(!callbacks.contains("push_assets"));
+    assert!(!callbacks.contains("save_local_store"));
+    assert!(!callbacks.contains(".generations"));
+    assert!(app.contains("if page == \"toolbox-watermark\""));
+    assert!(app.contains("state.set_page(\"toolbox\".into())"));
+}
+
+#[test]
 fn idle_generation_area_rotates_slash_usage_tips() {
     let panel = include_str!("../../ui/components/studio-work-panel.slint");
     let tips = include_str!("../../ui/components/usage-tip-carousel.slint");

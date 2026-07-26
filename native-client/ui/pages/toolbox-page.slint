@@ -3,6 +3,7 @@ import { AppTheme } from "../theme.slint";
 
 component ToolboxCard {
     in property <string> tool-id;
+    in property <string> target-page: "";
     in property <string> title;
     in property <string> description;
     in property <image> icon;
@@ -64,6 +65,9 @@ component ToolboxCard {
             mouse-cursor: pointer;
             clicked => {
                 AppState.toolbox-selected-tool = root.tool-id;
+                if root.target-page != "" {
+                    AppState.navigate(root.target-page);
+                }
             }
         }
     }
@@ -128,6 +132,7 @@ export component ToolboxPage {
                 width: root.card-width();
                 height: root.card-height();
                 tool-id: "remove-watermark";
+                target-page: "toolbox-watermark";
                 title: AppState.en ? "Remove Watermark" : "去水印";
                 description: AppState.en ? "Remove unwanted watermarks or text from an image" : "移除图片中的水印、文字或干扰元素";
                 icon: @image-url("../../assets/icons/trash.svg");

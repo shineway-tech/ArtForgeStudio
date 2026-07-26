@@ -78,6 +78,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
     wire_credit_callbacks(app, context.clone());
     wire_custom_prompt_callbacks(app, context.clone());
     wire_infinite_canvas_callbacks(app, store.clone());
+    wire_toolbox_callbacks(app);
 
     {
         let app_weak = app.as_weak();
@@ -142,6 +143,10 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
                 let page = state.get_page().to_string();
                 if page == "custom-prompt-editor" {
                     close_custom_prompt_editor(&app);
+                    return;
+                }
+                if page == "toolbox-watermark" {
+                    state.set_page("toolbox".into());
                     return;
                 }
                 if page == "generation" {

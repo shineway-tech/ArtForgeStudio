@@ -1,0 +1,238 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { PillButton } from "../components/pill-button.slint";
+
+component PreviewPanel {
+    in property <string> title;
+    in property <string> detail;
+    in property <image> preview;
+    in property <bool> has-image: false;
+    in property <bool> processing: false;
+    in property <int> progress: 0;
+    in property <bool> result-panel: false;
+    callback choose-image();
+
+    Rectangle {
+        background: transparent;
+
+        Text {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: 28px;
+            text: root.processing
+                ? (AppState.en ? "Removing watermark (" + root.progress + "%)..." : "去水印中(" + root.progress + "%)...")
+                : root.title;
+            color: AppTheme.text;
+            font-size: 16px;
+            font-weight: 600;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            x: 0px;
+            y: 30px;
+            width: parent.width;
+            height: 20px;
+            text: root.detail;
+            color: AppTheme.muted;
+            font-size: 12px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        preview-frame := Rectangle {
+            x: 0px;
+            y: 62px;
+            width: parent.width;
+            height: parent.height - 62px;
+            background: AppTheme.panel;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: root.processing ? AppTheme.accent : AppTheme.border;
+            clip: true;
+
+            if root.has-image: Image {
+                x: 12px;
+                y: 12px;
+                width: parent.width - 24px;
+                height: parent.height - 24px;
+                source: root.preview;
+                image-fit: contain;
+            }
+
+            if !root.has-image: Rectangle {
+                background: transparent;
+
+                Rectangle {
+                    x: (parent.width - 58px) / 2;
+                    y: (parent.height - 108px) / 2;
+                    width: 58px;
+                    height: 58px;
+                    border-radius: 14px;
+                    background: AppTheme.panel-soft;
+                    Image {
+                        x: 16px;
+                        y: 16px;
+                        width: 26px;
+                        height: 26px;
+                        source: root.result-panel
+                            ? @image-url("../../assets/icons/image.svg")
+                            : @image-url("../../assets/icons/upload.svg");
+                        colorize: AppTheme.muted;
+                        image-fit: contain;
+                    }
+                }
+
+                Text {
+                    x: 24px;
+                    y: (parent.height - 108px) / 2 + 72px;
+                    width: parent.width - 48px;
+                    height: 24px;
+                    text: root.result-panel
+                        ? (AppState.en ? "The processed image will appear here" : "处理后的图片将显示在这里")
+                        : (AppState.en ? "Upload an image to begin" : "上传图片后开始处理");
+                    color: AppTheme.muted;
+                    font-size: 13px;
+                    font-weight: 400;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                if !root.result-panel: TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => { root.choose-image(); }
+                }
+            }
+
+            if root.processing: Rectangle {
+                x: 0px;
+                y: parent.height - 4px;
+                width: parent.width * root.progress / 100;
+                height: 4px;
+                background: AppTheme.accent;
+            }
+        }
+    }
+}
+
+export component ToolboxWatermarkPage {
+    function panel-gap() -> length {
+        return 20px;
+    }
+
+    function panel-width() -> length {
+        return (root.width - 64px - root.panel-gap()) / 2;
+    }
+
+    Rectangle {
+        background: AppTheme.bg;
+
+        Text {
+            x: 32px;
+            y: 28px;
+            width: parent.width - 64px;
+            height: 32px;
+            text: AppState.en ? "Remove Watermark" : "去水印";
+            color: AppTheme.text;
+            font-size: 24px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: 32px;
+            y: 68px;
+            width: parent.width - 64px;
+            height: 22px;
+            text: AppState.en
+                ? "Upload an image. The processed file stays local and is not added to My Assets."
+                : "上传图片后进行处理，结果仅保存在本地，不进入“我的资产”。";
+            color: AppTheme.muted;
+            font-size: 13px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        source-panel := PreviewPanel {
+            x: 32px;
+            y: 116px;
+            width: root.panel-width();
+            height: parent.height - 222px;
+            title: AppState.en ? "Original" : "原图";
+            detail: AppState.watermark-source-name;
+            preview: AppState.watermark-source-image;
+            has-image: AppState.watermark-source-path != "";
+            choose-image => { AppState.choose-watermark-source(); }
+        }
+
+        result-panel := PreviewPanel {
+            x: 32px + root.panel-width() + root.panel-gap();
+            y: 116px;
+            width: root.panel-width();
+            height: parent.height - 222px;
+            title: AppState.watermark-result-path != ""
+                ? (AppState.en ? "Processed image" : "去水印结果")
+                : (AppState.en ? "Waiting for processing" : "等待处理");
+            detail: AppState.watermark-result-name;
+            preview: AppState.watermark-result-image;
+            has-image: AppState.watermark-result-path != "";
+            processing: AppState.watermark-processing;
+            progress: AppState.watermark-progress;
+            result-panel: true;
+        }
+
+        PillButton {
+            x: 32px;
+            y: parent.height - 78px;
+            width: 142px;
+            height: 42px;
+            text: AppState.watermark-source-path == ""
+                ? (AppState.en ? "Upload image" : "上传图片")
+                : (AppState.en ? "Choose another" : "重新选择");
+            clicked => { AppState.choose-watermark-source(); }
+        }
+
+        PillButton {
+            x: (parent.width - 166px) / 2;
+            y: parent.height - 78px;
+            width: 166px;
+            height: 42px;
+            text: AppState.watermark-processing
+                ? (AppState.en ? "Processing..." : "处理中...")
+                : (AppState.en ? "Remove watermark" : "去水印");
+            primary: true;
+            disabled: AppState.watermark-source-path == "" || AppState.watermark-processing;
+            clicked => { AppState.start-watermark-removal(); }
+        }
+
+        PillButton {
+            x: parent.width - 174px;
+            y: parent.height - 78px;
+            width: 142px;
+            height: 42px;
+            text: AppState.en ? "View image" : "查看图片";
+            disabled: AppState.watermark-result-path == "";
+            clicked => { AppState.reveal-watermark-result(); }
+        }
+
+        if AppState.watermark-message != "": Text {
+            x: 196px;
+            y: parent.height - 69px;
+            width: (parent.width - 166px) / 2 - 214px;
+            height: 24px;
+            text: AppState.watermark-message;
+            color: AppTheme.muted;
+            font-size: 12px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}

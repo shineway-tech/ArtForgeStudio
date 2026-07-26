@@ -98,6 +98,15 @@ export global AppState {
     in-out property <bool> custom-prompt-editor-open: false;
     in-out property <string> custom-prompt-editor-return-page: "settings";
     in-out property <string> toolbox-selected-tool: "";
+    in-out property <string> watermark-source-path: "";
+    in-out property <string> watermark-source-name: "";
+    in-out property <image> watermark-source-image;
+    in-out property <string> watermark-result-path: "";
+    in-out property <string> watermark-result-name: "";
+    in-out property <image> watermark-result-image;
+    in-out property <bool> watermark-processing: false;
+    in-out property <int> watermark-progress: 0;
+    in-out property <string> watermark-message: "";
     in-out property <[CanvasNote]> canvas-notes: [];
     in-out property <[CanvasLink]> canvas-links: [];
     in-out property <string> canvas-selected-id: "";
@@ -399,6 +408,9 @@ export global AppState {
     callback choose-custom-prompt-reference();
     callback analyze-custom-prompt-reference();
     callback clear-custom-prompt-reference();
+    callback choose-watermark-source();
+    callback start-watermark-removal();
+    callback reveal-watermark-result();
     callback add-canvas-node(string, float, float);
     callback update-canvas-node(string, string, float, float);
     callback rename-canvas-group(string, string) -> bool;

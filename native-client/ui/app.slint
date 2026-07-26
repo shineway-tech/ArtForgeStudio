@@ -28,6 +28,7 @@ import { NotificationsPage } from "pages/notifications-page.slint";
 import { SettingsPage } from "pages/settings-page.slint";
 import { StudioSplitPage } from "pages/studio-split-page.slint";
 import { ToolboxPage } from "pages/toolbox-page.slint";
+import { ToolboxWatermarkPage } from "pages/toolbox-watermark-page.slint";
 import { WelcomePage } from "pages/welcome-page.slint";
 
 export { AppState, AppTheme, AccountSession, ModelGroup, ModelOption, AssetItem, AssetGroup, CanvasNote, ConversationItem, NotificationItem, CreditRecord, CustomPromptItem, InvoiceOrderView, ReferenceItem }
@@ -67,6 +68,7 @@ export component AppWindow inherits Window {
                 if AppState.page == "generation": StudioSplitPage { width: parent.width; height: parent.height; generation: true; }
                 if AppState.page == "canvas": InfiniteCanvasPage { width: parent.width; height: parent.height; }
                 if AppState.page == "toolbox": ToolboxPage { width: parent.width; height: parent.height; }
+                if AppState.page == "toolbox-watermark": ToolboxWatermarkPage { width: parent.width; height: parent.height; }
                 if AppState.page == "assets": AssetsPage { width: parent.width; height: parent.height; }
                 if AppState.page == "inspiration": InspirationPage { width: parent.width; height: parent.height; }
                 if AppState.page == "notifications": NotificationsPage { width: parent.width; height: parent.height; }
