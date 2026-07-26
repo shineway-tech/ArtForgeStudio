@@ -393,7 +393,7 @@ mod tests {
         let app = include_str!("../../ui/app.slint");
         let settings = include_str!("../../ui/pages/settings-page.slint");
         let custom_settings = include_str!("../../ui/components/custom-prompt-settings.slint");
-        let custom_dialog = include_str!("../../ui/dialogs/custom-prompt-dialog.slint");
+        let custom_editor = include_str!("../../ui/pages/custom-prompt-editor-page.slint");
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         let local_store = include_str!("storage/local_store.rs");
         let callbacks = include_str!("callbacks/custom_prompt.rs");
@@ -403,7 +403,8 @@ mod tests {
         assert!(state.contains("in-out property <bool> custom-prompt-editor-open"));
         assert!(state.contains("callback save-custom-prompt(string, string)"));
         assert!(state.contains("callback remove-custom-prompt(string)"));
-        assert!(app.contains("CustomPromptDialog"));
+        assert!(app.contains("if AppState.page == \"custom-prompt-editor\""));
+        assert!(app.contains("CustomPromptEditorPage"));
         assert!(settings.contains("CustomPromptSettings"));
         assert!(settings.contains("自定义提示词"));
         assert!(custom_settings.contains("text: AppState.en ? \"Add\" : \"新增\""));
@@ -416,7 +417,7 @@ mod tests {
         assert!(custom_settings.contains("assets/icons/edit.svg"));
         assert!(custom_settings.contains("AppState.pending-delete-kind = \"custom-prompt\""));
         assert!(custom_settings.contains("AppState.delete-confirm-open = true"));
-        assert!(custom_dialog.contains("AppState.save-custom-prompt"));
+        assert!(custom_editor.contains("AppState.save-custom-prompt"));
 
         assert!(composer.contains("event.text == \"/\" && AppState.prompt == \"/\""));
         assert!(composer.contains("AppState.prompt = \"//\";"));
@@ -455,6 +456,7 @@ mod tests {
         assert!(local_store.contains("normalize_custom_prompts(data.custom_prompts)"));
         assert!(callbacks.contains("save_local_store(&app, &store.borrow())"));
         assert!(callbacks.contains("state.on_save_custom_prompt"));
+        assert!(callbacks.contains("state.set_page(\"custom-prompt-editor\".into())"));
         assert!(callbacks.contains("state.set_custom_prompt_editor_open(false)"));
         assert!(callbacks.contains("state.on_begin_new_custom_prompt"));
         assert!(callbacks.contains("state.on_begin_edit_custom_prompt"));
@@ -589,7 +591,8 @@ mod tests {
 
     #[test]
     fn custom_prompt_editor_uses_the_structured_reference_form() {
-        let dialog = include_str!("../../ui/dialogs/custom-prompt-dialog.slint");
+        let page = include_str!("../../ui/pages/custom-prompt-editor-page.slint");
+        let app = include_str!("../../ui/app.slint");
         let state = include_str!("../../ui/app-state.slint");
         let callbacks = include_str!("callbacks/custom_prompt.rs");
 
@@ -603,24 +606,30 @@ mod tests {
         ] {
             assert!(state.contains(field), "missing state field {field}");
         }
-        assert!(dialog.contains("提示词名称 *"));
-        assert!(dialog.contains("PromptCategorySelect"));
-        assert!(dialog.contains("上传风格参考图"));
-        assert!(dialog.contains("AI 分析生成风格"));
-        assert!(dialog.contains("保存格式"));
-        assert!(dialog.contains("提示词内容 *"));
-        assert!(dialog.contains("反向提示词（仅 JSON 格式有效）"));
-        assert!(dialog.contains("AppState.choose-custom-prompt-reference()"));
-        assert!(dialog.contains("AppState.clear-custom-prompt-reference()"));
+        assert!(app.contains("if AppState.page == \"custom-prompt-editor\""));
+        assert!(page.contains("left-panel := Rectangle"));
+        assert!(page.contains("right-panel := Rectangle"));
+        assert!(page.contains("x: left-panel.width + 18px"));
+        assert!(page.contains("提示词名称 *"));
+        assert!(page.contains("PromptCategorySelect"));
+        assert!(page.contains("上传参考图"));
+        assert!(page.contains("AI 分析风格"));
+        assert!(page.contains("保存格式"));
+        assert!(page.contains("提示词内容 *"));
+        assert!(page.contains("反向提示词（仅 JSON 格式有效）"));
+        assert!(page.contains("AppState.choose-custom-prompt-reference()"));
+        assert!(page.contains("AppState.clear-custom-prompt-reference()"));
+        assert!(page.contains("AppState.close-custom-prompt-editor()"));
         assert!(state.contains("callback analyze-custom-prompt-reference();"));
-        assert!(dialog.contains("AppState.analyze-custom-prompt-reference();"));
-        assert!(dialog.contains(
+        assert!(state.contains("callback close-custom-prompt-editor();"));
+        assert!(page.contains("AppState.analyze-custom-prompt-reference();"));
+        assert!(page.contains(
             "disabled: AppState.custom-prompt-reference-path == \"\" || AppState.custom-prompt-analyzing;"
         ));
-        assert!(!dialog.contains("等待服务端开放图片风格分析"));
+        assert!(!page.contains("等待服务端开放图片风格分析"));
         assert!(callbacks.contains("state.on_analyze_custom_prompt_reference"));
-        assert!(!dialog.contains("Analyzed locally; the image is not uploaded"));
-        assert!(!dialog.contains("由本地客户端分析，不会上传参考图"));
+        assert!(!page.contains("Analyzed locally; the image is not uploaded"));
+        assert!(!page.contains("由本地客户端分析，不会上传参考图"));
         assert!(state.contains("custom-prompt-analyzing"));
         assert!(callbacks.contains("state.get_reasoning_model()"));
         assert!(callbacks.contains("GenerationApi::new(backend.api.clone())"));
@@ -713,15 +722,15 @@ mod tests {
 
     #[test]
     fn custom_prompt_editor_allows_ime_to_handle_composition_keys() {
-        let dialog = include_str!("../../ui/dialogs/custom-prompt-dialog.slint");
-        let prompt_input = dialog
+        let page = include_str!("../../ui/pages/custom-prompt-editor-page.slint");
+        let prompt_input = page
             .split("prompt-input := TextInput")
             .nth(1)
             .and_then(|value| value.split("if AppState.custom-prompt-input").next())
             .expect("custom prompt content input");
 
-        assert!(dialog.contains("init => { prompt-name-input.focus(); }"));
-        assert!(dialog.matches("input-type: text;").count() >= 3);
+        assert!(page.contains("init => { prompt-name-input.focus(); }"));
+        assert!(page.matches("input-type: text;").count() >= 3);
         assert!(!prompt_input.contains("key-pressed(event)"));
         assert!(!prompt_input.contains("root.save-prompt()"));
     }
@@ -862,7 +871,11 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         let write_position = apply_prompt
             .find("AppState.prompt = value")
             .expect("prompt value assignment");
+        let cursor_position = apply_prompt
+            .find("prompt-input.set-selection-offsets(2147483647, 2147483647)")
+            .expect("prompt cursor moves to the end");
         assert!(focus_position < write_position);
+        assert!(write_position < cursor_position);
         assert!(composer.contains("暂无自定义提示词，点击创建"));
         assert!(composer.contains("AppState.settings-section = \"prompts\""));
         assert!(composer.contains("AppState.navigate(\"settings\")"));

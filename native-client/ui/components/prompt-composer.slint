@@ -27,6 +27,7 @@ export component PromptComposer {
         prompt-input.focus();
         prompt-input.text = value;
         AppState.prompt = value;
+        prompt-input.set-selection-offsets(2147483647, 2147483647);
     }
 
     Rectangle {

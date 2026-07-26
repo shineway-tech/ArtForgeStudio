@@ -37,8 +37,7 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                 return;
             };
             reset_custom_prompt_editor(&app);
-            app.global::<AppState>()
-                .set_custom_prompt_editor_open(true);
+            open_custom_prompt_editor(&app);
         });
     }
 
@@ -89,7 +88,17 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                 },
             );
             state.set_custom_prompt_message("".into());
-            state.set_custom_prompt_editor_open(true);
+            open_custom_prompt_editor(&app);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_close_custom_prompt_editor(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            close_custom_prompt_editor(&app);
         });
     }
 
@@ -274,9 +283,9 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
             match result {
                 SaveCustomPromptResult::Saved => {
                     reset_custom_prompt_editor(&app);
-                    state.set_custom_prompt_editor_open(false);
                     push_custom_prompts(&app, &store.borrow());
                     save_local_store(&app, &store.borrow());
+                    close_custom_prompt_editor(&app);
                 }
                 SaveCustomPromptResult::Empty => {
                     state.set_custom_prompt_message(
@@ -475,6 +484,31 @@ fn reset_custom_prompt_editor(app: &AppWindow) {
     state.set_custom_prompt_message("".into());
     state.set_custom_prompt_analyzing(false);
     state.set_custom_prompt_editing_original("".into());
+}
+
+fn open_custom_prompt_editor(app: &AppWindow) {
+    let state = app.global::<AppState>();
+    let current_page = state.get_page().to_string();
+    if current_page != "custom-prompt-editor" {
+        let return_page = match current_page.as_str() {
+            "generation" | "settings" => current_page,
+            _ => "settings".to_string(),
+        };
+        state.set_custom_prompt_editor_return_page(return_page.into());
+    }
+    state.set_custom_prompt_editor_open(true);
+    state.set_page("custom-prompt-editor".into());
+}
+
+pub(super) fn close_custom_prompt_editor(app: &AppWindow) {
+    let state = app.global::<AppState>();
+    let return_page = match state.get_custom_prompt_editor_return_page().as_str() {
+        "generation" => "generation",
+        _ => "settings",
+    };
+    state.set_custom_prompt_editor_open(false);
+    state.set_custom_prompt_message("".into());
+    state.set_page(return_page.into());
 }
 
 pub(super) fn normalized_custom_prompt_category(value: &str) -> String {

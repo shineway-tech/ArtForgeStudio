@@ -7,7 +7,6 @@ import { AlipayPaymentDialog } from "dialogs/alipay-payment-dialog.slint";
 import { AuthDialog } from "dialogs/auth-dialog.slint";
 import { CreditInsufficientDialog } from "dialogs/credit-insufficient-dialog.slint";
 import { CanvasGroupNameDialog } from "dialogs/canvas-group-name-dialog.slint";
-import { CustomPromptDialog } from "dialogs/custom-prompt-dialog.slint";
 import { InvoiceDialog } from "dialogs/invoice-dialog.slint";
 import { InvoiceOrderDialog } from "dialogs/invoice-order-dialog.slint";
 import { DeleteConfirm } from "dialogs/delete-confirm.slint";
@@ -22,6 +21,7 @@ import { ViewerOverlay } from "dialogs/viewer-overlay.slint";
 import { CutoutPage } from "pages/cutout-page.slint";
 import { AssetsPage } from "pages/assets-page.slint";
 import { CreditsPage } from "pages/credits-page.slint";
+import { CustomPromptEditorPage } from "pages/custom-prompt-editor-page.slint";
 import { InspirationPage } from "pages/inspiration-page.slint";
 import { InfiniteCanvasPage } from "pages/infinite-canvas-page.slint";
 import { NotificationsPage } from "pages/notifications-page.slint";
@@ -74,6 +74,10 @@ export component AppWindow inherits Window {
                     open-invoice-orders => { root.invoice-orders-open = true; }
                 }
                 if AppState.page == "settings": SettingsPage { width: parent.width; height: parent.height; }
+                if AppState.page == "custom-prompt-editor": CustomPromptEditorPage {
+                    width: parent.width;
+                    height: parent.height;
+                }
             }
         }
     }
@@ -109,7 +113,6 @@ export component AppWindow inherits Window {
     ModelRequiredDialog { width: root.width; height: root.height; }
     CreditInsufficientDialog { width: root.width; height: root.height; }
     QualityRestrictedDialog { width: root.width; height: root.height; }
-    CustomPromptDialog { width: root.width; height: root.height; }
     InvoiceOrderDialog {
         x: 0px;
         y: 0px;

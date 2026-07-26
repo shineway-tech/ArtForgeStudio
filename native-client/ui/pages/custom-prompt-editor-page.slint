@@ -1,6 +1,5 @@
 import { ScrollView } from "std-widgets.slint";
 import { AppState } from "../app-state.slint";
-import { DialogCloseButton } from "../components/dialog-close-button.slint";
 import { PillButton } from "../components/pill-button.slint";
 import { AppTheme } from "../theme.slint";
 
@@ -106,12 +105,39 @@ component PromptCategorySelect {
     }
 }
 
-export component CustomPromptDialog {
-    function close-dialog() {
-        AppState.custom-prompt-editor-open = false;
-        AppState.custom-prompt-message = "";
-    }
+component FormatOption {
+    in property <string> value;
+    in property <string> label;
+    property <bool> active: AppState.custom-prompt-format == root.value;
+    callback selected();
+    width: 86px;
+    height: 38px;
 
+    Rectangle {
+        background: root.active ? AppTheme.accent : AppTheme.bg;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: root.active ? AppTheme.accent : AppTheme.border;
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.label;
+            color: root.active ? #ffffff : AppTheme.text;
+            font-size: 12px;
+            font-weight: 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.selected(); }
+        }
+    }
+}
+
+export component CustomPromptEditorPage {
     function save-prompt() {
         AppState.save-custom-prompt(
             AppState.custom-prompt-editing-original,
@@ -119,17 +145,16 @@ export component CustomPromptDialog {
         );
     }
 
-    if AppState.custom-prompt-editor-open: Rectangle {
-        background: #00000066;
-        TouchArea { width: parent.width; height: parent.height; }
+    Rectangle {
+        background: AppTheme.bg;
 
-        dialog := Rectangle {
-            width: min(760px, root.width - 32px);
-            height: min(820px, root.height - 40px);
-            x: (root.width - self.width) / 2;
-            y: (root.height - self.height) / 2;
+        editor := Rectangle {
+            x: 28px;
+            y: 18px;
+            width: parent.width - 56px;
+            height: parent.height - 36px;
             background: AppTheme.panel;
-            border-radius: 14px;
+            border-radius: 12px;
             border-width: 1px;
             border-color: AppTheme.border;
             clip: true;
@@ -138,36 +163,46 @@ export component CustomPromptDialog {
             Text {
                 x: 24px;
                 y: 16px;
-                width: parent.width - 80px;
-                height: 28px;
+                width: parent.width - 180px;
+                height: 36px;
                 text: AppState.custom-prompt-editing-original == ""
                     ? (AppState.en ? "Create prompt" : "创建提示词")
                     : (AppState.en ? "Edit prompt" : "编辑提示词");
                 color: AppTheme.text;
-                font-size: 17px;
+                font-size: 20px;
                 font-weight: 600;
                 vertical-alignment: center;
             }
-            DialogCloseButton {
-                x: parent.width - 42px;
-                y: 12px;
-                clicked => { root.close-dialog(); }
+            PillButton {
+                x: parent.width - 104px;
+                y: 16px;
+                width: 80px;
+                height: 36px;
+                text: AppState.en ? "Close" : "关闭";
+                clicked => { AppState.close-custom-prompt-editor(); }
             }
 
-            form-scroll := ScrollView {
+            body := Rectangle {
                 x: 24px;
-                y: 56px;
+                y: 68px;
                 width: parent.width - 48px;
-                height: parent.height - 124px;
-                viewport-width: self.visible-width;
-                viewport-height: 704px;
+                height: parent.height - 136px;
+                background: transparent;
 
-                form := VerticalLayout {
-                    width: parent.viewport-width;
-                    height: 704px;
-                    spacing: 8px;
+                left-panel := Rectangle {
+                    x: 0px;
+                    width: max(310px, min(430px, (parent.width - 18px) * 0.37));
+                    height: parent.height;
+                    background: AppTheme.bg;
+                    border-radius: 10px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    clip: true;
 
                     Text {
+                        x: 20px;
+                        y: 16px;
+                        width: parent.width - 40px;
                         height: 18px;
                         text: AppState.en ? "Prompt name *" : "提示词名称 *";
                         color: AppTheme.text;
@@ -176,8 +211,11 @@ export component CustomPromptDialog {
                         vertical-alignment: center;
                     }
                     Rectangle {
+                        x: 20px;
+                        y: 42px;
+                        width: parent.width - 40px;
                         height: 42px;
-                        background: AppTheme.bg;
+                        background: AppTheme.panel;
                         border-radius: 8px;
                         border-width: 1px;
                         border-color: prompt-name-input.has-focus ? AppTheme.accent : AppTheme.border;
@@ -197,7 +235,7 @@ export component CustomPromptDialog {
                             x: 12px;
                             width: parent.width - 24px;
                             height: parent.height;
-                            text: AppState.en ? "Name this prompt" : "输入提示词名称";
+                            text: AppState.en ? "For example: Dark Style V5" : "例如：暗黑风格V5";
                             color: AppTheme.weak;
                             font-size: AppState.settings-font-size * 1px;
                             font-weight: 400;
@@ -206,6 +244,9 @@ export component CustomPromptDialog {
                     }
 
                     Text {
+                        x: 20px;
+                        y: 100px;
+                        width: parent.width - 40px;
                         height: 18px;
                         text: AppState.en ? "Category" : "分类";
                         color: AppTheme.text;
@@ -214,84 +255,16 @@ export component CustomPromptDialog {
                         vertical-alignment: center;
                     }
                     PromptCategorySelect {
+                        x: 20px;
+                        y: 126px;
+                        width: parent.width - 40px;
                         value <=> AppState.custom-prompt-category;
                     }
 
                     Text {
-                        height: 18px;
-                        text: AppState.en ? "Style reference" : "风格参考";
-                        color: AppTheme.text;
-                        font-size: 13px;
-                        font-weight: 400;
-                        vertical-alignment: center;
-                    }
-                    HorizontalLayout {
-                        height: 36px;
-                        spacing: 10px;
-                        PillButton {
-                            width: 132px;
-                            height: 36px;
-                            text: AppState.en ? "Upload image" : "上传风格参考图";
-                            clicked => { AppState.choose-custom-prompt-reference(); }
-                        }
-                        PillButton {
-                            width: 158px;
-                            height: 36px;
-                            text: AppState.custom-prompt-analyzing
-                                ? (AppState.en ? "Analyzing..." : "分析中...")
-                                : (AppState.en ? "AI style analysis" : "AI 分析生成风格");
-                            disabled: AppState.custom-prompt-reference-path == "" || AppState.custom-prompt-analyzing;
-                            clicked => { AppState.analyze-custom-prompt-reference(); }
-                        }
-                    }
-                    Rectangle {
-                        height: 88px;
-                        background: AppTheme.bg;
-                        border-radius: 8px;
-                        border-width: 1px;
-                        border-color: AppTheme.border;
-                        clip: true;
-                        if AppState.custom-prompt-reference-path == "": Text {
-                            x: 12px;
-                            width: parent.width - 24px;
-                            height: parent.height;
-                            text: AppState.en ? "The uploaded reference image will appear here." : "已上传参考图会显示在这里。";
-                            color: AppTheme.weak;
-                            font-size: 12px;
-                            font-weight: 400;
-                            vertical-alignment: center;
-                        }
-                        if AppState.custom-prompt-reference-path != "": Image {
-                            x: 8px;
-                            y: 8px;
-                            width: 72px;
-                            height: 72px;
-                            source: AppState.custom-prompt-reference-image;
-                            image-fit: contain;
-                        }
-                        if AppState.custom-prompt-reference-path != "": Text {
-                            x: 92px;
-                            y: 12px;
-                            width: parent.width - 196px;
-                            height: 24px;
-                            text: AppState.custom-prompt-reference-path;
-                            color: AppTheme.text;
-                            font-size: 12px;
-                            font-weight: 400;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
-                        if AppState.custom-prompt-reference-path != "": PillButton {
-                            x: parent.width - 92px;
-                            y: 26px;
-                            width: 76px;
-                            height: 36px;
-                            text: AppState.en ? "Remove" : "移除";
-                            clicked => { AppState.clear-custom-prompt-reference(); }
-                        }
-                    }
-
-                    Text {
+                        x: 20px;
+                        y: 184px;
+                        width: parent.width - 40px;
                         height: 18px;
                         text: AppState.en ? "Save format" : "保存格式";
                         color: AppTheme.text;
@@ -300,58 +273,126 @@ export component CustomPromptDialog {
                         vertical-alignment: center;
                     }
                     HorizontalLayout {
+                        x: 20px;
+                        y: 210px;
+                        width: parent.width - 40px;
                         height: 38px;
                         spacing: 10px;
-                        Rectangle {
-                            width: 86px;
-                            background: AppState.custom-prompt-format == "json" ? AppTheme.accent : AppTheme.bg;
-                            border-radius: 8px;
-                            border-width: 1px;
-                            border-color: AppState.custom-prompt-format == "json" ? AppTheme.accent : AppTheme.border;
-                            Text {
-                                width: parent.width;
-                                height: parent.height;
-                                text: "JSON";
-                                color: AppState.custom-prompt-format == "json" ? #ffffff : AppTheme.text;
-                                font-size: 12px;
-                                font-weight: 500;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-                            TouchArea {
-                                width: parent.width;
-                                height: parent.height;
-                                mouse-cursor: pointer;
-                                clicked => { AppState.custom-prompt-format = "json"; }
-                            }
+                        FormatOption {
+                            value: "json";
+                            label: "JSON";
+                            selected => { AppState.custom-prompt-format = "json"; }
                         }
-                        Rectangle {
-                            width: 86px;
-                            background: AppState.custom-prompt-format == "txt" ? AppTheme.accent : AppTheme.bg;
-                            border-radius: 8px;
-                            border-width: 1px;
-                            border-color: AppState.custom-prompt-format == "txt" ? AppTheme.accent : AppTheme.border;
-                            Text {
-                                width: parent.width;
-                                height: parent.height;
-                                text: "TXT";
-                                color: AppState.custom-prompt-format == "txt" ? #ffffff : AppTheme.text;
-                                font-size: 12px;
-                                font-weight: 500;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-                            TouchArea {
-                                width: parent.width;
-                                height: parent.height;
-                                mouse-cursor: pointer;
-                                clicked => { AppState.custom-prompt-format = "txt"; }
-                            }
+                        FormatOption {
+                            value: "txt";
+                            label: "TXT";
+                            selected => { AppState.custom-prompt-format = "txt"; }
                         }
                         Rectangle { horizontal-stretch: 1; background: transparent; }
                     }
 
                     Text {
+                        x: 20px;
+                        y: 266px;
+                        width: parent.width - 40px;
+                        height: 18px;
+                        text: AppState.en ? "Reference image" : "参考图";
+                        color: AppTheme.text;
+                        font-size: 13px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                    }
+                    HorizontalLayout {
+                        x: 20px;
+                        y: 292px;
+                        width: parent.width - 40px;
+                        height: 36px;
+                        spacing: 8px;
+                        PillButton {
+                            horizontal-stretch: 1;
+                            height: 36px;
+                            text: AppState.en ? "Upload image" : "上传参考图";
+                            clicked => { AppState.choose-custom-prompt-reference(); }
+                        }
+                        PillButton {
+                            horizontal-stretch: 1;
+                            height: 36px;
+                            text: AppState.custom-prompt-analyzing
+                                ? (AppState.en ? "Analyzing..." : "分析中...")
+                                : (AppState.en ? "AI style analysis" : "AI 分析风格");
+                            disabled: AppState.custom-prompt-reference-path == "" || AppState.custom-prompt-analyzing;
+                            clicked => { AppState.analyze-custom-prompt-reference(); }
+                        }
+                    }
+                    Rectangle {
+                        x: 20px;
+                        y: 340px;
+                        width: parent.width - 40px;
+                        height: max(116px, parent.height - 360px);
+                        background: AppTheme.panel;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: AppTheme.border;
+                        clip: true;
+
+                        if AppState.custom-prompt-reference-path == "": Text {
+                            x: 14px;
+                            width: parent.width - 28px;
+                            height: parent.height;
+                            text: AppState.en
+                                ? "The uploaded reference image will appear here."
+                                : "已上传参考图会显示在这里。";
+                            color: AppTheme.weak;
+                            font-size: 12px;
+                            font-weight: 400;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        if AppState.custom-prompt-reference-path != "": Image {
+                            x: 12px;
+                            y: 12px;
+                            width: min(132px, parent.width * 0.42);
+                            height: parent.height - 24px;
+                            source: AppState.custom-prompt-reference-image;
+                            image-fit: contain;
+                        }
+                        if AppState.custom-prompt-reference-path != "": Text {
+                            x: min(156px, parent.width * 0.48);
+                            y: 16px;
+                            width: parent.width - self.x - 16px;
+                            height: parent.height - 66px;
+                            text: AppState.custom-prompt-reference-path;
+                            color: AppTheme.muted;
+                            font-size: 12px;
+                            font-weight: 400;
+                            wrap: word-wrap;
+                            overflow: elide;
+                        }
+                        if AppState.custom-prompt-reference-path != "": PillButton {
+                            x: parent.width - 88px;
+                            y: parent.height - 44px;
+                            width: 72px;
+                            height: 30px;
+                            text: AppState.en ? "Remove" : "移除";
+                            clicked => { AppState.clear-custom-prompt-reference(); }
+                        }
+                    }
+                }
+
+                right-panel := Rectangle {
+                    x: left-panel.width + 18px;
+                    width: parent.width - self.x;
+                    height: parent.height;
+                    background: AppTheme.bg;
+                    border-radius: 10px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    clip: true;
+
+                    Text {
+                        x: 20px;
+                        y: 16px;
+                        width: parent.width - 40px;
                         height: 18px;
                         text: AppState.en ? "Prompt content *" : "提示词内容 *";
                         color: AppTheme.text;
@@ -360,8 +401,11 @@ export component CustomPromptDialog {
                         vertical-alignment: center;
                     }
                     Rectangle {
-                        height: 118px;
-                        background: AppTheme.bg;
+                        x: 20px;
+                        y: 42px;
+                        width: parent.width - 40px;
+                        height: max(220px, parent.height - 198px);
+                        background: AppTheme.panel;
                         border-radius: 8px;
                         border-width: 1px;
                         border-color: prompt-input.has-focus ? AppTheme.accent : AppTheme.border;
@@ -389,7 +433,9 @@ export component CustomPromptDialog {
                             y: 10px;
                             width: parent.width - 24px;
                             height: parent.height - 20px;
-                            text: AppState.en ? "Enter the reusable prompt content" : "输入可复用的提示词内容";
+                            text: AppState.en
+                                ? "Enter the reusable prompt content"
+                                : "输入可复用的提示词内容";
                             color: AppTheme.weak;
                             font-size: AppState.settings-font-size * 1px;
                             font-weight: 400;
@@ -398,6 +444,9 @@ export component CustomPromptDialog {
                     }
 
                     Text {
+                        x: 20px;
+                        y: parent.height - 138px;
+                        width: parent.width - 40px;
                         height: 18px;
                         text: AppState.en
                             ? "Negative prompt (JSON only)"
@@ -408,8 +457,11 @@ export component CustomPromptDialog {
                         vertical-alignment: center;
                     }
                     Rectangle {
-                        height: 86px;
-                        background: AppTheme.bg;
+                        x: 20px;
+                        y: parent.height - 112px;
+                        width: parent.width - 40px;
+                        height: 92px;
+                        background: AppTheme.panel;
                         opacity: AppState.custom-prompt-format == "json" ? 1 : 0.55;
                         border-radius: 8px;
                         border-width: 1px;
@@ -441,41 +493,35 @@ export component CustomPromptDialog {
                             vertical-alignment: top;
                         }
                     }
-
-                    Text {
-                        height: 22px;
-                        text: AppState.custom-prompt-message;
-                        color: AppTheme.danger;
-                        font-size: 12px;
-                        font-weight: 400;
-                        vertical-alignment: center;
-                        overflow: elide;
-                    }
                 }
             }
 
-            Rectangle {
-                x: 0px;
-                y: parent.height - 60px;
-                width: parent.width;
-                height: 1px;
-                background: AppTheme.border;
+            Text {
+                x: 24px;
+                y: parent.height - 52px;
+                width: parent.width - 300px;
+                height: 32px;
+                text: AppState.custom-prompt-message;
+                color: AppTheme.danger;
+                font-size: 12px;
+                font-weight: 400;
+                vertical-alignment: center;
+                overflow: elide;
             }
             HorizontalLayout {
-                x: 24px;
-                y: parent.height - 50px;
-                width: parent.width - 48px;
+                x: parent.width - 270px;
+                y: parent.height - 54px;
+                width: 246px;
                 height: 38px;
                 spacing: 10px;
-                Rectangle { horizontal-stretch: 1; background: transparent; }
                 PillButton {
                     width: 104px;
                     height: 38px;
                     text: AppState.en ? "Cancel" : "取消";
-                    clicked => { root.close-dialog(); }
+                    clicked => { AppState.close-custom-prompt-editor(); }
                 }
                 PillButton {
-                    width: 124px;
+                    width: 132px;
                     height: 38px;
                     text: AppState.custom-prompt-editing-original == ""
                         ? (AppState.en ? "Save" : "保存")

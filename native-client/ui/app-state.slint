@@ -96,6 +96,7 @@ export global AppState {
     in-out property <string> custom-prompt-editing-original: "";
     in-out property <bool> custom-prompt-open: false;
     in-out property <bool> custom-prompt-editor-open: false;
+    in-out property <string> custom-prompt-editor-return-page: "settings";
     in-out property <[CanvasNote]> canvas-notes: [];
     in-out property <[CanvasLink]> canvas-links: [];
     in-out property <string> canvas-selected-id: "";
@@ -393,6 +394,7 @@ export global AppState {
     callback remove-custom-prompt(string);
     callback begin-new-custom-prompt();
     callback begin-edit-custom-prompt(string);
+    callback close-custom-prompt-editor();
     callback choose-custom-prompt-reference();
     callback analyze-custom-prompt-reference();
     callback clear-custom-prompt-reference();
