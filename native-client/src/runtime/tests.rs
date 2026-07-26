@@ -836,8 +836,12 @@ fn idle_generation_area_rotates_slash_usage_tips() {
     assert!(panel.contains("AppState.generation-status == \"\""));
     assert!(tips.contains("interval: 4200ms"));
     assert!(tips.contains("Math.mod(root.active-tip + 1, 2)"));
-    assert!(tips.contains("输入“/”可查看最近的提示词记录"));
-    assert!(tips.contains("输入“//”可查看自定义提示词"));
+    assert!(tips.contains(": \"输入“/”可查看最近的提示词记录\""));
+    assert!(tips.contains(": \"输入“//”可查看自定义提示词\""));
+    assert!(!tips.contains("Tip 1"));
+    assert!(!tips.contains("Tip 2"));
+    assert!(!tips.contains("1、"));
+    assert!(!tips.contains("2、"));
     assert_eq!(tips.matches("animate y").count(), 2);
 }
 
