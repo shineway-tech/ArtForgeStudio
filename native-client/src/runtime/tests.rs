@@ -870,6 +870,11 @@ fn watermark_tool_uses_a_local_result_workspace_without_assets() {
     assert!(page.contains("AppState.choose-watermark-source()"));
     assert!(page.contains("AppState.start-watermark-removal()"));
     assert!(page.contains("AppState.reveal-watermark-result()"));
+    assert_eq!(
+        page.matches("AppState.choose-watermark-source()").count(),
+        1
+    );
+    assert!(page.contains("x: 32px + root.panel-width() - 166px;"));
     assert!(page.contains("结果仅保存在本地，不进入“我的资产”"));
     assert!(page.contains("查看图片"));
     assert!(page.contains("去水印中("));
