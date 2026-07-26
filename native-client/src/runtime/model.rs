@@ -88,6 +88,8 @@ struct CanvasLinkData {
     id: String,
     source_id: String,
     target_id: String,
+    #[serde(default)]
+    flow_reversed: bool,
 }
 
 fn normalize_canvas_groups(notes: &mut [CanvasNoteData]) {

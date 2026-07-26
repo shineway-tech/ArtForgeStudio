@@ -1076,10 +1076,11 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             let before = canvas_snapshot(&store_mut);
             let CanvasConnectResult::Connected {
                 link_id, target_id, ..
-            } = connect_nodes(
+            } = connect_nodes_with_flow(
                 &mut store_mut.canvas_links,
                 source_id.as_str(),
                 target_id.as_str(),
+                true,
             )
             else {
                 return "rejected".into();
@@ -1215,6 +1216,14 @@ mod tests {
     }
 
     #[test]
+    fn legacy_canvas_links_keep_forward_flow_by_default() {
+        let legacy = r#"{"id":"link","source_id":"a","target_id":"b"}"#;
+        let parsed: CanvasLinkData = serde_json::from_str(legacy).expect("legacy canvas link");
+
+        assert!(!parsed.flow_reversed);
+    }
+
+    #[test]
     fn canvas_links_reject_cycles_and_find_the_nearest_input() {
         let store = Store {
             canvas_notes: vec![
@@ -1235,6 +1244,7 @@ mod tests {
             id: "link".to_string(),
             source_id: "source".to_string(),
             target_id: "target".to_string(),
+            flow_reversed: false,
         }];
         assert!(link_reaches(&links, "source", "target"));
         assert!(!link_reaches(&links, "target", "source"));

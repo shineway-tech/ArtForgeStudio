@@ -408,7 +408,7 @@ mod tests {
     }
 
     #[test]
-    fn populated_custom_prompt_popup_exposes_a_create_action() {
+    fn populated_custom_prompt_popup_exposes_low_emphasis_create_and_manage_actions() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         let popup = composer
             .split("custom-prompt-popup := PopupWindow")
@@ -416,8 +416,17 @@ mod tests {
             .and_then(|value| value.split("function scroll-prompt-history-selection").next())
             .expect("custom prompt popup");
 
-        assert!(popup.contains("if AppState.custom-prompts.length > 0: PillButton"));
+        assert_eq!(
+            popup
+                .matches("if AppState.custom-prompts.length > 0: PillButton")
+                .count(),
+            2
+        );
+        assert!(popup.contains("text: AppState.en ? \"Manage\" : \"管理\""));
         assert!(popup.contains("text: AppState.en ? \"Create\" : \"创建\""));
+        assert_eq!(popup.matches("primary: false").count(), 2);
+        assert!(popup.contains("AppState.settings-section = \"prompts\""));
+        assert!(popup.contains("AppState.navigate(\"settings\")"));
         assert!(popup.contains("AppState.begin-new-custom-prompt()"));
         assert!(popup.contains("height: parent.height - 52px"));
     }
@@ -1406,6 +1415,8 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
     #[test]
     fn infinite_canvas_links_are_selectable_and_backspace_requests_confirmation() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let types = include_str!("../../ui/types.slint");
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
         let curve = page
             .split("component CanvasConnectionCurve")
             .nth(1)
@@ -1417,6 +1428,15 @@ fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         assert!(curve.contains("property <int> hit-count:"));
         assert!(curve.contains("in property <float> flow-phase: 0;"));
         assert!(curve.contains("function flow-distance(t: float)"));
+        assert!(curve.contains(
+            "root.link.flow-reversed ? 1 - root.flow-phase : root.flow-phase"
+        ));
+        assert!(types.contains("flow-reversed: bool"));
+        assert!(callbacks.contains("connect_nodes_with_flow("));
+        assert!(callbacks.contains(
+            "state.on_finish_canvas_reconnect(move |target_id, x, y, tolerance|"
+        ));
+        assert!(callbacks.contains("target_id.as_str(),\n                true,"));
         assert!(curve.contains("property <bool> in-sweep:"));
         assert!(curve.contains("for dash-index in root.dash-count"));
         assert!(curve.contains("for hit-index in root.hit-count"));

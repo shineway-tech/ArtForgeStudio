@@ -138,6 +138,7 @@ impl CanvasController {
                     id: Uuid::new_v4().to_string(),
                     source_id: id_map.get(&link.source_id)?.clone(),
                     target_id: id_map.get(&link.target_id)?.clone(),
+                    flow_reversed: link.flow_reversed,
                 })
             })
             .collect();
@@ -212,6 +213,15 @@ pub(super) fn connect_nodes(
     source_id: &str,
     target_id: &str,
 ) -> CanvasConnectResult {
+    connect_nodes_with_flow(links, source_id, target_id, false)
+}
+
+pub(super) fn connect_nodes_with_flow(
+    links: &mut Vec<CanvasLinkData>,
+    source_id: &str,
+    target_id: &str,
+    flow_reversed: bool,
+) -> CanvasConnectResult {
     if !connection_allowed(links, source_id, target_id) {
         return CanvasConnectResult::Rejected;
     }
@@ -225,6 +235,7 @@ pub(super) fn connect_nodes(
         id: link_id.clone(),
         source_id: source_id.to_string(),
         target_id: target_id.to_string(),
+        flow_reversed,
     });
     CanvasConnectResult::Connected {
         link_id,
@@ -639,11 +650,13 @@ mod tests {
                 id: "internal".into(),
                 source_id: "a".into(),
                 target_id: "b".into(),
+                flow_reversed: true,
             },
             CanvasLinkData {
                 id: "external".into(),
                 source_id: "b".into(),
                 target_id: "outside".into(),
+                flow_reversed: false,
             },
         ];
         let mut controller = CanvasController::default();
@@ -653,6 +666,7 @@ mod tests {
 
         assert_eq!(pasted_notes.len(), 3);
         assert_eq!(pasted_links.len(), 1);
+        assert!(pasted_links[0].flow_reversed);
         let pasted_group = pasted_notes
             .iter()
             .find(|note| note.kind == "group")
@@ -684,6 +698,7 @@ mod tests {
             id: "link".into(),
             source_id: "child".into(),
             target_id: "removed".into(),
+            flow_reversed: false,
         }];
 
         let removed = remove_selection(&mut notes, &mut links);
@@ -718,16 +733,19 @@ mod tests {
                 id: "inside".into(),
                 source_id: "child".into(),
                 target_id: "nested-child".into(),
+                flow_reversed: false,
             },
             CanvasLinkData {
                 id: "crossing".into(),
                 source_id: "nested-child".into(),
                 target_id: "outside".into(),
+                flow_reversed: false,
             },
             CanvasLinkData {
                 id: "outside-link".into(),
                 source_id: "outside".into(),
                 target_id: "outside-two".into(),
+                flow_reversed: false,
             },
         ];
 
@@ -959,6 +977,7 @@ mod tests {
             id: "old".into(),
             source_id: "old-source".into(),
             target_id: "target".into(),
+            flow_reversed: false,
         }];
 
         let result = connect_nodes(&mut links, "new-source", "target");
@@ -976,17 +995,33 @@ mod tests {
     }
 
     #[test]
+    fn canvas_link_flow_preserves_the_drag_origin_direction() {
+        let mut output_started = Vec::new();
+        let mut input_started = Vec::new();
+
+        connect_nodes(&mut output_started, "a", "b");
+        connect_nodes_with_flow(&mut input_started, "a", "b", true);
+
+        assert!(!output_started[0].flow_reversed);
+        assert!(input_started[0].flow_reversed);
+        assert_eq!(input_started[0].source_id, "a");
+        assert_eq!(input_started[0].target_id, "b");
+    }
+
+    #[test]
     fn canvas_reconnect_rejects_cycles_without_mutation() {
         let mut links = vec![
             CanvasLinkData {
                 id: "ab".into(),
                 source_id: "a".into(),
                 target_id: "b".into(),
+                flow_reversed: false,
             },
             CanvasLinkData {
                 id: "bc".into(),
                 source_id: "b".into(),
                 target_id: "c".into(),
+                flow_reversed: false,
             },
         ];
         let before = links.clone();
@@ -1039,6 +1074,7 @@ mod tests {
                 id: format!("link-{index}"),
                 source_id: format!("node-{source}"),
                 target_id: format!("node-{target}"),
+                flow_reversed: false,
             });
         }
 

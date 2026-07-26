@@ -570,7 +570,8 @@ component CanvasConnectionCurve {
     }
 
     function flow-distance(t: float) -> float {
-        return Math.abs(t - root.flow-phase);
+        let flow-position = root.link.flow-reversed ? 1 - root.flow-phase : root.flow-phase;
+        return Math.abs(t - flow-position);
     }
 
     width: root.canvas-width;

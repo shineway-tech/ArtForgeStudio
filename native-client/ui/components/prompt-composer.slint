@@ -449,12 +449,26 @@ export component PromptComposer {
                 }
             }
             if AppState.custom-prompts.length > 0: PillButton {
+                x: parent.width - 160px;
+                y: parent.height - 36px;
+                width: 72px;
+                height: 28px;
+                text: AppState.en ? "Manage" : "管理";
+                primary: false;
+                clicked => {
+                    AppState.custom-prompt-open = false;
+                    custom-prompt-popup.close();
+                    AppState.settings-section = "prompts";
+                    AppState.navigate("settings");
+                }
+            }
+            if AppState.custom-prompts.length > 0: PillButton {
                 x: parent.width - 80px;
                 y: parent.height - 36px;
                 width: 72px;
                 height: 28px;
                 text: AppState.en ? "Create" : "创建";
-                primary: true;
+                primary: false;
                 clicked => {
                     AppState.custom-prompt-open = false;
                     custom-prompt-popup.close();

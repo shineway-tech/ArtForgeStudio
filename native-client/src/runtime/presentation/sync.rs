@@ -324,6 +324,7 @@ pub(super) fn push_canvas_notes(app: &AppWindow, store: &Store) {
                     id: link.id.clone().into(),
                     source_id: link.source_id.clone().into(),
                     target_id: link.target_id.clone().into(),
+                    flow_reversed: link.flow_reversed,
                     start_x: source.x + source.width,
                     start_y: source.y + source.height / 2.0,
                     end_x: target.x,
@@ -768,11 +769,13 @@ mod canvas_link_tests {
                     id: "one".to_string(),
                     source_id: "brief".to_string(),
                     target_id: "image".to_string(),
+                    flow_reversed: false,
                 },
                 CanvasLinkData {
                     id: "two".to_string(),
                     source_id: "style".to_string(),
                     target_id: "image".to_string(),
+                    flow_reversed: false,
                 },
             ],
             ..Store::default()
