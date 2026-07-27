@@ -9,24 +9,32 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
         let app_weak = app.as_weak();
         let store = store.clone();
         state.on_toggle_custom_prompt_selection(move |prompt| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
+            let app_weak = app_weak.clone();
+            let store = store.clone();
             let prompt = prompt.to_string();
-            {
-                let mut store_mut = store.borrow_mut();
-                if !store_mut.custom_prompts.contains(&prompt) {
+            slint::Timer::single_shot(Duration::ZERO, move || {
+                let Some(app) = app_weak.upgrade() else {
                     return;
+                };
+                {
+                    let mut store_mut = store.borrow_mut();
+                    if !store_mut.custom_prompts.contains(&prompt) {
+                        return;
+                    }
+                    let category = current_workspace_category(&app);
+                    toggle_custom_prompt_selection_for_category(
+                        &mut store_mut,
+                        &category,
+                        &prompt,
+                    );
                 }
-                let category = current_workspace_category(&app);
-                toggle_custom_prompt_selection_for_category(&mut store_mut, &category, &prompt);
-            }
-            let state = app.global::<AppState>();
-            if state.get_prompt().trim() == "//" {
-                state.set_prompt("".into());
-            }
-            push_custom_prompts(&app, &store.borrow());
-            save_local_store(&app, &store.borrow());
+                let state = app.global::<AppState>();
+                if state.get_prompt().trim() == "//" {
+                    state.set_prompt("".into());
+                }
+                push_custom_prompts(&app, &store.borrow());
+                save_local_store(&app, &store.borrow());
+            });
         });
     }
 

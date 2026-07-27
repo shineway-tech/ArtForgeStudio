@@ -617,6 +617,7 @@ mod tests {
         assert!(popup.contains("overflow: clip"));
         assert!(callbacks.contains("if state.get_prompt().trim() == \"//\""));
         assert!(callbacks.contains("state.set_prompt(\"\".into());"));
+        assert!(callbacks.contains("slint::Timer::single_shot(Duration::ZERO"));
     }
 
     #[test]
