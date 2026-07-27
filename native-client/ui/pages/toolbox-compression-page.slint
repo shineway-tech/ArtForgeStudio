@@ -1,0 +1,668 @@
+import { AppState } from "../app-state.slint";
+import { CompressionImageItem } from "../types.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+component CompressionChoice {
+    in property <string> text;
+    in property <bool> selected: false;
+    callback clicked();
+
+    Rectangle {
+        background: root.selected ? AppTheme.panel : transparent;
+        border-radius: 7px;
+        border-width: root.selected ? 1px : 0px;
+        border-color: root.selected ? AppTheme.border : transparent;
+
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.text;
+            color: root.selected ? AppTheme.accent-dark : AppTheme.muted;
+            font-size: 13px;
+            font-weight: root.selected ? 500 : 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        choice-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+component CompressionDropArea {
+    in property <bool> compact: false;
+    callback choose-images();
+    callback dropped(string, string);
+
+    Rectangle {
+        background: drop-area.contains-drag ? AppTheme.accent.with-alpha(0.08) : AppTheme.panel;
+        border-radius: 12px;
+        border-width: drop-area.contains-drag ? 2px : 1px;
+        border-color: drop-area.contains-drag ? AppTheme.accent : AppTheme.border;
+
+        Image {
+            x: (parent.width - (root.compact ? 28px : 40px)) / 2;
+            y: root.compact ? 20px : 38px;
+            width: root.compact ? 28px : 40px;
+            height: root.compact ? 28px : 40px;
+            source: @image-url("../../assets/icons/upload.svg");
+            colorize: drop-area.contains-drag ? AppTheme.accent : AppTheme.weak;
+            image-fit: contain;
+        }
+
+        Text {
+            x: 24px;
+            y: root.compact ? 56px : 92px;
+            width: parent.width - 48px;
+            height: 24px;
+            text: drop-area.contains-drag
+                ? (AppState.en ? "Release to add images" : "松开即可添加图片")
+                : (AppState.en ? "Drag images here, or click to choose files" : "拖放图片到这里，或点击选择文件");
+            color: drop-area.contains-drag ? AppTheme.accent : AppTheme.text;
+            font-size: root.compact ? 12px : 14px;
+            font-weight: 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        if !root.compact: Text {
+            x: 24px;
+            y: 122px;
+            width: parent.width - 48px;
+            height: 22px;
+            text: AppState.en
+                ? "JPG / PNG / WebP / BMP · multiple selection · Ctrl+V paste · up to 50 images"
+                : "支持 JPG / PNG / WebP / BMP，可一次选择多张，也支持 Ctrl+V 粘贴，最多 50 张";
+            color: AppTheme.muted;
+            font-size: 12px;
+            font-weight: 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        upload-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => {
+                root.choose-images();
+            }
+        }
+
+        drop-area := DropArea {
+            width: parent.width;
+            height: parent.height;
+            can-drop(event) => {
+                return event.mime-type == "text/uri-list"
+                    || event.mime-type == "text/plain"
+                    || event.mime-type == "application/x-artforge-image-path";
+            }
+            dropped(event) => { root.dropped(event.mime-type, event.data); }
+        }
+    }
+}
+
+component CompressionListRow {
+    in property <CompressionImageItem> item;
+    callback remove();
+
+    Rectangle {
+        background: row-touch.has-hover ? AppTheme.panel-soft : AppTheme.bg;
+        border-radius: 9px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+
+        Rectangle {
+            x: 10px;
+            y: 8px;
+            width: 48px;
+            height: 48px;
+            background: AppTheme.panel;
+            border-radius: 7px;
+            clip: true;
+            Image {
+                width: parent.width;
+                height: parent.height;
+                source: root.item.image;
+                image-fit: cover;
+            }
+        }
+
+        Text {
+            x: 70px;
+            y: 10px;
+            width: parent.width - 126px;
+            height: 22px;
+            text: root.item.name;
+            color: AppTheme.text;
+            font-size: 13px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            x: 70px;
+            y: 34px;
+            width: parent.width - 126px;
+            height: 18px;
+            text: root.item.size-text;
+            color: AppTheme.muted;
+            font-size: 11px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        row-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+        }
+
+        Rectangle {
+            x: parent.width - 42px;
+            y: 13px;
+            width: 32px;
+            height: 32px;
+            background: delete-touch.has-hover ? AppTheme.danger.with-alpha(0.10) : transparent;
+            border-radius: 7px;
+            Image {
+                x: 8px;
+                y: 8px;
+                width: 16px;
+                height: 16px;
+                source: @image-url("../../assets/icons/trash.svg");
+                colorize: AppTheme.danger;
+                image-fit: contain;
+            }
+            delete-touch := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: pointer;
+                clicked => { root.remove(); }
+            }
+        }
+    }
+}
+
+export component ToolboxCompressionPage {
+    function content-width() -> length {
+        return max(820px, root.width - 64px);
+    }
+
+    function left-width() -> length {
+        return max(480px, (root.content-width() - 20px) * 0.58);
+    }
+
+    function accept-drop(mime-type: string, data: string) {
+        if AppState.add-compression-images-from-drag(mime-type, data) {
+            compression-keys.focus();
+        }
+    }
+
+    Rectangle {
+        background: AppTheme.bg;
+
+        Text {
+            x: 32px;
+            y: 28px;
+            width: parent.width - 64px;
+            height: 32px;
+            text: AppState.en ? "Compress Image" : "图片压缩";
+            color: AppTheme.text;
+            font-size: 24px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: 32px;
+            y: 68px;
+            width: parent.width - 64px;
+            height: 22px;
+            text: AppState.en
+                ? "Upload up to 50 images and configure the batch compression"
+                : "一次最多上传 50 张图片，并统一设置本批次压缩参数";
+            color: AppTheme.muted;
+            font-size: 13px;
+            font-weight: 400;
+            vertical-alignment: center;
+        }
+
+        if AppState.compression-images.length == 0: CompressionDropArea {
+            x: 32px;
+            y: 112px;
+            width: root.content-width();
+            height: 178px;
+            choose-images => { AppState.choose-compression-images(); }
+            dropped(mime-type, data) => { root.accept-drop(mime-type, data); }
+        }
+
+        if AppState.compression-images.length > 0: Rectangle {
+            x: 32px;
+            y: 112px;
+            width: root.left-width();
+            height: parent.height - 144px;
+            background: AppTheme.panel;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+
+            Text {
+                x: 18px;
+                y: 14px;
+                width: 180px;
+                height: 32px;
+                text: (AppState.en ? "Uploaded " : "已上传 ") + AppState.compression-images.length + (AppState.en ? " / 50" : " / 50 张");
+                color: AppTheme.text;
+                font-size: 15px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+
+            PillButton {
+                x: parent.width - 204px;
+                y: 12px;
+                width: 92px;
+                height: 34px;
+                text: AppState.en ? "Add images" : "继续添加";
+                clicked => { AppState.choose-compression-images(); }
+            }
+
+            PillButton {
+                x: parent.width - 102px;
+                y: 12px;
+                width: 84px;
+                height: 34px;
+                text: AppState.en ? "Clear" : "清空";
+                danger: true;
+                clicked => { AppState.clear-compression-images(); }
+            }
+
+            list := Flickable {
+                x: 16px;
+                y: 58px;
+                width: parent.width - 32px;
+                height: parent.height - 74px;
+                viewport-width: self.width;
+                viewport-height: max(self.height, AppState.compression-images.length * 70px);
+
+                for item[index] in AppState.compression-images: CompressionListRow {
+                    x: 0px;
+                    y: index * 70px;
+                    width: list.width;
+                    height: 62px;
+                    item: item;
+                    remove => { AppState.remove-compression-image(item.id); }
+                }
+            }
+
+            list-drop := DropArea {
+                width: parent.width;
+                height: parent.height;
+                can-drop(event) => {
+                    return event.mime-type == "text/uri-list"
+                        || event.mime-type == "text/plain"
+                        || event.mime-type == "application/x-artforge-image-path";
+                }
+                dropped(event) => { root.accept-drop(event.mime-type, event.data); }
+            }
+
+            if list-drop.contains-drag: Rectangle {
+                x: 8px;
+                y: 56px;
+                width: parent.width - 16px;
+                height: parent.height - 64px;
+                background: AppTheme.accent.with-alpha(0.10);
+                border-radius: 10px;
+                border-width: 2px;
+                border-color: AppTheme.accent;
+                Text {
+                    width: parent.width;
+                    height: parent.height;
+                    text: AppState.en ? "Release to add images" : "松开即可添加图片";
+                    color: AppTheme.accent;
+                    font-size: 15px;
+                    font-weight: 500;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        if AppState.compression-images.length > 0: Rectangle {
+            x: 52px + root.left-width();
+            y: 112px;
+            width: root.content-width() - root.left-width() - 20px;
+            height: parent.height - 144px;
+            background: AppTheme.panel;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+
+            Text {
+                x: 22px;
+                y: 18px;
+                width: parent.width - 44px;
+                height: 24px;
+                text: AppState.en ? "Compression settings" : "压缩设置";
+                color: AppTheme.text;
+                font-size: 16px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+
+            Text {
+                x: 22px;
+                y: 56px;
+                width: parent.width - 44px;
+                height: 20px;
+                text: AppState.en ? "Output · Keep original format" : "输出 · 保持原图格式";
+                color: AppTheme.muted;
+                font-size: 12px;
+                font-weight: 400;
+                vertical-alignment: center;
+            }
+
+            Rectangle {
+                x: 22px;
+                y: 92px;
+                width: parent.width - 44px;
+                height: 42px;
+                background: AppTheme.bg;
+                border-radius: 9px;
+
+                CompressionChoice {
+                    x: 4px;
+                    y: 4px;
+                    width: (parent.width - 12px) / 2;
+                    height: 34px;
+                    text: AppState.en ? "By quality" : "按质量压缩";
+                    selected: AppState.compression-mode == "quality";
+                    clicked => { AppState.compression-mode = "quality"; }
+                }
+
+                CompressionChoice {
+                    x: 8px + (parent.width - 12px) / 2;
+                    y: 4px;
+                    width: (parent.width - 12px) / 2;
+                    height: 34px;
+                    text: AppState.en ? "Target file size" : "压缩到指定大小";
+                    selected: AppState.compression-mode == "size";
+                    clicked => { AppState.compression-mode = "size"; }
+                }
+            }
+
+            if AppState.compression-mode == "quality": Rectangle {
+                x: 22px;
+                y: 154px;
+                width: parent.width - 44px;
+                height: 182px;
+                background: transparent;
+
+                Rectangle {
+                    width: parent.width;
+                    height: 42px;
+                    background: AppTheme.bg;
+                    border-radius: 9px;
+
+                    CompressionChoice {
+                        x: 4px;
+                        y: 4px;
+                        width: (parent.width - 16px) / 3;
+                        height: 34px;
+                        text: AppState.en ? "Lossless" : "无损";
+                        selected: AppState.compression-level == "lossless";
+                        clicked => {
+                            AppState.compression-level = "lossless";
+                            AppState.compression-quality = 100;
+                        }
+                    }
+                    CompressionChoice {
+                        x: 8px + (parent.width - 16px) / 3;
+                        y: 4px;
+                        width: (parent.width - 16px) / 3;
+                        height: 34px;
+                        text: AppState.en ? "Light" : "轻量";
+                        selected: AppState.compression-level == "light";
+                        clicked => {
+                            AppState.compression-level = "light";
+                            AppState.compression-quality = 75;
+                        }
+                    }
+                    CompressionChoice {
+                        x: 12px + (parent.width - 16px) * 2 / 3;
+                        y: 4px;
+                        width: (parent.width - 16px) / 3;
+                        height: 34px;
+                        text: AppState.en ? "Strong" : "重度";
+                        selected: AppState.compression-level == "strong";
+                        clicked => {
+                            AppState.compression-level = "strong";
+                            AppState.compression-quality = 45;
+                        }
+                    }
+                }
+
+                quality-track := Rectangle {
+                    x: 0px;
+                    y: 76px;
+                    width: parent.width - 62px;
+                    height: 4px;
+                    background: AppTheme.border;
+                    border-radius: 2px;
+
+                    Rectangle {
+                        width: parent.width * AppState.compression-quality / 100;
+                        height: parent.height;
+                        background: AppTheme.accent;
+                        border-radius: 2px;
+                    }
+
+                    Rectangle {
+                        x: parent.width * AppState.compression-quality / 100 - 7px;
+                        y: -5px;
+                        width: 14px;
+                        height: 14px;
+                        background: AppTheme.accent;
+                        border-radius: 7px;
+                    }
+
+                    quality-touch := TouchArea {
+                        y: -10px;
+                        width: parent.width;
+                        height: 24px;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            AppState.compression-quality = max(1, min(100, round(self.mouse-x / self.width * 100)));
+                            AppState.compression-level = "custom";
+                        }
+                        moved => {
+                            if self.pressed {
+                                AppState.compression-quality = max(1, min(100, round(max(0px, min(self.width, self.mouse-x)) / self.width * 100)));
+                                AppState.compression-level = "custom";
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    x: parent.width - 52px;
+                    y: 60px;
+                    width: 52px;
+                    height: 34px;
+                    background: AppTheme.bg;
+                    border-radius: 7px;
+                    Text {
+                        width: parent.width;
+                        height: parent.height;
+                        text: AppState.compression-quality;
+                        color: AppTheme.accent-dark;
+                        font-size: 13px;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    x: 0px;
+                    y: 108px;
+                    width: parent.width / 2;
+                    height: 20px;
+                    text: AppState.en ? "Smaller files" : "更小文件";
+                    color: AppTheme.muted;
+                    font-size: 11px;
+                    font-weight: 400;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    x: parent.width / 2;
+                    y: 108px;
+                    width: parent.width / 2;
+                    height: 20px;
+                    text: AppState.en ? "Higher quality" : "更高画质";
+                    color: AppTheme.muted;
+                    font-size: 11px;
+                    font-weight: 400;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+            }
+
+            if AppState.compression-mode == "size": Rectangle {
+                x: 22px;
+                y: 154px;
+                width: parent.width - 44px;
+                height: 116px;
+                background: transparent;
+
+                Text {
+                    x: 0px;
+                    y: 8px;
+                    width: 96px;
+                    height: 42px;
+                    text: AppState.en ? "Target under" : "目标大小小于";
+                    color: AppTheme.muted;
+                    font-size: 12px;
+                    font-weight: 400;
+                    vertical-alignment: center;
+                }
+
+                Rectangle {
+                    x: 100px;
+                    y: 8px;
+                    width: 96px;
+                    height: 42px;
+                    background: AppTheme.bg;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: target-input.has-focus ? AppTheme.accent : AppTheme.border;
+                    target-input := TextInput {
+                        x: 12px;
+                        width: parent.width - 24px;
+                        height: parent.height;
+                        text <=> AppState.compression-target-kb;
+                        single-line: true;
+                        input-type: number;
+                        color: AppTheme.text;
+                        font-size: 13px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    x: 206px;
+                    y: 8px;
+                    width: parent.width - 206px;
+                    height: 42px;
+                    text: "KB  |  ≈ " + (AppState.compression-target-kb == "" ? "--" : AppState.compression-target-kb) + " KB";
+                    color: AppTheme.muted;
+                    font-size: 12px;
+                    font-weight: 400;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+
+            if AppState.compression-message != "": Text {
+                x: 22px;
+                y: parent.height - 142px;
+                width: parent.width - 44px;
+                height: 24px;
+                text: AppState.compression-message;
+                color: AppTheme.muted;
+                font-size: 12px;
+                font-weight: 400;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            Text {
+                x: 22px;
+                y: parent.height - 108px;
+                width: parent.width - 44px;
+                height: 24px;
+                text: AppState.en
+                    ? "Estimated cost: " + AppState.compression-estimated-credits + " credits"
+                    : "本次压缩预计消耗 " + AppState.compression-estimated-credits + " 积分";
+                color: AppTheme.muted;
+                font-size: 12px;
+                font-weight: 400;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            PillButton {
+                x: 22px;
+                y: parent.height - 72px;
+                width: parent.width - 44px;
+                height: 48px;
+                text: AppState.compression-processing
+                    ? (AppState.en ? "Compressing..." : "压缩中...")
+                    : (AppState.en ? "Start compression" : "开始压缩");
+                primary: true;
+                disabled: AppState.compression-images.length == 0 || AppState.compression-processing;
+                clicked => { AppState.start-compression(); }
+            }
+        }
+
+        if AppState.compression-images.length == 0 && AppState.compression-message != "": Text {
+            x: 32px;
+            y: 304px;
+            width: root.content-width();
+            height: 24px;
+            text: AppState.compression-message;
+            color: AppTheme.muted;
+            font-size: 12px;
+            font-weight: 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        compression-keys := FocusScope {
+            width: parent.width;
+            height: parent.height;
+            init => { self.focus(); }
+            key-pressed(event) => {
+                if event.modifiers.control && (event.text == "v" || event.text == "V") {
+                    if AppState.paste-compression-images() {
+                        return accept;
+                    }
+                }
+                return reject;
+            }
+        }
+    }
+}

@@ -181,7 +181,8 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
             return;
         };
         let drops = platform::take_external_image_drops();
-        if app.global::<AppState>().get_page().as_str() == "generation" {
+        let page = app.global::<AppState>().get_page();
+        if page.as_str() == "generation" {
             for drop in drops {
                 match drop {
                     ExternalImageDrop::Paths(paths) => {
@@ -195,6 +196,21 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
                         } else {
                             add_reference_from_drag_data(&app, &store, TEXT_PLAIN_MIME, &data);
                         }
+                    }
+                }
+            }
+        } else if page.as_str() == "toolbox-compress" {
+            for drop in drops {
+                match drop {
+                    ExternalImageDrop::Paths(paths) => {
+                        toolbox_callbacks::add_compression_paths(&app, paths);
+                    }
+                    ExternalImageDrop::Text(data) => {
+                        toolbox_callbacks::add_compression_from_drag_data(
+                            &app,
+                            TEXT_PLAIN_MIME,
+                            &data,
+                        );
                     }
                 }
             }

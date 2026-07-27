@@ -1,4 +1,4 @@
-import { AccountSession, AssetGroup, AssetItem, CanvasLink, CanvasNote, CatalogModelView, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
+import { AccountSession, AssetGroup, AssetItem, CanvasLink, CanvasNote, CatalogModelView, CompressionImageItem, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 
 export global AppState {
     callback dismiss-payment();
@@ -99,6 +99,14 @@ export global AppState {
     in-out property <string> custom-prompt-editor-return-page: "settings";
     in-out property <string> toolbox-selected-tool: "";
     in-out property <bool> toolbox-coming-soon-open: false;
+    in-out property <[CompressionImageItem]> compression-images: [];
+    in-out property <string> compression-mode: "quality";
+    in-out property <string> compression-level: "light";
+    in-out property <int> compression-quality: 75;
+    in-out property <string> compression-target-kb: "100";
+    in-out property <string> compression-estimated-credits: "--";
+    in-out property <bool> compression-processing: false;
+    in-out property <string> compression-message: "";
     in-out property <string> enhance-source-path: "";
     in-out property <string> enhance-source-name: "";
     in-out property <image> enhance-source-image;
@@ -424,6 +432,12 @@ export global AppState {
     callback choose-enhance-source();
     callback start-enhance(string);
     callback reveal-enhance-result();
+    callback choose-compression-images();
+    callback add-compression-images-from-drag(string, string) -> bool;
+    callback paste-compression-images() -> bool;
+    callback remove-compression-image(string);
+    callback clear-compression-images();
+    callback start-compression();
     callback add-canvas-node(string, float, float);
     callback update-canvas-node(string, string, float, float);
     callback rename-canvas-group(string, string) -> bool;

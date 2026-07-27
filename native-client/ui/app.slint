@@ -1,6 +1,6 @@
 import { AppState } from "app-state.slint";
 import { AppTheme } from "theme.slint";
-import { AccountSession, AssetGroup, AssetItem, CanvasNote, ConversationItem, CreditRecord, CustomPromptItem, InvoiceOrderView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
+import { AccountSession, AssetGroup, AssetItem, CanvasNote, CompressionImageItem, ConversationItem, CreditRecord, CustomPromptItem, InvoiceOrderView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 import { Sidebar } from "components/sidebar.slint";
 import { TopBar } from "components/top-bar.slint";
 import { AlipayPaymentDialog } from "dialogs/alipay-payment-dialog.slint";
@@ -29,10 +29,11 @@ import { SettingsPage } from "pages/settings-page.slint";
 import { StudioSplitPage } from "pages/studio-split-page.slint";
 import { ToolboxPage } from "pages/toolbox-page.slint";
 import { ToolboxEnhancePage } from "pages/toolbox-enhance-page.slint";
+import { ToolboxCompressionPage } from "pages/toolbox-compression-page.slint";
 import { ToolboxWatermarkPage } from "pages/toolbox-watermark-page.slint";
 import { WelcomePage } from "pages/welcome-page.slint";
 
-export { AppState, AppTheme, AccountSession, ModelGroup, ModelOption, AssetItem, AssetGroup, CanvasNote, ConversationItem, NotificationItem, CreditRecord, CustomPromptItem, InvoiceOrderView, ReferenceItem }
+export { AppState, AppTheme, AccountSession, ModelGroup, ModelOption, AssetItem, AssetGroup, CanvasNote, CompressionImageItem, ConversationItem, NotificationItem, CreditRecord, CustomPromptItem, InvoiceOrderView, ReferenceItem }
 
 export component AppWindow inherits Window {
     property <bool> invoice-open: false;
@@ -70,6 +71,7 @@ export component AppWindow inherits Window {
                 if AppState.page == "canvas": InfiniteCanvasPage { width: parent.width; height: parent.height; }
                 if AppState.page == "toolbox": ToolboxPage { width: parent.width; height: parent.height; }
                 if AppState.page == "toolbox-enhance": ToolboxEnhancePage { width: parent.width; height: parent.height; }
+                if AppState.page == "toolbox-compress": ToolboxCompressionPage { width: parent.width; height: parent.height; }
                 if AppState.page == "toolbox-watermark": ToolboxWatermarkPage { width: parent.width; height: parent.height; }
                 if AppState.page == "assets": AssetsPage { width: parent.width; height: parent.height; }
                 if AppState.page == "inspiration": InspirationPage { width: parent.width; height: parent.height; }

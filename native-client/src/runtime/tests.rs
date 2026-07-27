@@ -873,9 +873,10 @@ fn sidebar_toolbox_opens_a_six_tool_page() {
         assert!(page.contains(title), "missing toolbox card: {title}");
     }
     assert_eq!(page.matches("tool-id: ").count(), 6);
-    assert_eq!(page.matches("target-page: \"toolbox-").count(), 2);
+    assert_eq!(page.matches("target-page: \"toolbox-").count(), 3);
     assert!(page.contains("target-page: \"toolbox-watermark\""));
     assert!(page.contains("target-page: \"toolbox-enhance\""));
+    assert!(page.contains("target-page: \"toolbox-compress\""));
     assert!(page.contains("AppState.toolbox-selected-tool = root.tool-id"));
     assert!(state.contains("toolbox-coming-soon-open"));
     assert!(page.contains("AppState.toolbox-coming-soon-open = true"));
@@ -883,6 +884,49 @@ fn sidebar_toolbox_opens_a_six_tool_page() {
     assert!(page.contains("AppState.en ? \"Got it\" : \"知道了\""));
     assert!(!page.contains("\"选择工具\""));
     assert!(!page.contains("\"已选择\""));
+}
+
+#[test]
+fn toolbox_compression_supports_batch_input_and_server_pricing() {
+    let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
+    let page = include_str!("../../ui/pages/toolbox-compression-page.slint");
+    let state = include_str!("../../ui/app-state.slint");
+    let types = include_str!("../../ui/types.slint");
+    let app_ui = include_str!("../../ui/app.slint");
+    let callbacks = include_str!("callbacks/toolbox.rs");
+    let reference = include_str!("callbacks/reference.rs");
+    let manifest = include_str!("../../Cargo.toml");
+
+    assert!(toolbox.contains("target-page: \"toolbox-compress\""));
+    assert!(app_ui.contains("AppState.page == \"toolbox-compress\""));
+    assert!(app_ui.contains("ToolboxCompressionPage"));
+    assert!(types.contains("export struct CompressionImageItem"));
+    assert!(state.contains("in-out property <[CompressionImageItem]> compression-images"));
+    assert!(state.contains("compression-estimated-credits: \"--\""));
+
+    assert!(page.contains("CompressionDropArea"));
+    assert!(page.contains("CompressionListRow"));
+    assert!(page.contains("AppState.choose-compression-images()"));
+    assert!(page.contains("AppState.paste-compression-images()"));
+    assert!(page.contains("AppState.remove-compression-image(item.id)"));
+    assert!(page.contains("AppState.clear-compression-images()"));
+    assert!(page.contains("@image-url(\"../../assets/icons/trash.svg\")"));
+    assert!(page.contains("AppState.compression-mode = \"quality\""));
+    assert!(page.contains("AppState.compression-mode = \"size\""));
+    assert!(page.contains("AppState.compression-target-kb"));
+    assert!(page.contains("AppState.compression-estimated-credits"));
+    assert!(page.contains("AppState.start-compression()"));
+
+    assert!(callbacks.contains("const MAX_COMPRESSION_IMAGES: usize = 50;"));
+    assert!(callbacks.contains(".pick_files()"));
+    assert!(callbacks.contains("state.on_paste_compression_images"));
+    assert!(callbacks.contains("state.on_remove_compression_image"));
+    assert!(callbacks.contains("state.on_start_compression"));
+    assert!(callbacks.contains("set_compression_estimated_credits(\"--\""));
+    assert!(callbacks.contains("\"jpg\" | \"jpeg\" | \"png\" | \"webp\" | \"bmp\""));
+    assert!(reference.contains("page.as_str() == \"toolbox-compress\""));
+    assert!(reference.contains("toolbox_callbacks::add_compression_paths"));
+    assert!(manifest.contains("\"bmp\""));
 }
 
 #[test]
