@@ -145,7 +145,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
                     close_custom_prompt_editor(&app);
                     return;
                 }
-                if page == "toolbox-watermark" {
+                if page.starts_with("toolbox-") {
                     state.set_page("toolbox".into());
                     return;
                 }

@@ -1,0 +1,242 @@
+import { AppState } from "../app-state.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+component EnhanceQualityButton {
+    in property <string> value;
+    property <bool> selected: AppState.enhance-quality == root.value;
+    callback clicked();
+
+    height: 48px;
+
+    Rectangle {
+        background: root.selected
+            ? AppTheme.accent.with-alpha(0.16)
+            : (quality-touch.has-hover ? AppTheme.panel-soft : transparent);
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: root.selected ? AppTheme.accent : AppTheme.border;
+
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.value;
+            color: root.selected ? AppTheme.accent-dark : AppTheme.text;
+            font-size: 15px;
+            font-weight: root.selected ? 500 : 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        quality-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+export component ToolboxEnhancePage {
+    Rectangle {
+        background: AppTheme.bg;
+
+        Text {
+            x: 32px;
+            y: 28px;
+            width: parent.width - 64px;
+            height: 32px;
+            text: AppState.en ? "Image Enhance" : "图片变清晰";
+            color: AppTheme.text;
+            font-size: 24px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: 32px;
+            y: 68px;
+            width: parent.width - 64px;
+            height: 22px;
+            text: AppState.en
+                ? "Upload an image and choose the target quality"
+                : "上传图片并选择目标清晰度";
+            color: AppTheme.muted;
+            font-size: 13px;
+            font-weight: 400;
+            vertical-alignment: center;
+        }
+
+        HorizontalLayout {
+            x: 32px;
+            y: 112px;
+            width: parent.width - 64px;
+            height: parent.height - 144px;
+            spacing: 20px;
+
+            Rectangle {
+                horizontal-stretch: 1;
+                background: AppTheme.panel;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+
+                Text {
+                    x: 20px;
+                    y: 16px;
+                    width: parent.width - 40px;
+                    height: 28px;
+                    text: AppState.en ? "Original" : "原图";
+                    color: AppTheme.text;
+                    font-size: 16px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    x: 120px;
+                    y: 16px;
+                    width: parent.width - 140px;
+                    height: 28px;
+                    text: AppState.enhance-source-name;
+                    color: AppTheme.muted;
+                    font-size: 12px;
+                    font-weight: 400;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                preview := Rectangle {
+                    x: 20px;
+                    y: 56px;
+                    width: parent.width - 40px;
+                    height: parent.height - 76px;
+                    background: AppTheme.bg;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: preview-touch.has-hover ? AppTheme.accent : AppTheme.border;
+                    clip: true;
+
+                    if AppState.enhance-source-path != "": Image {
+                        width: parent.width;
+                        height: parent.height;
+                        source: AppState.enhance-source-image;
+                        image-fit: contain;
+                    }
+
+                    if AppState.enhance-source-path == "": Image {
+                        x: (parent.width - 44px) / 2;
+                        y: (parent.height - 88px) / 2;
+                        width: 44px;
+                        height: 44px;
+                        source: @image-url("../../assets/icons/image.svg");
+                        colorize: AppTheme.muted;
+                        image-fit: contain;
+                    }
+
+                    if AppState.enhance-source-path == "": Text {
+                        x: 20px;
+                        y: (parent.height - 88px) / 2 + 54px;
+                        width: parent.width - 40px;
+                        height: 28px;
+                        text: AppState.en ? "Click to upload an image" : "点击上传图片";
+                        color: AppTheme.muted;
+                        font-size: 14px;
+                        font-weight: 400;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    preview-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => { AppState.choose-enhance-source(); }
+                    }
+                }
+            }
+
+            Rectangle {
+                width: 360px;
+                background: AppTheme.panel;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+
+                VerticalLayout {
+                    padding: 24px;
+                    spacing: 14px;
+
+                    Text {
+                        text: AppState.en ? "Target quality" : "选择清晰度";
+                        color: AppTheme.text;
+                        font-size: 18px;
+                        font-weight: 600;
+                    }
+
+                    Text {
+                        text: AppState.en
+                            ? "Choose the target long-edge quality. Processing is provided by the server."
+                            : "选择目标长边清晰度，实际处理能力由服务端提供。";
+                        color: AppTheme.muted;
+                        font-size: 13px;
+                        font-weight: 400;
+                        wrap: word-wrap;
+                    }
+
+                    HorizontalLayout {
+                        height: 48px;
+                        spacing: 10px;
+
+                        EnhanceQualityButton {
+                            horizontal-stretch: 1;
+                            value: "1K";
+                            clicked => {
+                                AppState.enhance-quality = "1K";
+                                AppState.enhance-message = "";
+                            }
+                        }
+                        EnhanceQualityButton {
+                            horizontal-stretch: 1;
+                            value: "2K";
+                            clicked => {
+                                AppState.enhance-quality = "2K";
+                                AppState.enhance-message = "";
+                            }
+                        }
+                        EnhanceQualityButton {
+                            horizontal-stretch: 1;
+                            value: "4K";
+                            clicked => {
+                                AppState.enhance-quality = "4K";
+                                AppState.enhance-message = "";
+                            }
+                        }
+                    }
+
+                    Rectangle { vertical-stretch: 1; }
+
+                    if AppState.enhance-message != "": Text {
+                        text: AppState.enhance-message;
+                        color: AppTheme.muted;
+                        font-size: 12px;
+                        font-weight: 400;
+                        wrap: word-wrap;
+                        horizontal-alignment: center;
+                    }
+
+                    PillButton {
+                        height: 44px;
+                        text: AppState.enhance-processing
+                            ? (AppState.en ? "Enhancing..." : "处理中...")
+                            : (AppState.en ? "Start Enhance" : "开始变清晰");
+                        primary: true;
+                        disabled: AppState.enhance-processing;
+                        clicked => { AppState.start-enhance(AppState.enhance-quality); }
+                    }
+                }
+            }
+        }
+    }
+}

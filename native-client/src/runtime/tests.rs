@@ -873,7 +873,9 @@ fn sidebar_toolbox_opens_a_six_tool_page() {
         assert!(page.contains(title), "missing toolbox card: {title}");
     }
     assert_eq!(page.matches("tool-id: ").count(), 6);
-    assert_eq!(page.matches("target-page: \"toolbox-watermark\"").count(), 1);
+    assert_eq!(page.matches("target-page: \"toolbox-").count(), 2);
+    assert!(page.contains("target-page: \"toolbox-watermark\""));
+    assert!(page.contains("target-page: \"toolbox-enhance\""));
     assert!(page.contains("AppState.toolbox-selected-tool = root.tool-id"));
     assert!(state.contains("toolbox-coming-soon-open"));
     assert!(page.contains("AppState.toolbox-coming-soon-open = true"));
@@ -881,6 +883,35 @@ fn sidebar_toolbox_opens_a_six_tool_page() {
     assert!(page.contains("AppState.en ? \"Got it\" : \"知道了\""));
     assert!(!page.contains("\"选择工具\""));
     assert!(!page.contains("\"已选择\""));
+}
+
+#[test]
+fn toolbox_enhance_uses_a_cutout_style_quality_workspace() {
+    let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
+    let page = include_str!("../../ui/pages/toolbox-enhance-page.slint");
+    let state = include_str!("../../ui/app-state.slint");
+    let app_ui = include_str!("../../ui/app.slint");
+    let app = include_str!("app.rs");
+    let callbacks = include_str!("callbacks/toolbox.rs");
+
+    assert!(toolbox.contains("target-page: \"toolbox-enhance\""));
+    assert!(app_ui.contains("AppState.page == \"toolbox-enhance\""));
+    assert!(app_ui.contains("ToolboxEnhancePage"));
+    assert!(app.contains("page.starts_with(\"toolbox-\")"));
+    assert!(page.contains("HorizontalLayout"));
+    assert!(page.contains("text: AppState.en ? \"Original\" : \"原图\""));
+    assert!(page.contains("AppState.choose-enhance-source()"));
+    for quality in ["1K", "2K", "4K"] {
+        assert!(page.contains(&format!("value: \"{quality}\"")));
+    }
+    assert!(page.contains("AppState.start-enhance(AppState.enhance-quality)"));
+    assert!(state.contains("in-out property <string> enhance-quality: \"1K\""));
+    assert!(state.contains("callback choose-enhance-source()"));
+    assert!(state.contains("callback start-enhance(string)"));
+    assert!(callbacks.contains("state.on_choose_enhance_source"));
+    assert!(callbacks.contains("state.on_start_enhance"));
+    assert!(callbacks.contains("\"1K\" | \"2K\" | \"4K\""));
+    assert!(callbacks.contains("图片变清晰能力等待后端配置"));
 }
 
 #[test]
@@ -912,7 +943,7 @@ fn watermark_tool_uses_a_local_result_workspace_without_assets() {
     assert!(!callbacks.contains("push_assets"));
     assert!(!callbacks.contains("save_local_store"));
     assert!(!callbacks.contains(".generations"));
-    assert!(app.contains("if page == \"toolbox-watermark\""));
+    assert!(app.contains("if page.starts_with(\"toolbox-\")"));
     assert!(app.contains("state.set_page(\"toolbox\".into())"));
 }
 

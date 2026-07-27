@@ -99,6 +99,12 @@ export global AppState {
     in-out property <string> custom-prompt-editor-return-page: "settings";
     in-out property <string> toolbox-selected-tool: "";
     in-out property <bool> toolbox-coming-soon-open: false;
+    in-out property <string> enhance-source-path: "";
+    in-out property <string> enhance-source-name: "";
+    in-out property <image> enhance-source-image;
+    in-out property <string> enhance-quality: "1K";
+    in-out property <bool> enhance-processing: false;
+    in-out property <string> enhance-message: "";
     in-out property <string> watermark-source-path: "";
     in-out property <string> watermark-source-name: "";
     in-out property <image> watermark-source-image;
@@ -412,6 +418,8 @@ export global AppState {
     callback choose-watermark-source();
     callback start-watermark-removal();
     callback reveal-watermark-result();
+    callback choose-enhance-source();
+    callback start-enhance(string);
     callback add-canvas-node(string, float, float);
     callback update-canvas-node(string, string, float, float);
     callback rename-canvas-group(string, string) -> bool;
