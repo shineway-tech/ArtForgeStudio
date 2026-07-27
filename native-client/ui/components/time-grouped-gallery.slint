@@ -5,11 +5,24 @@ export component TimeGroupedGallery inherits VerticalLayout {
     in property <[AssetGroup]> groups;
     in property <length> card-width: 200px;
     in property <string> source: "asset";
+    in property <int> loading-count: 0;
+    in property <string> loading-group-title: "";
     spacing: 0px;
-    for group in root.groups: TimeGroupSection {
+    if root.loading-count > 0 && (root.groups.length == 0 || root.groups[0].title != root.loading-group-title): TimeGroupSection {
+        width: root.width;
+        group: {
+            title: root.loading-group-title,
+            items: [],
+        };
+        card-width: root.card-width;
+        source: root.source;
+        loading-count: root.loading-count;
+    }
+    for group[index] in root.groups: TimeGroupSection {
         width: root.width;
         group: group;
         card-width: root.card-width;
         source: root.source;
+        loading-count: index == 0 && group.title == root.loading-group-title ? root.loading-count : 0;
     }
 }

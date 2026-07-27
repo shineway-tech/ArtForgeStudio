@@ -1,4 +1,5 @@
 import { ThumbnailCard } from "thumbnail-card.slint";
+import { GenerationLoadingCard } from "generation-loading-card.slint";
 import { AppTheme } from "../theme.slint";
 import { AssetGroup } from "../types.slint";
 
@@ -6,6 +7,7 @@ export component TimeGroupSection {
     in property <AssetGroup> group;
     in property <length> card-width: 200px;
     in property <string> source: "asset";
+    in property <int> loading-count: 0;
     height: root.content-height();
     Rectangle {
         width: root.width;
@@ -23,9 +25,33 @@ export component TimeGroupSection {
             vertical-alignment: center;
             overflow: elide;
         }
+        if root.loading-count > 0: GenerationLoadingCard {
+            x: root.item-x(0);
+            y: root.item-y(0);
+            card-width: root.item-width();
+            card-gap: 0px;
+        }
+        if root.loading-count > 1: GenerationLoadingCard {
+            x: root.item-x(1);
+            y: root.item-y(1);
+            card-width: root.item-width();
+            card-gap: 0px;
+        }
+        if root.loading-count > 2: GenerationLoadingCard {
+            x: root.item-x(2);
+            y: root.item-y(2);
+            card-width: root.item-width();
+            card-gap: 0px;
+        }
+        if root.loading-count > 3: GenerationLoadingCard {
+            x: root.item-x(3);
+            y: root.item-y(3);
+            card-width: root.item-width();
+            card-gap: 0px;
+        }
         for item[index] in root.group.items: ThumbnailCard {
-            x: root.item-x(index);
-            y: root.item-y(index);
+            x: root.item-x(index + root.loading-count);
+            y: root.item-y(index + root.loading-count);
             item: item;
             card-width: root.item-width();
             card-gap: 0px;
@@ -48,7 +74,7 @@ export component TimeGroupSection {
         return max(1px, root.width);
     }
     function column-count() -> int {
-        return max(1, min(root.group.items.length, min(8, floor((root.grid-width() + root.grid-gap()) / (root.card-width + root.grid-gap())))));
+        return max(1, min(root.item-count(), min(8, floor((root.grid-width() + root.grid-gap()) / (root.card-width + root.grid-gap())))));
     }
     function item-width() -> length {
         return min(root.card-width, max(118px, (root.grid-width() - (root.column-count() - 1) * root.grid-gap()) / root.column-count()));
@@ -57,7 +83,7 @@ export component TimeGroupSection {
         return root.item-width() + root.grid-gap();
     }
     function row-count() -> int {
-        return (root.group.items.length + root.column-count() - 1) / root.column-count();
+        return (root.item-count() + root.column-count() - 1) / root.column-count();
     }
     function item-x(index: int) -> length {
         return Math.mod(index, root.column-count()) * (root.item-width() + root.grid-gap());
@@ -66,9 +92,12 @@ export component TimeGroupSection {
         return root.grid-y() + floor(index / root.column-count()) * root.row-height();
     }
     function content-height() -> length {
-        if root.group.items.length == 0 {
+        if root.item-count() == 0 {
             return 0px;
         }
         return root.grid-y() + root.row-count() * root.row-height() + root.section-gap();
+    }
+    function item-count() -> int {
+        return root.group.items.length + root.loading-count;
     }
 }

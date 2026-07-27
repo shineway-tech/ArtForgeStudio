@@ -570,13 +570,9 @@ mod tests {
         assert!(popup.contains("text: item.name"));
         assert!(popup.contains("item.selected ? AppTheme.accent"));
         assert!(popup.contains("AppState.toggle-custom-prompt-selection(item.content)"));
-        assert!(popup.contains(
-            "x: Math.mod(index, root.custom-prompt-column-count())"
-        ));
-        assert!(popup.contains(
-            "y: floor(index / root.custom-prompt-column-count()) * 36px"
-        ));
-        assert!(composer.contains("function custom-prompt-row-count() -> int"));
+        assert!(popup.contains("custom-prompt-row := HorizontalLayout"));
+        assert!(popup.contains("tag-title.preferred-width + 28px"));
+        assert!(!composer.contains("function custom-prompt-tag-width()"));
         assert!(!popup.contains("root.apply-selected-prompt(item.content)"));
         assert!(!popup.contains("text: item.content"));
         assert!(!popup.contains("text: item.preview"));
@@ -610,7 +606,8 @@ mod tests {
         ));
         assert!(composer.contains("if selected-tag-touch.has-hover: Rectangle"));
         assert!(composer.contains("text: \"×\""));
-        assert!(composer.contains("return 240px;"));
+        assert!(composer.contains("selected-title.preferred-width + 38px"));
+        assert!(composer.contains("tag-title.preferred-width + 28px"));
         assert!(popup.contains("overflow: clip"));
     }
 
@@ -719,7 +716,8 @@ mod tests {
         assert!(popup.contains("AppState.settings-section = \"prompts\""));
         assert!(popup.contains("AppState.navigate(\"settings\")"));
         assert!(popup.contains("AppState.begin-new-custom-prompt()"));
-        assert!(popup.contains("height: parent.height - 52px"));
+        assert!(popup.contains("custom-prompt-row := HorizontalLayout"));
+        assert!(popup.contains("height: 36px;"));
     }
 
     #[test]
@@ -930,6 +928,23 @@ fn generation_loading_thumbnail_has_a_breathing_border() {
     assert!(card.contains("interval: 900ms;"));
     assert!(card.contains("breathing-border := Rectangle"));
     assert!(card.contains("animate opacity { duration: 900ms; easing: ease-in-out; }"));
+}
+
+#[test]
+fn generation_loading_and_completed_items_share_the_time_grouped_template() {
+    let panel = include_str!("../../ui/components/generation-result-panel.slint");
+    let gallery = include_str!("../../ui/components/time-grouped-gallery.slint");
+    let section = include_str!("../../ui/components/time-group-section.slint");
+
+    assert!(!panel.contains("GenerationWaterfall"));
+    assert!(panel.contains(
+        "if AppState.generations.length > 0 || root.active-generating(): TimeGroupedGallery"
+    ));
+    assert!(panel.contains("loading-group-title: AppState.en ? \"Today\" : \"今天\";"));
+    assert!(gallery.contains("loading-count: root.loading-count;"));
+    assert!(gallery.contains("group.title == root.loading-group-title"));
+    assert!(section.contains("GenerationLoadingCard"));
+    assert!(section.contains("index + root.loading-count"));
 }
 
 #[test]
@@ -1315,7 +1330,7 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(composer.contains("AppState.toggle-custom-prompt-selection(item.content)"));
         assert!(composer.contains("viewport-height: AppState.prompt-history.length * 32px"));
         assert!(composer.contains(
-            "viewport-height: root.custom-prompt-row-count() * 36px"
+            "viewport-width: max(self.width, custom-prompt-row.preferred-width)"
         ));
         assert!(composer.contains("for item[index] in AppState.custom-prompt-items"));
         assert!(composer.contains("text: item.name"));

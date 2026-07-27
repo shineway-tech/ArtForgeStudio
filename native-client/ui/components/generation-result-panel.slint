@@ -1,6 +1,5 @@
 import { AppState } from "../app-state.slint";
 import { EmptyState } from "empty-state.slint";
-import { GenerationWaterfall } from "generation-waterfall.slint";
 import { TimeGroupedGallery } from "time-grouped-gallery.slint";
 import { AppTheme } from "../theme.slint";
 
@@ -40,20 +39,14 @@ export component GenerationResultPanel {
                         width: parent.width;
                         height: max(360px, root.height - 90px);
                     }
-                    if root.active-generating(): GenerationWaterfall {
-                        width: parent.width;
-                        height: root.content-height();
-                        items: AppState.generations;
-                        card-width: root.item-width();
-                        column-count: root.column-count();
-                        loading-count: root.loading-count();
-                    }
-                    if AppState.generations.length > 0 && !root.active-generating(): TimeGroupedGallery {
+                    if AppState.generations.length > 0 || root.active-generating(): TimeGroupedGallery {
                         width: parent.width;
                         height: root.content-height();
                         groups: AppState.generation-groups;
                         card-width: root.item-width();
                         source: "generation";
+                        loading-count: root.loading-count();
+                        loading-group-title: AppState.en ? "Today" : "今天";
                     }
                 }
             }
