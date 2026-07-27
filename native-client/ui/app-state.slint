@@ -108,6 +108,12 @@ export global AppState {
     in-out property <string> compression-estimated-credits: "--";
     in-out property <bool> compression-processing: false;
     in-out property <string> compression-message: "";
+    in-out property <[CompressionImageItem]> conversion-images: [];
+    in-out property <string> conversion-source-format: "--";
+    in-out property <string> conversion-target-format: "jpeg";
+    in-out property <int> conversion-quality: 92;
+    in-out property <bool> conversion-processing: false;
+    in-out property <string> conversion-message: "";
     in-out property <string> enhance-source-path: "";
     in-out property <string> enhance-source-name: "";
     in-out property <image> enhance-source-image;
@@ -443,6 +449,13 @@ export global AppState {
     callback reveal-compression-result(string);
     callback update-compression-target-preview(string);
     callback start-compression();
+    callback choose-conversion-images();
+    callback add-conversion-images-from-drag(string, string) -> bool;
+    callback paste-conversion-images() -> bool;
+    callback remove-conversion-image(string);
+    callback clear-conversion-images();
+    callback reveal-conversion-result(string);
+    callback start-conversion();
     callback add-canvas-node(string, float, float);
     callback update-canvas-node(string, string, float, float);
     callback rename-canvas-group(string, string) -> bool;

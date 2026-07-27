@@ -1,6 +1,7 @@
 use super::*;
 
 const MAX_COMPRESSION_IMAGES: usize = 50;
+const MAX_CONVERSION_IMAGES: usize = 50;
 
 pub(super) fn wire_toolbox_callbacks(app: &AppWindow) {
     let state = app.global::<AppState>();
@@ -179,6 +180,148 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow) {
                     "Image compression is waiting for backend configuration"
                 } else {
                     "图片压缩能力等待后端配置"
+                }
+                .into(),
+            );
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_choose_conversion_images(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let Some(paths) = rfd::FileDialog::new()
+                .add_filter("Images", &["jpg", "jpeg", "png", "webp", "bmp"])
+                .pick_files()
+            else {
+                return;
+            };
+            add_conversion_paths(&app, paths);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_add_conversion_images_from_drag(move |mime_type, data| {
+            let Some(app) = app_weak.upgrade() else {
+                return false;
+            };
+            add_conversion_from_drag_data(&app, mime_type.as_str(), data.as_str())
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_paste_conversion_images(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return false;
+            };
+            paste_conversion_image(&app)
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_remove_conversion_image(move |id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            let id = id.to_string();
+            let images = state
+                .get_conversion_images()
+                .iter()
+                .filter(|item| item.id.as_str() != id)
+                .collect::<Vec<_>>();
+            set_conversion_images(&state, images);
+            state.set_conversion_message("".into());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_clear_conversion_images(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            set_conversion_images(&state, Vec::new());
+            state.set_conversion_message("".into());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_reveal_conversion_result(move |id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            let result_path = state
+                .get_conversion_images()
+                .iter()
+                .find(|item| item.id == id)
+                .map(|item| item.result_path.to_string())
+                .unwrap_or_default();
+            let path = PathBuf::from(result_path);
+            if !path.is_file() {
+                state.set_conversion_message(
+                    if state.get_language().as_str() == "en" {
+                        "No converted image is available yet"
+                    } else {
+                        "暂无可查看的转换结果"
+                    }
+                    .into(),
+                );
+                return;
+            }
+            match reveal_path_in_file_manager(&path) {
+                Ok(_) => state.set_conversion_message(
+                    if state.get_language().as_str() == "en" {
+                        "Opened the image folder"
+                    } else {
+                        "已打开图片所在文件夹"
+                    }
+                    .into(),
+                ),
+                Err(error) => state.set_conversion_message(
+                    if state.get_language().as_str() == "en" {
+                        format!("Failed to open the image folder: {error}")
+                    } else {
+                        format!("打开图片所在文件夹失败：{error}")
+                    }
+                    .into(),
+                ),
+            }
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_start_conversion(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            if state.get_conversion_images().row_count() == 0 {
+                state.set_conversion_message(
+                    if state.get_language().as_str() == "en" {
+                        "Add at least one image first"
+                    } else {
+                        "请先添加需要转换的图片"
+                    }
+                    .into(),
+                );
+                return;
+            }
+            state.set_conversion_processing(false);
+            state.set_conversion_message(
+                if state.get_language().as_str() == "en" {
+                    "Image format conversion is waiting for backend configuration"
+                } else {
+                    "图片格式转换能力等待后端配置"
                 }
                 .into(),
             );
@@ -546,6 +689,152 @@ fn paste_compression_image(app: &AppWindow) -> bool {
 
 fn set_compression_images(state: &AppState, images: Vec<CompressionImageItem>) {
     state.set_compression_images(ModelRc::new(VecModel::from(images)));
+}
+
+pub(super) fn add_conversion_from_drag_data(app: &AppWindow, mime_type: &str, data: &str) -> bool {
+    if mime_type != URI_LIST_MIME && mime_type != TEXT_PLAIN_MIME && mime_type != IMAGE_DRAG_MIME {
+        return false;
+    }
+    let paths = data
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(drag_data_to_path)
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        return false;
+    }
+    add_conversion_paths(app, paths);
+    true
+}
+
+pub(super) fn add_conversion_paths(app: &AppWindow, paths: Vec<PathBuf>) {
+    let state = app.global::<AppState>();
+    let mut images = state.get_conversion_images().iter().collect::<Vec<_>>();
+    let mut known_paths = images
+        .iter()
+        .map(|item| item.source_path.to_string())
+        .filter(|path| !path.is_empty())
+        .collect::<BTreeSet<_>>();
+    let available = MAX_CONVERSION_IMAGES.saturating_sub(images.len());
+    let mut added = 0usize;
+    let mut skipped = paths.len().saturating_sub(available);
+
+    for path in paths.into_iter().take(available) {
+        let canonical = fs::canonicalize(&path).unwrap_or(path);
+        let source_path = canonical.display().to_string();
+        if !canonical.is_file()
+            || !is_compression_image_path(&canonical)
+            || !known_paths.insert(source_path.clone())
+        {
+            skipped += 1;
+            continue;
+        }
+        let Ok(decoded) = image::open(&canonical) else {
+            skipped += 1;
+            continue;
+        };
+        let rgba = decoded.to_rgba8();
+        let preview = slint_image_from_rgba(&rgba, rgba.width(), rgba.height());
+        let name = canonical
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let size = fs::metadata(&canonical)
+            .map(|metadata| format_file_size(metadata.len()))
+            .unwrap_or_default();
+        images.push(CompressionImageItem {
+            id: Uuid::new_v4().to_string().into(),
+            name: name.into(),
+            source_path: source_path.into(),
+            size_text: size.into(),
+            image: preview,
+            status: "pending".into(),
+            result_path: "".into(),
+        });
+        added += 1;
+    }
+
+    set_conversion_images(&state, images);
+    state.set_conversion_message(
+        compression_add_message(
+            state.get_language().as_str() == "en",
+            added,
+            skipped,
+            state.get_conversion_images().row_count(),
+        )
+        .into(),
+    );
+}
+
+fn paste_conversion_image(app: &AppWindow) -> bool {
+    let state = app.global::<AppState>();
+    if state.get_conversion_images().row_count() >= MAX_CONVERSION_IMAGES {
+        state.set_conversion_message(
+            compression_limit_message(state.get_language().as_str() == "en").into(),
+        );
+        return true;
+    }
+    let Ok(mut clipboard) = arboard::Clipboard::new() else {
+        return false;
+    };
+    if let Ok(image) = clipboard.get_image() {
+        let Some(rgba) = image::RgbaImage::from_raw(
+            image.width as u32,
+            image.height as u32,
+            image.bytes.into_owned(),
+        ) else {
+            return false;
+        };
+        let Ok(bytes) = encode_png_rgba(&rgba, rgba.width(), rgba.height()) else {
+            return false;
+        };
+        let directory = app_data_dir().join("toolbox").join("conversion-inputs");
+        if fs::create_dir_all(&directory).is_err() {
+            return false;
+        }
+        let path = directory.join(format!("pasted-{}.png", Uuid::new_v4()));
+        if atomic_write_file(&path, &bytes).is_err() {
+            return false;
+        }
+        add_conversion_paths(app, vec![path]);
+        return true;
+    }
+    let Ok(text) = clipboard.get_text() else {
+        return false;
+    };
+    add_conversion_from_drag_data(app, TEXT_PLAIN_MIME, &text)
+}
+
+fn set_conversion_images(state: &AppState, images: Vec<CompressionImageItem>) {
+    let source_format = conversion_source_format(&images, state.get_language().as_str() == "en");
+    state.set_conversion_images(ModelRc::new(VecModel::from(images)));
+    state.set_conversion_source_format(source_format.into());
+}
+
+fn conversion_source_format(images: &[CompressionImageItem], english: bool) -> String {
+    let formats = images
+        .iter()
+        .filter_map(|item| {
+            Path::new(item.source_path.as_str())
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(|value| match value.to_ascii_lowercase().as_str() {
+                    "jpg" | "jpeg" => "JPEG".to_string(),
+                    "png" => "PNG".to_string(),
+                    "webp" => "WebP".to_string(),
+                    "bmp" => "BMP".to_string(),
+                    value => value.to_ascii_uppercase(),
+                })
+        })
+        .collect::<BTreeSet<_>>();
+    match formats.len() {
+        0 => "--".to_string(),
+        1 => formats.into_iter().next().unwrap_or_default(),
+        _ if english => "Mixed formats".to_string(),
+        _ => "混合格式".to_string(),
+    }
 }
 
 fn is_compression_image_path(path: &Path) -> bool {

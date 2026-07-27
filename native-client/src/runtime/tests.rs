@@ -873,9 +873,10 @@ fn sidebar_toolbox_opens_a_six_tool_page() {
         assert!(page.contains(title), "missing toolbox card: {title}");
     }
     assert_eq!(page.matches("tool-id: ").count(), 6);
-    assert_eq!(page.matches("target-page: \"toolbox-").count(), 3);
+    assert_eq!(page.matches("target-page: \"toolbox-").count(), 4);
     assert!(page.contains("target-page: \"toolbox-watermark\""));
     assert!(page.contains("target-page: \"toolbox-enhance\""));
+    assert!(page.contains("target-page: \"toolbox-convert\""));
     assert!(page.contains("target-page: \"toolbox-compress\""));
     assert!(page.contains("../../assets/icons/toolbox-watermark.svg"));
     assert!(page.contains("../../assets/icons/toolbox-enhance.svg"));
@@ -888,6 +889,50 @@ fn sidebar_toolbox_opens_a_six_tool_page() {
     assert!(page.contains("AppState.en ? \"Got it\" : \"知道了\""));
     assert!(!page.contains("\"选择工具\""));
     assert!(!page.contains("\"已选择\""));
+}
+
+#[test]
+fn toolbox_conversion_reuses_the_batch_upload_layout() {
+    let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
+    let conversion = include_str!("../../ui/pages/toolbox-conversion-page.slint");
+    let compression = include_str!("../../ui/pages/toolbox-compression-page.slint");
+    let state = include_str!("../../ui/app-state.slint");
+    let app_ui = include_str!("../../ui/app.slint");
+    let callbacks = include_str!("callbacks/toolbox.rs");
+    let reference = include_str!("callbacks/reference.rs");
+
+    assert!(toolbox.contains("target-page: \"toolbox-convert\""));
+    assert!(app_ui.contains("AppState.page == \"toolbox-convert\""));
+    assert!(app_ui.contains("ToolboxConversionPage"));
+    assert!(compression.contains("export component CompressionDropArea"));
+    assert!(compression.contains("export component CompressionListRow"));
+    assert!(conversion.contains(
+        "import { CompressionDropArea, CompressionListRow } from \"toolbox-compression-page.slint\""
+    ));
+    assert!(conversion.contains("AppState.choose-conversion-images()"));
+    assert!(conversion.contains("AppState.paste-conversion-images()"));
+    assert!(conversion.contains("AppState.remove-conversion-image(item.id)"));
+    assert!(conversion.contains("AppState.reveal-conversion-result(item.id)"));
+    assert!(conversion.contains("AppState.clear-conversion-images()"));
+    assert!(conversion.contains("value <=> AppState.conversion-target-format"));
+    assert!(conversion.contains("AppState.conversion-quality"));
+    assert!(conversion.contains("AppState.conversion-source-format + \" → \""));
+    for format in ["JPEG (.jpg)", "PNG (.png)", "WebP (.webp)", "BMP (.bmp)"] {
+        assert!(conversion.contains(format), "missing conversion option: {format}");
+    }
+    assert!(conversion.contains("AppState.conversion-images.length"));
+    assert!(conversion.contains("AppState.start-conversion()"));
+    assert!(state.contains("in-out property <[CompressionImageItem]> conversion-images"));
+    assert!(state.contains("conversion-target-format: \"jpeg\""));
+    assert!(state.contains("conversion-quality: 92"));
+    assert!(callbacks.contains("const MAX_CONVERSION_IMAGES: usize = 50;"));
+    assert!(callbacks.contains("state.on_choose_conversion_images"));
+    assert!(callbacks.contains("state.on_add_conversion_images_from_drag"));
+    assert!(callbacks.contains("state.on_paste_conversion_images"));
+    assert!(callbacks.contains("state.on_start_conversion"));
+    assert!(callbacks.contains("conversion_source_format"));
+    assert!(reference.contains("page.as_str() == \"toolbox-convert\""));
+    assert!(reference.contains("toolbox_callbacks::add_conversion_paths"));
 }
 
 #[test]

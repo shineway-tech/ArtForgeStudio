@@ -34,7 +34,7 @@ component CompressionChoice {
     }
 }
 
-component CompressionDropArea {
+export component CompressionDropArea {
     in property <bool> compact: false;
     callback choose-images();
     callback dropped(string, string);
@@ -109,14 +109,15 @@ component CompressionDropArea {
     }
 }
 
-component CompressionListRow {
+export component CompressionListRow {
     in property <CompressionImageItem> item;
+    in property <string> processing-text: AppState.en ? "Compressing" : "压缩中";
     callback remove();
     callback reveal();
 
     function status-text() -> string {
         if root.item.status == "processing" {
-            return AppState.en ? "Compressing" : "压缩中";
+            return root.processing-text;
         }
         if root.item.status == "completed" {
             return AppState.en ? "Completed" : "已完成";

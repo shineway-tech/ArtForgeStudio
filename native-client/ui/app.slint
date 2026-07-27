@@ -30,6 +30,7 @@ import { StudioSplitPage } from "pages/studio-split-page.slint";
 import { ToolboxPage } from "pages/toolbox-page.slint";
 import { ToolboxEnhancePage } from "pages/toolbox-enhance-page.slint";
 import { ToolboxCompressionPage } from "pages/toolbox-compression-page.slint";
+import { ToolboxConversionPage } from "pages/toolbox-conversion-page.slint";
 import { ToolboxWatermarkPage } from "pages/toolbox-watermark-page.slint";
 import { WelcomePage } from "pages/welcome-page.slint";
 
@@ -72,6 +73,7 @@ export component AppWindow inherits Window {
                 if AppState.page == "toolbox": ToolboxPage { width: parent.width; height: parent.height; }
                 if AppState.page == "toolbox-enhance": ToolboxEnhancePage { width: parent.width; height: parent.height; }
                 if AppState.page == "toolbox-compress": ToolboxCompressionPage { width: parent.width; height: parent.height; }
+                if AppState.page == "toolbox-convert": ToolboxConversionPage { width: parent.width; height: parent.height; }
                 if AppState.page == "toolbox-watermark": ToolboxWatermarkPage { width: parent.width; height: parent.height; }
                 if AppState.page == "assets": AssetsPage { width: parent.width; height: parent.height; }
                 if AppState.page == "inspiration": InspirationPage { width: parent.width; height: parent.height; }
