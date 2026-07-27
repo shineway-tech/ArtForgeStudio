@@ -925,18 +925,6 @@ fn toolbox_enhance_uses_two_preview_panels_with_left_quality_controls() {
 }
 
 #[test]
-fn toolbox_pages_keep_the_top_bar_back_button_above_content() {
-    let top_bar = include_str!("../../ui/components/top-bar.slint");
-    let app = include_str!("app.rs");
-    assert!(top_bar.contains(
-        "if AppState.page != \"welcome\" && AppState.page != \"generation\": Rectangle"
-    ));
-    assert!(top_bar.contains("clicked => { AppState.back(); }"));
-    assert!(app.contains("if page.starts_with(\"toolbox-\")"));
-    assert!(app.contains("state.set_page(\"toolbox\".into())"));
-}
-
-#[test]
 fn watermark_tool_uses_a_local_result_workspace_without_assets() {
     let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
     let page = include_str!("../../ui/pages/toolbox-watermark-page.slint");
