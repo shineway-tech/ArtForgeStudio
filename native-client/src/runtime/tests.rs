@@ -886,7 +886,7 @@ fn sidebar_toolbox_opens_a_six_tool_page() {
 }
 
 #[test]
-fn toolbox_enhance_uses_a_cutout_style_quality_workspace() {
+fn toolbox_enhance_uses_two_preview_panels_with_left_quality_controls() {
     let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
     let page = include_str!("../../ui/pages/toolbox-enhance-page.slint");
     let state = include_str!("../../ui/app-state.slint");
@@ -898,14 +898,20 @@ fn toolbox_enhance_uses_a_cutout_style_quality_workspace() {
     assert!(app_ui.contains("AppState.page == \"toolbox-enhance\""));
     assert!(app_ui.contains("ToolboxEnhancePage"));
     assert!(app.contains("page.starts_with(\"toolbox-\")"));
-    assert!(page.contains("HorizontalLayout"));
-    assert!(page.contains("text: AppState.en ? \"Original\" : \"原图\""));
+    assert_eq!(page.matches("EnhancePreviewPanel {").count(), 3);
+    assert!(page.contains("title: AppState.en ? \"Original\" : \"原图\""));
+    assert!(page.contains("title: AppState.en ? \"Result\" : \"处理结果\""));
     assert!(page.contains("AppState.choose-enhance-source()"));
+    assert!(page.contains("upload-panel: true"));
+    assert!(page.contains("if root.upload-panel: HorizontalLayout"));
+    assert!(page.contains("x: parent.width - 166px;"));
     for quality in ["1K", "2K", "4K"] {
         assert!(page.contains(&format!("value: \"{quality}\"")));
     }
     assert!(page.contains("AppState.start-enhance(AppState.enhance-quality)"));
     assert!(state.contains("in-out property <string> enhance-quality: \"1K\""));
+    assert!(state.contains("enhance-result-path"));
+    assert!(state.contains("enhance-result-image"));
     assert!(state.contains("callback choose-enhance-source()"));
     assert!(state.contains("callback start-enhance(string)"));
     assert!(callbacks.contains("state.on_choose_enhance_source"));

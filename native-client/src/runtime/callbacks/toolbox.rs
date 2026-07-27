@@ -26,6 +26,9 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow) {
                     state.set_enhance_source_path(path.display().to_string().into());
                     state.set_enhance_source_name(name.into());
                     state.set_enhance_source_image(image);
+                    state.set_enhance_result_path("".into());
+                    state.set_enhance_result_name("".into());
+                    state.set_enhance_result_image(Image::default());
                     state.set_enhance_processing(false);
                     state.set_enhance_message("".into());
                 }
