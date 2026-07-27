@@ -583,13 +583,16 @@ mod tests {
     #[test]
     fn double_slash_selection_closes_inline_and_backspace_removes_the_tag() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let callbacks = include_str!("callbacks/custom_prompt.rs");
         let popup = composer
             .split("custom-prompt-popup := PopupWindow")
             .nth(1)
             .and_then(|value| value.split("function scroll-prompt-history-selection").next())
             .expect("custom prompt popup");
 
-        assert!(composer.contains(
+        assert!(composer.contains("prompt-entry-row := HorizontalLayout"));
+        assert!(composer.contains("horizontal-stretch: 1;"));
+        assert!(!composer.contains(
             "x: AppState.selected-custom-prompt-items.length > 0 ? 270px : 24px;"
         ));
         assert!(composer.contains("y: root.prompt-input-y();"));
@@ -604,11 +607,16 @@ mod tests {
         assert!(popup.contains(
             "prompt-input.set-selection-offsets(2147483647, 2147483647)"
         ));
-        assert!(composer.contains("if selected-tag-touch.has-hover: Rectangle"));
+        assert!(composer.contains(
+            "visible: selected-tag-touch.has-hover || selected-close-touch.has-hover;"
+        ));
+        assert!(composer.contains("selected-close-touch := TouchArea"));
         assert!(composer.contains("text: \"×\""));
         assert!(composer.contains("selected-title.preferred-width + 38px"));
         assert!(composer.contains("tag-title.preferred-width + 28px"));
         assert!(popup.contains("overflow: clip"));
+        assert!(callbacks.contains("if state.get_prompt().trim() == \"//\""));
+        assert!(callbacks.contains("state.set_prompt(\"\".into());"));
     }
 
     #[test]

@@ -98,105 +98,112 @@ export component PromptComposer {
             font-weight: 400;
             overflow: elide;
         }
-        if AppState.selected-custom-prompt-items.length > 0: selected-prompt-tags := Rectangle {
+        prompt-entry-row := HorizontalLayout {
             x: 24px;
             y: root.prompt-input-y();
-            width: min(max(72px, selected-prompt-row.preferred-width), parent.width - 80px);
-            height: 30px;
-            background: transparent;
-            clip: true;
-            selected-prompt-row := HorizontalLayout {
-                spacing: 6px;
-                alignment: start;
-                for item in AppState.selected-custom-prompt-items: Rectangle {
-                    width: min(max(72px, selected-title.preferred-width + 38px), root.width - 80px);
-                    height: 26px;
-                    background: AppTheme.panel-soft;
-                    border-radius: 13px;
-                    border-width: 1px;
-                    border-color: AppTheme.accent;
-                    selected-title := Text {
-                        x: 10px;
-                        width: parent.width - 34px;
-                        height: parent.height;
-                        text: item.name;
-                        color: AppTheme.accent-dark;
-                        font-size: AppState.settings-font-size * 1px - 1px;
-                        font-weight: 400;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                        overflow: clip;
-                    }
-                    selected-tag-touch := TouchArea {
-                        width: parent.width;
-                        height: parent.height;
-                        mouse-cursor: pointer;
-                    }
-                    if selected-tag-touch.has-hover: Rectangle {
-                        x: parent.width - 24px;
-                        y: 2px;
-                        width: 22px;
-                        height: 22px;
-                        border-radius: 11px;
-                        background: AppTheme.panel;
+            width: parent.width - 48px;
+            height: root.prompt-input-height();
+            spacing: 6px;
+            alignment: start;
 
-                        Text {
-                            width: parent.width;
+            if AppState.selected-custom-prompt-items.length > 0: selected-prompt-tags := Rectangle {
+                width: min(max(72px, selected-prompt-row.preferred-width), root.width - 104px);
+                height: 30px;
+                background: transparent;
+                clip: true;
+                selected-prompt-row := HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    for item in AppState.selected-custom-prompt-items: Rectangle {
+                        width: min(max(72px, selected-title.preferred-width + 38px), root.width - 104px);
+                        height: 26px;
+                        background: AppTheme.panel-soft;
+                        border-radius: 13px;
+                        border-width: 1px;
+                        border-color: AppTheme.accent;
+                        selected-title := Text {
+                            x: 10px;
+                            width: parent.width - 34px;
                             height: parent.height;
-                            text: "×";
-                            color: AppTheme.muted;
-                            font-size: 14px;
+                            text: item.name;
+                            color: AppTheme.accent-dark;
+                            font-size: AppState.settings-font-size * 1px - 1px;
+                            font-weight: 400;
                             horizontal-alignment: center;
                             vertical-alignment: center;
+                            overflow: clip;
                         }
-
-                        TouchArea {
+                        selected-tag-touch := TouchArea {
                             width: parent.width;
                             height: parent.height;
                             mouse-cursor: pointer;
-                            clicked => {
-                                AppState.toggle-custom-prompt-selection(item.content);
-                                prompt-input.focus();
-                                prompt-input.set-selection-offsets(2147483647, 2147483647);
+                        }
+                        selected-close := Rectangle {
+                            x: parent.width - 24px;
+                            y: 2px;
+                            width: 22px;
+                            height: 22px;
+                            visible: selected-tag-touch.has-hover || selected-close-touch.has-hover;
+                            border-radius: 11px;
+                            background: AppTheme.panel;
+
+                            Text {
+                                width: parent.width;
+                                height: parent.height;
+                                text: "×";
+                                color: AppTheme.muted;
+                                font-size: 14px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            selected-close-touch := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    AppState.toggle-custom-prompt-selection(item.content);
+                                    prompt-input.focus();
+                                    prompt-input.set-selection-offsets(2147483647, 2147483647);
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-        prompt-scroll := ScrollView {
-            x: AppState.selected-custom-prompt-items.length > 0 ? 270px : 24px;
-            y: root.prompt-input-y();
-            width: parent.width - self.x - 24px;
-            height: root.prompt-input-height();
-            viewport-width: self.visible-width;
-            viewport-height: max(self.visible-height, prompt-input.preferred-height);
-            prompt-input := TextInput {
-                text <=> AppState.prompt;
-                single-line: false;
-                color: AppTheme.text;
-                font-size: AppState.settings-font-size * 1px;
-                font-weight: 400;
-                wrap: word-wrap;
-                page-height: prompt-scroll.visible-height;
-                cursor-position-changed(position) => {
-                    if position.y + prompt-scroll.viewport-y < 8px {
-                        prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, -position.y + 8px));
-                    } else if position.y + prompt-scroll.viewport-y > prompt-scroll.visible-height - 28px {
-                        prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, prompt-scroll.visible-height - position.y - 28px));
+
+            prompt-scroll := ScrollView {
+                horizontal-stretch: 1;
+                min-width: 36px;
+                height: root.prompt-input-height();
+                viewport-width: self.visible-width;
+                viewport-height: max(self.visible-height, prompt-input.preferred-height);
+                prompt-input := TextInput {
+                    text <=> AppState.prompt;
+                    single-line: false;
+                    color: AppTheme.text;
+                    font-size: AppState.settings-font-size * 1px;
+                    font-weight: 400;
+                    wrap: word-wrap;
+                    page-height: prompt-scroll.visible-height;
+                    cursor-position-changed(position) => {
+                        if position.y + prompt-scroll.viewport-y < 8px {
+                            prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, -position.y + 8px));
+                        } else if position.y + prompt-scroll.viewport-y > prompt-scroll.visible-height - 28px {
+                            prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, prompt-scroll.visible-height - position.y - 28px));
+                        }
                     }
-                }
-                edited => {
-                    if AppState.prompt-history-open && self.text != "/" {
-                        AppState.prompt-history-open = false;
-                        history-popup.close();
+                    edited => {
+                        if AppState.prompt-history-open && self.text != "/" {
+                            AppState.prompt-history-open = false;
+                            history-popup.close();
+                        }
+                        if AppState.custom-prompt-open && self.text != "//" {
+                            AppState.custom-prompt-open = false;
+                            custom-prompt-popup.close();
+                        }
                     }
-                    if AppState.custom-prompt-open && self.text != "//" {
-                        AppState.custom-prompt-open = false;
-                        custom-prompt-popup.close();
-                    }
-                }
-                key-pressed(event) => {
+                    key-pressed(event) => {
                     if event.text == "/" && AppState.prompt == "/" {
                         AppState.prompt = "//";
                         prompt-input.set-selection-offsets(2, 2);
@@ -299,6 +306,7 @@ export component PromptComposer {
                     return reject;
                 }
             }
+        }
         }
         Text {
             visible: prompt-input.text == ""
