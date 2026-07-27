@@ -135,6 +135,9 @@ use local_store::*;
 #[path = "storage/paths.rs"]
 mod paths;
 use paths::*;
+#[path = "storage/updater.rs"]
+mod updater;
+use updater::*;
 #[path = "storage/recovery.rs"]
 mod recovery;
 use recovery::*;

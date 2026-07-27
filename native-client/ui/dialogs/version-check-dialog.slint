@@ -14,7 +14,7 @@ export component VersionCheckDialog {
                     ? min(440px, root.width - 32px)
                     : min(420px, root.width - 32px));
             height: AppState.update-available
-                ? min(390px, root.height - 40px)
+                ? min(AppState.update-active ? 420px : 390px, root.height - 40px)
                 : (AppState.update-check-failed
                     ? min(270px, root.height - 40px)
                     : min(240px, root.height - 40px));
@@ -25,7 +25,7 @@ export component VersionCheckDialog {
             border-width: 1px;
             border-color: AppTheme.border;
 
-            if !AppState.update-required: DialogCloseButton {
+            if !AppState.update-required && !AppState.update-active: DialogCloseButton {
                 z: 10;
                 x: parent.width - 46px;
                 y: 16px;
@@ -51,9 +51,17 @@ export component VersionCheckDialog {
 
                 Text {
                     height: 30px;
-                    text: AppState.update-required
-                        ? (AppState.en ? "Update required to continue" : "需要更新后继续")
-                        : (AppState.en ? "A new version is available" : "发现新版本");
+                    text: AppState.update-stage == "downloading"
+                        ? (AppState.en ? "Downloading update" : "正在下载更新")
+                        : (AppState.update-stage == "cancelling"
+                            ? (AppState.en ? "Cancelling update" : "正在取消更新")
+                            : (AppState.update-stage == "verifying"
+                                ? (AppState.en ? "Verifying update" : "正在校验更新")
+                                : (AppState.update-stage == "installing"
+                                    ? (AppState.en ? "Installing update" : "正在安装更新")
+                                    : (AppState.update-required
+                                        ? (AppState.en ? "Update required to continue" : "需要更新后继续")
+                                        : (AppState.en ? "A new version is available" : "发现新版本")))));
                     color: AppTheme.text;
                     font-size: 21px;
                     font-weight: 600;
@@ -114,7 +122,51 @@ export component VersionCheckDialog {
                     }
                 }
 
-                Rectangle {
+                if AppState.update-active: Rectangle {
+                    height: 92px;
+                    background: AppTheme.panel-soft;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    VerticalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        padding-top: 14px;
+                        padding-bottom: 12px;
+                        spacing: 8px;
+                        Text {
+                            height: 22px;
+                            text: AppState.update-download-message;
+                            color: AppTheme.text;
+                            font-size: 13px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        Rectangle {
+                            height: 8px;
+                            background: AppTheme.border.with-alpha(0.55);
+                            border-radius: 4px;
+                            Rectangle {
+                                width: max(0px, min(parent.width, parent.width * AppState.update-download-progress / 100));
+                                height: parent.height;
+                                background: AppTheme.accent;
+                                border-radius: 4px;
+                            }
+                        }
+                        Text {
+                            height: 18px;
+                            text: AppState.update-stage == "downloading"
+                                ? (AppState.update-download-progress + "%")
+                                : (AppState.en ? "Please wait…" : "请稍候…");
+                            color: AppTheme.muted;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                if !AppState.update-active: Rectangle {
                     height: AppState.update-required ? 92px : 72px;
                     background: AppState.update-required
                         ? AppTheme.warning.with-alpha(0.10)
@@ -129,13 +181,15 @@ export component VersionCheckDialog {
                         y: 10px;
                         width: parent.width - 28px;
                         height: parent.height - 20px;
-                        text: AppState.update-required
-                            ? (AppState.en
-                                ? "This version can no longer use online features. Download and install the latest version to continue."
-                                : "当前版本已无法继续使用在线功能。请下载并安装最新版本后继续。")
-                            : (AppState.update-release-notes == ""
-                                ? (AppState.en ? "This update includes improvements and bug fixes." : "本次更新包含功能优化与问题修复。")
-                                : AppState.update-release-notes);
+                        text: AppState.update-stage == "failed" || AppState.update-stage == "manual"
+                            ? AppState.update-download-message
+                            : (AppState.update-required
+                                ? (AppState.en
+                                    ? "This version can no longer use online features. Download and install the latest version to continue."
+                                    : "当前版本已无法继续使用在线功能。请下载并安装最新版本后继续。")
+                                : (AppState.update-release-notes == ""
+                                    ? (AppState.en ? "This update includes improvements and bug fixes." : "本次更新包含功能优化与问题修复。")
+                                    : AppState.update-release-notes));
                         color: AppState.update-required ? AppTheme.text : AppTheme.muted;
                         font-size: 13px;
                         font-weight: 400;
@@ -150,13 +204,22 @@ export component VersionCheckDialog {
                 HorizontalLayout {
                     height: 42px;
                     spacing: 10px;
-                    if !AppState.update-required: PillButton {
+                    if AppState.update-active: PillButton {
+                        horizontal-stretch: 1;
+                        height: 42px;
+                        text: AppState.update-stage == "installing"
+                            ? (AppState.en ? "Installing" : "安装中")
+                            : (AppState.en ? "Cancel" : "取消");
+                        disabled: AppState.update-stage == "installing";
+                        clicked => { AppState.cancel-update(); }
+                    }
+                    if !AppState.update-active && !AppState.update-required: PillButton {
                         horizontal-stretch: 1;
                         height: 42px;
                         text: AppState.en ? "Later" : "稍后再说";
                         clicked => { AppState.update-result-open = false; }
                     }
-                    if AppState.update-required && AppState.offline-available: PillButton {
+                    if !AppState.update-active && AppState.update-required && AppState.offline-available: PillButton {
                         horizontal-stretch: 1;
                         height: 42px;
                         text: AppState.en ? "Use offline" : "离线使用";
@@ -165,10 +228,12 @@ export component VersionCheckDialog {
                             AppState.enter-offline();
                         }
                     }
-                    PillButton {
+                    if !AppState.update-active: PillButton {
                         horizontal-stretch: 1;
                         height: 42px;
-                        text: AppState.en ? "Update" : "更新";
+                        text: AppState.update-stage == "failed"
+                            ? (AppState.en ? "Try again" : "重试更新")
+                            : (AppState.en ? "Update now" : "立即更新");
                         primary: true;
                         disabled: AppState.update-download-url == "";
                         clicked => { AppState.start-update(); }

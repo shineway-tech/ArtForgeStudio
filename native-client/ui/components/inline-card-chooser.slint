@@ -189,13 +189,11 @@ export component InlineCardChooser {
                 CompactSelectOption {
                     text: "2K";
                     active: AppState.quality == "2K";
-                    disabled: AppState.membership-max-quality == "1K";
                     clicked => { AppState.quality = "2K"; quality-popup.close(); }
                 }
                 CompactSelectOption {
                     text: "4K";
                     active: AppState.quality == "4K";
-                    disabled: AppState.membership-max-quality != "4K";
                     clicked => { AppState.quality = "4K"; quality-popup.close(); }
                 }
             }

@@ -46,7 +46,7 @@ function stableFileName(fileName, version) {
 }
 
 function publicUrlFor(objectKey) {
-  const baseUrl = process.env.ALIYUN_OSS_PUBLIC_BASE_URL || 'https://cdn.honeykid.cn';
+  const baseUrl = process.env.ALIYUN_OSS_PUBLIC_BASE_URL || 'https://static.honeykid.cn';
   return `${baseUrl.replace(/\/+$/g, '')}/${objectKey}`;
 }
 

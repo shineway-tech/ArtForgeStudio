@@ -170,7 +170,7 @@ jobs:
           ALIYUN_OSS_ACCESS_KEY_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
           ALIYUN_OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
           ALIYUN_OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
-          ALIYUN_OSS_PUBLIC_BASE_URL: ${{ secrets.ALIYUN_OSS_PUBLIC_BASE_URL || 'https://cdn.honeykid.cn' }}
+          ALIYUN_OSS_PUBLIC_BASE_URL: https://static.honeykid.cn
           ALIYUN_OSS_PREFIX: ${{ secrets.ALIYUN_OSS_PREFIX || 'public/art_forge' }}
           ALIYUN_OSS_OBJECT_ACL: ${{ secrets.ALIYUN_OSS_OBJECT_ACL }}
         run: |
@@ -290,7 +290,7 @@ jobs:
           ALIYUN_OSS_ACCESS_KEY_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
           ALIYUN_OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
           ALIYUN_OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
-          ALIYUN_OSS_PUBLIC_BASE_URL: ${{ secrets.ALIYUN_OSS_PUBLIC_BASE_URL || 'https://cdn.honeykid.cn' }}
+          ALIYUN_OSS_PUBLIC_BASE_URL: https://static.honeykid.cn
           ALIYUN_OSS_PREFIX: ${{ secrets.ALIYUN_OSS_PREFIX || 'public/art_forge' }}
           ALIYUN_OSS_OBJECT_ACL: ${{ secrets.ALIYUN_OSS_OBJECT_ACL }}
         run: |
@@ -314,11 +314,18 @@ jobs:
       - build-macos
       - build-windows
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Download release packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ArtForgeStudio-*
+          path: release-assets
+          merge-multiple: true
 
       - name: Create and upload update manifest
         env:
@@ -327,7 +334,7 @@ jobs:
           ALIYUN_OSS_ACCESS_KEY_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
           ALIYUN_OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
           ALIYUN_OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
-          ALIYUN_OSS_PUBLIC_BASE_URL: ${{ secrets.ALIYUN_OSS_PUBLIC_BASE_URL || 'https://cdn.honeykid.cn' }}
+          ALIYUN_OSS_PUBLIC_BASE_URL: https://static.honeykid.cn
           ALIYUN_OSS_PREFIX: ${{ secrets.ALIYUN_OSS_PREFIX || 'public/art_forge' }}
           ALIYUN_OSS_OBJECT_ACL: ${{ secrets.ALIYUN_OSS_OBJECT_ACL }}
         run: |
@@ -335,6 +342,10 @@ jobs:
           APP_VERSION="${GITHUB_REF_NAME#v}"
           node scripts/create-update-manifest.js \
             --version "$APP_VERSION" \
+            --macos-aarch64-file "release-assets/ArtForgeStudio_${APP_VERSION}_macos_aarch64.dmg" \
+            --macos-x64-file "release-assets/ArtForgeStudio_${APP_VERSION}_macos_x64.dmg" \
+            --windows-x64-file "release-assets/ArtForgeStudio_${APP_VERSION}_windows_x64_setup.exe" \
+            --windows-x64-portable-file "release-assets/ArtForgeStudio_${APP_VERSION}_windows_x64_portable.zip" \
             --output dist/update-manifest.json
           node scripts/upload-release-assets.js \
             --file dist/update-manifest.json \

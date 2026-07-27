@@ -2,6 +2,7 @@
 
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -30,11 +31,27 @@ function normalizePrefix(prefix) {
     .replace(/\/+/g, '/');
 }
 
-function publicUrl(baseUrl, prefix, fileName) {
-  return `${baseUrl.replace(/\/+$/g, '')}/${prefix}/${fileName}`;
+function publicUrl(baseUrl, prefix, version, fileName) {
+  return `${baseUrl.replace(/\/+$/g, '')}/${prefix}/${version}/${fileName}`;
 }
 
-function main() {
+async function artifactMetadata(filePath, label) {
+  const resolved = path.resolve(required(filePath, label));
+  const stat = fs.statSync(resolved);
+  if (!stat.isFile() || stat.size <= 0) {
+    throw new Error(`Release artifact is empty or invalid: ${resolved}`);
+  }
+  const digest = crypto.createHash('sha256');
+  for await (const chunk of fs.createReadStream(resolved)) {
+    digest.update(chunk);
+  }
+  return {
+    size_bytes: stat.size,
+    sha256: digest.digest('hex'),
+  };
+}
+
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   const version = required(args.version, '--version').replace(/^v/i, '');
   if (!/^\d+\.\d+\.\d+$/.test(version)) {
@@ -42,11 +59,24 @@ function main() {
   }
 
   const output = path.resolve(required(args.output, '--output'));
-  const baseUrl = process.env.ALIYUN_OSS_PUBLIC_BASE_URL || 'https://cdn.honeykid.cn';
+  const baseUrl = process.env.ALIYUN_OSS_PUBLIC_BASE_URL || 'https://static.honeykid.cn';
   const prefix = normalizePrefix(process.env.ALIYUN_OSS_PREFIX);
   const notes = String(
     process.env.ARTFORGE_RELEASE_NOTES || '本次更新包含功能优化与问题修复。',
   ).trim();
+  const files = {
+    macos_aarch64: args['macos-aarch64-file'],
+    macos_x64: args['macos-x64-file'],
+    windows_x64: args['windows-x64-file'],
+    windows_x64_portable: args['windows-x64-portable-file'],
+  };
+  const artifacts = {};
+  for (const [platform, filePath] of Object.entries(files)) {
+    artifacts[platform] = await artifactMetadata(
+      filePath,
+      `--${platform.replaceAll('_', '-')}-file`,
+    );
+  }
 
   const manifest = {
     version,
@@ -56,20 +86,29 @@ function main() {
       macos_aarch64: publicUrl(
         baseUrl,
         prefix,
+        version,
         'ArtForgeStudio_macos_aarch64.dmg',
       ),
-      macos_x64: publicUrl(baseUrl, prefix, 'ArtForgeStudio_macos_x64.dmg'),
+      macos_x64: publicUrl(
+        baseUrl,
+        prefix,
+        version,
+        'ArtForgeStudio_macos_x64.dmg',
+      ),
       windows_x64: publicUrl(
         baseUrl,
         prefix,
+        version,
         'ArtForgeStudio_windows_x64_setup.exe',
       ),
       windows_x64_portable: publicUrl(
         baseUrl,
         prefix,
+        version,
         'ArtForgeStudio_windows_x64_portable.zip',
       ),
     },
+    artifacts,
   };
 
   fs.mkdirSync(path.dirname(output), { recursive: true });
@@ -77,9 +116,7 @@ function main() {
   console.log(`Update manifest: ${output}`);
 }
 
-try {
-  main();
-} catch (error) {
+main().catch((error) => {
   console.error(error.message);
   process.exit(1);
-}
+});

@@ -1636,8 +1636,8 @@ component CanvasNodeCard {
                     height: 36px;
                     spacing: 10px;
                     CanvasOptionPill { text: "1K"; selected: AppState.quality == "1K"; clicked => { AppState.quality = "1K"; } }
-                    CanvasOptionPill { text: "2K"; selected: AppState.quality == "2K"; disabled: AppState.membership-max-quality == "1K"; clicked => { AppState.quality = "2K"; } }
-                    CanvasOptionPill { text: "4K"; selected: AppState.quality == "4K"; disabled: AppState.membership-max-quality != "4K"; clicked => { AppState.quality = "4K"; } }
+                    CanvasOptionPill { text: "2K"; selected: AppState.quality == "2K"; clicked => { AppState.quality = "2K"; } }
+                    CanvasOptionPill { text: "4K"; selected: AppState.quality == "4K"; clicked => { AppState.quality = "4K"; } }
                 }
                 Text { x: 18px; y: 158px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Aspect ratio" : "宽高比"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
                 GridLayout {

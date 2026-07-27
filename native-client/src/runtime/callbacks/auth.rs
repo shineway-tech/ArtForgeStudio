@@ -950,7 +950,6 @@ pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snap
     if let Some(plan) = snapshot.account.membership.plan.as_ref() {
         state.set_membership_plan_code(plan.code.clone().into());
         state.set_membership_plan_name(plan.name.clone().into());
-        state.set_membership_max_quality(plan.max_quality.clone().into());
         state.set_membership_tier_rank(plan.tier_rank);
     }
     let membership_ends_at = snapshot.account.membership.ends_at.clone().unwrap_or_default();
@@ -989,7 +988,6 @@ pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snap
             grant_credits: plan.grant_credits.clone().into(),
             period_days: plan.period_days,
             tier_rank: plan.tier_rank,
-            max_quality: plan.max_quality.clone().into(),
         }).collect::<Vec<_>>(),
     )));
     let catalog_models = snapshot

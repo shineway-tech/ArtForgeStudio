@@ -19,7 +19,6 @@ pub(crate) struct MembershipPlanSummary {
     pub(crate) name: String,
     pub(crate) tier_rank: i32,
     pub(crate) recharge_discount_bps: i32,
-    pub(crate) max_quality: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -32,7 +31,6 @@ pub(crate) struct MembershipPlan {
     pub(crate) period_days: i32,
     pub(crate) grant_credits: String,
     pub(crate) recharge_discount_bps: i32,
-    pub(crate) max_quality: String,
     pub(crate) entitlements: Value,
 }
 

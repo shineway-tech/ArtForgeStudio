@@ -291,7 +291,7 @@ export component ProfileDialog {
                         y: 34px;
                         width: parent.width - 68px;
                         height: 22px;
-                        text: AppState.membership-plan-name + " · " + AppState.membership-max-quality;
+                        text: AppState.membership-plan-name;
                         color: AppTheme.muted;
                         font-size: 12px;
                         vertical-alignment: center;
@@ -381,7 +381,7 @@ export component ProfileDialog {
                         y: 184px;
                         width: parent.width;
                         label: AppState.en ? "Membership" : "当前会员";
-                        value: AppState.membership-plan-name + " · " + AppState.membership-max-quality;
+                        value: AppState.membership-plan-name;
                         action-text: AppState.en ? "View plans" : "查看会员";
                         action => { AppState.navigate("credits"); AppState.credits-tab = "membership"; AppState.profile-open = false; }
                     }

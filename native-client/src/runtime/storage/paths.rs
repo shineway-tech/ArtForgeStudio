@@ -1,8 +1,10 @@
 use super::*;
 
 const DEFAULT_UPDATE_MANIFEST_URL: &str =
-    "https://cdn.honeykid.cn/public/art_forge/update-manifest.json";
+    "https://static.honeykid.cn/public/art_forge/update-manifest.json";
 const DEFAULT_UPDATE_NOTES: &str = "本次更新包含功能优化与问题修复。";
+pub(super) const UPDATE_ASSET_HOST: &str = "static.honeykid.cn";
+const LEGACY_UPDATE_ASSET_HOST: &str = "cdn.honeykid.cn";
 
 pub(super) fn app_dir() -> PathBuf {
     std::env::current_exe()
@@ -18,6 +20,11 @@ pub(super) fn init_version_state(app: &AppWindow) {
     state.set_current_version(current.into());
     state.set_latest_version(current.into());
     state.set_update_download_url(default_update_download_url().into());
+    state.set_update_download_sha256("".into());
+    state.set_update_download_size("0".into());
+    state.set_update_stage("idle".into());
+    state.set_update_download_progress(0);
+    state.set_update_download_message("".into());
     state.set_update_check_failed(false);
     state.set_update_message("".into());
 }
@@ -118,12 +125,17 @@ fn fetch_remote_update_manifest() -> Result<UpdateManifest> {
     }
     let response = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::none())
         .user_agent(format!("ArtForgeStudio/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .context("无法创建版本检查请求")?
         .get(url)
         .send()
-        .context("无法连接版本服务")?
+        .context("无法连接版本服务")?;
+    if !cfg!(debug_assertions) && response.url().host_str() != Some(UPDATE_ASSET_HOST) {
+        anyhow::bail!("更新清单被重定向到不受信任的地址");
+    }
+    let response = response
         .error_for_status()
         .context("版本服务返回错误")?;
     let manifest = response
@@ -180,10 +192,25 @@ fn apply_update_manifest(app: &AppWindow, manifest: UpdateManifest, manual: bool
         }
         .into(),
     );
-    let download_url = manifest_download_url(&manifest)
-        .filter(|url| validated_update_download_url(url).is_ok())
-        .unwrap_or_else(default_update_download_url);
+    let manifest_matches_latest = compare_versions(manifest_version, &latest).is_eq();
+    let download_url = if manifest_matches_latest {
+        manifest_download_url(&manifest)
+            .filter(|url| validated_update_download_url(url).is_ok())
+            .unwrap_or_else(default_update_download_url)
+    } else {
+        default_update_download_url()
+    };
+    let artifact = if manifest_matches_latest {
+        manifest_update_artifact(&manifest)
+    } else {
+        UpdateArtifact::default()
+    };
     state.set_update_download_url(download_url.into());
+    state.set_update_download_sha256(artifact.sha256.trim().into());
+    state.set_update_download_size(artifact.size_bytes.to_string().into());
+    state.set_update_stage("idle".into());
+    state.set_update_download_progress(0);
+    state.set_update_download_message("".into());
     state.set_update_message(
         if required {
             format!("在线功能要求升级到 {latest}")
@@ -209,8 +236,31 @@ fn manifest_download_url(manifest: &UpdateManifest) -> Option<String> {
     } else {
         ""
     };
-    let value = value.trim();
-    (!value.is_empty()).then(|| value.to_string())
+    canonical_update_download_url(value)
+}
+
+fn manifest_update_artifact(manifest: &UpdateManifest) -> UpdateArtifact {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        manifest.artifacts.macos_aarch64.clone()
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        manifest.artifacts.macos_x64.clone()
+    } else if cfg!(target_os = "windows") {
+        manifest.artifacts.windows_x64.clone()
+    } else {
+        UpdateArtifact::default()
+    }
+}
+
+pub(super) fn canonical_update_download_url(candidate: &str) -> Option<String> {
+    let candidate = candidate.trim();
+    if candidate.is_empty() {
+        return None;
+    }
+    let mut url = reqwest::Url::parse(candidate).ok()?;
+    if url.host_str() == Some(LEGACY_UPDATE_ASSET_HOST) {
+        url.set_host(Some(UPDATE_ASSET_HOST)).ok()?;
+    }
+    Some(url.to_string())
 }
 
 fn default_update_download_url() -> String {
@@ -223,13 +273,18 @@ fn default_update_download_url() -> String {
     } else {
         return String::new();
     };
-    format!("https://cdn.honeykid.cn/public/art_forge/{file_name}")
+    format!("https://{UPDATE_ASSET_HOST}/public/art_forge/{file_name}")
 }
 
 pub(super) fn validated_update_download_url(candidate: &str) -> Result<reqwest::Url> {
     let url = reqwest::Url::parse(candidate.trim()).context("更新下载地址无效")?;
-    if url.scheme() != "https" || url.host_str().is_none() || !url.username().is_empty() {
-        anyhow::bail!("更新下载地址必须是安全的 HTTPS 地址");
+    if url.scheme() != "https"
+        || url.host_str() != Some(UPDATE_ASSET_HOST)
+        || url.port().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        anyhow::bail!("更新下载地址必须使用受信任的 HTTPS 内容域名");
     }
     Ok(url)
 }
@@ -271,14 +326,22 @@ pub(super) fn show_required_update_prompt(app: &AppWindow, minimum_version: &str
     let state = app.global::<AppState>();
     let minimum = minimum_version.trim();
     let latest = state.get_latest_version().to_string();
-    if latest.is_empty() || compare_versions(minimum, &latest).is_gt() {
+    let minimum_exceeds_known_release =
+        latest.is_empty() || compare_versions(minimum, &latest).is_gt();
+    if minimum_exceeds_known_release {
         state.set_latest_version(minimum.into());
+        state.set_update_download_url(default_update_download_url().into());
+        state.set_update_download_sha256("".into());
+        state.set_update_download_size("0".into());
     }
     if state.get_update_download_url().is_empty() {
         state.set_update_download_url(default_update_download_url().into());
     }
     state.set_update_available(true);
     state.set_update_required(true);
+    state.set_update_stage("idle".into());
+    state.set_update_download_progress(0);
+    state.set_update_download_message("".into());
     state.set_update_check_failed(false);
     state.set_update_message(format!("在线功能要求至少升级到 {minimum}").into());
     state.set_update_result_open(true);
