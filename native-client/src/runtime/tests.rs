@@ -1047,12 +1047,30 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(chooser.contains("\"清晰度 · \""));
         assert!(chooser.contains("\"张数 · \""));
         assert!(chooser.contains("disabled: AppState.asset-type == \"action-sequence\""));
-        assert!(chooser.contains("AppState.membership-max-quality == \"1K\""));
-        assert!(chooser.contains("AppState.membership-max-quality != \"4K\""));
         assert!(panel.contains("InlineCardChooser {"));
         assert!(!panel.contains("viewport-height: AppState.ratio-more-open"));
         assert!(panel.contains("parent.height - 254px"));
         assert!(prompt.contains("? 650px : 600px"));
+    }
+
+    #[test]
+    fn image_quality_is_not_limited_by_membership() {
+        let chooser = include_str!("../../ui/components/inline-card-chooser.slint");
+        let quality_button = include_str!("../../ui/components/quality-button.slint");
+        let canvas = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let membership = include_str!("../../ui/components/membership-plans.slint");
+        let profile = include_str!("../../ui/dialogs/profile-dialog.slint");
+        let app = include_str!("../../ui/app.slint");
+
+        for source in [chooser, quality_button, canvas, membership, profile, app] {
+            assert!(!source.contains("membership-max-quality"));
+            assert!(!source.contains("QualityRestrictedDialog"));
+        }
+        assert!(chooser.contains("text: \"1K\""));
+        assert!(chooser.contains("text: \"2K\""));
+        assert!(chooser.contains("text: \"4K\""));
+        assert!(!membership.contains("最高画质"));
+        assert!(!membership.contains("Max quality"));
     }
 
     #[test]

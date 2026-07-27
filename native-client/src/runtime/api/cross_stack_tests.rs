@@ -2409,7 +2409,6 @@ fn cross_stack_catalog_and_account_dto_invariants() {
         assert!(plan.period_days > 0);
         assert!(plan.grant_credits.parse::<u64>().is_ok());
         assert!((0..=10_000).contains(&plan.recharge_discount_bps));
-        assert!(["1K", "2K", "4K"].contains(&plan.max_quality.as_str()));
         assert!(plan.entitlements.is_object());
     }
     let pack_codes: HashSet<_> = snapshot.packs.iter().map(|pack| pack.code.as_str()).collect();

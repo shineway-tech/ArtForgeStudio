@@ -14,7 +14,6 @@ export global AppState {
     in-out property <string> nickname: "";
     in-out property <string> membership-plan-code: "free";
     in-out property <string> membership-plan-name: "免费版";
-    in-out property <string> membership-max-quality: "1K";
     in-out property <string> membership-ends-at: "";
     in-out property <string> membership-expiry-message: "";
     in-out property <int> membership-tier-rank: 0;
@@ -64,8 +63,6 @@ export global AppState {
     in-out property <string> purchase-credit-rules-url: "";
     in-out property <bool> credit-insufficient-open: false;
     in-out property <string> credit-insufficient-message: "积分不足以支持本次生图，请前往充值";
-    in-out property <bool> quality-restricted-open: false;
-    in-out property <string> quality-restricted-message: "当前会员不支持所选清晰度，请升级会员后使用";
 
     in-out property <[ModelGroup]> model-groups: [];
     in-out property <[ModelOption]> model-image-options: [];

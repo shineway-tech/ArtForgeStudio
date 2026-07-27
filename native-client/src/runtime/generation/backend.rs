@@ -45,9 +45,6 @@ pub(super) fn start_backend_generation(
         &state.get_quote_ratio().to_string(),
     );
     let quality = state.get_quality().to_string();
-    if !ensure_membership_quality_allowed(&state, &quality) {
-        return;
-    }
     let count = forced_count.unwrap_or_else(|| {
         if category == "action-sequence" { 1 } else { state.get_count().clamp(1, 4) }
     });
@@ -433,9 +430,6 @@ pub(super) fn start_backend_upscale(
         target_long_edge,
     );
     let billing_quality = quality_for_target_dimensions(target_width, target_height);
-    if !ensure_membership_quality_allowed(&state, &billing_quality) {
-        return;
-    }
     let upload_path = match upscale_upload_path(app, &state, &source) {
         Ok(path) => path,
         Err(error) => {
@@ -771,30 +765,6 @@ fn quality_for_target_dimensions(width: u32, height: u32) -> String {
     }
 }
 
-fn ensure_membership_quality_allowed(state: &AppState, requested_quality: &str) -> bool {
-    let max_quality = normalized_quality(&state.get_membership_max_quality().to_string());
-    let requested_quality = normalized_quality(requested_quality);
-    if membership_allows_quality(max_quality, requested_quality) {
-        return true;
-    }
-
-    let plan_name = state.get_membership_plan_name().to_string();
-    let plan_label = if plan_name.trim().is_empty() {
-        "当前会员"
-    } else {
-        plan_name.trim()
-    };
-    state.set_quality_restricted_message(
-        format!(
-            "{}最高支持 {} 图片，请升级会员后使用 {} 图片。",
-            plan_label, max_quality, requested_quality
-        )
-        .into(),
-    );
-    state.set_quality_restricted_open(true);
-    false
-}
-
 fn upscale_upload_path(
     app: &AppWindow,
     state: &AppState,
@@ -893,12 +863,6 @@ pub(super) fn recover_pending_generations(app: &AppWindow, context: AppContext) 
     let now_epoch_ms = Local::now().timestamp_millis();
     for record in local_records {
         if record.schema_version != 1 || record.client_request_id.trim().is_empty() {
-            let _ = remove_pending_generation(&record.client_request_id);
-            continue;
-        }
-        if record.server_task_id.is_empty()
-            && !ensure_membership_quality_allowed(&state, &record.quality)
-        {
             let _ = remove_pending_generation(&record.client_request_id);
             continue;
         }
