@@ -8,6 +8,7 @@ pub(super) fn run() -> Result<()> {
     schedule_external_image_drop_install(app.as_weak(), 20);
     app.window().set_size(slint::PhysicalSize::new(1440, 900));
     init_version_state(&app);
+    cleanup_stale_update_dirs();
     apply_theme(&app, "light");
     init_portable_dirs(&app)?;
     load_user_profile(&app);
@@ -280,11 +281,22 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
         });
     }
 
+    let update_cancellation = new_update_cancellation();
     {
         let app_weak = app.as_weak();
+        let update_cancellation = update_cancellation.clone();
         state.on_start_update(move || {
             if let Some(app) = app_weak.upgrade() {
-                open_update_download(&app);
+                begin_automatic_update(&app, update_cancellation.clone());
+            }
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_cancel_update(move || {
+            if let Some(app) = app_weak.upgrade() {
+                cancel_automatic_update(&app, &update_cancellation);
             }
         });
     }

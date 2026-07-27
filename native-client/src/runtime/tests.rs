@@ -22,11 +22,70 @@ mod tests {
         assert!(compare_versions("1.0.4", "1.0.5").is_lt());
 
         assert!(validated_update_download_url(
-            "https://cdn.honeykid.cn/public/art_forge/ArtForgeStudio_macos_aarch64.dmg"
+            "https://static.honeykid.cn/public/art_forge/ArtForgeStudio_macos_aarch64.dmg"
         )
         .is_ok());
-        assert!(validated_update_download_url("http://cdn.honeykid.cn/update.dmg").is_err());
+        assert_eq!(
+            canonical_update_download_url(
+                "https://cdn.honeykid.cn/public/art_forge/ArtForgeStudio_macos_aarch64.dmg"
+            )
+            .as_deref(),
+            Some(
+                "https://static.honeykid.cn/public/art_forge/ArtForgeStudio_macos_aarch64.dmg"
+            )
+        );
+        assert!(validated_update_download_url("http://static.honeykid.cn/update.dmg").is_err());
+        assert!(validated_update_download_url(
+            "https://static.honeykid.cn.attacker.example/update.dmg"
+        )
+        .is_err());
+        assert!(validated_update_download_url("https://attacker.example/update.dmg").is_err());
         assert!(validated_update_download_url("not-a-url").is_err());
+        assert!(valid_update_artifact_metadata(42, &"a".repeat(64)));
+        assert!(!valid_update_artifact_metadata(0, &"a".repeat(64)));
+        assert!(!valid_update_artifact_metadata(42, "not-a-sha256"));
+        assert_eq!(shell_quote("ArtForge's update"), "'ArtForge'\"'\"'s update'");
+        assert!(windows_update_installer_args().contains(&"/VERYSILENT"));
+        assert!(windows_update_installer_args().contains(&"/CLOSEAPPLICATIONS"));
+        assert!(is_update_temp_dir_name(&format!(
+            "artforge-update-{}",
+            Uuid::new_v4()
+        )));
+        assert!(!is_update_temp_dir_name("artforge-update-not-a-uuid"));
+    }
+
+    #[test]
+    fn update_manifest_accepts_integrity_metadata_without_breaking_legacy_download_fields() {
+        let manifest: UpdateManifest = serde_json::from_value(serde_json::json!({
+            "version": "1.0.10",
+            "downloads": {
+                "macos_aarch64": "https://static.honeykid.cn/public/art_forge/1.0.10/ArtForgeStudio_macos_aarch64.dmg",
+                "macos_x64": "https://static.honeykid.cn/public/art_forge/1.0.10/ArtForgeStudio_macos_x64.dmg",
+                "windows_x64": "https://static.honeykid.cn/public/art_forge/1.0.10/ArtForgeStudio_windows_x64_setup.exe"
+            },
+            "artifacts": {
+                "macos_aarch64": { "size_bytes": 42, "sha256": "a".repeat(64) },
+                "macos_x64": { "size_bytes": 43, "sha256": "b".repeat(64) },
+                "windows_x64": { "size_bytes": 44, "sha256": "c".repeat(64) }
+            }
+        }))
+        .unwrap();
+
+        assert!(manifest.downloads.windows_x64.contains("/1.0.10/"));
+        assert_eq!(manifest.artifacts.macos_aarch64.size_bytes, 42);
+        assert_eq!(manifest.artifacts.windows_x64.sha256, "c".repeat(64));
+
+        let legacy: UpdateManifest = serde_json::from_value(serde_json::json!({
+            "version": "1.0.9",
+            "downloads": {
+                "macos_aarch64": "",
+                "macos_x64": "",
+                "windows_x64": ""
+            }
+        }))
+        .unwrap();
+        assert_eq!(legacy.artifacts.windows_x64.size_bytes, 0);
+        assert!(legacy.artifacts.windows_x64.sha256.is_empty());
     }
 
     #[test]
@@ -34,10 +93,14 @@ mod tests {
         let dialog = include_str!("../../ui/dialogs/version-check-dialog.slint");
         let state = include_str!("../../ui/app-state.slint");
         let app = include_str!("../../ui/app.slint");
+        let updater = include_str!("storage/updater.rs");
+        let installer = include_str!("../../../installer/ArtForgeStudio.iss");
+        let release_workflow = include_str!("../../../.github/workflows/release-desktop.yml");
+        let manifest_script = include_str!("../../../scripts/create-update-manifest.js");
 
         assert!(dialog.contains("AppState.update-required"));
         assert!(dialog.contains("\"稍后再说\""));
-        assert!(dialog.contains("\"更新\""));
+        assert!(dialog.contains("\"立即更新\""));
         assert!(dialog.contains("\"离线使用\""));
         assert!(dialog.contains("\"重新检查\""));
         assert!(dialog.contains("\"已是最新版本\""));
@@ -46,7 +109,20 @@ mod tests {
         assert!(dialog.contains("min(240px, root.height - 40px)"));
         assert!(dialog.contains("width: 160px;"));
         assert!(state.contains("in-out property <string> update-download-url"));
+        assert!(state.contains("in-out property <string> update-download-sha256"));
+        assert!(state.contains("in-out property <string> update-stage"));
+        assert!(state.contains("callback cancel-update()"));
+        assert!(dialog.contains("AppState.update-download-progress"));
+        assert!(dialog.contains("AppState.cancel-update()"));
         assert!(state.contains("in-out property <bool> update-check-failed"));
+        assert!(updater.contains("Sha256"));
+        assert!(updater.contains("hdiutil verify"));
+        assert!(updater.contains("codesign --verify --deep --strict"));
+        assert!(updater.contains("\"/VERYSILENT\""));
+        assert!(installer.contains("skipifnotsilent"));
+        assert!(release_workflow.contains("actions/download-artifact@v8"));
+        assert!(manifest_script.contains("size_bytes"));
+        assert!(manifest_script.contains("sha256"));
         assert!(!app.contains("UpdateProgressDialog"));
     }
 

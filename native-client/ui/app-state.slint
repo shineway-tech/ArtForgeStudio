@@ -361,7 +361,16 @@ export global AppState {
     in-out property <string> update-release-notes: "";
     in-out property <string> update-published-at: "";
     in-out property <string> update-download-url: "";
+    in-out property <string> update-download-sha256: "";
+    in-out property <string> update-download-size: "0";
     in-out property <string> update-message: "";
+    in-out property <string> update-stage: "idle";
+    in-out property <int> update-download-progress: 0;
+    in-out property <string> update-download-message: "";
+    out property <bool> update-active: update-stage == "downloading"
+        || update-stage == "verifying"
+        || update-stage == "installing"
+        || update-stage == "cancelling";
 
     callback use-now();
     callback login-or-register();
@@ -395,6 +404,7 @@ export global AppState {
     callback load-fonts();
     callback check-version();
     callback start-update();
+    callback cancel-update();
     callback remove-prompt-history(string);
     callback clear-prompt-history();
     callback toggle-custom-prompt-selection(string);

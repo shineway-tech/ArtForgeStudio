@@ -415,6 +415,8 @@ struct UpdateManifest {
     published_at: String,
     #[serde(default)]
     downloads: UpdateDownloads,
+    #[serde(default)]
+    artifacts: UpdateArtifacts,
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -425,4 +427,22 @@ struct UpdateDownloads {
     macos_x64: String,
     #[serde(default)]
     windows_x64: String,
+}
+
+#[derive(Clone, Default, Deserialize)]
+struct UpdateArtifacts {
+    #[serde(default)]
+    macos_aarch64: UpdateArtifact,
+    #[serde(default)]
+    macos_x64: UpdateArtifact,
+    #[serde(default)]
+    windows_x64: UpdateArtifact,
+}
+
+#[derive(Clone, Default, Deserialize)]
+struct UpdateArtifact {
+    #[serde(default)]
+    size_bytes: u64,
+    #[serde(default)]
+    sha256: String,
 }
