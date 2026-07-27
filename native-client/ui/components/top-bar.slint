@@ -15,20 +15,6 @@ export component TopBar {
         Rectangle {
             x: 18px;
             y: 0px;
-            width: 94px;
-            height: parent.height;
-            background: transparent;
-            if AppState.page != "welcome" && AppState.page != "generation": PillButton {
-                x: 0px;
-                y: (parent.height - 36px) / 2;
-                width: 88px;
-                text: AppState.en ? "← Back" : "← 返回";
-                clicked => { AppState.back(); }
-            }
-        }
-        Rectangle {
-            x: 18px;
-            y: 0px;
             width: max(360px, parent.width - 18px - root.actions-width() - 32px);
             height: parent.height;
             background: transparent;
@@ -53,6 +39,21 @@ export component TopBar {
                     picker-width: root.model-picker-width();
                     select-model(model) => { AppState.select-reasoning-model(model); }
                 }
+            }
+        }
+        if AppState.page != "welcome" && AppState.page != "generation": Rectangle {
+            x: 18px;
+            y: 0px;
+            width: 94px;
+            height: parent.height;
+            background: AppTheme.bg;
+
+            PillButton {
+                x: 0px;
+                y: (parent.height - 36px) / 2;
+                width: 88px;
+                text: AppState.en ? "← Back" : "← 返回";
+                clicked => { AppState.back(); }
             }
         }
         Rectangle {

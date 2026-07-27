@@ -79,7 +79,7 @@ component EnhancePreviewPanel {
             x: 20px;
             y: 56px;
             width: parent.width - 40px;
-            height: parent.height - (root.upload-panel ? 164px : 76px);
+            height: parent.height - 76px;
             background: AppTheme.bg;
             border-radius: 8px;
             border-width: 1px;
@@ -133,63 +133,6 @@ component EnhancePreviewPanel {
             }
         }
 
-        if root.upload-panel: Text {
-            x: 20px;
-            y: parent.height - 94px;
-            width: 76px;
-            height: 40px;
-            text: AppState.en ? "Quality" : "清晰度";
-            color: AppTheme.text;
-            font-size: 14px;
-            font-weight: 400;
-            vertical-alignment: center;
-        }
-
-        if root.upload-panel: HorizontalLayout {
-            x: 92px;
-            y: parent.height - 94px;
-            width: max(138px, min(260px, parent.width - 278px));
-            height: 40px;
-            spacing: 8px;
-
-            EnhanceQualityButton {
-                horizontal-stretch: 1;
-                value: "1K";
-                clicked => {
-                    AppState.enhance-quality = "1K";
-                    AppState.enhance-message = "";
-                }
-            }
-            EnhanceQualityButton {
-                horizontal-stretch: 1;
-                value: "2K";
-                clicked => {
-                    AppState.enhance-quality = "2K";
-                    AppState.enhance-message = "";
-                }
-            }
-            EnhanceQualityButton {
-                horizontal-stretch: 1;
-                value: "4K";
-                clicked => {
-                    AppState.enhance-quality = "4K";
-                    AppState.enhance-message = "";
-                }
-            }
-        }
-
-        if root.upload-panel: PillButton {
-            x: parent.width - 166px;
-            y: parent.height - 94px;
-            width: 146px;
-            height: 40px;
-            text: AppState.enhance-processing
-                ? (AppState.en ? "Enhancing..." : "处理中...")
-                : (AppState.en ? "Start Enhance" : "开始变清晰");
-            primary: true;
-            disabled: AppState.enhance-processing;
-            clicked => { AppState.start-enhance(AppState.enhance-quality); }
-        }
     }
 }
 
@@ -231,7 +174,7 @@ export component ToolboxEnhancePage {
             x: 32px;
             y: 112px;
             width: root.panel-width();
-            height: parent.height - 144px;
+            height: parent.height - 218px;
             title: AppState.en ? "Original" : "原图";
             detail: AppState.enhance-source-name;
             preview: AppState.enhance-source-image;
@@ -244,25 +187,92 @@ export component ToolboxEnhancePage {
             x: 52px + root.panel-width();
             y: 112px;
             width: root.panel-width();
-            height: parent.height - 144px;
+            height: parent.height - 218px;
             title: AppState.en ? "Result" : "处理结果";
             detail: AppState.enhance-result-name;
             preview: AppState.enhance-result-image;
             has-image: AppState.enhance-result-path != "";
         }
 
+        Text {
+            x: 32px;
+            y: parent.height - 78px;
+            width: 58px;
+            height: 42px;
+            text: AppState.en ? "Quality" : "清晰度";
+            color: AppTheme.text;
+            font-size: 14px;
+            font-weight: 400;
+            vertical-alignment: center;
+        }
+
+        HorizontalLayout {
+            x: 96px;
+            y: parent.height - 78px;
+            width: min(204px, root.panel-width() - 262px);
+            height: 42px;
+            spacing: 8px;
+
+            EnhanceQualityButton {
+                horizontal-stretch: 1;
+                value: "1K";
+                clicked => {
+                    AppState.enhance-quality = "1K";
+                    AppState.enhance-message = "";
+                }
+            }
+            EnhanceQualityButton {
+                horizontal-stretch: 1;
+                value: "2K";
+                clicked => {
+                    AppState.enhance-quality = "2K";
+                    AppState.enhance-message = "";
+                }
+            }
+            EnhanceQualityButton {
+                horizontal-stretch: 1;
+                value: "4K";
+                clicked => {
+                    AppState.enhance-quality = "4K";
+                    AppState.enhance-message = "";
+                }
+            }
+        }
+
+        PillButton {
+            x: 32px + root.panel-width() - 146px;
+            y: parent.height - 78px;
+            width: 146px;
+            height: 42px;
+            text: AppState.enhance-processing
+                ? (AppState.en ? "Enhancing..." : "处理中...")
+                : (AppState.en ? "Start Enhance" : "开始变清晰");
+            primary: true;
+            disabled: AppState.enhance-source-path == "" || AppState.enhance-processing;
+            clicked => { AppState.start-enhance(AppState.enhance-quality); }
+        }
+
+        PillButton {
+            x: parent.width - 174px;
+            y: parent.height - 78px;
+            width: 142px;
+            height: 42px;
+            text: AppState.en ? "View image" : "查看图片";
+            disabled: AppState.enhance-result-path == "";
+            clicked => { AppState.reveal-enhance-result(); }
+        }
+
         if AppState.enhance-message != "": Text {
-            x: 72px + root.panel-width();
-            y: parent.height - 86px;
-            width: root.panel-width() - 40px;
-            height: 40px;
+            x: 52px + root.panel-width();
+            y: parent.height - 69px;
+            width: root.panel-width() - 162px;
+            height: 24px;
             text: AppState.enhance-message;
             color: AppTheme.muted;
             font-size: 12px;
             font-weight: 400;
-            wrap: word-wrap;
-            horizontal-alignment: center;
             vertical-alignment: center;
+            overflow: elide;
         }
     }
 }

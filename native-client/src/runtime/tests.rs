@@ -903,21 +903,37 @@ fn toolbox_enhance_uses_two_preview_panels_with_left_quality_controls() {
     assert!(page.contains("title: AppState.en ? \"Result\" : \"处理结果\""));
     assert!(page.contains("AppState.choose-enhance-source()"));
     assert!(page.contains("upload-panel: true"));
-    assert!(page.contains("if root.upload-panel: HorizontalLayout"));
-    assert!(page.contains("x: parent.width - 166px;"));
+    assert!(page.contains("x: 96px;"));
+    assert!(page.contains("x: 32px + root.panel-width() - 146px;"));
     for quality in ["1K", "2K", "4K"] {
         assert!(page.contains(&format!("value: \"{quality}\"")));
     }
     assert!(page.contains("AppState.start-enhance(AppState.enhance-quality)"));
+    assert!(page.contains("AppState.reveal-enhance-result()"));
+    assert!(page.contains("disabled: AppState.enhance-result-path == \"\""));
     assert!(state.contains("in-out property <string> enhance-quality: \"1K\""));
     assert!(state.contains("enhance-result-path"));
     assert!(state.contains("enhance-result-image"));
     assert!(state.contains("callback choose-enhance-source()"));
     assert!(state.contains("callback start-enhance(string)"));
+    assert!(state.contains("callback reveal-enhance-result()"));
     assert!(callbacks.contains("state.on_choose_enhance_source"));
     assert!(callbacks.contains("state.on_start_enhance"));
+    assert!(callbacks.contains("state.on_reveal_enhance_result"));
     assert!(callbacks.contains("\"1K\" | \"2K\" | \"4K\""));
     assert!(callbacks.contains("图片变清晰能力等待后端配置"));
+}
+
+#[test]
+fn toolbox_pages_keep_the_top_bar_back_button_above_content() {
+    let top_bar = include_str!("../../ui/components/top-bar.slint");
+    let app = include_str!("app.rs");
+    assert!(top_bar.contains(
+        "if AppState.page != \"welcome\" && AppState.page != \"generation\": Rectangle"
+    ));
+    assert!(top_bar.contains("clicked => { AppState.back(); }"));
+    assert!(app.contains("if page.starts_with(\"toolbox-\")"));
+    assert!(app.contains("state.set_page(\"toolbox\".into())"));
 }
 
 #[test]

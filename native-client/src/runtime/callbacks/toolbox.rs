@@ -89,6 +89,46 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow) {
 
     {
         let app_weak = app.as_weak();
+        state.on_reveal_enhance_result(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            let path = PathBuf::from(state.get_enhance_result_path().to_string());
+            if !path.is_file() {
+                state.set_enhance_message(
+                    if state.get_language().as_str() == "en" {
+                        "No enhanced image is available yet"
+                    } else {
+                        "暂无可查看的清晰处理结果"
+                    }
+                    .into(),
+                );
+                return;
+            }
+            match reveal_path_in_file_manager(&path) {
+                Ok(_) => state.set_enhance_message(
+                    if state.get_language().as_str() == "en" {
+                        "Opened the image folder"
+                    } else {
+                        "已打开图片所在文件夹"
+                    }
+                    .into(),
+                ),
+                Err(error) => state.set_enhance_message(
+                    if state.get_language().as_str() == "en" {
+                        format!("Failed to open the image folder: {error}")
+                    } else {
+                        format!("打开图片所在文件夹失败：{error}")
+                    }
+                    .into(),
+                ),
+            }
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
         state.on_choose_watermark_source(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
