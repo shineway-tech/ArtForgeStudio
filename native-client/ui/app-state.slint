@@ -186,6 +186,8 @@ export global AppState {
     in-out property <string> deep-optimization-applied-english: "";
     in-out property <string> deep-optimization-result-tab: "chinese";
     in-out property <string> deep-optimization-feedback: "";
+    in-out property <bool> deep-optimization-feedback-stable: false;
+    in-out property <string> deep-optimization-stable-feedback-summary: "";
     in-out property <string> deep-optimization-change-summary: "";
     in-out property <string> deep-optimization-error: "";
     in-out property <string> deep-optimization-consumed-credits: "0";
@@ -197,6 +199,7 @@ export global AppState {
     in-out property <bool> deep-optimization-can-cancel: false;
     in-out property <bool> deep-optimization-can-continue: false;
     in-out property <bool> deep-optimization-can-apply: false;
+    in-out property <bool> deep-optimization-can-clear-stable-feedback: false;
     out property <bool> deep-optimization-active: deep-optimization-job-id != "";
     in-out property <[ReferenceItem]> references: [];
     in-out property <string> quote-title: "";
@@ -510,6 +513,7 @@ export global AppState {
     callback cancel-deep-optimization();
     callback retry-deep-optimization();
     callback continue-deep-optimization(bool);
+    callback clear-deep-optimization-stable-feedback();
     callback use-deep-optimization-result();
     callback keep-original-deep-prompt();
     callback restore-deep-original-prompt();

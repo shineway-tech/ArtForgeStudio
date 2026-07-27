@@ -30,6 +30,16 @@ pub(crate) struct PromptOptimizationResult {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
+pub(crate) struct PromptOptimizationTopBand {
+    #[serde(default)]
+    pub(crate) triggered: bool,
+    #[serde(default)]
+    pub(crate) qualifies: bool,
+    #[serde(default)]
+    pub(crate) blocking_issues: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct PromptOptimizationRound {
     pub(crate) round: i32,
     #[serde(default)]
@@ -50,6 +60,8 @@ pub(crate) struct PromptOptimizationRound {
     pub(crate) drift_detected: bool,
     #[serde(default)]
     pub(crate) drift_reason: Option<String>,
+    #[serde(default)]
+    pub(crate) top_band: Option<PromptOptimizationTopBand>,
     #[serde(default)]
     pub(crate) credit_cost: String,
 }
@@ -88,6 +100,8 @@ pub(crate) struct PromptOptimizationDetail {
     #[serde(default)]
     pub(crate) pending_feedback: Option<String>,
     #[serde(default)]
+    pub(crate) stable_feedback: Vec<String>,
+    #[serde(default)]
     pub(crate) rounds: Vec<PromptOptimizationRound>,
     #[serde(default)]
     pub(crate) can_pause: bool,
@@ -101,6 +115,8 @@ pub(crate) struct PromptOptimizationDetail {
     pub(crate) can_continue: bool,
     #[serde(default)]
     pub(crate) can_apply: bool,
+    #[serde(default)]
+    pub(crate) can_clear_stable_feedback: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -132,6 +148,8 @@ struct ReviewDecision<'a> {
     action: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     feedback: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    feedback_scope: Option<&'a str>,
 }
 
 #[derive(Clone)]
@@ -214,11 +232,13 @@ impl PromptOptimizationApi {
         client_request_id: &str,
         action: &str,
         feedback: Option<&str>,
+        feedback_scope: Option<&str>,
     ) -> Result<PromptOptimizationDetail, ApiError> {
         let body = serde_json::to_value(ReviewDecision {
             client_request_id,
             action,
             feedback,
+            feedback_scope,
         })
         .map_err(protocol_error)?;
         self.client

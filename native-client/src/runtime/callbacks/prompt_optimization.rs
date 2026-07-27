@@ -73,6 +73,13 @@ pub(super) fn wire_prompt_optimization_callbacks(app: &AppWindow, context: AppCo
             } else {
                 None
             };
+            let feedback_scope = feedback.as_ref().map(|_| {
+                if state.get_deep_optimization_feedback_stable() {
+                    "stable".to_string()
+                } else {
+                    "round".to_string()
+                }
+            });
             state.set_deep_optimization_stage("running".into());
             state.set_deep_optimization_error("".into());
             state.set_deep_optimization_status_message("正在提交下一轮优化...".into());
@@ -86,6 +93,37 @@ pub(super) fn wire_prompt_optimization_callbacks(app: &AppWindow, context: AppCo
                     &request_id,
                     "continue_step",
                     feedback.as_deref(),
+                    feedback_scope.as_deref(),
+                ),
+            );
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let context = context.clone();
+        state.on_clear_deep_optimization_stable_feedback(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let id = app
+                .global::<AppState>()
+                .get_deep_optimization_job_id()
+                .to_string();
+            if id.is_empty() {
+                return;
+            }
+            let request_id = Uuid::new_v4().simple().to_string();
+            run_prompt_request(
+                &app,
+                context.clone(),
+                PromptRequestEffect::Refresh,
+                move |api| api.review(
+                    &id,
+                    &request_id,
+                    "clear_stable_feedback",
+                    None,
+                    None,
                 ),
             );
         });
@@ -110,7 +148,7 @@ pub(super) fn wire_prompt_optimization_callbacks(app: &AppWindow, context: AppCo
                 &app,
                 context.clone(),
                 PromptRequestEffect::ApplyResult,
-                move |api| api.review(&id, &request_id, "use_current", None),
+                move |api| api.review(&id, &request_id, "use_current", None, None),
             );
         });
     }
@@ -134,7 +172,7 @@ pub(super) fn wire_prompt_optimization_callbacks(app: &AppWindow, context: AppCo
                 &app,
                 context.clone(),
                 PromptRequestEffect::Refresh,
-                move |api| api.review(&id, &request_id, "keep_original", None),
+                move |api| api.review(&id, &request_id, "keep_original", None, None),
             );
         });
     }
@@ -152,6 +190,8 @@ pub(super) fn wire_prompt_optimization_callbacks(app: &AppWindow, context: AppCo
             state.set_deep_optimization_original_prompt(state.get_prompt());
             state.set_deep_optimization_error("".into());
             state.set_deep_optimization_feedback("".into());
+            state.set_deep_optimization_feedback_stable(false);
+            state.set_deep_optimization_stable_feedback_summary("".into());
             state.set_deep_optimization_result_tab("chinese".into());
             state.set_deep_optimization_progress(0);
             state.set_deep_optimization_maximum_credits(
@@ -747,6 +787,9 @@ fn apply_prompt_optimization_detail(app: &AppWindow, detail: &PromptOptimization
     state.set_deep_optimization_can_cancel(detail.can_cancel);
     state.set_deep_optimization_can_continue(detail.can_continue);
     state.set_deep_optimization_can_apply(detail.can_apply);
+    state.set_deep_optimization_can_clear_stable_feedback(
+        detail.can_clear_stable_feedback,
+    );
     if let Some(original) = detail.original_prompt.as_ref() {
         state.set_deep_optimization_original_prompt(original.clone().into());
     }
@@ -761,6 +804,10 @@ fn apply_prompt_optimization_detail(app: &AppWindow, detail: &PromptOptimization
     }
     state.set_deep_optimization_feedback(
         detail.pending_feedback.clone().unwrap_or_default().into(),
+    );
+    state.set_deep_optimization_feedback_stable(false);
+    state.set_deep_optimization_stable_feedback_summary(
+        detail.stable_feedback.join("；").into(),
     );
     state.set_deep_optimization_error(
         detail
@@ -777,6 +824,16 @@ fn apply_prompt_optimization_detail(app: &AppWindow, detail: &PromptOptimization
         .or_else(|| detail.rounds.iter().rev().find(|round| round.status == "completed"));
     let summary = best_round
         .map(|round| {
+            if let Some(review) = round
+                .top_band
+                .as_ref()
+                .filter(|review| !review.qualifies && !review.blocking_issues.is_empty())
+            {
+                return format!(
+                    "高分复核待改进：{}",
+                    review.blocking_issues.join("；"),
+                );
+            }
             if round.major_changes.is_empty() {
                 round.issues.join("；")
             } else {
@@ -802,8 +859,22 @@ fn apply_prompt_optimization_detail(app: &AppWindow, detail: &PromptOptimization
             score_after: round.score_after.unwrap_or(0),
             score_label: match round.score_after {
                 Some(score) => format!(
-                    "{} → {} · {} 积分",
-                    round.score_before, score, round.credit_cost,
+                    "{} → {} · {} 积分{}",
+                    round.score_before,
+                    score,
+                    round.credit_cost,
+                    round
+                        .top_band
+                        .as_ref()
+                        .filter(|review| review.triggered)
+                        .map(|review| {
+                            if review.qualifies {
+                                " · 高分复核通过"
+                            } else {
+                                " · 高分复核未通过"
+                            }
+                        })
+                        .unwrap_or(""),
                 )
                 .into(),
                 None => "正在处理本轮内容".into(),
@@ -1082,8 +1153,9 @@ fn phase_label(phase: &str) -> &'static str {
     match phase {
         "queued" => "任务排队中",
         "baseline_scoring" => "正在评估原提示词",
-        "optimizing" => "GPT-5.5 正在生成中英文优化版本",
+        "optimizing" => "优化模型正在生成中英文版本",
         "judging" => "正在进行双重评分与语义偏移检查",
+        "top_band_review" => "正在进行图片高分复核",
         "review" => "等待确认优化结果",
         "paused" => "优化已暂停",
         "failed" => "本轮优化暂时失败",
@@ -1099,6 +1171,7 @@ fn phase_message(phase: &str) -> &'static str {
         "baseline_scoring" => "从主体、构图、光线、风格和约束等维度评分",
         "optimizing" => "生成中文可读版与模型英文版",
         "judging" => "两次独立评分取平均，避免单次评价偏差",
+        "top_band_review" => "复核主体保真、中英文一致性和视觉指令可执行性",
         "review" => "优化版本已就绪，确认后才会替换当前提示词",
         "paused" => "已完成的轮次和结果都会保留",
         "failed" => "不会重复扣除未完成轮次的积分",

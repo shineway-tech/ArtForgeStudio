@@ -295,7 +295,7 @@ export component DeepPromptOptimizationDrawer {
                     }
 
                     if AppState.deep-optimization-stage == "review": Rectangle {
-                        x: 24px; y: 20px; width: parent.width - 48px; height: 790px; background: transparent;
+                        x: 24px; y: 20px; width: parent.width - 48px; height: 870px; background: transparent;
                         Text { x: 0px; y: 0px; width: parent.width - 120px; height: 28px; text: AppState.en ? "Review this version" : "确认优化结果"; color: AppTheme.text; font-size: 18px; font-weight: 600; }
                         Text { x: parent.width - 120px; y: 0px; width: 120px; height: 28px; text: (AppState.en ? "Round " : "第 ") + AppState.deep-optimization-completed-rounds + " / " + AppState.deep-optimization-max-rounds + (AppState.en ? "" : " 轮"); color: AppTheme.muted; font-size: 12px; horizontal-alignment: right; vertical-alignment: center; }
                         Text { x: 0px; y: 40px; width: 180px; height: 44px; text: AppState.deep-optimization-baseline-score + " → " + AppState.deep-optimization-current-score; color: AppTheme.accent-dark; font-size: 28px; font-weight: 600; vertical-alignment: center; }
@@ -366,14 +366,32 @@ export component DeepPromptOptimizationDrawer {
                         }
                         Text { x: 0px; y: 506px; width: parent.width; height: 22px; text: AppState.en ? "Optional direction for next round" : "下一轮希望怎么调整（可选）"; color: AppTheme.text; font-size: 13px; font-weight: 600; }
                         Rectangle {
-                            x: 0px; y: 536px; width: parent.width; height: 80px; background: AppTheme.panel; border-radius: 10px; border-width: 1px; border-color: AppTheme.border;
+                            x: 0px; y: 536px; width: parent.width; height: 70px; background: AppTheme.panel; border-radius: 10px; border-width: 1px; border-color: AppTheme.border;
                             feedback-input := TextInput { x: 12px; y: 10px; width: parent.width - 24px; height: parent.height - 20px; text <=> AppState.deep-optimization-feedback; color: AppTheme.text; font-size: 12px; single-line: false; wrap: word-wrap; }
                             if AppState.deep-optimization-feedback == "" && !feedback-input.has-focus: Text { x: 12px; y: 10px; width: parent.width - 24px; height: 20px; text: AppState.en ? "e.g. warmer light, wider view" : "例如：更仙气、背景更远、减少花瓣"; color: AppTheme.weak; font-size: 11px; }
                         }
-                        PillButton { x: 0px; y: 638px; width: 92px; height: 44px; text: AppState.en ? "Keep original" : "保留原文"; clicked => { AppState.keep-original-deep-prompt(); } }
-                        PillButton { x: 102px; y: 638px; width: 128px; height: 44px; text: AppState.en ? "One more round" : "再优化一轮"; disabled: !AppState.deep-optimization-can-continue; clicked => { AppState.continue-deep-optimization(AppState.deep-optimization-feedback != ""); } }
-                        PillButton { x: 240px; y: 638px; width: parent.width - 240px; height: 44px; text: AppState.en ? "Use this version" : "使用此版本"; primary: true; disabled: !AppState.deep-optimization-can-apply; clicked => { AppState.use-deep-optimization-result(); } }
-                        Text { x: 0px; y: 700px; width: parent.width; height: 36px; text: AppState.en ? "The Chinese version stays readable; image generation uses the matching English version." : "输入框显示中文可读版，生图时会提交对应的英文版。"; color: AppTheme.weak; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+                        Rectangle {
+                            x: 0px; y: 614px; width: parent.width; height: 28px; background: transparent;
+                            Rectangle {
+                                x: 0px; y: 4px; width: 18px; height: 18px; border-radius: 4px;
+                                background: AppState.deep-optimization-feedback-stable ? AppTheme.accent : AppTheme.panel;
+                                border-width: AppState.deep-optimization-feedback-stable ? 0px : 1px;
+                                border-color: AppTheme.border;
+                                Text { width: parent.width; height: parent.height; text: AppState.deep-optimization-feedback-stable ? "✓" : ""; color: #ffffff; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            Text { x: 26px; width: parent.width - 26px; height: parent.height; text: AppState.en ? "Keep this direction for all later rounds" : "设为稳定规则，后续轮次持续生效"; color: AppTheme.muted; font-size: 11px; vertical-alignment: center; }
+                            TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.deep-optimization-feedback-stable = !AppState.deep-optimization-feedback-stable; } }
+                        }
+                        if AppState.deep-optimization-stable-feedback-summary != "": Rectangle {
+                            x: 0px; y: 650px; width: parent.width; height: 38px; background: AppTheme.panel-soft; border-radius: 8px;
+                            Text { x: 10px; width: parent.width - 78px; height: parent.height; text: (AppState.en ? "Stable: " : "稳定规则：") + AppState.deep-optimization-stable-feedback-summary; color: AppTheme.muted; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                            Text { x: parent.width - 66px; width: 56px; height: parent.height; text: AppState.en ? "Clear" : "清除"; color: AppTheme.danger; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                            TouchArea { x: parent.width - 72px; width: 72px; height: parent.height; mouse-cursor: pointer; enabled: AppState.deep-optimization-can-clear-stable-feedback; clicked => { AppState.clear-deep-optimization-stable-feedback(); } }
+                        }
+                        PillButton { x: 0px; y: 704px; width: 92px; height: 44px; text: AppState.en ? "Keep original" : "保留原文"; clicked => { AppState.keep-original-deep-prompt(); } }
+                        PillButton { x: 102px; y: 704px; width: 128px; height: 44px; text: AppState.en ? "One more round" : "再优化一轮"; disabled: !AppState.deep-optimization-can-continue; clicked => { AppState.continue-deep-optimization(AppState.deep-optimization-feedback != ""); } }
+                        PillButton { x: 240px; y: 704px; width: parent.width - 240px; height: 44px; text: AppState.en ? "Use this version" : "使用此版本"; primary: true; disabled: !AppState.deep-optimization-can-apply; clicked => { AppState.use-deep-optimization-result(); } }
+                        Text { x: 0px; y: 766px; width: parent.width; height: 36px; text: AppState.en ? "The Chinese version stays readable; image generation uses the matching English version." : "输入框显示中文可读版，生图时会提交对应的英文版。"; color: AppTheme.weak; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                     }
 
                     if AppState.deep-optimization-stage == "complete": Rectangle {
@@ -438,7 +456,7 @@ export component DeepPromptOptimizationDrawer {
 
     function body-height() -> length {
         if AppState.deep-optimization-stage == "settings" { return 820px; }
-        if AppState.deep-optimization-stage == "review" { return 820px; }
+        if AppState.deep-optimization-stage == "review" { return 920px; }
         if AppState.deep-optimization-stage == "running" { return max(650px, 470px + root.running-round-list-height()); }
         return 650px;
     }
