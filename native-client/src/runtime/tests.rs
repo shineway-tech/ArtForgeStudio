@@ -522,7 +522,7 @@ mod tests {
             .contains("history-popup.show();\n                        prompt-input.focus();"));
         assert!(composer.contains("for item[index] in AppState.custom-prompt-items"));
         assert!(composer.contains("text: item.name"));
-        assert!(composer.contains("AppState.toggle-custom-prompt-selection(item.content)"));
+        assert!(composer.contains("root.queue-custom-prompt-selection(item.content)"));
         assert!(composer.contains("close-policy: close-on-click-outside"));
 
         assert!(local_store.contains("custom_prompts: store.custom_prompts.clone()"));
@@ -569,7 +569,8 @@ mod tests {
         assert!(composer.contains("for item in AppState.selected-custom-prompt-items"));
         assert!(popup.contains("text: item.name"));
         assert!(popup.contains("item.selected ? AppTheme.accent"));
-        assert!(popup.contains("AppState.toggle-custom-prompt-selection(item.content)"));
+        assert!(popup.contains("root.queue-custom-prompt-selection(item.content)"));
+        assert!(!popup.contains("AppState.toggle-custom-prompt-selection(item.content)"));
         assert!(popup.contains("custom-prompt-row := HorizontalLayout"));
         assert!(popup.contains("tag-title.preferred-width + 28px"));
         assert!(!composer.contains("function custom-prompt-tag-width()"));
@@ -591,6 +592,8 @@ mod tests {
             .expect("custom prompt popup");
 
         assert!(composer.contains("prompt-entry-row := HorizontalLayout"));
+        assert!(composer.contains("prompt-cursor-area := TouchArea"));
+        assert!(composer.contains("mouse-cursor: text;"));
         assert!(composer.contains("horizontal-stretch: 1;"));
         assert!(!composer.contains(
             "x: AppState.selected-custom-prompt-items.length > 0 ? 270px : 24px;"
@@ -602,11 +605,17 @@ mod tests {
         assert!(composer.contains(
             "AppState.selected-custom-prompt-items[0].content"
         ));
-        assert!(popup.contains("AppState.custom-prompt-open = false"));
-        assert!(popup.contains("custom-prompt-popup.close()"));
-        assert!(popup.contains(
+        assert!(composer.contains("property <bool> custom-prompt-selection-pending: false;"));
+        assert!(composer.contains("function queue-custom-prompt-selection(value: string)"));
+        assert!(composer.contains("interval: 1ms;"));
+        assert!(composer.contains("running: root.custom-prompt-selection-pending;"));
+        assert!(composer.contains("AppState.custom-prompt-open = false"));
+        assert!(composer.contains("custom-prompt-popup.close()"));
+        assert!(composer.contains(
             "prompt-input.set-selection-offsets(2147483647, 2147483647)"
         ));
+        assert!(popup.contains("root.queue-custom-prompt-selection(item.content)"));
+        assert!(!popup.contains("AppState.toggle-custom-prompt-selection(item.content)"));
         assert!(composer.contains(
             "visible: selected-tag-touch.has-hover || selected-close-touch.has-hover;"
         ));
@@ -1336,7 +1345,7 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(composer.contains(
             "root.apply-selected-prompt(AppState.prompt-history[index])"
         ));
-        assert!(composer.contains("AppState.toggle-custom-prompt-selection(item.content)"));
+        assert!(composer.contains("root.queue-custom-prompt-selection(item.content)"));
         assert!(composer.contains("viewport-height: AppState.prompt-history.length * 32px"));
         assert!(composer.contains(
             "viewport-width: max(self.width, custom-prompt-row.preferred-width)"
@@ -2705,6 +2714,9 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(viewer.contains("component ViewerInfoText inherits Text"));
         assert!(viewer.contains("viewer-info := HorizontalLayout"));
         assert!(viewer.contains("y: 24px;"));
+        assert!(viewer.contains("spacing: 8px;"));
+        assert!(viewer.contains("alignment: center;"));
+        assert!(viewer.contains("width: min(self.preferred-width, 180px);"));
         assert!(viewer.contains(
             "property <length> detail-panel-width: AppState.viewer-source == \"reference\" ? 0px : 460px;"
         ));

@@ -17,7 +17,14 @@ export component PromptComposer {
     property <int> custom-prompt-selected-index: 0;
     property <length> prompt-history-scroll-y: 0px;
     property <length> custom-prompt-scroll-x: 0px;
+    property <string> pending-custom-prompt-content: "";
+    property <bool> custom-prompt-selection-pending: false;
     height: AppState.references.length > 0 || AppState.quote-title != "" ? 650px : 600px;
+
+    function queue-custom-prompt-selection(value: string) {
+        root.pending-custom-prompt-content = value;
+        root.custom-prompt-selection-pending = true;
+    }
 
     function apply-selected-prompt(value: string) {
         AppState.prompt-history-open = false;
@@ -28,6 +35,21 @@ export component PromptComposer {
         prompt-input.text = value;
         AppState.prompt = value;
         prompt-input.set-selection-offsets(2147483647, 2147483647);
+    }
+
+    Timer {
+        interval: 1ms;
+        running: root.custom-prompt-selection-pending;
+        triggered => {
+            root.custom-prompt-selection-pending = false;
+            let value = root.pending-custom-prompt-content;
+            root.pending-custom-prompt-content = "";
+            AppState.custom-prompt-open = false;
+            custom-prompt-popup.close();
+            AppState.toggle-custom-prompt-selection(value);
+            prompt-input.focus();
+            prompt-input.set-selection-offsets(2147483647, 2147483647);
+        }
     }
 
     Rectangle {
@@ -162,9 +184,7 @@ export component PromptComposer {
                                 height: parent.height;
                                 mouse-cursor: pointer;
                                 clicked => {
-                                    AppState.toggle-custom-prompt-selection(item.content);
-                                    prompt-input.focus();
-                                    prompt-input.set-selection-offsets(2147483647, 2147483647);
+                                    root.queue-custom-prompt-selection(item.content);
                                 }
                             }
                         }
@@ -172,10 +192,14 @@ export component PromptComposer {
                 }
             }
 
-            prompt-scroll := ScrollView {
+            prompt-cursor-area := TouchArea {
                 horizontal-stretch: 1;
                 min-width: 36px;
                 height: root.prompt-input-height();
+                mouse-cursor: text;
+                prompt-scroll := ScrollView {
+                width: parent.width;
+                height: parent.height;
                 viewport-width: self.visible-width;
                 viewport-height: max(self.visible-height, prompt-input.preferred-height);
                 prompt-input := TextInput {
@@ -257,13 +281,9 @@ export component PromptComposer {
                             return accept;
                         }
                         if event.text == Key.Return && !event.modifiers.alt {
-                            AppState.toggle-custom-prompt-selection(
+                            root.queue-custom-prompt-selection(
                                 AppState.custom-prompt-items[root.custom-prompt-selected-index].content,
                             );
-                            AppState.custom-prompt-open = false;
-                            custom-prompt-popup.close();
-                            prompt-input.focus();
-                            prompt-input.set-selection-offsets(2147483647, 2147483647);
                             return accept;
                         }
                         if event.text == Key.Escape {
@@ -275,11 +295,9 @@ export component PromptComposer {
                     if event.text == Key.Backspace
                         && AppState.prompt == ""
                         && AppState.selected-custom-prompt-items.length > 0 {
-                        AppState.toggle-custom-prompt-selection(
+                        root.queue-custom-prompt-selection(
                             AppState.selected-custom-prompt-items[0].content,
                         );
-                        prompt-input.focus();
-                        prompt-input.set-selection-offsets(0, 0);
                         return accept;
                     }
                     if event.text == Key.Return {
@@ -306,6 +324,7 @@ export component PromptComposer {
                     return reject;
                 }
             }
+        }
         }
         }
         Text {
@@ -597,11 +616,7 @@ export component PromptComposer {
                                 mouse-cursor: pointer;
                                 clicked => {
                                     root.custom-prompt-selected-index = index;
-                                    AppState.toggle-custom-prompt-selection(item.content);
-                                    AppState.custom-prompt-open = false;
-                                    custom-prompt-popup.close();
-                                    prompt-input.focus();
-                                    prompt-input.set-selection-offsets(2147483647, 2147483647);
+                                    root.queue-custom-prompt-selection(item.content);
                                 }
                             }
                         }

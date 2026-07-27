@@ -15,6 +15,7 @@ component ViewerInfoText inherits Text {
     font-weight: 500;
     vertical-alignment: center;
     overflow: elide;
+    width: min(self.preferred-width, 180px);
 }
 
 component ViewerFooterActionButton inherits Rectangle {
@@ -124,31 +125,30 @@ export component ViewerOverlay {
         }
         PillButton { x: 24px; y: 24px; width: 88px; text: AppState.en ? "← Back" : "← 返回"; clicked => { AppState.close-viewer(); } }
         if AppState.viewer-source != "reference": viewer-info := HorizontalLayout {
-            x: (root.viewer-content-right - self.width) / 2;
+            x: 124px;
             y: 24px;
-            width: min(620px, max(460px, root.viewer-content-right - 248px));
+            width: root.viewer-content-right - 248px;
             height: 40px;
-            spacing: 14px;
+            spacing: 8px;
+            alignment: center;
+            Rectangle { horizontal-stretch: 1; background: transparent; }
             ViewerInfoText {
-                horizontal-stretch: 1;
-                value: AppState.viewer-width + "X" + AppState.viewer-height + "  \\";
+                value: AppState.viewer-width + "X" + AppState.viewer-height + " \\";
                 foreground: #24b8ff;
             }
             ViewerInfoText {
-                horizontal-stretch: 1;
-                value: AppState.viewer-ratio + "  \\";
+                value: AppState.viewer-ratio + " \\";
                 foreground: #42d79e;
             }
             ViewerInfoText {
-                horizontal-stretch: 1;
-                value: AppState.viewer-quality + "  \\";
+                value: AppState.viewer-quality + " \\";
                 foreground: #ffb454;
             }
             ViewerInfoText {
-                horizontal-stretch: 1;
                 value: AppState.viewer-model;
                 foreground: #bda4ff;
             }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
         }
         Rectangle {
             x: AppState.viewer-source == "reference" ? 128px : root.viewer-padding + root.viewer-nav-lane;
