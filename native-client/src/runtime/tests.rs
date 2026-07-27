@@ -901,6 +901,8 @@ fn toolbox_compression_supports_batch_input_and_server_pricing() {
     assert!(app_ui.contains("AppState.page == \"toolbox-compress\""));
     assert!(app_ui.contains("ToolboxCompressionPage"));
     assert!(types.contains("export struct CompressionImageItem"));
+    assert!(types.contains("status: string"));
+    assert!(types.contains("result-path: string"));
     assert!(state.contains("in-out property <[CompressionImageItem]> compression-images"));
     assert!(state.contains("compression-estimated-credits: \"--\""));
 
@@ -909,6 +911,10 @@ fn toolbox_compression_supports_batch_input_and_server_pricing() {
     assert!(page.contains("AppState.choose-compression-images()"));
     assert!(page.contains("AppState.paste-compression-images()"));
     assert!(page.contains("AppState.remove-compression-image(item.id)"));
+    assert!(page.contains("AppState.reveal-compression-result(item.id)"));
+    assert!(page.contains("root.item.status == \"completed\""));
+    assert!(page.contains("AppState.en ? \"Completed\" : \"已完成\""));
+    assert!(page.contains("AppState.en ? \"View\" : \"查看\""));
     assert!(page.contains("AppState.clear-compression-images()"));
     assert!(page.contains("@image-url(\"../../assets/icons/trash.svg\")"));
     assert!(page.contains("AppState.compression-mode = \"quality\""));
@@ -923,6 +929,9 @@ fn toolbox_compression_supports_batch_input_and_server_pricing() {
     assert!(callbacks.contains(".pick_files()"));
     assert!(callbacks.contains("state.on_paste_compression_images"));
     assert!(callbacks.contains("state.on_remove_compression_image"));
+    assert!(callbacks.contains("state.on_reveal_compression_result"));
+    assert!(callbacks.contains("reveal_path_in_file_manager(&path)"));
+    assert!(callbacks.contains("status: \"pending\".into()"));
     assert!(callbacks.contains("state.on_update_compression_target_preview"));
     assert!(callbacks.contains("kilobytes / 1024.0"));
     assert!(callbacks.contains("state.on_start_compression"));

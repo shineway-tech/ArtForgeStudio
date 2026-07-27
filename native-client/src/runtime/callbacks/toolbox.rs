@@ -74,6 +74,52 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow) {
 
     {
         let app_weak = app.as_weak();
+        state.on_reveal_compression_result(move |id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            let result_path = state
+                .get_compression_images()
+                .iter()
+                .find(|item| item.id == id)
+                .map(|item| item.result_path.to_string())
+                .unwrap_or_default();
+            let path = PathBuf::from(result_path);
+            if !path.is_file() {
+                state.set_compression_message(
+                    if state.get_language().as_str() == "en" {
+                        "No compressed image is available yet"
+                    } else {
+                        "暂无可查看的压缩结果"
+                    }
+                    .into(),
+                );
+                return;
+            }
+            match reveal_path_in_file_manager(&path) {
+                Ok(_) => state.set_compression_message(
+                    if state.get_language().as_str() == "en" {
+                        "Opened the image folder"
+                    } else {
+                        "已打开图片所在文件夹"
+                    }
+                    .into(),
+                ),
+                Err(error) => state.set_compression_message(
+                    if state.get_language().as_str() == "en" {
+                        format!("Failed to open the image folder: {error}")
+                    } else {
+                        format!("打开图片所在文件夹失败：{error}")
+                    }
+                    .into(),
+                ),
+            }
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
         state.on_update_compression_target_preview(move |value| {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -440,6 +486,8 @@ pub(super) fn add_compression_paths(app: &AppWindow, paths: Vec<PathBuf>) {
             source_path: source_path.into(),
             size_text: size.into(),
             image: preview,
+            status: "pending".into(),
+            result_path: "".into(),
         });
         added += 1;
     }
