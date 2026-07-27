@@ -1110,6 +1110,37 @@ fn idle_generation_area_rotates_slash_usage_tips() {
     }
 
     #[test]
+    fn deep_prompt_drawer_contains_long_text_inside_fixed_cards() {
+        let drawer = include_str!("../../ui/dialogs/deep-prompt-optimization-drawer.slint");
+
+        assert!(drawer.matches("read-only: true").count() >= 4);
+        assert!(drawer.matches("clip: true").count() >= 9);
+        assert!(drawer.contains("panel-hit-blocker := TouchArea"));
+        assert!(drawer.contains("current-prompt-frame := Rectangle"));
+        assert!(drawer.contains("current-prompt-scroll := ScrollView"));
+        assert!(drawer.contains("current-prompt-text := Text"));
+        assert!(drawer.contains("text: AppState.prompt;"));
+        assert!(drawer.contains("color: AppTheme.muted;"));
+        assert!(drawer.contains("wrap: word-wrap;"));
+        assert!(drawer.contains(
+            "vertical-scrollbar-policy: ScrollBarPolicy.always-on;",
+        ));
+        assert!(drawer.contains(
+            "horizontal-scrollbar-policy: ScrollBarPolicy.always-off;",
+        ));
+        assert!(drawer.contains("mouse-drag-pan-enabled: true;"));
+        assert!(drawer.contains("progress-fill := Rectangle"));
+        assert!(drawer.contains("x: 0px;"));
+        assert!(drawer.contains(
+            "width: max(0px, min(parent.width, parent.width * AppState.deep-optimization-progress / 100));",
+        ));
+        assert!(drawer.contains("text: AppState.deep-optimization-change-summary"));
+        assert!(drawer.contains(
+            "\"本次最多消耗 \" + AppState.deep-optimization-maximum-credits + \" 积分\"",
+        ));
+    }
+
+    #[test]
     fn studio_generation_settings_use_three_compact_dropdowns_and_a_taller_prompt() {
         let chooser = include_str!("../../ui/components/inline-card-chooser.slint");
         let panel = include_str!("../../ui/components/studio-work-panel.slint");

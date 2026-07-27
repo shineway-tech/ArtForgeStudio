@@ -416,6 +416,7 @@ fn poll_network_recovery(
                 state.set_generation_status("网络已恢复，账号数据已同步".into());
                 require_updated_agreements(&app);
                 recover_pending_generations(&app, context.clone());
+                recover_prompt_optimization(&app, context.clone());
                 recover_pending_orders(&app, context.clone());
                 refresh_server_notifications(&app, context);
             }
@@ -762,6 +763,7 @@ fn finish_login(
         ),
     }
     recover_pending_generations(app, context.clone());
+    recover_prompt_optimization(app, context.clone());
     recover_pending_orders(app, context.clone());
     navigate_to(app, "generation");
 }
@@ -828,6 +830,7 @@ fn apply_startup_auth(app: &AppWindow, context: &AppContext, result: StartupAuth
                 }
             }
             recover_pending_generations(app, context.clone());
+            recover_prompt_optimization(app, context.clone());
             recover_pending_orders(app, context.clone());
             require_updated_agreements(app);
             navigate_to(app, "generation");
@@ -995,7 +998,7 @@ pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snap
         .iter()
         .map(|model| CatalogModelView {
             code: model.code.clone().into(),
-            name: model.name.clone().into(),
+            name: model_display_name(model).into(),
             purpose: model.purpose.clone().into(),
             version: model.version.min(i32::MAX as u32) as i32,
             capabilities: model_capabilities_text(model).into(),
@@ -1041,7 +1044,7 @@ pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snap
         .filter(|item| item.purpose == "image_generation")
         .map(|item| ModelOptionData {
             code: item.code.clone(),
-            name: item.name.clone(),
+            name: model_display_name(item),
         })
         .collect::<Vec<_>>();
     let prompt_models = snapshot
@@ -1149,10 +1152,18 @@ fn model_price(model: &ModelCatalogItem, quality: &str) -> i32 {
 
 fn apply_image_model(state: &AppState, model: &ModelCatalogItem) {
     state.set_image_model(model.code.clone().into());
-    state.set_image_model_name(model.name.clone().into());
+    state.set_image_model_name(model_display_name(model).into());
     state.set_image_price_1k(model_price(model, "1K"));
     state.set_image_price_2k(model_price(model, "2K"));
     state.set_image_price_4k(model_price(model, "4K"));
+}
+
+fn model_display_name(model: &ModelCatalogItem) -> String {
+    if model.code == "nano_banana" {
+        "nano-banana-2".to_string()
+    } else {
+        model.name.clone()
+    }
 }
 
 fn decimal_to_i32(value: &str) -> i32 {
@@ -1539,5 +1550,33 @@ mod tests {
         assert_eq!(model_price(&model, "1K"), 35);
         assert_eq!(model_price(&model, "2K"), 45);
         assert_eq!(model_price(&model, "4K"), 60);
+    }
+
+    #[test]
+    fn nano_banana_uses_the_versioned_client_display_name() {
+        let model = ModelCatalogItem {
+            code: "nano_banana".to_string(),
+            version: 1,
+            purpose: "image_generation".to_string(),
+            name: "nano-banana".to_string(),
+            capabilities: serde_json::json!({}),
+            prices: vec![],
+        };
+
+        assert_eq!(model_display_name(&model), "nano-banana-2");
+        assert_eq!(model.code, "nano_banana");
+
+        let pro = ModelCatalogItem {
+            code: "nano_banana_pro".to_string(),
+            name: "nano-banana-pro".to_string(),
+            ..model.clone()
+        };
+        let fast = ModelCatalogItem {
+            code: "nano_banana_fast".to_string(),
+            name: "nano-banana".to_string(),
+            ..model
+        };
+        assert_eq!(model_display_name(&pro), "nano-banana-pro");
+        assert_eq!(model_display_name(&fast), "nano-banana");
     }
 }

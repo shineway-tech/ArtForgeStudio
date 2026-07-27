@@ -86,6 +86,9 @@ use agreement_window::*;
 #[path = "callbacks/generation.rs"]
 mod generation_callbacks;
 use generation_callbacks::*;
+#[path = "callbacks/prompt_optimization.rs"]
+mod prompt_optimization_callbacks;
+use prompt_optimization_callbacks::*;
 #[path = "callbacks/notification.rs"]
 mod notification_callbacks;
 use notification_callbacks::*;

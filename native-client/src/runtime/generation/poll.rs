@@ -108,7 +108,7 @@ pub(super) fn poll_generation_stream(
             }
             GenerationOutcome::ImageSuccess {
                 bytes,
-                optimized,
+                display_prompt,
                 time,
                 upscale_done,
                 delivery,
@@ -121,7 +121,7 @@ pub(super) fn poll_generation_stream(
                 &quality,
                 &image_model,
                 &conversation_id,
-                &optimized,
+                &display_prompt,
                 &time,
                 &bytes,
                 upscale_done,

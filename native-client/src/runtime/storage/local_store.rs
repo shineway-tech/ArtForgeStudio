@@ -180,6 +180,8 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
         normalize_canvas_groups(&mut store_mut.canvas_notes);
         let fitted_canvas_groups = fit_groups_to_children(&mut store_mut.canvas_notes);
         store_mut.canvas_links = data.canvas_links;
+        store_mut.deep_prompt_job_id = data.deep_prompt_job_id;
+        store_mut.deep_prompt_bindings = data.deep_prompt_bindings;
         let original_prompt_times = store_mut.custom_prompt_times.clone();
         let retained = store_mut
             .custom_prompts
@@ -210,6 +212,7 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
     let category = resolve_category(&state.get_asset_type().to_string(), "");
     state.set_asset_type(category.clone().into());
     state.set_prompt(prompt_draft_for_category(&store.borrow().prompt_drafts, &category).into());
+    sync_deep_prompt_binding_for_category(app, &store.borrow(), &category);
     if migrated_local_store {
         save_local_store(app, &store.borrow());
     }
@@ -285,6 +288,24 @@ pub(super) fn store_current_prompt_draft(
 ) {
     let prompt = app.global::<AppState>().get_prompt().to_string();
     set_prompt_draft_for_category(&mut store.borrow_mut().prompt_drafts, category, prompt);
+}
+
+pub(super) fn sync_deep_prompt_binding_for_category(
+    app: &AppWindow,
+    store: &Store,
+    category: &str,
+) {
+    let state = app.global::<AppState>();
+    let visible_prompt = state.get_prompt().trim().to_string();
+    if let Some(binding) = store.deep_prompt_bindings.get(category) {
+        if !binding.english.trim().is_empty() && visible_prompt == binding.chinese.trim() {
+            state.set_deep_optimization_applied_chinese(binding.chinese.clone().into());
+            state.set_deep_optimization_applied_english(binding.english.clone().into());
+            return;
+        }
+    }
+    state.set_deep_optimization_applied_chinese("".into());
+    state.set_deep_optimization_applied_english("".into());
 }
 
 pub(super) const MAX_CUSTOM_PROMPTS: usize = 100;
@@ -593,6 +614,8 @@ pub(super) fn save_local_store(app: &AppWindow, store: &Store) {
         custom_prompt_profiles: store.custom_prompt_profiles.clone(),
         canvas_notes: store.canvas_notes.clone(),
         canvas_links: store.canvas_links.clone(),
+        deep_prompt_job_id: store.deep_prompt_job_id.clone(),
+        deep_prompt_bindings: store.deep_prompt_bindings.clone(),
     };
     if let Ok(text) = serde_json::to_string_pretty(&data) {
         let path = local_store_path();

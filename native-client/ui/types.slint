@@ -126,6 +126,16 @@ export struct CustomPromptItem {
     time: string,
 }
 
+export struct DeepOptimizationRoundView {
+    round: int,
+    status: string,
+    phase-label: string,
+    score-before: int,
+    score-after: int,
+    score-label: string,
+    summary: string,
+}
+
 export struct CanvasNote {
     id: string,
     kind: string,
