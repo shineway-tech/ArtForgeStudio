@@ -249,6 +249,7 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow) {
             let state = app.global::<AppState>();
             set_conversion_images(&state, Vec::new());
             state.set_conversion_message("".into());
+            state.set_conversion_estimated_credits("--".into());
         });
     }
 
@@ -757,6 +758,7 @@ pub(super) fn add_conversion_paths(app: &AppWindow, paths: Vec<PathBuf>) {
     }
 
     set_conversion_images(&state, images);
+    state.set_conversion_estimated_credits("--".into());
     state.set_conversion_message(
         compression_add_message(
             state.get_language().as_str() == "en",

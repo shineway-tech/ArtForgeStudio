@@ -915,16 +915,27 @@ fn toolbox_conversion_reuses_the_batch_upload_layout() {
     assert!(conversion.contains("AppState.reveal-conversion-result(item.id)"));
     assert!(conversion.contains("AppState.clear-conversion-images()"));
     assert!(conversion.contains("value <=> AppState.conversion-target-format"));
-    assert!(conversion.contains("AppState.conversion-quality"));
+    assert!(!conversion.contains("AppState.conversion-quality"));
+    assert!(!conversion.contains("quality-track"));
     assert!(conversion.contains("AppState.conversion-source-format + \" → \""));
-    for format in ["JPEG (.jpg)", "PNG (.png)", "WebP (.webp)", "BMP (.bmp)"] {
+    for format in [
+        "JPEG (.jpg)",
+        "PNG (.png)",
+        "WebP (.webp)",
+        "BMP (.bmp)",
+        "AVIF (.avif)",
+    ] {
         assert!(conversion.contains(format), "missing conversion option: {format}");
     }
     assert!(conversion.contains("AppState.conversion-images.length"));
     assert!(conversion.contains("AppState.start-conversion()"));
     assert!(state.contains("in-out property <[CompressionImageItem]> conversion-images"));
     assert!(state.contains("conversion-target-format: \"jpeg\""));
-    assert!(state.contains("conversion-quality: 92"));
+    assert!(!state.contains("conversion-quality"));
+    assert!(state.contains("conversion-estimated-credits: \"--\""));
+    assert!(conversion.contains(
+        "\"本次预计扣除 \" + AppState.conversion-estimated-credits + \" 积分\""
+    ));
     assert!(callbacks.contains("const MAX_CONVERSION_IMAGES: usize = 50;"));
     assert!(callbacks.contains("state.on_choose_conversion_images"));
     assert!(callbacks.contains("state.on_add_conversion_images_from_drag"));
