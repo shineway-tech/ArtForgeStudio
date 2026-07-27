@@ -408,6 +408,8 @@ export component ToolboxCompressionPage {
                 background: transparent;
 
                 Rectangle {
+                    x: 0px;
+                    y: 0px;
                     width: parent.width;
                     height: 42px;
                     background: AppTheme.bg;
@@ -460,6 +462,7 @@ export component ToolboxCompressionPage {
                     border-radius: 2px;
 
                     Rectangle {
+                        x: 0px;
                         width: parent.width * AppState.compression-quality / 100;
                         height: parent.height;
                         background: AppTheme.accent;
@@ -577,6 +580,9 @@ export component ToolboxCompressionPage {
                         font-size: 13px;
                         font-weight: 400;
                         vertical-alignment: center;
+                        edited => {
+                            AppState.update-compression-target-preview(self.text);
+                        }
                     }
                 }
 
@@ -585,7 +591,7 @@ export component ToolboxCompressionPage {
                     y: 8px;
                     width: parent.width - 206px;
                     height: 42px;
-                    text: "KB  |  ≈ " + (AppState.compression-target-kb == "" ? "--" : AppState.compression-target-kb) + " KB";
+                    text: "KB  |  ≈ " + AppState.compression-target-mb + " MB";
                     color: AppTheme.muted;
                     font-size: 12px;
                     font-weight: 400;

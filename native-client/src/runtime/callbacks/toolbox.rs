@@ -74,6 +74,24 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow) {
 
     {
         let app_weak = app.as_weak();
+        state.on_update_compression_target_preview(move |value| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            let preview = value
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|value| value.is_finite() && *value > 0.0)
+                .map(|kilobytes| format!("{:.2}", kilobytes / 1024.0))
+                .unwrap_or_else(|| "--".to_string());
+            state.set_compression_target_mb(preview.into());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
         state.on_start_compression(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;

@@ -914,6 +914,8 @@ fn toolbox_compression_supports_batch_input_and_server_pricing() {
     assert!(page.contains("AppState.compression-mode = \"quality\""));
     assert!(page.contains("AppState.compression-mode = \"size\""));
     assert!(page.contains("AppState.compression-target-kb"));
+    assert!(page.contains("AppState.compression-target-mb + \" MB\""));
+    assert!(page.contains("x: 0px;"));
     assert!(page.contains("AppState.compression-estimated-credits"));
     assert!(page.contains("AppState.start-compression()"));
 
@@ -921,6 +923,8 @@ fn toolbox_compression_supports_batch_input_and_server_pricing() {
     assert!(callbacks.contains(".pick_files()"));
     assert!(callbacks.contains("state.on_paste_compression_images"));
     assert!(callbacks.contains("state.on_remove_compression_image"));
+    assert!(callbacks.contains("state.on_update_compression_target_preview"));
+    assert!(callbacks.contains("kilobytes / 1024.0"));
     assert!(callbacks.contains("state.on_start_compression"));
     assert!(callbacks.contains("set_compression_estimated_credits(\"--\""));
     assert!(callbacks.contains("\"jpg\" | \"jpeg\" | \"png\" | \"webp\" | \"bmp\""));
