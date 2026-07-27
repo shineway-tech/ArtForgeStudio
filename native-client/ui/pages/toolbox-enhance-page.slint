@@ -252,6 +252,22 @@ export component ToolboxEnhancePage {
             clicked => { AppState.start-enhance(AppState.enhance-quality); }
         }
 
+        Text {
+            x: 32px + root.panel-width() - 146px;
+            y: parent.height - 33px;
+            width: 146px;
+            height: 20px;
+            text: AppState.en
+                ? "Estimated charge: " + AppState.enhance-estimated-credits + " credits"
+                : "本次预计扣除 " + AppState.enhance-estimated-credits + " 积分";
+            color: AppTheme.muted;
+            font-size: 10px;
+            font-weight: 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
         PillButton {
             x: parent.width - 174px;
             y: parent.height - 78px;

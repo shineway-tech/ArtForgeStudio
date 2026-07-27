@@ -969,6 +969,10 @@ fn toolbox_enhance_uses_two_preview_panels_with_left_quality_controls() {
     assert!(page.contains("AppState.reveal-enhance-result()"));
     assert!(page.contains("disabled: AppState.enhance-result-path == \"\""));
     assert!(state.contains("in-out property <string> enhance-quality: \"1K\""));
+    assert!(state.contains("enhance-estimated-credits: \"--\""));
+    assert!(page.contains(
+        "\"本次预计扣除 \" + AppState.enhance-estimated-credits + \" 积分\""
+    ));
     assert!(state.contains("enhance-result-path"));
     assert!(state.contains("enhance-result-image"));
     assert!(state.contains("callback choose-enhance-source()"));
@@ -1004,6 +1008,10 @@ fn watermark_tool_uses_a_local_result_workspace_without_assets() {
     assert!(page.contains("查看图片"));
     assert!(page.contains("去水印中("));
     assert!(state.contains("watermark-result-path"));
+    assert!(state.contains("watermark-estimated-credits: \"--\""));
+    assert!(page.contains(
+        "\"本次预计扣除 \" + AppState.watermark-estimated-credits + \" 积分\""
+    ));
     assert!(callbacks.contains("rfd::FileDialog::new()"));
     assert!(callbacks.contains("reveal_path_in_file_manager(&path)"));
     assert!(callbacks.contains("去水印服务等待后端配置"));
