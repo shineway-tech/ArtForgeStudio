@@ -139,7 +139,7 @@ export component ToolboxPage {
                 target-page: "toolbox-watermark";
                 title: AppState.en ? "Remove Watermark" : "去水印";
                 description: AppState.en ? "Remove unwanted watermarks or text from an image" : "移除图片中的水印、文字或干扰元素";
-                icon: @image-url("../../assets/icons/trash.svg");
+                icon: @image-url("../../assets/icons/toolbox-watermark.svg");
             }
             ToolboxCard {
                 x: root.card-width() + root.card-gap();
@@ -150,7 +150,7 @@ export component ToolboxPage {
                 target-page: "toolbox-enhance";
                 title: AppState.en ? "Image Enhance" : "图片清晰";
                 description: AppState.en ? "Improve image sharpness and visible detail" : "增强图片清晰度，恢复模糊细节";
-                icon: @image-url("../../assets/icons/focus.svg");
+                icon: @image-url("../../assets/icons/toolbox-enhance.svg");
             }
             ToolboxCard {
                 x: 0px;
@@ -180,7 +180,7 @@ export component ToolboxPage {
                 tool-id: "convert";
                 title: AppState.en ? "Convert Format" : "图片转格式";
                 description: AppState.en ? "Convert images between common file formats" : "在常用图片文件格式之间转换";
-                icon: @image-url("../../assets/icons/image.svg");
+                icon: @image-url("../../assets/icons/toolbox-convert.svg");
             }
             ToolboxCard {
                 x: root.card-width() + root.card-gap();
@@ -191,7 +191,7 @@ export component ToolboxPage {
                 target-page: "toolbox-compress";
                 title: AppState.en ? "Compress Image" : "图片压缩";
                 description: AppState.en ? "Reduce file size while retaining image quality" : "在保留画质的同时减小图片体积";
-                icon: @image-url("../../assets/icons/download.svg");
+                icon: @image-url("../../assets/icons/toolbox-compress.svg");
             }
         }
 

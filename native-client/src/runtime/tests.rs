@@ -877,6 +877,10 @@ fn sidebar_toolbox_opens_a_six_tool_page() {
     assert!(page.contains("target-page: \"toolbox-watermark\""));
     assert!(page.contains("target-page: \"toolbox-enhance\""));
     assert!(page.contains("target-page: \"toolbox-compress\""));
+    assert!(page.contains("../../assets/icons/toolbox-watermark.svg"));
+    assert!(page.contains("../../assets/icons/toolbox-enhance.svg"));
+    assert!(page.contains("../../assets/icons/toolbox-convert.svg"));
+    assert!(page.contains("../../assets/icons/toolbox-compress.svg"));
     assert!(page.contains("AppState.toolbox-selected-tool = root.tool-id"));
     assert!(state.contains("toolbox-coming-soon-open"));
     assert!(page.contains("AppState.toolbox-coming-soon-open = true"));
