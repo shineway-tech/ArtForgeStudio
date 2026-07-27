@@ -8,13 +8,14 @@ export component NavItem {
     in property <string> page;
     in property <bool> show-dot: false;
     in property <bool> collapsed: false;
+    in property <bool> active: AppState.page == root.page;
     width: root.collapsed ? 56px : 176px;
     height: 38px;
     animate width { duration: 160ms; }
     Rectangle {
-        background: AppState.page == root.page ? AppTheme.panel-soft : (touch.has-hover ? AppTheme.panel-soft : transparent);
+        background: root.active ? AppTheme.panel-soft : (touch.has-hover ? AppTheme.panel-soft : transparent);
         border-radius: 7px;
-        border-width: AppState.page == root.page ? 1px : 0px;
+        border-width: root.active ? 1px : 0px;
         border-color: AppTheme.accent;
         Rectangle {
             x: root.collapsed ? (parent.width - self.width) / 2 : 9px;

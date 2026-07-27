@@ -889,6 +889,25 @@ fn sidebar_toolbox_opens_a_six_tool_page() {
     assert!(page.contains("AppState.en ? \"Got it\" : \"知道了\""));
     assert!(!page.contains("\"选择工具\""));
     assert!(!page.contains("\"已选择\""));
+    assert!(sidebar.contains("active: AppState.page == \"toolbox\""));
+    for subpage in [
+        "toolbox-watermark",
+        "toolbox-enhance",
+        "toolbox-convert",
+        "toolbox-compress",
+    ] {
+        assert!(
+            sidebar.contains(&format!("AppState.page == \"{subpage}\"")),
+            "toolbox navigation should remain active on {subpage}"
+        );
+    }
+    let nav_item = include_str!("../../ui/components/nav-item.slint");
+    assert!(nav_item.contains("in property <bool> active: AppState.page == root.page;"));
+    assert!(nav_item.contains("background: root.active ? AppTheme.panel-soft"));
+    assert!(nav_item.contains("border-width: root.active ? 1px : 0px;"));
+    assert!(sidebar.contains(
+        "active: AppState.page == \"settings\" || AppState.page == \"custom-prompt-editor\";"
+    ));
 }
 
 #[test]
