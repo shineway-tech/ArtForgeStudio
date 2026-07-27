@@ -101,7 +101,7 @@ export component PromptComposer {
         if AppState.selected-custom-prompt-items.length > 0: Rectangle {
             x: 24px;
             y: root.prompt-input-y();
-            width: parent.width - 48px;
+            width: min(240px, parent.width - 80px);
             height: 30px;
             background: transparent;
             clip: true;
@@ -109,8 +109,8 @@ export component PromptComposer {
                 spacing: 6px;
                 alignment: start;
                 for item in AppState.selected-custom-prompt-items: Rectangle {
-                    min-width: 56px;
-                    max-width: 140px;
+                    min-width: 96px;
+                    max-width: 240px;
                     height: 26px;
                     background: AppTheme.panel-soft;
                     border-radius: 13px;
@@ -118,7 +118,7 @@ export component PromptComposer {
                     border-color: AppTheme.accent;
                     selected-title := Text {
                         x: 10px;
-                        width: parent.width - 20px;
+                        width: parent.width - 34px;
                         height: parent.height;
                         text: item.name;
                         color: AppTheme.accent-dark;
@@ -126,24 +126,50 @@ export component PromptComposer {
                         font-weight: 400;
                         horizontal-alignment: center;
                         vertical-alignment: center;
-                        overflow: elide;
+                        overflow: clip;
                     }
-                    TouchArea {
+                    selected-tag-touch := TouchArea {
                         width: parent.width;
                         height: parent.height;
                         mouse-cursor: pointer;
-                        clicked => {
-                            AppState.toggle-custom-prompt-selection(item.content);
+                    }
+                    if selected-tag-touch.has-hover: Rectangle {
+                        x: parent.width - 24px;
+                        y: 2px;
+                        width: 22px;
+                        height: 22px;
+                        border-radius: 11px;
+                        background: AppTheme.panel;
+
+                        Text {
+                            width: parent.width;
+                            height: parent.height;
+                            text: "×";
+                            color: AppTheme.muted;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => {
+                                AppState.toggle-custom-prompt-selection(item.content);
+                                prompt-input.focus();
+                                prompt-input.set-selection-offsets(2147483647, 2147483647);
+                            }
                         }
                     }
                 }
             }
         }
         prompt-scroll := ScrollView {
-            x: 24px;
-            y: root.prompt-input-y() + (AppState.selected-custom-prompt-items.length > 0 ? 34px : 0px);
-            width: parent.width - 48px;
-            height: root.prompt-input-height() - (AppState.selected-custom-prompt-items.length > 0 ? 34px : 0px);
+            x: AppState.selected-custom-prompt-items.length > 0 ? 270px : 24px;
+            y: root.prompt-input-y();
+            width: parent.width - self.x - 24px;
+            height: root.prompt-input-height();
             viewport-width: self.visible-width;
             viewport-height: max(self.visible-height, prompt-input.preferred-height);
             prompt-input := TextInput {
@@ -228,6 +254,10 @@ export component PromptComposer {
                             AppState.toggle-custom-prompt-selection(
                                 AppState.custom-prompt-items[root.custom-prompt-selected-index].content,
                             );
+                            AppState.custom-prompt-open = false;
+                            custom-prompt-popup.close();
+                            prompt-input.focus();
+                            prompt-input.set-selection-offsets(2147483647, 2147483647);
                             return accept;
                         }
                         if event.text == Key.Escape {
@@ -235,6 +265,16 @@ export component PromptComposer {
                             custom-prompt-popup.close();
                             return accept;
                         }
+                    }
+                    if event.text == Key.Backspace
+                        && AppState.prompt == ""
+                        && AppState.selected-custom-prompt-items.length > 0 {
+                        AppState.toggle-custom-prompt-selection(
+                            AppState.selected-custom-prompt-items[0].content,
+                        );
+                        prompt-input.focus();
+                        prompt-input.set-selection-offsets(0, 0);
+                        return accept;
                     }
                     if event.text == Key.Return {
                         if event.modifiers.alt {
@@ -457,7 +497,7 @@ export component PromptComposer {
 
     custom-prompt-popup := PopupWindow {
         x: 24px;
-        y: root.prompt-input-y() + (AppState.selected-custom-prompt-items.length > 0 ? 66px : 32px);
+        y: root.prompt-input-y() + 32px;
         width: root.width - 48px;
         height: AppState.custom-prompt-items.length > 0
             ? max(88px, 52px + min(10, root.custom-prompt-row-count()) * 36px)
@@ -542,7 +582,7 @@ export component PromptComposer {
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
                                 wrap: no-wrap;
-                                overflow: elide;
+                                overflow: clip;
                             }
                             custom-row := TouchArea {
                                 width: parent.width;
@@ -551,6 +591,10 @@ export component PromptComposer {
                                 clicked => {
                                     root.custom-prompt-selected-index = index;
                                     AppState.toggle-custom-prompt-selection(item.content);
+                                    AppState.custom-prompt-open = false;
+                                    custom-prompt-popup.close();
+                                    prompt-input.focus();
+                                    prompt-input.set-selection-offsets(2147483647, 2147483647);
                                 }
                             }
                         }
@@ -610,7 +654,7 @@ export component PromptComposer {
     }
 
     function custom-prompt-tag-width() -> length {
-        return 108px;
+        return 240px;
     }
 
     function custom-prompt-column-count() -> int {

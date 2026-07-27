@@ -2,6 +2,7 @@ use super::*;
 
 const MAX_COMPRESSION_IMAGES: usize = 50;
 const MAX_CONVERSION_IMAGES: usize = 50;
+const MAX_CROP_IMAGES: usize = 50;
 
 pub(super) fn wire_toolbox_callbacks(app: &AppWindow) {
     let state = app.global::<AppState>();
@@ -331,6 +332,149 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow) {
 
     {
         let app_weak = app.as_weak();
+        state.on_choose_crop_images(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let Some(paths) = rfd::FileDialog::new()
+                .add_filter("Images", &["jpg", "jpeg", "png", "webp", "bmp"])
+                .pick_files()
+            else {
+                return;
+            };
+            add_crop_paths(&app, paths);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_add_crop_images_from_drag(move |mime_type, data| {
+            let Some(app) = app_weak.upgrade() else {
+                return false;
+            };
+            add_crop_from_drag_data(&app, mime_type.as_str(), data.as_str())
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_paste_crop_images(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return false;
+            };
+            paste_crop_image(&app)
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_remove_crop_image(move |id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            let id = id.to_string();
+            let images = state
+                .get_crop_images()
+                .iter()
+                .filter(|item| item.id.as_str() != id)
+                .collect::<Vec<_>>();
+            set_crop_images(&state, images);
+            state.set_crop_message("".into());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_clear_crop_images(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            set_crop_images(&state, Vec::new());
+            state.set_crop_message("".into());
+            state.set_crop_estimated_credits("--".into());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_reveal_crop_result(move |id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            let result_path = state
+                .get_crop_images()
+                .iter()
+                .find(|item| item.id == id)
+                .map(|item| item.result_path.to_string())
+                .unwrap_or_default();
+            let path = PathBuf::from(result_path);
+            if !path.is_file() {
+                state.set_crop_message(
+                    if state.get_language().as_str() == "en" {
+                        "No cropped image is available yet"
+                    } else {
+                        "暂无可查看的裁剪结果"
+                    }
+                    .into(),
+                );
+                return;
+            }
+            match reveal_path_in_file_manager(&path) {
+                Ok(_) => state.set_crop_message(
+                    if state.get_language().as_str() == "en" {
+                        "Opened the image folder"
+                    } else {
+                        "已打开图片所在文件夹"
+                    }
+                    .into(),
+                ),
+                Err(error) => state.set_crop_message(
+                    if state.get_language().as_str() == "en" {
+                        format!("Failed to open the image folder: {error}")
+                    } else {
+                        format!("打开图片所在文件夹失败：{error}")
+                    }
+                    .into(),
+                ),
+            }
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_start_crop(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            if state.get_crop_images().row_count() == 0 {
+                state.set_crop_message(
+                    if state.get_language().as_str() == "en" {
+                        "Add at least one image first"
+                    } else {
+                        "请先添加需要裁剪的图片"
+                    }
+                    .into(),
+                );
+                return;
+            }
+            state.set_crop_processing(false);
+            state.set_crop_message(
+                if state.get_language().as_str() == "en" {
+                    "Image cropping is waiting for backend configuration"
+                } else {
+                    "图片裁剪能力等待后端配置"
+                }
+                .into(),
+            );
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
         state.on_choose_enhance_source(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -555,6 +699,119 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow) {
                     .into(),
                 ),
                 Err(error) => state.set_watermark_message(
+                    if state.get_language().as_str() == "en" {
+                        format!("Failed to open the image folder: {error}")
+                    } else {
+                        format!("打开图片所在文件夹失败：{error}")
+                    }
+                    .into(),
+                ),
+            }
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_choose_colorize_source(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let Some(path) = rfd::FileDialog::new()
+                .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
+                .pick_file()
+            else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            match load_image(&path) {
+                Ok(image) => {
+                    let name = path
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    state.set_colorize_source_path(path.display().to_string().into());
+                    state.set_colorize_source_name(name.into());
+                    state.set_colorize_source_image(image);
+                    state.set_colorize_result_path("".into());
+                    state.set_colorize_result_name("".into());
+                    state.set_colorize_result_image(Image::default());
+                    state.set_colorize_processing(false);
+                    state.set_colorize_progress(0);
+                    state.set_colorize_message("".into());
+                }
+                Err(_) => state.set_colorize_message(
+                    if state.get_language().as_str() == "en" {
+                        "The selected file is not a supported image"
+                    } else {
+                        "所选文件不是受支持的图片"
+                    }
+                    .into(),
+                ),
+            }
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_start_colorize(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            if state.get_colorize_source_path().trim().is_empty() {
+                state.set_colorize_message(
+                    if state.get_language().as_str() == "en" {
+                        "Upload an image first"
+                    } else {
+                        "请先上传图片"
+                    }
+                    .into(),
+                );
+                return;
+            }
+            state.set_colorize_processing(false);
+            state.set_colorize_progress(0);
+            state.set_colorize_message(
+                if state.get_language().as_str() == "en" {
+                    "Old-photo colorization is waiting for backend configuration"
+                } else {
+                    "老照片上色能力等待后端配置"
+                }
+                .into(),
+            );
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_reveal_colorize_result(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            let path = PathBuf::from(state.get_colorize_result_path().to_string());
+            if !path.is_file() {
+                state.set_colorize_message(
+                    if state.get_language().as_str() == "en" {
+                        "No colorized image is available yet"
+                    } else {
+                        "暂无可查看的上色结果"
+                    }
+                    .into(),
+                );
+                return;
+            }
+            match reveal_path_in_file_manager(&path) {
+                Ok(_) => state.set_colorize_message(
+                    if state.get_language().as_str() == "en" {
+                        "Opened the image folder"
+                    } else {
+                        "已打开图片所在文件夹"
+                    }
+                    .into(),
+                ),
+                Err(error) => state.set_colorize_message(
                     if state.get_language().as_str() == "en" {
                         format!("Failed to open the image folder: {error}")
                     } else {
@@ -837,6 +1094,127 @@ fn conversion_source_format(images: &[CompressionImageItem], english: bool) -> S
         _ if english => "Mixed formats".to_string(),
         _ => "混合格式".to_string(),
     }
+}
+
+pub(super) fn add_crop_from_drag_data(app: &AppWindow, mime_type: &str, data: &str) -> bool {
+    if mime_type != URI_LIST_MIME && mime_type != TEXT_PLAIN_MIME && mime_type != IMAGE_DRAG_MIME {
+        return false;
+    }
+    let paths = data
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(drag_data_to_path)
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        return false;
+    }
+    add_crop_paths(app, paths);
+    true
+}
+
+pub(super) fn add_crop_paths(app: &AppWindow, paths: Vec<PathBuf>) {
+    let state = app.global::<AppState>();
+    let mut images = state.get_crop_images().iter().collect::<Vec<_>>();
+    let mut known_paths = images
+        .iter()
+        .map(|item| item.source_path.to_string())
+        .filter(|path| !path.is_empty())
+        .collect::<BTreeSet<_>>();
+    let available = MAX_CROP_IMAGES.saturating_sub(images.len());
+    let mut added = 0usize;
+    let mut skipped = paths.len().saturating_sub(available);
+
+    for path in paths.into_iter().take(available) {
+        let canonical = fs::canonicalize(&path).unwrap_or(path);
+        let source_path = canonical.display().to_string();
+        if !canonical.is_file()
+            || !is_compression_image_path(&canonical)
+            || !known_paths.insert(source_path.clone())
+        {
+            skipped += 1;
+            continue;
+        }
+        let Ok(decoded) = image::open(&canonical) else {
+            skipped += 1;
+            continue;
+        };
+        let rgba = decoded.to_rgba8();
+        let preview = slint_image_from_rgba(&rgba, rgba.width(), rgba.height());
+        let name = canonical
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let size = fs::metadata(&canonical)
+            .map(|metadata| format_file_size(metadata.len()))
+            .unwrap_or_default();
+        images.push(CompressionImageItem {
+            id: Uuid::new_v4().to_string().into(),
+            name: name.into(),
+            source_path: source_path.into(),
+            size_text: size.into(),
+            image: preview,
+            status: "pending".into(),
+            result_path: "".into(),
+        });
+        added += 1;
+    }
+
+    set_crop_images(&state, images);
+    state.set_crop_estimated_credits("--".into());
+    state.set_crop_message(
+        compression_add_message(
+            state.get_language().as_str() == "en",
+            added,
+            skipped,
+            state.get_crop_images().row_count(),
+        )
+        .into(),
+    );
+}
+
+fn paste_crop_image(app: &AppWindow) -> bool {
+    let state = app.global::<AppState>();
+    if state.get_crop_images().row_count() >= MAX_CROP_IMAGES {
+        state.set_crop_message(
+            compression_limit_message(state.get_language().as_str() == "en").into(),
+        );
+        return true;
+    }
+    let Ok(mut clipboard) = arboard::Clipboard::new() else {
+        return false;
+    };
+    if let Ok(image) = clipboard.get_image() {
+        let Some(rgba) = image::RgbaImage::from_raw(
+            image.width as u32,
+            image.height as u32,
+            image.bytes.into_owned(),
+        ) else {
+            return false;
+        };
+        let Ok(bytes) = encode_png_rgba(&rgba, rgba.width(), rgba.height()) else {
+            return false;
+        };
+        let directory = app_data_dir().join("toolbox").join("crop-inputs");
+        if fs::create_dir_all(&directory).is_err() {
+            return false;
+        }
+        let path = directory.join(format!("pasted-{}.png", Uuid::new_v4()));
+        if atomic_write_file(&path, &bytes).is_err() {
+            return false;
+        }
+        add_crop_paths(app, vec![path]);
+        return true;
+    }
+    let Ok(text) = clipboard.get_text() else {
+        return false;
+    };
+    add_crop_from_drag_data(app, TEXT_PLAIN_MIME, &text)
+}
+
+fn set_crop_images(state: &AppState, images: Vec<CompressionImageItem>) {
+    state.set_crop_images(ModelRc::new(VecModel::from(images)));
 }
 
 fn is_compression_image_path(path: &Path) -> bool {

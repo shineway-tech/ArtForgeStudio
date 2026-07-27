@@ -585,6 +585,36 @@ mod tests {
     }
 
     #[test]
+    fn double_slash_selection_closes_inline_and_backspace_removes_the_tag() {
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let popup = composer
+            .split("custom-prompt-popup := PopupWindow")
+            .nth(1)
+            .and_then(|value| value.split("function scroll-prompt-history-selection").next())
+            .expect("custom prompt popup");
+
+        assert!(composer.contains(
+            "x: AppState.selected-custom-prompt-items.length > 0 ? 270px : 24px;"
+        ));
+        assert!(composer.contains("y: root.prompt-input-y();"));
+        assert!(composer.contains(
+            "event.text == Key.Backspace\n                        && AppState.prompt == \"\""
+        ));
+        assert!(composer.contains(
+            "AppState.selected-custom-prompt-items[0].content"
+        ));
+        assert!(popup.contains("AppState.custom-prompt-open = false"));
+        assert!(popup.contains("custom-prompt-popup.close()"));
+        assert!(popup.contains(
+            "prompt-input.set-selection-offsets(2147483647, 2147483647)"
+        ));
+        assert!(composer.contains("if selected-tag-touch.has-hover: Rectangle"));
+        assert!(composer.contains("text: \"×\""));
+        assert!(composer.contains("return 240px;"));
+        assert!(popup.contains("overflow: clip"));
+    }
+
+    #[test]
     fn custom_prompt_selections_are_isolated_by_workspace_category() {
         let mut store = Store {
             custom_prompts: vec![
@@ -949,9 +979,11 @@ fn sidebar_toolbox_opens_a_six_tool_page() {
         assert!(page.contains(title), "missing toolbox card: {title}");
     }
     assert_eq!(page.matches("tool-id: ").count(), 6);
-    assert_eq!(page.matches("target-page: \"toolbox-").count(), 4);
+    assert_eq!(page.matches("target-page: \"toolbox-").count(), 6);
     assert!(page.contains("target-page: \"toolbox-watermark\""));
     assert!(page.contains("target-page: \"toolbox-enhance\""));
+    assert!(page.contains("target-page: \"toolbox-colorize\""));
+    assert!(page.contains("target-page: \"toolbox-crop\""));
     assert!(page.contains("target-page: \"toolbox-convert\""));
     assert!(page.contains("target-page: \"toolbox-compress\""));
     assert!(page.contains("../../assets/icons/toolbox-watermark.svg"));
@@ -969,6 +1001,8 @@ fn sidebar_toolbox_opens_a_six_tool_page() {
     for subpage in [
         "toolbox-watermark",
         "toolbox-enhance",
+        "toolbox-colorize",
+        "toolbox-crop",
         "toolbox-convert",
         "toolbox-compress",
     ] {
@@ -1039,6 +1073,62 @@ fn toolbox_conversion_reuses_the_batch_upload_layout() {
     assert!(callbacks.contains("conversion_source_format"));
     assert!(reference.contains("page.as_str() == \"toolbox-convert\""));
     assert!(reference.contains("toolbox_callbacks::add_conversion_paths"));
+}
+
+#[test]
+fn toolbox_colorize_matches_the_watermark_original_and_result_layout() {
+    let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
+    let page = include_str!("../../ui/pages/toolbox-colorize-page.slint");
+    let state = include_str!("../../ui/app-state.slint");
+    let app_ui = include_str!("../../ui/app.slint");
+    let callbacks = include_str!("callbacks/toolbox.rs");
+
+    assert!(toolbox.contains("target-page: \"toolbox-colorize\""));
+    assert!(app_ui.contains("AppState.page == \"toolbox-colorize\""));
+    assert!(app_ui.contains("ToolboxColorizePage"));
+    assert_eq!(page.matches("ColorizePreviewPanel {").count(), 3);
+    assert!(page.contains("AppState.choose-colorize-source()"));
+    assert!(page.contains("AppState.start-colorize()"));
+    assert!(page.contains("AppState.reveal-colorize-result()"));
+    assert!(page.contains("title: AppState.en ? \"Original\" : \"原图\""));
+    assert!(page.contains("result-panel: true"));
+    assert!(state.contains("colorize-estimated-credits: \"--\""));
+    assert!(callbacks.contains("state.on_choose_colorize_source"));
+    assert!(callbacks.contains("state.on_start_colorize"));
+    assert!(callbacks.contains("state.on_reveal_colorize_result"));
+}
+
+#[test]
+fn toolbox_crop_reuses_the_conversion_batch_workspace() {
+    let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
+    let page = include_str!("../../ui/pages/toolbox-crop-page.slint");
+    let state = include_str!("../../ui/app-state.slint");
+    let app_ui = include_str!("../../ui/app.slint");
+    let callbacks = include_str!("callbacks/toolbox.rs");
+    let reference = include_str!("callbacks/reference.rs");
+
+    assert!(toolbox.contains("target-page: \"toolbox-crop\""));
+    assert!(app_ui.contains("AppState.page == \"toolbox-crop\""));
+    assert!(app_ui.contains("ToolboxCropPage"));
+    assert!(page.contains(
+        "import { CompressionDropArea, CompressionListRow } from \"toolbox-compression-page.slint\""
+    ));
+    assert!(page.contains("AppState.choose-crop-images()"));
+    assert!(page.contains("AppState.paste-crop-images()"));
+    assert!(page.contains("AppState.remove-crop-image(item.id)"));
+    assert!(page.contains("AppState.reveal-crop-result(item.id)"));
+    assert!(page.contains("AppState.clear-crop-images()"));
+    assert!(page.contains("AppState.start-crop()"));
+    for ratio in ["free", "1:1", "4:3", "16:9"] {
+        assert!(page.contains(&format!("value: \"{ratio}\"")));
+    }
+    assert!(state.contains("in-out property <[CompressionImageItem]> crop-images"));
+    assert!(state.contains("crop-estimated-credits: \"--\""));
+    assert!(callbacks.contains("const MAX_CROP_IMAGES: usize = 50;"));
+    assert!(callbacks.contains("state.on_choose_crop_images"));
+    assert!(callbacks.contains("state.on_start_crop"));
+    assert!(reference.contains("page.as_str() == \"toolbox-crop\""));
+    assert!(reference.contains("toolbox_callbacks::add_crop_paths"));
 }
 
 #[test]
@@ -2526,7 +2616,9 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(agreement_viewer.contains("width: min(860px, root.width - 32px);"));
         assert!(agreement_viewer.contains("height: parent.height - 120px;"));
         assert!(update_prompt.contains("? min(500px, root.width - 32px)"));
-        assert!(update_prompt.contains("min(390px, root.height - 40px)"));
+        assert!(update_prompt.contains(
+            "min(AppState.update-active ? 420px : 390px, root.height - 40px)"
+        ));
         assert!(settings.contains(
             "visible: AppState.update-available || AppState.update-checking;"
         ));
@@ -2576,23 +2668,30 @@ fn idle_generation_area_rotates_slash_usage_tips() {
     }
 
     #[test]
-    fn viewer_metadata_is_four_compact_tags_in_the_top_row() {
+    fn viewer_metadata_is_four_colored_plain_text_values_in_the_top_row() {
         let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
-        let tag_start = viewer.find("component ViewerInfoTag").expect("viewer info tag");
-        let tag_end = viewer
+        let info_start = viewer
+            .find("component ViewerInfoText")
+            .expect("viewer info text");
+        let info_end = viewer
             .find("component ViewerFooterActionButton")
             .expect("viewer footer action button");
-        let tag = &viewer[tag_start..tag_end];
+        let info = &viewer[info_start..info_end];
 
-        assert!(viewer.contains("component ViewerInfoTag"));
-        assert!(viewer.contains("info-tags := HorizontalLayout"));
+        assert!(viewer.contains("component ViewerInfoText inherits Text"));
+        assert!(viewer.contains("viewer-info := HorizontalLayout"));
         assert!(viewer.contains("y: 24px;"));
         assert!(viewer.contains(
             "property <length> detail-panel-width: AppState.viewer-source == \"reference\" ? 0px : 460px;"
         ));
-        assert_eq!(viewer.matches("ViewerInfoTag {").count(), 4);
-        assert!(tag.contains("tag-hit-blocker := TouchArea"));
-        assert!(!tag.contains("clicked =>"));
+        assert_eq!(viewer.matches("ViewerInfoText {").count(), 4);
+        assert!(viewer.contains("AppState.viewer-width + \"X\" + AppState.viewer-height"));
+        for color in ["#24b8ff", "#42d79e", "#ffb454", "#bda4ff"] {
+            assert!(viewer.contains(color), "missing viewer info color: {color}");
+        }
+        assert!(!info.contains("TouchArea"));
+        assert!(!info.contains("background:"));
+        assert!(!info.contains("border-radius:"));
         assert!(!viewer.contains("InfoCard"));
         assert!(!viewer.contains("图像信息"));
     }

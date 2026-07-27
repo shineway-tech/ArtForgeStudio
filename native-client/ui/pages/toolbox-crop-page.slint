@@ -1,0 +1,307 @@
+import { AppState } from "../app-state.slint";
+import { CompressionDropArea, CompressionListRow } from "toolbox-compression-page.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+component CropRatioButton {
+    in property <string> value;
+    in property <string> label;
+
+    Rectangle {
+        background: AppState.crop-ratio == root.value ? AppTheme.panel-soft : AppTheme.bg;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: AppState.crop-ratio == root.value ? AppTheme.accent : AppTheme.border;
+
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.label;
+            color: AppState.crop-ratio == root.value ? AppTheme.accent-dark : AppTheme.text;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { AppState.crop-ratio = root.value; }
+        }
+    }
+}
+
+export component ToolboxCropPage {
+    function content-width() -> length { return max(820px, root.width - 64px); }
+    function left-width() -> length { return max(480px, (root.content-width() - 20px) * 0.58); }
+
+    function accept-drop(mime-type: string, data: string) {
+        if AppState.add-crop-images-from-drag(mime-type, data) {
+            crop-keys.focus();
+        }
+    }
+
+    Rectangle {
+        background: AppTheme.bg;
+
+        Text {
+            x: 32px;
+            y: 28px;
+            width: parent.width - 64px;
+            height: 32px;
+            text: AppState.en ? "Crop Images" : "图片裁剪";
+            color: AppTheme.text;
+            font-size: 24px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: 32px;
+            y: 68px;
+            width: parent.width - 64px;
+            height: 22px;
+            text: AppState.en
+                ? "Upload up to 50 images and configure one crop ratio for the batch"
+                : "一次最多上传 50 张图片，并统一设置本批次裁剪比例";
+            color: AppTheme.muted;
+            font-size: 13px;
+            vertical-alignment: center;
+        }
+
+        if AppState.crop-images.length == 0: CompressionDropArea {
+            x: 32px;
+            y: 112px;
+            width: root.content-width();
+            height: 178px;
+            choose-images => { AppState.choose-crop-images(); }
+            dropped(mime-type, data) => { root.accept-drop(mime-type, data); }
+        }
+
+        if AppState.crop-images.length > 0: Rectangle {
+            x: 32px;
+            y: 112px;
+            width: root.left-width();
+            height: parent.height - 144px;
+            background: AppTheme.panel;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+
+            Text {
+                x: 18px;
+                y: 14px;
+                width: 180px;
+                height: 32px;
+                text: (AppState.en ? "Uploaded " : "已上传 ")
+                    + AppState.crop-images.length
+                    + (AppState.en ? " / 50" : " / 50 张");
+                color: AppTheme.text;
+                font-size: 15px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+
+            PillButton {
+                x: parent.width - 204px;
+                y: 12px;
+                width: 92px;
+                height: 34px;
+                text: AppState.en ? "Add images" : "继续添加";
+                clicked => { AppState.choose-crop-images(); }
+            }
+
+            PillButton {
+                x: parent.width - 102px;
+                y: 12px;
+                width: 84px;
+                height: 34px;
+                text: AppState.en ? "Clear" : "清空";
+                danger: true;
+                clicked => { AppState.clear-crop-images(); }
+            }
+
+            list := Flickable {
+                x: 16px;
+                y: 58px;
+                width: parent.width - 32px;
+                height: parent.height - 74px;
+                viewport-width: self.width;
+                viewport-height: max(self.height, AppState.crop-images.length * 70px);
+
+                for item[index] in AppState.crop-images: CompressionListRow {
+                    x: 0px;
+                    y: index * 70px;
+                    width: list.width;
+                    height: 62px;
+                    item: item;
+                    processing-text: AppState.en ? "Cropping" : "裁剪中";
+                    remove => { AppState.remove-crop-image(item.id); }
+                    reveal => { AppState.reveal-crop-result(item.id); }
+                }
+            }
+
+            list-drop := DropArea {
+                width: parent.width;
+                height: parent.height;
+                can-drop(event) => {
+                    return event.mime-type == "text/uri-list"
+                        || event.mime-type == "text/plain"
+                        || event.mime-type == "application/x-artforge-image-path";
+                }
+                dropped(event) => { root.accept-drop(event.mime-type, event.data); }
+            }
+
+            if list-drop.contains-drag: Rectangle {
+                x: 8px;
+                y: 56px;
+                width: parent.width - 16px;
+                height: parent.height - 64px;
+                background: AppTheme.accent.with-alpha(0.10);
+                border-radius: 10px;
+                border-width: 2px;
+                border-color: AppTheme.accent;
+
+                Text {
+                    width: parent.width;
+                    height: parent.height;
+                    text: AppState.en ? "Release to add images" : "松开即可添加图片";
+                    color: AppTheme.accent;
+                    font-size: 15px;
+                    font-weight: 500;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        if AppState.crop-images.length > 0: Rectangle {
+            x: 52px + root.left-width();
+            y: 112px;
+            width: root.content-width() - root.left-width() - 20px;
+            height: parent.height - 144px;
+            background: AppTheme.panel;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+
+            Text {
+                x: 22px;
+                y: 18px;
+                width: parent.width - 44px;
+                height: 24px;
+                text: AppState.en ? "Crop settings" : "裁剪设置";
+                color: AppTheme.text;
+                font-size: 16px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+
+            Text {
+                x: 22px;
+                y: 58px;
+                width: parent.width - 44px;
+                height: 20px;
+                text: AppState.en ? "Aspect ratio" : "裁剪比例";
+                color: AppTheme.muted;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+
+            HorizontalLayout {
+                x: 22px;
+                y: 88px;
+                width: parent.width - 44px;
+                height: 38px;
+                spacing: 8px;
+
+                CropRatioButton { value: "free"; label: AppState.en ? "Free" : "自由"; }
+                CropRatioButton { value: "1:1"; label: "1:1"; }
+                CropRatioButton { value: "4:3"; label: "4:3"; }
+                CropRatioButton { value: "16:9"; label: "16:9"; }
+            }
+
+            Text {
+                x: 22px;
+                y: 158px;
+                width: parent.width - 44px;
+                height: 22px;
+                text: (AppState.en ? "Total " : "共 ")
+                    + AppState.crop-images.length
+                    + (AppState.en ? " image(s)" : " 张");
+                color: AppTheme.muted;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+
+            if AppState.crop-message != "": Text {
+                x: 22px;
+                y: parent.height - 132px;
+                width: parent.width - 44px;
+                height: 24px;
+                text: AppState.crop-message;
+                color: AppTheme.muted;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            Text {
+                x: 22px;
+                y: parent.height - 104px;
+                width: parent.width - 44px;
+                height: 20px;
+                text: AppState.en
+                    ? "Estimated charge: " + AppState.crop-estimated-credits + " credits"
+                    : "本次预计扣除 " + AppState.crop-estimated-credits + " 积分";
+                color: AppTheme.muted;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            PillButton {
+                x: 22px;
+                y: parent.height - 72px;
+                width: parent.width - 44px;
+                height: 48px;
+                text: AppState.crop-processing
+                    ? (AppState.en ? "Cropping..." : "裁剪中...")
+                    : (AppState.en ? "Start cropping" : "开始裁剪");
+                primary: true;
+                disabled: AppState.crop-images.length == 0 || AppState.crop-processing;
+                clicked => { AppState.start-crop(); }
+            }
+        }
+
+        if AppState.crop-images.length == 0 && AppState.crop-message != "": Text {
+            x: 32px;
+            y: 304px;
+            width: root.content-width();
+            height: 24px;
+            text: AppState.crop-message;
+            color: AppTheme.muted;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        crop-keys := FocusScope {
+            width: parent.width;
+            height: parent.height;
+            init => { self.focus(); }
+            key-pressed(event) => {
+                if event.modifiers.control && (event.text == "v" || event.text == "V") {
+                    if AppState.paste-crop-images() {
+                        return accept;
+                    }
+                }
+                return reject;
+            }
+        }
+    }
+}

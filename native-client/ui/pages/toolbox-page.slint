@@ -158,6 +158,7 @@ export component ToolboxPage {
                 width: root.card-width();
                 height: root.card-height();
                 tool-id: "colorize";
+                target-page: "toolbox-colorize";
                 title: AppState.en ? "Old Photo Colorization" : "老照片上色";
                 description: AppState.en ? "Add natural color to black-and-white photos" : "为黑白老照片还原自然色彩";
                 icon: @image-url("../../assets/icons/palette.svg");
@@ -168,6 +169,7 @@ export component ToolboxPage {
                 width: root.card-width();
                 height: root.card-height();
                 tool-id: "crop";
+                target-page: "toolbox-crop";
                 title: AppState.en ? "Crop Image" : "图片裁剪";
                 description: AppState.en ? "Crop an image to the desired size and composition" : "按所需尺寸与构图裁剪图片";
                 icon: @image-url("../../assets/icons/fit.svg");

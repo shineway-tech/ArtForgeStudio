@@ -1,0 +1,215 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { PillButton } from "../components/pill-button.slint";
+
+component ColorizePreviewPanel {
+    in property <string> title;
+    in property <string> detail;
+    in property <image> preview;
+    in property <bool> has-image: false;
+    in property <bool> processing: false;
+    in property <int> progress: 0;
+    in property <bool> result-panel: false;
+    callback choose-image();
+
+    Rectangle {
+        background: transparent;
+
+        Text {
+            width: parent.width;
+            height: 28px;
+            text: root.processing
+                ? (AppState.en ? "Colorizing (" + root.progress + "%)..." : "上色中(" + root.progress + "%)...")
+                : root.title;
+            color: AppTheme.text;
+            font-size: 16px;
+            font-weight: 600;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            y: 30px;
+            width: parent.width;
+            height: 20px;
+            text: root.detail;
+            color: AppTheme.muted;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Rectangle {
+            y: 62px;
+            width: parent.width;
+            height: parent.height - 62px;
+            background: AppTheme.panel;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: root.processing ? AppTheme.accent : AppTheme.border;
+            clip: true;
+
+            if root.has-image: Image {
+                x: 12px;
+                y: 12px;
+                width: parent.width - 24px;
+                height: parent.height - 24px;
+                source: root.preview;
+                image-fit: contain;
+            }
+
+            if !root.has-image: Rectangle {
+                background: transparent;
+
+                Rectangle {
+                    x: (parent.width - 58px) / 2;
+                    y: (parent.height - 108px) / 2;
+                    width: 58px;
+                    height: 58px;
+                    border-radius: 14px;
+                    background: AppTheme.panel-soft;
+
+                    Image {
+                        x: 16px;
+                        y: 16px;
+                        width: 26px;
+                        height: 26px;
+                        source: root.result-panel
+                            ? @image-url("../../assets/icons/image.svg")
+                            : @image-url("../../assets/icons/upload.svg");
+                        colorize: AppTheme.muted;
+                        image-fit: contain;
+                    }
+                }
+
+                Text {
+                    x: 24px;
+                    y: (parent.height - 108px) / 2 + 72px;
+                    width: parent.width - 48px;
+                    height: 24px;
+                    text: root.result-panel
+                        ? (AppState.en ? "The colorized image will appear here" : "上色后的图片将显示在这里")
+                        : (AppState.en ? "Upload an image to begin" : "上传图片后开始处理");
+                    color: AppTheme.muted;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                if !root.result-panel: TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => { root.choose-image(); }
+                }
+            }
+
+            if root.processing: Rectangle {
+                y: parent.height - 4px;
+                width: parent.width * root.progress / 100;
+                height: 4px;
+                background: AppTheme.accent;
+            }
+        }
+    }
+}
+
+export component ToolboxColorizePage {
+    function panel-gap() -> length { return 20px; }
+    function panel-width() -> length { return (root.width - 64px - root.panel-gap()) / 2; }
+
+    Rectangle {
+        background: AppTheme.bg;
+
+        Text {
+            x: 32px;
+            y: 28px;
+            width: parent.width - 64px;
+            height: 32px;
+            text: AppState.en ? "Old Photo Colorization" : "老照片上色";
+            color: AppTheme.text;
+            font-size: 24px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+
+        ColorizePreviewPanel {
+            x: 32px;
+            y: 76px;
+            width: root.panel-width();
+            height: parent.height - 182px;
+            title: AppState.en ? "Original" : "原图";
+            detail: AppState.colorize-source-name;
+            preview: AppState.colorize-source-image;
+            has-image: AppState.colorize-source-path != "";
+            choose-image => { AppState.choose-colorize-source(); }
+        }
+
+        ColorizePreviewPanel {
+            x: 32px + root.panel-width() + root.panel-gap();
+            y: 76px;
+            width: root.panel-width();
+            height: parent.height - 182px;
+            title: AppState.colorize-result-path != ""
+                ? (AppState.en ? "Colorized image" : "上色结果")
+                : (AppState.en ? "Waiting for processing" : "等待处理");
+            detail: AppState.colorize-result-name;
+            preview: AppState.colorize-result-image;
+            has-image: AppState.colorize-result-path != "";
+            processing: AppState.colorize-processing;
+            progress: AppState.colorize-progress;
+            result-panel: true;
+        }
+
+        PillButton {
+            x: 32px + root.panel-width() - 166px;
+            y: parent.height - 78px;
+            width: 166px;
+            height: 42px;
+            text: AppState.colorize-processing
+                ? (AppState.en ? "Processing..." : "处理中...")
+                : (AppState.en ? "Colorize photo" : "开始上色");
+            primary: true;
+            disabled: AppState.colorize-source-path == "" || AppState.colorize-processing;
+            clicked => { AppState.start-colorize(); }
+        }
+
+        Text {
+            x: 32px + root.panel-width() - 166px;
+            y: parent.height - 33px;
+            width: 166px;
+            height: 20px;
+            text: AppState.en
+                ? "Estimated charge: " + AppState.colorize-estimated-credits + " credits"
+                : "本次预计扣除 " + AppState.colorize-estimated-credits + " 积分";
+            color: AppTheme.muted;
+            font-size: 10px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        PillButton {
+            x: parent.width - 174px;
+            y: parent.height - 78px;
+            width: 142px;
+            height: 42px;
+            text: AppState.en ? "View image" : "查看图片";
+            disabled: AppState.colorize-result-path == "";
+            clicked => { AppState.reveal-colorize-result(); }
+        }
+
+        if AppState.colorize-message != "": Text {
+            x: 32px;
+            y: parent.height - 69px;
+            width: root.panel-width() - 182px;
+            height: 24px;
+            text: AppState.colorize-message;
+            color: AppTheme.muted;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}

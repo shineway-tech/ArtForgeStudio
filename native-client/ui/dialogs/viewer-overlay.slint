@@ -6,41 +6,15 @@ import { ViewerContextMenuItem } from "../components/viewer-context-menu-item.sl
 import { ViewerNavButton } from "../components/viewer-nav-button.slint";
 import { AppTheme } from "../theme.slint";
 
-component ViewerInfoTag inherits Rectangle {
-    in property <string> label;
+component ViewerInfoText inherits Text {
     in property <string> value;
-    height: 40px;
-    background: AppTheme.panel;
-    border-radius: 20px;
-    border-width: 1px;
-    border-color: AppTheme.border;
-
-    Text {
-        x: 12px;
-        width: min(46px, parent.width / 3);
-        height: parent.height;
-        text: root.label;
-        color: AppTheme.muted;
-        font-size: 11px;
-        font-weight: 400;
-        vertical-alignment: center;
-        overflow: elide;
-    }
-    Text {
-        x: min(58px, parent.width / 3 + 10px);
-        width: parent.width - self.x - 12px;
-        height: parent.height;
-        text: root.value;
-        color: AppTheme.text;
-        font-size: 12px;
-        font-weight: 500;
-        vertical-alignment: center;
-        overflow: elide;
-    }
-    tag-hit-blocker := TouchArea {
-        width: parent.width;
-        height: parent.height;
-    }
+    in property <color> foreground: AppTheme.text;
+    text: root.value;
+    color: root.foreground;
+    font-size: 13px;
+    font-weight: 500;
+    vertical-alignment: center;
+    overflow: elide;
 }
 
 component ViewerFooterActionButton inherits Rectangle {
@@ -149,31 +123,31 @@ export component ViewerOverlay {
             triggered => { AppState.viewer-message = ""; }
         }
         PillButton { x: 24px; y: 24px; width: 88px; text: AppState.en ? "← Back" : "← 返回"; clicked => { AppState.close-viewer(); } }
-        if AppState.viewer-source != "reference": info-tags := HorizontalLayout {
+        if AppState.viewer-source != "reference": viewer-info := HorizontalLayout {
             x: (root.viewer-content-right - self.width) / 2;
             y: 24px;
-            width: min(560px, max(420px, root.viewer-content-right - 248px));
+            width: min(620px, max(460px, root.viewer-content-right - 248px));
             height: 40px;
-            spacing: 8px;
-            ViewerInfoTag {
+            spacing: 14px;
+            ViewerInfoText {
                 horizontal-stretch: 1;
-                label: AppState.en ? "Size" : "尺寸";
-                value: AppState.viewer-width + " x " + AppState.viewer-height;
+                value: AppState.viewer-width + "X" + AppState.viewer-height + "  \\";
+                foreground: #24b8ff;
             }
-            ViewerInfoTag {
+            ViewerInfoText {
                 horizontal-stretch: 1;
-                label: AppState.en ? "Ratio" : "宽高比";
-                value: AppState.viewer-ratio;
+                value: AppState.viewer-ratio + "  \\";
+                foreground: #42d79e;
             }
-            ViewerInfoTag {
+            ViewerInfoText {
                 horizontal-stretch: 1;
-                label: AppState.en ? "Quality" : "清晰度";
-                value: AppState.viewer-quality;
+                value: AppState.viewer-quality + "  \\";
+                foreground: #ffb454;
             }
-            ViewerInfoTag {
+            ViewerInfoText {
                 horizontal-stretch: 1;
-                label: AppState.en ? "Model" : "模型";
                 value: AppState.viewer-model;
+                foreground: #bda4ff;
             }
         }
         Rectangle {
