@@ -69,7 +69,7 @@ pub(super) fn prepare_reference_for_upload(path: &Path) -> Result<PreparedRefere
     };
 
     let directory = std::env::temp_dir()
-        .join("ArtForgeStudio")
+        .join("ElunviCanvas")
         .join("reference-uploads");
     fs::create_dir_all(&directory)?;
     let destination = directory.join(format!("reference-{}.{}", Uuid::new_v4(), extension));

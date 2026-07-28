@@ -524,7 +524,7 @@ async fn find_free_port() -> Result<u16, SidecarError> {
 
 /// Sidecar 数据目录（绿色版）。
 fn sidecar_data_dir() -> PathBuf {
-    directories::ProjectDirs::from("", "ArtAIT", "ArtForgeStudio")
+    directories::ProjectDirs::from("", "ArtAIT", "ElunviCanvas")
         .map(|d| d.data_dir().join("sidecar"))
         .unwrap_or_else(|| PathBuf::from("data/sidecar"))
 }

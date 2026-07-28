@@ -20,7 +20,7 @@
 在仓库根目录运行：
 
 ```bash
-cargo run -p artforge-studio-native --bin ArtForgeStudio
+cargo run -p artforge-studio-native --bin ElunviCanvas
 ```
 
 开发构建使用当前平台目标。首次构建会编译 Slint、渲染器、HTTP 和 WebView 相关依赖，耗时明显长于后续增量启动。
@@ -30,7 +30,7 @@ cargo run -p artforge-studio-native --bin ArtForgeStudio
 ```bash
 cargo check -p artforge-studio-native
 cargo test -p artforge-studio-native
-cargo build --release -p artforge-studio-native --bin ArtForgeStudio
+cargo build --release -p artforge-studio-native --bin ElunviCanvas
 ```
 
 单元测试中的本地 HTTP 测试需要允许测试进程监听回环端口。`cross_stack_` 测试默认标记为 ignored，不会在普通 `cargo test` 中访问外部后端。
@@ -54,7 +54,7 @@ cargo build --release -p artforge-studio-native --bin ArtForgeStudio
 
 ```bash
 ARTFORGE_API_BASE_URL=http://127.0.0.1:39091 \
-cargo run -p artforge-studio-native --bin ArtForgeStudio
+cargo run -p artforge-studio-native --bin ElunviCanvas
 ```
 
 ## Cross-stack Mock API tests
@@ -81,7 +81,7 @@ cargo test -p artforge-studio-native --locked \
 
 ```bash
 SLINT_BACKEND=winit-software \
-cargo run -p artforge-studio-native --bin ArtForgeStudio
+cargo run -p artforge-studio-native --bin ElunviCanvas
 ```
 
 显式覆盖只用于诊断或兼容性验证。Windows 最小化恢复性能需要用默认 GPU 后端进行最终验收。

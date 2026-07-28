@@ -126,7 +126,7 @@ fn fetch_remote_update_manifest() -> Result<UpdateManifest> {
     let response = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(8))
         .redirect(reqwest::redirect::Policy::none())
-        .user_agent(format!("ArtForgeStudio/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("ElunviCanvas/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .context("无法创建版本检查请求")?
         .get(url)
@@ -265,11 +265,11 @@ pub(super) fn canonical_update_download_url(candidate: &str) -> Option<String> {
 
 fn default_update_download_url() -> String {
     let file_name = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        "ArtForgeStudio_macos_aarch64.dmg"
+        "ElunviCanvas_macos_aarch64.dmg"
     } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
-        "ArtForgeStudio_macos_x64.dmg"
+        "ElunviCanvas_macos_x64.dmg"
     } else if cfg!(target_os = "windows") {
-        "ArtForgeStudio_windows_x64_setup.exe"
+        "ElunviCanvas_windows_x64_setup.exe"
     } else {
         return String::new();
     };
@@ -408,7 +408,7 @@ pub(super) fn resource_base_dirs() -> Vec<PathBuf> {
     {
         push_unique_path(
             &mut bases,
-            PathBuf::from(r"C:\Users\deyx1\Documents\ArtForgeStudio"),
+            PathBuf::from(r"C:\Users\deyx1\Documents\ElunviCanvas"),
         );
     }
     bases
@@ -421,7 +421,7 @@ pub(super) fn app_data_dir() -> PathBuf {
             return PathBuf::from(home)
                 .join("Library")
                 .join("Application Support")
-                .join("ArtForgeStudio")
+                .join("ElunviCanvas")
                 .join("data");
         }
     }

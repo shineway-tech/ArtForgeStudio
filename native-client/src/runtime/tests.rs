@@ -22,16 +22,16 @@ mod tests {
         assert!(compare_versions("1.0.4", "1.0.5").is_lt());
 
         assert!(validated_update_download_url(
-            "https://static.honeykid.cn/public/art_forge/ArtForgeStudio_macos_aarch64.dmg"
+            "https://static.honeykid.cn/public/art_forge/ElunviCanvas_macos_aarch64.dmg"
         )
         .is_ok());
         assert_eq!(
             canonical_update_download_url(
-                "https://cdn.honeykid.cn/public/art_forge/ArtForgeStudio_macos_aarch64.dmg"
+                "https://cdn.honeykid.cn/public/art_forge/ElunviCanvas_macos_aarch64.dmg"
             )
             .as_deref(),
             Some(
-                "https://static.honeykid.cn/public/art_forge/ArtForgeStudio_macos_aarch64.dmg"
+                "https://static.honeykid.cn/public/art_forge/ElunviCanvas_macos_aarch64.dmg"
             )
         );
         assert!(validated_update_download_url("http://static.honeykid.cn/update.dmg").is_err());
@@ -59,9 +59,9 @@ mod tests {
         let manifest: UpdateManifest = serde_json::from_value(serde_json::json!({
             "version": "1.0.10",
             "downloads": {
-                "macos_aarch64": "https://static.honeykid.cn/public/art_forge/1.0.10/ArtForgeStudio_macos_aarch64.dmg",
-                "macos_x64": "https://static.honeykid.cn/public/art_forge/1.0.10/ArtForgeStudio_macos_x64.dmg",
-                "windows_x64": "https://static.honeykid.cn/public/art_forge/1.0.10/ArtForgeStudio_windows_x64_setup.exe"
+                "macos_aarch64": "https://static.honeykid.cn/public/art_forge/1.0.10/ElunviCanvas_macos_aarch64.dmg",
+                "macos_x64": "https://static.honeykid.cn/public/art_forge/1.0.10/ElunviCanvas_macos_x64.dmg",
+                "windows_x64": "https://static.honeykid.cn/public/art_forge/1.0.10/ElunviCanvas_windows_x64_setup.exe"
             },
             "artifacts": {
                 "macos_aarch64": { "size_bytes": 42, "sha256": "a".repeat(64) },
@@ -94,7 +94,7 @@ mod tests {
         let state = include_str!("../../ui/app-state.slint");
         let app = include_str!("../../ui/app.slint");
         let updater = include_str!("storage/updater.rs");
-        let installer = include_str!("../../../installer/ArtForgeStudio.iss");
+        let installer = include_str!("../../../installer/ElunviCanvas.iss");
         let release_workflow = include_str!("../../../.github/workflows/release-desktop.yml");
         let manifest_script = include_str!("../../../scripts/create-update-manifest.js");
 
@@ -113,6 +113,11 @@ mod tests {
         assert!(state.contains("in-out property <string> update-stage"));
         assert!(state.contains("callback cancel-update()"));
         assert!(dialog.contains("AppState.update-download-progress"));
+        assert!(dialog.contains("visible-progress: max(0, min(100"));
+        assert!(dialog.contains("progress-fill := Rectangle"));
+        assert!(dialog.contains("x: 0px;"));
+        assert!(dialog.contains("animate width { duration: 220ms; easing: ease-out; }"));
+        assert!(dialog.contains("\"正在核对文件大小与 SHA-256\""));
         assert!(dialog.contains("AppState.cancel-update()"));
         assert!(state.contains("in-out property <bool> update-check-failed"));
         assert!(updater.contains("Sha256"));
@@ -1005,13 +1010,13 @@ fn generation_results_scroll_to_the_gallerys_measured_height() {
 }
 
 #[test]
-fn application_brand_is_elunvi_canvas_without_renaming_update_artifacts() {
+fn application_brand_and_release_artifacts_are_elunvi_canvas() {
     let app = include_str!("../../ui/app.slint");
     let sidebar = include_str!("../../ui/components/sidebar.slint");
     let welcome = include_str!("../../ui/pages/welcome-page.slint");
     let settings = include_str!("../../ui/pages/settings-page.slint");
     let windows_resources = include_str!("../../build.rs");
-    let installer = include_str!("../../../installer/ArtForgeStudio.iss");
+    let installer = include_str!("../../../installer/ElunviCanvas.iss");
     let windows_package = include_str!("../../../scripts/package-native-client.ps1");
     let macos_package = include_str!("../../../scripts/package-macos.sh");
 
@@ -1021,12 +1026,14 @@ fn application_brand_is_elunvi_canvas_without_renaming_update_artifacts() {
     assert!(settings.contains("text: \"Elunvi Canvas\";"));
     assert!(windows_resources.contains("res.set(\"ProductName\", \"Elunvi Canvas\")"));
     assert!(windows_resources.contains("res.set(\"FileDescription\", \"Elunvi Canvas\")"));
-    assert!(installer.contains("#define AppDisplayName \"Elunvi Canvas\""));
-    assert!(installer.contains("AppName={#AppDisplayName}"));
+    assert!(installer.contains("#define AppName \"Elunvi Canvas\""));
+    assert!(installer.contains("#define AppFileStem \"ElunviCanvas\""));
+    assert!(installer.contains("#define AppExeName \"ElunviCanvas.exe\""));
+    assert!(installer.contains("AppName={#AppName}"));
     assert!(windows_package.contains("<string>Elunvi Canvas</string>"));
     assert!(macos_package.contains("<string>Elunvi Canvas</string>"));
-    assert!(windows_package.contains("$AppName = \"ArtForgeStudio\""));
-    assert!(macos_package.contains("APP_NAME=\"ArtForgeStudio\""));
+    assert!(windows_package.contains("$AppName = \"ElunviCanvas\""));
+    assert!(macos_package.contains("APP_NAME=\"ElunviCanvas\""));
 }
 
 #[test]

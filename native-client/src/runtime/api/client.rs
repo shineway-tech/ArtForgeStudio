@@ -68,7 +68,7 @@ impl ApiClient {
     ) -> Result<Self, ApiError> {
         let http = Client::builder()
             .timeout(config.timeout)
-            .user_agent(format!("ArtForgeStudio/{}", config.app_version))
+            .user_agent(format!("ElunviCanvas/{}", config.app_version))
             .build()?;
         Ok(Self {
             http,

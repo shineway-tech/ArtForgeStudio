@@ -2,7 +2,7 @@
 
 ## Repository and binary boundary
 
-根 Cargo workspace 只有 `native-client` 一个成员。它构建包 `artforge-studio-native`，并生成唯一应用二进制 `ArtForgeStudio`（Windows 为 `ArtForgeStudio.exe`）。
+根 Cargo workspace 只有 `native-client` 一个成员。它构建包 `artforge-studio-native`，并生成唯一应用二进制 `ElunviCanvas`（Windows 为 `ElunviCanvas.exe`）。
 
 `AppContext` 持有运行期共享状态、平台 API 后端和生成任务注册表。Slint 只保存展示状态；后台网络、轮询、下载和磁盘操作完成后，通过事件循环同步回 UI。
 

@@ -12,7 +12,7 @@
 
 ## 实施约束
 
-- 工作树：`C:\Users\deyx1\Documents\ArtForgeStudio-canvas-interactions`
+- 工作树：`C:\Users\deyx1\Documents\ElunviCanvas-canvas-interactions`
 - 分支：`codex/comfy-litegraph-canvas`
 - 不修改或接入归档的 `crates/`。
 - 不修改服务端 API、生成接口和媒体协议。
@@ -712,10 +712,10 @@ Expected: 全部测试通过，测试总数不少于 Task 1 记录的基线。
 Run:
 
 ```powershell
-cargo build --release -p artforge-studio-native --bin ArtForgeStudio
+cargo build --release -p artforge-studio-native --bin ElunviCanvas
 ```
 
-Expected: `target\release\ArtForgeStudio.exe` 成功生成。
+Expected: `target\release\ElunviCanvas.exe` 成功生成。
 
 **Step 6: 检查跨平台打包脚本**
 
@@ -736,14 +736,14 @@ powershell -ExecutionPolicy Bypass -File scripts/package-native-client.ps1 -Targ
 将生成的 Windows x64 zip 复制到：
 
 ```text
-D:\ArtForgeStudio
+D:\ElunviCanvas
 ```
 
 输出文件大小与 SHA-256：
 
 ```powershell
-Get-Item D:\ArtForgeStudio\ArtForgeStudio_*_windows_x64_portable.zip
-Get-FileHash D:\ArtForgeStudio\ArtForgeStudio_*_windows_x64_portable.zip -Algorithm SHA256
+Get-Item D:\ElunviCanvas\ElunviCanvas_*_windows_x64_portable.zip
+Get-FileHash D:\ElunviCanvas\ElunviCanvas_*_windows_x64_portable.zip -Algorithm SHA256
 ```
 
 **Step 8: 最终提交**

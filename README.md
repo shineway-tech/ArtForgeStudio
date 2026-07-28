@@ -1,6 +1,6 @@
 # Elunvi Canvas
 
-Elunvi Canvas 是使用 Rust 与 Slint 构建的跨平台桌面 AI 美术生产客户端。根 Cargo workspace 只构建 `native-client`，并生成兼容二进制 `ArtForgeStudio`。应用版本以 `native-client/Cargo.toml` 为准。
+Elunvi Canvas 是使用 Rust 与 Slint 构建的跨平台桌面 AI 美术生产客户端。根 Cargo workspace 只构建 `native-client`，并生成唯一应用二进制 `ElunviCanvas`。应用版本以 `native-client/Cargo.toml` 为准。
 
 ## Supported platforms
 
@@ -15,7 +15,7 @@ Elunvi Canvas 是使用 Rust 与 Slint 构建的跨平台桌面 AI 美术生产�
 安装 Rust stable 工具链后，在仓库根目录运行：
 
 ```bash
-cargo run -p artforge-studio-native --bin ArtForgeStudio
+cargo run -p artforge-studio-native --bin ElunviCanvas
 ```
 
 客户端默认连接生产 API。开发环境可通过 `ARTFORGE_API_BASE_URL` 覆盖服务地址，具体规则见 [开发指南](docs/DEVELOPMENT.md)。
@@ -25,10 +25,10 @@ cargo run -p artforge-studio-native --bin ArtForgeStudio
 ```bash
 cargo check -p artforge-studio-native
 cargo test -p artforge-studio-native
-cargo build --release -p artforge-studio-native --bin ArtForgeStudio
+cargo build --release -p artforge-studio-native --bin ElunviCanvas
 ```
 
-Release 二进制位于 `target/release/ArtForgeStudio`，Windows 下为 `target/release/ArtForgeStudio.exe`。
+Release 二进制位于 `target/release/ElunviCanvas`，Windows 下为 `target/release/ElunviCanvas.exe`。
 
 ## Package
 

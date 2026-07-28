@@ -122,7 +122,8 @@ export component VersionCheckDialog {
                     }
                 }
 
-                if AppState.update-active: Rectangle {
+                if AppState.update-active: active-progress := Rectangle {
+                    property <int> visible-progress: max(0, min(100, AppState.update-download-progress));
                     height: 92px;
                     background: AppTheme.panel-soft;
                     border-radius: 12px;
@@ -134,33 +135,62 @@ export component VersionCheckDialog {
                         padding-top: 14px;
                         padding-bottom: 12px;
                         spacing: 8px;
-                        Text {
+                        HorizontalLayout {
                             height: 22px;
-                            text: AppState.update-download-message;
-                            color: AppTheme.text;
-                            font-size: 13px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: AppState.update-stage == "downloading"
+                                    ? (AppState.en ? "Downloading installation package" : "正在下载安装包")
+                                    : (AppState.update-stage == "verifying"
+                                        ? (AppState.en ? "Verifying installation package" : "正在校验安装包")
+                                        : (AppState.update-stage == "installing"
+                                            ? (AppState.en ? "Starting installation" : "正在启动安装")
+                                            : (AppState.en ? "Cancelling download" : "正在取消下载")));
+                                color: AppTheme.text;
+                                font-size: 13px;
+                                horizontal-alignment: left;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                width: 48px;
+                                text: active-progress.visible-progress + "%";
+                                color: AppTheme.accent-dark;
+                                font-size: 13px;
+                                font-weight: 600;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                            }
                         }
-                        Rectangle {
+                        progress-track := Rectangle {
+                            width: parent.width;
                             height: 8px;
+                            clip: true;
                             background: AppTheme.border.with-alpha(0.55);
                             border-radius: 4px;
-                            Rectangle {
-                                width: max(0px, min(parent.width, parent.width * AppState.update-download-progress / 100));
+                            progress-fill := Rectangle {
+                                x: 0px;
+                                y: 0px;
+                                width: parent.width * active-progress.visible-progress / 100;
                                 height: parent.height;
                                 background: AppTheme.accent;
-                                border-radius: 4px;
+                                border-radius: min(4px, self.width / 2);
+                                animate width { duration: 220ms; easing: ease-out; }
                             }
                         }
                         Text {
                             height: 18px;
                             text: AppState.update-stage == "downloading"
-                                ? (AppState.update-download-progress + "%")
-                                : (AppState.en ? "Please wait…" : "请稍候…");
+                                ? (AppState.en
+                                    ? "The package will be verified automatically after downloading"
+                                    : "下载完成后将自动校验，请保持应用开启")
+                                : (AppState.update-stage == "verifying"
+                                    ? (AppState.en ? "Checking file size and SHA-256" : "正在核对文件大小与 SHA-256")
+                                    : (AppState.update-stage == "installing"
+                                        ? (AppState.en ? "The app will restart automatically" : "安装完成后应用将自动重启")
+                                        : (AppState.en ? "Removing the temporary download" : "正在清理临时下载文件")));
                             color: AppTheme.muted;
-                            font-size: 12px;
-                            horizontal-alignment: center;
+                            font-size: 11px;
+                            horizontal-alignment: left;
                             vertical-alignment: center;
                         }
                     }

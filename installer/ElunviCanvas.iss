@@ -1,6 +1,6 @@
-#define AppName "ArtForgeStudio"
-#define AppDisplayName "Elunvi Canvas"
-#define AppExeName "ArtForgeStudio.exe"
+#define AppName "Elunvi Canvas"
+#define AppFileStem "ElunviCanvas"
+#define AppExeName "ElunviCanvas.exe"
 #define AppVersion GetEnv("ARTFORGE_APP_VERSION")
 #define PackageDir GetEnv("ARTFORGE_PACKAGE_DIR")
 #define ReleaseDir GetEnv("ARTFORGE_RELEASE_DIR")
@@ -17,16 +17,16 @@
 
 [Setup]
 AppId={{DB6417C1-ACF9-41D6-956F-898E69F7CE3E}
-AppName={#AppDisplayName}
+AppName={#AppName}
 AppVersion={#AppVersion}
 DefaultDirName={localappdata}\Programs\{#AppName}
-DefaultGroupName={#AppDisplayName}
+DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#ReleaseDir}
-OutputBaseFilename={#AppName}_{#AppVersion}_windows_x64_setup
+OutputBaseFilename={#AppFileStem}_{#AppVersion}_windows_x64_setup
 SetupIconFile=..\native-client\assets\app.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 Compression=lzma2/max
@@ -52,9 +52,9 @@ Name: "{app}\data\out"; Flags: uninsneveruninstall
 Name: "{app}\data\prompt"; Flags: uninsneveruninstall
 
 [Icons]
-Name: "{autoprograms}\{#AppDisplayName}"; Filename: "{app}\{#AppExeName}"
-Name: "{autodesktop}\{#AppDisplayName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#AppExeName}"; Description: "启动 {#AppDisplayName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExeName}"; Description: "启动 {#AppName}"; Flags: nowait postinstall skipifsilent
 Filename: "{app}\{#AppExeName}"; Parameters: "--updated"; Flags: nowait skipifnotsilent

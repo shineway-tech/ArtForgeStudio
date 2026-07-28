@@ -164,7 +164,7 @@ fn perform_update_download(
         .connect_timeout(Duration::from_secs(15))
         .timeout(UPDATE_DOWNLOAD_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
-        .user_agent(format!("ArtForgeStudio/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("ElunviCanvas/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .context("无法创建更新下载请求")?;
     let mut response = client
@@ -275,10 +275,8 @@ fn poll_update_download(
             match event {
                 UpdateDownloadEvent::Progress(progress) => {
                     let state = app.global::<AppState>();
-                    state.set_update_download_progress(progress);
-                    state.set_update_download_message(
-                        format!("正在下载安装包… {progress}%").into(),
-                    );
+                    state.set_update_download_progress(progress.clamp(0, 100));
+                    state.set_update_download_message("正在下载安装包…".into());
                 }
                 UpdateDownloadEvent::Verifying => {
                     let state = app.global::<AppState>();
@@ -353,11 +351,11 @@ fn handoff_update_to_installer(app: &AppWindow, package_path: &Path) {
 
 fn update_package_file_name() -> &'static str {
     if cfg!(target_os = "macos") {
-        "ArtForgeStudio-update.dmg"
+        "ElunviCanvas-update.dmg"
     } else if cfg!(target_os = "windows") {
-        "ArtForgeStudio-update.exe"
+        "ElunviCanvas-update.exe"
     } else {
-        "ArtForgeStudio-update.bin"
+        "ElunviCanvas-update.bin"
     }
 }
 
@@ -460,7 +458,7 @@ fn macos_current_bundle() -> Option<PathBuf> {
 fn macos_update_destination(current_bundle: Option<&Path>) -> PathBuf {
     match current_bundle {
         Some(path) if !path.starts_with("/Volumes") => path.to_path_buf(),
-        _ => PathBuf::from("/Applications/ArtForgeStudio.app"),
+        _ => PathBuf::from("/Applications/ElunviCanvas.app"),
     }
 }
 
@@ -510,7 +508,7 @@ trap cleanup EXIT
 /usr/bin/hdiutil verify "$dmg_path" >/dev/null
 /usr/bin/hdiutil attach "$dmg_path" -nobrowse -readonly -mountpoint "$mount_dir" >/dev/null
 mounted=1
-source_app="$mount_dir/ArtForgeStudio.app"
+source_app="$mount_dir/ElunviCanvas.app"
 test -d "$source_app"
 installed_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$source_app/Contents/Info.plist")"
 test "$installed_version" = "$expected_version"
