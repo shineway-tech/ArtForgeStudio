@@ -2132,9 +2132,11 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(callbacks.contains("state.on_choose_canvas_node_image"));
         assert!(callbacks.contains("app_data_dir().join(\"canvas\").join(\"uploads\")"));
         assert!(callbacks.contains("atomic_write_file(&destination, &bytes)"));
-        assert!(callbacks.contains("image_path = destination.display().to_string()"));
+        assert!(callbacks.contains("path: destination.display().to_string()"));
+        assert!(callbacks.contains("image_path = image.path"));
         assert!(sync.contains("load_image(Path::new(&note.image_path))"));
-        assert!(page.contains("root.note.kind == \"image\" && root.note.image-path != \"\""));
+        assert!(page.contains("root.note.kind == \"image\" || root.is-board-image()"));
+        assert!(page.contains("root.note.image-path != \"\""));
         assert!(page.contains("source: root.note.preview-image"));
         assert!(page.contains("image-fit: contain"));
         assert!(page.contains("clip: true"));
@@ -2151,7 +2153,8 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(state.contains("callback resize-canvas-image-node(string, float, float)"));
         assert!(page.contains("image-resize-handle := Rectangle"));
         assert!(page.contains("image-resize-touch := TouchArea"));
-        assert!(page.contains("root.note.kind == \"image\" && root.note.image-path != \"\""));
+        assert!(page.contains("root.note.kind == \"image\" || root.is-board-image()"));
+        assert!(page.contains("root.note.image-path != \"\""));
         assert!(page.contains("AppState.resize-canvas-image-node(root.note.id"));
         assert!(page.contains("root.resize-preview-width = self.start-width * scale"));
         assert!(page.contains("root.resize-preview-height = self.start-height * scale"));
@@ -2160,6 +2163,25 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(callbacks.contains("source_image.size()"));
         assert!(ops.contains("fn resize_image_node_proportionally"));
         assert!(ops.contains("fn fit_image_node_to_intrinsic_aspect"));
+    }
+
+    #[test]
+    fn infinite_canvas_image_tool_separates_plain_uploads_from_generation_nodes() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+
+        assert!(state.contains("callback add-canvas-uploaded-image(float, float)"));
+        assert!(page.contains("image-insert-open"));
+        assert!(page.contains("text: AppState.en ? \"Upload image\" : \"上传图片\""));
+        assert!(page.contains("text: AppState.en ? \"Image node\" : \"图片节点\""));
+        assert!(page.contains("AppState.add-canvas-uploaded-image"));
+        assert!(page.contains("root.add-node(\"image\")"));
+        assert!(page.contains("function is-board-image() -> bool"));
+        assert!(page.contains("!root.is-board-image() && root.zoom-percent >= 30"));
+        assert!(callbacks.contains("state.on_add_canvas_uploaded_image"));
+        assert!(callbacks.contains("kind: \"board-image\".into()"));
+        assert!(callbacks.contains("pick_canvas_image(&app, &id)"));
     }
 
     #[test]

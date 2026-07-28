@@ -524,7 +524,10 @@ pub(super) fn fit_image_node_to_intrinsic_aspect(
     image_width: f32,
     image_height: f32,
 ) -> bool {
-    if note.kind != "image" || image_width <= 0.0 || image_height <= 0.0 {
+    if !matches!(note.kind.as_str(), "image" | "board-image")
+        || image_width <= 0.0
+        || image_height <= 0.0
+    {
         return false;
     }
 
@@ -564,7 +567,9 @@ pub(super) fn resize_image_node_proportionally(
     requested_height: f32,
 ) -> bool {
     let Some(node) = notes.iter_mut().find(|note| {
-        note.id == node_id && note.kind == "image" && !note.image_path.is_empty()
+        note.id == node_id
+            && matches!(note.kind.as_str(), "image" | "board-image")
+            && !note.image_path.is_empty()
     }) else {
         return false;
     };
@@ -1029,6 +1034,25 @@ mod tests {
         ));
         assert!((notes[0].width - 160.0).abs() < 0.001);
         assert!((notes[0].height - 80.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn whiteboard_image_objects_use_the_same_proportional_resize_rules() {
+        let mut notes = vec![CanvasNoteData {
+            kind: "board-image".into(),
+            width: 240.0,
+            height: 160.0,
+            image_path: "whiteboard.png".into(),
+            ..note("whiteboard", "board-image", 0.0, 0.0)
+        }];
+
+        assert!(resize_image_node_proportionally(
+            &mut notes,
+            "whiteboard",
+            360.0,
+            240.0
+        ));
+        assert_eq!((notes[0].width, notes[0].height), (360.0, 240.0));
     }
 
     #[test]

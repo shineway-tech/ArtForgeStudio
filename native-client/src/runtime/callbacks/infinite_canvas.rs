@@ -3,6 +3,67 @@ use super::*;
 const MAX_CANVAS_NODES: usize = 200;
 const MAX_CANVAS_LINKS: usize = 400;
 
+struct PreparedCanvasImage {
+    path: String,
+    width: f32,
+    height: f32,
+}
+
+fn pick_canvas_image(app: &AppWindow, node_id: &str) -> Option<PreparedCanvasImage> {
+    let source_path = rfd::FileDialog::new()
+        .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
+        .pick_file()?;
+    let source_image = match load_image(&source_path) {
+        Ok(image) => image,
+        Err(_) => {
+            let state = app.global::<AppState>();
+            state.set_generation_status(
+                if state.get_language().as_str() == "en" {
+                    "The selected file is not a supported image"
+                } else {
+                    "所选文件不是受支持的图片"
+                }
+                .into(),
+            );
+            return None;
+        }
+    };
+    let source_size = source_image.size();
+    let bytes = match fs::read(&source_path) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            let state = app.global::<AppState>();
+            state.set_generation_status(
+                if state.get_language().as_str() == "en" {
+                    "Unable to read the selected image"
+                } else {
+                    "无法读取所选图片"
+                }
+                .into(),
+            );
+            return None;
+        }
+    };
+    let upload_dir = app_data_dir().join("canvas").join("uploads");
+    if fs::create_dir_all(&upload_dir).is_err() {
+        return None;
+    }
+    let destination = upload_dir.join(format!(
+        "{}-{}.{}",
+        node_id,
+        Uuid::new_v4(),
+        image_extension(&bytes)
+    ));
+    if atomic_write_file(&destination, &bytes).is_err() {
+        return None;
+    }
+    Some(PreparedCanvasImage {
+        path: destination.display().to_string(),
+        width: source_size.width as f32,
+        height: source_size.height as f32,
+    })
+}
+
 fn target_at_input(
     store: &Store,
     source_id: &str,
@@ -202,44 +263,17 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let Some(source_path) = rfd::FileDialog::new()
-                .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
-                .pick_file()
-            else {
-                return;
-            };
-            let source_image = match load_image(&source_path) {
-                Ok(image) => image,
-                Err(_) => {
-                    let state = app.global::<AppState>();
-                    state.set_generation_status(
-                        if state.get_language().as_str() == "en" {
-                            "The selected file is not a supported image"
-                        } else {
-                            "所选文件不是受支持的图片"
-                        }
-                        .into(),
-                    );
-                    return;
-                }
-            };
-            let source_size = source_image.size();
-            let Ok(bytes) = fs::read(&source_path) else {
-                return;
-            };
-            let upload_dir = app_data_dir().join("canvas").join("uploads");
-            if fs::create_dir_all(&upload_dir).is_err() {
+            if !store
+                .borrow()
+                .canvas_notes
+                .iter()
+                .any(|node| node.id == id.as_str() && node.kind == "image")
+            {
                 return;
             }
-            let destination = upload_dir.join(format!(
-                "{}-{}.{}",
-                id.as_str(),
-                Uuid::new_v4(),
-                image_extension(&bytes)
-            ));
-            if atomic_write_file(&destination, &bytes).is_err() {
+            let Some(image) = pick_canvas_image(&app, id.as_str()) else {
                 return;
-            }
+            };
 
             let mut store_mut = store.borrow_mut();
             let Some(index) = store_mut
@@ -247,15 +281,15 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
                 .iter()
                 .position(|node| node.id == id.as_str() && node.kind == "image")
             else {
-                let _ = fs::remove_file(&destination);
+                let _ = fs::remove_file(&image.path);
                 return;
             };
             history.borrow_mut().record(canvas_snapshot(&store_mut));
-            store_mut.canvas_notes[index].image_path = destination.display().to_string();
+            store_mut.canvas_notes[index].image_path = image.path;
             fit_image_node_to_intrinsic_aspect(
                 &mut store_mut.canvas_notes[index],
-                source_size.width as f32,
-                source_size.height as f32,
+                image.width,
+                image.height,
             );
             persist_canvas(&app, &store_mut);
             sync_history_state(&app, &history.borrow());
@@ -269,6 +303,53 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
                 }
                 .into(),
             );
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        let history = history.clone();
+        state.on_add_canvas_uploaded_image(move |center_x, center_y| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            if store.borrow().canvas_notes.len() >= MAX_CANVAS_NODES {
+                show_canvas_capacity_status(&app);
+                return;
+            }
+            let id = Uuid::new_v4().to_string();
+            let Some(image) = pick_canvas_image(&app, &id) else {
+                return;
+            };
+
+            let mut store_mut = store.borrow_mut();
+            if store_mut.canvas_notes.len() >= MAX_CANVAS_NODES {
+                let _ = fs::remove_file(&image.path);
+                show_canvas_capacity_status(&app);
+                return;
+            }
+            let (_, width, height) = canvas_node_defaults("image", false);
+            let mut note = CanvasNoteData {
+                id: id.clone(),
+                kind: "board-image".into(),
+                x: center_x - width / 2.0,
+                y: center_y - height / 2.0,
+                width,
+                height,
+                image_path: image.path,
+                selected: true,
+                ..CanvasNoteData::default()
+            };
+            fit_image_node_to_intrinsic_aspect(&mut note, image.width, image.height);
+
+            history.borrow_mut().record(canvas_snapshot(&store_mut));
+            clear_selection(&mut store_mut.canvas_notes);
+            store_mut.canvas_notes.push(note);
+            persist_canvas(&app, &store_mut);
+            sync_canvas_selection(&app, &store_mut);
+            app.global::<AppState>().set_canvas_selected_id(id.into());
+            sync_history_state(&app, &history.borrow());
         });
     }
 

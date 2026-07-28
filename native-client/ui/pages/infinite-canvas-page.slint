@@ -58,6 +58,44 @@ component CanvasToolButton {
     }
 }
 
+component CanvasImageInsertChoice {
+    in property <image> icon;
+    in property <string> text;
+    callback clicked();
+    height: 42px;
+
+    Rectangle {
+        background: choice-touch.has-hover ? AppTheme.panel-soft : transparent;
+        border-radius: 6px;
+        Image {
+            x: 12px;
+            y: (parent.height - 18px) / 2;
+            width: 18px;
+            height: 18px;
+            source: root.icon;
+            colorize: choice-touch.has-hover ? AppTheme.accent : AppTheme.text;
+            image-fit: contain;
+        }
+        Text {
+            x: 42px;
+            width: parent.width - 54px;
+            height: parent.height;
+            text: root.text;
+            color: choice-touch.has-hover ? AppTheme.accent : AppTheme.text;
+            font-size: 13px;
+            font-weight: 400;
+            vertical-alignment: center;
+            wrap: no-wrap;
+        }
+        choice-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
 component CanvasZoomButton {
     in property <image> icon;
     in property <string> label;
@@ -705,6 +743,10 @@ component CanvasNodeCard {
         return root.note.kind == "image" || root.note.kind == "video" || root.note.kind == "audio";
     }
 
+    function is-board-image() -> bool {
+        return root.note.kind == "board-image";
+    }
+
     function is-default-media-prompt() -> bool {
         return root.current-content == "描述要生成的图片内容"
             || root.current-content == "描述要生成的视频内容"
@@ -878,16 +920,18 @@ component CanvasNodeCard {
         clip: false;
         background: root.note.kind == "group"
             ? AppTheme.accent.with-alpha(root.note.selected ? 0.10 : 0.045)
-            : (root.dark-background ? #292522 : AppTheme.panel);
-        border-radius: (root.note.kind == "group" ? 4px : 20px) * root.node-scale();
-        border-width: (root.note.selected || node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover ? 2px : 1px) * root.node-scale();
+            : (root.is-board-image() ? transparent : (root.dark-background ? #292522 : AppTheme.panel));
+        border-radius: (root.note.kind == "group" || root.is-board-image() ? 4px : 20px) * root.node-scale();
+        border-width: (root.is-board-image()
+            ? (root.note.selected || node-drag-touch.has-hover ? 2px : 0px)
+            : (root.note.selected || node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover ? 2px : 1px)) * root.node-scale();
         border-color: root.note.selected
             ? AppTheme.accent
             : (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover
                 ? AppTheme.accent.with-alpha(0.78)
                 : (root.note.kind == "group" ? AppTheme.accent.with-alpha(0.55) : #514c48));
 
-        if root.note.kind != "group" && (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover || AppState.canvas-selected-id == root.note.id || root.connection-source-id != ""): Rectangle {
+        if root.note.kind != "group" && !root.is-board-image() && (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover || AppState.canvas-selected-id == root.note.id || root.connection-source-id != ""): Rectangle {
             x: -5px * root.node-scale();
             y: (parent.height - 10px * root.node-scale()) / 2;
             width: 10px * root.node-scale();
@@ -899,7 +943,7 @@ component CanvasNodeCard {
                 ? (AppState.canvas-link-hover-valid ? AppTheme.accent : #e5484d)
                 : (root.connection-source-id != "" && root.connection-source-id != root.note.id ? AppTheme.accent.with-alpha(0.72) : AppTheme.accent);
         }
-        if root.note.kind != "group" && (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover || AppState.canvas-selected-id == root.note.id || root.connection-source-id == root.note.id || root.connection-target-id != ""): Rectangle {
+        if root.note.kind != "group" && !root.is-board-image() && (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover || AppState.canvas-selected-id == root.note.id || root.connection-source-id == root.note.id || root.connection-target-id != ""): Rectangle {
             x: parent.width - 5px * root.node-scale();
             y: (parent.height - 10px * root.node-scale()) / 2;
             width: 10px * root.node-scale();
@@ -1192,13 +1236,13 @@ component CanvasNodeCard {
             overflow: elide;
         }
 
-        if root.note.kind == "image" && root.note.image-path != "": Rectangle {
+        if (root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "": Rectangle {
             x: 2px * root.node-scale();
             y: self.x;
             width: parent.width - 2 * self.x;
             height: parent.height - 2 * self.y;
-            background: #171513;
-            border-radius: 18px * root.node-scale();
+            background: root.is-board-image() ? transparent : #171513;
+            border-radius: (root.is-board-image() ? 3px : 18px) * root.node-scale();
             clip: true;
             Image {
                 width: parent.width;
@@ -1454,7 +1498,7 @@ component CanvasNodeCard {
         }
 
         input-connector-touch := TouchArea {
-            visible: root.note.kind != "group" && root.zoom-percent >= 30;
+            visible: root.note.kind != "group" && !root.is-board-image() && root.zoom-percent >= 30;
             width: max(18px, 26px * root.node-scale());
             height: self.width;
             x: -self.width / 2;
@@ -1477,7 +1521,7 @@ component CanvasNodeCard {
         }
 
         output-connector-touch := TouchArea {
-            visible: root.note.kind != "group" && root.zoom-percent >= 30;
+            visible: root.note.kind != "group" && !root.is-board-image() && root.zoom-percent >= 30;
             width: max(18px, 26px * root.node-scale());
             height: self.width;
             x: parent.width - self.width / 2;
@@ -1533,7 +1577,7 @@ component CanvasNodeCard {
             }
         }
 
-        if root.note.kind == "image" && root.note.image-path != "" && root.note.selected && root.zoom-percent >= 30: image-resize-handle := Rectangle {
+        if (root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "" && root.note.selected && root.zoom-percent >= 30: image-resize-handle := Rectangle {
             width: max(18px, 24px * root.node-scale());
             height: self.width;
             x: parent.width - self.width / 2;
@@ -1885,6 +1929,7 @@ export component InfiniteCanvasPage {
     in-out property <length> pan-y: 92px;
     in-out property <int> zoom-percent: 100;
     in-out property <bool> appearance-open: false;
+    in-out property <bool> image-insert-open: false;
     in-out property <bool> connection-dragging: false;
     in-out property <string> connection-mode: "";
     in-out property <string> connection-source-id: "";
@@ -1988,6 +2033,13 @@ export component InfiniteCanvasPage {
         let world-x = (canvas.width / 2 - root.pan-x) * 100 / root.zoom-percent;
         let world-y = (canvas.height / 2 - root.pan-y) * 100 / root.zoom-percent;
         AppState.add-canvas-node(kind, world-x / 1px, world-y / 1px);
+        AppState.canvas-tool = "pan";
+    }
+
+    function upload-board-image() {
+        let world-x = (canvas.width / 2 - root.pan-x) * 100 / root.zoom-percent;
+        let world-y = (canvas.height / 2 - root.pan-y) * 100 / root.zoom-percent;
+        AppState.add-canvas-uploaded-image(world-x / 1px, world-y / 1px);
         AppState.canvas-tool = "pan";
     }
 
@@ -2166,6 +2218,7 @@ export component InfiniteCanvasPage {
                 pointer-event(event) => {
                     if event.kind == PointerEventKind.down && (event.button == PointerEventButton.left || event.button == PointerEventButton.middle) {
                         root.appearance-open = false;
+                        root.image-insert-open = false;
                         canvas-keyboard.focus();
                         if event.button == PointerEventButton.middle || AppState.canvas-tool == "pan" || root.space-pan-active {
                             root.temporary-pan-active = true;
@@ -2564,7 +2617,16 @@ export component InfiniteCanvasPage {
                     CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/undo.svg"); label: AppState.en ? "Undo" : "撤销"; disabled: !AppState.canvas-can-undo; clicked => { AppState.undo-canvas(); } }
                     CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/redo.svg"); label: AppState.en ? "Redo" : "重做"; disabled: !AppState.canvas-can-redo; clicked => { AppState.redo-canvas(); } }
                     CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/text.svg"); label: AppState.en ? "Text node" : "文本节点"; clicked => { root.add-node("text"); } }
-                    CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/image.svg"); label: AppState.en ? "Image node" : "图片节点"; clicked => { root.add-node("image"); } }
+                    image-button := CanvasToolButton {
+                        compact: canvas.width < 620px;
+                        icon: @image-url("../../assets/icons/image.svg");
+                        label: AppState.en ? "Insert image" : "添加图片";
+                        selected: root.image-insert-open;
+                        clicked => {
+                            root.appearance-open = false;
+                            root.image-insert-open = !root.image-insert-open;
+                        }
+                    }
                     CanvasToolButton {
                         compact: canvas.width < 620px;
                         icon: @image-url("../../assets/icons/group.svg");
@@ -2575,8 +2637,48 @@ export component InfiniteCanvasPage {
                             AppState.group-canvas-selection(world-x / 1px, world-y / 1px);
                         }
                     }
-                    appearance-button := CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/palette.svg"); label: AppState.en ? "Canvas appearance" : "画布外观"; selected: root.appearance-open; clicked => { root.appearance-open = !root.appearance-open; } }
+                    appearance-button := CanvasToolButton {
+                        compact: canvas.width < 620px;
+                        icon: @image-url("../../assets/icons/palette.svg");
+                        label: AppState.en ? "Canvas appearance" : "画布外观";
+                        selected: root.appearance-open;
+                        clicked => {
+                            root.image-insert-open = false;
+                            root.appearance-open = !root.appearance-open;
+                        }
+                    }
                     CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/trash.svg"); label: AppState.en ? "Delete selected" : "删除所选"; disabled: AppState.canvas-selected-count == 0 && AppState.canvas-selected-link-id == ""; clicked => { root.request-selected-delete(); } }
+                }
+            }
+
+            if root.image-insert-open: Rectangle {
+                x: max(16px, min(toolbar.x + image-button.x + (image-button.width - self.width) / 2, parent.width - self.width - 16px));
+                y: max(16px, toolbar.y - self.height - 10px);
+                width: 176px;
+                height: 96px;
+                background: AppTheme.panel.with-alpha(0.99);
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+                VerticalLayout {
+                    padding: 5px;
+                    spacing: 2px;
+                    CanvasImageInsertChoice {
+                        icon: @image-url("../../assets/icons/upload.svg");
+                        text: AppState.en ? "Upload image" : "上传图片";
+                        clicked => {
+                            root.image-insert-open = false;
+                            root.upload-board-image();
+                        }
+                    }
+                    CanvasImageInsertChoice {
+                        icon: @image-url("../../assets/icons/image.svg");
+                        text: AppState.en ? "Image node" : "图片节点";
+                        clicked => {
+                            root.image-insert-open = false;
+                            root.add-node("image");
+                        }
+                    }
                 }
             }
 
