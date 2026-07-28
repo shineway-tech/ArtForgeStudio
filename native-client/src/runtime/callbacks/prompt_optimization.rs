@@ -339,6 +339,7 @@ fn start_prompt_optimization(app: &AppWindow, context: AppContext) {
         max_rounds,
         target_score: 90,
     };
+    clear_prompt_optimization_result(&state);
     state.set_deep_optimization_original_prompt(prompt.into());
     state.set_deep_optimization_stage("running".into());
     state.set_deep_optimization_progress(1);
@@ -483,10 +484,19 @@ fn persist_prompt_optimization_job(app: &AppWindow, context: &AppContext, id: &s
 }
 
 fn clear_prompt_optimization_job(app: &AppWindow, context: &AppContext) {
-    app.global::<AppState>()
-        .set_deep_optimization_job_id("".into());
+    let state = app.global::<AppState>();
+    state.set_deep_optimization_job_id("".into());
+    clear_prompt_optimization_result(&state);
     context.store.borrow_mut().deep_prompt_job_id.clear();
     save_local_store(app, &context.store.borrow());
+}
+
+fn clear_prompt_optimization_result(state: &AppState) {
+    state.set_deep_optimization_chinese_prompt("".into());
+    state.set_deep_optimization_english_prompt("".into());
+    state.set_deep_optimization_highlighted_original(styled_markdown(""));
+    state.set_deep_optimization_highlighted_chinese(styled_markdown(""));
+    state.set_deep_optimization_change_summary("".into());
 }
 
 fn begin_prompt_optimization_polling(app: &AppWindow, context: AppContext, id: String) {
@@ -768,7 +778,11 @@ fn apply_prompt_optimization_detail(app: &AppWindow, detail: &PromptOptimization
     );
     state.set_deep_optimization_baseline_score(detail.baseline_score.unwrap_or(0));
     state.set_deep_optimization_current_score(
-        detail.best_score.or(detail.baseline_score).unwrap_or(0),
+        detail
+            .result_score
+            .or(detail.best_score)
+            .or(detail.baseline_score)
+            .unwrap_or(0),
     );
     state.set_deep_optimization_phase_label(phase_label(&detail.phase).into());
     state.set_deep_optimization_status_message(phase_message(&detail.phase).into());
@@ -790,17 +804,25 @@ fn apply_prompt_optimization_detail(app: &AppWindow, detail: &PromptOptimization
     state.set_deep_optimization_can_clear_stable_feedback(
         detail.can_clear_stable_feedback,
     );
-    if let Some(original) = detail.original_prompt.as_ref() {
-        state.set_deep_optimization_original_prompt(original.clone().into());
-    }
-    if let Some(result) = detail.result.as_ref() {
-        state.set_deep_optimization_chinese_prompt(result.chinese_prompt.clone().into());
-        state.set_deep_optimization_english_prompt(result.english_prompt.clone().into());
-        let original = detail.original_prompt.as_deref().unwrap_or_default();
-        let (highlighted_original, highlighted_chinese) =
-            highlighted_prompt_markdown(original, &result.chinese_prompt);
-        state.set_deep_optimization_highlighted_original(styled_markdown(&highlighted_original));
-        state.set_deep_optimization_highlighted_chinese(styled_markdown(&highlighted_chinese));
+    let original = detail.original_prompt.as_deref().unwrap_or_default();
+    state.set_deep_optimization_original_prompt(original.into());
+    match detail.result.as_ref() {
+        Some(result) => {
+            state.set_deep_optimization_chinese_prompt(result.chinese_prompt.clone().into());
+            state.set_deep_optimization_english_prompt(result.english_prompt.clone().into());
+            let comparison_base = best_result_comparison_base(detail);
+            let (highlighted_original, highlighted_chinese) =
+                highlighted_prompt_markdown(comparison_base, &result.chinese_prompt);
+            state.set_deep_optimization_highlighted_original(styled_markdown(&highlighted_original));
+            state.set_deep_optimization_highlighted_chinese(styled_markdown(&highlighted_chinese));
+        }
+        None => {
+            state.set_deep_optimization_chinese_prompt(original.into());
+            state.set_deep_optimization_english_prompt("".into());
+            let plain_original = styled_markdown(&escape_prompt_markdown(original));
+            state.set_deep_optimization_highlighted_original(plain_original.clone());
+            state.set_deep_optimization_highlighted_chinese(plain_original);
+        }
     }
     state.set_deep_optimization_feedback(
         detail.pending_feedback.clone().unwrap_or_default().into(),
@@ -818,35 +840,7 @@ fn apply_prompt_optimization_detail(app: &AppWindow, detail: &PromptOptimization
             .into(),
     );
 
-    let best_round = detail
-        .best_round_no
-        .and_then(|number| detail.rounds.iter().find(|round| round.round == number))
-        .or_else(|| detail.rounds.iter().rev().find(|round| round.status == "completed"));
-    let summary = best_round
-        .map(|round| {
-            if let Some(review) = round
-                .top_band
-                .as_ref()
-                .filter(|review| !review.qualifies && !review.blocking_issues.is_empty())
-            {
-                return format!(
-                    "高分复核待改进：{}",
-                    review.blocking_issues.join("；"),
-                );
-            }
-            if round.major_changes.is_empty() {
-                round.issues.join("；")
-            } else {
-                round
-                    .major_changes
-                    .iter()
-                    .map(|item| format!("• {item}"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
-        })
-        .unwrap_or_else(|| "正在分析提示词的主体、构图、光线、风格和约束。".to_string());
-    state.set_deep_optimization_change_summary(summary.into());
+    state.set_deep_optimization_change_summary(optimization_change_summary(detail).into());
 
     let rounds = detail
         .rounds
@@ -894,6 +888,65 @@ fn apply_prompt_optimization_detail(app: &AppWindow, detail: &PromptOptimization
         _ => "running",
     };
     state.set_deep_optimization_stage(stage.into());
+}
+
+fn displayed_result_round(detail: &PromptOptimizationDetail) -> Option<&PromptOptimizationRound> {
+    detail
+        .result_round_no
+        .or(detail.best_round_no)
+        .and_then(|number| detail.rounds.iter().find(|round| round.round == number))
+}
+
+fn best_result_comparison_base(detail: &PromptOptimizationDetail) -> &str {
+    let Some(result_round) = displayed_result_round(detail) else {
+        return detail.original_prompt.as_deref().unwrap_or_default();
+    };
+    detail
+        .rounds
+        .iter()
+        .filter(|round| {
+            round.accepted
+                && round.round < result_round.round
+                && round
+                    .chinese_prompt
+                    .as_deref()
+                    .is_some_and(|prompt| !prompt.trim().is_empty())
+        })
+        .max_by_key(|round| round.round)
+        .and_then(|round| round.chinese_prompt.as_deref())
+        .or(detail.original_prompt.as_deref())
+        .unwrap_or_default()
+}
+
+fn optimization_change_summary(detail: &PromptOptimizationDetail) -> String {
+    if detail.result.is_none() {
+        return "本轮候选未超过原提示词，已保留原提示词。".to_string();
+    }
+    let Some(round) = displayed_result_round(detail) else {
+        return "已生成当前最佳版本。".to_string();
+    };
+    if let Some(review) = round
+        .top_band
+        .as_ref()
+        .filter(|review| !review.qualifies && !review.blocking_issues.is_empty())
+    {
+        return format!(
+            "高分复核待改进：{}",
+            review.blocking_issues.join("；"),
+        );
+    }
+    if !round.major_changes.is_empty() {
+        return round
+            .major_changes
+            .iter()
+            .map(|item| format!("• {item}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    if !round.issues.is_empty() {
+        return round.issues.join("；");
+    }
+    "已生成当前最佳版本。".to_string()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1204,8 +1257,11 @@ fn round_status_label(status: &str) -> &'static str {
 #[cfg(test)]
 mod prompt_diff_tests {
     use super::{
-        collect_lcs_matches, highlighted_prompt_markdown, prompt_diff_pieces,
-        prompt_diff_tokens, styled_markdown,
+        best_result_comparison_base, collect_lcs_matches, highlighted_prompt_markdown,
+        optimization_change_summary, prompt_diff_pieces, prompt_diff_tokens, styled_markdown,
+    };
+    use crate::runtime::api::{
+        PromptOptimizationDetail, PromptOptimizationResult, PromptOptimizationRound,
     };
 
     #[test]
@@ -1242,5 +1298,105 @@ mod prompt_diff_tests {
         assert!(optimized.contains("<u>夜晚"));
         let _ = styled_markdown(&original);
         let _ = styled_markdown(&optimized);
+    }
+
+    #[test]
+    fn identical_prompts_have_no_change_highlights() {
+        let prompt = "一位古风美女，柔和自然光照，高质量人像摄影效果。";
+        let (original, optimized) = highlighted_prompt_markdown(prompt, prompt);
+        assert!(!original.contains("<u>"));
+        assert!(!optimized.contains("<u>"));
+    }
+
+    #[test]
+    fn best_result_diff_uses_the_previous_accepted_version() {
+        let detail = PromptOptimizationDetail {
+            original_prompt: Some("最初提示词".into()),
+            result: Some(PromptOptimizationResult {
+                chinese_prompt: "第二版提示词".into(),
+                english_prompt: "second prompt".into(),
+            }),
+            best_round_no: Some(3),
+            result_round_no: Some(3),
+            rounds: vec![
+                PromptOptimizationRound {
+                    round: 1,
+                    accepted: true,
+                    chinese_prompt: Some("第一版提示词".into()),
+                    ..Default::default()
+                },
+                PromptOptimizationRound {
+                    round: 2,
+                    accepted: false,
+                    chinese_prompt: Some("被拒绝的提示词".into()),
+                    ..Default::default()
+                },
+                PromptOptimizationRound {
+                    round: 3,
+                    accepted: true,
+                    chinese_prompt: Some("第二版提示词".into()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(best_result_comparison_base(&detail), "第一版提示词");
+    }
+
+    #[test]
+    fn rejected_only_job_does_not_describe_candidate_changes() {
+        let detail = PromptOptimizationDetail {
+            original_prompt: Some("保留的原提示词".into()),
+            result: None,
+            best_round_no: None,
+            rounds: vec![PromptOptimizationRound {
+                round: 1,
+                status: "completed".into(),
+                accepted: false,
+                major_changes: vec!["不应展示的候选改动".into()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            optimization_change_summary(&detail),
+            "本轮候选未超过原提示词，已保留原提示词。",
+        );
+    }
+
+    #[test]
+    fn low_score_reviewable_candidate_describes_its_actual_changes() {
+        let detail = PromptOptimizationDetail {
+            original_prompt: Some("一位古风美女".into()),
+            result: Some(PromptOptimizationResult {
+                chinese_prompt: "一位古风美女，青色织锦长裙，园林晨雾".into(),
+                english_prompt: "an ancient-style beauty in a cyan brocade dress".into(),
+            }),
+            baseline_score: Some(88),
+            best_score: Some(88),
+            result_score: Some(59),
+            result_round_no: Some(3),
+            can_apply: true,
+            rounds: vec![PromptOptimizationRound {
+                round: 3,
+                status: "completed".into(),
+                accepted: false,
+                score_before: 88,
+                major_changes: vec!["补充服装材质和环境层次".into()],
+                chinese_prompt: Some("一位古风美女，青色织锦长裙，园林晨雾".into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_eq!(best_result_comparison_base(&detail), "一位古风美女");
+        assert_eq!(
+            optimization_change_summary(&detail),
+            "• 补充服装材质和环境层次",
+        );
+        assert!(detail.can_apply);
+        assert_eq!(detail.result_score, Some(59));
     }
 }
