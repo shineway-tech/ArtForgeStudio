@@ -309,7 +309,7 @@ export component DeepPromptOptimizationDrawer {
                             }
                             Text { x: 0px; width: parent.width / 3; height: parent.height; text: AppState.en ? "Chinese" : "中文可读版"; color: AppState.deep-optimization-result-tab == "chinese" ? #ffffff : AppTheme.muted; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
                             Text { x: parent.width / 3; width: parent.width / 3; height: parent.height; text: AppState.en ? "English" : "模型英文版"; color: AppState.deep-optimization-result-tab == "english" ? #ffffff : AppTheme.muted; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
-                            Text { x: parent.width * 2 / 3; width: parent.width / 3; height: parent.height; text: AppState.en ? "Original" : "原提示词"; color: AppState.deep-optimization-result-tab == "original" ? #ffffff : AppTheme.muted; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { x: parent.width * 2 / 3; width: parent.width / 3; height: parent.height; text: AppState.en ? "Compared version" : "对比版本"; color: AppState.deep-optimization-result-tab == "original" ? #ffffff : AppTheme.muted; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
                             TouchArea { x: 0px; width: parent.width / 3; height: parent.height; clicked => { AppState.deep-optimization-result-tab = "chinese"; } }
                             TouchArea { x: parent.width / 3; width: parent.width / 3; height: parent.height; clicked => { AppState.deep-optimization-result-tab = "english"; } }
                             TouchArea { x: parent.width * 2 / 3; width: parent.width / 3; height: parent.height; clicked => { AppState.deep-optimization-result-tab = "original"; } }
@@ -323,7 +323,7 @@ export component DeepPromptOptimizationDrawer {
                                 color: AppTheme.text; font-size: 12px;
                                 single-line: false; wrap: word-wrap; read-only: true;
                             }
-                            if AppState.deep-optimization-result-tab != "english": Rectangle {
+                            if AppState.deep-optimization-result-tab != "english" && AppState.deep-optimization-can-apply: Rectangle {
                                 x: 14px; y: 10px; width: parent.width - 28px; height: 20px; background: transparent;
                                 Rectangle {
                                     x: 0px; y: 6px; width: 8px; height: 8px; border-radius: 4px;
@@ -332,8 +332,8 @@ export component DeepPromptOptimizationDrawer {
                                 Text {
                                     x: 16px; width: parent.width - 16px; height: parent.height;
                                     text: AppState.deep-optimization-result-tab == "original"
-                                        ? (AppState.en ? "Highlighted text was replaced or removed" : "高亮内容为被替换或删减的原文")
-                                        : (AppState.en ? "Highlighted text was added or rewritten" : "高亮内容为本轮新增或改写");
+                                        ? (AppState.en ? "Highlighted text was replaced or removed in this version" : "高亮内容为当前版本中被替换或删减的原文")
+                                        : (AppState.en ? "Highlighted text was added or rewritten in this version" : "高亮内容为当前版本新增或改写");
                                     color: AppTheme.muted; font-size: 10px; vertical-alignment: center;
                                 }
                             }
