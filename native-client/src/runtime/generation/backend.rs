@@ -75,7 +75,29 @@ pub(super) fn start_backend_generation(
         time: state.get_time_mode().to_string(),
         light: state.get_light_mode().to_string(),
     };
-    let language = if state.get_translate_prompt() || state.get_language().as_str() == "en" {
+    let deep_english = state
+        .get_deep_optimization_applied_english()
+        .trim()
+        .to_string();
+    let deep_chinese = state
+        .get_deep_optimization_applied_chinese()
+        .trim()
+        .to_string();
+    let uses_deep_english = !deep_english.is_empty()
+        && (raw_prompt.trim() == deep_english || raw_prompt.trim().ends_with(&deep_english));
+    let display_prompt = if uses_deep_english && !deep_chinese.is_empty() {
+        let prefix = raw_prompt
+            .trim()
+            .strip_suffix(&deep_english)
+            .unwrap_or_default();
+        format!("{prefix}{deep_chinese}")
+    } else {
+        raw_prompt.clone()
+    };
+    let language = if uses_deep_english
+        || state.get_translate_prompt()
+        || state.get_language().as_str() == "en"
+    {
         PromptLanguage::English
     } else {
         PromptLanguage::Chinese
@@ -111,7 +133,7 @@ pub(super) fn start_backend_generation(
         client_request_id: request_id.clone(),
         local_task_id: local_task_id.clone(),
         server_task_id: String::new(),
-        raw_prompt: raw_prompt.clone(),
+        raw_prompt: display_prompt.clone(),
         generation_prompt: generation_prompt.clone(),
         task_type: "image_generation".to_string(),
         category: category.clone(),
@@ -140,7 +162,7 @@ pub(super) fn start_backend_generation(
         server_task_id: None,
         category: category.clone(),
         conversation_id: conversation_id.clone(),
-        prompt: raw_prompt.clone(),
+        prompt: display_prompt.clone(),
         credit_cost: 0,
         total_count: count,
         loading_count: count,
@@ -168,7 +190,7 @@ pub(super) fn start_backend_generation(
         let mut conversations = state.get_conversations().iter().collect::<Vec<_>>();
         conversations.insert(0, ConversationItem {
             id: conversation_id.clone().into(),
-            title: short_text(&raw_prompt, 10).into(),
+            title: short_text(&display_prompt, 10).into(),
             image: Image::default(),
             loading: true,
         });
@@ -178,6 +200,7 @@ pub(super) fn start_backend_generation(
 
     let quality_for_worker = quality.clone();
     let aspect_ratio = api_aspect_ratio(&ratio);
+    let display_prompt_for_worker = display_prompt.clone();
     let (sender, receiver) = mpsc::channel::<GenerationOutcome>();
     let cancellations = context.cancelled_generation_requests.clone();
     std::thread::spawn(move || {
@@ -284,7 +307,7 @@ pub(super) fn start_backend_generation(
                                 handled_success.insert(item.index);
                                 let _ = sender.send(GenerationOutcome::ImageSuccess {
                                     bytes,
-                                    optimized: detail.prompt.clone().unwrap_or_else(|| generation_prompt.clone()),
+                                    display_prompt: display_prompt_for_worker.clone(),
                                     time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
                                     upscale_done: false,
                                     delivery: Some(DeliveryConfirmation {
@@ -344,7 +367,7 @@ pub(super) fn start_backend_generation(
         app.as_weak(),
         context,
         Rc::new(RefCell::new(Some(receiver))),
-        raw_prompt,
+        display_prompt,
         category,
         mode,
         ratio,
@@ -620,7 +643,7 @@ pub(super) fn start_backend_upscale(
                                 handled_success.insert(item.index);
                                 let _ = sender.send(GenerationOutcome::ImageSuccess {
                                     bytes,
-                                    optimized: source_prompt_for_result.clone(),
+                                    display_prompt: source_prompt_for_result.clone(),
                                     time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
                                     upscale_done: true,
                                     delivery: Some(DeliveryConfirmation {
@@ -1230,14 +1253,9 @@ fn run_recovered_generation_worker(
                     match api.download_verified(file) {
                         Ok(bytes) => {
                             handled_success.insert(item.index);
-                            let optimized = if record.task_type == "image_upscale" {
-                                record.raw_prompt.clone()
-                            } else {
-                                detail.prompt.clone().unwrap_or_else(|| record.generation_prompt.clone())
-                            };
                             let _ = sender.send(GenerationOutcome::ImageSuccess {
                                 bytes,
-                                optimized,
+                                display_prompt: record.raw_prompt.clone(),
                                 time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
                                 upscale_done: record.task_type == "image_upscale",
                                 delivery: Some(DeliveryConfirmation {

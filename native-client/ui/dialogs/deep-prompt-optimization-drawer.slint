@@ -1,0 +1,481 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component DeepPromptOptimizationDrawer {
+    visible: AppState.deep-optimization-open;
+
+    if AppState.deep-optimization-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #08130f52;
+
+        TouchArea {
+            width: parent.width - 430px;
+            height: parent.height;
+            clicked => { AppState.close-deep-optimization(); }
+        }
+
+        panel := Rectangle {
+            x: parent.width - 430px;
+            y: 0px;
+            width: 430px;
+            height: parent.height;
+            background: AppTheme.panel;
+            border-width: 1px;
+            border-color: AppTheme.border;
+
+            panel-hit-blocker := TouchArea {
+                width: parent.width;
+                height: parent.height;
+            }
+
+            Text {
+                x: 26px;
+                y: 22px;
+                width: 280px;
+                height: 32px;
+                text: AppState.en ? "Deep Prompt Optimization" : "深度优化";
+                color: AppTheme.text;
+                font-size: 22px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            Text {
+                x: parent.width - 54px;
+                y: 20px;
+                width: 32px;
+                height: 32px;
+                text: "×";
+                color: AppTheme.muted;
+                font-size: 24px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            close-touch := TouchArea {
+                x: parent.width - 58px;
+                y: 16px;
+                width: 40px;
+                height: 40px;
+                mouse-cursor: pointer;
+                clicked => { AppState.close-deep-optimization(); }
+            }
+
+            Rectangle {
+                x: 26px;
+                y: 68px;
+                width: parent.width - 52px;
+                height: 58px;
+                background: transparent;
+                for label[index] in [AppState.en ? "Setup" : "设置", AppState.en ? "Optimize" : "优化中", AppState.en ? "Review" : "确认", AppState.en ? "Done" : "完成"]: Rectangle {
+                    x: index * 98px;
+                    y: 0px;
+                    width: 84px;
+                    height: 54px;
+                    background: transparent;
+                    Rectangle {
+                        x: 30px;
+                        y: 0px;
+                        width: 24px;
+                        height: 24px;
+                        border-radius: 12px;
+                        background: index <= root.stage-index() ? AppTheme.accent : AppTheme.panel-soft;
+                        border-width: index <= root.stage-index() ? 0px : 1px;
+                        border-color: AppTheme.border;
+                        Text {
+                            width: parent.width;
+                            height: parent.height;
+                            text: index < root.stage-index() ? "✓" : (index + 1);
+                            color: index <= root.stage-index() ? #ffffff : AppTheme.muted;
+                            font-size: 12px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                    if index < 3: Rectangle {
+                        x: 54px;
+                        y: 11px;
+                        width: 44px;
+                        height: 2px;
+                        background: index < root.stage-index() ? AppTheme.accent : AppTheme.border;
+                    }
+                    Text {
+                        x: 0px;
+                        y: 32px;
+                        width: 84px;
+                        height: 20px;
+                        text: label;
+                        color: index == root.stage-index() ? AppTheme.accent-dark : AppTheme.muted;
+                        font-size: 12px;
+                        font-weight: index == root.stage-index() ? 600 : 400;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            Rectangle {
+                x: 0px;
+                y: 126px;
+                width: parent.width;
+                height: 1px;
+                background: AppTheme.border;
+            }
+
+            body := ScrollView {
+                x: 0px;
+                y: 127px;
+                width: parent.width;
+                height: parent.height - 127px;
+                viewport-width: self.visible-width;
+                viewport-height: root.body-height();
+
+                Rectangle {
+                    width: body.visible-width;
+                    height: root.body-height();
+                    background: AppTheme.panel;
+
+                    if AppState.deep-optimization-stage == "settings": Rectangle {
+                        x: 24px;
+                        y: 22px;
+                        width: parent.width - 48px;
+                        height: 770px;
+                        background: transparent;
+
+                        Text { x: 0px; y: 0px; width: parent.width; height: 22px; text: AppState.en ? "Current prompt" : "当前提示词"; color: AppTheme.text; font-size: 14px; font-weight: 600; }
+                        current-prompt-frame := Rectangle {
+                            x: 0px; y: 30px; width: parent.width; height: 190px;
+                            background: AppTheme.panel-soft;
+                            border-radius: 10px;
+                            border-width: 1px;
+                            border-color: AppTheme.border;
+                            clip: true;
+                            current-prompt-scroll := ScrollView {
+                                x: 12px;
+                                y: 10px;
+                                width: parent.width - 24px;
+                                height: parent.height - 20px;
+                                viewport-width: self.visible-width;
+                                viewport-height: max(self.visible-height, current-prompt-text.preferred-height);
+                                vertical-scrollbar-policy: ScrollBarPolicy.always-on;
+                                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                                mouse-drag-pan-enabled: true;
+                                current-prompt-text := Text {
+                                    width: current-prompt-scroll.visible-width - 10px;
+                                    height: max(current-prompt-scroll.visible-height, self.preferred-height);
+                                    text: AppState.prompt;
+                                    color: AppTheme.muted;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                    vertical-alignment: top;
+                                }
+                            }
+                        }
+
+                        Text { x: 0px; y: 232px; width: parent.width; height: 22px; text: AppState.en ? "Optimization mode" : "优化模式"; color: AppTheme.text; font-size: 14px; font-weight: 600; }
+                        Rectangle {
+                            x: 0px; y: 260px; width: (parent.width - 10px) / 2; height: 64px;
+                            background: AppState.deep-optimization-run-mode == "auto" ? AppTheme.panel-soft : AppTheme.panel;
+                            border-radius: 10px; border-width: 1px;
+                            border-color: AppState.deep-optimization-run-mode == "auto" ? AppTheme.accent : AppTheme.border;
+                            clip: true;
+                            Text { x: 12px; y: 8px; width: parent.width - 24px; height: 20px; text: AppState.en ? "Automatic" : "自动优化"; color: AppTheme.text; font-size: 13px; font-weight: 600; }
+                            Text { x: 12px; y: 32px; width: parent.width - 24px; height: 22px; text: AppState.en ? "Run continuously to target" : "连续执行，达到条件后确认"; color: AppTheme.muted; font-size: 11px; wrap: word-wrap; }
+                            TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.deep-optimization-run-mode = "auto"; } }
+                        }
+                        Rectangle {
+                            x: (parent.width + 10px) / 2; y: 260px; width: (parent.width - 10px) / 2; height: 64px;
+                            background: AppState.deep-optimization-run-mode == "step" ? AppTheme.panel-soft : AppTheme.panel;
+                            border-radius: 10px; border-width: 1px;
+                            border-color: AppState.deep-optimization-run-mode == "step" ? AppTheme.accent : AppTheme.border;
+                            clip: true;
+                            Text { x: 12px; y: 8px; width: parent.width - 24px; height: 20px; text: AppState.en ? "Review each round" : "逐轮确认"; color: AppTheme.text; font-size: 13px; font-weight: 600; }
+                            Text { x: 12px; y: 32px; width: parent.width - 24px; height: 22px; text: AppState.en ? "Decide after every round" : "每轮完成后由你决定"; color: AppTheme.muted; font-size: 11px; wrap: word-wrap; }
+                            TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.deep-optimization-run-mode = "step"; } }
+                        }
+
+                        Text { x: 0px; y: 338px; width: 160px; height: 22px; text: AppState.en ? "Maximum rounds" : "最大轮数"; color: AppTheme.text; font-size: 14px; font-weight: 600; }
+                        for value[index] in [2, 3, 4]: Rectangle {
+                            x: 0px + index * 76px; y: 366px; width: 64px; height: 32px;
+                            background: AppState.deep-optimization-max-rounds == value ? AppTheme.accent : AppTheme.panel;
+                            border-radius: 17px; border-width: AppState.deep-optimization-max-rounds == value ? 0px : 1px; border-color: AppTheme.border;
+                            Text { width: parent.width; height: parent.height; text: value + (AppState.en ? "" : " 轮"); color: AppState.deep-optimization-max-rounds == value ? #ffffff : AppTheme.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => {
+                                AppState.deep-optimization-max-rounds = value;
+                                AppState.deep-optimization-maximum-credits = value == 2 ? "10" : (value == 4 ? "20" : "15");
+                            } }
+                        }
+
+                        Text { x: 0px; y: 410px; width: parent.width; height: 22px; text: AppState.en ? "Optimization focus" : "优化重点"; color: AppTheme.text; font-size: 14px; font-weight: 600; }
+                        for option[index] in ["system", "subject", "detail", "composition", "style"]: Rectangle {
+                            x: Math.mod(index, 2) * ((parent.width + 10px) / 2);
+                            y: 438px + floor(index / 2) * 38px;
+                            width: (parent.width - 10px) / 2;
+                            height: 32px;
+                            background: AppState.deep-optimization-focus-mode == option ? AppTheme.panel-soft : AppTheme.panel;
+                            border-radius: 8px; border-width: 1px;
+                            border-color: AppState.deep-optimization-focus-mode == option ? AppTheme.accent : AppTheme.border;
+                            Text { x: 10px; width: parent.width - 20px; height: parent.height; text: root.focus-label(option); color: AppTheme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                            TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.deep-optimization-focus-mode = option; } }
+                        }
+
+                        Rectangle {
+                            x: 0px; y: 558px; width: parent.width; height: 52px;
+                            background: AppTheme.panel-soft; border-radius: 10px;
+                            clip: true;
+                            Text { x: 14px; y: 6px; width: parent.width - 28px; height: 20px; text: AppState.en ? "Stop when score reaches 90" : "评分达到 90 分后自动停止"; color: AppTheme.text; font-size: 13px; }
+                            Text { x: 14px; y: 28px; width: parent.width - 28px; height: 18px; text: AppState.en ? "The original prompt is replaced only after confirmation" : "只有确认使用后才会替换当前提示词"; color: AppTheme.muted; font-size: 11px; }
+                        }
+
+                        if AppState.deep-optimization-error != "": Text { x: 0px; y: 620px; width: parent.width; height: 36px; text: AppState.deep-optimization-error; color: AppTheme.danger; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; overflow: elide; }
+                        PillButton {
+                            x: 0px; y: 672px; width: parent.width; height: 56px;
+                            text: AppState.en ? "Start deep optimization" : "开始深度优化";
+                            secondary-text: AppState.en
+                                ? "Up to " + AppState.deep-optimization-maximum-credits + " credits"
+                                : "本次最多消耗 " + AppState.deep-optimization-maximum-credits + " 积分";
+                            primary: true;
+                            disabled: AppState.prompt == "";
+                            clicked => { AppState.start-deep-optimization(); }
+                        }
+                    }
+
+                    if AppState.deep-optimization-stage == "running": Rectangle {
+                        x: 24px; y: 22px; width: parent.width - 48px; height: 610px; background: transparent;
+                        Text { x: 0px; y: 0px; width: parent.width; height: 28px; text: AppState.en ? "Optimizing your prompt" : "正在深度优化提示词"; color: AppTheme.text; font-size: 18px; font-weight: 600; }
+                        Text { x: 0px; y: 34px; width: parent.width; height: 20px; text: (AppState.en ? "Round " : "第 ") + max(1, AppState.deep-optimization-current-round) + " / " + AppState.deep-optimization-max-rounds + (AppState.en ? "" : " 轮"); color: AppTheme.muted; font-size: 12px; }
+                        Rectangle {
+                            x: 0px; y: 70px; width: parent.width; height: 116px; background: AppTheme.panel-soft; border-radius: 12px; border-width: 1px; border-color: AppTheme.border;
+                            clip: true;
+                            Text { x: 16px; y: 14px; width: parent.width - 32px; height: 22px; text: AppState.deep-optimization-phase-label; color: AppTheme.text; font-size: 14px; font-weight: 600; }
+                            Text {
+                                x: 16px; y: 44px; width: parent.width - 32px; height: 18px;
+                                text: AppState.deep-optimization-status-message
+                                    + (AppState.deep-optimization-estimated-seconds > 0
+                                        ? (" · 预计 " + AppState.deep-optimization-estimated-seconds + " 秒")
+                                        : "");
+                                color: AppTheme.muted; font-size: 12px; overflow: elide;
+                            }
+                            Rectangle { x: 16px; y: 76px; width: parent.width - 32px; height: 8px; background: AppTheme.border; border-radius: 4px;
+                                progress-fill := Rectangle {
+                                    x: 0px;
+                                    y: 0px;
+                                    width: max(0px, min(parent.width, parent.width * AppState.deep-optimization-progress / 100));
+                                    height: parent.height;
+                                    background: AppTheme.accent;
+                                    border-radius: 4px;
+                                    animate width { duration: 220ms; easing: ease-out; }
+                                }
+                            }
+                            Text { x: 16px; y: 91px; width: parent.width - 32px; height: 16px; text: AppState.deep-optimization-progress + "%"; color: AppTheme.muted; font-size: 11px; horizontal-alignment: right; }
+                        }
+                        Rectangle {
+                            x: 0px; y: 202px; width: parent.width; height: 68px; background: AppTheme.panel; border-radius: 10px; border-width: 1px; border-color: AppTheme.border;
+                            Text { x: 16px; y: 12px; width: 110px; height: 42px; text: AppState.deep-optimization-baseline-score; color: AppTheme.muted; font-size: 28px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { x: 126px; y: 12px; width: 40px; height: 42px; text: "→"; color: AppTheme.weak; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { x: 166px; y: 12px; width: 110px; height: 42px; text: AppState.deep-optimization-current-score; color: AppTheme.accent-dark; font-size: 28px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { x: parent.width - 100px; y: 12px; width: 84px; height: 42px; text: AppState.deep-optimization-consumed-credits + " / " + AppState.deep-optimization-maximum-credits + "\n积分"; color: AppTheme.muted; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        Text { x: 0px; y: 292px; width: parent.width; height: 22px; text: AppState.en ? "Round progress" : "轮次记录"; color: AppTheme.text; font-size: 14px; font-weight: 600; }
+                        VerticalLayout {
+                            x: 0px; y: 322px; width: parent.width; height: root.running-round-list-height(); spacing: 6px;
+                            for item in AppState.deep-optimization-rounds: Rectangle {
+                                height: 52px; background: AppTheme.panel-soft; border-radius: 8px;
+                                clip: true;
+                                Text { x: 12px; y: 8px; width: 76px; height: 18px; text: (AppState.en ? "Round " : "第 ") + item.round + (AppState.en ? "" : " 轮"); color: AppTheme.text; font-size: 12px; font-weight: 600; }
+                                Text { x: 88px; y: 8px; width: parent.width - 100px; height: 18px; text: item.phase-label; color: AppTheme.muted; font-size: 11px; horizontal-alignment: right; overflow: elide; }
+                                Text { x: 12px; y: 29px; width: parent.width - 24px; height: 16px; text: item.score-label; color: AppTheme.accent-dark; font-size: 11px; overflow: elide; }
+                            }
+                        }
+                        PillButton { x: 0px; y: 342px + root.running-round-list-height(); width: (parent.width - 10px) / 2; height: 44px; text: AppState.en ? "Pause" : "暂停"; disabled: !AppState.deep-optimization-can-pause; clicked => { AppState.pause-deep-optimization(); } }
+                        PillButton { x: (parent.width + 10px) / 2; y: 342px + root.running-round-list-height(); width: (parent.width - 10px) / 2; height: 44px; text: AppState.en ? "Run in background" : "收起后台运行"; primary: true; clicked => { AppState.close-deep-optimization(); } }
+                        PillButton { x: 0px; y: 400px + root.running-round-list-height(); width: parent.width; height: 36px; text: AppState.en ? "Cancel optimization" : "取消优化"; danger: true; disabled: !AppState.deep-optimization-can-cancel; clicked => { AppState.cancel-deep-optimization(); } }
+                    }
+
+                    if AppState.deep-optimization-stage == "review": Rectangle {
+                        x: 24px; y: 20px; width: parent.width - 48px; height: 870px; background: transparent;
+                        Text { x: 0px; y: 0px; width: parent.width - 120px; height: 28px; text: AppState.en ? "Review this version" : "确认优化结果"; color: AppTheme.text; font-size: 18px; font-weight: 600; }
+                        Text { x: parent.width - 120px; y: 0px; width: 120px; height: 28px; text: (AppState.en ? "Round " : "第 ") + AppState.deep-optimization-completed-rounds + " / " + AppState.deep-optimization-max-rounds + (AppState.en ? "" : " 轮"); color: AppTheme.muted; font-size: 12px; horizontal-alignment: right; vertical-alignment: center; }
+                        Text { x: 0px; y: 40px; width: 180px; height: 44px; text: AppState.deep-optimization-baseline-score + " → " + AppState.deep-optimization-current-score; color: AppTheme.accent-dark; font-size: 28px; font-weight: 600; vertical-alignment: center; }
+                        Text { x: parent.width - 180px; y: 42px; width: 180px; height: 38px; text: AppState.deep-optimization-stop-reason + "\n已消耗 " + AppState.deep-optimization-consumed-credits + " 积分"; color: AppTheme.muted; font-size: 11px; horizontal-alignment: right; }
+                        Rectangle {
+                            x: 0px; y: 100px; width: parent.width; height: 38px; background: AppTheme.panel-soft; border-radius: 19px;
+                            Rectangle {
+                                x: AppState.deep-optimization-result-tab == "chinese" ? 2px
+                                    : (AppState.deep-optimization-result-tab == "english" ? parent.width / 3 : parent.width * 2 / 3);
+                                y: 2px; width: parent.width / 3 - 2px; height: 34px; background: AppTheme.accent; border-radius: 17px;
+                            }
+                            Text { x: 0px; width: parent.width / 3; height: parent.height; text: AppState.en ? "Chinese" : "中文可读版"; color: AppState.deep-optimization-result-tab == "chinese" ? #ffffff : AppTheme.muted; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { x: parent.width / 3; width: parent.width / 3; height: parent.height; text: AppState.en ? "English" : "模型英文版"; color: AppState.deep-optimization-result-tab == "english" ? #ffffff : AppTheme.muted; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { x: parent.width * 2 / 3; width: parent.width / 3; height: parent.height; text: AppState.en ? "Original" : "原提示词"; color: AppState.deep-optimization-result-tab == "original" ? #ffffff : AppTheme.muted; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { x: 0px; width: parent.width / 3; height: parent.height; clicked => { AppState.deep-optimization-result-tab = "chinese"; } }
+                            TouchArea { x: parent.width / 3; width: parent.width / 3; height: parent.height; clicked => { AppState.deep-optimization-result-tab = "english"; } }
+                            TouchArea { x: parent.width * 2 / 3; width: parent.width / 3; height: parent.height; clicked => { AppState.deep-optimization-result-tab = "original"; } }
+                        }
+                        Rectangle {
+                            x: 0px; y: 150px; width: parent.width; height: 210px; background: AppTheme.panel; border-radius: 10px; border-width: 1px; border-color: AppTheme.border;
+                            clip: true;
+                            if AppState.deep-optimization-result-tab == "english": TextInput {
+                                x: 14px; y: 12px; width: parent.width - 28px; height: parent.height - 24px;
+                                text: AppState.deep-optimization-english-prompt;
+                                color: AppTheme.text; font-size: 12px;
+                                single-line: false; wrap: word-wrap; read-only: true;
+                            }
+                            if AppState.deep-optimization-result-tab != "english": Rectangle {
+                                x: 14px; y: 10px; width: parent.width - 28px; height: 20px; background: transparent;
+                                Rectangle {
+                                    x: 0px; y: 6px; width: 8px; height: 8px; border-radius: 4px;
+                                    background: AppState.deep-optimization-result-tab == "original" ? #d97706 : AppTheme.accent;
+                                }
+                                Text {
+                                    x: 16px; width: parent.width - 16px; height: parent.height;
+                                    text: AppState.deep-optimization-result-tab == "original"
+                                        ? (AppState.en ? "Highlighted text was replaced or removed" : "高亮内容为被替换或删减的原文")
+                                        : (AppState.en ? "Highlighted text was added or rewritten" : "高亮内容为本轮新增或改写");
+                                    color: AppTheme.muted; font-size: 10px; vertical-alignment: center;
+                                }
+                            }
+                            if AppState.deep-optimization-result-tab != "english": Flickable {
+                                x: 14px; y: 36px; width: parent.width - 28px; height: parent.height - 46px;
+                                viewport-width: self.width;
+                                viewport-height: max(self.height, diff-prompt-text.preferred-height + 6px);
+                                interactive: true;
+                                diff-prompt-text := StyledText {
+                                    width: parent.width;
+                                    height: max(parent.height, self.preferred-height);
+                                    text: AppState.deep-optimization-result-tab == "original"
+                                        ? AppState.deep-optimization-highlighted-original
+                                        : AppState.deep-optimization-highlighted-chinese;
+                                    default-color: AppTheme.text;
+                                    default-font-size: 12px;
+                                    vertical-alignment: top;
+                                }
+                            }
+                        }
+                        Text { x: 0px; y: 380px; width: parent.width; height: 22px; text: AppState.en ? "What changed" : "改进摘要"; color: AppTheme.text; font-size: 14px; font-weight: 600; }
+                        Rectangle {
+                            x: 0px; y: 410px; width: parent.width; height: 76px; background: AppTheme.panel-soft; border-radius: 10px;
+                            clip: true;
+                            TextInput {
+                                x: 14px; y: 10px; width: parent.width - 28px; height: parent.height - 20px;
+                                text: AppState.deep-optimization-change-summary; color: AppTheme.muted; font-size: 12px;
+                                single-line: false; wrap: word-wrap; read-only: true;
+                            }
+                        }
+                        Text { x: 0px; y: 506px; width: parent.width; height: 22px; text: AppState.en ? "Optional direction for next round" : "下一轮希望怎么调整（可选）"; color: AppTheme.text; font-size: 13px; font-weight: 600; }
+                        Rectangle {
+                            x: 0px; y: 536px; width: parent.width; height: 70px; background: AppTheme.panel; border-radius: 10px; border-width: 1px; border-color: AppTheme.border;
+                            feedback-input := TextInput { x: 12px; y: 10px; width: parent.width - 24px; height: parent.height - 20px; text <=> AppState.deep-optimization-feedback; color: AppTheme.text; font-size: 12px; single-line: false; wrap: word-wrap; }
+                            if AppState.deep-optimization-feedback == "" && !feedback-input.has-focus: Text { x: 12px; y: 10px; width: parent.width - 24px; height: 20px; text: AppState.en ? "e.g. warmer light, wider view" : "例如：更仙气、背景更远、减少花瓣"; color: AppTheme.weak; font-size: 11px; }
+                        }
+                        Rectangle {
+                            x: 0px; y: 614px; width: parent.width; height: 28px; background: transparent;
+                            Rectangle {
+                                x: 0px; y: 4px; width: 18px; height: 18px; border-radius: 4px;
+                                background: AppState.deep-optimization-feedback-stable ? AppTheme.accent : AppTheme.panel;
+                                border-width: AppState.deep-optimization-feedback-stable ? 0px : 1px;
+                                border-color: AppTheme.border;
+                                Text { width: parent.width; height: parent.height; text: AppState.deep-optimization-feedback-stable ? "✓" : ""; color: #ffffff; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            Text { x: 26px; width: parent.width - 26px; height: parent.height; text: AppState.en ? "Keep this direction for all later rounds" : "设为稳定规则，后续轮次持续生效"; color: AppTheme.muted; font-size: 11px; vertical-alignment: center; }
+                            TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.deep-optimization-feedback-stable = !AppState.deep-optimization-feedback-stable; } }
+                        }
+                        if AppState.deep-optimization-stable-feedback-summary != "": Rectangle {
+                            x: 0px; y: 650px; width: parent.width; height: 38px; background: AppTheme.panel-soft; border-radius: 8px;
+                            Text { x: 10px; width: parent.width - 78px; height: parent.height; text: (AppState.en ? "Stable: " : "稳定规则：") + AppState.deep-optimization-stable-feedback-summary; color: AppTheme.muted; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                            Text { x: parent.width - 66px; width: 56px; height: parent.height; text: AppState.en ? "Clear" : "清除"; color: AppTheme.danger; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                            TouchArea { x: parent.width - 72px; width: 72px; height: parent.height; mouse-cursor: pointer; enabled: AppState.deep-optimization-can-clear-stable-feedback; clicked => { AppState.clear-deep-optimization-stable-feedback(); } }
+                        }
+                        PillButton { x: 0px; y: 704px; width: 92px; height: 44px; text: AppState.en ? "Keep original" : "保留原文"; clicked => { AppState.keep-original-deep-prompt(); } }
+                        PillButton { x: 102px; y: 704px; width: 128px; height: 44px; text: AppState.en ? "One more round" : "再优化一轮"; disabled: !AppState.deep-optimization-can-continue; clicked => { AppState.continue-deep-optimization(AppState.deep-optimization-feedback != ""); } }
+                        PillButton { x: 240px; y: 704px; width: parent.width - 240px; height: 44px; text: AppState.en ? "Use this version" : "使用此版本"; primary: true; disabled: !AppState.deep-optimization-can-apply; clicked => { AppState.use-deep-optimization-result(); } }
+                        Text { x: 0px; y: 766px; width: parent.width; height: 36px; text: AppState.en ? "The Chinese version stays readable; image generation uses the matching English version." : "输入框显示中文可读版，生图时会提交对应的英文版。"; color: AppTheme.weak; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+                    }
+
+                    if AppState.deep-optimization-stage == "complete": Rectangle {
+                        x: 24px; y: 34px; width: parent.width - 48px; height: 570px; background: transparent;
+                        Rectangle { x: (parent.width - 66px) / 2; y: 0px; width: 66px; height: 66px; background: AppTheme.panel-soft; border-radius: 33px;
+                            Image { x: 20px; y: 20px; width: 26px; height: 26px; source: AppState.icon-check; colorize: AppTheme.accent-dark; }
+                        }
+                        Text { x: 0px; y: 86px; width: parent.width; height: 32px; text: AppState.en ? "Optimization applied" : "深度优化已应用"; color: AppTheme.text; font-size: 22px; font-weight: 600; horizontal-alignment: center; }
+                        Text { x: 0px; y: 126px; width: parent.width; height: 36px; text: AppState.en ? "The readable Chinese prompt is shown in the editor. The matching English version will be used for generation." : "输入框已显示中文可读版，生图时将使用对应的英文版本。"; color: AppTheme.muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                        Rectangle {
+                            x: 0px; y: 184px; width: parent.width; height: 86px; background: AppTheme.panel-soft; border-radius: 12px;
+                            Text { x: 0px; y: 14px; width: parent.width / 3; height: 54px; text: AppState.deep-optimization-baseline-score + " → " + AppState.deep-optimization-current-score + "\n评分"; color: AppTheme.text; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { x: parent.width / 3; y: 14px; width: parent.width / 3; height: 54px; text: AppState.deep-optimization-completed-rounds + "\n轮次"; color: AppTheme.text; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { x: parent.width * 2 / 3; y: 14px; width: parent.width / 3; height: 54px; text: AppState.deep-optimization-consumed-credits + "\n积分"; color: AppTheme.text; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        Rectangle {
+                            x: 0px; y: 292px; width: parent.width; height: 126px; background: AppTheme.panel; border-radius: 10px; border-width: 1px; border-color: AppTheme.border;
+                            clip: true;
+                            TextInput {
+                                x: 14px; y: 12px; width: parent.width - 28px; height: parent.height - 24px;
+                                text: AppState.deep-optimization-change-summary; color: AppTheme.muted; font-size: 12px;
+                                single-line: false; wrap: word-wrap; read-only: true;
+                            }
+                        }
+                        PillButton { x: 0px; y: 438px; width: parent.width; height: 46px; text: AppState.en ? "Optimize another version" : "继续深度优化"; primary: true; clicked => { AppState.begin-new-deep-optimization(); } }
+                        PillButton { x: 0px; y: 498px; width: parent.width; height: 42px; text: AppState.en ? "Restore original prompt" : "恢复原提示词"; clicked => { AppState.restore-deep-original-prompt(); } }
+                        PillButton { x: 0px; y: 554px; width: parent.width; height: 44px; text: AppState.en ? "Done" : "完成"; clicked => { AppState.close-deep-optimization(); } }
+                    }
+
+                    if AppState.deep-optimization-stage == "paused" || AppState.deep-optimization-stage == "failed" || AppState.deep-optimization-stage == "cancelled": Rectangle {
+                        x: 24px; y: 48px; width: parent.width - 48px; height: 430px; background: transparent;
+                        Rectangle { x: (parent.width - 64px) / 2; y: 0px; width: 64px; height: 64px; background: AppTheme.panel-soft; border-radius: 32px;
+                            Text { width: parent.width; height: parent.height; text: AppState.deep-optimization-stage == "paused" ? "Ⅱ" : "!"; color: AppState.deep-optimization-stage == "failed" ? AppTheme.danger : AppTheme.accent-dark; font-size: 24px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        Text { x: 0px; y: 88px; width: parent.width; height: 30px; text: root.status-title(); color: AppTheme.text; font-size: 20px; font-weight: 600; horizontal-alignment: center; }
+                        Rectangle {
+                            x: 0px; y: 130px; width: parent.width; height: 58px;
+                            background: transparent; clip: true;
+                            TextInput {
+                                width: parent.width; height: parent.height;
+                                text: AppState.deep-optimization-error != "" ? AppState.deep-optimization-error : AppState.deep-optimization-status-message;
+                                color: AppTheme.muted; font-size: 12px; horizontal-alignment: center;
+                                single-line: false; wrap: word-wrap; read-only: true;
+                            }
+                        }
+                        if AppState.deep-optimization-stage == "paused": PillButton { x: 0px; y: 220px; width: parent.width; height: 48px; text: AppState.en ? "Continue optimization" : "继续优化"; primary: true; clicked => { AppState.resume-deep-optimization(); } }
+                        if AppState.deep-optimization-stage == "failed": PillButton { x: 0px; y: 220px; width: parent.width; height: 48px; text: AppState.en ? "Retry current round" : "重试当前轮次"; primary: true; disabled: !AppState.deep-optimization-can-retry; clicked => { AppState.retry-deep-optimization(); } }
+                        if AppState.deep-optimization-stage != "cancelled": PillButton { x: 0px; y: 286px; width: parent.width; height: 42px; text: AppState.en ? "Cancel and return" : "取消并返回"; danger: true; clicked => { AppState.cancel-deep-optimization(); } }
+                        if AppState.deep-optimization-stage == "cancelled": PillButton { x: 0px; y: 220px; width: parent.width; height: 48px; text: AppState.en ? "Close" : "关闭"; primary: true; clicked => { AppState.close-deep-optimization(); } }
+                    }
+                }
+            }
+        }
+    }
+
+    function stage-index() -> int {
+        if AppState.deep-optimization-stage == "settings" { return 0; }
+        if AppState.deep-optimization-stage == "running" || AppState.deep-optimization-stage == "paused" || AppState.deep-optimization-stage == "failed" { return 1; }
+        if AppState.deep-optimization-stage == "review" { return 2; }
+        return 3;
+    }
+
+    function body-height() -> length {
+        if AppState.deep-optimization-stage == "settings" { return 820px; }
+        if AppState.deep-optimization-stage == "review" { return 920px; }
+        if AppState.deep-optimization-stage == "running" { return max(650px, 470px + root.running-round-list-height()); }
+        return 650px;
+    }
+
+    function running-round-list-height() -> length {
+        return max(54px, AppState.deep-optimization-rounds.length * 58px);
+    }
+
+    function focus-label(value: string) -> string {
+        if value == "subject" { return AppState.en ? "Subject clarity" : "主体清晰"; }
+        if value == "detail" { return AppState.en ? "Image details" : "画面细节"; }
+        if value == "composition" { return AppState.en ? "Composition & light" : "构图与光线"; }
+        if value == "style" { return AppState.en ? "Style consistency" : "风格一致"; }
+        return AppState.en ? "System recommended" : "系统综合推荐";
+    }
+
+    function status-title() -> string {
+        if AppState.deep-optimization-stage == "paused" { return AppState.en ? "Optimization paused" : "深度优化已暂停"; }
+        if AppState.deep-optimization-stage == "cancelled" { return AppState.en ? "Optimization cancelled" : "深度优化已取消"; }
+        return AppState.en ? "Optimization interrupted" : "深度优化暂时中断";
+    }
+}

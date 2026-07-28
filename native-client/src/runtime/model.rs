@@ -206,7 +206,7 @@ enum GenerationOutcome {
     },
     ImageSuccess {
         bytes: Vec<u8>,
-        optimized: String,
+        display_prompt: String,
         time: String,
         upscale_done: bool,
         delivery: Option<DeliveryConfirmation>,
@@ -271,6 +271,8 @@ struct Store {
     canvas_notes: Vec<CanvasNoteData>,
     canvas_links: Vec<CanvasLinkData>,
     credit_ledger_pagination: CreditLedgerPagination,
+    deep_prompt_job_id: String,
+    deep_prompt_bindings: BTreeMap<String, DeepPromptBinding>,
 }
 
 #[derive(Default)]
@@ -292,6 +294,7 @@ struct AppContext {
     recovering_orders: Rc<RefCell<BTreeSet<String>>>,
     active_payment: Rc<RefCell<Option<ActivePaymentSession>>>,
     cancelled_generation_requests: Arc<Mutex<BTreeSet<String>>>,
+    prompt_optimization_polling: Rc<RefCell<Option<String>>>,
     backend: Option<Arc<BackendRuntime>>,
 }
 
@@ -323,6 +326,16 @@ struct LocalStoreData {
     canvas_notes: Vec<CanvasNoteData>,
     #[serde(default)]
     canvas_links: Vec<CanvasLinkData>,
+    #[serde(default)]
+    deep_prompt_job_id: String,
+    #[serde(default)]
+    deep_prompt_bindings: BTreeMap<String, DeepPromptBinding>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct DeepPromptBinding {
+    chinese: String,
+    english: String,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

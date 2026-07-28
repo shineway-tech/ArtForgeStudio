@@ -15,8 +15,9 @@ pub(super) fn open_viewer(app: &AppWindow, store: &Store, id: &str, source: &str
     state.set_viewer_source(source.into());
     state.set_viewer_image(item.image.clone());
     state.set_viewer_title(item.title.clone().into());
-    state.set_viewer_prompt(item.prompt.clone().into());
-    state.set_viewer_prompt_lines(estimated_prompt_lines(&item.prompt));
+    let viewer_prompt = readable_deep_prompt(&item.prompt, &store.deep_prompt_bindings);
+    state.set_viewer_prompt(viewer_prompt.clone().into());
+    state.set_viewer_prompt_lines(estimated_prompt_lines(&viewer_prompt));
     state.set_viewer_time(item.time.clone().into());
     state.set_viewer_ratio(item.ratio.clone().into());
     state.set_viewer_quality(item.quality.clone().into());
@@ -34,6 +35,24 @@ pub(super) fn open_viewer(app: &AppWindow, store: &Store, id: &str, source: &str
     state.set_viewer_open(true);
 }
 
+fn readable_deep_prompt(
+    prompt: &str,
+    bindings: &BTreeMap<String, DeepPromptBinding>,
+) -> String {
+    let prompt = prompt.trim();
+    for binding in bindings.values() {
+        let english = binding.english.trim();
+        let chinese = binding.chinese.trim();
+        if english.is_empty() || chinese.is_empty() {
+            continue;
+        }
+        if let Some(prefix) = prompt.strip_suffix(english) {
+            return format!("{prefix}{chinese}");
+        }
+    }
+    prompt.to_string()
+}
+
 pub(super) fn estimated_prompt_lines(prompt: &str) -> i32 {
     let estimated_chars_per_line = 28;
     let lines = prompt
@@ -45,6 +64,31 @@ pub(super) fn estimated_prompt_lines(prompt: &str) -> i32 {
         .sum::<usize>()
         .max(1);
     lines.min(1000) as i32
+}
+
+#[cfg(test)]
+mod deep_prompt_display_tests {
+    use super::{readable_deep_prompt, DeepPromptBinding};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn viewer_replaces_a_saved_english_deep_prompt_with_its_chinese_version() {
+        let bindings = BTreeMap::from([(
+            "character".to_string(),
+            DeepPromptBinding {
+                chinese: "月下的古风少女".to_string(),
+                english: "an ancient-style girl under moonlight".to_string(),
+            },
+        )]);
+
+        assert_eq!(
+            readable_deep_prompt(
+                "自定义风格\n\nan ancient-style girl under moonlight",
+                &bindings,
+            ),
+            "自定义风格\n\n月下的古风少女",
+        );
+    }
 }
 
 pub(super) fn move_viewer(app: &AppWindow, store: &Store, direction: i32) {

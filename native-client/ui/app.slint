@@ -1,6 +1,6 @@
 import { AppState } from "app-state.slint";
 import { AppTheme } from "theme.slint";
-import { AccountSession, AssetGroup, AssetItem, CanvasNote, CompressionImageItem, ConversationItem, CreditRecord, CustomPromptItem, InvoiceOrderView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
+import { AccountSession, AssetGroup, AssetItem, CanvasNote, CompressionImageItem, ConversationItem, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, InvoiceOrderView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 import { Sidebar } from "components/sidebar.slint";
 import { TopBar } from "components/top-bar.slint";
 import { AlipayPaymentDialog } from "dialogs/alipay-payment-dialog.slint";
@@ -10,6 +10,7 @@ import { CanvasGroupNameDialog } from "dialogs/canvas-group-name-dialog.slint";
 import { InvoiceDialog } from "dialogs/invoice-dialog.slint";
 import { InvoiceOrderDialog } from "dialogs/invoice-order-dialog.slint";
 import { DeleteConfirm } from "dialogs/delete-confirm.slint";
+import { DeepPromptOptimizationDrawer } from "dialogs/deep-prompt-optimization-drawer.slint";
 import { ModelRequiredDialog } from "dialogs/model-required-dialog.slint";
 import { ProfileDialog } from "dialogs/profile-dialog.slint";
 import { AgreementUpdateDialog } from "dialogs/agreement-update-dialog.slint";
@@ -35,7 +36,7 @@ import { ToolboxColorizePage } from "pages/toolbox-colorize-page.slint";
 import { ToolboxCropPage } from "pages/toolbox-crop-page.slint";
 import { WelcomePage } from "pages/welcome-page.slint";
 
-export { AppState, AppTheme, AccountSession, ModelGroup, ModelOption, AssetItem, AssetGroup, CanvasNote, CompressionImageItem, ConversationItem, NotificationItem, CreditRecord, CustomPromptItem, InvoiceOrderView, ReferenceItem }
+export { AppState, AppTheme, AccountSession, ModelGroup, ModelOption, AssetItem, AssetGroup, CanvasNote, CompressionImageItem, ConversationItem, NotificationItem, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, InvoiceOrderView, ReferenceItem }
 
 export component AppWindow inherits Window {
     property <bool> invoice-open: false;
@@ -152,4 +153,5 @@ export component AppWindow inherits Window {
         selected-order-time: root.invoice-order-time;
     }
     AgreementViewerDialog { width: root.width; height: root.height; }
+    DeepPromptOptimizationDrawer { width: root.width; height: root.height; }
 }

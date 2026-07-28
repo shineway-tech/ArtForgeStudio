@@ -34,6 +34,9 @@ export component PromptComposer {
         prompt-input.focus();
         prompt-input.text = value;
         AppState.prompt = value;
+        AppState.deep-optimization-applied-chinese = "";
+        AppState.deep-optimization-applied-english = "";
+        AppState.invalidate-deep-prompt-binding();
         prompt-input.set-selection-offsets(2147483647, 2147483647);
     }
 
@@ -101,17 +104,29 @@ export component PromptComposer {
             disabled: AppState.reasoning-model == "" || AppState.optimizing-prompt || AppState.references.length == 0;
             clicked => { AppState.visual-optimize-current-prompt(); }
         }
+        PillButton {
+            x: 240px;
+            y: 14px;
+            width: 112px;
+            height: 28px;
+            text: AppState.deep-optimization-active
+                ? (AppState.en ? "View Deep Optimize" : "查看深度优化")
+                : (AppState.en ? "Deep Optimize" : "深度优化");
+            primary: true;
+            disabled: AppState.optimizing-prompt || AppState.translating-prompt;
+            clicked => { AppState.open-deep-optimization(); }
+        }
         if AppState.optimizing-prompt: LoadingDots {
-            x: 238px;
+            x: 358px;
             y: 7px;
             width: 30px;
             height: 30px;
         }
         Text {
             visible: AppState.optimizing-prompt || AppState.translating-prompt;
-            x: root.action-status-wraps() ? 24px : 274px;
+            x: root.action-status-wraps() ? 24px : 394px;
             y: root.action-status-wraps() ? 48px : 20px;
-            width: root.action-status-wraps() ? parent.width - 48px : parent.width - 298px;
+            width: root.action-status-wraps() ? parent.width - 48px : parent.width - 418px;
             height: 18px;
             text: AppState.optimizing-prompt ? (AppState.en ? "Optimizing prompt..." : "正在优化提示词...")
                 : (AppState.en ? "Translating prompt..." : "正在翻译提示词...");
@@ -220,6 +235,12 @@ export component PromptComposer {
                         }
                     }
                     edited => {
+                        if AppState.deep-optimization-applied-chinese != ""
+                            && self.text != AppState.deep-optimization-applied-chinese {
+                            AppState.deep-optimization-applied-chinese = "";
+                            AppState.deep-optimization-applied-english = "";
+                            AppState.invalidate-deep-prompt-binding();
+                        }
                         if AppState.prompt-history-open && self.text != "/" {
                             AppState.prompt-history-open = false;
                             history-popup.close();

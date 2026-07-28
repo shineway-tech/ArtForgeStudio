@@ -9,7 +9,20 @@ pub(super) fn start_generation(
     forced_count: Option<i32>,
 ) {
     let state = app.global::<AppState>();
-    let input_prompt = state.get_prompt().trim().to_string();
+    let visible_prompt = state.get_prompt().trim().to_string();
+    let applied_chinese = state
+        .get_deep_optimization_applied_chinese()
+        .trim()
+        .to_string();
+    let applied_english = state
+        .get_deep_optimization_applied_english()
+        .trim()
+        .to_string();
+    let input_prompt = submitted_prompt_for_visible_prompt(
+        &visible_prompt,
+        &applied_chinese,
+        &applied_english,
+    );
     let raw_prompt = if override_prompt.is_none() {
         let selected_prompts = {
             let store = context.store.borrow();
@@ -40,6 +53,47 @@ pub(super) fn start_generation(
         retry_failed_id,
         forced_count,
     );
+}
+
+fn submitted_prompt_for_visible_prompt(
+    visible_prompt: &str,
+    applied_chinese: &str,
+    applied_english: &str,
+) -> String {
+    if !applied_english.trim().is_empty() && visible_prompt.trim() == applied_chinese.trim() {
+        applied_english.trim().to_string()
+    } else {
+        visible_prompt.trim().to_string()
+    }
+}
+
+#[cfg(test)]
+mod deep_prompt_tests {
+    use super::submitted_prompt_for_visible_prompt;
+
+    #[test]
+    fn applied_chinese_prompt_submits_its_matching_english_version() {
+        assert_eq!(
+            submitted_prompt_for_visible_prompt(
+                "月下的锻造工坊",
+                "月下的锻造工坊",
+                "a moonlit forge workshop",
+            ),
+            "a moonlit forge workshop",
+        );
+    }
+
+    #[test]
+    fn editing_the_readable_prompt_invalidates_the_english_binding() {
+        assert_eq!(
+            submitted_prompt_for_visible_prompt(
+                "月下的古老锻造工坊",
+                "月下的锻造工坊",
+                "a moonlit forge workshop",
+            ),
+            "月下的古老锻造工坊",
+        );
+    }
 }
 
 pub(super) fn compose_selected_custom_prompts(
@@ -138,7 +192,7 @@ pub(super) fn add_stream_success_item(
     quality: &str,
     image_model: &str,
     conversation_id: &str,
-    optimized: &str,
+    display_prompt: &str,
     time: &str,
     bytes: &[u8],
     upscale_done: bool,
@@ -152,7 +206,7 @@ pub(super) fn add_stream_success_item(
         category: category.to_string(),
         kind: mode.to_string(),
         time: time.to_string(),
-        prompt: display_generation_prompt(optimized),
+        prompt: display_generation_prompt(display_prompt),
         ratio: ratio_from_actual_dimensions(width, height),
         quality: quality.to_string(),
         model: image_model.to_string(),

@@ -3,6 +3,7 @@ import { AppTheme } from "../theme.slint";
 
 export component PillButton {
     in property <string> text;
+    in property <string> secondary-text;
     in property <bool> active: false;
     in property <bool> primary: false;
     in property <bool> danger: false;
@@ -23,8 +24,9 @@ export component PillButton {
         border-color: root.danger ? AppTheme.danger : (touch.has-hover && !root.disabled ? AppTheme.accent : AppTheme.border);
         Text {
             x: 0px;
+            y: root.secondary-text == "" ? 0px : 8px;
             width: parent.width;
-            height: parent.height;
+            height: root.secondary-text == "" ? parent.height : 20px;
             text: root.text;
             color: root.primary || root.active ? #ffffff : (root.danger ? AppTheme.danger : AppTheme.text);
             font-size: root.label-font-size;
@@ -32,6 +34,19 @@ export component PillButton {
             horizontal-alignment: center;
             vertical-alignment: center;
             wrap: no-wrap;
+            overflow: elide;
+        }
+        if root.secondary-text != "": Text {
+            x: 14px;
+            y: parent.height - 24px;
+            width: parent.width - 28px;
+            height: 16px;
+            text: root.secondary-text;
+            color: root.primary || root.active ? #ffffffcc : AppTheme.muted;
+            font-size: 11px;
+            font-weight: 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
             overflow: elide;
         }
         touch := TouchArea {

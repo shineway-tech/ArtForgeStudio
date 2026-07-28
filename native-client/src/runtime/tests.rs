@@ -613,9 +613,8 @@ mod tests {
             "x: AppState.selected-custom-prompt-items.length > 0 ? 270px : 24px;"
         ));
         assert!(composer.contains("y: root.prompt-input-y();"));
-        assert!(composer.contains(
-            "event.text == Key.Backspace\n                        && AppState.prompt == \"\""
-        ));
+        assert!(composer.contains("event.text == Key.Backspace"));
+        assert!(composer.contains("&& AppState.prompt == \"\""));
         assert!(composer.contains(
             "AppState.selected-custom-prompt-items[0].content"
         ));
@@ -1437,6 +1436,37 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(prompt.contains("page-height: prompt-scroll.visible-height;"));
         assert!(prompt.contains("cursor-position-changed(position)"));
         assert!(prompt.contains("prompt-scroll.viewport-y"));
+    }
+
+    #[test]
+    fn deep_prompt_drawer_contains_long_text_inside_fixed_cards() {
+        let drawer = include_str!("../../ui/dialogs/deep-prompt-optimization-drawer.slint");
+
+        assert!(drawer.matches("read-only: true").count() >= 4);
+        assert!(drawer.matches("clip: true").count() >= 9);
+        assert!(drawer.contains("panel-hit-blocker := TouchArea"));
+        assert!(drawer.contains("current-prompt-frame := Rectangle"));
+        assert!(drawer.contains("current-prompt-scroll := ScrollView"));
+        assert!(drawer.contains("current-prompt-text := Text"));
+        assert!(drawer.contains("text: AppState.prompt;"));
+        assert!(drawer.contains("color: AppTheme.muted;"));
+        assert!(drawer.contains("wrap: word-wrap;"));
+        assert!(drawer.contains(
+            "vertical-scrollbar-policy: ScrollBarPolicy.always-on;",
+        ));
+        assert!(drawer.contains(
+            "horizontal-scrollbar-policy: ScrollBarPolicy.always-off;",
+        ));
+        assert!(drawer.contains("mouse-drag-pan-enabled: true;"));
+        assert!(drawer.contains("progress-fill := Rectangle"));
+        assert!(drawer.contains("x: 0px;"));
+        assert!(drawer.contains(
+            "width: max(0px, min(parent.width, parent.width * AppState.deep-optimization-progress / 100));",
+        ));
+        assert!(drawer.contains("text: AppState.deep-optimization-change-summary"));
+        assert!(drawer.contains(
+            "\"本次最多消耗 \" + AppState.deep-optimization-maximum-credits + \" 积分\"",
+        ));
     }
 
     #[test]
