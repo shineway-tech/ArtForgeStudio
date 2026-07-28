@@ -595,6 +595,10 @@ mod tests {
         assert!(composer.contains("prompt-cursor-area := TouchArea"));
         assert!(composer.contains("mouse-cursor: text;"));
         assert!(composer.contains("horizontal-stretch: 1;"));
+        assert!(composer.contains(
+            "? max(0px, (26px - AppState.settings-font-size * 1px) / 2)"
+        ));
+        assert!(composer.contains("height: parent.height - self.y;"));
         let prompt_entry = composer
             .split("prompt-entry-row := HorizontalLayout")
             .nth(1)
@@ -1168,6 +1172,12 @@ fn toolbox_crop_reuses_the_conversion_batch_workspace() {
         assert!(page.contains(&format!("value: \"{ratio}\"")));
     }
     assert!(state.contains("in-out property <[CompressionImageItem]> crop-images"));
+    assert!(state.contains("in-out property <string> crop-width-px"));
+    assert!(state.contains("in-out property <string> crop-height-px"));
+    assert!(page.contains("if AppState.crop-ratio == \"free\": HorizontalLayout"));
+    assert!(page.contains("value <=> AppState.crop-width-px"));
+    assert!(page.contains("value <=> AppState.crop-height-px"));
+    assert!(page.contains("text: \"PX\""));
     assert!(state.contains("crop-estimated-credits: \"--\""));
     assert!(callbacks.contains("const MAX_CROP_IMAGES: usize = 50;"));
     assert!(callbacks.contains("state.on_choose_crop_images"));

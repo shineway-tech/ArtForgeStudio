@@ -197,11 +197,14 @@ export component PromptComposer {
                 height: root.prompt-input-height();
                 mouse-cursor: text;
                 prompt-scroll := ScrollView {
-                width: parent.width;
-                height: parent.height;
-                viewport-width: self.visible-width;
-                viewport-height: max(self.visible-height, prompt-input.preferred-height);
-                prompt-input := TextInput {
+                    y: AppState.selected-custom-prompt-items.length > 0
+                        ? max(0px, (26px - AppState.settings-font-size * 1px) / 2)
+                        : 0px;
+                    width: parent.width;
+                    height: parent.height - self.y;
+                    viewport-width: self.visible-width;
+                    viewport-height: max(self.visible-height, prompt-input.preferred-height);
+                    prompt-input := TextInput {
                     text <=> AppState.prompt;
                     single-line: false;
                     color: AppTheme.text;
@@ -327,9 +330,9 @@ export component PromptComposer {
                         }
                     }
                     return reject;
+                    }
                 }
             }
-        }
         }
         }
         Text {

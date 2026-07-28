@@ -32,6 +32,52 @@ component CropRatioButton {
     }
 }
 
+component CropSizeInput {
+    in property <string> label;
+    in-out property <string> value;
+
+    HorizontalLayout {
+        spacing: 8px;
+
+        Text {
+            width: 28px;
+            text: root.label;
+            color: AppTheme.muted;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            background: AppTheme.bg;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: size-input.has-focus ? AppTheme.accent : AppTheme.border;
+
+            size-input := TextInput {
+                x: 12px;
+                width: parent.width - 24px;
+                height: parent.height;
+                text <=> root.value;
+                single-line: true;
+                input-type: number;
+                color: AppTheme.text;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+        }
+
+        Text {
+            width: 24px;
+            text: "PX";
+            color: AppTheme.muted;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+    }
+}
+
 export component ToolboxCropPage {
     function content-width() -> length { return max(820px, root.width - 64px); }
     function left-width() -> length { return max(480px, (root.content-width() - 20px) * 0.58); }
@@ -222,9 +268,27 @@ export component ToolboxCropPage {
                 CropRatioButton { value: "16:9"; label: "16:9"; }
             }
 
+            if AppState.crop-ratio == "free": HorizontalLayout {
+                x: 22px;
+                y: 144px;
+                width: parent.width - 44px;
+                height: 42px;
+                spacing: 14px;
+
+                CropSizeInput {
+                    label: AppState.en ? "W" : "宽";
+                    value <=> AppState.crop-width-px;
+                }
+
+                CropSizeInput {
+                    label: AppState.en ? "H" : "高";
+                    value <=> AppState.crop-height-px;
+                }
+            }
+
             Text {
                 x: 22px;
-                y: 158px;
+                y: AppState.crop-ratio == "free" ? 204px : 158px;
                 width: parent.width - 44px;
                 height: 22px;
                 text: (AppState.en ? "Total " : "共 ")
