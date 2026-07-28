@@ -7,6 +7,7 @@ export component TimeGroupedGallery inherits VerticalLayout {
     in property <string> source: "asset";
     in property <int> loading-count: 0;
     in property <string> loading-group-title: "";
+    alignment: start;
     spacing: 0px;
     if root.loading-count > 0 && (root.groups.length == 0 || root.groups[0].title != root.loading-group-title): TimeGroupSection {
         width: root.width;

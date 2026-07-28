@@ -993,11 +993,14 @@ fn generation_loading_and_completed_items_share_the_time_grouped_template() {
 #[test]
 fn generation_results_scroll_to_the_gallerys_measured_height() {
     let panel = include_str!("../../ui/components/generation-result-panel.slint");
+    let gallery = include_str!("../../ui/components/time-grouped-gallery.slint");
 
     assert!(panel.contains(
         "viewport-height: max(self.height, result-gallery.preferred-height);"
     ));
+    assert!(panel.contains("y: 0px;"));
     assert!(panel.contains("height: self.preferred-height;"));
+    assert!(gallery.contains("alignment: start;"));
     assert!(!panel.contains("AppState.generation-groups.length * 66px"));
 }
 

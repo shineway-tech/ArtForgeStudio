@@ -41,6 +41,7 @@ export component GenerationResultPanel {
                     }
                     result-gallery := TimeGroupedGallery {
                         visible: AppState.generations.length > 0 || root.active-generating();
+                        y: 0px;
                         width: parent.width;
                         height: self.preferred-height;
                         groups: AppState.generation-groups;
