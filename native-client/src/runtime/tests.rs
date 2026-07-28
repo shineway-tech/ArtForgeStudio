@@ -599,12 +599,21 @@ mod tests {
             "? max(0px, (26px - AppState.settings-font-size * 1px) / 2)"
         ));
         assert!(composer.contains("height: parent.height - self.y;"));
+        assert!(composer.contains("width: selected-title.preferred-width + 38px;"));
+        assert!(composer.contains(
+            "for item in AppState.selected-custom-prompt-items: Rectangle"
+        ));
+        assert!(!composer.contains("selected-prompt-tags := Rectangle"));
+        assert!(!composer.contains("selected-prompt-row := HorizontalLayout"));
+        assert!(!composer.contains(
+            "width: min(max(72px, selected-title.preferred-width + 38px), root.width - 104px);"
+        ));
         let prompt_entry = composer
             .split("prompt-entry-row := HorizontalLayout")
             .nth(1)
             .and_then(|value| {
                 value
-                    .split("if AppState.selected-custom-prompt-items.length > 0")
+                    .split("for item in AppState.selected-custom-prompt-items")
                     .next()
             })
             .expect("prompt entry row");
@@ -1720,6 +1729,9 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         for kind in ["video", "audio"] {
             assert!(!page.contains(&format!("root.add-node(\"{kind}\")")));
         }
+        assert!(!page.contains("Create the first node"));
+        assert!(!page.contains("创建第一个节点"));
+        assert!(!page.contains("if AppState.canvas-notes.length == 0: Rectangle"));
         assert!(page.contains("AppState.group-canvas-selection"));
         assert!(page.contains("AppState.undo-canvas()"));
         assert!(page.contains("AppState.redo-canvas()"));

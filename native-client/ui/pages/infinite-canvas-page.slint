@@ -2258,44 +2258,6 @@ export component InfiniteCanvasPage {
                 dark-background: AppState.canvas-dark-background;
             }
 
-            if AppState.canvas-notes.length == 0: Rectangle {
-                x: (parent.width - min(320px, parent.width - 32px)) / 2;
-                y: (parent.height - 136px) / 2;
-                width: min(320px, parent.width - 32px);
-                height: 136px;
-                background: AppTheme.panel;
-                border-radius: 7px;
-                border-width: 1px;
-                border-color: AppTheme.border;
-                Image {
-                    x: (parent.width - 30px) / 2;
-                    y: 18px;
-                    width: 30px;
-                    height: 30px;
-                    source: @image-url("../../assets/icons/canvas.svg");
-                    colorize: AppTheme.accent;
-                }
-                Text {
-                    x: 16px;
-                    y: 55px;
-                    width: parent.width - 32px;
-                    height: 28px;
-                    text: AppState.en ? "Create the first node" : "创建第一个节点";
-                    color: AppTheme.text;
-                    font-size: 17px;
-                    font-weight: 600;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-                CanvasChoiceButton {
-                    x: (parent.width - 112px) / 2;
-                    y: 94px;
-                    width: 112px;
-                    text: AppState.en ? "Add text" : "添加文本";
-                    clicked => { root.add-node("text"); }
-                }
-            }
-
             for note in AppState.canvas-notes: CanvasNodeCard {
                 visible: note.kind == "group";
                 note: note;
