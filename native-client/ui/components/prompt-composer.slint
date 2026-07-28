@@ -14,7 +14,7 @@ export component PromptComposer {
     in property <bool> generation: false;
     in property <bool> show-generate-button: true;
     property <int> prompt-history-selected-index: 0;
-    property <int> custom-prompt-selected-index: 0;
+    property <int> custom-prompt-selected-index: -1;
     property <length> prompt-history-scroll-y: 0px;
     property <length> custom-prompt-scroll-x: 0px;
     property <string> pending-custom-prompt-content: "";
@@ -126,7 +126,6 @@ export component PromptComposer {
             width: parent.width - 48px;
             height: root.prompt-input-height();
             spacing: 6px;
-            alignment: start;
 
             if AppState.selected-custom-prompt-items.length > 0: selected-prompt-tags := Rectangle {
                 width: min(max(72px, selected-prompt-row.preferred-width), root.width - 104px);
@@ -233,7 +232,7 @@ export component PromptComposer {
                         prompt-input.set-selection-offsets(2, 2);
                         AppState.prompt-history-open = false;
                         history-popup.close();
-                        root.custom-prompt-selected-index = 0;
+                        root.custom-prompt-selected-index = -1;
                         root.custom-prompt-scroll-x = 0px;
                         AppState.custom-prompt-open = true;
                         custom-prompt-popup.show();
@@ -268,19 +267,25 @@ export component PromptComposer {
                     }
                     if AppState.custom-prompt-open && AppState.custom-prompt-items.length > 0 {
                         if event.text == Key.DownArrow {
-                            root.custom-prompt-selected-index = min(
-                                AppState.custom-prompt-items.length - 1,
-                                root.custom-prompt-selected-index + 1,
-                            );
+                            root.custom-prompt-selected-index = root.custom-prompt-selected-index < 0
+                                ? 0
+                                : min(
+                                    AppState.custom-prompt-items.length - 1,
+                                    root.custom-prompt-selected-index + 1,
+                                );
                             root.scroll-custom-prompt-selection-into-view();
                             return accept;
                         }
                         if event.text == Key.UpArrow {
-                            root.custom-prompt-selected-index = max(0, root.custom-prompt-selected-index - 1);
+                            root.custom-prompt-selected-index = root.custom-prompt-selected-index < 0
+                                ? AppState.custom-prompt-items.length - 1
+                                : max(0, root.custom-prompt-selected-index - 1);
                             root.scroll-custom-prompt-selection-into-view();
                             return accept;
                         }
-                        if event.text == Key.Return && !event.modifiers.alt {
+                        if event.text == Key.Return
+                            && !event.modifiers.alt
+                            && root.custom-prompt-selected-index >= 0 {
                             root.queue-custom-prompt-selection(
                                 AppState.custom-prompt-items[root.custom-prompt-selected-index].content,
                             );
@@ -665,6 +670,9 @@ export component PromptComposer {
     }
 
     function scroll-custom-prompt-selection-into-view() {
+        if root.custom-prompt-selected-index < 0 {
+            return;
+        }
         let selected-left = root.custom-prompt-selected-index * 120px;
         let selected-right = selected-left + 120px;
         let visible-width = max(120px, root.width - 64px);

@@ -339,7 +339,7 @@ mod tests {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
 
         assert!(composer.contains("property <int> prompt-history-selected-index: 0"));
-        assert!(composer.contains("property <int> custom-prompt-selected-index: 0"));
+        assert!(composer.contains("property <int> custom-prompt-selected-index: -1"));
         assert_eq!(composer.matches("event.text == Key.DownArrow").count(), 2);
         assert_eq!(composer.matches("event.text == Key.UpArrow").count(), 2);
         assert_eq!(composer.matches("event.text == Key.Escape").count(), 2);
@@ -595,6 +595,16 @@ mod tests {
         assert!(composer.contains("prompt-cursor-area := TouchArea"));
         assert!(composer.contains("mouse-cursor: text;"));
         assert!(composer.contains("horizontal-stretch: 1;"));
+        let prompt_entry = composer
+            .split("prompt-entry-row := HorizontalLayout")
+            .nth(1)
+            .and_then(|value| {
+                value
+                    .split("if AppState.selected-custom-prompt-items.length > 0")
+                    .next()
+            })
+            .expect("prompt entry row");
+        assert!(!prompt_entry.contains("alignment: start;"));
         assert!(!composer.contains(
             "x: AppState.selected-custom-prompt-items.length > 0 ? 270px : 24px;"
         ));
@@ -616,6 +626,8 @@ mod tests {
         ));
         assert!(popup.contains("root.queue-custom-prompt-selection(item.content)"));
         assert!(!popup.contains("AppState.toggle-custom-prompt-selection(item.content)"));
+        assert!(composer.contains("root.custom-prompt-selected-index = -1;"));
+        assert!(composer.contains("root.custom-prompt-selected-index < 0"));
         assert!(composer.contains(
             "visible: selected-tag-touch.has-hover || selected-close-touch.has-hover;"
         ));
