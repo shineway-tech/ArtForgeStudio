@@ -979,14 +979,26 @@ fn generation_loading_and_completed_items_share_the_time_grouped_template() {
     let section = include_str!("../../ui/components/time-group-section.slint");
 
     assert!(!panel.contains("GenerationWaterfall"));
+    assert!(panel.contains("result-gallery := TimeGroupedGallery"));
     assert!(panel.contains(
-        "if AppState.generations.length > 0 || root.active-generating(): TimeGroupedGallery"
+        "visible: AppState.generations.length > 0 || root.active-generating();"
     ));
     assert!(panel.contains("loading-group-title: AppState.en ? \"Today\" : \"今天\";"));
     assert!(gallery.contains("loading-count: root.loading-count;"));
     assert!(gallery.contains("group.title == root.loading-group-title"));
     assert!(section.contains("GenerationLoadingCard"));
     assert!(section.contains("index + root.loading-count"));
+}
+
+#[test]
+fn generation_results_scroll_to_the_gallerys_measured_height() {
+    let panel = include_str!("../../ui/components/generation-result-panel.slint");
+
+    assert!(panel.contains(
+        "viewport-height: max(self.height, result-gallery.preferred-height);"
+    ));
+    assert!(panel.contains("height: self.preferred-height;"));
+    assert!(!panel.contains("AppState.generation-groups.length * 66px"));
 }
 
 #[test]

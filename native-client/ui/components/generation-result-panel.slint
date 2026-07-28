@@ -29,19 +29,20 @@ export component GenerationResultPanel {
                 width: parent.width;
                 height: parent.height;
                 viewport-width: parent.width;
-                viewport-height: root.content-height();
+                viewport-height: max(self.height, result-gallery.preferred-height);
                 interactive: true;
                 Rectangle {
                     width: parent.viewport-width;
-                    height: root.content-height();
+                    height: parent.viewport-height;
                     background: transparent;
                     if AppState.generations.length == 0 && !root.active-generating(): EmptyState {
                         width: parent.width;
-                        height: max(360px, root.height - 90px);
+                        height: max(360px, parent.height);
                     }
-                    if AppState.generations.length > 0 || root.active-generating(): TimeGroupedGallery {
+                    result-gallery := TimeGroupedGallery {
+                        visible: AppState.generations.length > 0 || root.active-generating();
                         width: parent.width;
-                        height: root.content-height();
+                        height: self.preferred-height;
                         groups: AppState.generation-groups;
                         card-width: root.item-width();
                         source: "generation";
@@ -69,15 +70,6 @@ export component GenerationResultPanel {
     }
     function item-width() -> length {
         return min(root.base-thumb-width(), max(91px, (root.grid-width() - (root.column-count() - 1) * root.grid-gap()) / root.column-count()));
-    }
-    function row-height() -> length {
-        return root.item-width() + 30px;
-    }
-    function content-height() -> length {
-        return max(360px, max(root.height - 90px, 34px + AppState.generation-groups.length * 66px + root.row-count() * root.row-height()));
-    }
-    function row-count() -> int {
-        return (AppState.generations.length + root.loading-count() + root.column-count() - 1) / root.column-count();
     }
     function loading-count() -> int {
         return root.active-generating() ? AppState.generation-loading-count : 0;
