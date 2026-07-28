@@ -142,7 +142,7 @@ pub(crate) fn init(ctx: &CbCtx) {
                 crate::providers::push_providers(&app, &ctx.cfg.borrow());
                 s.set_in_onboarding(false);
                 s.set_current_page("welcome".into());
-                s.set_status_text("欢迎来到 ArtForge Studio".into());
+                s.set_status_text("欢迎来到 Elunvi Canvas".into());
             }
         });
     }

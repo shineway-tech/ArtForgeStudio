@@ -145,7 +145,7 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
           set -euo pipefail
-          DMG_PATH="dist/ArtForgeStudio_${APP_VERSION}_macos_${{ matrix.artifact_arch }}.dmg"
+          DMG_PATH="dist/ElunviCanvas_${APP_VERSION}_macos_${{ matrix.artifact_arch }}.dmg"
           xcrun notarytool submit "$DMG_PATH" \
             --key "$APPLE_API_KEY_PATH" \
             --key-id "$APPLE_API_KEY" \
@@ -157,8 +157,8 @@ jobs:
       - name: Upload macOS package artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ArtForgeStudio-macos-${{ matrix.artifact_arch }}
-          path: dist/ArtForgeStudio_*_macos_${{ matrix.artifact_arch }}.dmg
+          name: ElunviCanvas-macos-${{ matrix.artifact_arch }}
+          path: dist/ElunviCanvas_*_macos_${{ matrix.artifact_arch }}.dmg
           if-no-files-found: error
           compression-level: 0
 
@@ -176,7 +176,7 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/upload-release-assets.js \
-            --file "dist/ArtForgeStudio_${APP_VERSION}_macos_${{ matrix.artifact_arch }}.dmg" \
+            --file "dist/ElunviCanvas_${APP_VERSION}_macos_${{ matrix.artifact_arch }}.dmg" \
             --version "$APP_VERSION"
 
   build-windows:
@@ -224,7 +224,7 @@ jobs:
           & ./scripts/package-native-client.ps1 -Target windows
           New-Item -ItemType Directory -Force -Path release-windows | Out-Null
 
-          $portable = "dist/ArtForgeStudio_${env:APP_VERSION}_windows_x64_portable.zip"
+          $portable = "dist/ElunviCanvas_${env:APP_VERSION}_windows_x64_portable.zip"
           if (!(Test-Path -LiteralPath $portable)) {
             throw "Missing Windows portable package: $portable"
           }
@@ -253,14 +253,14 @@ jobs:
           }
 
           $env:ARTFORGE_APP_VERSION = $env:APP_VERSION
-          $env:ARTFORGE_PACKAGE_DIR = (Resolve-Path "dist/ArtForgeStudio-windows-x64").Path
+          $env:ARTFORGE_PACKAGE_DIR = (Resolve-Path "dist/ElunviCanvas-windows-x64").Path
           $env:ARTFORGE_RELEASE_DIR = (Resolve-Path "release-windows").Path
-          & $iscc "installer/ArtForgeStudio.iss"
+          & $iscc "installer/ElunviCanvas.iss"
           if ($LASTEXITCODE -ne 0) {
             throw "Inno Setup failed with exit code $LASTEXITCODE."
           }
 
-          $installer = "release-windows/ArtForgeStudio_${env:APP_VERSION}_windows_x64_setup.exe"
+          $installer = "release-windows/ElunviCanvas_${env:APP_VERSION}_windows_x64_setup.exe"
           if (!(Test-Path -LiteralPath $installer)) {
             throw "Missing Windows installer: $installer"
           }
@@ -268,16 +268,16 @@ jobs:
       - name: Upload Windows installer artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ArtForgeStudio-windows-x64
-          path: release-windows/ArtForgeStudio_*_windows_x64_setup.exe
+          name: ElunviCanvas-windows-x64
+          path: release-windows/ElunviCanvas_*_windows_x64_setup.exe
           if-no-files-found: error
           compression-level: 0
 
       - name: Upload Windows portable artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ArtForgeStudio-windows-x64-portable
-          path: dist/ArtForgeStudio_*_windows_x64_portable.zip
+          name: ElunviCanvas-windows-x64-portable
+          path: dist/ElunviCanvas_*_windows_x64_portable.zip
           if-no-files-found: error
           compression-level: 0
 
@@ -295,14 +295,14 @@ jobs:
           ALIYUN_OSS_OBJECT_ACL: ${{ secrets.ALIYUN_OSS_OBJECT_ACL }}
         run: |
           & node scripts/upload-release-assets.js `
-            --file "release-windows/ArtForgeStudio_${env:APP_VERSION}_windows_x64_setup.exe" `
+            --file "release-windows/ElunviCanvas_${env:APP_VERSION}_windows_x64_setup.exe" `
             --version $env:APP_VERSION
           if ($LASTEXITCODE -ne 0) {
             throw "Failed to upload Windows installer to OSS."
           }
 
           & node scripts/upload-release-assets.js `
-            --file "dist/ArtForgeStudio_${env:APP_VERSION}_windows_x64_portable.zip" `
+            --file "dist/ElunviCanvas_${env:APP_VERSION}_windows_x64_portable.zip" `
             --version $env:APP_VERSION
           if ($LASTEXITCODE -ne 0) {
             throw "Failed to upload Windows portable package to OSS."
@@ -323,7 +323,7 @@ jobs:
       - name: Download release packages
         uses: actions/download-artifact@v8
         with:
-          pattern: ArtForgeStudio-*
+          pattern: ElunviCanvas-*
           path: release-assets
           merge-multiple: true
 
@@ -342,10 +342,10 @@ jobs:
           APP_VERSION="${GITHUB_REF_NAME#v}"
           node scripts/create-update-manifest.js \
             --version "$APP_VERSION" \
-            --macos-aarch64-file "release-assets/ArtForgeStudio_${APP_VERSION}_macos_aarch64.dmg" \
-            --macos-x64-file "release-assets/ArtForgeStudio_${APP_VERSION}_macos_x64.dmg" \
-            --windows-x64-file "release-assets/ArtForgeStudio_${APP_VERSION}_windows_x64_setup.exe" \
-            --windows-x64-portable-file "release-assets/ArtForgeStudio_${APP_VERSION}_windows_x64_portable.zip" \
+            --macos-aarch64-file "release-assets/ElunviCanvas_${APP_VERSION}_macos_aarch64.dmg" \
+            --macos-x64-file "release-assets/ElunviCanvas_${APP_VERSION}_macos_x64.dmg" \
+            --windows-x64-file "release-assets/ElunviCanvas_${APP_VERSION}_windows_x64_setup.exe" \
+            --windows-x64-portable-file "release-assets/ElunviCanvas_${APP_VERSION}_windows_x64_portable.zip" \
             --output dist/update-manifest.json
           node scripts/upload-release-assets.js \
             --file dist/update-manifest.json \

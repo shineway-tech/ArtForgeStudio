@@ -319,7 +319,7 @@ fn download_external_reference(url: &str) -> std::result::Result<PathBuf, String
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::limited(5))
-        .user_agent("ArtForgeStudio/1.0")
+        .user_agent("ElunviCanvas/1.0")
         .build()
         .map_err(|_| "无法创建图片下载请求".to_string())?;
     let response = client

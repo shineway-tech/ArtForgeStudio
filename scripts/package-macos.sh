@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CLIENT_DIR="$ROOT/native-client"
 DIST_ROOT="$ROOT/dist"
-APP_NAME="ArtForgeStudio"
+APP_NAME="ElunviCanvas"
 ARCH_NAME="${1:-}"
 
 case "$ARCH_NAME" in
@@ -81,7 +81,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<EOF
   <key>CFBundleName</key>
   <string>$APP_NAME</string>
   <key>CFBundleDisplayName</key>
-  <string>ArtForgeStudio</string>
+  <string>Elunvi Canvas</string>
   <key>CFBundleIconFile</key>
   <string>app.icns</string>
   <key>CFBundlePackageType</key>

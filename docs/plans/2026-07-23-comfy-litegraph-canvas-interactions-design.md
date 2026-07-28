@@ -154,6 +154,6 @@ Slint 结构测试覆盖：
 - 节点搜索弹窗锚定。
 - 浮动工具条和分组的渲染层级。
 
-全部功能完成后统一执行格式检查、`cargo check`、完整测试、release 构建以及 200 节点/400 连线压力数据验证。最终 Windows x64 绿色包输出到 `D:\ArtForgeStudio`。
+全部功能完成后统一执行格式检查、`cargo check`、完整测试、release 构建以及 200 节点/400 连线压力数据验证。最终 Windows x64 绿色包输出到 `D:\ElunviCanvas`。
 
 同时检查现有 macOS Intel/ARM 打包配置，但 Windows 环境不生成未经实际编译验证的 macOS 成品。全部改动只做本地提交，不自动推送远程。

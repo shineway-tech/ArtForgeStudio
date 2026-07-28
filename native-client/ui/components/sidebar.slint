@@ -23,18 +23,33 @@ export component Sidebar {
                     source: AppState.app-logo;
                     image-fit: contain;
                 }
-                if !AppState.sidebar-collapsed: VerticalLayout {
-                    x: 46px;
-                    y: 8px;
-                    width: parent.width - 76px;
-                    height: 40px;
-                    spacing: 1px;
-                    Text { text: "ArtForgeStudio"; color: AppTheme.text; font-size: 18px; font-weight: 600; overflow: elide; }
-                    Text { text: "AI Art Studio"; color: AppTheme.muted; font-size: 12px; font-weight: 400; overflow: elide; }
+                if !AppState.sidebar-collapsed: Text {
+                    x: 44px;
+                    y: 5px;
+                    width: parent.width - 44px;
+                    height: 23px;
+                    text: "Elunvi Canvas";
+                    color: AppTheme.text;
+                    font-size: 16px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                if !AppState.sidebar-collapsed: Text {
+                    x: 44px;
+                    y: 29px;
+                    width: parent.width - 70px;
+                    height: 18px;
+                    text: "AI Art Studio";
+                    color: AppTheme.muted;
+                    font-size: 12px;
+                    font-weight: 400;
+                    vertical-alignment: center;
+                    overflow: elide;
                 }
                 collapse-button := Rectangle {
                     x: parent.width - 22px;
-                    y: 17px;
+                    y: AppState.sidebar-collapsed ? 17px : 27px;
                     width: 22px;
                     height: 22px;
                     border-radius: 6px;

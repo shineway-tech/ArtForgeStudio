@@ -1,8 +1,8 @@
-# ArtForge Studio — Agent Guide
+# Elunvi Canvas — Agent Guide
 
 ## Repository boundary
 
-ArtForge Studio 是 Rust + Slint 桌面客户端。`native-client` 是唯一活动客户端和唯一 Cargo workspace 成员，包名为 `artforge-studio-native`，唯一应用二进制为 `ArtForgeStudio`。
+Elunvi Canvas 是 Rust + Slint 桌面客户端。`native-client` 是唯一活动客户端和唯一 Cargo workspace 成员，包名为 `artforge-studio-native`，唯一应用二进制为 `ElunviCanvas`。
 
 `crates/`、根 `ui/`、`schemas/` 和 `themes/` 是早期模块化客户端的历史源码，不参与当前构建、测试或发布。除非任务明确要求处理历史源码，不要修改、恢复或重新接入这些目录。
 
@@ -46,10 +46,10 @@ Slint UI：
 常用命令：
 
 ```bash
-cargo run -p artforge-studio-native --bin ArtForgeStudio
+cargo run -p artforge-studio-native --bin ElunviCanvas
 cargo check -p artforge-studio-native
 cargo test -p artforge-studio-native
-cargo build --release -p artforge-studio-native --bin ArtForgeStudio
+cargo build --release -p artforge-studio-native --bin ElunviCanvas
 ```
 
 使用网络回环的 HTTP 单元测试可能需要允许本地监听端口。标记为 ignored 的跨栈测试要求后端 Mock API 已启动，不属于普通 `cargo test` 的外部依赖。

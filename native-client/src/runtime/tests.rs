@@ -22,16 +22,16 @@ mod tests {
         assert!(compare_versions("1.0.4", "1.0.5").is_lt());
 
         assert!(validated_update_download_url(
-            "https://static.honeykid.cn/public/art_forge/ArtForgeStudio_macos_aarch64.dmg"
+            "https://static.honeykid.cn/public/art_forge/ElunviCanvas_macos_aarch64.dmg"
         )
         .is_ok());
         assert_eq!(
             canonical_update_download_url(
-                "https://cdn.honeykid.cn/public/art_forge/ArtForgeStudio_macos_aarch64.dmg"
+                "https://cdn.honeykid.cn/public/art_forge/ElunviCanvas_macos_aarch64.dmg"
             )
             .as_deref(),
             Some(
-                "https://static.honeykid.cn/public/art_forge/ArtForgeStudio_macos_aarch64.dmg"
+                "https://static.honeykid.cn/public/art_forge/ElunviCanvas_macos_aarch64.dmg"
             )
         );
         assert!(validated_update_download_url("http://static.honeykid.cn/update.dmg").is_err());
@@ -59,9 +59,9 @@ mod tests {
         let manifest: UpdateManifest = serde_json::from_value(serde_json::json!({
             "version": "1.0.10",
             "downloads": {
-                "macos_aarch64": "https://static.honeykid.cn/public/art_forge/1.0.10/ArtForgeStudio_macos_aarch64.dmg",
-                "macos_x64": "https://static.honeykid.cn/public/art_forge/1.0.10/ArtForgeStudio_macos_x64.dmg",
-                "windows_x64": "https://static.honeykid.cn/public/art_forge/1.0.10/ArtForgeStudio_windows_x64_setup.exe"
+                "macos_aarch64": "https://static.honeykid.cn/public/art_forge/1.0.10/ElunviCanvas_macos_aarch64.dmg",
+                "macos_x64": "https://static.honeykid.cn/public/art_forge/1.0.10/ElunviCanvas_macos_x64.dmg",
+                "windows_x64": "https://static.honeykid.cn/public/art_forge/1.0.10/ElunviCanvas_windows_x64_setup.exe"
             },
             "artifacts": {
                 "macos_aarch64": { "size_bytes": 42, "sha256": "a".repeat(64) },
@@ -94,7 +94,7 @@ mod tests {
         let state = include_str!("../../ui/app-state.slint");
         let app = include_str!("../../ui/app.slint");
         let updater = include_str!("storage/updater.rs");
-        let installer = include_str!("../../../installer/ArtForgeStudio.iss");
+        let installer = include_str!("../../../installer/ElunviCanvas.iss");
         let release_workflow = include_str!("../../../.github/workflows/release-desktop.yml");
         let manifest_script = include_str!("../../../scripts/create-update-manifest.js");
 
@@ -113,6 +113,11 @@ mod tests {
         assert!(state.contains("in-out property <string> update-stage"));
         assert!(state.contains("callback cancel-update()"));
         assert!(dialog.contains("AppState.update-download-progress"));
+        assert!(dialog.contains("visible-progress: max(0, min(100"));
+        assert!(dialog.contains("progress-fill := Rectangle"));
+        assert!(dialog.contains("x: 0px;"));
+        assert!(dialog.contains("animate width { duration: 220ms; easing: ease-out; }"));
+        assert!(dialog.contains("\"正在核对文件大小与 SHA-256\""));
         assert!(dialog.contains("AppState.cancel-update()"));
         assert!(state.contains("in-out property <bool> update-check-failed"));
         assert!(updater.contains("Sha256"));

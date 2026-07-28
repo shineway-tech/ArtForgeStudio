@@ -10,7 +10,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Root = Resolve-Path (Join-Path $ScriptDir "..")
 $DistRoot = Join-Path $Root "dist"
 $ClientDir = Join-Path $Root "native-client"
-$AppName = "ArtForgeStudio"
+$AppName = "ElunviCanvas"
 $metadataJson = & cargo metadata --manifest-path (Join-Path $Root "Cargo.toml") --format-version 1 --no-deps
 if ($LASTEXITCODE -ne 0) {
     throw "Unable to read Cargo package metadata"
@@ -181,7 +181,7 @@ function Package-Macos {
   <key>CFBundleName</key>
   <string>$AppName</string>
   <key>CFBundleDisplayName</key>
-  <string>ArtForgeStudio</string>
+  <string>Elunvi Canvas</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

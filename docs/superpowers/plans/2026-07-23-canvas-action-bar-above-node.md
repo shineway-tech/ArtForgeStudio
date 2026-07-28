@@ -282,8 +282,8 @@ git commit -m "Keep canvas action bars above nodes"
 **Files:**
 - Verify: `native-client/src/runtime/tests.rs`
 - Verify: `native-client/ui/pages/infinite-canvas-page.slint`
-- Generate: `dist/ArtForgeStudio_1.0.2_windows_x64_portable.zip`
-- Copy: `D:\ArtForgeStudio\ArtForgeStudio_1.0.2_windows_x64_portable.zip`
+- Generate: `dist/ElunviCanvas_1.0.2_windows_x64_portable.zip`
+- Copy: `D:\ElunviCanvas\ElunviCanvas_1.0.2_windows_x64_portable.zip`
 
 **Interfaces:**
 - Consumes: committed action-bar implementation
@@ -311,15 +311,15 @@ Expected: exit code 0.
 & .\scripts\package-native-client.ps1 -Target windows
 ```
 
-Expected: `dist\ArtForgeStudio_1.0.2_windows_x64_portable.zip` is generated successfully.
+Expected: `dist\ElunviCanvas_1.0.2_windows_x64_portable.zip` is generated successfully.
 
 - [ ] **Step 4: Copy and verify the package**
 
 ```powershell
-$destination = "D:\ArtForgeStudio"
+$destination = "D:\ElunviCanvas"
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
-Copy-Item -LiteralPath ".\dist\ArtForgeStudio_1.0.2_windows_x64_portable.zip" -Destination (Join-Path $destination "ArtForgeStudio_1.0.2_windows_x64_portable.zip") -Force
-Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $destination "ArtForgeStudio_1.0.2_windows_x64_portable.zip")
+Copy-Item -LiteralPath ".\dist\ElunviCanvas_1.0.2_windows_x64_portable.zip" -Destination (Join-Path $destination "ElunviCanvas_1.0.2_windows_x64_portable.zip") -Force
+Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $destination "ElunviCanvas_1.0.2_windows_x64_portable.zip")
 ```
 
 Expected: the destination package exists and a SHA-256 hash is reported.

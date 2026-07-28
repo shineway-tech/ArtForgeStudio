@@ -25,10 +25,10 @@ fn main() {
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let mut res = winresource::WindowsResource::new();
         res.set_icon(ico_path.to_str().expect("ico path"));
-        res.set("FileDescription", "ArtForge Studio - AI 美术生产套件");
-        res.set("ProductName", "ArtForge Studio");
-        res.set("CompanyName", "ArtForge Studio");
-        res.set("LegalCopyright", "© 2026 ArtForge Studio");
+        res.set("FileDescription", "Elunvi Canvas - AI 美术生产套件");
+        res.set("ProductName", "Elunvi Canvas");
+        res.set("CompanyName", "Elunvi Canvas");
+        res.set("LegalCopyright", "© 2026 Elunvi Canvas");
         res.set("OriginalFilename", "artait-migrate.exe");
         res.set("InternalName", "artait-migrate");
         res.set("FileVersion", "0.1.0.0");

@@ -1,5 +1,6 @@
-#define AppName "ArtForgeStudio"
-#define AppExeName "ArtForgeStudio.exe"
+#define AppName "Elunvi Canvas"
+#define AppFileStem "ElunviCanvas"
+#define AppExeName "ElunviCanvas.exe"
 #define AppVersion GetEnv("ARTFORGE_APP_VERSION")
 #define PackageDir GetEnv("ARTFORGE_PACKAGE_DIR")
 #define ReleaseDir GetEnv("ARTFORGE_RELEASE_DIR")
@@ -25,7 +26,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#ReleaseDir}
-OutputBaseFilename={#AppName}_{#AppVersion}_windows_x64_setup
+OutputBaseFilename={#AppFileStem}_{#AppVersion}_windows_x64_setup
 SetupIconFile=..\native-client\assets\app.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 Compression=lzma2/max

@@ -752,6 +752,14 @@ fn apply_prompt_versions(
     state.set_generation_status("深度优化结果已应用，生图时将使用英文版本".into());
 }
 
+fn displayed_best_score(detail: &PromptOptimizationDetail) -> i32 {
+    detail
+        .best_score
+        .or(detail.baseline_score)
+        .or(detail.result_score)
+        .unwrap_or(0)
+}
+
 fn apply_prompt_optimization_detail(app: &AppWindow, detail: &PromptOptimizationDetail) {
     let state = app.global::<AppState>();
     state.set_deep_optimization_job_id(detail.id.clone().into());
@@ -777,13 +785,7 @@ fn apply_prompt_optimization_detail(app: &AppWindow, detail: &PromptOptimization
         },
     );
     state.set_deep_optimization_baseline_score(detail.baseline_score.unwrap_or(0));
-    state.set_deep_optimization_current_score(
-        detail
-            .result_score
-            .or(detail.best_score)
-            .or(detail.baseline_score)
-            .unwrap_or(0),
-    );
+    state.set_deep_optimization_current_score(displayed_best_score(detail));
     state.set_deep_optimization_phase_label(phase_label(&detail.phase).into());
     state.set_deep_optimization_status_message(phase_message(&detail.phase).into());
     state.set_deep_optimization_stop_reason(
@@ -845,35 +847,44 @@ fn apply_prompt_optimization_detail(app: &AppWindow, detail: &PromptOptimization
     let rounds = detail
         .rounds
         .iter()
-        .map(|round| DeepOptimizationRoundView {
-            round: round.round,
-            status: round.status.clone().into(),
-            phase_label: round_status_label(&round.status).into(),
-            score_before: round.score_before,
-            score_after: round.score_after.unwrap_or(0),
-            score_label: match round.score_after {
-                Some(score) => format!(
-                    "{} → {} · {} 积分{}",
-                    round.score_before,
-                    score,
-                    round.credit_cost,
-                    round
-                        .top_band
-                        .as_ref()
-                        .filter(|review| review.triggered)
-                        .map(|review| {
-                            if review.qualifies {
-                                " · 高分复核通过"
-                            } else {
-                                " · 高分复核未通过"
-                            }
-                        })
-                        .unwrap_or(""),
-                )
-                .into(),
-                None => "正在处理本轮内容".into(),
-            },
-            summary: round.major_changes.join("；").into(),
+        .map(|round| {
+            let candidate_note = match (round.candidate_score, round.score_after, round.accepted) {
+                (Some(candidate), Some(best), false) if candidate != best => {
+                    format!(" · 本轮候选 {candidate} 分（未采用）")
+                }
+                _ => String::new(),
+            };
+            DeepOptimizationRoundView {
+                round: round.round,
+                status: round.status.clone().into(),
+                phase_label: round_status_label(&round.status).into(),
+                score_before: round.score_before,
+                score_after: round.score_after.unwrap_or(0),
+                score_label: match round.score_after {
+                    Some(score) => format!(
+                        "{} → {} · {} 积分{}{}",
+                        round.score_before,
+                        score,
+                        round.credit_cost,
+                        candidate_note,
+                        round
+                            .top_band
+                            .as_ref()
+                            .filter(|review| review.triggered)
+                            .map(|review| {
+                                if review.qualifies {
+                                    " · 高分复核通过"
+                                } else {
+                                    " · 高分复核未通过"
+                                }
+                            })
+                            .unwrap_or(""),
+                    )
+                    .into(),
+                    None => "正在处理本轮内容".into(),
+                },
+                summary: round.major_changes.join("；").into(),
+            }
         })
         .collect::<Vec<_>>();
     state.set_deep_optimization_rounds(ModelRc::new(VecModel::from(rounds)));
@@ -919,29 +930,54 @@ fn best_result_comparison_base(detail: &PromptOptimizationDetail) -> &str {
 }
 
 fn optimization_change_summary(detail: &PromptOptimizationDetail) -> String {
+    if detail.stop_reason.as_deref() == Some("target_reached")
+        && detail.completed_rounds == 0
+    {
+        return "原提示词已通过高分复核并达到目标，无需额外优化。".to_string();
+    }
     if detail.result.is_none() {
         return "本轮候选未超过原提示词，已保留原提示词。".to_string();
     }
     let Some(round) = displayed_result_round(detail) else {
         return "已生成当前最佳版本。".to_string();
     };
+    let rejected_notice = if !detail.result_accepted {
+        detail
+            .result_score
+            .zip(detail.best_score)
+            .filter(|(candidate, best)| candidate < best)
+            .map(|(candidate, best)| {
+                format!("本轮候选 {candidate} 分，未替换当前最佳 {best} 分。")
+            })
+    } else {
+        None
+    };
     if let Some(review) = round
         .top_band
         .as_ref()
         .filter(|review| !review.qualifies && !review.blocking_issues.is_empty())
     {
-        return format!(
+        let review_summary = format!(
             "高分复核待改进：{}",
-            review.blocking_issues.join("；"),
+            review.blocking_issues.join("；")
         );
+        return rejected_notice
+            .map(|notice| format!("{notice}\n{review_summary}"))
+            .unwrap_or(review_summary);
     }
     if !round.major_changes.is_empty() {
-        return round
+        let changes = round
             .major_changes
             .iter()
             .map(|item| format!("• {item}"))
             .collect::<Vec<_>>()
             .join("\n");
+        return rejected_notice
+            .map(|notice| format!("{notice}\n{changes}"))
+            .unwrap_or(changes);
+    }
+    if let Some(notice) = rejected_notice {
+        return notice;
     }
     if !round.issues.is_empty() {
         return round.issues.join("；");
@@ -1258,7 +1294,8 @@ fn round_status_label(status: &str) -> &'static str {
 mod prompt_diff_tests {
     use super::{
         best_result_comparison_base, collect_lcs_matches, highlighted_prompt_markdown,
-        optimization_change_summary, prompt_diff_pieces, prompt_diff_tokens, styled_markdown,
+        displayed_best_score, optimization_change_summary, prompt_diff_pieces,
+        prompt_diff_tokens, styled_markdown,
     };
     use crate::runtime::api::{
         PromptOptimizationDetail, PromptOptimizationResult, PromptOptimizationRound,
@@ -1394,9 +1431,36 @@ mod prompt_diff_tests {
         assert_eq!(best_result_comparison_base(&detail), "一位古风美女");
         assert_eq!(
             optimization_change_summary(&detail),
-            "• 补充服装材质和环境层次",
+            "本轮候选 59 分，未替换当前最佳 88 分。\n• 补充服装材质和环境层次",
         );
         assert!(detail.can_apply);
         assert_eq!(detail.result_score, Some(59));
+    }
+
+    #[test]
+    fn headline_score_keeps_the_server_best_when_a_reviewable_candidate_is_lower() {
+        let detail = PromptOptimizationDetail {
+            baseline_score: Some(100),
+            best_score: Some(100),
+            result_score: Some(40),
+            result_accepted: false,
+            ..Default::default()
+        };
+
+        assert_eq!(displayed_best_score(&detail), 100);
+    }
+
+    #[test]
+    fn baseline_target_summary_does_not_claim_that_a_round_was_needed() {
+        let detail = PromptOptimizationDetail {
+            completed_rounds: 0,
+            stop_reason: Some("target_reached".into()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            optimization_change_summary(&detail),
+            "原提示词已通过高分复核并达到目标，无需额外优化。",
+        );
     }
 }

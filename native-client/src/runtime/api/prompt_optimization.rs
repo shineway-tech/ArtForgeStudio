@@ -47,6 +47,8 @@ pub(crate) struct PromptOptimizationRound {
     pub(crate) score_before: i32,
     pub(crate) score_after: Option<i32>,
     #[serde(default)]
+    pub(crate) candidate_score: Option<i32>,
+    #[serde(default)]
     pub(crate) accepted: bool,
     #[serde(default)]
     pub(crate) chinese_prompt: Option<String>,

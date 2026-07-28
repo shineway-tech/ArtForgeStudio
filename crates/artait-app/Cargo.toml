@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 publish.workspace = true
-description = "ArtForge Studio - AI 美术生产套件"
+description = "Elunvi Canvas - AI 美术生产套件"
 autobins = false
 
 [[bin]]

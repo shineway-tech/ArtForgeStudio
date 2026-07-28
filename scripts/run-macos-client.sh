@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CLIENT_DIR="$ROOT/native-client"
-APP_NAME="ArtForgeStudio"
+APP_NAME="ElunviCanvas"
 TARGET_DIR="$ROOT/target/debug"
 APP_DIR="$TARGET_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
@@ -67,7 +67,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<EOF
   <key>CFBundleName</key>
   <string>$APP_NAME</string>
   <key>CFBundleDisplayName</key>
-  <string>ArtForgeStudio Dev</string>
+  <string>Elunvi Canvas Dev</string>
   <key>CFBundleIconFile</key>
   <string>app.icns</string>
   <key>CFBundlePackageType</key>

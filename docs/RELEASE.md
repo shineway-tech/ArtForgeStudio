@@ -25,8 +25,8 @@ macOS DMG：
 输出：
 
 ```text
-dist/ArtForgeStudio_<version>_macos_x64.dmg
-dist/ArtForgeStudio_<version>_macos_aarch64.dmg
+dist/ElunviCanvas_<version>_macos_x64.dmg
+dist/ElunviCanvas_<version>_macos_aarch64.dmg
 ```
 
 脚本读取 Cargo 版本、原生构建对应 Rust target、组装 `.app`、校验 `Info.plist` 并创建压缩 DMG。没有设置 `APPLE_SIGNING_IDENTITY` 时，脚本会明确生成未签名开发 DMG，不能当作正式发布包。
@@ -56,12 +56,12 @@ Windows PowerShell：
 
 | Platform | Artifact |
 |---|---|
-| Windows x64 installer | `ArtForgeStudio_<version>_windows_x64_setup.exe` |
-| Windows x64 portable | `ArtForgeStudio_<version>_windows_x64_portable.zip` |
-| macOS Intel | `ArtForgeStudio_<version>_macos_x64.dmg` |
-| macOS Apple Silicon | `ArtForgeStudio_<version>_macos_aarch64.dmg` |
+| Windows x64 installer | `ElunviCanvas_<version>_windows_x64_setup.exe` |
+| Windows x64 portable | `ElunviCanvas_<version>_windows_x64_portable.zip` |
+| macOS Intel | `ElunviCanvas_<version>_macos_x64.dmg` |
+| macOS Apple Silicon | `ElunviCanvas_<version>_macos_aarch64.dmg` |
 
-Windows portable ZIP 包含 `ArtForgeStudio.exe`、随包素材和初始 `data` 目录；必须完整解压后运行。用户迁移 portable 目录时应保留相邻 `data`。
+Windows portable ZIP 包含 `ElunviCanvas.exe`、随包素材和初始 `data` 目录；必须完整解压后运行。用户迁移 portable 目录时应保留相邻 `data`。
 
 上传 OSS 时，脚本为每个制品生成：
 
@@ -126,7 +126,7 @@ OSS 上传：
 
 Windows Runner 使用 MSVC 构建 release 二进制。`package-native-client.ps1` 组装 portable 目录、素材和数据目录，再创建 ZIP。
 
-CI 随后查找或安装 Inno Setup，并使用 `installer/ArtForgeStudio.iss` 生成当前用户安装器。安装器输入目录、版本和输出目录由工作流通过以下临时环境变量传入：
+CI 随后查找或安装 Inno Setup，并使用 `installer/ElunviCanvas.iss` 生成当前用户安装器。安装器输入目录、版本和输出目录由工作流通过以下临时环境变量传入：
 
 - `ARTFORGE_APP_VERSION`
 - `ARTFORGE_PACKAGE_DIR`

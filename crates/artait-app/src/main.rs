@@ -1,4 +1,4 @@
-//! ArtForge Studio 桌面应用入口。
+//! Elunvi Canvas 桌面应用入口。
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
@@ -67,7 +67,7 @@ fn main() -> Result<()> {
         exe = %exe_path,
         version = env!("CARGO_PKG_VERSION"),
         build_marker = BUILD_MARKER,
-        "ArtForge Studio 启动"
+        "Elunvi Canvas 启动"
     );
 
     let app = AppShell::new()?;
@@ -431,11 +431,11 @@ fn main() -> Result<()> {
 
     callbacks::settings::on_close_requested(&ctx, &app);
 
-    tracing::info!("ArtForge Studio 进入事件循环");
+    tracing::info!("Elunvi Canvas 进入事件循环");
     let run_result = app.run();
     persist_current_app_state(&app, &cfg, &ref_images, &workspace_drafts);
     run_result?;
-    tracing::info!("ArtForge Studio 事件循环结束");
+    tracing::info!("Elunvi Canvas 事件循环结束");
 
     // 关闭 sidecar 进程
     rt.block_on(async { sidecar_mgr.shutdown().await });
@@ -604,7 +604,7 @@ impl std::io::Write for RuntimeLogWriter {
 fn runtime_log_path() -> PathBuf {
     artait_model::portable_data_dir()
         .join("logs")
-        .join("ArtForgeStudio.log")
+        .join("ElunviCanvas.log")
 }
 
 fn push_runtime_log(s: &AppState) {
@@ -657,7 +657,7 @@ fn install_sample_user_theme() {
     }
     const SAMPLE: &str = include_str!("../../../themes/dark.toml");
     let with_header = format!(
-        "# ArtForge Studio 用户自定义主题样例。\n# 修改并保存后，把顶栏主题循环到\"自定义\"即可生效，无需重启。\n# 也可在主题为\"自定义\"时实时编辑此文件。\n\n{SAMPLE}"
+        "# Elunvi Canvas 用户自定义主题样例。\n# 修改并保存后，把顶栏主题循环到\"自定义\"即可生效，无需重启。\n# 也可在主题为\"自定义\"时实时编辑此文件。\n\n{SAMPLE}"
     );
     if let Err(e) = std::fs::write(&path, with_header) {
         tracing::warn!(error = %e, path = %path.display(), "写入 user.toml 样例失败");

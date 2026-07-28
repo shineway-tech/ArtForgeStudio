@@ -71,7 +71,7 @@ fn device_name() -> String {
         .or_else(|_| std::env::var("HOSTNAME"))
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "ArtForge Studio".to_string())
+        .unwrap_or_else(|| "Elunvi Canvas".to_string())
         .chars()
         .take(128)
         .collect()
