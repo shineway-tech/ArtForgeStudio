@@ -6,6 +6,7 @@ import { TopBar } from "components/top-bar.slint";
 import { AlipayPaymentDialog } from "dialogs/alipay-payment-dialog.slint";
 import { AuthDialog } from "dialogs/auth-dialog.slint";
 import { CreditInsufficientDialog } from "dialogs/credit-insufficient-dialog.slint";
+import { ContactPopup } from "dialogs/contact-popup.slint";
 import { CanvasGroupNameDialog } from "dialogs/canvas-group-name-dialog.slint";
 import { InvoiceDialog } from "dialogs/invoice-dialog.slint";
 import { InvoiceOrderDialog } from "dialogs/invoice-order-dialog.slint";
@@ -94,6 +95,13 @@ export component AppWindow inherits Window {
                 }
             }
         }
+    }
+
+    if AppState.contact-popup-open: ContactPopup {
+        width: min(400px, root.width - 40px);
+        height: 392px;
+        x: root.width - self.width - 22px;
+        y: root.height - self.height - 22px;
     }
 
     AuthDialog { width: root.width; height: root.height; }

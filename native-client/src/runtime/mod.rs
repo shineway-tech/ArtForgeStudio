@@ -79,6 +79,9 @@ use infinite_canvas_callbacks::*;
 #[path = "callbacks/toolbox.rs"]
 mod toolbox_callbacks;
 use toolbox_callbacks::*;
+#[path = "callbacks/contact.rs"]
+mod contact_callbacks;
+use contact_callbacks::*;
 mod payment_checkout;
 use payment_checkout::*;
 mod agreement_window;

@@ -273,6 +273,7 @@ struct Store {
     credit_ledger_pagination: CreditLedgerPagination,
     deep_prompt_job_id: String,
     deep_prompt_bindings: BTreeMap<String, DeepPromptBinding>,
+    contact_popup_dismissed: bool,
 }
 
 #[derive(Default)]
@@ -330,6 +331,8 @@ struct LocalStoreData {
     deep_prompt_job_id: String,
     #[serde(default)]
     deep_prompt_bindings: BTreeMap<String, DeepPromptBinding>,
+    #[serde(default)]
+    contact_popup_dismissed: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

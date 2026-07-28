@@ -3212,4 +3212,53 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(!restore_inputs.contains("state.set_prompt("));
         assert!(!restore_inputs.contains("set_prompt_draft_for_category("));
     }
+
+    #[test]
+    fn contact_details_are_available_on_first_launch_and_in_settings() {
+        let state = include_str!("../../ui/app-state.slint");
+        let app = include_str!("../../ui/app.slint");
+        let popup = include_str!("../../ui/dialogs/contact-popup.slint");
+        let settings = include_str!("../../ui/pages/settings-page.slint");
+        let callbacks = include_str!("callbacks/contact.rs");
+
+        assert!(state.contains("contact-popup-open: true"));
+        assert!(state.contains("callback dismiss-contact-popup();"));
+        assert!(state.contains("callback open-contact-settings();"));
+        assert!(app.contains("if AppState.contact-popup-open: ContactPopup"));
+        for detail in ["1090665775", "dyx346", "business@honeykid.cn"] {
+            assert!(popup.contains(detail));
+            assert!(settings.contains(detail));
+        }
+        assert!(settings.contains("AppState.settings-section = \"contact\""));
+        assert!(callbacks.contains("store_mut.contact_popup_dismissed = true"));
+        assert!(callbacks.contains("state.set_settings_section(\"contact\".into())"));
+        assert!(callbacks.contains("save_local_store(app, &store_mut)"));
+    }
+
+    #[test]
+    fn legacy_local_store_shows_the_first_launch_contact_popup() {
+        let data: LocalStoreData =
+            serde_json::from_str("{}").expect("deserialize legacy local store");
+        assert!(!data.contact_popup_dismissed);
+
+        let saved = LocalStoreData {
+            contact_popup_dismissed: true,
+            ..LocalStoreData::default()
+        };
+        let serialized = serde_json::to_string(&saved).expect("serialize local store");
+        let restored: LocalStoreData =
+            serde_json::from_str(&serialized).expect("restore local store");
+        assert!(restored.contact_popup_dismissed);
+    }
+
+    #[test]
+    fn active_brand_assets_use_the_new_elunvi_logo() {
+        let logo = image::load_from_memory(include_bytes!("../../assets/logo.png"))
+            .expect("decode active logo")
+            .to_rgba8();
+        assert_eq!(logo.dimensions(), (460, 460));
+        assert_eq!(logo.get_pixel(0, 0).0[3], 0);
+        assert!(include_bytes!("../../assets/app.ico").len() > 20_000);
+        assert!(include_bytes!("../../assets/app.icns").len() > 100_000);
+    }
 }

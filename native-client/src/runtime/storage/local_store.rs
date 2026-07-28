@@ -182,6 +182,7 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
         store_mut.canvas_links = data.canvas_links;
         store_mut.deep_prompt_job_id = data.deep_prompt_job_id;
         store_mut.deep_prompt_bindings = data.deep_prompt_bindings;
+        store_mut.contact_popup_dismissed = data.contact_popup_dismissed;
         let original_prompt_times = store_mut.custom_prompt_times.clone();
         let retained = store_mut
             .custom_prompts
@@ -207,6 +208,7 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
             || store_mut.custom_prompt_times != original_prompt_times
     };
     let state = app.global::<AppState>();
+    state.set_contact_popup_open(!store.borrow().contact_popup_dismissed);
     state.set_image_model(saved_image_model.into());
     state.set_reasoning_model(saved_reasoning_model.into());
     let category = resolve_category(&state.get_asset_type().to_string(), "");
@@ -616,6 +618,7 @@ pub(super) fn save_local_store(app: &AppWindow, store: &Store) {
         canvas_links: store.canvas_links.clone(),
         deep_prompt_job_id: store.deep_prompt_job_id.clone(),
         deep_prompt_bindings: store.deep_prompt_bindings.clone(),
+        contact_popup_dismissed: store.contact_popup_dismissed,
     };
     if let Ok(text) = serde_json::to_string_pretty(&data) {
         let path = local_store_path();

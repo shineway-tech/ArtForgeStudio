@@ -4,8 +4,11 @@ export global AppState {
     callback dismiss-payment();
     callback confirm-payment-success();
     callback retry-payment-browser();
+    callback dismiss-contact-popup();
+    callback open-contact-settings();
     in-out property <string> page: "welcome";
     in-out property <bool> sidebar-collapsed: false;
+    in-out property <bool> contact-popup-open: true;
     in-out property <string> language: "zh";
     out property <bool> en: language == "en";
     in-out property <string> theme-id: "light";

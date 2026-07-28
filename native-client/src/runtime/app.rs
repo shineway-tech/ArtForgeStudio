@@ -81,6 +81,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
     wire_prompt_optimization_callbacks(app, context.clone());
     wire_infinite_canvas_callbacks(app, store.clone());
     wire_toolbox_callbacks(app);
+    wire_contact_callbacks(app, store.clone());
 
     {
         let app_weak = app.as_weak();

@@ -102,17 +102,31 @@ export component SettingsPage {
                         Text { x: 18px; y: 34px; text: AppState.en ? "Version and paths" : "版本与配置位置"; color: AppTheme.weak; font-size: 12px; font-weight: 400; }
                         TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.settings-section = "about"; } }
                     }
+                    Rectangle {
+                        x: 16px;
+                        y: 414px;
+                        width: parent.width - 32px;
+                        height: 62px;
+                        background: AppState.settings-section == "contact" ? AppTheme.panel-soft : transparent;
+                        border-radius: 10px;
+                        if AppState.settings-section == "contact": Rectangle { x: 0px; y: 14px; width: 3px; height: 24px; border-radius: 2px; background: AppTheme.accent; }
+                        Text { x: 18px; y: 10px; text: AppState.en ? "Contact Us" : "联系我们"; color: AppState.settings-section == "contact" ? AppTheme.text : AppTheme.muted; font-size: 14px; font-weight: 400; }
+                        Text { x: 18px; y: 34px; text: AppState.en ? "Community and support" : "官方群与客服"; color: AppTheme.weak; font-size: 12px; font-weight: 400; }
+                        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.settings-section = "contact"; } }
+                    }
                 }
 
                 Text {
                     x: content-x;
                     y: 38px;
                     width: content-w;
-                    text: AppState.settings-section == "about"
-                        ? (AppState.en ? "About" : "关于")
-                        : (AppState.settings-section == "models"
+                    text: AppState.settings-section == "contact"
+                        ? (AppState.en ? "Contact Us" : "联系我们")
+                        : (AppState.settings-section == "about"
+                            ? (AppState.en ? "About" : "关于")
+                            : (AppState.settings-section == "models"
                             ? (AppState.en ? "Model Management" : "模型管理")
-                            : (AppState.settings-section == "prompts" ? (AppState.en ? "Custom prompts" : "自定义提示词") : (AppState.en ? "Basic Settings" : "基础设置")));
+                            : (AppState.settings-section == "prompts" ? (AppState.en ? "Custom prompts" : "自定义提示词") : (AppState.en ? "Basic Settings" : "基础设置"))));
                     color: AppTheme.text;
                     font-size: 24px;
                     font-weight: 600;
@@ -190,6 +204,76 @@ export component SettingsPage {
                     y: 96px;
                     width: content-w;
                     height: root.models-height();
+                }
+                if AppState.settings-section == "contact": Rectangle {
+                    x: content-x;
+                    y: 96px;
+                    width: content-w;
+                    height: 390px;
+                    background: AppTheme.panel;
+                    border-radius: 14px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+
+                    Text {
+                        x: 22px;
+                        y: 20px;
+                        width: parent.width - 44px;
+                        height: 26px;
+                        text: AppState.en ? "Community & Support" : "官方群与客服";
+                        color: AppTheme.text;
+                        font-size: 18px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        x: 22px;
+                        y: 50px;
+                        width: parent.width - 44px;
+                        height: 22px;
+                        text: AppState.en ? "Feedback, tutorials and product support" : "问题反馈、教程交流与产品支持";
+                        color: AppTheme.muted;
+                        font-size: 13px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle {
+                        x: 22px;
+                        y: 94px;
+                        width: parent.width - 44px;
+                        height: 78px;
+                        background: AppTheme.panel-soft;
+                        border-radius: 12px;
+                        border-width: 1px;
+                        border-color: AppTheme.border;
+                        Text { x: 16px; y: 12px; text: AppState.en ? "Official group" : "官方群"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
+                        Text { x: 16px; y: 39px; text: "1090665775"; color: AppTheme.text; font-size: 16px; font-weight: 500; }
+                    }
+                    Rectangle {
+                        x: 22px;
+                        y: 184px;
+                        width: parent.width - 44px;
+                        height: 78px;
+                        background: AppTheme.panel-soft;
+                        border-radius: 12px;
+                        border-width: 1px;
+                        border-color: AppTheme.border;
+                        Text { x: 16px; y: 12px; text: AppState.en ? "Customer service WeChat" : "客服微信"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
+                        Text { x: 16px; y: 39px; text: "dyx346"; color: AppTheme.text; font-size: 16px; font-weight: 500; }
+                    }
+                    Rectangle {
+                        x: 22px;
+                        y: 274px;
+                        width: parent.width - 44px;
+                        height: 78px;
+                        background: AppTheme.panel-soft;
+                        border-radius: 12px;
+                        border-width: 1px;
+                        border-color: AppTheme.border;
+                        Text { x: 16px; y: 12px; text: AppState.en ? "Customer service email" : "客服邮箱"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
+                        Text { x: 16px; y: 39px; text: "business@honeykid.cn"; color: AppTheme.text; font-size: 16px; font-weight: 500; }
+                    }
                 }
                 if AppState.settings-section == "about": Rectangle {
                     x: content-x;
