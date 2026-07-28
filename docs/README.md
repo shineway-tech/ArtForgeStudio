@@ -1,6 +1,6 @@
 # Documentation
 
-这里是 ArtForge Studio 客户端仓库的当前文档入口。文档面向客户端开发和发布维护，以 `native-client` 源码、`scripts/` 和 `.github/workflows/` 为事实来源；文档与代码不一致时，先以代码为准，再同步修正文档。
+这里是 Elunvi Canvas 客户端仓库的当前文档入口。文档面向客户端开发和发布维护，以 `native-client` 源码、`scripts/` 和 `.github/workflows/` 为事实来源；文档与代码不一致时，先以代码为准，再同步修正文档。
 
 | Document | Purpose |
 |---|---|

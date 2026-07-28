@@ -1005,6 +1005,31 @@ fn generation_results_scroll_to_the_gallerys_measured_height() {
 }
 
 #[test]
+fn application_brand_is_elunvi_canvas_without_renaming_update_artifacts() {
+    let app = include_str!("../../ui/app.slint");
+    let sidebar = include_str!("../../ui/components/sidebar.slint");
+    let welcome = include_str!("../../ui/pages/welcome-page.slint");
+    let settings = include_str!("../../ui/pages/settings-page.slint");
+    let windows_resources = include_str!("../../build.rs");
+    let installer = include_str!("../../../installer/ArtForgeStudio.iss");
+    let windows_package = include_str!("../../../scripts/package-native-client.ps1");
+    let macos_package = include_str!("../../../scripts/package-macos.sh");
+
+    assert!(app.contains("title: \"Elunvi Canvas\";"));
+    assert!(sidebar.contains("text: \"Elunvi Canvas\";"));
+    assert!(welcome.contains("利用 Elunvi Canvas"));
+    assert!(settings.contains("text: \"Elunvi Canvas\";"));
+    assert!(windows_resources.contains("res.set(\"ProductName\", \"Elunvi Canvas\")"));
+    assert!(windows_resources.contains("res.set(\"FileDescription\", \"Elunvi Canvas\")"));
+    assert!(installer.contains("#define AppDisplayName \"Elunvi Canvas\""));
+    assert!(installer.contains("AppName={#AppDisplayName}"));
+    assert!(windows_package.contains("<string>Elunvi Canvas</string>"));
+    assert!(macos_package.contains("<string>Elunvi Canvas</string>"));
+    assert!(windows_package.contains("$AppName = \"ArtForgeStudio\""));
+    assert!(macos_package.contains("APP_NAME=\"ArtForgeStudio\""));
+}
+
+#[test]
 fn loading_dots_use_staggered_bouncing_motion() {
     let dots = include_str!("../../ui/components/loading-dots.slint");
 

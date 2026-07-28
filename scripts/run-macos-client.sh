@@ -67,7 +67,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<EOF
   <key>CFBundleName</key>
   <string>$APP_NAME</string>
   <key>CFBundleDisplayName</key>
-  <string>ArtForgeStudio Dev</string>
+  <string>Elunvi Canvas Dev</string>
   <key>CFBundleIconFile</key>
   <string>app.icns</string>
   <key>CFBundlePackageType</key>

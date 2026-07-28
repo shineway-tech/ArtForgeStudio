@@ -179,9 +179,9 @@ function Package-Macos {
   <key>CFBundleIdentifier</key>
   <string>com.artforgestudio.client</string>
   <key>CFBundleName</key>
-  <string>$AppName</string>
+  <string>Elunvi Canvas</string>
   <key>CFBundleDisplayName</key>
-  <string>ArtForgeStudio</string>
+  <string>Elunvi Canvas</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

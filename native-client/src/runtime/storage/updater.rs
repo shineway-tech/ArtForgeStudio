@@ -422,7 +422,7 @@ fn launch_update_installer(package_path: &Path, expected_version: &str) -> Resul
         apple_script_string(&shell_command)
     );
     let recovery_message =
-        "display alert \"ArtForgeStudio 更新失败\" message \"已保留原版本，请稍后重试。\"";
+        "display alert \"Elunvi Canvas 更新失败\" message \"已保留原版本，请稍后重试。\"";
     let recovery_command = format!(
         "/usr/bin/osascript -e {} || {{ \
          wait_count=0; \

@@ -1,6 +1,6 @@
-# ArtForge Studio
+# Elunvi Canvas
 
-ArtForge Studio 是使用 Rust 与 Slint 构建的跨平台桌面 AI 美术生产客户端。根 Cargo workspace 只构建 `native-client`，并生成唯一应用二进制 `ArtForgeStudio`。应用版本以 `native-client/Cargo.toml` 为准。
+Elunvi Canvas 是使用 Rust 与 Slint 构建的跨平台桌面 AI 美术生产客户端。根 Cargo workspace 只构建 `native-client`，并生成兼容二进制 `ArtForgeStudio`。应用版本以 `native-client/Cargo.toml` 为准。
 
 ## Supported platforms
 

@@ -1,4 +1,5 @@
 #define AppName "ArtForgeStudio"
+#define AppDisplayName "Elunvi Canvas"
 #define AppExeName "ArtForgeStudio.exe"
 #define AppVersion GetEnv("ARTFORGE_APP_VERSION")
 #define PackageDir GetEnv("ARTFORGE_PACKAGE_DIR")
@@ -16,10 +17,10 @@
 
 [Setup]
 AppId={{DB6417C1-ACF9-41D6-956F-898E69F7CE3E}
-AppName={#AppName}
+AppName={#AppDisplayName}
 AppVersion={#AppVersion}
 DefaultDirName={localappdata}\Programs\{#AppName}
-DefaultGroupName={#AppName}
+DefaultGroupName={#AppDisplayName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
@@ -51,9 +52,9 @@ Name: "{app}\data\out"; Flags: uninsneveruninstall
 Name: "{app}\data\prompt"; Flags: uninsneveruninstall
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppDisplayName}"; Filename: "{app}\{#AppExeName}"
+Name: "{autodesktop}\{#AppDisplayName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#AppExeName}"; Description: "启动 {#AppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExeName}"; Description: "启动 {#AppDisplayName}"; Flags: nowait postinstall skipifsilent
 Filename: "{app}\{#AppExeName}"; Parameters: "--updated"; Flags: nowait skipifnotsilent

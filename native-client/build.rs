@@ -17,6 +17,8 @@ fn main() {
 fn embed_windows_resources() {
     let mut res = winresource::WindowsResource::new();
     res.set_icon("assets/app.ico");
+    res.set("ProductName", "Elunvi Canvas");
+    res.set("FileDescription", "Elunvi Canvas");
     res.compile().expect("embed Windows application icon");
 }
 
