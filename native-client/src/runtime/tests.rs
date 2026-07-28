@@ -2142,6 +2142,27 @@ fn idle_generation_area_rotates_slash_usage_tips() {
     }
 
     #[test]
+    fn infinite_canvas_uploaded_images_resize_proportionally_like_whiteboard_objects() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+        let ops = include_str!("canvas_ops.rs");
+
+        assert!(state.contains("callback resize-canvas-image-node(string, float, float)"));
+        assert!(page.contains("image-resize-handle := Rectangle"));
+        assert!(page.contains("image-resize-touch := TouchArea"));
+        assert!(page.contains("root.note.kind == \"image\" && root.note.image-path != \"\""));
+        assert!(page.contains("AppState.resize-canvas-image-node(root.note.id"));
+        assert!(page.contains("root.resize-preview-width = self.start-width * scale"));
+        assert!(page.contains("root.resize-preview-height = self.start-height * scale"));
+        assert!(callbacks.contains("state.on_resize_canvas_image_node"));
+        assert!(callbacks.contains("fit_image_node_to_intrinsic_aspect"));
+        assert!(callbacks.contains("source_image.size()"));
+        assert!(ops.contains("fn resize_image_node_proportionally"));
+        assert!(ops.contains("fn fit_image_node_to_intrinsic_aspect"));
+    }
+
+    #[test]
     fn infinite_canvas_links_nodes_and_feeds_upstream_prompts_downstream() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
         let state = include_str!("../../ui/app-state.slint");

@@ -1533,6 +1533,80 @@ component CanvasNodeCard {
             }
         }
 
+        if root.note.kind == "image" && root.note.image-path != "" && root.note.selected && root.zoom-percent >= 30: image-resize-handle := Rectangle {
+            width: max(18px, 24px * root.node-scale());
+            height: self.width;
+            x: parent.width - self.width / 2;
+            y: parent.height - self.height / 2;
+            background: image-resize-touch.has-hover || image-resize-touch.pressed
+                ? AppTheme.accent
+                : AppTheme.panel;
+            border-radius: self.width / 2;
+            border-width: max(1px, 2px * root.node-scale());
+            border-color: AppTheme.accent;
+            z: 20;
+
+            Rectangle {
+                x: parent.width * 0.34;
+                y: parent.height * 0.64;
+                width: parent.width * 0.34;
+                height: max(1px, 2px * root.node-scale());
+                background: image-resize-touch.has-hover || image-resize-touch.pressed
+                    ? #ffffff
+                    : AppTheme.accent;
+            }
+            Rectangle {
+                x: parent.width * 0.64;
+                y: parent.height * 0.34;
+                width: max(1px, 2px * root.node-scale());
+                height: parent.height * 0.34;
+                background: image-resize-touch.has-hover || image-resize-touch.pressed
+                    ? #ffffff
+                    : AppTheme.accent;
+            }
+
+            image-resize-touch := TouchArea {
+                in-out property <length> start-width: 0px;
+                in-out property <length> start-height: 0px;
+                in-out property <length> start-pointer-x: 0px;
+                in-out property <length> start-pointer-y: 0px;
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: nwse-resize;
+                pointer-event(event) => {
+                    if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                        self.start-width = root.width;
+                        self.start-height = root.height;
+                        self.start-pointer-x = self.absolute-position.x + self.mouse-x;
+                        self.start-pointer-y = self.absolute-position.y + self.mouse-y;
+                    } else if event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
+                        if root.resize-preview-width > 0px && root.resize-preview-height > 0px {
+                            let next-width = root.resize-preview-width / 1px * 100 / root.zoom-percent;
+                            let next-height = root.resize-preview-height / 1px * 100 / root.zoom-percent;
+                            AppState.resize-canvas-image-node(root.note.id, next-width, next-height);
+                        }
+                        root.resize-preview-width = 0px;
+                        root.resize-preview-height = 0px;
+                    }
+                }
+                moved => {
+                    if self.pressed {
+                        let delta-x = self.absolute-position.x + self.mouse-x - self.start-pointer-x;
+                        let delta-y = self.absolute-position.y + self.mouse-y - self.start-pointer-y;
+                        let horizontal-scale = (self.start-width + delta-x) / self.start-width;
+                        let vertical-scale = (self.start-height + delta-y) / self.start-height;
+                        let requested-scale = abs(delta-x / self.start-width) >= abs(delta-y / self.start-height)
+                            ? horizontal-scale
+                            : vertical-scale;
+                        let minimum-scale = max(80px / self.start-width, 80px / self.start-height);
+                        let scale = max(minimum-scale, requested-scale);
+                        root.resize-preview-width = self.start-width * scale;
+                        root.resize-preview-height = self.start-height * scale;
+                    }
+                }
+            }
+        }
+
         image-model-popup := PopupWindow {
             width: max(230px, min(320px, 280px * root.zoom-percent / 100));
             height: root.note.kind == "image" ? min(270px, max(58px, 12px + AppState.model-image-options.length * 42px)) : 74px;

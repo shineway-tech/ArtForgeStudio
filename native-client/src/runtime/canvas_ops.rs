@@ -3,6 +3,8 @@ use super::*;
 const MAX_CANVAS_HISTORY: usize = 100;
 pub(super) const GROUP_PADDING: f32 = 36.0;
 pub(super) const GROUP_TOP_PADDING: f32 = 72.0;
+const MIN_IMAGE_NODE_EDGE: f32 = 80.0;
+const MAX_IMAGE_NODE_EDGE: f32 = 4096.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct CanvasRect {
@@ -517,6 +519,86 @@ pub(super) fn resize_group(
     true
 }
 
+pub(super) fn fit_image_node_to_intrinsic_aspect(
+    note: &mut CanvasNoteData,
+    image_width: f32,
+    image_height: f32,
+) -> bool {
+    if note.kind != "image" || image_width <= 0.0 || image_height <= 0.0 {
+        return false;
+    }
+
+    let longest_edge = note.width.max(note.height).max(MIN_IMAGE_NODE_EDGE);
+    let (mut width, mut height) = if image_width >= image_height {
+        (longest_edge, longest_edge * image_height / image_width)
+    } else {
+        (longest_edge * image_width / image_height, longest_edge)
+    };
+    if width < MIN_IMAGE_NODE_EDGE {
+        let scale = MIN_IMAGE_NODE_EDGE / width;
+        width *= scale;
+        height *= scale;
+    }
+    if height < MIN_IMAGE_NODE_EDGE {
+        let scale = MIN_IMAGE_NODE_EDGE / height;
+        width *= scale;
+        height *= scale;
+    }
+
+    if note.width == width && note.height == height {
+        return false;
+    }
+    let center_x = note.x + note.width / 2.0;
+    let center_y = note.y + note.height / 2.0;
+    note.width = width;
+    note.height = height;
+    note.x = center_x - width / 2.0;
+    note.y = center_y - height / 2.0;
+    true
+}
+
+pub(super) fn resize_image_node_proportionally(
+    notes: &mut [CanvasNoteData],
+    node_id: &str,
+    requested_width: f32,
+    requested_height: f32,
+) -> bool {
+    let Some(node) = notes.iter_mut().find(|note| {
+        note.id == node_id && note.kind == "image" && !note.image_path.is_empty()
+    }) else {
+        return false;
+    };
+    if node.width <= 0.0 || node.height <= 0.0 {
+        return false;
+    }
+
+    let width_scale = requested_width.max(1.0) / node.width;
+    let height_scale = requested_height.max(1.0) / node.height;
+    let requested_scale = if (width_scale - 1.0).abs() >= (height_scale - 1.0).abs() {
+        width_scale
+    } else {
+        height_scale
+    };
+    let minimum_scale =
+        (MIN_IMAGE_NODE_EDGE / node.width).max(MIN_IMAGE_NODE_EDGE / node.height);
+    let maximum_scale =
+        (MAX_IMAGE_NODE_EDGE / node.width).min(MAX_IMAGE_NODE_EDGE / node.height);
+    let scale = requested_scale
+        .max(minimum_scale.min(maximum_scale))
+        .min(maximum_scale);
+    let width = node.width * scale;
+    let height = node.height * scale;
+
+    if (node.width - width).abs() < f32::EPSILON
+        && (node.height - height).abs() < f32::EPSILON
+    {
+        return false;
+    }
+    node.width = width;
+    node.height = height;
+    true
+}
+
 pub(super) fn remove_selection(
     notes: &mut Vec<CanvasNoteData>,
     links: &mut Vec<CanvasLinkData>,
@@ -908,6 +990,45 @@ mod tests {
         assert_eq!(notes[0].width, 300.0 + 100.0 + GROUP_PADDING);
         assert_eq!(notes[0].height, 220.0 + 80.0 + GROUP_PADDING);
         assert_eq!(notes[1], child_before);
+    }
+
+    #[test]
+    fn uploaded_canvas_image_adopts_its_intrinsic_aspect_ratio() {
+        let mut image = CanvasNoteData {
+            width: 340.0,
+            height: 250.0,
+            ..note("image", "image", 0.0, 0.0)
+        };
+
+        assert!(fit_image_node_to_intrinsic_aspect(
+            &mut image, 1000.0, 2000.0
+        ));
+
+        assert_eq!(image.width, 170.0);
+        assert_eq!(image.height, 340.0);
+        assert_eq!(image.x, 85.0);
+        assert_eq!(image.y, -45.0);
+    }
+
+    #[test]
+    fn canvas_image_resize_preserves_ratio_and_minimum_edge() {
+        let mut notes = vec![CanvasNoteData {
+            width: 200.0,
+            height: 100.0,
+            image_path: "uploaded.png".into(),
+            ..note("image", "image", 0.0, 0.0)
+        }];
+
+        assert!(resize_image_node_proportionally(
+            &mut notes, "image", 300.0, 150.0
+        ));
+        assert_eq!((notes[0].width, notes[0].height), (300.0, 150.0));
+
+        assert!(resize_image_node_proportionally(
+            &mut notes, "image", 10.0, 5.0
+        ));
+        assert!((notes[0].width - 160.0).abs() < 0.001);
+        assert!((notes[0].height - 80.0).abs() < 0.001);
     }
 
     #[test]

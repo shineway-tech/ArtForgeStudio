@@ -208,18 +208,22 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             else {
                 return;
             };
-            if load_image(&source_path).is_err() {
-                let state = app.global::<AppState>();
-                state.set_generation_status(
-                    if state.get_language().as_str() == "en" {
-                        "The selected file is not a supported image"
-                    } else {
-                        "所选文件不是受支持的图片"
-                    }
-                    .into(),
-                );
-                return;
-            }
+            let source_image = match load_image(&source_path) {
+                Ok(image) => image,
+                Err(_) => {
+                    let state = app.global::<AppState>();
+                    state.set_generation_status(
+                        if state.get_language().as_str() == "en" {
+                            "The selected file is not a supported image"
+                        } else {
+                            "所选文件不是受支持的图片"
+                        }
+                        .into(),
+                    );
+                    return;
+                }
+            };
+            let source_size = source_image.size();
             let Ok(bytes) = fs::read(&source_path) else {
                 return;
             };
@@ -248,6 +252,11 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             };
             history.borrow_mut().record(canvas_snapshot(&store_mut));
             store_mut.canvas_notes[index].image_path = destination.display().to_string();
+            fit_image_node_to_intrinsic_aspect(
+                &mut store_mut.canvas_notes[index],
+                source_size.width as f32,
+                source_size.height as f32,
+            );
             persist_canvas(&app, &store_mut);
             sync_history_state(&app, &history.borrow());
 
@@ -384,6 +393,31 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             let mut store_mut = store.borrow_mut();
             let before = canvas_snapshot(&store_mut);
             if !resize_group(
+                &mut store_mut.canvas_notes,
+                id.as_str(),
+                width.max(1.0),
+                height.max(1.0),
+            ) {
+                return;
+            }
+            history.borrow_mut().record(before);
+            persist_canvas(&app, &store_mut);
+            sync_canvas_selection(&app, &store_mut);
+            sync_history_state(&app, &history.borrow());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        let history = history.clone();
+        state.on_resize_canvas_image_node(move |id, width, height| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut store_mut = store.borrow_mut();
+            let before = canvas_snapshot(&store_mut);
+            if !resize_image_node_proportionally(
                 &mut store_mut.canvas_notes,
                 id.as_str(),
                 width.max(1.0),
