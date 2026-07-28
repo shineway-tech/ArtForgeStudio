@@ -1,4 +1,5 @@
 use super::*;
+use std::hash::{Hash, Hasher};
 
 const MAX_CANVAS_NODES: usize = 200;
 const MAX_CANVAS_LINKS: usize = 400;
@@ -7,6 +8,77 @@ struct PreparedCanvasImage {
     path: String,
     width: f32,
     height: f32,
+}
+
+enum CanvasSystemClipboard {
+    Image {
+        fingerprint: u64,
+        width: u32,
+        height: u32,
+        bytes: Vec<u8>,
+    },
+    Text {
+        fingerprint: u64,
+        text: String,
+    },
+}
+
+impl CanvasSystemClipboard {
+    fn fingerprint(&self) -> u64 {
+        match self {
+            Self::Image { fingerprint, .. } | Self::Text { fingerprint, .. } => *fingerprint,
+        }
+    }
+}
+
+fn read_canvas_system_clipboard() -> Option<CanvasSystemClipboard> {
+    let mut clipboard = arboard::Clipboard::new().ok()?;
+    if let Ok(image) = clipboard.get_image() {
+        let width = image.width as u32;
+        let height = image.height as u32;
+        let bytes = image.bytes.into_owned();
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        "image".hash(&mut hasher);
+        width.hash(&mut hasher);
+        height.hash(&mut hasher);
+        bytes.hash(&mut hasher);
+        return Some(CanvasSystemClipboard::Image {
+            fingerprint: hasher.finish(),
+            width,
+            height,
+            bytes,
+        });
+    }
+
+    let text = clipboard.get_text().ok()?;
+    if text.trim().is_empty() {
+        return None;
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    "text".hash(&mut hasher);
+    text.hash(&mut hasher);
+    Some(CanvasSystemClipboard::Text {
+        fingerprint: hasher.finish(),
+        text,
+    })
+}
+
+fn persist_canvas_clipboard_image(
+    width: u32,
+    height: u32,
+    bytes: Vec<u8>,
+) -> Option<PreparedCanvasImage> {
+    let rgba = image::RgbaImage::from_raw(width, height, bytes)?;
+    let encoded = encode_png_rgba(&rgba, width, height).ok()?;
+    let upload_dir = app_data_dir().join("canvas").join("uploads");
+    fs::create_dir_all(&upload_dir).ok()?;
+    let destination = upload_dir.join(format!("pasted-{}.png", Uuid::new_v4()));
+    atomic_write_file(&destination, &encoded).ok()?;
+    Some(PreparedCanvasImage {
+        path: destination.display().to_string(),
+        width: width as f32,
+        height: height as f32,
+    })
 }
 
 fn pick_canvas_image(app: &AppWindow, node_id: &str) -> Option<PreparedCanvasImage> {
@@ -692,10 +764,12 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
         let store = store.clone();
         let history = history.clone();
         state.on_copy_canvas_selection(move || {
+            let system_fingerprint =
+                read_canvas_system_clipboard().map(|content| content.fingerprint());
             let store_ref = store.borrow();
-            history
-                .borrow_mut()
-                .copy_selection(&store_ref.canvas_notes, &store_ref.canvas_links);
+            let mut controller = history.borrow_mut();
+            controller.copy_selection(&store_ref.canvas_notes, &store_ref.canvas_links);
+            controller.remember_system_clipboard(system_fingerprint);
         });
     }
 
@@ -734,6 +808,97 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             state.set_canvas_selected_id(primary.into());
             state.set_canvas_selected_link_id("".into());
             sync_canvas_selection(&app, &store_mut);
+            sync_history_state(&app, &history.borrow());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        let history = history.clone();
+        state.on_paste_canvas_content(move |center_x, center_y| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let system_clipboard = read_canvas_system_clipboard();
+            let system_fingerprint = system_clipboard
+                .as_ref()
+                .map(CanvasSystemClipboard::fingerprint);
+            let paste_system_clipboard = history
+                .borrow()
+                .should_paste_system_clipboard(system_fingerprint);
+            if !paste_system_clipboard {
+                app.global::<AppState>()
+                    .invoke_paste_canvas_selection(24.0, 24.0);
+                return;
+            }
+            let Some(system_clipboard) = system_clipboard else {
+                return;
+            };
+            if store.borrow().canvas_notes.len() >= MAX_CANVAS_NODES {
+                show_canvas_capacity_status(&app);
+                return;
+            }
+
+            let id = Uuid::new_v4().to_string();
+            let state = app.global::<AppState>();
+            let note = match system_clipboard {
+                CanvasSystemClipboard::Image {
+                    width,
+                    height,
+                    bytes,
+                    ..
+                } => {
+                    let Some(image) = persist_canvas_clipboard_image(width, height, bytes) else {
+                        return;
+                    };
+                    let (_, width, height) = canvas_node_defaults("image", false);
+                    let mut note = CanvasNoteData {
+                        id: id.clone(),
+                        kind: "board-image".into(),
+                        x: center_x - width / 2.0,
+                        y: center_y - height / 2.0,
+                        width,
+                        height,
+                        image_path: image.path,
+                        selected: true,
+                        ..CanvasNoteData::default()
+                    };
+                    fit_image_node_to_intrinsic_aspect(&mut note, image.width, image.height);
+                    note
+                }
+                CanvasSystemClipboard::Text { text, .. } => {
+                    let (_, width, height) =
+                        canvas_node_defaults("text", state.get_language().as_str() == "en");
+                    CanvasNoteData {
+                        id: id.clone(),
+                        kind: "text".into(),
+                        content: text,
+                        x: center_x - width / 2.0,
+                        y: center_y - height / 2.0,
+                        width,
+                        height,
+                        selected: true,
+                        ..CanvasNoteData::default()
+                    }
+                }
+            };
+
+            let mut store_mut = store.borrow_mut();
+            if store_mut.canvas_notes.len() >= MAX_CANVAS_NODES {
+                if note.kind == "board-image" {
+                    let _ = fs::remove_file(&note.image_path);
+                }
+                show_canvas_capacity_status(&app);
+                return;
+            }
+            history.borrow_mut().record(canvas_snapshot(&store_mut));
+            clear_selection(&mut store_mut.canvas_notes);
+            store_mut.canvas_notes.push(note);
+            persist_canvas(&app, &store_mut);
+            sync_canvas_selection(&app, &store_mut);
+            state.set_canvas_selected_id(id.into());
+            state.set_canvas_selected_link_id("".into());
             sync_history_state(&app, &history.borrow());
         });
     }

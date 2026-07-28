@@ -1787,6 +1787,7 @@ fn idle_generation_area_rotates_slash_usage_tips() {
             "callback move-canvas-selection(float, float)",
             "callback copy-canvas-selection()",
             "callback paste-canvas-selection(float, float)",
+            "callback paste-canvas-content(float, float)",
             "callback duplicate-canvas-selection()",
             "callback remove-canvas-selection()",
             "callback group-canvas-selection(float, float)",
@@ -1802,6 +1803,7 @@ fn idle_generation_area_rotates_slash_usage_tips() {
             "on_move_canvas_selection",
             "on_copy_canvas_selection",
             "on_paste_canvas_selection",
+            "on_paste_canvas_content",
             "on_duplicate_canvas_selection",
             "on_remove_canvas_selection",
             "on_group_canvas_selection",
@@ -2182,6 +2184,23 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(callbacks.contains("state.on_add_canvas_uploaded_image"));
         assert!(callbacks.contains("kind: \"board-image\".into()"));
         assert!(callbacks.contains("pick_canvas_image(&app, &id)"));
+    }
+
+    #[test]
+    fn infinite_canvas_pastes_external_images_and_text_at_the_viewport_center() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+
+        assert!(state.contains("callback paste-canvas-content(float, float)"));
+        assert!(page.contains("AppState.paste-canvas-content(world-x / 1px, world-y / 1px)"));
+        assert!(callbacks.contains("state.on_paste_canvas_content"));
+        assert!(callbacks.contains("clipboard.get_image()"));
+        assert!(callbacks.contains("clipboard.get_text()"));
+        assert!(callbacks.contains("persist_canvas_clipboard_image"));
+        assert!(callbacks.contains("kind: \"board-image\".into()"));
+        assert!(callbacks.contains("kind: \"text\".into()"));
+        assert!(callbacks.contains("invoke_paste_canvas_selection(24.0, 24.0)"));
     }
 
     #[test]

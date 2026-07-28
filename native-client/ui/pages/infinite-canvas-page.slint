@@ -2311,7 +2311,9 @@ export component InfiniteCanvasPage {
                         return accept;
                     }
                     if event.modifiers.control && (event.text == "v" || event.text == "V") {
-                        AppState.paste-canvas-selection(24, 24);
+                        let world-x = (canvas.width / 2 - root.pan-x) * 100 / root.zoom-percent;
+                        let world-y = (canvas.height / 2 - root.pan-y) * 100 / root.zoom-percent;
+                        AppState.paste-canvas-content(world-x / 1px, world-y / 1px);
                         return accept;
                     }
                     if event.modifiers.control && (event.text == "d" || event.text == "D") {

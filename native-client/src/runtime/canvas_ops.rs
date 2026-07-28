@@ -58,6 +58,7 @@ pub(super) struct CanvasController {
     undo: Vec<CanvasSnapshot>,
     redo: Vec<CanvasSnapshot>,
     pub clipboard: CanvasClipboard,
+    system_clipboard_fingerprint_at_copy: Option<u64>,
 }
 
 impl CanvasController {
@@ -101,6 +102,16 @@ impl CanvasController {
             .filter(|link| ids.contains(&link.source_id) && ids.contains(&link.target_id))
             .cloned()
             .collect();
+    }
+
+    pub fn remember_system_clipboard(&mut self, fingerprint: Option<u64>) {
+        self.system_clipboard_fingerprint_at_copy = fingerprint;
+    }
+
+    pub fn should_paste_system_clipboard(&self, fingerprint: Option<u64>) -> bool {
+        self.clipboard.notes.is_empty()
+            || fingerprint.is_some()
+                && fingerprint != self.system_clipboard_fingerprint_at_copy
     }
 
     pub fn paste_clipboard(
@@ -763,6 +774,25 @@ mod tests {
             .filter(|note| note.kind != "group")
             .all(|note| note.parent_group_id == pasted_group.id));
         assert!(pasted_notes.iter().all(|note| note.selected));
+    }
+
+    #[test]
+    fn canvas_clipboard_uses_external_content_only_after_system_clipboard_changes() {
+        let notes = vec![CanvasNoteData {
+            selected: true,
+            ..note("node", "text", 0.0, 0.0)
+        }];
+        let mut controller = CanvasController::default();
+
+        controller.copy_selection(&notes, &[]);
+        controller.remember_system_clipboard(Some(10));
+
+        assert!(!controller.should_paste_system_clipboard(Some(10)));
+        assert!(controller.should_paste_system_clipboard(Some(11)));
+
+        controller.copy_selection(&[], &[]);
+        controller.remember_system_clipboard(Some(11));
+        assert!(controller.should_paste_system_clipboard(Some(11)));
     }
 
     #[test]
