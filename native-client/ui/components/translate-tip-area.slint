@@ -1,8 +1,11 @@
 import { AppTheme } from "../theme.slint";
 
 export component TranslateTipArea {
+    in property <string> label;
     in property <string> text;
     property <bool> open: false;
+    height: 22px;
+
     Timer {
         interval: 80ms;
         running: true;
@@ -17,11 +20,37 @@ export component TranslateTipArea {
             }
         }
     }
+
+    Text {
+        x: 0px;
+        width: root.width - 18px;
+        height: root.height;
+        text: root.label;
+        color: AppTheme.muted;
+        font-size: 12px;
+        font-weight: 400;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Text {
+        x: root.width - 18px;
+        width: 18px;
+        height: root.height;
+        text: "?";
+        color: AppTheme.muted;
+        font-size: 12px;
+        font-weight: 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
     hover := TouchArea {
-        width: parent.width;
-        height: parent.height;
+        width: root.width;
+        height: root.height;
         mouse-cursor: help;
     }
+
     popup := PopupWindow {
         x: -84px;
         y: 28px;

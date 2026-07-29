@@ -16,7 +16,9 @@ export component FontPicker {
             x: 14px;
             width: parent.width - 48px;
             height: parent.height;
-            text: AppState.settings-font-family;
+            text: AppState.settings-font-family == ""
+                ? (AppState.en ? "System Default" : "系统默认")
+                : AppState.settings-font-family;
             color: AppTheme.text;
             font-size: AppState.settings-font-size * 1px;
             font-weight: 400;
@@ -51,12 +53,22 @@ export component FontPicker {
                 width: parent.width;
                 height: parent.height;
                 viewport-width: self.width;
-                viewport-height: max(self.height, 12px + AppState.font-list.length * 42px);
+                viewport-height: max(self.height, 12px + (AppState.font-list.length + 1) * 42px);
                 VerticalLayout {
                     width: parent.viewport-width;
                     height: parent.viewport-height;
                     padding: 6px;
                     spacing: 4px;
+                    IconButton {
+                        width: root.width - 12px;
+                        text: AppState.en ? "System Default" : "系统默认";
+                        active: AppState.settings-font-family == "";
+                        clicked => {
+                            AppState.settings-font-family = "";
+                            root.open = false;
+                            popup.close();
+                        }
+                    }
                     for font in AppState.font-list: IconButton {
                         width: root.width - 12px;
                         text: font;
