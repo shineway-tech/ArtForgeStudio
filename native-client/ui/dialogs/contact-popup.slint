@@ -1,4 +1,5 @@
 import { AppState } from "../app-state.slint";
+import { PillButton } from "../components/pill-button.slint";
 import { AppTheme } from "../theme.slint";
 
 component ContactItem inherits Rectangle {
@@ -14,7 +15,7 @@ component ContactItem inherits Rectangle {
     Text {
         x: 16px;
         y: 12px;
-        width: parent.width - 32px;
+        width: parent.width - 122px;
         height: 22px;
         text: root.label;
         color: AppTheme.muted;
@@ -25,13 +26,23 @@ component ContactItem inherits Rectangle {
     Text {
         x: 16px;
         y: 38px;
-        width: parent.width - 32px;
+        width: parent.width - 122px;
         height: 26px;
         text: root.value;
         color: AppTheme.text;
         font-size: 16px;
         font-weight: 500;
         vertical-alignment: center;
+        overflow: elide;
+    }
+    PillButton {
+        x: parent.width - 88px;
+        y: 21px;
+        width: 72px;
+        height: 36px;
+        label-font-size: 12px;
+        text: AppState.en ? "Copy" : "复制";
+        clicked => { AppState.copy-contact-detail(root.value); }
     }
 }
 

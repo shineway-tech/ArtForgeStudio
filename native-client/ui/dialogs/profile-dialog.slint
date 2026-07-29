@@ -306,6 +306,7 @@ export component ProfileDialog {
                 width: parent.width - 288px;
                 height: parent.height - 84px;
                 background: AppTheme.panel;
+                clip: true;
 
                 if AppState.profile-section == "login": Rectangle {
                     x: 44px;
@@ -429,17 +430,17 @@ export component ProfileDialog {
                                 height: 68px;
                                 background: transparent;
                                 Image { x: 0px; y: 22px; width: 24px; height: 24px; source: AppState.icon-account-display; colorize: AppTheme.muted; image-fit: contain; }
-                                Text { x: 42px; width: parent.width - 170px; height: parent.height; text: session.device-name + " · " + session.platform + (session.is-current ? (AppState.en ? " · Current device" : " · 当前设备") : ""); color: AppTheme.text; font-size: 14px; vertical-alignment: center; overflow: elide; }
-                                if !session.is-current: PillButton { x: parent.width - 112px; y: 16px; width: 112px; text: AppState.en ? "Revoke" : "撤销登录"; danger: true; clicked => { AppState.revoke-session(session.id); } }
+                                Text { x: 42px; width: parent.width - 186px; height: parent.height; text: session.device-name + " · " + session.platform + (session.is-current ? (AppState.en ? " · Current device" : " · 当前设备") : ""); color: AppTheme.text; font-size: 14px; vertical-alignment: center; overflow: elide; }
+                                if !session.is-current: PillButton { x: parent.width - 128px; y: 16px; width: 112px; text: AppState.en ? "Revoke" : "撤销登录"; danger: true; clicked => { AppState.revoke-session(session.id); } }
                                 Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: AppTheme.border; }
                             }
                         }
                     }
-                    PillButton { x: parent.width - 142px; y: 386px; width: 142px; text: AppState.en ? "Logout all devices" : "退出全部设备"; danger: true; clicked => { AppState.logout-all(); } }
+                    PillButton { x: parent.width - 158px; y: 386px; width: 142px; text: AppState.en ? "Logout all devices" : "退出全部设备"; danger: true; clicked => { AppState.logout-all(); } }
                 }
 
-                PillButton { x: parent.width - 276px; y: parent.height - 62px; width: 118px; text: AppState.en ? "Close" : "关闭"; clicked => { AppState.profile-open = false; } }
-                PillButton { x: parent.width - 142px; y: parent.height - 62px; width: 142px; text: AppState.en ? "Logout" : "退出登录"; danger: true; clicked => { AppState.logout(); } }
+                PillButton { x: parent.width - 320px; y: parent.height - 62px; width: 118px; text: AppState.en ? "Close" : "关闭"; clicked => { AppState.profile-open = false; } }
+                PillButton { x: parent.width - 186px; y: parent.height - 62px; width: 142px; text: AppState.en ? "Logout" : "退出登录"; danger: true; clicked => { AppState.logout(); } }
             }
         }
     }

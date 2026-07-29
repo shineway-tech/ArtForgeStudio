@@ -14,6 +14,42 @@ pub(super) fn wire_contact_callbacks(app: &AppWindow, store: Rc<RefCell<Store>>)
 
     {
         let app_weak = app.as_weak();
+        state.on_copy_contact_detail(move |value| {
+            let value = value.trim();
+            if value.is_empty() {
+                return;
+            }
+            let Ok(mut clipboard) = arboard::Clipboard::new() else {
+                return;
+            };
+            if clipboard.set_text(value.to_owned()).is_ok() {
+                if let Some(app) = app_weak.upgrade() {
+                    let state = app.global::<AppState>();
+                    let current_sequence = state.get_contact_copy_sequence();
+                    let sequence = if current_sequence == i32::MAX {
+                        1
+                    } else {
+                        current_sequence + 1
+                    };
+                    state.set_contact_copy_sequence(sequence);
+                    state.set_contact_copy_toast_visible(true);
+                    let app_weak = app.as_weak();
+                    slint::Timer::single_shot(Duration::from_millis(1400), move || {
+                        let Some(app) = app_weak.upgrade() else {
+                            return;
+                        };
+                        let state = app.global::<AppState>();
+                        if state.get_contact_copy_sequence() == sequence {
+                            state.set_contact_copy_toast_visible(false);
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
         let store = store.clone();
         state.on_dismiss_contact_popup(move || {
             let Some(app) = app_weak.upgrade() else {

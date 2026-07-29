@@ -6,9 +6,12 @@ export global AppState {
     callback retry-payment-browser();
     callback dismiss-contact-popup();
     callback open-contact-settings();
+    callback copy-contact-detail(string);
     in-out property <string> page: "welcome";
     in-out property <bool> sidebar-collapsed: false;
     in-out property <bool> contact-popup-open: true;
+    in-out property <bool> contact-copy-toast-visible: false;
+    in-out property <int> contact-copy-sequence: 0;
     in-out property <string> language: "zh";
     out property <bool> en: language == "en";
     in-out property <string> theme-id: "light";

@@ -2816,6 +2816,10 @@ fn idle_generation_area_rotates_slash_usage_tips() {
             "viewport-height: max(self.height, AppState.account-sessions.length * 68px);"
         ));
         assert!(profile.contains("width: min(920px, root.width - 48px);"));
+        assert!(profile.contains("x: parent.width - 128px;"));
+        assert!(profile.contains("x: parent.width - 158px;"));
+        assert!(profile.contains("x: parent.width - 186px;"));
+        assert!(profile.contains("clip: true;"));
 
         assert!(auth.contains("height: min(700px, root.height - 40px);"));
         assert!(agreement_update.contains("height: min(380px, root.height - 40px);"));
@@ -3231,6 +3235,9 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(state.contains("contact-popup-open: true"));
         assert!(state.contains("callback dismiss-contact-popup();"));
         assert!(state.contains("callback open-contact-settings();"));
+        assert!(state.contains("callback copy-contact-detail(string);"));
+        assert!(state.contains("contact-copy-toast-visible"));
+        assert!(state.contains("contact-copy-sequence"));
         assert!(app.contains("if AppState.contact-popup-open: ContactPopup"));
         for detail in ["1090665775", "dyx346", "business@honeykid.cn"] {
             assert!(popup.contains(detail));
@@ -3239,6 +3246,17 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(settings.contains("AppState.settings-section = \"contact\""));
         assert!(callbacks.contains("store_mut.contact_popup_dismissed = true"));
         assert!(callbacks.contains("state.set_settings_section(\"contact\".into())"));
+        assert!(callbacks.contains("state.on_copy_contact_detail"));
+        assert!(callbacks.contains("clipboard.set_text(value.to_owned())"));
+        assert!(callbacks.contains("state.set_contact_copy_toast_visible(true)"));
+        assert!(callbacks.contains("Duration::from_millis(1400)"));
+        assert!(callbacks.contains("state.get_contact_copy_sequence() == sequence"));
+        assert!(popup.contains("AppState.copy-contact-detail(root.value)"));
+        assert_eq!(settings.matches("AppState.copy-contact-detail(").count(), 3);
+        assert!(app.contains("if AppState.contact-copy-toast-visible: Rectangle"));
+        assert!(app.contains("AppState.en ? \"Copied\" : \"已复制\""));
+        assert!(!popup.contains("AppState.contact-copied-value"));
+        assert!(!settings.contains("AppState.contact-copied-value"));
         assert!(callbacks.contains("save_local_store(app, &store_mut)"));
     }
 

@@ -248,7 +248,8 @@ export component SettingsPage {
                         border-width: 1px;
                         border-color: AppTheme.border;
                         Text { x: 16px; y: 12px; text: AppState.en ? "Official group" : "官方群"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
-                        Text { x: 16px; y: 39px; text: "1090665775"; color: AppTheme.text; font-size: 16px; font-weight: 500; }
+                        Text { x: 16px; y: 39px; width: parent.width - 122px; text: "1090665775"; color: AppTheme.text; font-size: 16px; font-weight: 500; overflow: elide; }
+                        PillButton { x: parent.width - 88px; y: 21px; width: 72px; height: 36px; label-font-size: 12px; text: AppState.en ? "Copy" : "复制"; clicked => { AppState.copy-contact-detail("1090665775"); } }
                     }
                     Rectangle {
                         x: 22px;
@@ -260,7 +261,8 @@ export component SettingsPage {
                         border-width: 1px;
                         border-color: AppTheme.border;
                         Text { x: 16px; y: 12px; text: AppState.en ? "Customer service WeChat" : "客服微信"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
-                        Text { x: 16px; y: 39px; text: "dyx346"; color: AppTheme.text; font-size: 16px; font-weight: 500; }
+                        Text { x: 16px; y: 39px; width: parent.width - 122px; text: "dyx346"; color: AppTheme.text; font-size: 16px; font-weight: 500; overflow: elide; }
+                        PillButton { x: parent.width - 88px; y: 21px; width: 72px; height: 36px; label-font-size: 12px; text: AppState.en ? "Copy" : "复制"; clicked => { AppState.copy-contact-detail("dyx346"); } }
                     }
                     Rectangle {
                         x: 22px;
@@ -272,7 +274,8 @@ export component SettingsPage {
                         border-width: 1px;
                         border-color: AppTheme.border;
                         Text { x: 16px; y: 12px; text: AppState.en ? "Customer service email" : "客服邮箱"; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
-                        Text { x: 16px; y: 39px; text: "business@honeykid.cn"; color: AppTheme.text; font-size: 16px; font-weight: 500; }
+                        Text { x: 16px; y: 39px; width: parent.width - 122px; text: "business@honeykid.cn"; color: AppTheme.text; font-size: 16px; font-weight: 500; overflow: elide; }
+                        PillButton { x: parent.width - 88px; y: 21px; width: 72px; height: 36px; label-font-size: 12px; text: AppState.en ? "Copy" : "复制"; clicked => { AppState.copy-contact-detail("business@honeykid.cn"); } }
                     }
                 }
                 if AppState.settings-section == "about": Rectangle {

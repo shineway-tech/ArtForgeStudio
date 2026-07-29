@@ -162,4 +162,27 @@ export component AppWindow inherits Window {
     }
     AgreementViewerDialog { width: root.width; height: root.height; }
     DeepPromptOptimizationDrawer { width: root.width; height: root.height; }
+    if AppState.contact-copy-toast-visible: Rectangle {
+        width: 132px;
+        height: 46px;
+        x: (root.width - self.width) / 2;
+        y: root.height - self.height - 54px;
+        background: AppTheme.panel;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #00000044;
+        drop-shadow-offset-y: 6px;
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: AppState.en ? "Copied" : "已复制";
+            color: AppTheme.text;
+            font-size: 14px;
+            font-weight: 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
 }
