@@ -86,4 +86,18 @@ EOF
 
 plutil -lint "$CONTENTS_DIR/Info.plist" >/dev/null
 open "$APP_DIR"
+for attempt in {1..20}; do
+  if osascript \
+    -e 'tell application "System Events"' \
+    -e 'tell application process "ElunviCanvas"' \
+    -e 'if not (exists window 1) then error "window is not ready"' \
+    -e 'set position of window 1 to {80, 80}' \
+    -e 'set frontmost to true' \
+    -e 'perform action "AXRaise" of window 1' \
+    -e 'end tell' \
+    -e 'end tell' >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.1
+done
 echo "Started $APP_DIR"

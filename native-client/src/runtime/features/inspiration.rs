@@ -88,6 +88,7 @@ pub(super) fn seed_inspiration(app: &AppWindow, store: &Rc<RefCell<Store>>) -> R
                     height,
                     image,
                     source_path: path.display().to_string(),
+                    reference_paths: vec![],
                     cutout_done: false,
                     remove_black_done: false,
                     upscale_done: false,

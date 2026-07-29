@@ -30,7 +30,15 @@ pub(super) fn wire_generation_callbacks(app: &AppWindow, context: AppContext) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            start_generation(&app, context.clone(), None, true, None, None);
+            start_generation(
+                &app,
+                context.clone(),
+                None,
+                true,
+                None,
+                None,
+                ExistingGenerationPolicy::StopExisting,
+            );
         });
     }
 
@@ -139,23 +147,15 @@ pub(super) fn wire_generation_callbacks(app: &AppWindow, context: AppContext) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let prompt = store
+            let item = store
                 .borrow()
                 .generations
                 .iter()
                 .find(|g| g.id == id.to_string())
-                .map(|g| g.prompt.clone());
-            if let Some(conversation_id) = store
-                .borrow()
-                .generations
-                .iter()
-                .find(|g| g.id == id.to_string())
-                .map(|g| g.conversation_id.clone())
-            {
-                app.global::<AppState>()
-                    .set_current_conversation_id(conversation_id.into());
+                .cloned();
+            if let Some(item) = item {
+                start_asset_regeneration(&app, context.clone(), item);
             }
-            start_generation(&app, context.clone(), prompt, false, None, None);
         });
     }
 

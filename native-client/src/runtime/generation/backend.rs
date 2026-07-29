@@ -11,6 +11,7 @@ struct UpscaleSource {
     prompt: String,
     conversation_id: String,
     source_path: String,
+    reference_paths: Vec<String>,
     width: i32,
     height: i32,
 }
@@ -22,6 +23,7 @@ pub(super) fn start_backend_generation(
     create_conversation: bool,
     retry_failed_id: Option<String>,
     forced_count: Option<i32>,
+    existing_generation_policy: ExistingGenerationPolicy,
 ) {
     let Some(backend) = context.backend.clone() else {
         return;
@@ -35,7 +37,20 @@ pub(super) fn start_backend_generation(
     }
     let category = resolve_category(&state.get_asset_type().to_string(), &raw_prompt);
     if category_is_generating(&context, &category) {
-        stop_generation(app, &context);
+        match existing_generation_policy {
+            ExistingGenerationPolicy::StopExisting => stop_generation(app, &context),
+            ExistingGenerationPolicy::KeepExisting => {
+                set_generation_status_for_category(
+                    &context,
+                    app,
+                    &category,
+                    "当前分类已有生成任务，已保留正在进行中的任务",
+                );
+                sync_generation_state_for_current_category(&context, app);
+                push_generations(app, &store.borrow());
+                navigate_to(app, "generation");
+            }
+        }
         return;
     }
     let ratio = resolve_ratio_for_category(
@@ -57,6 +72,10 @@ pub(super) fn start_backend_generation(
     let reference_paths = original_references
         .iter()
         .map(|item| PathBuf::from(&item.source_path))
+        .collect::<Vec<_>>();
+    let generation_reference_paths = reference_paths
+        .iter()
+        .map(|path| path.display().to_string())
         .collect::<Vec<_>>();
     let quote = QuoteContext {
         title: state.get_quote_title().to_string(),
@@ -146,7 +165,7 @@ pub(super) fn start_backend_generation(
         target_width: 0,
         target_height: 0,
         create_conversation,
-        reference_paths: reference_paths.iter().map(|path| path.display().to_string()).collect(),
+        reference_paths: generation_reference_paths.clone(),
         uploaded_file_ids: vec![],
         deliveries: vec![],
         terminal: false,
@@ -375,6 +394,7 @@ pub(super) fn start_backend_generation(
         state.get_image_model().to_string(),
         conversation_id,
         create_conversation,
+        generation_reference_paths,
         original_references,
         quote,
         true,
@@ -545,6 +565,7 @@ pub(super) fn start_backend_upscale(
     let cancellations = context.cancelled_generation_requests.clone();
     let source_prompt_for_result = display_prompt.clone();
     let source_category = source.category.clone();
+    let source_reference_paths = source.reference_paths.clone();
     let quality_for_worker = billing_quality.clone();
     std::thread::spawn(move || {
         let api = GenerationApi::new(backend.api.clone());
@@ -712,6 +733,7 @@ pub(super) fn start_backend_upscale(
         state.get_image_model().to_string(),
         conversation_id,
         false,
+        source_reference_paths,
         vec![],
         QuoteContext {
             title: String::new(),
@@ -743,6 +765,7 @@ fn upscale_source_for_viewer(app: &AppWindow, store: &Store) -> Option<UpscaleSo
             prompt: state.get_viewer_prompt().to_string(),
             conversation_id: String::new(),
             source_path: reference.source_path.clone(),
+            reference_paths: vec![reference.source_path.clone()],
             width: 0,
             height: 0,
         });
@@ -755,6 +778,7 @@ fn upscale_source_for_viewer(app: &AppWindow, store: &Store) -> Option<UpscaleSo
         prompt: item.prompt.clone(),
         conversation_id: item.conversation_id.clone(),
         source_path: item.source_path.clone(),
+        reference_paths: item.reference_paths.clone(),
         width: item.width,
         height: item.height,
     })
@@ -1052,6 +1076,7 @@ fn resume_pending_generation(
 
     let (sender, receiver) = mpsc::channel::<GenerationOutcome>();
     let worker_record = record.clone();
+    let generation_reference_paths = record.reference_paths.clone();
     let cancellations = context.cancelled_generation_requests.clone();
     std::thread::spawn(move || {
         run_recovered_generation_worker(backend, worker_record, sender, cancellations)
@@ -1068,6 +1093,7 @@ fn resume_pending_generation(
         record.model_code,
         record.conversation_id,
         record.create_conversation,
+        generation_reference_paths,
         vec![],
         QuoteContext {
             title: String::new(),

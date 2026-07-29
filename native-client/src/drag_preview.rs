@@ -31,12 +31,20 @@ pub fn start_thumbnail_file_drag(path: PathBuf) -> bool {
     result
 }
 
+#[cfg(target_os = "macos")]
+pub fn start_thumbnail_file_drag(path: PathBuf) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    crate::platform::queue_macos_file_drag(path)
+}
+
 #[cfg(not(target_os = "windows"))]
 pub fn start_thumbnail_drag_preview(_path: PathBuf) -> bool {
     false
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 pub fn start_thumbnail_file_drag(_path: PathBuf) -> bool {
     false
 }

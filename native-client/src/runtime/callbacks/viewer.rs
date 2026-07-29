@@ -226,14 +226,21 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
+        let store = store.clone();
         let context = context.clone();
         state.on_viewer_regenerate(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let prompt = app.global::<AppState>().get_viewer_prompt().to_string();
-            app.global::<AppState>().set_viewer_open(false);
-            start_generation(&app, context.clone(), Some(prompt), false, None, None);
+            let state = app.global::<AppState>();
+            let id = state.get_viewer_id().to_string();
+            let source = state.get_viewer_source().to_string();
+            let item = viewer_item(&store.borrow(), &id, &source).cloned();
+            if let Some(item) = item {
+                start_asset_regeneration(&app, context.clone(), item);
+            } else {
+                state.set_viewer_message("找不到原生成记录，无法再次生成".into());
+            }
         });
     }
 
@@ -270,6 +277,13 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
                 state.set_viewer_message(reference_limit_message(max_references).into());
                 return;
             }
+            let source_path = match persist_slint_reference(&state.get_viewer_image()) {
+                Ok(path) => path.display().to_string(),
+                Err(_) => {
+                    state.set_viewer_message("无法保存当前图片作为参考图".into());
+                    return;
+                }
+            };
             let prompt = state.get_viewer_prompt().to_string();
             let title = short_text(&prompt, 10);
             let conversation_id = Uuid::new_v4().to_string();
@@ -291,7 +305,7 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
                     ReferenceData {
                         id: Uuid::new_v4().to_string(),
                         image: state.get_viewer_image(),
-                        source_path: String::new(),
+                        source_path,
                     },
                 );
             }
@@ -318,13 +332,20 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
                 state.set_viewer_message(reference_limit_message(max_references).into());
                 return;
             }
+            let source_path = match persist_slint_reference(&state.get_viewer_image()) {
+                Ok(path) => path.display().to_string(),
+                Err(_) => {
+                    state.set_viewer_message("无法保存当前图片作为参考图".into());
+                    return;
+                }
+            };
             {
                 let mut store_mut = store.borrow_mut();
                 references_for_category_mut(&mut store_mut.references, &category).push(
                     ReferenceData {
                         id: Uuid::new_v4().to_string(),
                         image: state.get_viewer_image(),
-                        source_path: String::new(),
+                        source_path,
                     },
                 );
             }
@@ -402,24 +423,34 @@ pub(super) fn add_reference_from_drag_data(
     if mime_type != URI_LIST_MIME && mime_type != TEXT_PLAIN_MIME && mime_type != IMAGE_DRAG_MIME {
         return false;
     }
-    let Some(path) = drag_data_to_path(data) else {
-        return false;
-    };
-    add_reference_from_path(app, store, &path)
+    drag_data_to_paths(data)
+        .into_iter()
+        .fold(false, |added, path| {
+            add_reference_from_path(app, store, &path) || added
+        })
 }
 
 pub(super) fn drag_data_to_path(data: &str) -> Option<PathBuf> {
-    let raw = data
+    drag_data_to_paths(data).into_iter().next()
+}
+
+pub(super) fn drag_data_to_paths(data: &str) -> Vec<PathBuf> {
+    data
         .lines()
         .map(str::trim)
-        .find(|line| !line.is_empty() && !line.starts_with('#'))?;
-    let raw = if let Some(rest) = raw.strip_prefix("file:///") {
-        rest
-    } else if let Some(rest) = raw.strip_prefix("file://") {
-        rest
-    } else {
-        raw
-    };
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(drag_line_to_path)
+        .collect()
+}
+
+fn drag_line_to_path(raw: &str) -> Option<PathBuf> {
+    if raw
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))
+    {
+        return reqwest::Url::parse(raw).ok()?.to_file_path().ok();
+    }
+
     let decoded = percent_decode_path(raw);
     #[cfg(windows)]
     let decoded = decoded.trim_start_matches('/').replace('/', "\\");
@@ -523,7 +554,11 @@ pub(super) fn hex_value(value: u8) -> Option<u8> {
     }
 }
 
-pub(super) fn add_reference_from_path(app: &AppWindow, store: &Rc<RefCell<Store>>, path: &Path) -> bool {
+pub(super) fn add_reference_from_path(
+    app: &AppWindow,
+    store: &Rc<RefCell<Store>>,
+    path: &Path,
+) -> bool {
     let state = app.global::<AppState>();
     if !path.exists() {
         state.set_generation_status("参考图文件不存在".into());
@@ -531,12 +566,34 @@ pub(super) fn add_reference_from_path(app: &AppWindow, store: &Rc<RefCell<Store>
     }
     let category = resolve_category(&state.get_asset_type().to_string(), "");
     let max_references = max_reference_images_for_category(&category);
+    {
+        let mut store_mut = store.borrow_mut();
+        let references = references_for_category_mut(&mut store_mut.references, &category);
+        if references.len() >= max_references {
+            state.set_generation_status(reference_limit_message(max_references).into());
+            return true;
+        }
+    }
+
     let Ok(image) = load_image(path) else {
-        state.set_generation_status("无法读取参考图".into());
+        state.set_generation_status(
+            format!(
+                "无法读取参考图，支持：{}",
+                crate::image_formats::supported_image_formats_label()
+            )
+            .into(),
+        );
         return false;
     };
-    let mut store = store.borrow_mut();
-    let references = references_for_category_mut(&mut store.references, &category);
+    let source_path = match persist_reference_source(path) {
+        Ok(path) => path.display().to_string(),
+        Err(_) => {
+            state.set_generation_status("无法保存参考图，请检查磁盘空间和文件权限".into());
+            return false;
+        }
+    };
+    let mut store_mut = store.borrow_mut();
+    let references = references_for_category_mut(&mut store_mut.references, &category);
     if references.len() >= max_references {
         state.set_generation_status(reference_limit_message(max_references).into());
         return true;
@@ -544,9 +601,9 @@ pub(super) fn add_reference_from_path(app: &AppWindow, store: &Rc<RefCell<Store>
     references.push(ReferenceData {
         id: Uuid::new_v4().to_string(),
         image,
-        source_path: path.display().to_string(),
+        source_path,
     });
-    push_references(app, &store);
+    push_references(app, &store_mut);
     state.set_generation_status("已添加参考图".into());
     true
 }

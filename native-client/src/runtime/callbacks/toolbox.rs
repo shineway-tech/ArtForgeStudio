@@ -14,7 +14,7 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow) {
                 return;
             };
             let Some(paths) = rfd::FileDialog::new()
-                .add_filter("Images", &["jpg", "jpeg", "png", "webp", "bmp"])
+                .add_filter("Images", crate::image_formats::picker_image_extensions())
                 .pick_files()
             else {
                 return;
@@ -194,7 +194,7 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow) {
                 return;
             };
             let Some(paths) = rfd::FileDialog::new()
-                .add_filter("Images", &["jpg", "jpeg", "png", "webp", "bmp"])
+                .add_filter("Images", crate::image_formats::picker_image_extensions())
                 .pick_files()
             else {
                 return;
@@ -337,7 +337,7 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow) {
                 return;
             };
             let Some(paths) = rfd::FileDialog::new()
-                .add_filter("Images", &["jpg", "jpeg", "png", "webp", "bmp"])
+                .add_filter("Images", crate::image_formats::picker_image_extensions())
                 .pick_files()
             else {
                 return;
@@ -480,7 +480,7 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow) {
                 return;
             };
             let Some(path) = rfd::FileDialog::new()
-                .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
+                .add_filter("Images", crate::image_formats::picker_image_extensions())
                 .pick_file()
             else {
                 return;
@@ -604,7 +604,7 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow) {
                 return;
             };
             let Some(path) = rfd::FileDialog::new()
-                .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
+                .add_filter("Images", crate::image_formats::picker_image_extensions())
                 .pick_file()
             else {
                 return;
@@ -717,7 +717,7 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow) {
                 return;
             };
             let Some(path) = rfd::FileDialog::new()
-                .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
+                .add_filter("Images", crate::image_formats::picker_image_extensions())
                 .pick_file()
             else {
                 return;

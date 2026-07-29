@@ -12,6 +12,7 @@ pub(super) fn poll_generation_stream(
     image_model: String,
     conversation_id: String,
     create_conversation: bool,
+    generation_reference_paths: Vec<String>,
     original_references: Vec<ReferenceData>,
     original_quote: QuoteContext,
     restore_inputs_on_failure: bool,
@@ -67,6 +68,7 @@ pub(super) fn poll_generation_stream(
                 image_model,
                 conversation_id,
                 create_conversation,
+                generation_reference_paths,
                 original_references,
                 original_quote,
                 restore_inputs_on_failure,
@@ -124,6 +126,7 @@ pub(super) fn poll_generation_stream(
                 &display_prompt,
                 &time,
                 &bytes,
+                &generation_reference_paths,
                 upscale_done,
             ) {
                 Ok((conversation_image, source_path, generated_id)) => {
@@ -176,6 +179,7 @@ pub(super) fn poll_generation_stream(
                         &conversation_id,
                         &reason,
                         &time,
+                        &generation_reference_paths,
                     );
                     mark_active_generation_image_completed(
                         &context, &app, &category, &task_id, false, None,
@@ -195,6 +199,7 @@ pub(super) fn poll_generation_stream(
                     &conversation_id,
                     &reason,
                     &time,
+                    &generation_reference_paths,
                 );
                 if let Some(active) = mark_active_generation_image_completed(
                     &context, &app, &category, &task_id, false, None,
@@ -289,6 +294,7 @@ pub(super) fn poll_generation_stream(
                         &conversation_id,
                         &reason,
                         &time,
+                        &generation_reference_paths,
                     );
                 }
                 if create_conversation && task.success_count == 0 {
@@ -333,6 +339,7 @@ pub(super) fn poll_generation_stream(
                 image_model,
                 conversation_id,
                 create_conversation,
+                generation_reference_paths,
                 original_references,
                 original_quote,
                 restore_inputs_on_failure,
