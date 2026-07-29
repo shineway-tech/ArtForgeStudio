@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ArtForgeStudio - AI 游戏美术生产套件</title>
+  <meta name="description" content="ArtForgeStudio 是面向游戏团队与创作者的 Windows 桌面端 AI 美术生产套件，覆盖角色、场景、UI、特效和本地资产管理。">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="site-header" data-header>
+    <a class="brand" href="#top" aria-label="ArtForgeStudio 首页">
+      <img src="../native-client/assets/logo.png" alt="" class="brand-mark">
+      <span>ArtForgeStudio</span>
+    </a>
+    <button class="nav-toggle" type="button" aria-label="打开导航" aria-expanded="false" data-nav-toggle>
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+    <nav class="site-nav" data-nav>
+      <a href="#workbenches">工作台</a>
+      <a href="#gallery">案例</a>
+      <a href="#workflow">流程</a>
+      <a href="#download">下载</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-bg" role="img" aria-label="东方玄幻巨像游戏场景"></div>
+      <div class="hero-shade"></div>
+      <div class="hero-content">
+        <p class="eyebrow">Windows Native AI Art Studio</p>
+        <h1 id="hero-title">ArtForgeStudio</h1>
+        <p class="hero-copy">
+          面向游戏项目的 AI 美术生产套件。把提示词、参考图、多模型生成、本地资产库和二次处理放进一个桌面工作流。
+        </p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="../dist/ArtForgeStudio-Portable.zip" download>下载绿色版</a>
+          <a class="button button-secondary" href="#gallery">查看作品案例</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="signal-band" aria-label="产品特性">
+      <div class="signal-track">
+        <span>Rust + Slint 原生客户端</span>
+        <span>单二进制绿色发布</span>
+        <span>角色 / 场景 / UI / 特效工作台</span>
+        <span>本地资产库与灵感广场</span>
+      </div>
+    </section>
+
+    <section class="intro-section section-pad">
+      <div class="section-inner intro-grid">
+        <div class="section-copy reveal">
+          <p class="eyebrow">From Prompt To Production Asset</p>
+          <h2>为游戏美术生产准备，而不是只做一次生图。</h2>
+        </div>
+        <p class="lead reveal">
+          ArtForgeStudio 将常用游戏资产拆成独立工作台。每个分类保留自己的提示词、参考图、生成结果和参数选择，生成后可以进入图库、作为参考图复用，或者继续抠图、去黑、清晰放大。
+        </p>
+      </div>
+    </section>
+
+    <section id="workbenches" class="section-pad workbench-section">
+      <div class="section-inner">
+        <div class="section-heading reveal">
+          <p class="eyebrow">Creative Workbenches</p>
+          <h2>按资产类型组织创作，不让素材混在一起。</h2>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card reveal">
+            <span class="feature-index">01</span>
+            <h3>角色工作台</h3>
+            <p>角色立绘、三视图、Q 版图标、像素角色和设定图，参考图与提示词按角色分类独立保存。</p>
+          </article>
+          <article class="feature-card reveal">
+            <span class="feature-index">02</span>
+            <h3>场景工作台</h3>
+            <p>概念场景、地图、TileSet、Loading 图和建筑套件，用分类约束把画面方向固定下来。</p>
+          </article>
+          <article class="feature-card reveal">
+            <span class="feature-index">03</span>
+            <h3>UI 工作台</h3>
+            <p>HUD、主界面、背包、商城、图标和弹窗素材，适合快速搭建游戏界面风格库。</p>
+          </article>
+          <article class="feature-card reveal">
+            <span class="feature-index">04</span>
+            <h3>特效工作台</h3>
+            <p>技能特效、Buff、爆炸痕迹、场景特效和 UI 反馈，生成后继续去黑或透明化。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="gallery" class="gallery-section section-pad">
+      <div class="section-inner">
+        <div class="section-heading reveal">
+          <p class="eyebrow">Asset Gallery</p>
+          <h2>灵感广场直接展示真实游戏资产方向。</h2>
+        </div>
+        <div class="showcase-grid">
+          <figure class="showcase-card tall reveal">
+            <img src="../assets/sucai/inspiration-16.png" alt="魔法森林祭台场景">
+            <figcaption>魔法森林场景</figcaption>
+          </figure>
+          <figure class="showcase-card reveal">
+            <img src="../assets/sucai/inspiration-12.png" alt="奇幻 RPG 迷你角色图标">
+            <figcaption>RPG 角色图标</figcaption>
+          </figure>
+          <figure class="showcase-card wide reveal">
+            <img src="../assets/sucai/inspiration-08.png" alt="即时战略游戏画面">
+            <figcaption>即时战略画面</figcaption>
+          </figure>
+          <figure class="showcase-card reveal">
+            <img src="../assets/sucai/inspiration-02.png" alt="日式 RPG UI 素材">
+            <figcaption>游戏 UI 素材</figcaption>
+          </figure>
+          <figure class="showcase-card reveal">
+            <img src="../assets/sucai/inspiration-20.png" alt="像素重甲骑士三视图">
+            <figcaption>像素角色设定</figcaption>
+          </figure>
+          <figure class="showcase-card tall reveal">
+            <img src="../assets/sucai/inspiration-05.png" alt="国风玄幻角色设计图">
+            <figcaption>角色设定长卷</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section id="workflow" class="workflow-section section-pad">
+      <div class="section-inner workflow-layout">
+        <div class="workflow-copy reveal">
+          <p class="eyebrow">Desktop Pipeline</p>
+          <h2>一次生成之后，后续动作也在同一个地方完成。</h2>
+          <p class="lead">
+            不需要在多个网页、文件夹和工具之间来回搬图。结果进入本地资产库，详情里可以查看参数，也能继续处理并打开图片所在文件夹。
+          </p>
+        </div>
+        <ol class="steps">
+          <li class="reveal">
+            <span>01</span>
+            <strong>写提示词或粘贴参考图</strong>
+            <p>文字进入输入框，图片进入参考图，每个分类互不串场。</p>
+          </li>
+          <li class="reveal">
+            <span>02</span>
+            <strong>选择工作台和画布</strong>
+            <p>分类约束、风格约束和画布比例真正带入生图请求。</p>
+          </li>
+          <li class="reveal">
+            <span>03</span>
+            <strong>按张返回生成结果</strong>
+            <p>后端成功一张就显示一张，失败缩略图保留重试入口。</p>
+          </li>
+          <li class="reveal">
+            <span>04</span>
+            <strong>整理到资产库复用</strong>
+            <p>缩略图支持拖拽、用作参考图、查看详情和定位本地文件。</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="engine-section section-pad">
+      <div class="section-inner engine-grid">
+        <div class="engine-panel reveal">
+          <h2>原生、轻量、可移动。</h2>
+          <p>Rust + Slint 构建 Windows 桌面端，绿色版目录可移动，配置和用户数据保存在本地。</p>
+        </div>
+        <div class="engine-list">
+          <div class="engine-item reveal">
+            <span>Provider</span>
+            <strong>多模型配置</strong>
+            <p>模型列表、使用状态、推理模型和生图模型分开选择。</p>
+          </div>
+          <div class="engine-item reveal">
+            <span>Local First</span>
+            <strong>本地数据保留</strong>
+            <p>关闭客户端后，生成历史、资产和用户选择不会清空。</p>
+          </div>
+          <div class="engine-item reveal">
+            <span>Post Process</span>
+            <strong>抠图、去黑、清晰放大</strong>
+            <p>图片详情中继续完成常见二次处理，处理过的动作会自动防重复。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="download" class="final-cta">
+      <div class="final-bg" role="img" aria-label="像素勇者大战游戏 Boss 场景"></div>
+      <div class="final-shade"></div>
+      <div class="final-content reveal">
+        <p class="eyebrow">Ready For Game Asset Production</p>
+        <h2>把 ArtForgeStudio 发给团队，直接开始做游戏资产。</h2>
+        <p>下载 Windows 绿色版，或把源码带到 Mac 机器继续打包其它平台产物。</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="../dist/ArtForgeStudio-Portable.zip" download>下载绿色版</a>
+          <a class="button button-secondary" href="../README.md">查看项目说明</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>ArtForgeStudio</span>
+    <span>AI Art Studio for game creators</span>
+    <span id="year"></span>
+  </footer>
+
+  <script src="./script.js"></script>
+</body>
+</html>

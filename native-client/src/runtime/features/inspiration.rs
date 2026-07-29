@@ -134,6 +134,20 @@ pub(super) fn inspiration_meta(index: usize) -> (&'static str, &'static str, &'s
         ("复古游戏 UI", "ui", "game"),
         ("特效设计", "effect", "game"),
         ("游戏 CG 角色", "character", "game"),
+        ("莲华灯", "ui", "game"),
+        ("山水画卷", "ui", "game"),
+        ("玄晶宝炉", "ui", "game"),
+        ("月纹战旗", "ui", "game"),
+        ("流霜剑", "ui", "game"),
+        ("青玉葫芦", "ui", "game"),
+        ("月华镜", "ui", "game"),
+        ("紫绶铜铃", "ui", "game"),
+        ("灵桃灯", "ui", "game"),
+        ("流光古琴", "ui", "game"),
+        ("聚宝灵鼎", "ui", "game"),
+        ("碧玉盏", "ui", "game"),
+        ("流云伞", "ui", "game"),
+        ("云海宝船", "ui", "game"),
     ]
     .get(index.saturating_sub(1))
     .copied()
@@ -161,8 +175,49 @@ pub(super) fn inspiration_prompt(index: usize, title: &str, ratio: &str) -> Stri
         22 => "生成一组游戏风格UI素材，包含上百个不同样式的按钮、面板、进度条，采用复古美食荒野牛仔风格，不应受到阴影或光线的影响。大师，杰作。".to_string(),
         23 => "游戏特效，没有人物，没有主角，灰色背景，有层次的，俯视角，平面，多个不一样的设计，素材，排列整齐，暗黑，爆炸后的地面痕迹，没有火焰，没有烟雾".to_string(),
         24 => "游戏CG风格，隐约的淡彩褪色，泛朦，对焦模糊，特写，剑风传奇格斯，高颜值，复古，迷离，低饱和，反射，质感，泛光模糊晕染，高噪点，胶片颗粒质感，极具艺术感，震撼人心，色彩丰富，暗部叠加，特写镜头，超高清。落雪飞溅，前景落雪虚化，动态模糊，背景动态虚化，阳光灿烂，蓝天白云，光影交错，特写镜头，突出速度感和视觉冲击力，强透视，原比例。".to_string(),
+        25..=38 => format!(
+            "{title}，东方仙侠题材游戏 UI 道具图标，青玉、鎏金与淡紫流苏配色，精致金属镶嵌与宝石装饰，单个物件居中展示，深炭灰纯色背景，柔和轮廓光，3D 手绘渲染，轮廓清晰，无文字，无人物，{ratio} 构图。"
+        ),
         _ => {
             format!("{title}，{ratio} 构图，官方灵感示例，可用于做同款或作为参考图继续创作。")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{inspiration_meta, inspiration_prompt};
+
+    #[test]
+    fn fantasy_ui_atlas_items_are_registered_as_game_ui_in_order() {
+        assert_eq!(inspiration_meta(25), ("莲华灯", "ui", "game"));
+        assert_eq!(inspiration_meta(31), ("月华镜", "ui", "game"));
+        assert_eq!(inspiration_meta(38), ("云海宝船", "ui", "game"));
+    }
+
+    #[test]
+    fn fantasy_ui_atlas_items_have_reusable_generation_prompts() {
+        let prompt = inspiration_prompt(25, "莲华灯", "1:1");
+
+        assert!(prompt.contains("莲华灯"));
+        assert!(prompt.contains("东方仙侠"));
+        assert!(prompt.contains("游戏 UI"));
+        assert!(prompt.contains("1:1"));
+    }
+
+    #[test]
+    fn fantasy_ui_atlas_crops_are_packaged_as_square_inspiration_assets() {
+        let asset_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/sucai");
+
+        for index in 25..=38 {
+            let path = asset_dir.join(format!("inspiration-{index:02}.png"));
+            assert!(path.is_file(), "missing {}", path.display());
+            assert_eq!(
+                image::image_dimensions(&path).expect("read inspiration crop dimensions"),
+                (640, 640),
+                "unexpected dimensions for {}",
+                path.display()
+            );
         }
     }
 }
