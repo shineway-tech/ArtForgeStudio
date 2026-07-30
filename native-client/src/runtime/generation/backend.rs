@@ -181,11 +181,6 @@ pub(super) fn start_backend_generation(
     state.set_quote_prompt("".into());
     state.set_quote_ratio("".into());
     state.set_quote_quality("".into());
-    {
-        let mut store = store.borrow_mut();
-        references_for_category_mut(&mut store.references, &category).clear();
-        push_references(app, &store);
-    }
     if create_conversation {
         let mut conversations = state.get_conversations().iter().collect::<Vec<_>>();
         conversations.insert(0, ConversationItem {

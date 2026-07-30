@@ -226,14 +226,20 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
+        let store = store.clone();
         let context = context.clone();
         state.on_viewer_regenerate(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let prompt = app.global::<AppState>().get_viewer_prompt().to_string();
-            app.global::<AppState>().set_viewer_open(false);
-            start_generation(&app, context.clone(), Some(prompt), false, None, None);
+            let state = app.global::<AppState>();
+            let id = state.get_viewer_id().to_string();
+            let source = state.get_viewer_source().to_string();
+            let item = viewer_item(&store.borrow(), &id, &source).cloned();
+            state.set_viewer_open(false);
+            if let Some(item) = item {
+                regenerate_asset(&app, context.clone(), item);
+            }
         });
     }
 

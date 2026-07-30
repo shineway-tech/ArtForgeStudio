@@ -125,6 +125,7 @@ pub(super) fn poll_generation_stream(
                 &time,
                 &bytes,
                 upscale_done,
+                &original_references,
             ) {
                 Ok((conversation_image, source_path, generated_id)) => {
                     if let (Some(backend), Some(delivery)) = (context.backend.clone(), delivery) {
@@ -176,6 +177,7 @@ pub(super) fn poll_generation_stream(
                         &conversation_id,
                         &reason,
                         &time,
+                        &original_references,
                     );
                     mark_active_generation_image_completed(
                         &context, &app, &category, &task_id, false, None,
@@ -195,6 +197,7 @@ pub(super) fn poll_generation_stream(
                     &conversation_id,
                     &reason,
                     &time,
+                    &original_references,
                 );
                 if let Some(active) = mark_active_generation_image_completed(
                     &context, &app, &category, &task_id, false, None,
@@ -289,6 +292,7 @@ pub(super) fn poll_generation_stream(
                         &conversation_id,
                         &reason,
                         &time,
+                        &original_references,
                     );
                 }
                 if create_conversation && task.success_count == 0 {

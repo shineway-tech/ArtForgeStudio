@@ -138,6 +138,7 @@ struct AssetData {
     height: i32,
     image: Image,
     source_path: String,
+    references: Vec<ReferenceData>,
     cutout_done: bool,
     remove_black_done: bool,
     upscale_done: bool,
@@ -384,6 +385,8 @@ struct StoredAssetData {
     width: i32,
     height: i32,
     source_path: String,
+    #[serde(default)]
+    reference_paths: Vec<String>,
     #[serde(default)]
     cutout_done: bool,
     #[serde(default)]

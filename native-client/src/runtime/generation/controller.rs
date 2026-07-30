@@ -133,6 +133,25 @@ pub(super) fn retry_failed_generation(app: &AppWindow, context: AppContext, id: 
             .set_generation_status("失败图片没有可重试的提示词".into());
         return;
     }
+    restore_generation_inputs(app, &store, &item);
+    start_generation(app, context, Some(item.prompt), false, Some(item.id), Some(1));
+}
+
+pub(super) fn regenerate_asset(
+    app: &AppWindow,
+    context: AppContext,
+    item: AssetData,
+) {
+    let prompt = item.prompt.clone();
+    restore_generation_inputs(app, &context.store, &item);
+    start_generation(app, context, Some(prompt), false, None, None);
+}
+
+fn restore_generation_inputs(
+    app: &AppWindow,
+    store: &Rc<RefCell<Store>>,
+    item: &AssetData,
+) {
     let state = app.global::<AppState>();
     state.set_asset_type(item.category.clone().into());
     state.set_mode(item.kind.clone().into());
@@ -140,10 +159,21 @@ pub(super) fn retry_failed_generation(app: &AppWindow, context: AppContext, id: 
     state.set_quality(item.quality.clone().into());
     state.set_count(1);
     state.set_prompt(item.prompt.clone().into());
+    state.set_deep_optimization_applied_chinese("".into());
+    state.set_deep_optimization_applied_english("".into());
     if !item.conversation_id.trim().is_empty() {
         state.set_current_conversation_id(item.conversation_id.clone().into());
     }
-    start_generation(app, context, Some(item.prompt), false, Some(item.id), Some(1));
+    {
+        let mut store_mut = store.borrow_mut();
+        *references_for_category_mut(&mut store_mut.references, &item.category) =
+            item.references
+                .iter()
+                .take(max_reference_images_for_category(&item.category))
+                .cloned()
+                .collect();
+        push_references(app, &store_mut);
+    }
 }
 
 pub(super) fn stop_generation(app: &AppWindow, context: &AppContext) {
@@ -196,6 +226,7 @@ pub(super) fn add_stream_success_item(
     time: &str,
     bytes: &[u8],
     upscale_done: bool,
+    references: &[ReferenceData],
 ) -> Result<(Image, String, String)> {
     let (bytes, image, width, height) = generated_image_from_bytes(bytes)?;
     let source_path = save_generated_bytes(app, &bytes, raw_prompt)?;
@@ -214,6 +245,7 @@ pub(super) fn add_stream_success_item(
         height,
         image,
         source_path: source_path.clone(),
+        references: references.to_vec(),
         cutout_done: false,
         remove_black_done: false,
         upscale_done,
@@ -254,6 +286,7 @@ pub(super) fn add_stream_failure_item(
     conversation_id: &str,
     reason: &str,
     time: &str,
+    references: &[ReferenceData],
 ) {
     let mut store_mut = store.borrow_mut();
     reveal_prompt_history_entry(&mut store_mut, raw_prompt);
@@ -274,6 +307,7 @@ pub(super) fn add_stream_failure_item(
             height: 0,
             image: Image::default(),
             source_path: "failed".to_string(),
+            references: references.to_vec(),
             cutout_done: false,
             remove_black_done: false,
             upscale_done: false,

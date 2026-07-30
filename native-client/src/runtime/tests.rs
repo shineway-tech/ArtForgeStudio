@@ -3225,6 +3225,38 @@ fn idle_generation_area_rotates_slash_usage_tips() {
     }
 
     #[test]
+    fn generation_keeps_reference_thumbnails_after_submission() {
+        let backend = include_str!("generation/backend.rs");
+        let submission = backend
+            .split("pub(super) fn start_backend_generation")
+            .nth(1)
+            .and_then(|value| value.split("pub(super) fn start_backend_upscale").next())
+            .expect("generation submission");
+
+        assert!(submission.contains("let original_references ="));
+        assert!(!submission.contains("references_for_category_mut"));
+        assert!(!submission.contains("push_references(app"));
+    }
+
+    #[test]
+    fn regenerate_restores_the_original_reference_snapshot() {
+        let controller = include_str!("generation/controller.rs");
+        let generation_callbacks = include_str!("callbacks/generation.rs");
+        let viewer_callbacks = include_str!("callbacks/viewer.rs");
+        let model = include_str!("model.rs");
+        let local_store = include_str!("storage/local_store.rs");
+
+        assert!(model.contains("references: Vec<ReferenceData>"));
+        assert!(model.contains("reference_paths: Vec<String>"));
+        assert!(local_store.contains("reference_paths: asset"));
+        assert!(controller.contains("pub(super) fn regenerate_asset"));
+        assert!(controller.contains("*references_for_category_mut"));
+        assert!(controller.contains("item.references"));
+        assert!(generation_callbacks.contains("regenerate_asset(&app, context.clone(), item)"));
+        assert!(viewer_callbacks.contains("regenerate_asset(&app, context.clone(), item)"));
+    }
+
+    #[test]
     fn contact_details_are_available_on_first_launch_and_in_settings() {
         let state = include_str!("../../ui/app-state.slint");
         let app = include_str!("../../ui/app.slint");
