@@ -30,7 +30,15 @@ pub(super) fn wire_generation_callbacks(app: &AppWindow, context: AppContext) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            start_generation(&app, context.clone(), None, true, None, None);
+            start_generation(
+                &app,
+                context.clone(),
+                None,
+                true,
+                None,
+                None,
+                ExistingGenerationPolicy::StopExisting,
+            );
         });
     }
 
@@ -146,7 +154,7 @@ pub(super) fn wire_generation_callbacks(app: &AppWindow, context: AppContext) {
                 .find(|g| g.id == id.to_string())
                 .cloned();
             if let Some(item) = item {
-                regenerate_asset(&app, context.clone(), item);
+                start_asset_regeneration(&app, context.clone(), item);
             }
         });
     }

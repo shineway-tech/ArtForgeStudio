@@ -32,18 +32,16 @@ impl Drop for PreparedReferenceUpload {
 
 pub(super) fn prepare_reference_for_upload(path: &Path) -> Result<PreparedReferenceUpload> {
     let file_size = fs::metadata(path)?.len();
-    let reader = image::ImageReader::open(path)?.with_guessed_format()?;
-    let (width, height) = reader.into_dimensions()?;
-    if !reference_requires_optimization(file_size, width, height) {
+    let (mut image, source_format) = decode_image_file(path)?;
+    if !reference_requires_optimization(file_size, image.width(), image.height())
+        && !reference_requires_conversion(source_format)
+    {
         return Ok(PreparedReferenceUpload {
             path: path.to_path_buf(),
             temporary: false,
         });
     }
 
-    let mut image = image::ImageReader::open(path)?
-        .with_guessed_format()?
-        .decode()?;
     let preserve_alpha = image.color().has_alpha();
     if image.width().max(image.height()) > REFERENCE_UPLOAD_MAX_EDGE {
         image = image.resize(
@@ -84,6 +82,13 @@ fn reference_requires_optimization(file_size: u64, width: u32, height: u32) -> b
     file_size > REFERENCE_UPLOAD_TARGET_BYTES
         || width > REFERENCE_UPLOAD_MAX_EDGE
         || height > REFERENCE_UPLOAD_MAX_EDGE
+}
+
+fn reference_requires_conversion(format: Option<image::ImageFormat>) -> bool {
+    !matches!(
+        format,
+        Some(image::ImageFormat::Png | image::ImageFormat::Jpeg | image::ImageFormat::WebP)
+    )
 }
 
 fn encode_reference_upload(
@@ -192,8 +197,107 @@ pub(super) fn image_from_clipboard(img: arboard::ImageData<'_>) -> Image {
     Image::from_rgba8(buffer)
 }
 
+pub(super) fn persist_reference_source(path: &Path) -> Result<PathBuf> {
+    let (decoded, _) = decode_image_file(path)?;
+    persist_reference_image(&decoded)
+}
+
+pub(super) fn persist_clipboard_reference(img: &arboard::ImageData<'_>) -> Result<PathBuf> {
+    let rgba = image::RgbaImage::from_raw(
+        img.width as u32,
+        img.height as u32,
+        img.bytes.as_ref().to_vec(),
+    )
+    .ok_or_else(|| anyhow!("剪贴板图片数据无效"))?;
+    persist_reference_image(&image::DynamicImage::ImageRgba8(rgba))
+}
+
+pub(super) fn persist_slint_reference(image: &Image) -> Result<PathBuf> {
+    let buffer = image
+        .to_rgba8()
+        .ok_or_else(|| anyhow!("参考图像素数据不可用"))?;
+    let rgba = image::RgbaImage::from_raw(
+        buffer.width(),
+        buffer.height(),
+        buffer.as_bytes().to_vec(),
+    )
+    .ok_or_else(|| anyhow!("参考图像素数据无效"))?;
+    persist_reference_image(&image::DynamicImage::ImageRgba8(rgba))
+}
+
+fn persist_reference_image(image: &image::DynamicImage) -> Result<PathBuf> {
+    use sha2::{Digest, Sha256};
+
+    let preserve_alpha = image.color().has_alpha();
+    let (bytes, extension) = encode_reference_upload(image, preserve_alpha)?;
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    let directory = app_data_dir().join("references").join("library");
+    fs::create_dir_all(&directory)?;
+    let destination = directory.join(format!("{digest}.{extension}"));
+    if !destination.is_file() {
+        atomic_write_file(&destination, &bytes)?;
+    }
+    Ok(destination)
+}
+
 pub(super) fn load_image(path: &Path) -> Result<Image> {
-    Image::load_from_path(path).map_err(|_| anyhow!("无法读取图片"))
+    let (decoded, _) = decode_image_file(path)?;
+    let rgba = decoded.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    Ok(slint_image_from_rgba(&rgba, width, height))
+}
+
+fn decode_image_file(path: &Path) -> Result<(image::DynamicImage, Option<image::ImageFormat>)> {
+    let decoded = (|| -> image::ImageResult<_> {
+        let reader = image::ImageReader::open(path)?.with_guessed_format()?;
+        let format = reader.format();
+        Ok((reader.decode()?, format))
+    })();
+
+    match decoded {
+        Ok(image) => Ok(image),
+        Err(error) => {
+            #[cfg(target_os = "macos")]
+            if is_macos_native_image(path) {
+                return decode_macos_native_image(path)
+                    .map(|image| (image, None))
+                    .with_context(|| format!("无法读取图片 {}", path.display()));
+            }
+            Err(error).with_context(|| format!("无法读取图片 {}", path.display()))
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn is_macos_native_image(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "heic" | "heif"
+            )
+        })
+}
+
+#[cfg(target_os = "macos")]
+fn decode_macos_native_image(path: &Path) -> Result<image::DynamicImage> {
+    use objc2::AllocAnyThread;
+    use objc2_app_kit::NSImage;
+    use objc2_foundation::NSString;
+
+    let file_name = path
+        .to_str()
+        .map(NSString::from_str)
+        .ok_or_else(|| anyhow!("图片路径不是有效文本"))?;
+    let native_image = NSImage::initWithContentsOfFile(NSImage::alloc(), &file_name)
+        .ok_or_else(|| anyhow!("macOS 无法解码该图片"))?;
+    let tiff_data = native_image
+        .TIFFRepresentation()
+        .ok_or_else(|| anyhow!("macOS 无法转换该图片"))?;
+    let bytes = unsafe { tiff_data.as_bytes_unchecked() };
+    image::load_from_memory_with_format(bytes, image::ImageFormat::Tiff)
+        .map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -214,6 +318,59 @@ mod tests {
         ));
         assert!(reference_requires_optimization(1024, 4097, 512));
         assert!(reference_requires_optimization(1024, 512, 4097));
+    }
+
+    #[test]
+    fn small_non_upload_format_is_converted_before_upload() {
+        let source = std::env::temp_dir().join(format!(
+            "artforge-reference-source-{}.bmp",
+            Uuid::new_v4()
+        ));
+        image::RgbaImage::from_pixel(4, 4, image::Rgba([20, 80, 160, 255]))
+            .save_with_format(&source, image::ImageFormat::Bmp)
+            .expect("write bmp");
+
+        let prepared = prepare_reference_for_upload(&source).expect("prepare reference");
+        let prepared_path = prepared.path().to_path_buf();
+
+        assert!(prepared.is_temporary());
+        assert_ne!(prepared_path, source);
+        assert!(matches!(
+            image::ImageReader::open(&prepared_path)
+                .expect("open prepared image")
+                .with_guessed_format()
+                .expect("guess prepared format")
+                .format(),
+            Some(image::ImageFormat::Jpeg | image::ImageFormat::WebP)
+        ));
+        drop(prepared);
+        assert!(!prepared_path.exists());
+        let _ = fs::remove_file(source);
+    }
+
+    #[test]
+    fn common_image_formats_decode_for_preview() {
+        for (extension, format) in [
+            ("bmp", image::ImageFormat::Bmp),
+            ("gif", image::ImageFormat::Gif),
+            ("tiff", image::ImageFormat::Tiff),
+        ] {
+            let source = std::env::temp_dir().join(format!(
+                "artforge-reference-source-{}.{}",
+                Uuid::new_v4(),
+                extension
+            ));
+            image::RgbaImage::from_pixel(3, 2, image::Rgba([40, 120, 210, 180]))
+                .save_with_format(&source, format)
+                .expect("write common image format");
+
+            let (decoded, detected_format) =
+                decode_image_file(&source).expect("decode common image format");
+            assert_eq!(decoded.width(), 3);
+            assert_eq!(decoded.height(), 2);
+            assert_eq!(detected_format, Some(format));
+            let _ = fs::remove_file(source);
+        }
     }
 
     #[test]

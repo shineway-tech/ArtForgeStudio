@@ -138,7 +138,7 @@ struct AssetData {
     height: i32,
     image: Image,
     source_path: String,
-    references: Vec<ReferenceData>,
+    reference_paths: Vec<String>,
     cutout_done: bool,
     remove_black_done: bool,
     upscale_done: bool,
@@ -253,6 +253,12 @@ struct ActiveGeneration {
     progress: i32,
     eta: i32,
     latest_success_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExistingGenerationPolicy {
+    StopExisting,
+    KeepExisting,
 }
 
 #[derive(Default)]

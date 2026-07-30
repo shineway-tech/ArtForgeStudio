@@ -15,36 +15,12 @@ pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>
                 return;
             };
             if let Some(files) = rfd::FileDialog::new()
-                .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
+                .add_filter("Images", crate::image_formats::picker_image_extensions())
                 .pick_files()
             {
-                let category =
-                    resolve_category(&app.global::<AppState>().get_asset_type().to_string(), "");
-                let max_references = max_reference_images_for_category(&category);
-                let mut store = store.borrow_mut();
-                let references = references_for_category_mut(&mut store.references, &category);
-                if references.len() >= max_references {
-                    app.global::<AppState>()
-                        .set_generation_status(reference_limit_message(max_references).into());
-                    return;
-                }
                 for path in files {
-                    if references.len() >= max_references {
-                        break;
-                    }
-                    if let Ok(image) = load_image(&path) {
-                        references.push(ReferenceData {
-                            id: Uuid::new_v4().to_string(),
-                            image,
-                            source_path: path.display().to_string(),
-                        });
-                    }
+                    add_reference_from_path(&app, &store, &path);
                 }
-                if references.len() >= max_references {
-                    app.global::<AppState>()
-                        .set_generation_status(reference_limit_message(max_references).into());
-                }
-                push_references(&app, &store);
             }
         });
     }
@@ -65,6 +41,13 @@ pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>
             let Ok(img) = clipboard.get_image() else {
                 return false;
             };
+            let source_path = match persist_clipboard_reference(&img) {
+                Ok(path) => path.display().to_string(),
+                Err(_) => {
+                    state.set_generation_status("无法保存剪贴板参考图".into());
+                    return true;
+                }
+            };
             let mut store = store.borrow_mut();
             let references = references_for_category_mut(&mut store.references, &category);
             if references.len() >= max_references {
@@ -75,7 +58,7 @@ pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>
             references.push(ReferenceData {
                 id: Uuid::new_v4().to_string(),
                 image,
-                source_path: String::new(),
+                source_path,
             });
             push_references(&app, &store);
             state.set_generation_status("已从剪贴板粘贴参考图".into());
@@ -190,6 +173,7 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
                             add_reference_from_path(&app, &store, &path);
                         }
                     }
+                    #[cfg(windows)]
                     ExternalImageDrop::Text(data) => {
                         if let Some(url) = external_image_url(&data) {
                             start_external_reference_import(&app, store.clone(), url);
@@ -205,6 +189,7 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
                     ExternalImageDrop::Paths(paths) => {
                         toolbox_callbacks::add_compression_paths(&app, paths);
                     }
+                    #[cfg(windows)]
                     ExternalImageDrop::Text(data) => {
                         toolbox_callbacks::add_compression_from_drag_data(
                             &app,
@@ -220,6 +205,7 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
                     ExternalImageDrop::Paths(paths) => {
                         toolbox_callbacks::add_conversion_paths(&app, paths);
                     }
+                    #[cfg(windows)]
                     ExternalImageDrop::Text(data) => {
                         toolbox_callbacks::add_conversion_from_drag_data(
                             &app,
@@ -235,6 +221,7 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
                     ExternalImageDrop::Paths(paths) => {
                         toolbox_callbacks::add_crop_paths(&app, paths);
                     }
+                    #[cfg(windows)]
                     ExternalImageDrop::Text(data) => {
                         toolbox_callbacks::add_crop_from_drag_data(
                             &app,

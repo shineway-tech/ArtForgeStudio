@@ -2,12 +2,48 @@ import { AppTheme } from "../theme.slint";
 
 export component UploadCard {
     callback clicked();
-    Rectangle {
-        background: AppTheme.panel-soft;
-        border-radius: 3px;
+    in property <string> label;
+
+    upload-card := Rectangle {
+        background: upload-touch.has-hover
+            ? AppTheme.accent.with-alpha(0.10)
+            : AppTheme.panel-soft;
+        border-radius: 10px;
         border-width: 1px;
         border-color: AppTheme.accent;
-        Text { width: parent.width; height: parent.height; text: "+"; color: AppTheme.muted; font-size: 22px; font-weight: 300; horizontal-alignment: center; vertical-alignment: center; }
-        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.clicked(); } }
+
+        Text {
+            x: 8px;
+            y: 10px;
+            width: parent.width - 16px;
+            height: 40px;
+            text: "+";
+            color: AppTheme.accent;
+            font-size: 26px;
+            font-weight: 300;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: 6px;
+            y: 52px;
+            width: parent.width - 12px;
+            height: 24px;
+            text: root.label;
+            color: AppTheme.text;
+            font-size: 12px;
+            font-weight: 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        upload-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
     }
 }

@@ -4,10 +4,14 @@ use std::sync::{Mutex, OnceLock};
 #[derive(Debug, Clone)]
 pub(crate) enum ExternalImageDrop {
     Paths(Vec<PathBuf>),
+    #[cfg(windows)]
     Text(String),
 }
 
 static EXTERNAL_IMAGE_DROPS: OnceLock<Mutex<Vec<ExternalImageDrop>>> = OnceLock::new();
+
+#[cfg(target_os = "macos")]
+static PENDING_MACOS_FILE_DRAG: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 
 fn external_image_drops() -> &'static Mutex<Vec<ExternalImageDrop>> {
     EXTERNAL_IMAGE_DROPS.get_or_init(|| Mutex::new(Vec::new()))
@@ -26,12 +30,41 @@ pub(crate) fn take_external_image_drops() -> Vec<ExternalImageDrop> {
         .unwrap_or_default()
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn queue_macos_file_drag(path: PathBuf) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    PENDING_MACOS_FILE_DRAG
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map(|mut pending| {
+            *pending = Some(path);
+            true
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+fn take_macos_file_drag() -> Option<PathBuf> {
+    PENDING_MACOS_FILE_DRAG
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|mut pending| pending.take())
+}
+
 #[cfg(windows)]
 pub(crate) fn install_external_image_drop_target(window: &slint::Window) -> bool {
     windows_drop_target::install(window)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub(crate) fn install_external_image_drop_target(window: &slint::Window) -> bool {
+    macos_drop_target::install(window)
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
 pub(crate) fn install_external_image_drop_target(_window: &slint::Window) -> bool {
     true
 }
@@ -57,7 +90,7 @@ fn install_macos_app_icon() -> anyhow::Result<()> {
 
     let main_thread = MainThreadMarker::new()
         .ok_or_else(|| anyhow!("macOS application icon must be installed on the main thread"))?;
-    let icon_data = NSData::with_bytes(include_bytes!("../assets/app-icon.png"));
+    let icon_data = NSData::with_bytes(include_bytes!("../assets/app-icon-macos.png"));
     let icon = NSImage::initWithData(NSImage::alloc(), &icon_data)
         .context("decode embedded macOS application icon")?;
     let application = NSApplication::sharedApplication(main_thread);
@@ -65,6 +98,260 @@ fn install_macos_app_icon() -> anyhow::Result<()> {
     // SAFETY: AppKit retains the supplied NSImage and this runs on the main thread.
     unsafe { application.setApplicationIconImage(Some(&icon)) };
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[allow(deprecated)] // winit 0.30 registers Finder drops with NSFilenamesPboardType.
+mod macos_drop_target {
+    use super::{queue_external_image_drop, take_macos_file_drag, ExternalImageDrop};
+    use objc2::{
+        ffi,
+        msg_send, sel,
+        rc::Retained,
+        runtime::{AnyClass, AnyObject, Bool, Imp, Sel},
+    };
+    use objc2_app_kit::{NSEvent, NSFilenamesPboardType, NSPasteboard, NSView};
+    use objc2_foundation::{NSArray, NSRect, NSSize, NSString};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use std::path::PathBuf;
+    use std::sync::OnceLock;
+
+    static ORIGINAL_MOUSE_DRAGGED: OnceLock<Imp> = OnceLock::new();
+    static ORIGINAL_MOUSE_UP: OnceLock<Imp> = OnceLock::new();
+
+    pub(super) fn install(window: &slint::Window) -> bool {
+        let window_handle = window.window_handle();
+        let Ok(window_handle) = window_handle.window_handle() else {
+            return false;
+        };
+        let RawWindowHandle::AppKit(handle) = window_handle.as_raw() else {
+            return false;
+        };
+
+        // SAFETY: Slint owns the AppKit view for at least as long as this window handle.
+        let Some(view) = (unsafe { handle.ns_view.as_ptr().cast::<AnyObject>().as_ref() }) else {
+            return false;
+        };
+        // SAFETY: `window` is a standard AppKit accessor. The returned object remains
+        // owned by Slint/winit while the application window exists.
+        let native_window: *mut AnyObject = unsafe { msg_send![view, window] };
+        let Some(native_window) = (unsafe { native_window.as_ref() }) else {
+            return false;
+        };
+        if !install_file_drag_method(view.class()) || !install_drop_methods(native_window.class()) {
+            return false;
+        }
+
+        let dragged_types = NSArray::from_slice(&[
+            // SAFETY: AppKit exposes this as a process-lifetime NSString constant.
+            unsafe { NSFilenamesPboardType },
+        ]);
+        // SAFETY: `native_window` is an NSWindow and the array contains pasteboard types.
+        unsafe {
+            let _: () = msg_send![native_window, registerForDraggedTypes: &*dragged_types];
+        }
+        true
+    }
+
+    fn install_file_drag_method(class: &'static AnyClass) -> bool {
+        if ORIGINAL_MOUSE_DRAGGED.get().is_some() && ORIGINAL_MOUSE_UP.get().is_some() {
+            return true;
+        }
+        let drag_selector = sel!(mouseDragged:);
+        let up_selector = sel!(mouseUp:);
+        // SAFETY: Both selectors are inherited by every NSView. Their implementations
+        // and type encodings remain valid for winit's concrete view subclass.
+        let drag_method = unsafe { ffi::class_getInstanceMethod(class, drag_selector) };
+        let up_method = unsafe { ffi::class_getInstanceMethod(class, up_selector) };
+        if drag_method.is_null() || up_method.is_null() {
+            return false;
+        }
+        let Some(original_dragged) = (unsafe { ffi::method_getImplementation(drag_method) }) else {
+            return false;
+        };
+        let Some(original_up) = (unsafe { ffi::method_getImplementation(up_method) }) else {
+            return false;
+        };
+        let drag_types = unsafe { ffi::method_getTypeEncoding(drag_method) };
+        let up_types = unsafe { ffi::method_getTypeEncoding(up_method) };
+        if drag_types.is_null()
+            || up_types.is_null()
+            || ORIGINAL_MOUSE_DRAGGED.set(original_dragged).is_err()
+            || ORIGINAL_MOUSE_UP.set(original_up).is_err()
+        {
+            return false;
+        }
+        let mouse_dragged: extern "C-unwind" fn(_, _, _) = mouse_dragged;
+        let mouse_up: extern "C-unwind" fn(_, _, _) = mouse_up;
+        // SAFETY: The override has the same ABI and encoding as NSResponder's
+        // pointer methods and is installed only on winit's concrete NSView class.
+        unsafe {
+            ffi::class_replaceMethod(
+                class as *const AnyClass as *mut AnyClass,
+                drag_selector,
+                std::mem::transmute::<_, Imp>(mouse_dragged),
+                drag_types,
+            );
+            ffi::class_replaceMethod(
+                class as *const AnyClass as *mut AnyClass,
+                up_selector,
+                std::mem::transmute::<_, Imp>(mouse_up),
+                up_types,
+            );
+        }
+        true
+    }
+
+    fn install_drop_methods(class: &'static AnyClass) -> bool {
+        let dragging_entered: extern "C-unwind" fn(_, _, _) -> _ = dragging_entered;
+        let prepare_for_drag_operation: extern "C-unwind" fn(_, _, _) -> _ =
+            prepare_for_drag_operation;
+        let perform_drag_operation: extern "C-unwind" fn(_, _, _) -> _ =
+            perform_drag_operation;
+        // SAFETY: Each replacement uses the original method's type encoding and an
+        // ABI-compatible function. class_replaceMethod adds the override only to
+        // winit's concrete window class and leaves NSWindow's runtime identity intact.
+        unsafe {
+            replace_method(
+                class,
+                sel!(draggingEntered:),
+                std::mem::transmute::<_, Imp>(dragging_entered),
+            ) && replace_method(
+                class,
+                sel!(prepareForDragOperation:),
+                std::mem::transmute::<_, Imp>(prepare_for_drag_operation),
+            ) && replace_method(
+                class,
+                sel!(performDragOperation:),
+                std::mem::transmute::<_, Imp>(perform_drag_operation),
+            )
+        }
+    }
+
+    unsafe fn replace_method(class: &'static AnyClass, selector: Sel, implementation: Imp) -> bool {
+        let method = unsafe { ffi::class_getInstanceMethod(class, selector) };
+        if method.is_null() {
+            return false;
+        }
+        let types = unsafe { ffi::method_getTypeEncoding(method) };
+        if types.is_null() {
+            return false;
+        }
+        unsafe {
+            ffi::class_replaceMethod(
+                class as *const AnyClass as *mut AnyClass,
+                selector,
+                implementation,
+                types,
+            );
+        }
+        true
+    }
+
+    extern "C-unwind" fn dragging_entered(
+        _window: &AnyObject,
+        _command: Sel,
+        sender: *mut AnyObject,
+    ) -> usize {
+        let Some(sender) = (unsafe { sender.as_ref() }) else {
+            return 0;
+        };
+        usize::from(!extract_image_paths(sender).is_empty())
+    }
+
+    extern "C-unwind" fn prepare_for_drag_operation(
+        _window: &AnyObject,
+        _command: Sel,
+        sender: *mut AnyObject,
+    ) -> Bool {
+        let Some(sender) = (unsafe { sender.as_ref() }) else {
+            return Bool::NO;
+        };
+        Bool::new(!extract_image_paths(sender).is_empty())
+    }
+
+    extern "C-unwind" fn perform_drag_operation(
+        _window: &AnyObject,
+        _command: Sel,
+        sender: *mut AnyObject,
+    ) -> Bool {
+        let Some(sender) = (unsafe { sender.as_ref() }) else {
+            return Bool::NO;
+        };
+        let paths = extract_image_paths(sender);
+        if paths.is_empty() {
+            return Bool::NO;
+        }
+        queue_external_image_drop(ExternalImageDrop::Paths(paths));
+        Bool::YES
+    }
+
+    extern "C-unwind" fn mouse_dragged(
+        view: &AnyObject,
+        command: Sel,
+        event: *mut AnyObject,
+    ) {
+        let native_drag_started = (unsafe { event.as_ref() })
+            .and_then(|event| take_macos_file_drag().map(|path| (event, path)))
+            .map(|(event, path)| start_native_file_drag(view, event, path))
+            .unwrap_or(false);
+        if native_drag_started {
+            return;
+        }
+
+        let Some(original) = ORIGINAL_MOUSE_DRAGGED.get().copied() else {
+            return;
+        };
+        // SAFETY: The IMP was captured from `mouseDragged:` before installing
+        // this ABI-compatible override.
+        let original: unsafe extern "C-unwind" fn(&AnyObject, Sel, *mut AnyObject) =
+            unsafe { std::mem::transmute(original) };
+        unsafe { original(view, command, event) };
+    }
+
+    extern "C-unwind" fn mouse_up(view: &AnyObject, command: Sel, event: *mut AnyObject) {
+        let _ = take_macos_file_drag();
+        let Some(original) = ORIGINAL_MOUSE_UP.get().copied() else {
+            return;
+        };
+        // SAFETY: The IMP was captured from `mouseUp:` before installing this
+        // ABI-compatible override.
+        let original: unsafe extern "C-unwind" fn(&AnyObject, Sel, *mut AnyObject) =
+            unsafe { std::mem::transmute(original) };
+        unsafe { original(view, command, event) };
+    }
+
+    #[allow(deprecated)]
+    fn start_native_file_drag(view: &AnyObject, event: &AnyObject, path: PathBuf) -> bool {
+        let Ok(path) = std::fs::canonicalize(&path) else {
+            return false;
+        };
+        // SAFETY: This hook is installed exclusively on winit's NSView class and
+        // receives AppKit's NSEvent argument for `mouseDragged:`.
+        let view = unsafe { &*(view as *const AnyObject).cast::<NSView>() };
+        let event = unsafe { &*(event as *const AnyObject).cast::<NSEvent>() };
+        let filename = NSString::from_str(&path.to_string_lossy());
+        let source_rect = NSRect::new(event.locationInWindow(), NSSize::new(1.0, 1.0));
+        view.dragFile_fromRect_slideBack_event(&filename, source_rect, true, event)
+    }
+
+    fn extract_image_paths(sender: &AnyObject) -> Vec<PathBuf> {
+        // SAFETY: NSDraggingInfo's `draggingPasteboard` returns an AppKit pasteboard.
+        let pasteboard: Retained<NSPasteboard> =
+            unsafe { msg_send![sender, draggingPasteboard] };
+        let Some(filenames) =
+            pasteboard.propertyListForType(unsafe { NSFilenamesPboardType })
+        else {
+            return Vec::new();
+        };
+        // SAFETY: NSFilenamesPboardType's property list is an NSArray<NSString>.
+        let filenames: Retained<NSArray<NSString>> =
+            unsafe { Retained::cast_unchecked(filenames) };
+
+        (0..filenames.count())
+            .map(|index| PathBuf::from(filenames.objectAtIndex(index).to_string()))
+            .collect()
+    }
 }
 
 #[cfg(windows)]

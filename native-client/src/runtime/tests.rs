@@ -831,12 +831,27 @@ mod tests {
     #[test]
     fn prompt_composer_accepts_local_and_browser_image_drops() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let upload_card = include_str!("../../ui/components/upload-card.slint");
         let callbacks = include_str!("callbacks/reference.rs");
         let viewer = include_str!("callbacks/viewer.rs");
         let platform = include_str!("../platform.rs");
         let app = include_str!("app.rs");
 
+        assert!(composer.contains("label: AppState.en ? \"Add image\" : \"添加图片\""));
+        assert!(upload_card.contains("in property <string> label"));
+        assert!(upload_card.contains("text: root.label"));
+        assert!(upload_card.contains("border-radius: 10px"));
+        assert!(composer.contains("width: 88px"));
+        assert!(composer.contains("return 4;"));
+        assert!(callbacks.contains("add_reference_from_path(&app, &store, &path)"));
         assert!(composer.contains("reference-drop := DropArea"));
+        let drop_layer_position = composer
+            .find("reference-drop := DropArea")
+            .expect("reference drop layer");
+        let interactive_layer_position = composer
+            .find("if AppState.quote-title")
+            .expect("first interactive layer");
+        assert!(drop_layer_position < interactive_layer_position);
         assert!(composer.contains("event.mime-type == \"text/uri-list\""));
         assert!(composer.contains("event.mime-type == \"text/plain\""));
         assert!(composer.contains("AppState.add-reference-from-drag(event.mime-type, event.data)"));
@@ -847,12 +862,63 @@ mod tests {
         assert!(callbacks.contains("ExternalImageDrop::Paths"));
         assert!(callbacks.contains("ExternalImageDrop::Text"));
         assert!(viewer.contains("pub(super) fn external_image_url"));
+        assert!(viewer.contains("pub(super) fn drag_data_to_paths"));
+        assert!(viewer.contains("let url = reqwest::Url::parse(raw).ok()?;"));
+        assert!(viewer.contains("url.to_file_path()"));
         assert!(platform.contains("IDropTarget"));
         assert!(platform.contains("RegisterDragDrop"));
         assert!(platform.contains("CF_HDROP"));
         assert!(platform.contains("\"text/uri-list\""));
         assert!(platform.contains("\"text/html\""));
+        assert!(platform.contains("mod macos_drop_target"));
+        assert!(platform.contains("NSFilenamesPboardType"));
+        assert!(platform.contains("class_replaceMethod"));
+        assert!(platform.contains("sel!(performDragOperation:)"));
+        assert!(platform.contains("ExternalImageDrop::Paths(paths)"));
+        assert!(!platform.contains("AnyObject::set_class"));
         assert!(app.contains("schedule_external_image_drop_install"));
+    }
+
+    #[test]
+    fn regenerate_restores_and_reuploads_original_references() {
+        let model = include_str!("model.rs").replace("\r\n", "\n");
+        let storage = include_str!("storage/local_store.rs");
+        let controller = include_str!("generation/controller.rs");
+        let poll = include_str!("generation/poll.rs");
+        let backend = include_str!("generation/backend.rs");
+        let generation_callbacks = include_str!("callbacks/generation.rs");
+        let viewer_callbacks = include_str!("callbacks/viewer.rs");
+
+        assert!(model.contains("reference_paths: Vec<String>"));
+        assert!(model.contains("#[serde(default)]\n    reference_paths: Vec<String>"));
+        assert!(storage.contains("reference_paths: asset.reference_paths.clone()"));
+        assert!(storage.contains("reference_paths: asset.reference_paths"));
+        assert!(backend.contains("generation_reference_paths"));
+        assert!(backend.contains("reference_file_ids: Some(uploaded.clone())"));
+        assert!(poll.contains("&generation_reference_paths"));
+        assert!(controller.contains("reference_paths: reference_paths.to_vec()"));
+        assert!(controller.contains("restore_asset_regeneration_inputs"));
+        assert!(controller.contains("references_for_category_mut"));
+        assert!(controller.contains("load_image(&path)"));
+        assert!(generation_callbacks.contains("start_asset_regeneration"));
+        assert!(viewer_callbacks.contains("start_asset_regeneration"));
+        assert!(viewer_callbacks.contains("persist_slint_reference"));
+    }
+
+    #[test]
+    fn regenerate_keeps_an_existing_generation_visible() {
+        let controller = include_str!("generation/controller.rs");
+        let backend = include_str!("generation/backend.rs");
+        let callbacks = include_str!("callbacks/generation.rs");
+
+        assert!(controller.contains("ExistingGenerationPolicy::KeepExisting"));
+        assert!(controller.contains("push_generations(app, &store)"));
+        assert!(controller.contains("sync_generation_state_for_current_category(context, app)"));
+        assert!(callbacks.contains("ExistingGenerationPolicy::StopExisting"));
+        assert!(backend.contains("ExistingGenerationPolicy::KeepExisting"));
+        assert!(backend.contains("已保留正在进行中的任务"));
+        assert!(backend.contains("sync_generation_state_for_current_category(&context, app)"));
+        assert!(backend.contains("navigate_to(app, \"generation\")"));
     }
 
     #[test]
@@ -877,6 +943,25 @@ mod tests {
         );
         assert!(external_image_url("file:///C:/images/reference.png").is_none());
         assert!(external_image_url("C:\\images\\reference.png").is_none());
+    }
+
+    #[test]
+    fn finder_and_file_manager_drops_preserve_absolute_paths_and_multiple_files() {
+        let paths = drag_data_to_paths(
+            "# Finder drag\r\nfile:///Users/demo/first%20image.png\r\nfile:///Users/demo/second.jpg\r\n",
+        );
+
+        assert_eq!(paths.len(), 2);
+        assert_eq!(
+            paths[0].file_name().and_then(|name| name.to_str()),
+            Some("first image.png")
+        );
+        assert_eq!(
+            paths[1].file_name().and_then(|name| name.to_str()),
+            Some("second.jpg")
+        );
+        #[cfg(not(windows))]
+        assert!(paths[0].is_absolute());
     }
 
     #[test]
@@ -933,6 +1018,22 @@ mod tests {
         assert!(runtime.contains("WindowEvent::PointerExited"));
         assert!(references.contains("reset_pointer_after_native_drag(&app)"));
         assert!(viewer.contains("reset_pointer_after_native_drag(&app)"));
+    }
+
+    #[test]
+    fn macos_file_drag_exposes_the_local_image_to_finder() {
+        let drag = include_str!("../drag_preview.rs");
+        let platform = include_str!("../platform.rs");
+
+        assert!(drag.contains("crate::platform::queue_macos_file_drag(path)"));
+        assert!(platform.contains("PENDING_MACOS_FILE_DRAG"));
+        assert!(platform.contains("sel!(mouseDragged:)"));
+        assert!(platform.contains("ORIGINAL_MOUSE_DRAGGED"));
+        assert!(platform.contains("sel!(mouseUp:)"));
+        assert!(platform.contains("ORIGINAL_MOUSE_UP"));
+        assert!(platform.contains("start_native_file_drag(view, event, path)"));
+        assert!(platform.contains("dragFile_fromRect_slideBack_event"));
+        assert!(platform.contains("std::fs::canonicalize(&path)"));
     }
 
     #[test]
@@ -1250,7 +1351,7 @@ fn toolbox_compression_supports_batch_input_and_server_pricing() {
     let app_ui = include_str!("../../ui/app.slint");
     let callbacks = include_str!("callbacks/toolbox.rs");
     let reference = include_str!("callbacks/reference.rs");
-    let manifest = include_str!("../../Cargo.toml");
+    let formats = include_str!("../image_formats.rs");
 
     assert!(toolbox.contains("target-page: \"toolbox-compress\""));
     assert!(app_ui.contains("AppState.page == \"toolbox-compress\""));
@@ -1292,9 +1393,12 @@ fn toolbox_compression_supports_batch_input_and_server_pricing() {
     assert!(callbacks.contains("state.on_start_compression"));
     assert!(callbacks.contains("set_compression_estimated_credits(\"--\""));
     assert!(callbacks.contains("\"jpg\" | \"jpeg\" | \"png\" | \"webp\" | \"bmp\""));
+    assert!(callbacks.contains("crate::image_formats::picker_image_extensions()"));
     assert!(reference.contains("page.as_str() == \"toolbox-compress\""));
     assert!(reference.contains("toolbox_callbacks::add_compression_paths"));
-    assert!(manifest.contains("\"bmp\""));
+    assert!(formats.contains("\"bmp\""));
+    assert!(formats.contains("\"gif\""));
+    assert!(formats.contains("\"tiff\""));
 }
 
 #[test]
@@ -2276,7 +2380,7 @@ fn idle_generation_area_rotates_slash_usage_tips() {
     fn infinite_canvas_links_are_selectable_and_backspace_requests_confirmation() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
         let types = include_str!("../../ui/types.slint");
-        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+        let callbacks = include_str!("callbacks/infinite_canvas.rs").replace("\r\n", "\n");
         let curve = page
             .split("component CanvasConnectionCurve")
             .nth(1)
@@ -3239,24 +3343,6 @@ fn idle_generation_area_rotates_slash_usage_tips() {
     }
 
     #[test]
-    fn regenerate_restores_the_original_reference_snapshot() {
-        let controller = include_str!("generation/controller.rs");
-        let generation_callbacks = include_str!("callbacks/generation.rs");
-        let viewer_callbacks = include_str!("callbacks/viewer.rs");
-        let model = include_str!("model.rs");
-        let local_store = include_str!("storage/local_store.rs");
-
-        assert!(model.contains("references: Vec<ReferenceData>"));
-        assert!(model.contains("reference_paths: Vec<String>"));
-        assert!(local_store.contains("reference_paths: asset"));
-        assert!(controller.contains("pub(super) fn regenerate_asset"));
-        assert!(controller.contains("*references_for_category_mut"));
-        assert!(controller.contains("item.references"));
-        assert!(generation_callbacks.contains("regenerate_asset(&app, context.clone(), item)"));
-        assert!(viewer_callbacks.contains("regenerate_asset(&app, context.clone(), item)"));
-    }
-
-    #[test]
     fn contact_details_are_available_on_first_launch_and_in_settings() {
         let state = include_str!("../../ui/app-state.slint");
         let app = include_str!("../../ui/app.slint");
@@ -3317,5 +3403,31 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert_eq!(logo.get_pixel(0, 0).0[3], 0);
         assert!(include_bytes!("../../assets/app.ico").len() > 20_000);
         assert!(include_bytes!("../../assets/app.icns").len() > 100_000);
+    }
+
+    #[test]
+    fn macos_dock_icon_keeps_platform_safe_area() {
+        let platform = include_str!("../platform.rs");
+        let icon = image::load_from_memory(include_bytes!("../../assets/app-icon-macos.png"))
+            .expect("decode macOS app icon")
+            .to_rgba8();
+        assert!(platform.contains("include_bytes!(\"../assets/app-icon-macos.png\")"));
+        assert!(!platform.contains("include_bytes!(\"../assets/app-icon.png\")"));
+        assert_eq!(icon.dimensions(), (1024, 1024));
+
+        let mut min_x = 1024;
+        let mut min_y = 1024;
+        let mut max_x = 0;
+        let mut max_y = 0;
+        for (x, y, pixel) in icon.enumerate_pixels() {
+            if pixel.0[3] > 0 {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+
+        assert_eq!((min_x, min_y, max_x, max_y), (100, 100, 923, 923));
     }
 }

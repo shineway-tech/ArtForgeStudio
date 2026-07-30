@@ -570,7 +570,7 @@ pub(super) fn recover_output_assets(app: &AppWindow, store: &Rc<RefCell<Store>>)
             height,
             image,
             source_path: path.display().to_string(),
-            references: vec![],
+            reference_paths: vec![],
             cutout_done: false,
             remove_black_done: false,
             upscale_done: false,
@@ -642,14 +642,7 @@ pub(super) fn stored_asset_from(asset: &AssetData) -> StoredAssetData {
         width: asset.width,
         height: asset.height,
         source_path: asset.source_path.clone(),
-        reference_paths: asset
-            .references
-            .iter()
-            .filter_map(|reference| {
-                let path = reference.source_path.trim();
-                (!path.is_empty()).then(|| path.to_string())
-            })
-            .collect(),
+        reference_paths: asset.reference_paths.clone(),
         cutout_done: asset.cutout_done,
         remove_black_done: asset.remove_black_done,
         upscale_done: asset.upscale_done,
@@ -662,19 +655,6 @@ pub(super) fn asset_from_stored(asset: StoredAssetData) -> Option<AssetData> {
     } else {
         load_image(&PathBuf::from(&asset.source_path)).ok()?
     };
-    let references = asset
-        .reference_paths
-        .iter()
-        .filter_map(|source_path| {
-            load_image(&PathBuf::from(source_path))
-                .ok()
-                .map(|image| ReferenceData {
-                    id: Uuid::new_v4().to_string(),
-                    image,
-                    source_path: source_path.clone(),
-                })
-        })
-        .collect();
     Some(AssetData {
         id: asset.id,
         conversation_id: asset.conversation_id,
@@ -690,7 +670,7 @@ pub(super) fn asset_from_stored(asset: StoredAssetData) -> Option<AssetData> {
         height: asset.height,
         image,
         source_path: asset.source_path,
-        references,
+        reference_paths: asset.reference_paths,
         cutout_done: asset.cutout_done,
         remove_black_done: asset.remove_black_done,
         upscale_done: asset.upscale_done,

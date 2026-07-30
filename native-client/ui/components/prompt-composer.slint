@@ -61,6 +61,21 @@ export component PromptComposer {
         border-width: 1px;
         border-color: AppTheme.border;
         clip: false;
+
+        reference-drop := DropArea {
+            width: parent.width;
+            height: parent.height;
+            can-drop(event) => {
+                return event.mime-type == "text/uri-list"
+                    || event.mime-type == "text/plain"
+                    || event.mime-type == "text/html"
+                    || event.mime-type == "application/x-artforge-image-path";
+            }
+            dropped(event) => {
+                AppState.add-reference-from-drag(event.mime-type, event.data);
+            }
+        }
+
         if AppState.quote-title != "": Rectangle {
             x: 24px;
             y: root.action-status-wraps() ? 76px : 50px;
@@ -78,10 +93,11 @@ export component PromptComposer {
             item: ref;
         }
         if AppState.references.length < root.max-reference-count(): UploadCard {
-            x: root.reference-x(AppState.references.length) + 4px;
-            y: root.reference-y(AppState.references.length) + 4px;
-            width: 56px;
-            height: 64px;
+            x: root.reference-x(AppState.references.length);
+            y: root.reference-y(AppState.references.length);
+            width: 88px;
+            height: 88px;
+            label: AppState.en ? "Add image" : "添加图片";
             clicked => { AppState.add-reference(); }
         }
         PillButton {
@@ -400,19 +416,6 @@ export component PromptComposer {
             vertical-alignment: center;
             overflow: elide;
         }
-        reference-drop := DropArea {
-            width: parent.width;
-            height: parent.height;
-            can-drop(event) => {
-                return event.mime-type == "text/uri-list"
-                    || event.mime-type == "text/plain"
-                    || event.mime-type == "text/html"
-                    || event.mime-type == "application/x-artforge-image-path";
-            }
-            dropped(event) => {
-                AppState.add-reference-from-drag(event.mime-type, event.data);
-            }
-        }
         if reference-drop.contains-drag: Rectangle {
             x: 8px;
             y: 8px;
@@ -703,11 +706,11 @@ export component PromptComposer {
 
     function max-reference-count() -> int {
         if AppState.asset-type == "action-sequence" { return 1; }
-        return 8;
+        return 4;
     }
 
     function reference-columns() -> int {
-        return max(1, min(8, floor((root.width - 48px) / 72px)));
+        return max(1, min(4, floor((root.width - 48px) / 98px)));
     }
 
     function reference-row-count() -> int {
@@ -715,15 +718,15 @@ export component PromptComposer {
     }
 
     function reference-tray-y() -> length {
-        return root.height - 80px - root.reference-row-count() * 74px;
+        return root.height - 80px - root.reference-row-count() * 98px;
     }
 
     function reference-x(index: int) -> length {
-        return 24px + Math.mod(index, root.reference-columns()) * 72px;
+        return 24px + Math.mod(index, root.reference-columns()) * 98px;
     }
 
     function reference-y(index: int) -> length {
-        return root.reference-tray-y() + floor(index / root.reference-columns()) * 74px;
+        return root.reference-tray-y() + floor(index / root.reference-columns()) * 98px;
     }
 
     function prompt-input-y() -> length {

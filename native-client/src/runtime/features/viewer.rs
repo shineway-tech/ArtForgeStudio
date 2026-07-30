@@ -511,9 +511,9 @@ pub(super) fn save_processed_viewer_image(
         height: height as i32,
         image,
         source_path: path.display().to_string(),
-        references: original
+        reference_paths: original
             .as_ref()
-            .map(|item| item.references.clone())
+            .map(|item| item.reference_paths.clone())
             .unwrap_or_default(),
         cutout_done: base_cutout_done,
         remove_black_done: base_remove_black_done || matches!(mode, ProcessImageMode::RemoveBlack),

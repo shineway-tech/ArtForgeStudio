@@ -117,7 +117,7 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                 return;
             };
             let Some(path) = rfd::FileDialog::new()
-                .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
+                .add_filter("Images", crate::image_formats::picker_image_extensions())
                 .pick_file()
             else {
                 return;

@@ -83,7 +83,7 @@ fn persist_canvas_clipboard_image(
 
 fn pick_canvas_image(app: &AppWindow, node_id: &str) -> Option<PreparedCanvasImage> {
     let source_path = rfd::FileDialog::new()
-        .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
+        .add_filter("Images", crate::image_formats::picker_image_extensions())
         .pick_file()?;
     let source_image = match load_image(&source_path) {
         Ok(image) => image,

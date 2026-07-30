@@ -7,6 +7,7 @@ pub(super) fn start_generation(
     create_conversation: bool,
     retry_failed_id: Option<String>,
     forced_count: Option<i32>,
+    existing_generation_policy: ExistingGenerationPolicy,
 ) {
     let state = app.global::<AppState>();
     let visible_prompt = state.get_prompt().trim().to_string();
@@ -23,16 +24,14 @@ pub(super) fn start_generation(
         &applied_chinese,
         &applied_english,
     );
-    let raw_prompt = if override_prompt.is_none() {
+    let raw_prompt = if let Some(override_prompt) = override_prompt {
+        override_prompt.trim().to_string()
+    } else {
         let selected_prompts = {
             let store = context.store.borrow();
             selected_custom_prompts_for_category(&store, &current_workspace_category(app))
         };
         compose_selected_custom_prompts(&input_prompt, &selected_prompts)
-    } else if !input_prompt.is_empty() {
-        input_prompt
-    } else {
-        override_prompt.unwrap_or_default().trim().to_string()
     };
     if raw_prompt.trim().is_empty() {
         state.set_generation_status("请输入生成需求".into());
@@ -52,7 +51,89 @@ pub(super) fn start_generation(
         create_conversation,
         retry_failed_id,
         forced_count,
+        existing_generation_policy,
     );
+}
+
+pub(super) fn start_asset_regeneration(
+    app: &AppWindow,
+    context: AppContext,
+    item: AssetData,
+) -> bool {
+    if !restore_asset_regeneration_inputs(app, &context, &item) {
+        return false;
+    }
+    let state = app.global::<AppState>();
+    state.set_viewer_message("".into());
+    state.set_viewer_open(false);
+    start_generation(
+        app,
+        context,
+        Some(item.prompt),
+        false,
+        None,
+        None,
+        ExistingGenerationPolicy::KeepExisting,
+    );
+    true
+}
+
+fn restore_asset_regeneration_inputs(
+    app: &AppWindow,
+    context: &AppContext,
+    item: &AssetData,
+) -> bool {
+    let state = app.global::<AppState>();
+    let category = resolve_category(&item.category, &item.prompt);
+    let max_references = max_reference_images_for_category(&category);
+    if item.reference_paths.len() > max_references {
+        let message = reference_limit_message(max_references);
+        state.set_viewer_message(message.into());
+        state.set_generation_status(message.into());
+        return false;
+    }
+
+    let mut references = Vec::with_capacity(item.reference_paths.len());
+    for source_path in &item.reference_paths {
+        let path = PathBuf::from(source_path);
+        if !path.is_file() {
+            let message = format!("原参考图已不存在，无法再次生成：{}", path.display());
+            state.set_viewer_message(message.clone().into());
+            state.set_generation_status(message.into());
+            return false;
+        }
+        let Ok(image) = load_image(&path) else {
+            let message = format!("原参考图无法读取，无法再次生成：{}", path.display());
+            state.set_viewer_message(message.clone().into());
+            state.set_generation_status(message.into());
+            return false;
+        };
+        references.push(ReferenceData {
+            id: Uuid::new_v4().to_string(),
+            image,
+            source_path: path.display().to_string(),
+        });
+    }
+
+    state.set_asset_type(category.clone().into());
+    if !item.ratio.trim().is_empty() {
+        state.set_ratio(item.ratio.clone().into());
+    }
+    if !item.quality.trim().is_empty() {
+        state.set_quality(item.quality.clone().into());
+    }
+    if !item.kind.trim().is_empty() {
+        state.set_mode(item.kind.clone().into());
+    }
+    state.set_current_conversation_id(item.conversation_id.clone().into());
+    {
+        let mut store = context.store.borrow_mut();
+        *references_for_category_mut(&mut store.references, &category) = references;
+        push_references(app, &store);
+        push_generations(app, &store);
+    }
+    sync_generation_state_for_current_category(context, app);
+    true
 }
 
 fn submitted_prompt_for_visible_prompt(
@@ -133,47 +214,21 @@ pub(super) fn retry_failed_generation(app: &AppWindow, context: AppContext, id: 
             .set_generation_status("失败图片没有可重试的提示词".into());
         return;
     }
-    restore_generation_inputs(app, &store, &item);
-    start_generation(app, context, Some(item.prompt), false, Some(item.id), Some(1));
-}
-
-pub(super) fn regenerate_asset(
-    app: &AppWindow,
-    context: AppContext,
-    item: AssetData,
-) {
-    let prompt = item.prompt.clone();
-    restore_generation_inputs(app, &context.store, &item);
-    start_generation(app, context, Some(prompt), false, None, None);
-}
-
-fn restore_generation_inputs(
-    app: &AppWindow,
-    store: &Rc<RefCell<Store>>,
-    item: &AssetData,
-) {
+    if !restore_asset_regeneration_inputs(app, &context, &item) {
+        return;
+    }
     let state = app.global::<AppState>();
-    state.set_asset_type(item.category.clone().into());
-    state.set_mode(item.kind.clone().into());
-    state.set_ratio(item.ratio.clone().into());
-    state.set_quality(item.quality.clone().into());
     state.set_count(1);
     state.set_prompt(item.prompt.clone().into());
-    state.set_deep_optimization_applied_chinese("".into());
-    state.set_deep_optimization_applied_english("".into());
-    if !item.conversation_id.trim().is_empty() {
-        state.set_current_conversation_id(item.conversation_id.clone().into());
-    }
-    {
-        let mut store_mut = store.borrow_mut();
-        *references_for_category_mut(&mut store_mut.references, &item.category) =
-            item.references
-                .iter()
-                .take(max_reference_images_for_category(&item.category))
-                .cloned()
-                .collect();
-        push_references(app, &store_mut);
-    }
+    start_generation(
+        app,
+        context,
+        Some(item.prompt),
+        false,
+        Some(item.id),
+        Some(1),
+        ExistingGenerationPolicy::KeepExisting,
+    );
 }
 
 pub(super) fn stop_generation(app: &AppWindow, context: &AppContext) {
@@ -225,8 +280,8 @@ pub(super) fn add_stream_success_item(
     display_prompt: &str,
     time: &str,
     bytes: &[u8],
+    reference_paths: &[String],
     upscale_done: bool,
-    references: &[ReferenceData],
 ) -> Result<(Image, String, String)> {
     let (bytes, image, width, height) = generated_image_from_bytes(bytes)?;
     let source_path = save_generated_bytes(app, &bytes, raw_prompt)?;
@@ -245,7 +300,7 @@ pub(super) fn add_stream_success_item(
         height,
         image,
         source_path: source_path.clone(),
-        references: references.to_vec(),
+        reference_paths: reference_paths.to_vec(),
         cutout_done: false,
         remove_black_done: false,
         upscale_done,
@@ -286,7 +341,7 @@ pub(super) fn add_stream_failure_item(
     conversation_id: &str,
     reason: &str,
     time: &str,
-    references: &[ReferenceData],
+    reference_paths: &[String],
 ) {
     let mut store_mut = store.borrow_mut();
     reveal_prompt_history_entry(&mut store_mut, raw_prompt);
@@ -307,7 +362,7 @@ pub(super) fn add_stream_failure_item(
             height: 0,
             image: Image::default(),
             source_path: "failed".to_string(),
-            references: references.to_vec(),
+            reference_paths: reference_paths.to_vec(),
             cutout_done: false,
             remove_black_done: false,
             upscale_done: false,

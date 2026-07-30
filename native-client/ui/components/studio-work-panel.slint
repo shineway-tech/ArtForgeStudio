@@ -26,13 +26,12 @@ export component StudioWorkPanel {
             y: 21px;
             width: 176px;
             height: 22px;
-            Text { x: 0px; width: 78px; height: parent.height; text: AppState.en ? "Translate" : "翻译提示词"; color: AppTheme.muted; font-size: 12px; font-weight: 400; vertical-alignment: center; overflow: elide; }
-            Text { x: 78px; width: 16px; height: parent.height; text: "?"; color: AppTheme.muted; font-size: 12px; font-weight: 400; horizontal-alignment: center; vertical-alignment: center; }
             TranslateTipArea {
                 x: 0px;
                 y: 0px;
                 width: 96px;
                 height: parent.height;
+                label: AppState.en ? "Translate" : "翻译提示词";
                 text: AppState.en ? "When enabled, your input will be translated into English to help English-only models understand it better." : "开启后，我们会将你的输入自动翻译成英文，帮助仅支持英文的模型更好理解你的需求";
             }
             SmallToggle {

@@ -4,17 +4,57 @@ import { ReferenceItem } from "../types.slint";
 
 export component ReferenceThumb {
     in property <ReferenceItem> item;
-    width: 60px;
-    height: 70px;
+    width: 88px;
+    height: 88px;
+
+    thumb-card := Rectangle {
+        background: AppTheme.panel-soft;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        clip: true;
+
+        Image {
+            x: 4px;
+            y: 4px;
+            width: parent.width - 8px;
+            height: parent.height - 8px;
+            source: root.item.image;
+            image-fit: contain;
+        }
+
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { AppState.open-reference(root.item.id); }
+        }
+    }
+
     Rectangle {
-        background: transparent;
+        x: parent.width - 18px;
+        y: -6px;
+        width: 22px;
+        height: 22px;
+        border-radius: 11px;
+        background: AppTheme.danger;
         clip: false;
-        Image { x: 4px; y: 8px; width: 48px; height: 58px; source: root.item.image; image-fit: contain; }
-        TouchArea { x: 0px; y: 8px; width: 52px; height: 58px; mouse-cursor: pointer; clicked => { AppState.open-reference(root.item.id); } }
-        Rectangle {
-            x: 38px; y: 0px; width: 20px; height: 20px; border-radius: 10px; background: AppTheme.danger;
-            Text { width: parent.width; height: parent.height; text: "x"; color: #ffffff; horizontal-alignment: center; vertical-alignment: center; font-size: 12px; }
-            TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.remove-reference(root.item.id); } }
+
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: "×";
+            color: #ffffff;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            font-size: 13px;
+        }
+
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { AppState.remove-reference(root.item.id); }
         }
     }
 }
