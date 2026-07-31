@@ -3109,9 +3109,9 @@ fn idle_generation_area_rotates_slash_usage_tips() {
             .nth(1)
             .and_then(|value| value.split("if AppState.viewer-source == \"inspiration\"").next())
             .expect("viewer repeat card");
-        let spacer_index = viewer
-            .find("Rectangle { vertical-stretch: 1; }")
-            .expect("viewer action spacer");
+        let prompt_scroll_index = viewer
+            .find("prompt-scroll := ScrollView")
+            .expect("viewer prompt scroll");
         let tools_index = viewer
             .find("cutout-tools-card := Rectangle")
             .expect("viewer processing tools");
@@ -3120,7 +3120,13 @@ fn idle_generation_area_rotates_slash_usage_tips() {
             .expect("viewer repeat tools");
 
         assert!(viewer.contains("component ViewerToolActionButton inherits Rectangle"));
-        assert!(spacer_index < tools_index);
+        assert!(viewer.contains("prompt-scroll := ScrollView {"));
+        assert!(viewer.contains("vertical-stretch: 1;"));
+        assert!(!viewer.contains(
+            "height: min(360px, max(24px, (AppState.viewer-prompt-lines > 20 ? 20 : AppState.viewer-prompt-lines) * 18px));"
+        ));
+        assert!(!viewer.contains("Rectangle { vertical-stretch: 1; }"));
+        assert!(prompt_scroll_index < tools_index);
         assert!(tools_index < repeat_index);
         assert!(tools.contains("GridLayout"));
         assert_eq!(tools.matches("Row {").count(), 2);
