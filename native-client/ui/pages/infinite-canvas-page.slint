@@ -2168,6 +2168,8 @@ export component InfiniteCanvasPage {
             y: 58px;
             width: parent.width - 40px;
             height: parent.height - 78px;
+            property <int> grid-column-count: max(1, Math.ceil(self.width / root.grid-spacing()) + 1);
+            property <int> grid-row-count: max(1, Math.ceil(self.height / root.grid-spacing()) + 1);
             background: AppState.canvas-dark-background ? #090e17 : AppTheme.panel-soft;
             border-width: 1px;
             border-color: AppTheme.border;
@@ -2176,13 +2178,13 @@ export component InfiniteCanvasPage {
 
             if AppState.canvas-grid-style == "line": Rectangle {
                 background: transparent;
-                for column in 120: Rectangle {
+                for column in canvas.grid-column-count: Rectangle {
                     x: root.grid-offset-x() + column * root.grid-spacing();
                     width: 1px;
                     height: parent.height;
                     background: AppState.canvas-dark-background ? #ffffff12 : AppTheme.border.with-alpha(0.55);
                 }
-                for row in 80: Rectangle {
+                for row in canvas.grid-row-count: Rectangle {
                     y: root.grid-offset-y() + row * root.grid-spacing();
                     width: parent.width;
                     height: 1px;
@@ -2192,12 +2194,12 @@ export component InfiniteCanvasPage {
 
             if AppState.canvas-grid-style == "dot": Rectangle {
                 background: transparent;
-                for row in 44: Rectangle {
+                for row in canvas.grid-row-count: Rectangle {
                     y: root.grid-offset-y() + row * root.grid-spacing();
                     width: parent.width;
                     height: 2px;
                     background: transparent;
-                    for column in 70: Rectangle {
+                    for column in canvas.grid-column-count: Rectangle {
                         x: root.grid-offset-x() + column * root.grid-spacing();
                         width: 2px;
                         height: 2px;

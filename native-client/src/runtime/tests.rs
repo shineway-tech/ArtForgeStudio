@@ -1888,6 +1888,16 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(page.contains("AppState.redo-canvas()"));
         assert!(page.contains("canvas-minimap-open"));
         assert!(page.contains("canvas-grid-style"));
+        assert!(page.contains(
+            "grid-column-count: max(1, Math.ceil(self.width / root.grid-spacing()) + 1)"
+        ));
+        assert!(page.contains(
+            "grid-row-count: max(1, Math.ceil(self.height / root.grid-spacing()) + 1)"
+        ));
+        assert!(page.contains("for column in canvas.grid-column-count"));
+        assert!(page.contains("for row in canvas.grid-row-count"));
+        assert!(!page.contains("for column in 70"));
+        assert!(!page.contains("for row in 44"));
         assert!(page.contains("canvas-show-image-info"));
         assert!(page.contains("zoom-track"));
         assert!(page.contains("for note in AppState.canvas-notes"));
