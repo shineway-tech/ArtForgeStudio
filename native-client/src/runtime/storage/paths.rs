@@ -46,23 +46,13 @@ pub(super) fn begin_update_check(app: &AppWindow, manual: bool) {
         let result = fetch_update_manifest().map_err(|error| error.to_string());
         let _ = sender.send(result);
     });
-    poll_update_check(
-        app.as_weak(),
-        manual,
-        Rc::new(RefCell::new(Some(receiver))),
-    );
+    poll_update_check(app.as_weak(), manual, Rc::new(RefCell::new(Some(receiver))));
 }
 
 fn poll_update_check(
     app_weak: Weak<AppWindow>,
     manual: bool,
-    receiver: Rc<
-        RefCell<
-            Option<
-                mpsc::Receiver<std::result::Result<UpdateManifest, String>>,
-            >,
-        >,
-    >,
+    receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<UpdateManifest, String>>>>>,
 ) {
     slint::Timer::single_shot(Duration::from_millis(100), move || {
         let result = {
@@ -135,9 +125,7 @@ fn fetch_remote_update_manifest() -> Result<UpdateManifest> {
     if !cfg!(debug_assertions) && response.url().host_str() != Some(UPDATE_ASSET_HOST) {
         anyhow::bail!("更新清单被重定向到不受信任的地址");
     }
-    let response = response
-        .error_for_status()
-        .context("版本服务返回错误")?;
+    let response = response.error_for_status().context("版本服务返回错误")?;
     let manifest = response
         .json::<UpdateManifest>()
         .context("更新清单格式无效")?;
@@ -483,7 +471,10 @@ pub(super) fn save_generated_bytes(app: &AppWindow, bytes: &[u8], prompt: &str) 
 }
 
 pub(super) fn atomic_write_file(path: &Path, bytes: &[u8]) -> Result<()> {
-    let ext = path.extension().and_then(|value| value.to_str()).unwrap_or("bin");
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("bin");
     let temporary = path.with_extension(format!("{ext}.part"));
     fs::write(&temporary, bytes)?;
     if let Err(error) = fs::rename(&temporary, path) {

@@ -96,7 +96,10 @@ pub(super) fn begin_automatic_update(app: &AppWindow, cancellation: UpdateCancel
 
 pub(super) fn cancel_automatic_update(app: &AppWindow, cancellation: &UpdateCancellation) {
     let state = app.global::<AppState>();
-    if matches!(state.get_update_stage().as_str(), "downloading" | "verifying") {
+    if matches!(
+        state.get_update_stage().as_str(),
+        "downloading" | "verifying"
+    ) {
         cancellation.store(true, AtomicOrdering::Release);
         state.set_update_stage("cancelling".into());
         state.set_update_download_message("正在取消下载…".into());
@@ -125,15 +128,10 @@ fn update_download_request(state: &AppState) -> std::result::Result<UpdateDownlo
     })
 }
 
-pub(super) fn valid_update_artifact_metadata(
-    expected_size: u64,
-    expected_sha256: &str,
-) -> bool {
+pub(super) fn valid_update_artifact_metadata(expected_size: u64, expected_sha256: &str) -> bool {
     expected_size > 0
         && expected_sha256.len() == 64
-        && expected_sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
+        && expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn download_update_package(
@@ -182,8 +180,7 @@ fn perform_update_download(
         }
     }
 
-    let update_dir =
-        std::env::temp_dir().join(format!("artforge-update-{}", Uuid::new_v4()));
+    let update_dir = std::env::temp_dir().join(format!("artforge-update-{}", Uuid::new_v4()));
     fs::create_dir_all(&update_dir).context("无法创建更新临时目录")?;
     let final_path = update_dir.join(update_package_file_name());
     let partial_path = update_dir.join(format!("{}.part", update_package_file_name()));
@@ -208,15 +205,14 @@ fn perform_update_download(
             if count == 0 {
                 break;
             }
-            file.write_all(&buffer[..count])
-                .context("写入安装包失败")?;
+            file.write_all(&buffer[..count]).context("写入安装包失败")?;
             digest.update(&buffer[..count]);
             downloaded = downloaded.saturating_add(count as u64);
             if downloaded > request.expected_size {
                 anyhow::bail!("安装包大小超过更新清单声明");
             }
-            let progress = ((downloaded.saturating_mul(100)) / request.expected_size)
-                .min(100) as i32;
+            let progress =
+                ((downloaded.saturating_mul(100)) / request.expected_size).min(100) as i32;
             if progress != last_progress {
                 last_progress = progress;
                 let _ = sender.send(UpdateDownloadEvent::Progress(progress));
@@ -342,9 +338,7 @@ fn handoff_update_to_installer(app: &AppWindow, package_path: &Path) {
                 let _ = fs::remove_dir_all(parent);
             }
             state.set_update_stage("failed".into());
-            state.set_update_download_message(
-                format!("无法启动自动安装：{error}").into(),
-            );
+            state.set_update_download_message(format!("无法启动自动安装：{error}").into());
         }
     }
 }

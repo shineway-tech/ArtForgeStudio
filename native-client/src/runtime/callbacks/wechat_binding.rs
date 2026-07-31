@@ -8,14 +8,18 @@ enum BindingPollOutcome {
 }
 
 pub(super) fn wire_wechat_binding_callbacks(app: &AppWindow, context: AppContext) {
-    let Some(backend) = context.backend.clone() else { return; };
+    let Some(backend) = context.backend.clone() else {
+        return;
+    };
     let state = app.global::<AppState>();
 
     {
         let app_weak = app.as_weak();
         let backend = backend.clone();
         state.on_start_wechat_binding(move || {
-            let Some(app) = app_weak.upgrade() else { return; };
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             start_wechat_binding(&app, backend.clone());
         });
     }
@@ -23,7 +27,9 @@ pub(super) fn wire_wechat_binding_callbacks(app: &AppWindow, context: AppContext
     {
         let app_weak = app.as_weak();
         state.on_close_wechat_binding(move || {
-            let Some(app) = app_weak.upgrade() else { return; };
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             let state = app.global::<AppState>();
             state.set_wechat_bind_open(false);
             state.set_wechat_bind_login_id("".into());
@@ -37,7 +43,9 @@ pub(super) fn wire_wechat_binding_callbacks(app: &AppWindow, context: AppContext
     {
         let app_weak = app.as_weak();
         state.on_unbind_wechat(move || {
-            let Some(app) = app_weak.upgrade() else { return; };
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             let state = app.global::<AppState>();
             if state.get_wechat_bind_busy() || !state.get_wechat_can_unbind() {
                 return;
@@ -49,10 +57,7 @@ pub(super) fn wire_wechat_binding_callbacks(app: &AppWindow, context: AppContext
             std::thread::spawn(move || {
                 let _ = sender.send(api.unbind_wechat());
             });
-            poll_unbind_result(
-                app.as_weak(),
-                Rc::new(RefCell::new(Some(receiver))),
-            );
+            poll_unbind_result(app.as_weak(), Rc::new(RefCell::new(Some(receiver))));
         });
     }
 }
@@ -96,10 +101,14 @@ fn poll_binding_start_result(
             poll_binding_start_result(app_weak, backend, receiver);
             return;
         };
-        let Some(app) = app_weak.upgrade() else { return; };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
         let state = app.global::<AppState>();
         state.set_wechat_bind_busy(false);
-        if !state.get_wechat_bind_open() { return; }
+        if !state.get_wechat_bind_open() {
+            return;
+        }
         match result {
             Ok(response) => match if response.qr_image_base64.trim().is_empty() {
                 qr_image(&response.authorization_url)
@@ -108,7 +117,8 @@ fn poll_binding_start_result(
             } {
                 Ok(image) => {
                     let expires = response.expires_in_seconds.min(i32::MAX as u64) as i32;
-                    let poll_after_ms = response.poll_after_milliseconds
+                    let poll_after_ms = response
+                        .poll_after_milliseconds
                         .unwrap_or_else(|| response.poll_after_seconds.saturating_mul(1000))
                         .clamp(250, 10_000) as i32;
                     state.set_wechat_bind_qr_image(image);
@@ -146,40 +156,52 @@ fn schedule_binding_status_poll(
     login_id: String,
     delay_milliseconds: u64,
 ) {
-    slint::Timer::single_shot(Duration::from_millis(delay_milliseconds.max(250)), move || {
-        let Some(app) = app_weak.upgrade() else { return; };
-        let state = app.global::<AppState>();
-        if !state.get_wechat_bind_open()
-            || state.get_wechat_bind_login_id().as_str() != login_id
-        {
-            return;
-        }
-        let api = AccountApi::new(backend.api.clone());
-        let request_login_id = login_id.clone();
-        let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
-            let result = api.wechat_binding_status(&request_login_id).map(|status| {
-                match (status.status.as_str(), status.qr_status.as_deref()) {
-                    ("pending", Some("scanned")) | ("scanned", _) => BindingPollOutcome::Scanned(
-                        status.message.unwrap_or_else(|| "已扫码，请在手机微信中确认绑定".to_string()),
-                    ),
-                    ("pending", _) => BindingPollOutcome::Pending,
-                    ("failed", _) => BindingPollOutcome::Failed(
-                        status.message.unwrap_or_else(|| "微信绑定未完成，请刷新二维码重试".to_string()),
-                    ),
-                    ("completed", _) => BindingPollOutcome::Completed(status),
-                    _ => BindingPollOutcome::Failed("微信绑定状态异常，请刷新二维码重试".to_string()),
-                }
+    slint::Timer::single_shot(
+        Duration::from_millis(delay_milliseconds.max(250)),
+        move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            if !state.get_wechat_bind_open()
+                || state.get_wechat_bind_login_id().as_str() != login_id
+            {
+                return;
+            }
+            let api = AccountApi::new(backend.api.clone());
+            let request_login_id = login_id.clone();
+            let (sender, receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                let result =
+                    api.wechat_binding_status(&request_login_id).map(|status| {
+                        match (status.status.as_str(), status.qr_status.as_deref()) {
+                            ("pending", Some("scanned")) | ("scanned", _) => {
+                                BindingPollOutcome::Scanned(status.message.unwrap_or_else(|| {
+                                    "已扫码，请在手机微信中确认绑定".to_string()
+                                }))
+                            }
+                            ("pending", _) => BindingPollOutcome::Pending,
+                            ("failed", _) => {
+                                BindingPollOutcome::Failed(status.message.unwrap_or_else(|| {
+                                    "微信绑定未完成，请刷新二维码重试".to_string()
+                                }))
+                            }
+                            ("completed", _) => BindingPollOutcome::Completed(status),
+                            _ => BindingPollOutcome::Failed(
+                                "微信绑定状态异常，请刷新二维码重试".to_string(),
+                            ),
+                        }
+                    });
+                let _ = sender.send(result);
             });
-            let _ = sender.send(result);
-        });
-        poll_binding_status_result(
-            app.as_weak(),
-            backend,
-            login_id,
-            Rc::new(RefCell::new(Some(receiver))),
-        );
-    });
+            poll_binding_status_result(
+                app.as_weak(),
+                backend,
+                login_id,
+                Rc::new(RefCell::new(Some(receiver))),
+            );
+        },
+    );
 }
 
 fn poll_binding_status_result(
@@ -194,9 +216,13 @@ fn poll_binding_status_result(
             poll_binding_status_result(app_weak, backend, login_id, receiver);
             return;
         };
-        let Some(app) = app_weak.upgrade() else { return; };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
         let state = app.global::<AppState>();
-        if state.get_wechat_bind_login_id().as_str() != login_id { return; }
+        if state.get_wechat_bind_login_id().as_str() != login_id {
+            return;
+        }
         match result {
             Ok(BindingPollOutcome::Pending) => {
                 let poll_after_ms = state.get_wechat_bind_poll_after_ms().max(250);
@@ -291,7 +317,9 @@ fn poll_unbind_result(
             poll_unbind_result(app_weak, receiver);
             return;
         };
-        let Some(app) = app_weak.upgrade() else { return; };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
         let state = app.global::<AppState>();
         state.set_wechat_bind_busy(false);
         match result {
@@ -302,7 +330,9 @@ fn poll_unbind_result(
                 state.set_generation_status("微信已解绑".into());
             }
             Err(error) => {
-                state.set_generation_status(format!("解绑微信失败：{}", error.user_message()).into());
+                state.set_generation_status(
+                    format!("解绑微信失败：{}", error.user_message()).into(),
+                );
             }
         }
     });

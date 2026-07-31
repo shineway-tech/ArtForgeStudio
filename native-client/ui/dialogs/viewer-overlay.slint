@@ -339,7 +339,7 @@ export component ViewerOverlay {
                             ViewerToolActionButton {
                                 icon: @image-url("../../assets/icons/fit.svg");
                                 label: AppState.en ? "Cutout" : "抠图";
-                                disabled: AppState.viewer-processing || AppState.viewer-cutout-done;
+                                disabled: AppState.viewer-processing || AppState.cutout-processing || AppState.viewer-cutout-done;
                                 clicked => { AppState.viewer-cutout-image(); }
                             }
                             ViewerToolActionButton {
@@ -360,7 +360,7 @@ export component ViewerOverlay {
                         }
                     }
                 }
-                if AppState.viewer-source != "inspiration": viewer-repeat-card := Rectangle {
+                if AppState.viewer-source != "inspiration" && AppState.viewer-repeat-enabled: viewer-repeat-card := Rectangle {
                     height: 62px;
                     background: AppTheme.panel-soft;
                     border-radius: 10px;

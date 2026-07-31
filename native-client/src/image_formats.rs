@@ -4,14 +4,14 @@
 /// the same file have identical behavior.
 #[cfg(target_os = "macos")]
 pub(crate) const PICKER_IMAGE_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "ico", "avif", "tga",
-    "dds", "hdr", "exr", "qoi", "heic", "heif",
+    "png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "ico", "avif", "tga", "dds", "hdr",
+    "exr", "qoi", "heic", "heif",
 ];
 
 #[cfg(not(target_os = "macos"))]
 pub(crate) const PICKER_IMAGE_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "ico", "avif", "tga",
-    "dds", "hdr", "exr", "qoi",
+    "png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "ico", "avif", "tga", "dds", "hdr",
+    "exr", "qoi",
 ];
 
 #[cfg(target_os = "macos")]

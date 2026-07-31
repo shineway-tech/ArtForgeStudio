@@ -93,15 +93,19 @@ pub(super) fn order_recovery_path() -> PathBuf {
 }
 
 pub(super) fn load_pending_orders() -> Vec<PendingOrderRecord> {
-    let _guard = recovery_lock().lock().unwrap_or_else(|value| value.into_inner());
+    let _guard = recovery_lock()
+        .lock()
+        .unwrap_or_else(|value| value.into_inner());
     read_order_recovery_file().orders
 }
 
 pub(super) fn upsert_pending_order(record: PendingOrderRecord) -> Result<()> {
     mutate_order_recovery_file(|file| {
-        if let Some(existing) = file.orders.iter_mut().find(|item| {
-            item.client_request_id == record.client_request_id
-        }) {
+        if let Some(existing) = file
+            .orders
+            .iter_mut()
+            .find(|item| item.client_request_id == record.client_request_id)
+        {
             *existing = record;
         } else {
             file.orders.push(record);
@@ -111,9 +115,11 @@ pub(super) fn upsert_pending_order(record: PendingOrderRecord) -> Result<()> {
 
 pub(super) fn update_pending_order_id(client_request_id: &str, order_id: &str) -> Result<()> {
     mutate_order_recovery_file(|file| {
-        if let Some(order) = file.orders.iter_mut().find(|item| {
-            item.client_request_id == client_request_id
-        }) {
+        if let Some(order) = file
+            .orders
+            .iter_mut()
+            .find(|item| item.client_request_id == client_request_id)
+        {
             order.order_id = order_id.to_string();
         }
     })
@@ -121,20 +127,25 @@ pub(super) fn update_pending_order_id(client_request_id: &str, order_id: &str) -
 
 pub(super) fn remove_pending_order(client_request_id: &str) -> Result<()> {
     mutate_order_recovery_file(|file| {
-        file.orders.retain(|item| item.client_request_id != client_request_id);
+        file.orders
+            .retain(|item| item.client_request_id != client_request_id);
     })
 }
 
 pub(super) fn load_pending_generations() -> Vec<PendingGenerationRecord> {
-    let _guard = recovery_lock().lock().unwrap_or_else(|value| value.into_inner());
+    let _guard = recovery_lock()
+        .lock()
+        .unwrap_or_else(|value| value.into_inner());
     read_recovery_file().generations
 }
 
 pub(super) fn upsert_pending_generation(record: PendingGenerationRecord) -> Result<()> {
     mutate_recovery_file(|file| {
-        if let Some(existing) = file.generations.iter_mut().find(|item| {
-            item.client_request_id == record.client_request_id
-        }) {
+        if let Some(existing) = file
+            .generations
+            .iter_mut()
+            .find(|item| item.client_request_id == record.client_request_id)
+        {
             *existing = record;
         } else {
             file.generations.push(record);
@@ -147,9 +158,11 @@ pub(super) fn update_pending_generation(
     update: impl FnOnce(&mut PendingGenerationRecord),
 ) -> Result<()> {
     mutate_recovery_file(|file| {
-        if let Some(record) = file.generations.iter_mut().find(|item| {
-            item.client_request_id == client_request_id
-        }) {
+        if let Some(record) = file
+            .generations
+            .iter_mut()
+            .find(|item| item.client_request_id == client_request_id)
+        {
             update(record);
         }
         prune_completed(file);
@@ -158,7 +171,8 @@ pub(super) fn update_pending_generation(
 
 pub(super) fn remove_pending_generation(client_request_id: &str) -> Result<()> {
     mutate_recovery_file(|file| {
-        file.generations.retain(|item| item.client_request_id != client_request_id);
+        file.generations
+            .retain(|item| item.client_request_id != client_request_id);
     })
 }
 
@@ -168,7 +182,11 @@ pub(super) fn pending_delivery_saved(
     local_path: &str,
 ) -> Result<()> {
     update_pending_generation(client_request_id, |record| {
-        if let Some(item) = record.deliveries.iter_mut().find(|item| item.file_id == delivery.file_id) {
+        if let Some(item) = record
+            .deliveries
+            .iter_mut()
+            .find(|item| item.file_id == delivery.file_id)
+        {
             item.local_path = local_path.to_string();
         } else {
             record.deliveries.push(PendingDeliveryRecord {
@@ -183,19 +201,22 @@ pub(super) fn pending_delivery_saved(
     })
 }
 
-pub(super) fn pending_delivery_acknowledged(
-    client_request_id: &str,
-    file_id: &str,
-) -> Result<()> {
+pub(super) fn pending_delivery_acknowledged(client_request_id: &str, file_id: &str) -> Result<()> {
     update_pending_generation(client_request_id, |record| {
-        if let Some(item) = record.deliveries.iter_mut().find(|item| item.file_id == file_id) {
+        if let Some(item) = record
+            .deliveries
+            .iter_mut()
+            .find(|item| item.file_id == file_id)
+        {
             item.acknowledged = true;
         }
     })
 }
 
 fn mutate_recovery_file(update: impl FnOnce(&mut RecoveryFile)) -> Result<()> {
-    let _guard = recovery_lock().lock().unwrap_or_else(|value| value.into_inner());
+    let _guard = recovery_lock()
+        .lock()
+        .unwrap_or_else(|value| value.into_inner());
     let mut file = read_recovery_file();
     file.schema_version = RECOVERY_SCHEMA_VERSION;
     update(&mut file);
@@ -204,7 +225,9 @@ fn mutate_recovery_file(update: impl FnOnce(&mut RecoveryFile)) -> Result<()> {
 
 fn read_recovery_file() -> RecoveryFile {
     let path = generation_recovery_path();
-    let Ok(text) = fs::read_to_string(path) else { return RecoveryFile::default(); };
+    let Ok(text) = fs::read_to_string(path) else {
+        return RecoveryFile::default();
+    };
     serde_json::from_str(&text).unwrap_or_default()
 }
 
@@ -220,7 +243,9 @@ fn write_recovery_file(file: &RecoveryFile) -> Result<()> {
 }
 
 fn mutate_order_recovery_file(update: impl FnOnce(&mut OrderRecoveryFile)) -> Result<()> {
-    let _guard = recovery_lock().lock().unwrap_or_else(|value| value.into_inner());
+    let _guard = recovery_lock()
+        .lock()
+        .unwrap_or_else(|value| value.into_inner());
     let mut file = read_order_recovery_file();
     file.schema_version = RECOVERY_SCHEMA_VERSION;
     update(&mut file);
@@ -246,7 +271,11 @@ fn prune_completed(file: &mut RecoveryFile) {
         if !record.terminal {
             return true;
         }
-        let acknowledged = record.deliveries.iter().filter(|item| item.acknowledged).count();
+        let acknowledged = record
+            .deliveries
+            .iter()
+            .filter(|item| item.acknowledged)
+            .count();
         acknowledged < record.expected_success_count
     });
 }

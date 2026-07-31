@@ -241,7 +241,11 @@ pub(super) fn viewer_processing_duration_ms(mode: ProcessImageMode) -> u64 {
     }
 }
 
-pub(super) fn schedule_viewer_processing_progress(app: Weak<AppWindow>, delay_ms: u64, progress: i32) {
+pub(super) fn schedule_viewer_processing_progress(
+    app: Weak<AppWindow>,
+    delay_ms: u64,
+    progress: i32,
+) {
     slint::Timer::single_shot(Duration::from_millis(delay_ms), move || {
         let Some(app) = app.upgrade() else {
             return;
@@ -348,7 +352,12 @@ pub(super) fn process_viewer_image(
     true
 }
 
-pub(super) fn upscale_dimensions(width: u32, height: u32, scale: u32, target_long_edge: u32) -> (u32, u32) {
+pub(super) fn upscale_dimensions(
+    width: u32,
+    height: u32,
+    scale: u32,
+    target_long_edge: u32,
+) -> (u32, u32) {
     let scale = scale.clamp(2, 4) as u64;
     let scaled_width = (width as u64).saturating_mul(scale);
     let scaled_height = (height as u64).saturating_mul(scale);
@@ -507,6 +516,10 @@ pub(super) fn save_processed_viewer_image(
             ProcessImageMode::Upscale { .. } => "本地清晰放大".to_string(),
             _ => "本地处理".to_string(),
         },
+        origin: original
+            .as_ref()
+            .map(|item| item.origin.clone())
+            .unwrap_or_else(|| "local_processing".to_string()),
         width: width as i32,
         height: height as i32,
         image,

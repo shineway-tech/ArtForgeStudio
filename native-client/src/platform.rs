@@ -105,10 +105,10 @@ fn install_macos_app_icon() -> anyhow::Result<()> {
 mod macos_drop_target {
     use super::{queue_external_image_drop, take_macos_file_drag, ExternalImageDrop};
     use objc2::{
-        ffi,
-        msg_send, sel,
+        ffi, msg_send,
         rc::Retained,
         runtime::{AnyClass, AnyObject, Bool, Imp, Sel},
+        sel,
     };
     use objc2_app_kit::{NSEvent, NSFilenamesPboardType, NSPasteboard, NSView};
     use objc2_foundation::{NSArray, NSRect, NSSize, NSString};
@@ -206,8 +206,7 @@ mod macos_drop_target {
         let dragging_entered: extern "C-unwind" fn(_, _, _) -> _ = dragging_entered;
         let prepare_for_drag_operation: extern "C-unwind" fn(_, _, _) -> _ =
             prepare_for_drag_operation;
-        let perform_drag_operation: extern "C-unwind" fn(_, _, _) -> _ =
-            perform_drag_operation;
+        let perform_drag_operation: extern "C-unwind" fn(_, _, _) -> _ = perform_drag_operation;
         // SAFETY: Each replacement uses the original method's type encoding and an
         // ABI-compatible function. class_replaceMethod adds the override only to
         // winit's concrete window class and leaves NSWindow's runtime identity intact.
@@ -286,11 +285,7 @@ mod macos_drop_target {
         Bool::YES
     }
 
-    extern "C-unwind" fn mouse_dragged(
-        view: &AnyObject,
-        command: Sel,
-        event: *mut AnyObject,
-    ) {
+    extern "C-unwind" fn mouse_dragged(view: &AnyObject, command: Sel, event: *mut AnyObject) {
         let native_drag_started = (unsafe { event.as_ref() })
             .and_then(|event| take_macos_file_drag().map(|path| (event, path)))
             .map(|(event, path)| start_native_file_drag(view, event, path))
@@ -337,16 +332,13 @@ mod macos_drop_target {
 
     fn extract_image_paths(sender: &AnyObject) -> Vec<PathBuf> {
         // SAFETY: NSDraggingInfo's `draggingPasteboard` returns an AppKit pasteboard.
-        let pasteboard: Retained<NSPasteboard> =
-            unsafe { msg_send![sender, draggingPasteboard] };
-        let Some(filenames) =
-            pasteboard.propertyListForType(unsafe { NSFilenamesPboardType })
+        let pasteboard: Retained<NSPasteboard> = unsafe { msg_send![sender, draggingPasteboard] };
+        let Some(filenames) = pasteboard.propertyListForType(unsafe { NSFilenamesPboardType })
         else {
             return Vec::new();
         };
         // SAFETY: NSFilenamesPboardType's property list is an NSArray<NSString>.
-        let filenames: Retained<NSArray<NSString>> =
-            unsafe { Retained::cast_unchecked(filenames) };
+        let filenames: Retained<NSArray<NSString>> = unsafe { Retained::cast_unchecked(filenames) };
 
         (0..filenames.count())
             .map(|index| PathBuf::from(filenames.objectAtIndex(index).to_string()))

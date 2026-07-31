@@ -88,13 +88,15 @@ pub(super) fn wire_prompt_optimization_callbacks(app: &AppWindow, context: AppCo
                 &app,
                 context.clone(),
                 PromptRequestEffect::Refresh,
-                move |api| api.review(
-                    &id,
-                    &request_id,
-                    "continue_step",
-                    feedback.as_deref(),
-                    feedback_scope.as_deref(),
-                ),
+                move |api| {
+                    api.review(
+                        &id,
+                        &request_id,
+                        "continue_step",
+                        feedback.as_deref(),
+                        feedback_scope.as_deref(),
+                    )
+                },
             );
         });
     }
@@ -118,13 +120,7 @@ pub(super) fn wire_prompt_optimization_callbacks(app: &AppWindow, context: AppCo
                 &app,
                 context.clone(),
                 PromptRequestEffect::Refresh,
-                move |api| api.review(
-                    &id,
-                    &request_id,
-                    "clear_stable_feedback",
-                    None,
-                    None,
-                ),
+                move |api| api.review(&id, &request_id, "clear_stable_feedback", None, None),
             );
         });
     }
@@ -195,7 +191,9 @@ pub(super) fn wire_prompt_optimization_callbacks(app: &AppWindow, context: AppCo
             state.set_deep_optimization_result_tab("chinese".into());
             state.set_deep_optimization_progress(0);
             state.set_deep_optimization_maximum_credits(
-                (state.get_deep_optimization_max_rounds() * 5).to_string().into(),
+                (state.get_deep_optimization_max_rounds() * 5)
+                    .to_string()
+                    .into(),
             );
         });
     }
@@ -240,11 +238,7 @@ pub(super) fn wire_prompt_optimization_callbacks(app: &AppWindow, context: AppCo
                 .borrow_mut()
                 .deep_prompt_bindings
                 .remove(&current_workspace_category(&app));
-            store_current_prompt_draft(
-                &app,
-                &context.store,
-                &current_workspace_category(&app),
-            );
+            store_current_prompt_draft(&app, &context.store, &current_workspace_category(&app));
             save_local_store(&app, &context.store.borrow());
             clear_prompt_optimization_job(&app, &context);
             state.set_generation_status("已恢复深度优化前的提示词".into());
@@ -305,18 +299,17 @@ fn open_prompt_optimization(app: &AppWindow, context: AppContext) {
     };
     if !job_id.is_empty() {
         state.set_deep_optimization_job_id(job_id.clone().into());
-        run_prompt_request(
-            app,
-            context,
-            PromptRequestEffect::Refresh,
-            move |api| api.get(&job_id),
-        );
+        run_prompt_request(app, context, PromptRequestEffect::Refresh, move |api| {
+            api.get(&job_id)
+        });
         return;
     }
     state.set_deep_optimization_stage("settings".into());
     state.set_deep_optimization_original_prompt(state.get_prompt());
     state.set_deep_optimization_maximum_credits(
-        (state.get_deep_optimization_max_rounds() * 5).to_string().into(),
+        (state.get_deep_optimization_max_rounds() * 5)
+            .to_string()
+            .into(),
     );
 }
 
@@ -347,12 +340,9 @@ fn start_prompt_optimization(app: &AppWindow, context: AppContext) {
     state.set_deep_optimization_phase_label("正在创建深度优化任务".into());
     state.set_deep_optimization_status_message("正在预留积分并进入任务队列...".into());
     state.set_deep_optimization_maximum_credits((max_rounds * 5).to_string().into());
-    run_prompt_request(
-        app,
-        context,
-        PromptRequestEffect::Start,
-        move |api| api.create(&request),
-    );
+    run_prompt_request(app, context, PromptRequestEffect::Start, move |api| {
+        api.create(&request)
+    });
 }
 
 fn run_prompt_request<F>(
@@ -388,13 +378,7 @@ fn poll_prompt_request(
     app_weak: Weak<AppWindow>,
     context: AppContext,
     receiver: Rc<
-        RefCell<
-            Option<
-                mpsc::Receiver<
-                    std::result::Result<PromptOptimizationDetail, String>,
-                >,
-            >,
-        >,
+        RefCell<Option<mpsc::Receiver<std::result::Result<PromptOptimizationDetail, String>>>>,
     >,
     effect: PromptRequestEffect,
 ) {
@@ -430,7 +414,10 @@ fn poll_prompt_request(
                 let applied = if matches!(effect, PromptRequestEffect::ApplyResult)
                     || status == "completed"
                 {
-                    detail.final_result.clone().or_else(|| detail.result.clone())
+                    detail
+                        .final_result
+                        .clone()
+                        .or_else(|| detail.result.clone())
                 } else {
                     None
                 };
@@ -439,9 +426,7 @@ fn poll_prompt_request(
                 if let Some(result) = applied {
                     apply_prompt_versions(&app, &context, result);
                     refresh_backend_snapshot(&app, context.clone());
-                } else if matches!(effect, PromptRequestEffect::Start)
-                    || status == "cancelled"
-                {
+                } else if matches!(effect, PromptRequestEffect::Start) || status == "cancelled" {
                     refresh_backend_snapshot(&app, context.clone());
                 }
                 if matches!(status.as_str(), "queued" | "processing") {
@@ -504,23 +489,14 @@ fn begin_prompt_optimization_polling(app: &AppWindow, context: AppContext, id: S
         *context.prompt_optimization_polling.borrow_mut() = None;
         return;
     }
-    if context
-        .prompt_optimization_polling
-        .borrow()
-        .as_deref()
-        == Some(id.as_str())
-    {
+    if context.prompt_optimization_polling.borrow().as_deref() == Some(id.as_str()) {
         return;
     }
     *context.prompt_optimization_polling.borrow_mut() = Some(id.clone());
     poll_prompt_optimization_once(app.as_weak(), context, id);
 }
 
-fn poll_prompt_optimization_once(
-    app_weak: Weak<AppWindow>,
-    context: AppContext,
-    id: String,
-) {
+fn poll_prompt_optimization_once(app_weak: Weak<AppWindow>, context: AppContext, id: String) {
     let Some(backend) = context.backend.clone() else {
         *context.prompt_optimization_polling.borrow_mut() = None;
         return;
@@ -544,13 +520,7 @@ fn poll_prompt_optimization_once_result(
     context: AppContext,
     id: String,
     receiver: Rc<
-        RefCell<
-            Option<
-                mpsc::Receiver<
-                    std::result::Result<PromptOptimizationDetail, ApiError>,
-                >,
-            >,
-        >,
+        RefCell<Option<mpsc::Receiver<std::result::Result<PromptOptimizationDetail, ApiError>>>>,
     >,
 ) {
     slint::Timer::single_shot(Duration::from_millis(100), move || {
@@ -573,12 +543,7 @@ fn poll_prompt_optimization_once_result(
         };
         let Some(result) = result else {
             if receiver.borrow().is_some() {
-                poll_prompt_optimization_once_result(
-                    app_weak,
-                    context,
-                    id,
-                    receiver,
-                );
+                poll_prompt_optimization_once_result(app_weak, context, id, receiver);
             } else {
                 *context.prompt_optimization_polling.borrow_mut() = None;
             }
@@ -609,7 +574,9 @@ fn poll_prompt_optimization_once_result(
                     *context.prompt_optimization_polling.borrow_mut() = None;
                     let state = app.global::<AppState>();
                     if detail.status == "manual_review" {
-                        state.set_generation_status("深度优化已生成新版本，请点击“查看深度优化”确认".into());
+                        state.set_generation_status(
+                            "深度优化已生成新版本，请点击“查看深度优化”确认".into(),
+                        );
                     } else if matches!(detail.status.as_str(), "completed" | "cancelled") {
                         refresh_backend_snapshot(&app, context.clone());
                     }
@@ -617,9 +584,10 @@ fn poll_prompt_optimization_once_result(
             }
             Err(error) => {
                 *context.prompt_optimization_polling.borrow_mut() = None;
-                app.global::<AppState>().set_deep_optimization_status_message(
-                    format!("状态同步暂时失败：{}", error.user_message()).into(),
-                );
+                app.global::<AppState>()
+                    .set_deep_optimization_status_message(
+                        format!("状态同步暂时失败：{}", error.user_message()).into(),
+                    );
                 let retry_app = app.as_weak();
                 let retry_context = context.clone();
                 slint::Timer::single_shot(Duration::from_secs(5), move || {
@@ -641,11 +609,10 @@ pub(super) fn recover_prompt_optimization(app: &AppWindow, context: AppContext) 
     std::thread::spawn(move || {
         let api = PromptOptimizationApi::new(backend.api.clone());
         let detail = if stored_id.is_empty() {
-            api.active()
-                .and_then(|items| match items.first() {
-                    Some(item) => api.get(&item.id).map(Some),
-                    None => Ok(None),
-                })
+            api.active().and_then(|items| match items.first() {
+                Some(item) => api.get(&item.id).map(Some),
+                None => Ok(None),
+            })
         } else {
             match api.get(&stored_id) {
                 Ok(detail) => Ok(Some(detail)),
@@ -669,11 +636,7 @@ fn poll_prompt_recovery(
     context: AppContext,
     receiver: Rc<
         RefCell<
-            Option<
-                mpsc::Receiver<
-                    std::result::Result<Option<PromptOptimizationDetail>, ApiError>,
-                >,
-            >,
+            Option<mpsc::Receiver<std::result::Result<Option<PromptOptimizationDetail>, ApiError>>>,
         >,
     >,
 ) {
@@ -722,11 +685,7 @@ fn poll_prompt_recovery(
     });
 }
 
-fn apply_prompt_versions(
-    app: &AppWindow,
-    context: &AppContext,
-    result: PromptOptimizationResult,
-) {
+fn apply_prompt_versions(app: &AppWindow, context: &AppContext, result: PromptOptimizationResult) {
     if result.chinese_prompt.trim().is_empty() || result.english_prompt.trim().is_empty() {
         app.global::<AppState>()
             .set_deep_optimization_error("服务端返回的中英文提示词不完整".into());
@@ -743,11 +702,7 @@ fn apply_prompt_versions(
             english: result.english_prompt,
         },
     );
-    store_current_prompt_draft(
-        app,
-        &context.store,
-        &current_workspace_category(app),
-    );
+    store_current_prompt_draft(app, &context.store, &current_workspace_category(app));
     save_local_store(app, &context.store.borrow());
     state.set_generation_status("深度优化结果已应用，生图时将使用英文版本".into());
 }
@@ -788,24 +743,17 @@ fn apply_prompt_optimization_detail(app: &AppWindow, detail: &PromptOptimization
     state.set_deep_optimization_current_score(displayed_best_score(detail));
     state.set_deep_optimization_phase_label(phase_label(&detail.phase).into());
     state.set_deep_optimization_status_message(phase_message(&detail.phase).into());
-    state.set_deep_optimization_stop_reason(
-        stop_reason_label(detail.stop_reason.as_deref()).into(),
-    );
-    state.set_deep_optimization_consumed_credits(
-        detail.pricing.consumed_credits.clone().into(),
-    );
-    state.set_deep_optimization_maximum_credits(
-        detail.pricing.maximum_credits.clone().into(),
-    );
+    state
+        .set_deep_optimization_stop_reason(stop_reason_label(detail.stop_reason.as_deref()).into());
+    state.set_deep_optimization_consumed_credits(detail.pricing.consumed_credits.clone().into());
+    state.set_deep_optimization_maximum_credits(detail.pricing.maximum_credits.clone().into());
     state.set_deep_optimization_can_pause(detail.can_pause);
     state.set_deep_optimization_can_resume(detail.can_resume);
     state.set_deep_optimization_can_retry(detail.can_retry);
     state.set_deep_optimization_can_cancel(detail.can_cancel);
     state.set_deep_optimization_can_continue(detail.can_continue);
     state.set_deep_optimization_can_apply(detail.can_apply);
-    state.set_deep_optimization_can_clear_stable_feedback(
-        detail.can_clear_stable_feedback,
-    );
+    state.set_deep_optimization_can_clear_stable_feedback(detail.can_clear_stable_feedback);
     let original = detail.original_prompt.as_deref().unwrap_or_default();
     state.set_deep_optimization_original_prompt(original.into());
     match detail.result.as_ref() {
@@ -815,7 +763,8 @@ fn apply_prompt_optimization_detail(app: &AppWindow, detail: &PromptOptimization
             let comparison_base = best_result_comparison_base(detail);
             let (highlighted_original, highlighted_chinese) =
                 highlighted_prompt_markdown(comparison_base, &result.chinese_prompt);
-            state.set_deep_optimization_highlighted_original(styled_markdown(&highlighted_original));
+            state
+                .set_deep_optimization_highlighted_original(styled_markdown(&highlighted_original));
             state.set_deep_optimization_highlighted_chinese(styled_markdown(&highlighted_chinese));
         }
         None => {
@@ -826,13 +775,10 @@ fn apply_prompt_optimization_detail(app: &AppWindow, detail: &PromptOptimization
             state.set_deep_optimization_highlighted_chinese(plain_original);
         }
     }
-    state.set_deep_optimization_feedback(
-        detail.pending_feedback.clone().unwrap_or_default().into(),
-    );
+    state
+        .set_deep_optimization_feedback(detail.pending_feedback.clone().unwrap_or_default().into());
     state.set_deep_optimization_feedback_stable(false);
-    state.set_deep_optimization_stable_feedback_summary(
-        detail.stable_feedback.join("；").into(),
-    );
+    state.set_deep_optimization_stable_feedback_summary(detail.stable_feedback.join("；").into());
     state.set_deep_optimization_error(
         detail
             .failure
@@ -930,9 +876,7 @@ fn best_result_comparison_base(detail: &PromptOptimizationDetail) -> &str {
 }
 
 fn optimization_change_summary(detail: &PromptOptimizationDetail) -> String {
-    if detail.stop_reason.as_deref() == Some("target_reached")
-        && detail.completed_rounds == 0
-    {
+    if detail.stop_reason.as_deref() == Some("target_reached") && detail.completed_rounds == 0 {
         return "原提示词已通过高分复核并达到目标，无需额外优化。".to_string();
     }
     if detail.result.is_none() {
@@ -946,9 +890,7 @@ fn optimization_change_summary(detail: &PromptOptimizationDetail) -> String {
             .result_score
             .zip(detail.best_score)
             .filter(|(candidate, best)| candidate < best)
-            .map(|(candidate, best)| {
-                format!("本轮候选 {candidate} 分，未替换当前最佳 {best} 分。")
-            })
+            .map(|(candidate, best)| format!("本轮候选 {candidate} 分，未替换当前最佳 {best} 分。"))
     } else {
         None
     };
@@ -957,10 +899,7 @@ fn optimization_change_summary(detail: &PromptOptimizationDetail) -> String {
         .as_ref()
         .filter(|review| !review.qualifies && !review.blocking_issues.is_empty())
     {
-        let review_summary = format!(
-            "高分复核待改进：{}",
-            review.blocking_issues.join("；")
-        );
+        let review_summary = format!("高分复核待改进：{}", review.blocking_issues.join("；"));
         return rejected_notice
             .map(|notice| format!("{notice}\n{review_summary}"))
             .unwrap_or(review_summary);
@@ -995,13 +934,7 @@ fn highlighted_prompt_markdown(original: &str, optimized: &str) -> (String, Stri
     let original_tokens = prompt_diff_tokens(original);
     let optimized_tokens = prompt_diff_tokens(optimized);
     let mut matches = Vec::new();
-    collect_lcs_matches(
-        &original_tokens,
-        &optimized_tokens,
-        0,
-        0,
-        &mut matches,
-    );
+    collect_lcs_matches(&original_tokens, &optimized_tokens, 0, 0, &mut matches);
     let original_pieces = prompt_diff_pieces(&original_tokens, &matches, true);
     let optimized_pieces = prompt_diff_pieces(&optimized_tokens, &matches, false);
     (
@@ -1169,11 +1102,7 @@ fn prompt_diff_pieces(
     pieces
 }
 
-fn push_prompt_diff_piece(
-    pieces: &mut Vec<PromptDiffPiece>,
-    text: String,
-    changed: bool,
-) {
+fn push_prompt_diff_piece(pieces: &mut Vec<PromptDiffPiece>, text: String, changed: bool) {
     if text.is_empty() {
         return;
     }
@@ -1220,8 +1149,8 @@ fn escape_prompt_markdown(text: &str) -> String {
             '&' => escaped.push_str("&amp;"),
             '<' => escaped.push_str("&lt;"),
             '>' => escaped.push_str("&gt;"),
-            '\\' | '*' | '_' | '[' | ']' | '(' | ')' | '#' | '`' | '!' | '|'
-            | '+' | '-' | '.' | '=' | '~' => {
+            '\\' | '*' | '_' | '[' | ']' | '(' | ')' | '#' | '`' | '!' | '|' | '+' | '-' | '.'
+            | '=' | '~' => {
                 escaped.push('\\');
                 escaped.push(character);
             }
@@ -1231,9 +1160,7 @@ fn escape_prompt_markdown(text: &str) -> String {
     escaped
 }
 
-fn styled_markdown(
-    markdown: &str,
-) -> slint::private_unstable_api::re_exports::StyledText {
+fn styled_markdown(markdown: &str) -> slint::private_unstable_api::re_exports::StyledText {
     use slint::private_unstable_api::re_exports::{parse_markdown, StyledText};
     parse_markdown(markdown, &[] as &[StyledText])
 }
@@ -1293,8 +1220,8 @@ fn round_status_label(status: &str) -> &'static str {
 #[cfg(test)]
 mod prompt_diff_tests {
     use super::{
-        best_result_comparison_base, collect_lcs_matches, highlighted_prompt_markdown,
-        displayed_best_score, optimization_change_summary, prompt_diff_pieces,
+        best_result_comparison_base, collect_lcs_matches, displayed_best_score,
+        highlighted_prompt_markdown, optimization_change_summary, prompt_diff_pieces,
         prompt_diff_tokens, styled_markdown,
     };
     use crate::runtime::api::{
@@ -1313,11 +1240,17 @@ mod prompt_diff_tests {
         let optimized_pieces = prompt_diff_pieces(&optimized_tokens, &matches, false);
 
         assert_eq!(
-            original_pieces.iter().map(|piece| piece.text.as_str()).collect::<String>(),
+            original_pieces
+                .iter()
+                .map(|piece| piece.text.as_str())
+                .collect::<String>(),
             original,
         );
         assert_eq!(
-            optimized_pieces.iter().map(|piece| piece.text.as_str()).collect::<String>(),
+            optimized_pieces
+                .iter()
+                .map(|piece| piece.text.as_str())
+                .collect::<String>(),
             optimized,
         );
         assert!(optimized_pieces.iter().any(|piece| {
@@ -1327,8 +1260,7 @@ mod prompt_diff_tests {
 
     #[test]
     fn highlighted_markdown_uses_different_colors_for_old_and_new_text() {
-        let (original, optimized) =
-            highlighted_prompt_markdown("白天\n1. 室内", "夜晚\n1. 室外");
+        let (original, optimized) = highlighted_prompt_markdown("白天\n1. 室内", "夜晚\n1. 室外");
         assert!(original.contains("#d97706"));
         assert!(optimized.contains("#5147e5"));
         assert!(original.contains("<u>白天"));

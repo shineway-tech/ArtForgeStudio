@@ -80,7 +80,9 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
     wire_custom_prompt_callbacks(app, context.clone());
     wire_prompt_optimization_callbacks(app, context.clone());
     wire_infinite_canvas_callbacks(app, store.clone());
-    wire_toolbox_callbacks(app);
+    wire_toolbox_callbacks(app, context.clone());
+    wire_image_enhancement_callbacks(app, context.clone());
+    wire_image_cutout_callbacks(app, context.clone());
     wire_contact_callbacks(app, store.clone());
 
     {
@@ -128,10 +130,14 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
         state.on_navigate(move |page| {
             if let Some(app) = app_weak.upgrade() {
                 navigate_to_with_store(&app, &store.borrow(), &page);
-                if page.as_str() == "credits" && app.global::<AppState>().get_session_state().as_str() == "online" {
+                if page.as_str() == "credits"
+                    && app.global::<AppState>().get_session_state().as_str() == "online"
+                {
                     refresh_backend_snapshot(&app, context.clone());
                 }
-                if page.as_str() == "notifications" && app.global::<AppState>().get_session_state().as_str() == "online" {
+                if page.as_str() == "notifications"
+                    && app.global::<AppState>().get_session_state().as_str() == "online"
+                {
                     refresh_server_notifications(&app, context.clone());
                 }
             }
@@ -176,7 +182,11 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
         let app_weak = app.as_weak();
         state.on_set_card_style(move |style| {
             if let Some(app) = app_weak.upgrade() {
-                let style = if style.as_str() == "square" { "square" } else { "rounded" };
+                let style = if style.as_str() == "square" {
+                    "square"
+                } else {
+                    "rounded"
+                };
                 app.global::<AppState>().set_card_style(style.into());
                 save_user_profile(&app);
             }

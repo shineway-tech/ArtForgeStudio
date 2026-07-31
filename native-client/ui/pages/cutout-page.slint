@@ -5,22 +5,28 @@ import { AppTheme } from "../theme.slint";
 component CutoutTypeButton {
     in property <string> value;
     in property <string> label;
+    in property <bool> disabled: false;
     property <bool> selected: AppState.cutout-type == root.value;
     callback clicked();
-    height: 48px;
+    height: 46px;
 
     Rectangle {
-        background: root.selected ? AppTheme.accent.with-alpha(0.16) : (type-touch.has-hover ? AppTheme.panel-soft : transparent);
+        opacity: root.disabled ? 0.52 : 1;
+        background: root.selected
+            ? AppTheme.accent.with-alpha(0.16)
+            : (type-touch.has-hover && !root.disabled ? AppTheme.panel-soft : transparent);
         border-radius: 8px;
         border-width: 1px;
         border-color: root.selected ? AppTheme.accent : AppTheme.border;
 
         Text {
-            x: 12px;
-            width: parent.width - 24px;
+            x: 10px;
+            width: parent.width - 20px;
             height: parent.height;
             text: root.label;
-            color: root.selected ? AppTheme.accent-dark : AppTheme.text;
+            color: root.disabled
+                ? AppTheme.muted
+                : (root.selected ? AppTheme.accent-dark : AppTheme.text);
             font-size: 14px;
             font-weight: root.selected ? 500 : 400;
             horizontal-alignment: center;
@@ -29,10 +35,205 @@ component CutoutTypeButton {
         }
 
         type-touch := TouchArea {
+            enabled: !root.disabled;
             width: parent.width;
             height: parent.height;
-            mouse-cursor: pointer;
+            mouse-cursor: root.disabled ? default : pointer;
             clicked => { root.clicked(); }
+        }
+    }
+}
+
+component TransparencyBackground {
+    Rectangle {
+        background: AppTheme.panel;
+        clip: true;
+
+        for row in 40: Rectangle {
+            y: row * 24px;
+            width: parent.width;
+            height: 24px;
+            background: transparent;
+
+            for column in 40: Rectangle {
+                x: column * 24px;
+                width: 24px;
+                height: 24px;
+                background: Math.mod(row + column, 2) == 0
+                    ? AppTheme.panel
+                    : AppTheme.panel-soft;
+            }
+        }
+    }
+}
+
+component CutoutPreviewPanel {
+    in property <string> title;
+    in property <string> detail;
+    in property <image> preview;
+    in property <bool> has-image: false;
+    in property <bool> result-panel: false;
+    in property <bool> processing: false;
+    in property <int> progress: 0;
+
+    Rectangle {
+        min-width: 260px;
+        background: AppTheme.panel;
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: root.processing ? AppTheme.accent : AppTheme.border;
+
+        Text {
+            x: 20px;
+            y: 14px;
+            width: parent.width - 40px;
+            height: 26px;
+            text: root.title;
+            color: AppTheme.text;
+            font-size: 16px;
+            font-weight: 600;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            x: 20px;
+            y: 40px;
+            width: parent.width - 40px;
+            height: 18px;
+            text: root.detail;
+            color: AppTheme.muted;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        preview-frame := Rectangle {
+            x: 20px;
+            y: 68px;
+            width: parent.width - 40px;
+            height: parent.height - 88px;
+            background: root.result-panel ? AppTheme.panel : AppTheme.bg;
+            border-radius: 9px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            clip: true;
+
+            if root.result-panel: TransparencyBackground {
+                width: parent.width;
+                height: parent.height;
+            }
+
+            if root.has-image: Image {
+                x: 12px;
+                y: 12px;
+                width: parent.width - 24px;
+                height: parent.height - 24px;
+                source: root.preview;
+                image-fit: contain;
+            }
+
+            if !root.has-image && !root.processing: Rectangle {
+                background: transparent;
+
+                Rectangle {
+                    x: (parent.width - 58px) / 2;
+                    y: (parent.height - 110px) / 2;
+                    width: 58px;
+                    height: 58px;
+                    border-radius: 14px;
+                    background: AppTheme.panel-soft.with-alpha(0.92);
+
+                    Image {
+                        x: 16px;
+                        y: 16px;
+                        width: 26px;
+                        height: 26px;
+                        source: @image-url("../../assets/icons/image.svg");
+                        colorize: AppTheme.muted;
+                        image-fit: contain;
+                    }
+                }
+
+                Text {
+                    x: 24px;
+                    y: (parent.height - 110px) / 2 + 72px;
+                    width: parent.width - 48px;
+                    height: 28px;
+                    text: AppState.en
+                        ? "The transparent result will appear here"
+                        : "透明背景结果将在这里显示";
+                    color: AppTheme.muted;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+
+            if root.processing: Rectangle {
+                background: AppTheme.panel.with-alpha(0.86);
+
+                Rectangle {
+                    x: (parent.width - 246px) / 2;
+                    y: (parent.height - 112px) / 2;
+                    width: 246px;
+                    height: 112px;
+                    border-radius: 12px;
+                    background: AppTheme.panel;
+                    border-width: 1px;
+                    border-color: AppTheme.accent.with-alpha(0.55);
+
+                    Text {
+                        x: 16px;
+                        y: 15px;
+                        width: parent.width - 32px;
+                        height: 24px;
+                        text: root.progress < 35
+                            ? (AppState.en ? "Uploading original image..." : "正在上传原图...")
+                            : (AppState.en ? "Removing background..." : "正在智能抠图...");
+                        color: AppTheme.text;
+                        font-size: 14px;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    Text {
+                        x: 16px;
+                        y: 41px;
+                        width: parent.width - 32px;
+                        height: 20px;
+                        text: max(0, min(100, root.progress)) + "%";
+                        color: AppTheme.accent-dark;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle {
+                        x: 20px;
+                        y: 76px;
+                        width: parent.width - 40px;
+                        height: 6px;
+                        border-radius: 3px;
+                        background: AppTheme.panel-soft;
+                        clip: true;
+
+                        Rectangle {
+                            x: 0px;
+                            width: root.progress <= 0
+                                ? 0px
+                                : max(6px, min(parent.width,
+                                    parent.width * min(100, root.progress) / 100));
+                            height: parent.height;
+                            border-radius: 3px;
+                            background: AppTheme.accent;
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -55,6 +256,7 @@ export component CutoutPage {
                 y: 20px;
                 width: 88px;
                 text: AppState.en ? "← Back" : "← 返回";
+                disabled: AppState.cutout-processing;
                 clicked => { AppState.close-cutout(); }
             }
 
@@ -90,112 +292,249 @@ export component CutoutPage {
             y: 96px;
             width: parent.width - 48px;
             height: parent.height - 120px;
-            spacing: 20px;
+            spacing: 16px;
 
-            Rectangle {
+            CutoutPreviewPanel {
                 horizontal-stretch: 1;
-                background: AppTheme.panel;
-                border-radius: 12px;
-                border-width: 1px;
-                border-color: AppTheme.border;
+                title: AppState.en ? "Original" : "原图";
+                detail: AppState.viewer-title;
+                preview: AppState.viewer-image;
+                has-image: true;
+            }
 
-                Text {
-                    x: 20px;
-                    y: 16px;
-                    width: parent.width - 40px;
-                    height: 28px;
-                    text: AppState.en ? "Original" : "原图";
-                    color: AppTheme.text;
-                    font-size: 16px;
-                    font-weight: 600;
-                    vertical-alignment: center;
-                }
-
-                Rectangle {
-                    x: 20px;
-                    y: 56px;
-                    width: parent.width - 40px;
-                    height: parent.height - 76px;
-                    background: AppTheme.bg;
-                    border-radius: 8px;
-                    clip: true;
-
-                    Image {
-                        x: 0px;
-                        y: 0px;
-                        width: parent.width;
-                        height: parent.height;
-                        source: AppState.viewer-image;
-                        image-fit: contain;
-                    }
-                }
+            CutoutPreviewPanel {
+                horizontal-stretch: 1;
+                title: AppState.cutout-result-path != ""
+                    ? (AppState.en ? "Transparent result" : "透明背景结果")
+                    : (AppState.en ? "Waiting for processing" : "等待处理");
+                detail: AppState.cutout-result-name;
+                preview: AppState.cutout-result-image;
+                has-image: AppState.cutout-result-path != "";
+                result-panel: true;
+                processing: AppState.cutout-processing;
+                progress: AppState.cutout-progress;
             }
 
             Rectangle {
-                width: 360px;
+                width: 336px;
                 background: AppTheme.panel;
                 border-radius: 12px;
                 border-width: 1px;
                 border-color: AppTheme.border;
 
                 VerticalLayout {
-                    padding: 24px;
-                    spacing: 14px;
+                    padding: 22px;
+                    spacing: 12px;
 
                     Text {
-                        text: AppState.en ? "Cutout type" : "选择抠图类型";
+                        text: AppState.en ? "Cutout settings" : "抠图设置";
                         color: AppTheme.text;
                         font-size: 18px;
                         font-weight: 600;
                     }
 
                     Text {
+                        height: 38px;
                         text: AppState.en
-                            ? "Choose the subject category. Processing is provided by the server."
-                            : "请选择主体类型，实际抠图能力由服务端提供。";
+                            ? "Choose the subject type for more accurate edge detection."
+                            : "选择主体类型，以获得更准确的边缘识别效果。";
                         color: AppTheme.muted;
                         font-size: 13px;
-                        font-weight: 400;
                         wrap: word-wrap;
                     }
 
                     GridLayout {
-                        height: 234px;
-                        spacing: 10px;
+                        height: 214px;
+                        spacing: 9px;
+
                         Row {
-                            CutoutTypeButton { value: "general"; label: AppState.en ? "General" : "通用"; clicked => { AppState.cutout-type = "general"; AppState.cutout-message = ""; } }
-                            CutoutTypeButton { value: "portrait"; label: AppState.en ? "Portrait" : "人像"; clicked => { AppState.cutout-type = "portrait"; AppState.cutout-message = ""; } }
+                            CutoutTypeButton {
+                                value: "general";
+                                label: AppState.en ? "General" : "通用";
+                                disabled: AppState.cutout-processing;
+                                clicked => {
+                                    AppState.cutout-type = "general";
+                                    AppState.cutout-message = "";
+                                }
+                            }
+                            CutoutTypeButton {
+                                value: "portrait";
+                                label: AppState.en ? "Portrait" : "人像";
+                                disabled: AppState.cutout-processing;
+                                clicked => {
+                                    AppState.cutout-type = "portrait";
+                                    AppState.cutout-message = "";
+                                }
+                            }
                         }
+
                         Row {
-                            CutoutTypeButton { value: "avatar"; label: AppState.en ? "Avatar" : "头像"; clicked => { AppState.cutout-type = "avatar"; AppState.cutout-message = ""; } }
-                            CutoutTypeButton { value: "skin"; label: AppState.en ? "Skin" : "皮肤"; clicked => { AppState.cutout-type = "skin"; AppState.cutout-message = ""; } }
+                            CutoutTypeButton {
+                                value: "avatar";
+                                label: AppState.en ? "Avatar" : "头像";
+                                disabled: AppState.cutout-processing;
+                                clicked => {
+                                    AppState.cutout-type = "avatar";
+                                    AppState.cutout-message = "";
+                                }
+                            }
+                            CutoutTypeButton {
+                                value: "skin";
+                                label: AppState.en ? "Skin" : "皮肤";
+                                disabled: AppState.cutout-processing;
+                                clicked => {
+                                    AppState.cutout-type = "skin";
+                                    AppState.cutout-message = "";
+                                }
+                            }
                         }
+
                         Row {
-                            CutoutTypeButton { value: "product"; label: AppState.en ? "Product" : "商品"; clicked => { AppState.cutout-type = "product"; AppState.cutout-message = ""; } }
-                            CutoutTypeButton { value: "clothing"; label: AppState.en ? "Clothing" : "服饰"; clicked => { AppState.cutout-type = "clothing"; AppState.cutout-message = ""; } }
+                            CutoutTypeButton {
+                                value: "product";
+                                label: AppState.en ? "Product" : "商品";
+                                disabled: AppState.cutout-processing;
+                                clicked => {
+                                    AppState.cutout-type = "product";
+                                    AppState.cutout-message = "";
+                                }
+                            }
+                            CutoutTypeButton {
+                                value: "clothing";
+                                label: AppState.en ? "Clothing" : "服饰";
+                                disabled: AppState.cutout-processing;
+                                clicked => {
+                                    AppState.cutout-type = "clothing";
+                                    AppState.cutout-message = "";
+                                }
+                            }
                         }
+
                         Row {
-                            CutoutTypeButton { value: "sky"; label: AppState.en ? "Sky" : "天空"; clicked => { AppState.cutout-type = "sky"; AppState.cutout-message = ""; } }
+                            CutoutTypeButton {
+                                value: "sky";
+                                label: AppState.en ? "Sky" : "天空";
+                                disabled: AppState.cutout-processing;
+                                clicked => {
+                                    AppState.cutout-type = "sky";
+                                    AppState.cutout-message = "";
+                                }
+                            }
                             Rectangle { background: transparent; }
                         }
                     }
 
-                    Rectangle { vertical-stretch: 1; }
+                    if AppState.cutout-processing: Rectangle {
+                        height: 68px;
+                        border-radius: 9px;
+                        background: AppTheme.accent.with-alpha(0.10);
+                        border-width: 1px;
+                        border-color: AppTheme.accent.with-alpha(0.32);
 
-                    if AppState.cutout-message != "": Text {
-                        text: AppState.cutout-message;
-                        color: AppTheme.muted;
-                        font-size: 12px;
-                        font-weight: 400;
-                        wrap: word-wrap;
-                        horizontal-alignment: center;
+                        Text {
+                            x: 14px;
+                            y: 9px;
+                            width: parent.width - 28px;
+                            height: 22px;
+                            text: AppState.cutout-progress < 35
+                                ? (AppState.en ? "Uploading..." : "正在上传...")
+                                : (AppState.en ? "Processing..." : "正在抠图...");
+                            color: AppTheme.accent-dark;
+                            font-size: 13px;
+                            font-weight: 500;
+                            vertical-alignment: center;
+                        }
+
+                        Text {
+                            x: 14px;
+                            y: 34px;
+                            width: parent.width - 28px;
+                            height: 20px;
+                            text: max(0, min(100, AppState.cutout-progress)) + "%";
+                            color: AppTheme.muted;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
                     }
 
-                    PillButton {
+                    if AppState.cutout-result-path != "" && !AppState.cutout-processing: Rectangle {
+                        height: 50px;
+                        border-radius: 9px;
+                        background: AppTheme.success.with-alpha(0.10);
+                        border-width: 1px;
+                        border-color: AppTheme.success.with-alpha(0.28);
+
+                        Text {
+                            x: 14px;
+                            width: parent.width - 28px;
+                            height: parent.height;
+                            text: AppState.en
+                                ? "Cutout complete. Saved to My Assets / Other."
+                                : "抠图完成，透明结果已保存到「我的资产 / 其他」";
+                            color: AppTheme.success;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    if AppState.cutout-message != "" && AppState.cutout-result-path == "": Text {
+                        height: 42px;
+                        text: AppState.cutout-message;
+                        color: AppState.cutout-processing
+                            ? AppTheme.muted
+                            : (AppState.cutout-result-path != ""
+                                ? AppTheme.success
+                                : AppTheme.danger);
+                        font-size: 12px;
+                        wrap: word-wrap;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+
+                    Text {
+                        height: 24px;
+                        text: AppState.en
+                            ? "Estimated charge: " + AppState.cutout-estimated-credits + " credits"
+                            : "本次预计消耗 " + AppState.cutout-estimated-credits + " 积分";
+                        color: AppTheme.muted;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    if AppState.cutout-processing: PillButton {
+                        height: 44px;
+                        text: AppState.en ? "Processing..." : "正在抠图...";
+                        primary: true;
+                        disabled: true;
+                    }
+
+                    if !AppState.cutout-processing && AppState.cutout-result-path == "": PillButton {
                         height: 44px;
                         text: AppState.en ? "Start Cutout" : "开始抠图";
                         primary: true;
                         clicked => { AppState.submit-cutout(AppState.cutout-type); }
+                    }
+
+                    if !AppState.cutout-processing && AppState.cutout-result-path != "": HorizontalLayout {
+                        height: 44px;
+                        spacing: 10px;
+
+                        PillButton {
+                            horizontal-stretch: 1;
+                            text: AppState.en ? "Save" : "保存";
+                            primary: true;
+                            clicked => { AppState.reveal-cutout-result(); }
+                        }
+
+                        PillButton {
+                            horizontal-stretch: 1;
+                            text: AppState.en ? "Cut out again" : "重新抠图";
+                            clicked => { AppState.submit-cutout(AppState.cutout-type); }
+                        }
                     }
                 }
             }

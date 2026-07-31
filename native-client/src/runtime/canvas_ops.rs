@@ -110,8 +110,7 @@ impl CanvasController {
 
     pub fn should_paste_system_clipboard(&self, fingerprint: Option<u64>) -> bool {
         self.clipboard.notes.is_empty()
-            || fingerprint.is_some()
-                && fingerprint != self.system_clipboard_fingerprint_at_copy
+            || fingerprint.is_some() && fingerprint != self.system_clipboard_fingerprint_at_copy
     }
 
     pub fn paste_clipboard(
@@ -595,19 +594,15 @@ pub(super) fn resize_image_node_proportionally(
     } else {
         height_scale
     };
-    let minimum_scale =
-        (MIN_IMAGE_NODE_EDGE / node.width).max(MIN_IMAGE_NODE_EDGE / node.height);
-    let maximum_scale =
-        (MAX_IMAGE_NODE_EDGE / node.width).min(MAX_IMAGE_NODE_EDGE / node.height);
+    let minimum_scale = (MIN_IMAGE_NODE_EDGE / node.width).max(MIN_IMAGE_NODE_EDGE / node.height);
+    let maximum_scale = (MAX_IMAGE_NODE_EDGE / node.width).min(MAX_IMAGE_NODE_EDGE / node.height);
     let scale = requested_scale
         .max(minimum_scale.min(maximum_scale))
         .min(maximum_scale);
     let width = node.width * scale;
     let height = node.height * scale;
 
-    if (node.width - width).abs() < f32::EPSILON
-        && (node.height - height).abs() < f32::EPSILON
-    {
+    if (node.width - width).abs() < f32::EPSILON && (node.height - height).abs() < f32::EPSILON {
         return false;
     }
     node.width = width;
@@ -946,10 +941,7 @@ mod tests {
         assert_eq!(group.x, 40.0 - GROUP_PADDING);
         assert_eq!(group.y, 60.0 - GROUP_TOP_PADDING);
         assert_eq!(group.width, 280.0 + GROUP_PADDING * 2.0);
-        assert_eq!(
-            group.height,
-            200.0 + GROUP_TOP_PADDING + GROUP_PADDING
-        );
+        assert_eq!(group.height, 200.0 + GROUP_TOP_PADDING + GROUP_PADDING);
         assert_eq!(group.content, "Group 1");
     }
 
@@ -1113,10 +1105,7 @@ mod tests {
         assert_eq!(group.x, 120.0 - GROUP_PADDING);
         assert_eq!(group.y, 90.0 - GROUP_TOP_PADDING);
         assert_eq!(group.width, 440.0 + GROUP_PADDING * 2.0);
-        assert_eq!(
-            group.height,
-            230.0 + GROUP_TOP_PADDING + GROUP_PADDING
-        );
+        assert_eq!(group.height, 230.0 + GROUP_TOP_PADDING + GROUP_PADDING);
     }
 
     #[test]

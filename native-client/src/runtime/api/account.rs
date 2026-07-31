@@ -199,7 +199,9 @@ pub(crate) struct AccountSessionDto {
 }
 
 #[derive(Deserialize)]
-struct SessionList { items: Vec<AccountSessionDto> }
+struct SessionList {
+    items: Vec<AccountSessionDto>,
+}
 
 #[derive(Clone)]
 pub(crate) struct AccountApi {
@@ -214,35 +216,62 @@ impl AccountApi {
     pub(crate) fn snapshot(&self) -> Result<BackendSnapshot, ApiError> {
         std::thread::scope(|scope| {
             let account_client = self.client.clone();
-            let account = scope.spawn(move || account_client
-                .authenticated_json::<AccountSnapshot>(Method::GET, "/v1/account", None, None)
-                .map(|response| response.data));
+            let account = scope.spawn(move || {
+                account_client
+                    .authenticated_json::<AccountSnapshot>(Method::GET, "/v1/account", None, None)
+                    .map(|response| response.data)
+            });
             let credit_client = self.client.clone();
-            let credits = scope.spawn(move || credit_client
-                .authenticated_json::<CreditAccount>(Method::GET, "/v1/credits/account", None, None)
-                .map(|response| response.data));
+            let credits = scope.spawn(move || {
+                credit_client
+                    .authenticated_json::<CreditAccount>(
+                        Method::GET,
+                        "/v1/credits/account",
+                        None,
+                        None,
+                    )
+                    .map(|response| response.data)
+            });
             let plan_client = self.client.clone();
-            let plans = scope.spawn(move || plan_client
-                .authenticated_json::<Vec<MembershipPlan>>(Method::GET, "/v1/membership/plans", None, None)
-                .map(|response| response.data));
+            let plans = scope.spawn(move || {
+                plan_client
+                    .authenticated_json::<Vec<MembershipPlan>>(
+                        Method::GET,
+                        "/v1/membership/plans",
+                        None,
+                        None,
+                    )
+                    .map(|response| response.data)
+            });
             let membership_client = self.client.clone();
-            let membership = scope.spawn(move || membership_client
-                .authenticated_json::<Value>(Method::GET, "/v1/membership/current", None, None)
-                .map(|response| response.data));
+            let membership = scope.spawn(move || {
+                membership_client
+                    .authenticated_json::<Value>(Method::GET, "/v1/membership/current", None, None)
+                    .map(|response| response.data)
+            });
             let pack_client = self.client.clone();
             let packs = scope.spawn(move || PaymentApi::new(pack_client).packs());
             let model_client = self.client.clone();
-            let models = scope.spawn(move || model_client
-                .authenticated_json::<ModelCatalog>(Method::GET, "/v1/models", None, None)
-                .map(|response| response.data.items));
+            let models = scope.spawn(move || {
+                model_client
+                    .authenticated_json::<ModelCatalog>(Method::GET, "/v1/models", None, None)
+                    .map(|response| response.data.items)
+            });
             let ledger_client = self.client.clone();
             let ledger = scope.spawn(move || {
                 AccountApi::new(ledger_client).ledger_page(None, CREDIT_LEDGER_PAGE_SIZE)
             });
             let session_client = self.client.clone();
-            let sessions = scope.spawn(move || session_client
-                .authenticated_json::<SessionList>(Method::GET, "/v1/account/sessions", None, None)
-                .map(|response| response.data.items));
+            let sessions = scope.spawn(move || {
+                session_client
+                    .authenticated_json::<SessionList>(
+                        Method::GET,
+                        "/v1/account/sessions",
+                        None,
+                        None,
+                    )
+                    .map(|response| response.data.items)
+            });
 
             let mut account = join_snapshot(account)??;
             account.credits = Some(join_snapshot(credits)??);
@@ -294,55 +323,66 @@ impl AccountApi {
     }
 
     pub(crate) fn start_wechat_binding(&self) -> Result<WechatBindingStartResponse, ApiError> {
-        self.client.authenticated_json::<WechatBindingStartResponse>(
-            Method::POST,
-            "/v1/account/wechat/bind/session",
-            None,
-            None,
-        ).map(|response| response.data)
+        self.client
+            .authenticated_json::<WechatBindingStartResponse>(
+                Method::POST,
+                "/v1/account/wechat/bind/session",
+                None,
+                None,
+            )
+            .map(|response| response.data)
     }
 
     pub(crate) fn wechat_binding_status(
         &self,
         login_id: &str,
     ) -> Result<WechatBindingStatusResponse, ApiError> {
-        let body = serde_json::to_value(WechatBindingStatusRequest { login_id })
-            .map_err(|error| ApiError::Protocol {
-                message: error.to_string(),
-                request_id: None,
+        let body =
+            serde_json::to_value(WechatBindingStatusRequest { login_id }).map_err(|error| {
+                ApiError::Protocol {
+                    message: error.to_string(),
+                    request_id: None,
+                }
             })?;
-        self.client.authenticated_json::<WechatBindingStatusResponse>(
-            Method::POST,
-            "/v1/account/wechat/bind/session/status",
-            Some(body),
-            None,
-        ).map(|response| response.data)
+        self.client
+            .authenticated_json::<WechatBindingStatusResponse>(
+                Method::POST,
+                "/v1/account/wechat/bind/session/status",
+                Some(body),
+                None,
+            )
+            .map(|response| response.data)
     }
 
     pub(crate) fn unbind_wechat(&self) -> Result<WechatAuthMethod, ApiError> {
-        self.client.authenticated_json::<WechatAuthMethod>(
-            Method::DELETE,
-            "/v1/account/wechat",
-            None,
-            None,
-        ).map(|response| response.data)
+        self.client
+            .authenticated_json::<WechatAuthMethod>(
+                Method::DELETE,
+                "/v1/account/wechat",
+                None,
+                None,
+            )
+            .map(|response| response.data)
     }
 
     pub(crate) fn request_email_binding_code(
         &self,
         email: &str,
     ) -> Result<EmailBindingCodeResponse, ApiError> {
-        let body = serde_json::to_value(EmailBindingCodeRequest { email })
-            .map_err(|error| ApiError::Protocol {
+        let body = serde_json::to_value(EmailBindingCodeRequest { email }).map_err(|error| {
+            ApiError::Protocol {
                 message: error.to_string(),
                 request_id: None,
-            })?;
-        self.client.authenticated_json::<EmailBindingCodeResponse>(
-            Method::POST,
-            "/v1/account/email/code",
-            Some(body),
-            None,
-        ).map(|response| response.data)
+            }
+        })?;
+        self.client
+            .authenticated_json::<EmailBindingCodeResponse>(
+                Method::POST,
+                "/v1/account/email/code",
+                Some(body),
+                None,
+            )
+            .map(|response| response.data)
     }
 
     pub(crate) fn bind_email(
@@ -350,17 +390,20 @@ impl AccountApi {
         email: &str,
         code: &str,
     ) -> Result<EmailBindingResponse, ApiError> {
-        let body = serde_json::to_value(EmailBindingRequest { email, code })
-            .map_err(|error| ApiError::Protocol {
+        let body = serde_json::to_value(EmailBindingRequest { email, code }).map_err(|error| {
+            ApiError::Protocol {
                 message: error.to_string(),
                 request_id: None,
-            })?;
-        self.client.authenticated_json::<EmailBindingResponse>(
-            Method::POST,
-            "/v1/account/email/bind",
-            Some(body),
-            None,
-        ).map(|response| response.data)
+            }
+        })?;
+        self.client
+            .authenticated_json::<EmailBindingResponse>(
+                Method::POST,
+                "/v1/account/email/bind",
+                Some(body),
+                None,
+            )
+            .map(|response| response.data)
     }
 }
 

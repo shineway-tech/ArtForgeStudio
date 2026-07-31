@@ -10,7 +10,9 @@ component ColorizePreviewPanel {
     in property <bool> processing: false;
     in property <int> progress: 0;
     in property <bool> result-panel: false;
+    in property <bool> drop-enabled: false;
     callback choose-image();
+    callback dropped(string, string);
 
     Rectangle {
         background: transparent;
@@ -39,14 +41,18 @@ component ColorizePreviewPanel {
             overflow: elide;
         }
 
-        Rectangle {
+        preview-frame := Rectangle {
             y: 62px;
             width: parent.width;
             height: parent.height - 62px;
-            background: AppTheme.panel;
+            background: source-drop.contains-drag
+                ? AppTheme.accent.with-alpha(0.08)
+                : AppTheme.panel;
             border-radius: 12px;
-            border-width: 1px;
-            border-color: root.processing ? AppTheme.accent : AppTheme.border;
+            border-width: source-drop.contains-drag ? 2px : 1px;
+            border-color: source-drop.contains-drag || root.processing
+                ? AppTheme.accent
+                : AppTheme.border;
             clip: true;
 
             if root.has-image: Image {
@@ -87,10 +93,12 @@ component ColorizePreviewPanel {
                     y: (parent.height - 108px) / 2 + 72px;
                     width: parent.width - 48px;
                     height: 24px;
-                    text: root.result-panel
+                    text: source-drop.contains-drag
+                        ? (AppState.en ? "Release to upload image" : "松开即可上传图片")
+                        : root.result-panel
                         ? (AppState.en ? "The colorized image will appear here" : "上色后的图片将显示在这里")
-                        : (AppState.en ? "Upload an image to begin" : "上传图片后开始处理");
-                    color: AppTheme.muted;
+                        : (AppState.en ? "Drag an image here, or click to upload" : "拖放图片到这里，或点击上传");
+                    color: source-drop.contains-drag ? AppTheme.accent : AppTheme.muted;
                     font-size: 13px;
                     horizontal-alignment: center;
                     vertical-alignment: center;
@@ -110,6 +118,47 @@ component ColorizePreviewPanel {
                 width: parent.width * root.progress / 100;
                 height: 4px;
                 background: AppTheme.accent;
+            }
+
+            if source-drop.contains-drag && root.has-image: Rectangle {
+                background: AppTheme.accent.with-alpha(0.12);
+
+                Rectangle {
+                    x: (parent.width - 220px) / 2;
+                    y: (parent.height - 48px) / 2;
+                    width: 220px;
+                    height: 48px;
+                    border-radius: 12px;
+                    background: AppTheme.panel;
+                    border-width: 1px;
+                    border-color: AppTheme.accent;
+
+                    Text {
+                        width: parent.width;
+                        height: parent.height;
+                        text: AppState.en ? "Release to replace image" : "松开即可更换图片";
+                        color: AppTheme.accent;
+                        font-size: 14px;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            source-drop := DropArea {
+                width: parent.width;
+                height: parent.height;
+                can-drop(event) => {
+                    return root.drop-enabled
+                        && (event.mime-type == "text/uri-list"
+                            || event.mime-type == "text/plain"
+                            || event.mime-type == "text/html"
+                            || event.mime-type == "application/x-artforge-image-path");
+                }
+                dropped(event) => {
+                    root.dropped(event.mime-type, event.data);
+                }
             }
         }
     }
@@ -143,7 +192,11 @@ export component ToolboxColorizePage {
             detail: AppState.colorize-source-name;
             preview: AppState.colorize-source-image;
             has-image: AppState.colorize-source-path != "";
+            drop-enabled: !AppState.colorize-processing;
             choose-image => { AppState.choose-colorize-source(); }
+            dropped(mime-type, data) => {
+                AppState.add-colorize-source-from-drag(mime-type, data);
+            }
         }
 
         ColorizePreviewPanel {
@@ -160,6 +213,16 @@ export component ToolboxColorizePage {
             processing: AppState.colorize-processing;
             progress: AppState.colorize-progress;
             result-panel: true;
+        }
+
+        if AppState.colorize-source-path != "": PillButton {
+            x: 32px + root.panel-width() - 304px;
+            y: parent.height - 78px;
+            width: 126px;
+            height: 42px;
+            text: AppState.en ? "Change image" : "更换图片";
+            disabled: AppState.colorize-processing;
+            clicked => { AppState.choose-colorize-source(); }
         }
 
         PillButton {

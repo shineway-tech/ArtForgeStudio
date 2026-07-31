@@ -1,37 +1,35 @@
-# Design QA
+# 图片裁剪 Design QA
 
-- source visual truth: `C:/Users/deyx1/AppData/Local/Temp/codex-clipboard-bb78ba2e-46e2-401b-88fd-cd296a64957a.png`
-- implementation screenshot: `C:/Users/deyx1/AppData/Local/Temp/artforge-usage-tip.png`
-- combined comparison: `C:/Users/deyx1/AppData/Local/Temp/artforge-usage-tip-comparison.png`
-- source pixels: 755 × 93
-- implementation pixels: 2582 × 1550 at 144 DPI
-- implementation viewport: maximized Windows desktop window
-- density normalization: the bottom generation-control region was cropped from the 144-DPI native capture and placed beside the source at comparable scale
-- state: dark theme, character workspace, idle generation state, second usage tip visible
+- Result: `passed`
+- Reference: `/Users/fanxiao/.codex/generated_images/019fb1ac-d6ee-7d12-92b0-3cef9678696f/call_8YThL9mLtp5xAtn1Yz3ECgLw.png`
+- Final editor state: `/private/tmp/artforge-crop-final-3x4.png`
+- Save confirmation: `/private/tmp/artforge-crop-final-saved.png`
+- Asset confirmation: `/private/tmp/artforge-assets-final-crop.png`
+- Side-by-side comparison: `/private/tmp/artforge-crop-final-comparison.png`
+- Comparison viewport: reference cropped to 1487 × 958; implementation normalized to 1487 × 958.
 
-## Findings
+## Verified states
 
-- No actionable P0, P1, or P2 findings remain.
-- The requested usage-tip line occupies the previously empty area below the generation button without moving or covering persistent controls.
+- Empty state supports click upload, drag-and-drop, and paste guidance.
+- The async macOS file picker opens without terminating the Slint event loop.
+- A non-square 1448 × 1086 image is fitted without distortion.
+- Original, free, 1:1, 4:3, 3:4, 16:9, and 9:16 ratios are available.
+- 3:4 produces an 815 × 1086 crop and keeps the source pixels without upscaling.
+- Crop movement, corner resizing, rotation, flips, reset, and image replacement are wired.
+- Saving is local, displays `0积分`, and does not invoke a credit-consuming API.
+- The saved PNG appears in `我的资产 > 其他` as an `图片裁剪` asset.
+- Crop assets do not expose regenerate or re-edit actions.
 
-## Required fidelity surfaces
+## Visual review
 
-- Fonts and typography: passed. The tip uses 12 px regular-weight text and remains subordinate to the generation button.
-- Spacing and layout rhythm: passed. The tip is centered in the existing status slot with clear separation from the button.
-- Colors and visual tokens: passed. The text uses the existing weak foreground token and preserves dark-theme contrast.
-- Image quality and assets: not applicable; the feature introduces no image assets.
-- Copy and content: passed. Both `/` recent-history and `//` custom-prompt instructions are included, with localized English equivalents.
+- The loaded editor starts directly below the application header, matching the reference hierarchy.
+- The editor and inspector are balanced for both landscape and portrait crop selections.
+- Settings and save actions are separated into two cards, matching the selected direction.
+- No P0, P1, or P2 visual, interaction, or accessibility blockers remain.
 
-## Comparison evidence
+## Automated verification
 
-- Full view: the complete native application shows the tip inside the work panel and no overflow at the bottom edge.
-- Focused region: the combined comparison shows the former empty region on the left and the added tip below the unchanged generation button on the right.
-- Interaction: the 4.2-second timer rotates two vertically animated lines; active generation, optimization, translation, or status text hides the tips.
-
-## Comparison history
-
-1. Initial state: the area below the generation button was empty while idle.
-2. Fix: added a clipped vertical carousel that reuses the status-text slot.
-3. Post-fix evidence: the second tip is visible below the button; source-level tests verify both messages and both slide animations.
-
-final result: passed
+- `cargo check -p artforge-studio-native`
+- `cargo test -p artforge-studio-native local_crop_uses_normalized_bounds_and_applies_transforms -- --nocapture`
+- `cargo test -p artforge-studio-native toolbox_crop_is_a_free_local_editor_that_saves_other_assets -- --nocapture`
+- Full native-client suite previously completed with 222 passed, 0 failed, and 39 ignored mock-API tests.
