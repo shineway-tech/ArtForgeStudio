@@ -9,7 +9,8 @@ export component WaterfallColumn {
     in property <int> column-count: 1;
     horizontal-stretch: 0;
     width: root.column-width();
-    VerticalLayout {
+    height: content.preferred-height;
+    content := VerticalLayout {
         x: 0px;
         width: root.width;
         spacing: 0px;
@@ -20,6 +21,7 @@ export component WaterfallColumn {
             card-width: root.card-width;
             card-gap: 18px;
             source: root.source;
+            masonry: true;
         }
     }
     function column-width() -> length {

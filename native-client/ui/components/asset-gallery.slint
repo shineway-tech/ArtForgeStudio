@@ -7,6 +7,7 @@ export component AssetGallery {
     in property <[AssetGroup]> groups;
     in property <string> source;
     in property <length> card-width: 220px;
+    in property <string> layout-mode: "grid";
     Rectangle {
         width: root.width;
         height: root.height;
@@ -32,6 +33,7 @@ export component AssetGallery {
                     groups: root.groups;
                     card-width: root.card-width;
                     source: root.source;
+                    layout-mode: root.layout-mode;
                 }
             }
         }

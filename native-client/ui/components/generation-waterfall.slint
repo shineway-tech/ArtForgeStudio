@@ -7,7 +7,8 @@ export component GenerationWaterfall {
     in property <int> column-count: 1;
     in property <int> loading-count: 0;
     width: root.column-count * root.column-width() + max(0, root.column-count - 1) * 10px;
-    HorizontalLayout {
+    height: columns.preferred-height;
+    columns := HorizontalLayout {
         x: 0px;
         width: root.used-width();
         height: root.height;

@@ -1,5 +1,6 @@
 import { AppState } from "../app-state.slint";
 import { EmptyState } from "empty-state.slint";
+import { GalleryLayoutToggle } from "gallery-layout-toggle.slint";
 import { TimeGroupedGallery } from "time-grouped-gallery.slint";
 import { AppTheme } from "../theme.slint";
 
@@ -11,11 +12,16 @@ export component GenerationResultPanel {
         Text {
             x: 20px;
             y: 18px;
-            width: parent.width - 40px;
+            width: parent.width - 164px;
             text: AppState.en ? "Generated Images" : "生成结果";
             color: AppTheme.text;
             font-size: 16px;
             font-weight: 500;
+        }
+        GalleryLayoutToggle {
+            x: parent.width - 132px;
+            y: 14px;
+            mode <=> AppState.generation-gallery-layout;
         }
         Rectangle { x: 20px; y: 52px; width: parent.width - 40px; height: 1px; background: AppTheme.border; }
         Rectangle {
@@ -49,6 +55,7 @@ export component GenerationResultPanel {
                         source: "generation";
                         loading-count: root.loading-count();
                         loading-group-title: AppState.en ? "Today" : "今天";
+                        layout-mode: AppState.generation-gallery-layout;
                     }
                 }
             }

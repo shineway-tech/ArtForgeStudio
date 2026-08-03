@@ -1,6 +1,7 @@
 import { AppState } from "../app-state.slint";
 import { AssetGallery } from "../components/asset-gallery.slint";
 import { CategoryTabs } from "../components/category-tabs.slint";
+import { GalleryLayoutToggle } from "../components/gallery-layout-toggle.slint";
 import { AppTheme } from "../theme.slint";
 
 export component AssetsPage {
@@ -24,9 +25,14 @@ export component AssetsPage {
             CategoryTabs {
                 x: 0px;
                 y: 20px;
-                width: parent.width;
+                width: max(1px, parent.width - 128px);
                 height: 64px;
                 for-assets: true;
+            }
+            GalleryLayoutToggle {
+                x: parent.width - 112px;
+                y: 20px;
+                mode <=> AppState.asset-gallery-layout;
             }
             AssetGallery {
                 x: 0px;
@@ -37,6 +43,7 @@ export component AssetsPage {
                 groups: AppState.asset-groups;
                 source: "asset";
                 card-width: root.card-width();
+                layout-mode: AppState.asset-gallery-layout;
             }
         }
     }

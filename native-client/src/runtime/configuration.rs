@@ -61,7 +61,7 @@ pub(super) fn reference_limit_message(max_references: usize) -> &'static str {
     if max_references == 1 {
         "动作序列只能上传 1 张参考图"
     } else {
-        "最多上传 4 张参考图"
+        "最多上传 8 张参考图"
     }
 }
 

@@ -1,6 +1,6 @@
 const IMAGE_GENERATION_WAIT_SECS: u64 = 900;
 const IMAGE_POLL_INTERVAL_MS: u64 = 2000;
-const MAX_REFERENCE_IMAGES: usize = 4;
+const MAX_REFERENCE_IMAGES: usize = 8;
 const IMAGE_DRAG_MIME: &str = "application/x-artforge-image-path";
 const URI_LIST_MIME: &str = "text/uri-list";
 const TEXT_PLAIN_MIME: &str = "text/plain";

@@ -10,7 +10,8 @@ export component GenerationMasonryColumn {
     in property <int> loading-count: 0;
     horizontal-stretch: 0;
     width: root.column-width();
-    VerticalLayout {
+    height: content.preferred-height;
+    content := VerticalLayout {
         x: 0px;
         width: root.width;
         spacing: 0px;
@@ -37,6 +38,7 @@ export component GenerationMasonryColumn {
             card-width: root.card-width;
             card-gap: 10px;
             source: "generation";
+            masonry: true;
         }
     }
     function column-width() -> length {

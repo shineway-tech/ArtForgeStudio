@@ -9,26 +9,27 @@ export component ThumbnailCard {
     in property <length> card-gap: 18px;
     in property <string> source: "asset";
     in property <bool> active: true;
+    in property <bool> masonry: false;
     property <length> outline-pad: 0px;
     property <bool> drag-armed: false;
     property <bool> system-drag-preview-started: false;
     width: root.card-width;
-    height: root.active ? root.card-width + root.card-gap : 0px;
+    height: root.active ? root.image-height() + root.card-gap : 0px;
     Rectangle {
         width: root.card-width;
-        height: root.card-width;
+        height: root.image-height();
         visible: root.item.source-path != "failed";
         background: transparent;
         Rectangle {
             width: root.card-width;
-            height: root.card-width;
+            height: root.image-height();
             visible: root.active;
             background: transparent;
             content := Rectangle {
                 x: root.outline-pad;
                 y: root.outline-pad;
                 width: root.visual-card-width();
-                height: root.visual-card-width();
+                height: root.visual-card-height();
                 background: root.item.source-path == "failed" || hover.has-hover ? AppTheme.panel-soft : transparent;
                 border-radius: AppState.card-style == "rounded" ? 10px : 0px;
                 border-width: root.item.source-path == "failed" ? 1px : 0px;
@@ -183,14 +184,14 @@ export component ThumbnailCard {
     }
     if root.item.source-path == "failed": Rectangle {
         width: root.card-width;
-        height: root.card-width;
+        height: root.image-height();
         visible: root.active;
         background: transparent;
         Rectangle {
             x: root.outline-pad;
             y: root.outline-pad;
             width: root.visual-card-width();
-            height: root.visual-card-width();
+            height: root.visual-card-height();
             background: AppTheme.panel-soft;
             border-radius: AppState.card-style == "rounded" ? 10px : 0px;
             border-width: 1px;
@@ -253,16 +254,23 @@ export component ThumbnailCard {
         }
     }
     function image-height() -> length {
-        return root.card-width;
+        if !root.masonry || root.item.width <= 0 || root.item.height <= 0 {
+            return root.card-width;
+        }
+        let aspect-height = root.card-width * root.item.height / root.item.width;
+        return min(root.card-width * 2.4, max(root.card-width * 0.5, aspect-height));
     }
     function image-width() -> length {
         return root.card-width;
     }
     function visual-height() -> length {
-        return root.card-width;
+        return root.image-height();
     }
     function visual-card-width() -> length {
         return max(1px, root.card-width - root.outline-pad * 2);
+    }
+    function visual-card-height() -> length {
+        return max(1px, root.image-height() - root.outline-pad * 2);
     }
     function can-drag-preview() -> bool {
         return root.active && root.item.source-path != "" && root.item.source-path != "failed";

@@ -1,6 +1,8 @@
 import { AppState } from "../app-state.slint";
 import { CategoryTabs } from "../components/category-tabs.slint";
 import { EmptyState } from "../components/empty-state.slint";
+import { GalleryLayoutToggle } from "../components/gallery-layout-toggle.slint";
+import { GalleryWaterfall } from "../components/gallery-waterfall.slint";
 import { SquareGalleryGrid } from "../components/square-gallery-grid.slint";
 import { AppTheme } from "../theme.slint";
 
@@ -20,9 +22,6 @@ export component InspirationPage {
     function gallery-top-gap() -> length {
         return 18px;
     }
-    function gallery-height() -> length {
-        return max(root.height - root.gallery-y(), max(820px, root.gallery-top-gap() + 32px + root.row-count() * root.row-height()));
-    }
     Rectangle {
         background: AppTheme.bg;
         Rectangle {
@@ -35,28 +34,31 @@ export component InspirationPage {
                 width: parent.width;
                 height: parent.height;
                 viewport-width: parent.width;
-                viewport-height: root.gallery-height();
+                viewport-height: max(self.height, gallery-content.preferred-height);
                 interactive: true;
-                Rectangle {
-                    width: root.width;
-                    height: root.gallery-height();
-                    background: transparent;
-
+                gallery-content := VerticalLayout {
+                    x: root.content-x();
+                    width: root.content-width();
+                    height: self.preferred-height;
+                    spacing: 0px;
+                    Rectangle { height: root.gallery-top-gap(); background: transparent; }
                     if root.is-empty(): EmptyState {
-                        x: root.content-x();
-                        y: 0px;
                         width: root.content-width();
                         height: max(360px, root.height - 106px);
                     }
-
-                    if !root.is-empty(): SquareGalleryGrid {
-                        x: root.content-x();
-                        y: root.gallery-top-gap();
+                    if !root.is-empty() && AppState.inspiration-gallery-layout == "grid": SquareGalleryGrid {
                         width: root.content-width();
                         items: AppState.inspiration;
                         card-width: root.card-width();
                         source: "inspiration";
                     }
+                    if !root.is-empty() && AppState.inspiration-gallery-layout == "waterfall": GalleryWaterfall {
+                        width: root.content-width();
+                        items: AppState.inspiration;
+                        card-width: root.card-width();
+                        source: "inspiration";
+                    }
+                    Rectangle { height: 32px; background: transparent; }
                 }
             }
         }
@@ -69,8 +71,13 @@ export component InspirationPage {
         CategoryTabs {
             x: root.content-x();
             y: 14px;
-            width: root.content-width();
+            width: max(1px, root.content-width() - 128px);
             for-assets: false;
+        }
+        GalleryLayoutToggle {
+            x: root.content-x() + root.content-width() - 112px;
+            y: 14px;
+            mode <=> AppState.inspiration-gallery-layout;
         }
     }
     function is-empty() -> bool {

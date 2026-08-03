@@ -5,11 +5,12 @@ export component GalleryWaterfall {
     in property <[AssetItem]> items;
     in property <length> card-width: 220px;
     in property <string> source: "asset";
+    height: columns.preferred-height;
     Rectangle {
         width: root.width;
-        height: root.content-height();
+        height: root.height;
         background: transparent;
-        HorizontalLayout {
+        columns := HorizontalLayout {
             x: 0px;
             width: root.used-width();
             height: parent.height;
@@ -50,6 +51,6 @@ export component GalleryWaterfall {
         return (root.items.length + root.column-count() - 1) / root.column-count();
     }
     function content-height() -> length {
-        return max(1px, root.row-count() * root.row-height());
+        return max(1px, columns.preferred-height);
     }
 }

@@ -1,5 +1,7 @@
 import { ThumbnailCard } from "thumbnail-card.slint";
 import { GenerationLoadingCard } from "generation-loading-card.slint";
+import { GalleryWaterfall } from "gallery-waterfall.slint";
+import { GenerationWaterfall } from "generation-waterfall.slint";
 import { AppTheme } from "../theme.slint";
 import { AssetGroup } from "../types.slint";
 
@@ -8,6 +10,7 @@ export component TimeGroupSection {
     in property <length> card-width: 200px;
     in property <string> source: "asset";
     in property <int> loading-count: 0;
+    in property <string> layout-mode: "grid";
     height: root.content-height();
     Rectangle {
         width: root.width;
@@ -25,31 +28,32 @@ export component TimeGroupSection {
             vertical-alignment: center;
             overflow: elide;
         }
-        if root.loading-count > 0: GenerationLoadingCard {
+        if root.layout-mode == "grid" && root.loading-count > 0: GenerationLoadingCard {
             x: root.item-x(0);
             y: root.item-y(0);
             card-width: root.item-width();
             card-gap: 0px;
         }
-        if root.loading-count > 1: GenerationLoadingCard {
+        if root.layout-mode == "grid" && root.loading-count > 1: GenerationLoadingCard {
             x: root.item-x(1);
             y: root.item-y(1);
             card-width: root.item-width();
             card-gap: 0px;
         }
-        if root.loading-count > 2: GenerationLoadingCard {
+        if root.layout-mode == "grid" && root.loading-count > 2: GenerationLoadingCard {
             x: root.item-x(2);
             y: root.item-y(2);
             card-width: root.item-width();
             card-gap: 0px;
         }
-        if root.loading-count > 3: GenerationLoadingCard {
+        if root.layout-mode == "grid" && root.loading-count > 3: GenerationLoadingCard {
             x: root.item-x(3);
             y: root.item-y(3);
             card-width: root.item-width();
             card-gap: 0px;
         }
         for item[index] in root.group.items: ThumbnailCard {
+            active: root.layout-mode == "grid";
             x: root.item-x(index + root.loading-count);
             y: root.item-y(index + root.loading-count);
             item: item;
@@ -57,6 +61,25 @@ export component TimeGroupSection {
             card-gap: 0px;
             source: root.source;
         }
+    }
+    generation-waterfall := GenerationWaterfall {
+        visible: root.layout-mode == "waterfall" && root.source == "generation";
+        x: 0px;
+        y: root.grid-y();
+        width: root.width;
+        items: root.group.items;
+        card-width: root.item-width();
+        column-count: root.column-count();
+        loading-count: root.loading-count;
+    }
+    gallery-waterfall := GalleryWaterfall {
+        visible: root.layout-mode == "waterfall" && root.source != "generation";
+        x: 0px;
+        y: root.grid-y();
+        width: root.width;
+        items: root.group.items;
+        card-width: root.item-width();
+        source: root.source;
     }
     function grid-gap() -> length {
         return 8px;
@@ -94,6 +117,12 @@ export component TimeGroupSection {
     function content-height() -> length {
         if root.item-count() == 0 {
             return 0px;
+        }
+        if root.layout-mode == "waterfall" {
+            if root.source == "generation" {
+                return root.grid-y() + generation-waterfall.height + root.section-gap();
+            }
+            return root.grid-y() + gallery-waterfall.height + root.section-gap();
         }
         return root.grid-y() + root.row-count() * root.row-height() + root.section-gap();
     }

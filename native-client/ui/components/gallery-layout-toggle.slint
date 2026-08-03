@@ -1,0 +1,52 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component GalleryLayoutToggle {
+    in-out property <string> mode: "grid";
+    width: 112px;
+    height: 34px;
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: touch.has-hover ? AppTheme.panel-soft : AppTheme.panel;
+        border-radius: 17px;
+        border-width: 1px;
+        border-color: touch.has-hover ? AppTheme.accent : AppTheme.border;
+
+        Image {
+            x: 13px;
+            y: 9px;
+            width: 16px;
+            height: 16px;
+            source: root.mode == "grid"
+                ? @image-url("../../assets/icons/gallery-grid.svg")
+                : @image-url("../../assets/icons/gallery-waterfall.svg");
+            colorize: touch.has-hover ? AppTheme.accent : AppTheme.muted;
+            image-fit: contain;
+        }
+        Text {
+            x: 36px;
+            width: parent.width - 46px;
+            height: parent.height;
+            text: root.mode == "grid"
+                ? (AppState.en ? "Grid" : "网格")
+                : (AppState.en ? "Masonry" : "瀑布流");
+            color: touch.has-hover ? AppTheme.accent : AppTheme.text;
+            font-size: 12px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            accessible-role: button;
+            accessible-label: AppState.en ? "Switch gallery layout" : "切换缩略图布局";
+            clicked => {
+                root.mode = root.mode == "grid" ? "waterfall" : "grid";
+            }
+        }
+    }
+}

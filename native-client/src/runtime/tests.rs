@@ -842,7 +842,7 @@ mod tests {
         assert!(upload_card.contains("text: root.label"));
         assert!(upload_card.contains("border-radius: 10px"));
         assert!(composer.contains("width: 88px"));
-        assert!(composer.contains("return 4;"));
+        assert!(composer.contains("return 8;"));
         assert!(callbacks.contains("add_reference_from_path(&app, &store, &path)"));
         assert!(composer.contains("reference-drop := DropArea"));
         let drop_layer_position = composer
@@ -1108,6 +1108,51 @@ fn generation_results_scroll_to_the_gallerys_measured_height() {
     assert!(panel.contains("height: self.preferred-height;"));
     assert!(gallery.contains("alignment: start;"));
     assert!(!panel.contains("AppState.generation-groups.length * 66px"));
+}
+
+#[test]
+fn reference_images_are_capped_at_eight_outside_action_sequences() {
+    let model = include_str!("model.rs");
+    let configuration = include_str!("configuration.rs");
+    let composer = include_str!("../../ui/components/prompt-composer.slint");
+
+    assert_eq!(max_reference_images_for_category("character"), 8);
+    assert_eq!(max_reference_images_for_category("scene"), 8);
+    assert_eq!(max_reference_images_for_category("ui"), 8);
+    assert_eq!(max_reference_images_for_category("effect"), 8);
+    assert_eq!(max_reference_images_for_category("action-sequence"), 1);
+    assert!(model.contains("const MAX_REFERENCE_IMAGES: usize = 8;"));
+    assert!(configuration.contains("最多上传 8 张参考图"));
+    assert!(composer.contains("if AppState.asset-type == \"action-sequence\" { return 1; }"));
+    assert!(composer.contains("return 8;"));
+}
+
+#[test]
+fn thumbnail_galleries_switch_between_grid_and_masonry_layouts() {
+    let state = include_str!("../../ui/app-state.slint");
+    let toggle = include_str!("../../ui/components/gallery-layout-toggle.slint");
+    let panel = include_str!("../../ui/components/generation-result-panel.slint");
+    let assets = include_str!("../../ui/pages/assets-page.slint");
+    let inspiration = include_str!("../../ui/pages/inspiration-page.slint");
+    let groups = include_str!("../../ui/components/time-grouped-gallery.slint");
+    let thumbnail = include_str!("../../ui/components/thumbnail-card.slint");
+    let waterfall_column = include_str!("../../ui/components/waterfall-column.slint");
+
+    for property in [
+        "generation-gallery-layout",
+        "asset-gallery-layout",
+        "inspiration-gallery-layout",
+    ] {
+        assert!(state.contains(property), "missing gallery layout state {property}");
+    }
+    assert!(toggle.contains("root.mode = root.mode == \"grid\" ? \"waterfall\" : \"grid\";"));
+    assert!(panel.contains("mode <=> AppState.generation-gallery-layout;"));
+    assert!(assets.contains("mode <=> AppState.asset-gallery-layout;"));
+    assert!(inspiration.contains("mode <=> AppState.inspiration-gallery-layout;"));
+    assert!(groups.contains("layout-mode: root.layout-mode;"));
+    assert!(thumbnail.contains("in property <bool> masonry: false;"));
+    assert!(thumbnail.contains("root.item.height / root.item.width"));
+    assert!(waterfall_column.contains("masonry: true;"));
 }
 
 #[test]
