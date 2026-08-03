@@ -1,14 +1,18 @@
 use super::*;
 
 pub(super) fn wire_email_binding_callbacks(app: &AppWindow, context: AppContext) {
-    let Some(backend) = context.backend.clone() else { return; };
+    let Some(backend) = context.backend.clone() else {
+        return;
+    };
     let state = app.global::<AppState>();
 
     {
         let app_weak = app.as_weak();
         let backend = backend.clone();
         state.on_request_email_binding_code(move || {
-            let Some(app) = app_weak.upgrade() else { return; };
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             let state = app.global::<AppState>();
             if state.get_email_bind_code_busy()
                 || state.get_email_bind_busy()
@@ -34,11 +38,13 @@ pub(super) fn wire_email_binding_callbacks(app: &AppWindow, context: AppContext)
                         Ok(response) => {
                             let seconds = response.resend_after_seconds.min(i32::MAX as u64) as i32;
                             state.set_email_bind_countdown(seconds);
-                            state.set_email_bind_status(format!(
-                                "验证码已发送至 {}，{} 秒内有效",
-                                response.email_masked,
-                                response.expires_in_seconds,
-                            ).into());
+                            state.set_email_bind_status(
+                                format!(
+                                    "验证码已发送至 {}，{} 秒内有效",
+                                    response.email_masked, response.expires_in_seconds,
+                                )
+                                .into(),
+                            );
                             start_email_binding_countdown(app.as_weak());
                         }
                         Err(error) => state.set_email_bind_status(error.user_message().into()),
@@ -52,7 +58,9 @@ pub(super) fn wire_email_binding_callbacks(app: &AppWindow, context: AppContext)
         let app_weak = app.as_weak();
         let backend = backend.clone();
         state.on_bind_email(move || {
-            let Some(app) = app_weak.upgrade() else { return; };
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             let state = app.global::<AppState>();
             if state.get_email_bind_busy() || state.get_email_bind_code_busy() {
                 return;
@@ -99,7 +107,9 @@ pub(super) fn wire_email_binding_callbacks(app: &AppWindow, context: AppContext)
     {
         let app_weak = app.as_weak();
         state.on_close_email_binding(move || {
-            let Some(app) = app_weak.upgrade() else { return; };
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             let state = app.global::<AppState>();
             state.set_email_bind_open(false);
             state.set_email_bind_email("".into());
@@ -114,9 +124,13 @@ pub(super) fn wire_email_binding_callbacks(app: &AppWindow, context: AppContext)
 
 fn start_email_binding_countdown(app_weak: Weak<AppWindow>) {
     slint::Timer::single_shot(Duration::from_secs(1), move || {
-        let Some(app) = app_weak.upgrade() else { return; };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
         let state = app.global::<AppState>();
-        if !state.get_email_bind_open() { return; }
+        if !state.get_email_bind_open() {
+            return;
+        }
         let remaining = (state.get_email_bind_countdown() - 1).max(0);
         state.set_email_bind_countdown(remaining);
         if remaining > 0 {

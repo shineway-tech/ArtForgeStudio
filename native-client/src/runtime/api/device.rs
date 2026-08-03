@@ -18,11 +18,10 @@ impl DeviceIdentity {
             let text = fs::read_to_string(&path).map_err(|error| ApiError::LocalState {
                 message: format!("无法读取设备标识：{error}"),
             })?;
-            let identity = serde_json::from_str::<Self>(&text).map_err(|error| {
-                ApiError::LocalState {
+            let identity =
+                serde_json::from_str::<Self>(&text).map_err(|error| ApiError::LocalState {
                     message: format!("设备标识文件已损坏：{error}"),
-                }
-            })?;
+                })?;
             identity.validate()?;
             return Ok(identity);
         }

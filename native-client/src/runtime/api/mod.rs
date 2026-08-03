@@ -2,32 +2,32 @@
 // only renders a subset of their fields.
 #![allow(dead_code)]
 
-mod auth;
 mod account;
-mod generation;
-mod payment;
-mod membership;
-mod notifications;
-mod prompt_optimization;
+mod auth;
 mod client;
 mod device;
 mod error;
+mod generation;
+mod membership;
+mod notifications;
+mod payment;
+mod prompt_optimization;
 mod session;
 mod types;
 
 #[cfg(test)]
 mod cross_stack_tests;
 
-pub(crate) use auth::*;
 pub(crate) use account::*;
-pub(crate) use generation::*;
-pub(crate) use payment::*;
-pub(crate) use membership::*;
-pub(crate) use notifications::*;
-pub(crate) use prompt_optimization::*;
+pub(crate) use auth::*;
 pub(crate) use client::*;
 pub(crate) use device::*;
 pub(crate) use error::*;
+pub(crate) use generation::*;
+pub(crate) use membership::*;
+pub(crate) use notifications::*;
+pub(crate) use payment::*;
+pub(crate) use prompt_optimization::*;
 pub(crate) use session::*;
 pub(crate) use types::*;
 

@@ -159,7 +159,11 @@ pub(super) fn sync_generation_state_for_current_category(context: &AppContext, a
     }
 }
 
-pub(super) fn finish_conversation_placeholder(state: &AppState, conversation_id: &str, image: Option<Image>) {
+pub(super) fn finish_conversation_placeholder(
+    state: &AppState,
+    conversation_id: &str,
+    image: Option<Image>,
+) {
     let mut conversations = state.get_conversations().iter().collect::<Vec<_>>();
     if let Some(row) = conversations
         .iter_mut()

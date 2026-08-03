@@ -133,10 +133,7 @@ impl AuthApi {
             .map(|response: ApiResponse<AgreementList>| response.data.items)
     }
 
-    pub(crate) fn request_email_code(
-        &self,
-        email: &str,
-    ) -> Result<EmailCodeResponse, ApiError> {
+    pub(crate) fn request_email_code(&self, email: &str) -> Result<EmailCodeResponse, ApiError> {
         let body = serde_json::to_value(EmailCodeRequest {
             email,
             app_version: self.client.app_version(),
@@ -174,7 +171,9 @@ impl AuthApi {
             .client
             .public_json(Method::POST, "/v1/auth/email/login", Some(body))?;
         let response: ApiResponse<LoginResponse> = response;
-        self.client.session().install_tokens(&response.data.tokens)?;
+        self.client
+            .session()
+            .install_tokens(&response.data.tokens)?;
         Ok(response.data)
     }
 
@@ -208,15 +207,13 @@ impl AuthApi {
             login_id,
             agreement_acceptances: acceptances,
         })
-            .map_err(|error| ApiError::Protocol {
-                message: error.to_string(),
-                request_id: None,
-            })?;
-        let response: ApiResponse<WechatLoginStatusResponse> = self.client.public_json(
-            Method::POST,
-            "/v1/auth/wechat/session/status",
-            Some(body),
-        )?;
+        .map_err(|error| ApiError::Protocol {
+            message: error.to_string(),
+            request_id: None,
+        })?;
+        let response: ApiResponse<WechatLoginStatusResponse> =
+            self.client
+                .public_json(Method::POST, "/v1/auth/wechat/session/status", Some(body))?;
         if let Some(login) = response.data.login.as_ref() {
             self.client.session().install_tokens(&login.tokens)?;
         }
@@ -234,10 +231,12 @@ impl AuthApi {
         if agreements.is_empty() {
             return Ok(());
         }
-        let body = serde_json::to_value(AcceptAgreementsRequest { agreements })
-            .map_err(|error| ApiError::Protocol {
-                message: error.to_string(),
-                request_id: None,
+        let body =
+            serde_json::to_value(AcceptAgreementsRequest { agreements }).map_err(|error| {
+                ApiError::Protocol {
+                    message: error.to_string(),
+                    request_id: None,
+                }
             })?;
         self.client.authenticated_json::<serde_json::Value>(
             Method::POST,
@@ -254,8 +253,9 @@ impl AuthApi {
         } else {
             "/v1/auth/logout"
         };
-        let response: Result<ApiResponse<LogoutResponse>, ApiError> =
-            self.client.authenticated_json(Method::POST, path, None, None);
+        let response: Result<ApiResponse<LogoutResponse>, ApiError> = self
+            .client
+            .authenticated_json(Method::POST, path, None, None);
         match response {
             Ok(value) => {
                 let _ = value.data.logged_out || value.data.logged_out_all;

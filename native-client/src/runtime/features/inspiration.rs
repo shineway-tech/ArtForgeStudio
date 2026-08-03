@@ -84,6 +84,7 @@ pub(super) fn seed_inspiration(app: &AppWindow, store: &Rc<RefCell<Store>>) -> R
                     ratio,
                     quality,
                     model: "官方示例".to_string(),
+                    origin: "inspiration".to_string(),
                     width,
                     height,
                     image,

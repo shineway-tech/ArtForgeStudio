@@ -15,10 +15,7 @@ fn checkout_scheme_allowed(checkout: &reqwest::Url) -> bool {
     #[cfg(debug_assertions)]
     {
         checkout.scheme() == "http"
-            && matches!(
-                checkout.host_str(),
-                Some("localhost" | "127.0.0.1" | "::1")
-            )
+            && matches!(checkout.host_str(), Some("localhost" | "127.0.0.1" | "::1"))
     }
     #[cfg(not(debug_assertions))]
     {

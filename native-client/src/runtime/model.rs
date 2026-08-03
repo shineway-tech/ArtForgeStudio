@@ -134,6 +134,7 @@ struct AssetData {
     ratio: String,
     quality: String,
     model: String,
+    origin: String,
     width: i32,
     height: i32,
     image: Image,
@@ -223,6 +224,75 @@ enum GenerationOutcome {
     Failure {
         reason: String,
         time: String,
+    },
+}
+
+enum WatermarkOutcome {
+    Accepted {
+        task_id: String,
+    },
+    Progress {
+        percent: i32,
+    },
+    Success {
+        bytes: Vec<u8>,
+        delivery: DeliveryConfirmation,
+    },
+    Recovered {
+        local_path: String,
+        delivery: Option<DeliveryConfirmation>,
+    },
+    CreditInsufficient {
+        message: String,
+    },
+    Failure {
+        reason: String,
+    },
+}
+
+enum ImageColorizationOutcome {
+    Accepted {
+        task_id: String,
+    },
+    Progress {
+        percent: i32,
+    },
+    Success {
+        bytes: Vec<u8>,
+        delivery: DeliveryConfirmation,
+    },
+    Recovered {
+        local_path: String,
+        delivery: Option<DeliveryConfirmation>,
+    },
+    CreditInsufficient {
+        message: String,
+    },
+    Failure {
+        reason: String,
+    },
+}
+
+enum ImageEnhancementOutcome {
+    Accepted {
+        task_id: String,
+    },
+    Progress {
+        percent: i32,
+    },
+    Success {
+        bytes: Vec<u8>,
+        delivery: DeliveryConfirmation,
+    },
+    Recovered {
+        local_path: String,
+        delivery: Option<DeliveryConfirmation>,
+    },
+    CreditInsufficient {
+        message: String,
+    },
+    Failure {
+        reason: String,
     },
 }
 
@@ -388,6 +458,8 @@ struct StoredAssetData {
     ratio: String,
     quality: String,
     model: String,
+    #[serde(default)]
+    origin: String,
     width: i32,
     height: i32,
     source_path: String,

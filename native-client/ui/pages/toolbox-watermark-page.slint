@@ -10,7 +10,9 @@ component PreviewPanel {
     in property <bool> processing: false;
     in property <int> progress: 0;
     in property <bool> result-panel: false;
+    in property <bool> drop-enabled: false;
     callback choose-image();
+    callback dropped(string, string);
 
     Rectangle {
         background: transparent;
@@ -48,10 +50,14 @@ component PreviewPanel {
             y: 62px;
             width: parent.width;
             height: parent.height - 62px;
-            background: AppTheme.panel;
+            background: source-drop.contains-drag
+                ? AppTheme.accent.with-alpha(0.08)
+                : AppTheme.panel;
             border-radius: 12px;
-            border-width: 1px;
-            border-color: root.processing ? AppTheme.accent : AppTheme.border;
+            border-width: source-drop.contains-drag ? 2px : 1px;
+            border-color: source-drop.contains-drag || root.processing
+                ? AppTheme.accent
+                : AppTheme.border;
             clip: true;
 
             if root.has-image: Image {
@@ -91,10 +97,12 @@ component PreviewPanel {
                     y: (parent.height - 108px) / 2 + 72px;
                     width: parent.width - 48px;
                     height: 24px;
-                    text: root.result-panel
+                    text: source-drop.contains-drag
+                        ? (AppState.en ? "Release to upload image" : "松开即可上传图片")
+                        : root.result-panel
                         ? (AppState.en ? "The processed image will appear here" : "处理后的图片将显示在这里")
-                        : (AppState.en ? "Upload an image to begin" : "上传图片后开始处理");
-                    color: AppTheme.muted;
+                        : (AppState.en ? "Drag an image here, or click to upload" : "拖放图片到这里，或点击上传");
+                    color: source-drop.contains-drag ? AppTheme.accent : AppTheme.muted;
                     font-size: 13px;
                     font-weight: 400;
                     horizontal-alignment: center;
@@ -116,6 +124,47 @@ component PreviewPanel {
                 width: parent.width * root.progress / 100;
                 height: 4px;
                 background: AppTheme.accent;
+            }
+
+            if source-drop.contains-drag && root.has-image: Rectangle {
+                background: AppTheme.accent.with-alpha(0.12);
+
+                Rectangle {
+                    x: (parent.width - 220px) / 2;
+                    y: (parent.height - 48px) / 2;
+                    width: 220px;
+                    height: 48px;
+                    border-radius: 12px;
+                    background: AppTheme.panel;
+                    border-width: 1px;
+                    border-color: AppTheme.accent;
+
+                    Text {
+                        width: parent.width;
+                        height: parent.height;
+                        text: AppState.en ? "Release to replace image" : "松开即可更换图片";
+                        color: AppTheme.accent;
+                        font-size: 14px;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            source-drop := DropArea {
+                width: parent.width;
+                height: parent.height;
+                can-drop(event) => {
+                    return root.drop-enabled
+                        && (event.mime-type == "text/uri-list"
+                            || event.mime-type == "text/plain"
+                            || event.mime-type == "text/html"
+                            || event.mime-type == "application/x-artforge-image-path");
+                }
+                dropped(event) => {
+                    root.dropped(event.mime-type, event.data);
+                }
             }
         }
     }
@@ -154,7 +203,11 @@ export component ToolboxWatermarkPage {
             detail: AppState.watermark-source-name;
             preview: AppState.watermark-source-image;
             has-image: AppState.watermark-source-path != "";
+            drop-enabled: !AppState.watermark-processing;
             choose-image => { AppState.choose-watermark-source(); }
+            dropped(mime-type, data) => {
+                AppState.add-watermark-source-from-drag(mime-type, data);
+            }
         }
 
         result-panel := PreviewPanel {
@@ -171,6 +224,16 @@ export component ToolboxWatermarkPage {
             processing: AppState.watermark-processing;
             progress: AppState.watermark-progress;
             result-panel: true;
+        }
+
+        if AppState.watermark-source-path != "": PillButton {
+            x: 32px + root.panel-width() - 304px;
+            y: parent.height - 78px;
+            width: 126px;
+            height: 42px;
+            text: AppState.en ? "Change image" : "更换图片";
+            disabled: AppState.watermark-processing;
+            clicked => { AppState.choose-watermark-source(); }
         }
 
         PillButton {

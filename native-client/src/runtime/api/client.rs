@@ -31,11 +31,10 @@ impl ApiClientConfig {
         } else {
             default_url.to_string()
         };
-        let mut base_url = Url::parse(configured.trim()).map_err(|error| {
-            ApiError::Configuration {
+        let mut base_url =
+            Url::parse(configured.trim()).map_err(|error| ApiError::Configuration {
                 message: format!("无效的后端地址：{error}"),
-            }
-        })?;
+            })?;
         if !cfg!(debug_assertions) && base_url.scheme() != "https" {
             return Err(ApiError::Configuration {
                 message: "生产环境后端地址必须使用 HTTPS".to_string(),
@@ -130,12 +129,7 @@ impl ApiClient {
                 let refreshed = self.session.refresh(Some(&access_token), |refresh_token| {
                     self.request_refresh(refresh_token)
                 })?;
-                self.send_once(
-                    method,
-                    path,
-                    body,
-                    Some((&refreshed, idempotency_key)),
-                )
+                self.send_once(method, path, body, Some((&refreshed, idempotency_key)))
             }
             Err(error) => Err(error),
         }
@@ -261,8 +255,11 @@ mod tests {
                 name: "test-device".to_string(),
                 platform: "windows".to_string(),
             },
-            Arc::new(SessionManager::new(Arc::new(MemoryRefreshTokenStore::default()))),
-        ).unwrap()
+            Arc::new(SessionManager::new(Arc::new(
+                MemoryRefreshTokenStore::default(),
+            ))),
+        )
+        .unwrap()
     }
 
     fn one_response(status: &str, body: &'static str, delay: Duration) -> String {
@@ -308,8 +305,10 @@ mod tests {
         let error = client_for(url, Duration::from_secs(1))
             .public_json::<Value>(Method::GET, "/unauthorized", None)
             .unwrap_err();
-        assert!(matches!(error, ApiError::Http { status: 401, ref code, ref request_id, .. }
-            if code == "access_token_invalid" && request_id.as_deref() == Some("req-401")));
+        assert!(
+            matches!(error, ApiError::Http { status: 401, ref code, ref request_id, .. }
+            if code == "access_token_invalid" && request_id.as_deref() == Some("req-401"))
+        );
     }
 
     #[test]

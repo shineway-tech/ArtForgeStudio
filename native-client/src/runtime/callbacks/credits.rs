@@ -73,10 +73,7 @@ pub(super) fn wire_credit_callbacks(app: &AppWindow, context: AppContext) {
             if state.get_credit_ledger_loading() {
                 return;
             }
-            let target = store
-                .borrow()
-                .credit_ledger_pagination
-                .previous_target();
+            let target = store.borrow().credit_ledger_pagination.previous_target();
             if let Some((target_index, cursor)) = target {
                 request_credit_ledger_page(
                     &app,
@@ -144,10 +141,8 @@ fn request_credit_ledger_page(
     let request_cursor = cursor.clone();
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
-        let result = AccountApi::new(backend.api.clone()).ledger_page(
-            request_cursor.as_deref(),
-            CREDIT_LEDGER_PAGE_SIZE,
-        );
+        let result = AccountApi::new(backend.api.clone())
+            .ledger_page(request_cursor.as_deref(), CREDIT_LEDGER_PAGE_SIZE);
         let _ = sender.send(result);
     });
     poll_credit_ledger_page(
@@ -164,9 +159,7 @@ fn poll_credit_ledger_page(
     store: Rc<RefCell<Store>>,
     target_index: usize,
     start_cursor: Option<String>,
-    receiver: Rc<
-        RefCell<Option<mpsc::Receiver<std::result::Result<CreditLedgerPage, ApiError>>>>,
-    >,
+    receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<CreditLedgerPage, ApiError>>>>>,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
         let result = {
@@ -189,13 +182,7 @@ fn poll_credit_ledger_page(
             }
         };
         let Some(result) = result else {
-            poll_credit_ledger_page(
-                app_weak,
-                store,
-                target_index,
-                start_cursor,
-                receiver,
-            );
+            poll_credit_ledger_page(app_weak, store, target_index, start_cursor, receiver);
             return;
         };
         let Some(app) = app_weak.upgrade() else {
@@ -270,10 +257,7 @@ fn invoice_orders(app: &AppWindow, items: &[CreditLedgerItem]) -> Vec<InvoiceOrd
         .collect()
 }
 
-fn invoice_order(
-    item: &CreditLedgerItem,
-    packs: &[CreditPackView],
-) -> Option<InvoiceOrderView> {
+fn invoice_order(item: &CreditLedgerItem, packs: &[CreditPackView]) -> Option<InvoiceOrderView> {
     if item.entry_type != "grant" || item.business_type != "order" {
         return None;
     }
@@ -327,19 +311,28 @@ fn credit_record(item: &CreditLedgerItem) -> CreditRecord {
     let (title, amount, note, tone) = match item.entry_type.as_str() {
         "reserve" => (
             "AI 创作积分暂时冻结".to_string(),
-            format!("冻结 {}", preferred_absolute(&item.reserved_delta, &item.available_delta)),
+            format!(
+                "冻结 {}",
+                preferred_absolute(&item.reserved_delta, &item.available_delta)
+            ),
             format!("{business}任务处理中暂时冻结，失败或未使用部分会自动退回 · {balance}"),
             "neutral",
         ),
         "commit" => (
             "AI 创作积分已扣除".to_string(),
-            format!("扣除 {}", preferred_absolute(&item.reserved_delta, &item.available_delta)),
+            format!(
+                "扣除 {}",
+                preferred_absolute(&item.reserved_delta, &item.available_delta)
+            ),
             format!("{business}任务完成，已从冻结积分中结算 · {balance}"),
             "negative",
         ),
         "release" => (
             "未使用积分已退回".to_string(),
-            format!("退回 {}", preferred_absolute(&item.available_delta, &item.reserved_delta)),
+            format!(
+                "退回 {}",
+                preferred_absolute(&item.available_delta, &item.reserved_delta)
+            ),
             format!("{business}未消耗的冻结积分已返还 · {balance}"),
             "positive",
         ),
@@ -408,7 +401,10 @@ fn preferred_absolute(primary: &str, fallback: &str) -> String {
 }
 
 fn absolute_credit_amount(value: &str) -> String {
-    let normalized = value.trim().trim_start_matches(['-', '+']).trim_start_matches('0');
+    let normalized = value
+        .trim()
+        .trim_start_matches(['-', '+'])
+        .trim_start_matches('0');
     if normalized.is_empty() {
         "0".to_string()
     } else {
@@ -494,11 +490,8 @@ mod tests {
     #[test]
     fn invoice_order_is_enabled_at_exactly_one_hundred_yuan() {
         let item = ledger_item("grant", "10000", "0", "order");
-        let order = invoice_order(
-            &item,
-            &[invoice_pack("10000", "¥ 100.00", "10000")],
-        )
-        .expect("credit recharge order");
+        let order = invoice_order(&item, &[invoice_pack("10000", "¥ 100.00", "10000")])
+            .expect("credit recharge order");
 
         assert!(order.eligible);
         assert_eq!(order.amount.as_str(), "¥ 100.00");
@@ -509,11 +502,8 @@ mod tests {
     #[test]
     fn invoice_order_below_one_hundred_yuan_is_disabled() {
         let item = ledger_item("grant", "5000", "0", "order");
-        let order = invoice_order(
-            &item,
-            &[invoice_pack("5000", "¥ 99.99", "9999")],
-        )
-        .expect("credit recharge order");
+        let order = invoice_order(&item, &[invoice_pack("5000", "¥ 99.99", "9999")])
+            .expect("credit recharge order");
 
         assert!(!order.eligible);
         assert_eq!(order.status.as_str(), "单次充值未满 ¥100.00");
@@ -522,21 +512,12 @@ mod tests {
     #[test]
     fn non_recharge_ledger_entries_are_not_invoice_orders() {
         let item = ledger_item("grant", "10000", "0", "membership");
-        assert!(invoice_order(
-            &item,
-            &[invoice_pack("10000", "¥ 100.00", "10000")],
-        )
-        .is_none());
+        assert!(invoice_order(&item, &[invoice_pack("10000", "¥ 100.00", "10000")],).is_none());
     }
 
     #[test]
     fn reserve_is_explained_as_a_temporary_freeze() {
-        let record = credit_record(&ledger_item(
-            "reserve",
-            "-50",
-            "50",
-            "generation_task",
-        ));
+        let record = credit_record(&ledger_item("reserve", "-50", "50", "generation_task"));
 
         assert_eq!(record.title.as_str(), "AI 创作积分暂时冻结");
         assert_eq!(record.amount.as_str(), "冻结 50");
@@ -548,12 +529,7 @@ mod tests {
 
     #[test]
     fn commit_uses_reserved_delta_instead_of_zero_available_delta() {
-        let record = credit_record(&ledger_item(
-            "commit",
-            "0",
-            "-50",
-            "generation_task",
-        ));
+        let record = credit_record(&ledger_item("commit", "0", "-50", "generation_task"));
 
         assert_eq!(record.title.as_str(), "AI 创作积分已扣除");
         assert_eq!(record.amount.as_str(), "扣除 50");
@@ -564,12 +540,7 @@ mod tests {
 
     #[test]
     fn release_is_explained_as_returned_credit() {
-        let record = credit_record(&ledger_item(
-            "release",
-            "50",
-            "-50",
-            "generation_task",
-        ));
+        let record = credit_record(&ledger_item("release", "50", "-50", "generation_task"));
 
         assert_eq!(record.title.as_str(), "未使用积分已退回");
         assert_eq!(record.amount.as_str(), "退回 50");
@@ -596,43 +567,26 @@ mod tests {
 
         assert_eq!(pagination.page_number(), 1);
         assert_eq!(pagination.previous_target(), None);
-        assert_eq!(
-            pagination.next_target(),
-            Some((1, Some("80".to_string())))
-        );
+        assert_eq!(pagination.next_target(), Some((1, Some("80".to_string()))));
 
-        pagination.apply_page(
-            1,
-            Some("80".to_string()),
-            Some("72".to_string()),
-        );
+        pagination.apply_page(1, Some("80".to_string()), Some("72".to_string()));
 
         assert_eq!(pagination.page_number(), 2);
         assert_eq!(pagination.previous_target(), Some((0, None)));
-        assert_eq!(
-            pagination.next_target(),
-            Some((2, Some("72".to_string())))
-        );
+        assert_eq!(pagination.next_target(), Some((2, Some("72".to_string()))));
     }
 
     #[test]
     fn applying_previous_page_restores_first_page_state() {
         let mut pagination = CreditLedgerPagination::default();
         pagination.reset(Some("80".to_string()));
-        pagination.apply_page(
-            1,
-            Some("80".to_string()),
-            Some("72".to_string()),
-        );
+        pagination.apply_page(1, Some("80".to_string()), Some("72".to_string()));
 
         let (target_index, cursor) = pagination.previous_target().unwrap();
         pagination.apply_page(target_index, cursor, Some("80".to_string()));
 
         assert_eq!(pagination.page_number(), 1);
         assert_eq!(pagination.previous_target(), None);
-        assert_eq!(
-            pagination.next_target(),
-            Some((1, Some("80".to_string())))
-        );
+        assert_eq!(pagination.next_target(), Some((1, Some("80".to_string()))));
     }
 }

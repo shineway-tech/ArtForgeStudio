@@ -85,7 +85,9 @@ pub(super) fn poll_generation_stream(
         let mut keep_polling = true;
 
         match outcome {
-            GenerationOutcome::Accepted { task_id: server_task_id } => {
+            GenerationOutcome::Accepted {
+                task_id: server_task_id,
+            } => {
                 if let Some(task) = context.generations.active.borrow_mut().get_mut(&category) {
                     if task.task_id == task_id {
                         task.server_task_id = Some(server_task_id);
@@ -350,7 +352,7 @@ pub(super) fn poll_generation_stream(
     });
 }
 
-fn acknowledge_delivery_after_local_save(
+pub(super) fn acknowledge_delivery_after_local_save(
     backend: Arc<BackendRuntime>,
     delivery: DeliveryConfirmation,
 ) {
@@ -366,10 +368,8 @@ fn acknowledge_delivery_after_local_save(
                 )
                 .is_ok()
             {
-                let _ = pending_delivery_acknowledged(
-                    &delivery.client_request_id,
-                    &delivery.file_id,
-                );
+                let _ =
+                    pending_delivery_acknowledged(&delivery.client_request_id, &delivery.file_id);
                 return;
             }
             if attempt < 4 {

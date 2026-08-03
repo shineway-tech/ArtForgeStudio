@@ -61,7 +61,11 @@ pub(super) fn start_backend_generation(
     );
     let quality = state.get_quality().to_string();
     let count = forced_count.unwrap_or_else(|| {
-        if category == "action-sequence" { 1 } else { state.get_count().clamp(1, 4) }
+        if category == "action-sequence" {
+            1
+        } else {
+            state.get_count().clamp(1, 4)
+        }
     });
     let mode = state.get_mode().to_string();
     let original_references = references_for_category(&store.borrow().references, &category)
@@ -87,7 +91,10 @@ pub(super) fn start_backend_generation(
     };
     let controls = PromptControls {
         category: category.clone(),
-        creation: normalize_creation_mode_for_category(&category, &state.get_creation_mode().to_string()),
+        creation: normalize_creation_mode_for_category(
+            &category,
+            &state.get_creation_mode().to_string(),
+        ),
         style: state.get_style_mode().to_string(),
         view: state.get_view_mode().to_string(),
         weather: state.get_weather_mode().to_string(),
@@ -142,7 +149,11 @@ pub(super) fn start_backend_generation(
         Uuid::new_v4().to_string()
     } else {
         let current = state.get_current_conversation_id().to_string();
-        if current.trim().is_empty() { Uuid::new_v4().to_string() } else { current }
+        if current.trim().is_empty() {
+            Uuid::new_v4().to_string()
+        } else {
+            current
+        }
     };
     let local_task_id = Uuid::new_v4().to_string();
     let request_id = Uuid::new_v4().simple().to_string();
@@ -175,23 +186,26 @@ pub(super) fn start_backend_generation(
         state.set_generation_status("任务准备失败，请重试".into());
         return;
     }
-    insert_active_generation(&context, ActiveGeneration {
-        task_id: local_task_id.clone(),
-        client_request_id: Some(request_id.clone()),
-        server_task_id: None,
-        category: category.clone(),
-        conversation_id: conversation_id.clone(),
-        prompt: display_prompt.clone(),
-        credit_cost: 0,
-        total_count: count,
-        loading_count: count,
-        completed_count: 0,
-        success_count: 0,
-        failed_count: 0,
-        progress: 1,
-        eta: 0,
-        latest_success_id: None,
-    });
+    insert_active_generation(
+        &context,
+        ActiveGeneration {
+            task_id: local_task_id.clone(),
+            client_request_id: Some(request_id.clone()),
+            server_task_id: None,
+            category: category.clone(),
+            conversation_id: conversation_id.clone(),
+            prompt: display_prompt.clone(),
+            credit_cost: 0,
+            total_count: count,
+            loading_count: count,
+            completed_count: 0,
+            success_count: 0,
+            failed_count: 0,
+            progress: 1,
+            eta: 0,
+            latest_success_id: None,
+        },
+    );
     set_generation_status_for_category(&context, app, &category, "正在优化并上传参考图...");
     sync_generation_state_for_current_category(&context, app);
     navigate_to(app, "generation");
@@ -202,12 +216,15 @@ pub(super) fn start_backend_generation(
     state.set_quote_quality("".into());
     if create_conversation {
         let mut conversations = state.get_conversations().iter().collect::<Vec<_>>();
-        conversations.insert(0, ConversationItem {
-            id: conversation_id.clone().into(),
-            title: short_text(&display_prompt, 10).into(),
-            image: Image::default(),
-            loading: true,
-        });
+        conversations.insert(
+            0,
+            ConversationItem {
+                id: conversation_id.clone().into(),
+                title: short_text(&display_prompt, 10).into(),
+                image: Image::default(),
+                loading: true,
+            },
+        );
         state.set_conversations(ModelRc::new(VecModel::from(conversations)));
         state.set_current_conversation_id(conversation_id.clone().into());
     }
@@ -224,7 +241,9 @@ pub(super) fn start_backend_generation(
             match api.upload_reference(&path) {
                 Ok(file_id) => uploaded.push(file_id),
                 Err(error) => {
-                    for file_id in &uploaded { api.delete_reference(file_id); }
+                    for file_id in &uploaded {
+                        api.delete_reference(file_id);
+                    }
                     let _ = remove_pending_generation(&request_id);
                     let _ = sender.send(GenerationOutcome::Failure {
                         reason: error.generation_message(),
@@ -261,7 +280,9 @@ pub(super) fn start_backend_generation(
             Ok(detail) => detail,
             Err(error) => {
                 if error.is_insufficient_credits() {
-                    for file_id in &uploaded { api.delete_reference(file_id); }
+                    for file_id in &uploaded {
+                        api.delete_reference(file_id);
+                    }
                     let _ = remove_pending_generation(&request.client_request_id);
                     let _ = sender.send(GenerationOutcome::CreditInsufficient {
                         message: "积分不足以支持本次生图，请前往充值".to_string(),
@@ -269,7 +290,9 @@ pub(super) fn start_backend_generation(
                     return;
                 }
                 if !error.should_preserve_generation_recovery() {
-                    for file_id in &uploaded { api.delete_reference(file_id); }
+                    for file_id in &uploaded {
+                        api.delete_reference(file_id);
+                    }
                     let _ = remove_pending_generation(&request.client_request_id);
                 }
                 let _ = sender.send(GenerationOutcome::Failure {
@@ -295,7 +318,12 @@ pub(super) fn start_backend_generation(
             record.server_task_id = task_id_for_record;
             record.uploaded_file_ids = uploaded.clone();
         });
-        if sender.send(GenerationOutcome::Accepted { task_id: task_id.clone() }).is_err() {
+        if sender
+            .send(GenerationOutcome::Accepted {
+                task_id: task_id.clone(),
+            })
+            .is_err()
+        {
             let _ = api.cancel(&task_id);
             return;
         }
@@ -312,7 +340,9 @@ pub(super) fn start_backend_generation(
                 );
                 return;
             }
-            let _ = sender.send(GenerationOutcome::Progress { percent: detail.progress_percent });
+            let _ = sender.send(GenerationOutcome::Progress {
+                percent: detail.progress_percent,
+            });
             for item in &detail.items {
                 if item.status == "succeeded" && !handled_success.contains(&item.index) {
                     if let Some(file) = item.file.as_ref() {
@@ -347,7 +377,10 @@ pub(super) fn start_backend_generation(
                 } else if matches!(item.status.as_str(), "failed" | "cancelled")
                     && handled_failure.insert(item.index)
                 {
-                    let reason = item.failure.as_ref().map(|failure| failure.message.clone())
+                    let reason = item
+                        .failure
+                        .as_ref()
+                        .map(|failure| failure.message.clone())
                         .unwrap_or_else(|| "服务端未能生成该图片".to_string());
                     let _ = sender.send(GenerationOutcome::ImageFailure {
                         reason,
@@ -450,7 +483,12 @@ pub(super) fn start_backend_upscale(
         state.set_viewer_message("图片尺寸不可用，无法放大".into());
         return;
     };
-    let selected_quality = if quality.eq_ignore_ascii_case("4K") { "4K" } else { "2K" }.to_string();
+    let selected_quality = if quality.eq_ignore_ascii_case("4K") {
+        "4K"
+    } else {
+        "2K"
+    }
+    .to_string();
     let target_long_edge = upscale_quality_long_edge(&selected_quality);
     if source_width.max(source_height) > target_long_edge {
         let message = if target_long_edge >= 4096 {
@@ -486,7 +524,11 @@ pub(super) fn start_backend_upscale(
     };
     let raw_prompt = format!(
         "{} 清晰放大{}X",
-        if source.title.trim().is_empty() { "图片" } else { source.title.trim() },
+        if source.title.trim().is_empty() {
+            "图片"
+        } else {
+            source.title.trim()
+        },
         scale.clamp(2, 4),
     );
     let generation_prompt = build_upscale_prompt(
@@ -528,23 +570,26 @@ pub(super) fn start_backend_upscale(
         return;
     }
 
-    insert_active_generation(&context, ActiveGeneration {
-        task_id: local_task_id.clone(),
-        client_request_id: Some(request_id.clone()),
-        server_task_id: None,
-        category: source.category.clone(),
-        conversation_id: conversation_id.clone(),
-        prompt: raw_prompt.clone(),
-        credit_cost: 0,
-        total_count: 1,
-        loading_count: 1,
-        completed_count: 0,
-        success_count: 0,
-        failed_count: 0,
-        progress: 1,
-        eta: 0,
-        latest_success_id: None,
-    });
+    insert_active_generation(
+        &context,
+        ActiveGeneration {
+            task_id: local_task_id.clone(),
+            client_request_id: Some(request_id.clone()),
+            server_task_id: None,
+            category: source.category.clone(),
+            conversation_id: conversation_id.clone(),
+            prompt: raw_prompt.clone(),
+            credit_cost: 0,
+            total_count: 1,
+            loading_count: 1,
+            completed_count: 0,
+            success_count: 0,
+            failed_count: 0,
+            progress: 1,
+            eta: 0,
+            latest_success_id: None,
+        },
+    );
     state.set_viewer_processing(true);
     state.set_viewer_processing_progress(0);
     state.set_viewer_processing_label("正在提交放大任务".into());
@@ -598,7 +643,9 @@ pub(super) fn start_backend_upscale(
             Ok(detail) => detail,
             Err(error) => {
                 if error.is_insufficient_credits() {
-                    for file_id in &uploaded { api.delete_reference(file_id); }
+                    for file_id in &uploaded {
+                        api.delete_reference(file_id);
+                    }
                     let _ = remove_pending_generation(&request.client_request_id);
                     let _ = sender.send(GenerationOutcome::CreditInsufficient {
                         message: "积分不足以支持本次放大，请前往充值".to_string(),
@@ -606,7 +653,9 @@ pub(super) fn start_backend_upscale(
                     return;
                 }
                 if !error.should_preserve_generation_recovery() {
-                    for file_id in &uploaded { api.delete_reference(file_id); }
+                    for file_id in &uploaded {
+                        api.delete_reference(file_id);
+                    }
                     let _ = remove_pending_generation(&request.client_request_id);
                 }
                 let _ = sender.send(GenerationOutcome::Failure {
@@ -633,7 +682,12 @@ pub(super) fn start_backend_upscale(
             record.server_task_id = task_id_for_record;
             record.uploaded_file_ids = uploaded_for_record;
         });
-        if sender.send(GenerationOutcome::Accepted { task_id: task_id.clone() }).is_err() {
+        if sender
+            .send(GenerationOutcome::Accepted {
+                task_id: task_id.clone(),
+            })
+            .is_err()
+        {
             let _ = api.cancel(&task_id);
             return;
         }
@@ -650,7 +704,9 @@ pub(super) fn start_backend_upscale(
                 );
                 return;
             }
-            let _ = sender.send(GenerationOutcome::Progress { percent: detail.progress_percent });
+            let _ = sender.send(GenerationOutcome::Progress {
+                percent: detail.progress_percent,
+            });
             for item in &detail.items {
                 if item.status == "succeeded" && !handled_success.contains(&item.index) {
                     if let Some(file) = item.file.as_ref() {
@@ -685,7 +741,10 @@ pub(super) fn start_backend_upscale(
                 } else if matches!(item.status.as_str(), "failed" | "cancelled")
                     && handled_failure.insert(item.index)
                 {
-                    let reason = item.failure.as_ref().map(|failure| failure.message.clone())
+                    let reason = item
+                        .failure
+                        .as_ref()
+                        .map(|failure| failure.message.clone())
                         .unwrap_or_else(|| "服务端未能放大该图片".to_string());
                     let _ = sender.send(GenerationOutcome::ImageFailure {
                         reason,
@@ -898,7 +957,8 @@ pub(super) fn recover_pending_generations(app: &AppWindow, context: AppContext) 
         return;
     }
     let local_records = load_pending_generations();
-    let known_server_ids = local_records.iter()
+    let known_server_ids = local_records
+        .iter()
         .filter(|record| !record.server_task_id.is_empty())
         .map(|record| record.server_task_id.clone())
         .collect::<BTreeSet<_>>();
@@ -910,6 +970,22 @@ pub(super) fn recover_pending_generations(app: &AppWindow, context: AppContext) 
         }
         if pending_submission_recovery_expired(&record, now_epoch_ms) {
             let _ = remove_pending_generation(&record.client_request_id);
+            continue;
+        }
+        if record.task_type == "image_watermark_removal" {
+            resume_pending_watermark_removal(app, context.clone(), record);
+            continue;
+        }
+        if record.task_type == "image_enhancement" {
+            resume_pending_image_enhancement(app, context.clone(), record);
+            continue;
+        }
+        if record.task_type == "image_cutout" {
+            resume_pending_image_cutout(app, context.clone(), record);
+            continue;
+        }
+        if record.task_type == "image_colorization" {
+            resume_pending_image_colorization(app, context.clone(), record);
             continue;
         }
         if category_is_generating(&context, &record.category) {
@@ -937,25 +1013,87 @@ fn recover_server_generation_tasks(
     context: AppContext,
     known_server_ids: BTreeSet<String>,
 ) {
-    let Some(backend) = context.backend.clone() else { return; };
+    let Some(backend) = context.backend.clone() else {
+        return;
+    };
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let api = GenerationApi::new(backend.api.clone());
         let mut recovered = Vec::new();
         for status in ["queued", "processing", "completed", "partially_completed"] {
-            let Ok(summaries) = api.list_tasks(status) else { continue; };
+            let Ok(summaries) = api.list_tasks(status) else {
+                continue;
+            };
             for summary in summaries {
-                if !matches!(summary.task_type.as_str(), "image_generation" | "image_upscale")
-                    || known_server_ids.contains(&summary.id) {
+                if !matches!(
+                    summary.task_type.as_str(),
+                    "image_generation"
+                        | "image_upscale"
+                        | "image_watermark_removal"
+                        | "image_cutout"
+                        | "image_colorization"
+                ) || known_server_ids.contains(&summary.id)
+                {
                     continue;
                 }
-                let Ok(detail) = api.task(&summary.id) else { continue; };
-                if detail.terminal() && !detail.items.iter().any(|item| {
-                    item.file.as_ref().and_then(|file| file.download_url.as_ref()).is_some()
-                }) {
+                let Ok(detail) = api.task(&summary.id) else {
+                    continue;
+                };
+                if detail.terminal()
+                    && !detail.items.iter().any(|item| {
+                        item.file
+                            .as_ref()
+                            .and_then(|file| file.download_url.as_ref())
+                            .is_some()
+                    })
+                {
                     continue;
                 }
-                let prompt = detail.prompt.clone().unwrap_or_else(|| "恢复的生成任务".to_string());
+                let toolbox_enhancement = summary.task_type == "image_upscale"
+                    && detail
+                        .model
+                        .as_ref()
+                        .is_some_and(|model| model.code == "aliyun_super_resolution");
+                let toolbox_colorization = summary.task_type == "image_colorization"
+                    && detail
+                        .model
+                        .as_ref()
+                        .is_some_and(|model| model.code == "aliyun_image_colorization");
+                let recovered_task_type = if toolbox_enhancement {
+                    "image_enhancement".to_string()
+                } else if toolbox_colorization {
+                    "image_colorization".to_string()
+                } else {
+                    summary.task_type.clone()
+                };
+                let recovered_quality = if toolbox_enhancement {
+                    let target_long_edge = detail
+                        .request
+                        .get("target_width")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0)
+                        .max(
+                            detail
+                                .request
+                                .get("target_height")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0),
+                        );
+                    if target_long_edge > 2048 { "4K" } else { "2K" }.to_string()
+                } else if summary.task_type == "image_cutout" {
+                    detail
+                        .request
+                        .get("subject_type")
+                        .and_then(Value::as_str)
+                        .unwrap_or("general")
+                        .to_string()
+                } else {
+                    detail.quality.clone()
+                };
+                let prompt = detail
+                    .prompt
+                    .clone()
+                    .unwrap_or_else(|| "恢复的生成任务".to_string());
                 let ratio = detail
                     .request
                     .get("aspect_ratio")
@@ -970,12 +1108,24 @@ fn recover_server_generation_tasks(
                     server_task_id: detail.id.clone(),
                     raw_prompt: prompt.clone(),
                     generation_prompt: prompt,
-                    task_type: summary.task_type.clone(),
-                    category: "character".to_string(),
+                    task_type: recovered_task_type,
+                    category: if summary.task_type == "image_watermark_removal"
+                        || summary.task_type == "image_cutout"
+                        || toolbox_enhancement
+                        || toolbox_colorization
+                    {
+                        "other".to_string()
+                    } else {
+                        "character".to_string()
+                    },
                     mode: "game".to_string(),
                     ratio,
-                    quality: detail.quality.clone(),
-                    model_code: detail.model.as_ref().map(|model| model.code.clone()).unwrap_or_default(),
+                    quality: recovered_quality,
+                    model_code: detail
+                        .model
+                        .as_ref()
+                        .map(|model| model.code.clone())
+                        .unwrap_or_default(),
                     conversation_id: Uuid::new_v4().to_string(),
                     count: detail.requested_count.max(1),
                     target_width: detail
@@ -988,7 +1138,10 @@ fn recover_server_generation_tasks(
                         .get("target_height")
                         .and_then(Value::as_u64)
                         .unwrap_or(0) as u32,
-                    create_conversation: true,
+                    create_conversation: summary.task_type != "image_watermark_removal"
+                        && summary.task_type != "image_cutout"
+                        && !toolbox_enhancement
+                        && !toolbox_colorization,
                     reference_paths: vec![],
                     uploaded_file_ids: vec![],
                     deliveries: vec![],
@@ -1017,9 +1170,27 @@ fn poll_server_generation_recovery(
             poll_server_generation_recovery(app_weak, context, receiver);
             return;
         };
-        let Some(app) = app_weak.upgrade() else { return; };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
         for record in records {
             let _ = upsert_pending_generation(record.clone());
+            if record.task_type == "image_watermark_removal" {
+                resume_pending_watermark_removal(&app, context.clone(), record);
+                continue;
+            }
+            if record.task_type == "image_enhancement" {
+                resume_pending_image_enhancement(&app, context.clone(), record);
+                continue;
+            }
+            if record.task_type == "image_cutout" {
+                resume_pending_image_cutout(&app, context.clone(), record);
+                continue;
+            }
+            if record.task_type == "image_colorization" {
+                resume_pending_image_colorization(&app, context.clone(), record);
+                continue;
+            }
             if !category_is_generating(&context, &record.category) {
                 resume_pending_generation(&app, context.clone(), record);
             }
@@ -1032,38 +1203,52 @@ fn resume_pending_generation(
     context: AppContext,
     record: PendingGenerationRecord,
 ) {
-    let Some(backend) = context.backend.clone() else { return; };
-    let saved_count = record.deliveries.iter()
+    let Some(backend) = context.backend.clone() else {
+        return;
+    };
+    let saved_count = record
+        .deliveries
+        .iter()
         .filter(|item| !item.local_path.is_empty() && Path::new(&item.local_path).is_file())
         .count() as i32;
-    insert_active_generation(&context, ActiveGeneration {
-        task_id: record.local_task_id.clone(),
-        client_request_id: Some(record.client_request_id.clone()),
-        server_task_id: (!record.server_task_id.is_empty()).then(|| record.server_task_id.clone()),
-        category: record.category.clone(),
-        conversation_id: record.conversation_id.clone(),
-        prompt: record.raw_prompt.clone(),
-        credit_cost: 0,
-        total_count: record.count,
-        loading_count: (record.count - saved_count).max(0),
-        completed_count: saved_count,
-        success_count: saved_count,
-        failed_count: 0,
-        progress: if saved_count > 0 { 50 } else { 1 },
-        eta: 0,
-        latest_success_id: None,
-    });
+    insert_active_generation(
+        &context,
+        ActiveGeneration {
+            task_id: record.local_task_id.clone(),
+            client_request_id: Some(record.client_request_id.clone()),
+            server_task_id: (!record.server_task_id.is_empty())
+                .then(|| record.server_task_id.clone()),
+            category: record.category.clone(),
+            conversation_id: record.conversation_id.clone(),
+            prompt: record.raw_prompt.clone(),
+            credit_cost: 0,
+            total_count: record.count,
+            loading_count: (record.count - saved_count).max(0),
+            completed_count: saved_count,
+            success_count: saved_count,
+            failed_count: 0,
+            progress: if saved_count > 0 { 50 } else { 1 },
+            eta: 0,
+            latest_success_id: None,
+        },
+    );
     let state = app.global::<AppState>();
     if record.create_conversation
-        && !state.get_conversations().iter().any(|item| item.id.as_str() == record.conversation_id)
+        && !state
+            .get_conversations()
+            .iter()
+            .any(|item| item.id.as_str() == record.conversation_id)
     {
         let mut conversations = state.get_conversations().iter().collect::<Vec<_>>();
-        conversations.insert(0, ConversationItem {
-            id: record.conversation_id.clone().into(),
-            title: short_text(&record.raw_prompt, 10).into(),
-            image: Image::default(),
-            loading: true,
-        });
+        conversations.insert(
+            0,
+            ConversationItem {
+                id: record.conversation_id.clone().into(),
+                title: short_text(&record.raw_prompt, 10).into(),
+                image: Image::default(),
+                loading: true,
+            },
+        );
         state.set_conversations(ModelRc::new(VecModel::from(conversations)));
     }
     set_generation_status_for_category(&context, app, &record.category, "正在恢复未完成任务...");
@@ -1187,7 +1372,9 @@ fn run_recovered_generation_worker(
             Ok(detail) => detail,
             Err(error) => {
                 if error.is_insufficient_credits() {
-                    for file_id in &uploaded { api.delete_reference(file_id); }
+                    for file_id in &uploaded {
+                        api.delete_reference(file_id);
+                    }
                     let _ = remove_pending_generation(&record.client_request_id);
                     let _ = sender.send(GenerationOutcome::CreditInsufficient {
                         message: "积分不足以支持本次生图，请前往充值".to_string(),
@@ -1195,7 +1382,9 @@ fn run_recovered_generation_worker(
                     return;
                 }
                 if !error.should_preserve_generation_recovery() {
-                    for file_id in &uploaded { api.delete_reference(file_id); }
+                    for file_id in &uploaded {
+                        api.delete_reference(file_id);
+                    }
                     let _ = remove_pending_generation(&record.client_request_id);
                 }
                 let _ = sender.send(GenerationOutcome::Failure {
@@ -1235,23 +1424,33 @@ fn run_recovered_generation_worker(
         item.server_task_id = server_id_snapshot;
         item.uploaded_file_ids = uploaded_snapshot;
     });
-    let _ = sender.send(GenerationOutcome::Accepted { task_id: server_task_id.clone() });
+    let _ = sender.send(GenerationOutcome::Accepted {
+        task_id: server_task_id.clone(),
+    });
 
-    let mut handled_success = record.deliveries.iter()
+    let mut handled_success = record
+        .deliveries
+        .iter()
         .filter(|item| !item.local_path.is_empty() && Path::new(&item.local_path).is_file())
         .map(|item| item.item_index)
         .collect::<BTreeSet<_>>();
     let mut handled_failure = BTreeSet::new();
     for delivery in &record.deliveries {
-        if delivery.acknowledged || delivery.local_path.is_empty() || !Path::new(&delivery.local_path).is_file() {
+        if delivery.acknowledged
+            || delivery.local_path.is_empty()
+            || !Path::new(&delivery.local_path).is_file()
+        {
             continue;
         }
-        if api.acknowledge_delivery(
-            &server_task_id,
-            &delivery.file_id,
-            &delivery.sha256,
-            delivery.size_bytes,
-        ).is_ok() {
+        if api
+            .acknowledge_delivery(
+                &server_task_id,
+                &delivery.file_id,
+                &delivery.sha256,
+                delivery.size_bytes,
+            )
+            .is_ok()
+        {
             let _ = pending_delivery_acknowledged(&record.client_request_id, &delivery.file_id);
         }
     }
@@ -1267,7 +1466,9 @@ fn run_recovered_generation_worker(
             );
             return;
         }
-        let _ = sender.send(GenerationOutcome::Progress { percent: detail.progress_percent });
+        let _ = sender.send(GenerationOutcome::Progress {
+            percent: detail.progress_percent,
+        });
         for item in &detail.items {
             if item.status == "succeeded" && !handled_success.contains(&item.index) {
                 if let Some(file) = item.file.as_ref() {
@@ -1303,7 +1504,10 @@ fn run_recovered_generation_worker(
                 && handled_failure.insert(item.index)
             {
                 let _ = sender.send(GenerationOutcome::ImageFailure {
-                    reason: item.failure.as_ref().map(|value| value.message.clone())
+                    reason: item
+                        .failure
+                        .as_ref()
+                        .map(|value| value.message.clone())
                         .unwrap_or_else(|| "服务端未能生成该图片".to_string()),
                     time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
                 });

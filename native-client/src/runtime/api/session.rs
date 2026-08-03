@@ -33,8 +33,7 @@ impl FileRefreshTokenStore {
         let parent = self.path.parent().ok_or_else(|| ApiError::LocalState {
             message: "刷新令牌文件缺少父目录".to_string(),
         })?;
-        fs::create_dir_all(parent)
-            .map_err(|error| local_state_error("创建登录状态目录", error))?;
+        fs::create_dir_all(parent).map_err(|error| local_state_error("创建登录状态目录", error))?;
         restrict_directory(parent)
     }
 
@@ -320,7 +319,9 @@ mod tests {
     fn installing_tokens_persists_refresh_and_keeps_access_in_memory() {
         let store = Arc::new(MemoryRefreshTokenStore::default());
         let manager = SessionManager::new(store.clone());
-        manager.install_tokens(&tokens("access-1", "refresh-1")).unwrap();
+        manager
+            .install_tokens(&tokens("access-1", "refresh-1"))
+            .unwrap();
 
         assert_eq!(manager.access_token().as_deref(), Some("access-1"));
         assert_eq!(store.load().unwrap().as_deref(), Some("refresh-1"));
@@ -330,7 +331,9 @@ mod tests {
     fn persisted_refresh_token_is_available_to_a_fresh_session_manager() {
         let store = Arc::new(MemoryRefreshTokenStore::default());
         let first = SessionManager::new(store.clone());
-        first.install_tokens(&tokens("access-1", "refresh-1")).unwrap();
+        first
+            .install_tokens(&tokens("access-1", "refresh-1"))
+            .unwrap();
         drop(first);
 
         let second = SessionManager::new(store.clone());
@@ -348,10 +351,8 @@ mod tests {
 
     #[test]
     fn file_store_persists_rotated_token_and_clears_it() {
-        let dir = std::env::temp_dir().join(format!(
-            "artforge-session-test-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("artforge-session-test-{}", uuid::Uuid::new_v4()));
         let first = FileRefreshTokenStore::new(&dir);
         first.save("refresh-1").unwrap();
         assert_eq!(first.load().unwrap().as_deref(), Some("refresh-1"));

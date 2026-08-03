@@ -19,11 +19,8 @@ pub(super) fn start_generation(
         .get_deep_optimization_applied_english()
         .trim()
         .to_string();
-    let input_prompt = submitted_prompt_for_visible_prompt(
-        &visible_prompt,
-        &applied_chinese,
-        &applied_english,
-    );
+    let input_prompt =
+        submitted_prompt_for_visible_prompt(&visible_prompt, &applied_chinese, &applied_english);
     let raw_prompt = if let Some(override_prompt) = override_prompt {
         override_prompt.trim().to_string()
     } else {
@@ -296,6 +293,7 @@ pub(super) fn add_stream_success_item(
         ratio: ratio_from_actual_dimensions(width, height),
         quality: quality.to_string(),
         model: image_model.to_string(),
+        origin: "generation".to_string(),
         width,
         height,
         image,
@@ -358,6 +356,7 @@ pub(super) fn add_stream_failure_item(
             ratio: ratio.to_string(),
             quality: quality.to_string(),
             model: image_model.to_string(),
+            origin: "generation".to_string(),
             width: 0,
             height: 0,
             image: Image::default(),

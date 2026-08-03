@@ -24,10 +24,7 @@ fn advance_second_countdown(
     interval_milliseconds: i32,
 ) -> (i32, i32) {
     let elapsed = elapsed_milliseconds.saturating_add(interval_milliseconds.max(0));
-    (
-        (remaining_seconds - elapsed / 1000).max(0),
-        elapsed % 1000,
-    )
+    ((remaining_seconds - elapsed / 1000).max(0), elapsed % 1000)
 }
 
 fn reset_pointer_after_native_drag(app: &AppWindow) {
@@ -79,6 +76,12 @@ use infinite_canvas_callbacks::*;
 #[path = "callbacks/toolbox.rs"]
 mod toolbox_callbacks;
 use toolbox_callbacks::*;
+#[path = "callbacks/image_enhancement.rs"]
+mod image_enhancement_callbacks;
+use image_enhancement_callbacks::*;
+#[path = "callbacks/image_cutout.rs"]
+mod image_cutout_callbacks;
+use image_cutout_callbacks::*;
 #[path = "callbacks/contact.rs"]
 mod contact_callbacks;
 use contact_callbacks::*;

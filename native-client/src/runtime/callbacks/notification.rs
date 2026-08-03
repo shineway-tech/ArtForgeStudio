@@ -1,7 +1,9 @@
 use super::*;
 
 pub(super) fn wire_notification_callbacks(app: &AppWindow, context: AppContext) {
-    let Some(backend) = context.backend.clone() else { return; };
+    let Some(backend) = context.backend.clone() else {
+        return;
+    };
     let state = app.global::<AppState>();
 
     {
@@ -9,7 +11,9 @@ pub(super) fn wire_notification_callbacks(app: &AppWindow, context: AppContext) 
         let store = context.store.clone();
         let backend = backend.clone();
         state.on_mark_notification_read(move |id| {
-            let Some(app) = app_weak.upgrade() else { return; };
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             let id = id.to_string();
             {
                 let mut store = store.borrow_mut();
@@ -19,7 +23,9 @@ pub(super) fn wire_notification_callbacks(app: &AppWindow, context: AppContext) 
                 push_notifications(&app, &store);
             }
             let api = NotificationsApi::new(backend.api.clone());
-            std::thread::spawn(move || { let _ = api.mark_read(&id); });
+            std::thread::spawn(move || {
+                let _ = api.mark_read(&id);
+            });
         });
     }
 
@@ -28,14 +34,20 @@ pub(super) fn wire_notification_callbacks(app: &AppWindow, context: AppContext) 
         let store = context.store.clone();
         let backend = backend.clone();
         state.on_mark_all_notifications_read(move || {
-            let Some(app) = app_weak.upgrade() else { return; };
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             {
                 let mut store = store.borrow_mut();
-                for item in &mut store.notifications { item.read = true; }
+                for item in &mut store.notifications {
+                    item.read = true;
+                }
                 push_notifications(&app, &store);
             }
             let api = NotificationsApi::new(backend.api.clone());
-            std::thread::spawn(move || { let _ = api.mark_all_read(); });
+            std::thread::spawn(move || {
+                let _ = api.mark_all_read();
+            });
         });
     }
 
@@ -44,7 +56,9 @@ pub(super) fn wire_notification_callbacks(app: &AppWindow, context: AppContext) 
         let store = context.store.clone();
         let backend = backend.clone();
         state.on_delete_notification(move |id| {
-            let Some(app) = app_weak.upgrade() else { return; };
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             let id = id.to_string();
             {
                 let mut store = store.borrow_mut();
@@ -70,7 +84,9 @@ pub(super) fn wire_notification_callbacks(app: &AppWindow, context: AppContext) 
         let store = context.store.clone();
         let backend = backend.clone();
         state.on_clear_all_notifications(move || {
-            let Some(app) = app_weak.upgrade() else { return; };
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             {
                 let mut store = store.borrow_mut();
                 store.notifications.clear();
@@ -92,7 +108,9 @@ pub(super) fn wire_notification_callbacks(app: &AppWindow, context: AppContext) 
 }
 
 pub(super) fn refresh_server_notifications(app: &AppWindow, context: AppContext) {
-    let Some(backend) = context.backend.clone() else { return; };
+    let Some(backend) = context.backend.clone() else {
+        return;
+    };
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let _ = sender.send(NotificationsApi::new(backend.api.clone()).list());
@@ -133,47 +151,122 @@ fn has_failure_marker(value: &str) -> bool {
             .any(|marker| value.contains(marker))
 }
 
+fn notification_display_model(item: &ServerNotification) -> String {
+    match item.metadata.get("task_type").and_then(Value::as_str) {
+        Some("image_upscale") => "图片清晰".to_string(),
+        Some("image_watermark_removal") => "去水印".to_string(),
+        Some("image_cutout") => "智能抠图".to_string(),
+        Some("image_colorization") => "老照片上色".to_string(),
+        _ => item
+            .metadata
+            .get("model_name")
+            .or_else(|| item.metadata.get("model_code"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+    }
+}
+
 fn poll_server_notifications(
     app_weak: Weak<AppWindow>,
     context: AppContext,
-    receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<Vec<ServerNotification>, ApiError>>>>>,
+    receiver: Rc<
+        RefCell<Option<mpsc::Receiver<std::result::Result<Vec<ServerNotification>, ApiError>>>>,
+    >,
 ) {
     slint::Timer::single_shot(Duration::from_millis(100), move || {
-        let result = receiver.borrow().as_ref().and_then(|value| value.try_recv().ok());
+        let result = receiver
+            .borrow()
+            .as_ref()
+            .and_then(|value| value.try_recv().ok());
         let Some(result) = result else {
             poll_server_notifications(app_weak, context, receiver);
             return;
         };
-        let Some(app) = app_weak.upgrade() else { return; };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
         match result {
             Ok(items) => {
                 let mut store = context.store.borrow_mut();
-                store.notifications = items.into_iter().map(|item| {
-                    let model = item.metadata.get("model_name")
-                        .or_else(|| item.metadata.get("model_code"))
-                        .and_then(|value| value.as_str()).unwrap_or("").to_string();
-                    let success = notification_is_success(&item);
-                    NotificationData {
-                        id: item.id,
-                        title: item.title,
-                        model,
-                        time: format_notification_time(&item.created_at),
-                        reason: item.body,
-                        success,
-                        read: item.read_at.is_some(),
-                    }
-                }).collect();
+                store.notifications = items
+                    .into_iter()
+                    .map(|item| {
+                        let model = notification_display_model(&item);
+                        let success = notification_is_success(&item);
+                        NotificationData {
+                            id: item.id,
+                            title: item.title,
+                            model,
+                            time: format_notification_time(&item.created_at),
+                            reason: item.body,
+                            success,
+                            read: item.read_at.is_some(),
+                        }
+                    })
+                    .collect();
                 push_notifications(&app, &store);
             }
-            Err(error) => app.global::<AppState>().set_generation_status(
-                format!("通知刷新失败：{}", error.user_message()).into(),
-            ),
+            Err(error) => app
+                .global::<AppState>()
+                .set_generation_status(format!("通知刷新失败：{}", error.user_message()).into()),
         }
     });
 }
 
 fn format_notification_time(value: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(value)
-        .map(|time| time.with_timezone(&Local).format("%Y-%m-%d %H:%M").to_string())
+        .map(|time| {
+            time.with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
         .unwrap_or_else(|_| value.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn server_notification(task_type: &str, model_name: &str) -> ServerNotification {
+        ServerNotification {
+            id: "notification-1".to_string(),
+            notification_type: "generation.finished".to_string(),
+            title: "生成完成".to_string(),
+            body: "图片已经生成，可以下载到本地图库。".to_string(),
+            metadata: serde_json::json!({
+                "task_type": task_type,
+                "model_name": model_name,
+            }),
+            created_at: "2026-07-30T00:00:00Z".to_string(),
+            read_at: None,
+        }
+    }
+
+    #[test]
+    fn toolbox_notifications_use_product_names_instead_of_provider_models() {
+        assert_eq!(
+            notification_display_model(&server_notification("image_upscale", "阿里云图像超分",)),
+            "图片清晰",
+        );
+        assert_eq!(
+            notification_display_model(&server_notification(
+                "image_watermark_removal",
+                "gpt-image-2",
+            )),
+            "去水印",
+        );
+        assert_eq!(
+            notification_display_model(&server_notification("image_colorization", "老照片上色",)),
+            "老照片上色",
+        );
+        assert_eq!(
+            notification_display_model(&server_notification("image_cutout", "阿里云图像分割",)),
+            "智能抠图",
+        );
+        assert_eq!(
+            notification_display_model(&server_notification("image_generation", "gpt-image-2",)),
+            "gpt-image-2",
+        );
+    }
 }

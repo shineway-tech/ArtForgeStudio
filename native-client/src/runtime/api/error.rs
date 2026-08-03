@@ -95,18 +95,14 @@ impl ApiError {
                 "操作过于频繁，请稍后再试".to_string()
             }
             Some("email_already_bound") => "当前账号已经绑定邮箱".to_string(),
-            Some("email_identity_conflict") => {
-                "该邮箱已属于其他账号，不能直接绑定".to_string()
-            }
+            Some("email_identity_conflict") => "该邮箱已属于其他账号，不能直接绑定".to_string(),
             Some("email_delivery_failed") => "验证码发送失败，请稍后重试".to_string(),
             Some("wechat_login_unavailable") => "微信登录暂未开放，请使用邮箱登录".to_string(),
             Some("wechat_login_expired") => "二维码已失效，请点击刷新".to_string(),
             Some("wechat_code_invalid" | "wechat_profile_unavailable") => {
                 "微信授权未完成，请刷新二维码重试".to_string()
             }
-            Some("wechat_provider_unavailable") => {
-                "微信服务暂时不可用，请稍后重试".to_string()
-            }
+            Some("wechat_provider_unavailable") => "微信服务暂时不可用，请稍后重试".to_string(),
             Some("wechat_already_bound") => "当前账号已经绑定微信".to_string(),
             Some("wechat_identity_conflict") => {
                 "该微信已绑定其他账号，请更换微信后重试".to_string()
@@ -116,17 +112,19 @@ impl ApiError {
                 "当前账号只能使用微信登录，不能解绑唯一登录方式".to_string()
             }
             Some("wechat_not_bound") => "当前账号尚未绑定微信".to_string(),
-            Some("agreement_acceptance_required") => {
-                "请阅读并同意最新协议后重试".to_string()
-            }
+            Some("agreement_acceptance_required") => "请阅读并同意最新协议后重试".to_string(),
             Some("client_update_required") => "当前客户端版本过旧，请更新后重试".to_string(),
             Some("account_disabled" | "account_unavailable") => {
                 "当前账号暂不可用，请联系客服".to_string()
             }
-            Some("authentication_required" | "access_token_invalid" | "session_invalid"
-                | "session_device_mismatch" | "refresh_token_invalid" | "refresh_token_reused") => {
-                "登录状态已失效，请重新登录".to_string()
-            }
+            Some(
+                "authentication_required"
+                | "access_token_invalid"
+                | "session_invalid"
+                | "session_device_mismatch"
+                | "refresh_token_invalid"
+                | "refresh_token_reused",
+            ) => "登录状态已失效，请重新登录".to_string(),
             Some("insufficient_credits") => "积分不足，请充值后重试".to_string(),
             Some("membership_quality_forbidden") => {
                 "当前会员不支持所选清晰度，请降低清晰度或升级会员".to_string()
@@ -146,6 +144,44 @@ impl ApiError {
             Some("image_target_size_invalid") => {
                 "放大尺寸超过所选清晰度上限，请调整清晰度后重试".to_string()
             }
+            Some("watermark_image_aspect_ratio_unsupported") => {
+                "图片比例超过 3:1，暂时无法一键去水印".to_string()
+            }
+            Some(
+                "watermark_image_dimensions_invalid" | "watermark_image_dimensions_unsupported",
+            ) => "图片尺寸不符合去水印要求，请更换图片后重试".to_string(),
+            Some("image_enhancement_type_unsupported") => {
+                "图片变清晰仅支持 JPG、PNG 和 WebP 格式".to_string()
+            }
+            Some("image_enhancement_file_too_large") => "图片超过 20 MB，请压缩后重试".to_string(),
+            Some("image_enhancement_aspect_ratio_unsupported") => {
+                "图片比例超过 2:1，暂时无法进行生成式超分".to_string()
+            }
+            Some(
+                "image_enhancement_dimensions_invalid"
+                | "image_enhancement_dimensions_too_small"
+                | "image_enhancement_dimensions_too_large",
+            ) => "图片尺寸不符合超分要求，请更换图片后重试".to_string(),
+            Some("image_enhancement_quality_invalid") => "请选择 2K 或 4K 清晰度".to_string(),
+            Some("image_cutout_type_unsupported") => {
+                "智能抠图仅支持 JPG、PNG 和 WebP 格式".to_string()
+            }
+            Some("image_cutout_file_too_large") => {
+                "图片超过所选抠图类型的大小限制，可改选“通用”或压缩后重试".to_string()
+            }
+            Some(
+                "image_cutout_dimensions_invalid"
+                | "image_cutout_dimensions_too_small"
+                | "image_cutout_dimensions_too_large",
+            ) => "图片尺寸超出所选抠图类型范围，可改选“通用”或调整图片尺寸".to_string(),
+            Some("image_cutout_subject_type_invalid") => "请选择有效的抠图主体类型".to_string(),
+            Some("image_colorization_type_unsupported") => {
+                "老照片上色仅支持 JPG、PNG 和 BMP 格式".to_string()
+            }
+            Some("image_colorization_file_too_large") => "图片超过 10 MB，请压缩后重试".to_string(),
+            Some(
+                "image_colorization_dimensions_invalid" | "image_colorization_dimensions_too_large",
+            ) => "图片宽高均需小于 3000 像素".to_string(),
             Some("model_unavailable" | "model_configuration_missing") => {
                 "所选模型已下线或暂不可用，请刷新模型目录后重试".to_string()
             }
@@ -161,16 +197,12 @@ impl ApiError {
             Some("client_request_conflict" | "idempotency_key_conflict") => {
                 "请求记录已变化，请重新发起操作".to_string()
             }
-            Some("delivery_checksum_mismatch") => {
-                "生成文件完整性校验失败，请重新下载".to_string()
-            }
+            Some("delivery_checksum_mismatch") => "生成文件完整性校验失败，请重新下载".to_string(),
             Some("membership_plan_unavailable" | "credit_pack_unavailable") => {
                 "所选商品已下线，请刷新后重试".to_string()
             }
             Some("membership_upgrade_required") => "请使用会员升级入口完成购买".to_string(),
-            Some("membership_downgrade_unsupported") => {
-                "当前暂不支持降级会员套餐".to_string()
-            }
+            Some("membership_downgrade_unsupported") => "当前暂不支持降级会员套餐".to_string(),
             Some("membership_operation_in_progress") => {
                 "已有会员订单正在处理中，请稍后再试".to_string()
             }
@@ -215,6 +247,44 @@ impl ApiError {
             Some("image_target_size_invalid") => {
                 "放大尺寸超过所选清晰度上限，请调整清晰度后重试".to_string()
             }
+            Some("watermark_image_aspect_ratio_unsupported") => {
+                "图片比例超过 3:1，暂时无法一键去水印".to_string()
+            }
+            Some(
+                "watermark_image_dimensions_invalid" | "watermark_image_dimensions_unsupported",
+            ) => "图片尺寸不符合去水印要求，请更换图片后重试".to_string(),
+            Some("image_enhancement_type_unsupported") => {
+                "图片变清晰仅支持 JPG、PNG 和 WebP 格式".to_string()
+            }
+            Some("image_enhancement_file_too_large") => "图片超过 20 MB，请压缩后重试".to_string(),
+            Some("image_enhancement_aspect_ratio_unsupported") => {
+                "图片比例超过 2:1，暂时无法进行生成式超分".to_string()
+            }
+            Some(
+                "image_enhancement_dimensions_invalid"
+                | "image_enhancement_dimensions_too_small"
+                | "image_enhancement_dimensions_too_large",
+            ) => "图片尺寸不符合超分要求，请更换图片后重试".to_string(),
+            Some("image_enhancement_quality_invalid") => "请选择 2K 或 4K 清晰度".to_string(),
+            Some("image_cutout_type_unsupported") => {
+                "智能抠图仅支持 JPG、PNG 和 WebP 格式".to_string()
+            }
+            Some("image_cutout_file_too_large") => {
+                "图片超过所选抠图类型的大小限制，可改选“通用”或压缩后重试".to_string()
+            }
+            Some(
+                "image_cutout_dimensions_invalid"
+                | "image_cutout_dimensions_too_small"
+                | "image_cutout_dimensions_too_large",
+            ) => "图片尺寸超出所选抠图类型范围，可改选“通用”或调整图片尺寸".to_string(),
+            Some("image_cutout_subject_type_invalid") => "请选择有效的抠图主体类型".to_string(),
+            Some("image_colorization_type_unsupported") => {
+                "老照片上色仅支持 JPG、PNG 和 BMP 格式".to_string()
+            }
+            Some("image_colorization_file_too_large") => "图片超过 10 MB，请压缩后重试".to_string(),
+            Some(
+                "image_colorization_dimensions_invalid" | "image_colorization_dimensions_too_large",
+            ) => "图片宽高均需小于 3000 像素".to_string(),
             Some("model_unavailable" | "model_configuration_missing") => {
                 "所选模型已下线或暂不可用，请刷新模型目录后重试".to_string()
             }
@@ -230,9 +300,7 @@ impl ApiError {
             Some("client_request_conflict") => {
                 "请求恢复信息与服务端记录冲突，请重新发起生成".to_string()
             }
-            Some("delivery_checksum_mismatch") => {
-                "生成文件完整性校验失败，请重新下载".to_string()
-            }
+            Some("delivery_checksum_mismatch") => "生成文件完整性校验失败，请重新下载".to_string(),
             _ if self.is_client_update_required() => "当前客户端版本过旧，请更新后重试".to_string(),
             _ if self.is_terminal_session_error() => "登录状态已失效，请重新登录".to_string(),
             _ => self.user_message(),
@@ -314,6 +382,12 @@ mod tests {
         assert!(http_error("model_aspect_ratio_unsupported")
             .generation_message()
             .contains("画面比例"));
+        assert!(http_error("image_cutout_file_too_large")
+            .generation_message()
+            .contains("改选“通用”"));
+        assert!(http_error("image_cutout_dimensions_too_large")
+            .generation_message()
+            .contains("调整图片尺寸"));
     }
 
     #[test]

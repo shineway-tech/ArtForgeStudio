@@ -30,9 +30,7 @@ mod tests {
                 "https://cdn.honeykid.cn/public/art_forge/ElunviCanvas_macos_aarch64.dmg"
             )
             .as_deref(),
-            Some(
-                "https://static.honeykid.cn/public/art_forge/ElunviCanvas_macos_aarch64.dmg"
-            )
+            Some("https://static.honeykid.cn/public/art_forge/ElunviCanvas_macos_aarch64.dmg")
         );
         assert!(validated_update_download_url("http://static.honeykid.cn/update.dmg").is_err());
         assert!(validated_update_download_url(
@@ -44,7 +42,10 @@ mod tests {
         assert!(valid_update_artifact_metadata(42, &"a".repeat(64)));
         assert!(!valid_update_artifact_metadata(0, &"a".repeat(64)));
         assert!(!valid_update_artifact_metadata(42, "not-a-sha256"));
-        assert_eq!(shell_quote("ArtForge's update"), "'ArtForge'\"'\"'s update'");
+        assert_eq!(
+            shell_quote("ArtForge's update"),
+            "'ArtForge'\"'\"'s update'"
+        );
         assert!(windows_update_installer_args().contains(&"/VERYSILENT"));
         assert!(windows_update_installer_args().contains(&"/CLOSEAPPLICATIONS"));
         assert!(is_update_temp_dir_name(&format!(
@@ -134,8 +135,8 @@ mod tests {
     #[test]
     fn generation_api_preserves_exact_aspect_ratios() {
         for ratio in [
-            "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "2:1",
-            "1:2", "21:9", "9:21",
+            "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "2:1", "1:2", "21:9",
+            "9:21",
         ] {
             assert_eq!(api_aspect_ratio(ratio), ratio);
             assert_eq!(client_ratio_from_api(ratio), ratio);
@@ -175,6 +176,38 @@ mod tests {
 
         assert_eq!(saved, bytes);
         assert_eq!((width, height), (1254, 1254));
+    }
+
+    #[test]
+    fn local_crop_uses_normalized_bounds_and_applies_transforms() {
+        let source_path =
+            std::env::temp_dir().join(format!("artforge-crop-source-{}.png", Uuid::new_v4()));
+        let mut source = image::RgbaImage::new(4, 2);
+        for y in 0..2 {
+            for x in 0..4 {
+                source.put_pixel(
+                    x,
+                    y,
+                    if x < 2 {
+                        image::Rgba([220, 20, 20, 255])
+                    } else {
+                        image::Rgba([20, 40, 220, 255])
+                    },
+                );
+            }
+        }
+        source.save(&source_path).unwrap();
+
+        let cropped = process_crop_result(&source_path, "", (0.5, 0.0, 0.5, 1.0)).unwrap();
+        let cropped = image::load_from_memory(&cropped).unwrap().to_rgba8();
+        assert_eq!(cropped.dimensions(), (2, 2));
+        assert!(cropped.pixels().all(|pixel| pixel.0 == [20, 40, 220, 255]));
+
+        let rotated = process_crop_result(&source_path, "R", (0.0, 0.0, 1.0, 1.0)).unwrap();
+        let rotated = image::load_from_memory(&rotated).unwrap();
+        assert_eq!((rotated.width(), rotated.height()), (2, 4));
+
+        fs::remove_file(source_path).unwrap();
     }
 
     #[test]
@@ -231,7 +264,11 @@ mod tests {
 
     #[test]
     fn slash_prompt_history_uses_latest_unique_local_prompts() {
-        let mut prompts = vec!["  recent prompt  ".to_string(), String::new(), "recent prompt".to_string()];
+        let mut prompts = vec![
+            "  recent prompt  ".to_string(),
+            String::new(),
+            "recent prompt".to_string(),
+        ];
         prompts.extend((0..25).map(|index| format!("prompt-{index}")));
 
         let history = recent_prompt_history(prompts.iter().map(String::as_str), 20);
@@ -253,15 +290,14 @@ mod tests {
         assert!(composer.contains("event.text == \"/\""));
         assert!(composer.contains("AppState.prompt == \"\""));
         assert!(composer.contains("AppState.prompt-history-open = true"));
-        assert!(composer.contains(
-            "root.apply-selected-prompt(AppState.prompt-history[index])"
-        ));
+        assert!(composer.contains("root.apply-selected-prompt(AppState.prompt-history[index])"));
         assert!(sync.contains("recent_prompt_history"));
         assert!(sync.contains("dismissed_prompt_history"));
         assert!(sync.contains("20"));
         assert!(callbacks.contains("state.on_remove_prompt_history"));
         assert!(callbacks.contains("state.on_clear_prompt_history"));
-        assert!(local_store.contains("dismissed_prompt_history: store.dismissed_prompt_history.clone()"));
+        assert!(local_store
+            .contains("dismissed_prompt_history: store.dismissed_prompt_history.clone()"));
         assert!(local_store
             .contains("store_mut.dismissed_prompt_history = data.dismissed_prompt_history"));
     }
@@ -270,7 +306,10 @@ mod tests {
     fn prompt_history_dismissal_is_independent_and_reversible() {
         let mut store = Store::default();
 
-        assert!(dismiss_prompt_history_entry(&mut store, "  keep me hidden  "));
+        assert!(dismiss_prompt_history_entry(
+            &mut store,
+            "  keep me hidden  "
+        ));
         assert!(store.dismissed_prompt_history.contains("keep me hidden"));
         assert!(!dismiss_prompt_history_entry(&mut store, "keep me hidden"));
         assert!(reveal_prompt_history_entry(&mut store, "keep me hidden"));
@@ -348,12 +387,8 @@ mod tests {
         assert_eq!(composer.matches("event.text == Key.DownArrow").count(), 2);
         assert_eq!(composer.matches("event.text == Key.UpArrow").count(), 2);
         assert_eq!(composer.matches("event.text == Key.Escape").count(), 2);
-        assert!(composer.contains(
-            "AppState.prompt-history[root.prompt-history-selected-index]"
-        ));
-        assert!(composer.contains(
-            "AppState.toggle-custom-prompt-selection("
-        ));
+        assert!(composer.contains("AppState.prompt-history[root.prompt-history-selected-index]"));
+        assert!(composer.contains("AppState.toggle-custom-prompt-selection("));
         assert!(composer.contains("root.scroll-prompt-history-selection-into-view()"));
         assert!(composer.contains("root.scroll-custom-prompt-selection-into-view()"));
         assert!(composer.contains("index == root.prompt-history-selected-index"));
@@ -390,7 +425,10 @@ mod tests {
             SaveCustomPromptResult::Saved
         );
         assert_eq!(
-            store.custom_prompt_times.get("saved prompt").map(String::as_str),
+            store
+                .custom_prompt_times
+                .get("saved prompt")
+                .map(String::as_str),
             Some("2026-07-21 10:00")
         );
         save_custom_prompt_profile(
@@ -431,7 +469,10 @@ mod tests {
         );
         assert!(!store.custom_prompt_times.contains_key("saved prompt"));
         assert_eq!(
-            store.custom_prompt_times.get("edited prompt").map(String::as_str),
+            store
+                .custom_prompt_times
+                .get("edited prompt")
+                .map(String::as_str),
             Some("2026-07-21 10:03")
         );
         save_custom_prompt_profile(
@@ -465,7 +506,10 @@ mod tests {
         }
         assert_eq!(store.custom_prompts.len(), MAX_CUSTOM_PROMPTS);
         assert!(remove_custom_prompt_from_store(&mut store, "prompt-109"));
-        assert!(!remove_custom_prompt_from_store(&mut store, "missing prompt"));
+        assert!(!remove_custom_prompt_from_store(
+            &mut store,
+            "missing prompt"
+        ));
     }
 
     #[test]
@@ -531,8 +575,9 @@ mod tests {
         assert!(composer.contains("close-policy: close-on-click-outside"));
 
         assert!(local_store.contains("custom_prompts: store.custom_prompts.clone()"));
-        assert!(local_store
-            .contains("selected_custom_prompts: store.selected_custom_prompts.clone()"));
+        assert!(
+            local_store.contains("selected_custom_prompts: store.selected_custom_prompts.clone()")
+        );
         assert!(local_store.contains("custom_prompt_times: store.custom_prompt_times.clone()"));
         assert!(local_store.contains("normalize_custom_prompts(data.custom_prompts)"));
         assert!(callbacks.contains("save_local_store(&app, &store.borrow())"));
@@ -542,9 +587,9 @@ mod tests {
         assert!(callbacks.contains("state.on_begin_new_custom_prompt"));
         assert!(callbacks.contains("state.on_begin_edit_custom_prompt"));
         assert!(callbacks.contains("state.on_choose_custom_prompt_reference"));
-        assert!(local_store.contains(
-            "custom_prompt_profiles: store.custom_prompt_profiles.clone()"
-        ));
+        assert!(
+            local_store.contains("custom_prompt_profiles: store.custom_prompt_profiles.clone()")
+        );
     }
 
     #[test]
@@ -558,13 +603,15 @@ mod tests {
         let popup = composer
             .split("custom-prompt-popup := PopupWindow")
             .nth(1)
-            .and_then(|value| value.split("function scroll-prompt-history-selection").next())
+            .and_then(|value| {
+                value
+                    .split("function scroll-prompt-history-selection")
+                    .next()
+            })
             .expect("custom prompt popup");
 
         assert!(types.contains("selected: bool"));
-        assert!(state.contains(
-            "in-out property <[CustomPromptItem]> selected-custom-prompt-items"
-        ));
+        assert!(state.contains("in-out property <[CustomPromptItem]> selected-custom-prompt-items"));
         assert!(state.contains("callback toggle-custom-prompt-selection(string)"));
         assert!(callbacks.contains("state.on_toggle_custom_prompt_selection"));
         assert!(callbacks.contains("current_workspace_category(&app)"));
@@ -593,21 +640,21 @@ mod tests {
         let popup = composer
             .split("custom-prompt-popup := PopupWindow")
             .nth(1)
-            .and_then(|value| value.split("function scroll-prompt-history-selection").next())
+            .and_then(|value| {
+                value
+                    .split("function scroll-prompt-history-selection")
+                    .next()
+            })
             .expect("custom prompt popup");
 
         assert!(composer.contains("prompt-entry-row := HorizontalLayout"));
         assert!(composer.contains("prompt-cursor-area := TouchArea"));
         assert!(composer.contains("mouse-cursor: text;"));
         assert!(composer.contains("horizontal-stretch: 1;"));
-        assert!(composer.contains(
-            "? max(0px, (26px - AppState.settings-font-size * 1px) / 2)"
-        ));
+        assert!(composer.contains("? max(0px, (26px - AppState.settings-font-size * 1px) / 2)"));
         assert!(composer.contains("height: parent.height - self.y;"));
         assert!(composer.contains("width: selected-title.preferred-width + 38px;"));
-        assert!(composer.contains(
-            "for item in AppState.selected-custom-prompt-items: Rectangle"
-        ));
+        assert!(composer.contains("for item in AppState.selected-custom-prompt-items: Rectangle"));
         assert!(!composer.contains("selected-prompt-tags := Rectangle"));
         assert!(!composer.contains("selected-prompt-row := HorizontalLayout"));
         assert!(!composer.contains(
@@ -623,31 +670,25 @@ mod tests {
             })
             .expect("prompt entry row");
         assert!(!prompt_entry.contains("alignment: start;"));
-        assert!(!composer.contains(
-            "x: AppState.selected-custom-prompt-items.length > 0 ? 270px : 24px;"
-        ));
+        assert!(!composer
+            .contains("x: AppState.selected-custom-prompt-items.length > 0 ? 270px : 24px;"));
         assert!(composer.contains("y: root.prompt-input-y();"));
         assert!(composer.contains("event.text == Key.Backspace"));
         assert!(composer.contains("&& AppState.prompt == \"\""));
-        assert!(composer.contains(
-            "AppState.selected-custom-prompt-items[0].content"
-        ));
+        assert!(composer.contains("AppState.selected-custom-prompt-items[0].content"));
         assert!(composer.contains("property <bool> custom-prompt-selection-pending: false;"));
         assert!(composer.contains("function queue-custom-prompt-selection(value: string)"));
         assert!(composer.contains("interval: 1ms;"));
         assert!(composer.contains("running: root.custom-prompt-selection-pending;"));
         assert!(composer.contains("AppState.custom-prompt-open = false"));
         assert!(composer.contains("custom-prompt-popup.close()"));
-        assert!(composer.contains(
-            "prompt-input.set-selection-offsets(2147483647, 2147483647)"
-        ));
+        assert!(composer.contains("prompt-input.set-selection-offsets(2147483647, 2147483647)"));
         assert!(popup.contains("root.queue-custom-prompt-selection(item.content)"));
         assert!(!popup.contains("AppState.toggle-custom-prompt-selection(item.content)"));
         assert!(composer.contains("root.custom-prompt-selected-index = -1;"));
         assert!(composer.contains("root.custom-prompt-selected-index < 0"));
-        assert!(composer.contains(
-            "visible: selected-tag-touch.has-hover || selected-close-touch.has-hover;"
-        ));
+        assert!(composer
+            .contains("visible: selected-tag-touch.has-hover || selected-close-touch.has-hover;"));
         assert!(composer.contains("selected-close-touch := TouchArea"));
         assert!(composer.contains("text: \"×\""));
         assert!(composer.contains("selected-title.preferred-width + 38px"));
@@ -748,7 +789,11 @@ mod tests {
         let popup = composer
             .split("custom-prompt-popup := PopupWindow")
             .nth(1)
-            .and_then(|value| value.split("function scroll-prompt-history-selection").next())
+            .and_then(|value| {
+                value
+                    .split("function scroll-prompt-history-selection")
+                    .next()
+            })
             .expect("custom prompt popup");
 
         assert_eq!(
@@ -1013,7 +1058,8 @@ mod tests {
         assert_eq!(handler.matches("ReleaseCapture()").count(), 2);
         assert!(handler.contains("windows_file_drag::run(path).is_ok()"));
         assert!(!handler.contains("std::thread::spawn"));
-        assert!(drag.contains("DoDragDrop(&data_object, &drop_source, DROPEFFECT_COPY, &mut effect).ok()"));
+        assert!(drag
+            .contains("DoDragDrop(&data_object, &drop_source, DROPEFFECT_COPY, &mut effect).ok()"));
         assert!(runtime.contains("fn reset_pointer_after_native_drag"));
         assert!(runtime.contains("WindowEvent::PointerExited"));
         assert!(references.contains("reset_pointer_after_native_drag(&app)"));
@@ -1053,10 +1099,10 @@ mod tests {
     }
 
     #[test]
-fn generation_loading_thumbnail_exposes_a_stop_button() {
-    let card = include_str!("../../ui/components/generation-loading-card.slint");
-    let state = include_str!("../../ui/app-state.slint");
-    let callbacks = include_str!("callbacks/generation.rs");
+    fn generation_loading_thumbnail_exposes_a_stop_button() {
+        let card = include_str!("../../ui/components/generation-loading-card.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let callbacks = include_str!("callbacks/generation.rs");
 
         assert!(card.contains("stop-button := Rectangle"));
         assert!(card.contains("stop-touch := TouchArea"));
@@ -1064,493 +1110,625 @@ fn generation_loading_thumbnail_exposes_a_stop_button() {
         assert!(card.contains("visible: card-hover.has-hover || stop-touch.has-hover;"));
         assert!(card.contains("AppState.stop-generation()"));
         assert!(card.contains("AppTheme.danger"));
-    assert!(state.contains("callback stop-generation();"));
-    assert!(callbacks.contains("state.on_stop_generation"));
-}
-
-#[test]
-fn generation_loading_thumbnail_has_a_breathing_border() {
-    let card = include_str!("../../ui/components/generation-loading-card.slint");
-
-    assert!(card.contains("property <bool> pulse-bright: false;"));
-    assert!(card.contains("interval: 900ms;"));
-    assert!(card.contains("breathing-border := Rectangle"));
-    assert!(card.contains("animate opacity { duration: 900ms; easing: ease-in-out; }"));
-}
-
-#[test]
-fn generation_loading_and_completed_items_share_the_time_grouped_template() {
-    let panel = include_str!("../../ui/components/generation-result-panel.slint");
-    let gallery = include_str!("../../ui/components/time-grouped-gallery.slint");
-    let section = include_str!("../../ui/components/time-group-section.slint");
-
-    assert!(!panel.contains("GenerationWaterfall"));
-    assert!(panel.contains("result-gallery := TimeGroupedGallery"));
-    assert!(panel.contains(
-        "visible: AppState.generations.length > 0 || root.active-generating();"
-    ));
-    assert!(panel.contains("loading-group-title: AppState.en ? \"Today\" : \"今天\";"));
-    assert!(gallery.contains("loading-count: root.loading-count;"));
-    assert!(gallery.contains("group.title == root.loading-group-title"));
-    assert!(section.contains("GenerationLoadingCard"));
-    assert!(section.contains("index + root.loading-count"));
-}
-
-#[test]
-fn generation_results_scroll_to_the_gallerys_measured_height() {
-    let panel = include_str!("../../ui/components/generation-result-panel.slint");
-    let gallery = include_str!("../../ui/components/time-grouped-gallery.slint");
-
-    assert!(panel.contains(
-        "viewport-height: max(self.height, result-gallery.preferred-height);"
-    ));
-    assert!(panel.contains("y: 0px;"));
-    assert!(panel.contains("height: self.preferred-height;"));
-    assert!(gallery.contains("alignment: start;"));
-    assert!(!panel.contains("AppState.generation-groups.length * 66px"));
-}
-
-#[test]
-fn reference_images_are_capped_at_eight_outside_action_sequences() {
-    let model = include_str!("model.rs");
-    let configuration = include_str!("configuration.rs");
-    let composer = include_str!("../../ui/components/prompt-composer.slint");
-
-    assert_eq!(max_reference_images_for_category("character"), 8);
-    assert_eq!(max_reference_images_for_category("scene"), 8);
-    assert_eq!(max_reference_images_for_category("ui"), 8);
-    assert_eq!(max_reference_images_for_category("effect"), 8);
-    assert_eq!(max_reference_images_for_category("action-sequence"), 1);
-    assert!(model.contains("const MAX_REFERENCE_IMAGES: usize = 8;"));
-    assert!(configuration.contains("最多上传 8 张参考图"));
-    assert!(composer.contains("if AppState.asset-type == \"action-sequence\" { return 1; }"));
-    assert!(composer.contains("return 8;"));
-}
-
-#[test]
-fn thumbnail_galleries_switch_between_grid_and_masonry_layouts() {
-    let state = include_str!("../../ui/app-state.slint");
-    let toggle = include_str!("../../ui/components/gallery-layout-toggle.slint");
-    let panel = include_str!("../../ui/components/generation-result-panel.slint");
-    let assets = include_str!("../../ui/pages/assets-page.slint");
-    let inspiration = include_str!("../../ui/pages/inspiration-page.slint");
-    let groups = include_str!("../../ui/components/time-grouped-gallery.slint");
-    let thumbnail = include_str!("../../ui/components/thumbnail-card.slint");
-    let waterfall_column = include_str!("../../ui/components/waterfall-column.slint");
-    let waterfall = include_str!("../../ui/components/gallery-waterfall.slint");
-    let generation_waterfall = include_str!("../../ui/components/generation-waterfall.slint");
-
-    for property in [
-        "generation-gallery-layout",
-        "asset-gallery-layout",
-        "inspiration-gallery-layout",
-    ] {
-        assert!(state.contains(property), "missing gallery layout state {property}");
+        assert!(state.contains("callback stop-generation();"));
+        assert!(callbacks.contains("state.on_stop_generation"));
     }
-    assert!(toggle.contains("root.mode = root.mode == \"grid\" ? \"waterfall\" : \"grid\";"));
-    assert!(panel.contains("mode <=> AppState.generation-gallery-layout;"));
-    assert!(assets.contains("mode <=> AppState.asset-gallery-layout;"));
-    assert!(inspiration.contains("mode <=> AppState.inspiration-gallery-layout;"));
-    assert!(groups.contains("layout-mode: root.layout-mode;"));
-    assert!(thumbnail.contains("in property <bool> masonry: false;"));
-    assert!(thumbnail.contains("root.item.height / root.item.width"));
-    assert!(waterfall_column.contains("masonry: true;"));
-    assert!(waterfall.contains("floor((root.grid-width() + root.grid-gap()) / root.item-slot-width())"));
-    assert!(!waterfall.contains("min(root.items.length"));
-    assert!(waterfall.contains("(root.grid-width() - (root.column-count() - 1) * root.grid-gap()) / root.column-count()"));
-    assert!(generation_waterfall.contains("card-width: root.item-width();"));
-    assert!(generation_waterfall.contains("function column-count() -> int"));
-    assert!(panel.contains("AppState.generation-gallery-layout == \"waterfall\" ? root.base-thumb-width() : root.item-width()"));
-}
 
-#[test]
-fn application_brand_and_release_artifacts_are_elunvi_canvas() {
-    let app = include_str!("../../ui/app.slint");
-    let sidebar = include_str!("../../ui/components/sidebar.slint");
-    let welcome = include_str!("../../ui/pages/welcome-page.slint");
-    let settings = include_str!("../../ui/pages/settings-page.slint");
-    let windows_resources = include_str!("../../build.rs");
-    let installer = include_str!("../../../installer/ElunviCanvas.iss");
-    let windows_package = include_str!("../../../scripts/package-native-client.ps1");
-    let macos_package = include_str!("../../../scripts/package-macos.sh");
+    #[test]
+    fn generation_loading_thumbnail_has_a_breathing_border() {
+        let card = include_str!("../../ui/components/generation-loading-card.slint");
 
-    assert!(app.contains("title: \"Elunvi Canvas\";"));
-    assert!(sidebar.contains("text: \"Elunvi Canvas\";"));
-    assert!(welcome.contains("利用 Elunvi Canvas"));
-    assert!(settings.contains("text: \"Elunvi Canvas\";"));
-    assert!(windows_resources.contains("res.set(\"ProductName\", \"Elunvi Canvas\")"));
-    assert!(windows_resources.contains("res.set(\"FileDescription\", \"Elunvi Canvas\")"));
-    assert!(installer.contains("#define AppName \"Elunvi Canvas\""));
-    assert!(installer.contains("#define AppFileStem \"ElunviCanvas\""));
-    assert!(installer.contains("#define AppExeName \"ElunviCanvas.exe\""));
-    assert!(installer.contains("AppName={#AppName}"));
-    assert!(windows_package.contains("<string>Elunvi Canvas</string>"));
-    assert!(macos_package.contains("<string>Elunvi Canvas</string>"));
-    assert!(windows_package.contains("$AppName = \"ElunviCanvas\""));
-    assert!(macos_package.contains("APP_NAME=\"ElunviCanvas\""));
-}
-
-#[test]
-fn loading_dots_use_staggered_bouncing_motion() {
-    let dots = include_str!("../../ui/components/loading-dots.slint");
-
-    assert!(dots.contains("dot-one := Rectangle"));
-    assert!(dots.contains("dot-two := Rectangle"));
-    assert!(dots.contains("dot-three := Rectangle"));
-    assert!(dots.contains("interval: 120ms"));
-    assert!(dots.matches("animate y").count() >= 3);
-}
-
-#[test]
-fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
-    let page = include_str!("../../ui/pages/studio-split-page.slint");
-
-    assert!(page.contains("width: 480px;"));
-    assert!(page.contains("Rectangle { x: 480px;"));
-    assert!(page.contains("x: 481px;"));
-    assert!(page.contains("width: parent.width - 481px;"));
-}
-
-#[test]
-fn sidebar_toolbox_opens_a_six_tool_page() {
-    let sidebar = include_str!("../../ui/components/sidebar.slint");
-    let glyph = include_str!("../../ui/components/nav-glyph.slint");
-    let app = include_str!("../../ui/app.slint");
-    let state = include_str!("../../ui/app-state.slint");
-    let page = include_str!("../../ui/pages/toolbox-page.slint");
-
-    let canvas = sidebar.find("page: \"canvas\"").expect("canvas nav");
-    let toolbox = sidebar.find("page: \"toolbox\"").expect("toolbox nav");
-    let assets = sidebar.find("page: \"assets\"").expect("assets nav");
-    assert!(canvas < toolbox && toolbox < assets);
-    assert!(glyph.contains("root.kind == \"toolbox\""));
-    assert!(app.contains("AppState.page == \"toolbox\""));
-    assert!(state.contains("toolbox-selected-tool"));
-    for title in [
-        "去水印",
-        "图片清晰",
-        "老照片上色",
-        "图片裁剪",
-        "图片转格式",
-        "图片压缩",
-    ] {
-        assert!(page.contains(title), "missing toolbox card: {title}");
+        assert!(card.contains("property <bool> pulse-bright: false;"));
+        assert!(card.contains("interval: 900ms;"));
+        assert!(card.contains("breathing-border := Rectangle"));
+        assert!(card.contains("animate opacity { duration: 900ms; easing: ease-in-out; }"));
     }
-    assert_eq!(page.matches("tool-id: ").count(), 6);
-    assert_eq!(page.matches("target-page: \"toolbox-").count(), 6);
-    assert!(page.contains("target-page: \"toolbox-watermark\""));
-    assert!(page.contains("target-page: \"toolbox-enhance\""));
-    assert!(page.contains("target-page: \"toolbox-colorize\""));
-    assert!(page.contains("target-page: \"toolbox-crop\""));
-    assert!(page.contains("target-page: \"toolbox-convert\""));
-    assert!(page.contains("target-page: \"toolbox-compress\""));
-    assert!(page.contains("../../assets/icons/toolbox-watermark.svg"));
-    assert!(page.contains("../../assets/icons/toolbox-enhance.svg"));
-    assert!(page.contains("../../assets/icons/toolbox-convert.svg"));
-    assert!(page.contains("../../assets/icons/toolbox-compress.svg"));
-    assert!(page.contains("AppState.toolbox-selected-tool = root.tool-id"));
-    assert!(state.contains("toolbox-coming-soon-open"));
-    assert!(page.contains("AppState.toolbox-coming-soon-open = true"));
-    assert!(page.contains("AppState.en ? \"Coming soon\" : \"即将开放\""));
-    assert!(page.contains("AppState.en ? \"Got it\" : \"知道了\""));
-    assert!(!page.contains("\"选择工具\""));
-    assert!(!page.contains("\"已选择\""));
-    assert!(sidebar.contains("active: AppState.page == \"toolbox\""));
-    for subpage in [
-        "toolbox-watermark",
-        "toolbox-enhance",
-        "toolbox-colorize",
-        "toolbox-crop",
-        "toolbox-convert",
-        "toolbox-compress",
-    ] {
+
+    #[test]
+    fn generation_loading_and_completed_items_share_the_time_grouped_template() {
+        let panel = include_str!("../../ui/components/generation-result-panel.slint");
+        let gallery = include_str!("../../ui/components/time-grouped-gallery.slint");
+        let section = include_str!("../../ui/components/time-group-section.slint");
+
+        assert!(!panel.contains("GenerationWaterfall"));
+        assert!(panel.contains("result-gallery := TimeGroupedGallery"));
         assert!(
-            sidebar.contains(&format!("AppState.page == \"{subpage}\"")),
-            "toolbox navigation should remain active on {subpage}"
+            panel.contains("visible: AppState.generations.length > 0 || root.active-generating();")
         );
+        assert!(panel.contains("loading-group-title: AppState.en ? \"Today\" : \"今天\";"));
+        assert!(gallery.contains("loading-count: root.loading-count;"));
+        assert!(gallery.contains("group.title == root.loading-group-title"));
+        assert!(section.contains("GenerationLoadingCard"));
+        assert!(section.contains("index + root.loading-count"));
     }
-    let nav_item = include_str!("../../ui/components/nav-item.slint");
-    assert!(nav_item.contains("in property <bool> active: AppState.page == root.page;"));
-    assert!(nav_item.contains("background: root.active ? AppTheme.panel-soft"));
-    assert!(nav_item.contains("border-width: root.active ? 1px : 0px;"));
-    assert!(sidebar.contains(
-        "active: AppState.page == \"settings\" || AppState.page == \"custom-prompt-editor\";"
-    ));
-}
 
-#[test]
-fn toolbox_conversion_reuses_the_batch_upload_layout() {
-    let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
-    let conversion = include_str!("../../ui/pages/toolbox-conversion-page.slint");
-    let compression = include_str!("../../ui/pages/toolbox-compression-page.slint");
-    let state = include_str!("../../ui/app-state.slint");
-    let app_ui = include_str!("../../ui/app.slint");
-    let callbacks = include_str!("callbacks/toolbox.rs");
-    let reference = include_str!("callbacks/reference.rs");
+    #[test]
+    fn generation_results_scroll_to_the_gallerys_measured_height() {
+        let panel = include_str!("../../ui/components/generation-result-panel.slint");
+        let gallery = include_str!("../../ui/components/time-grouped-gallery.slint");
 
-    assert!(toolbox.contains("target-page: \"toolbox-convert\""));
-    assert!(app_ui.contains("AppState.page == \"toolbox-convert\""));
-    assert!(app_ui.contains("ToolboxConversionPage"));
-    assert!(compression.contains("export component CompressionDropArea"));
-    assert!(compression.contains("export component CompressionListRow"));
-    assert!(conversion.contains(
+        assert!(
+            panel.contains("viewport-height: max(self.height, result-gallery.preferred-height);")
+        );
+        assert!(panel.contains("y: 0px;"));
+        assert!(panel.contains("height: self.preferred-height;"));
+        assert!(gallery.contains("alignment: start;"));
+        assert!(!panel.contains("AppState.generation-groups.length * 66px"));
+    }
+
+    #[test]
+    fn reference_images_are_capped_at_eight_outside_action_sequences() {
+        let model = include_str!("model.rs");
+        let configuration = include_str!("configuration.rs");
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+
+        assert_eq!(max_reference_images_for_category("character"), 8);
+        assert_eq!(max_reference_images_for_category("scene"), 8);
+        assert_eq!(max_reference_images_for_category("ui"), 8);
+        assert_eq!(max_reference_images_for_category("effect"), 8);
+        assert_eq!(max_reference_images_for_category("action-sequence"), 1);
+        assert!(model.contains("const MAX_REFERENCE_IMAGES: usize = 8;"));
+        assert!(configuration.contains("最多上传 8 张参考图"));
+        assert!(composer.contains("if AppState.asset-type == \"action-sequence\" { return 1; }"));
+        assert!(composer.contains("return 8;"));
+    }
+
+    #[test]
+    fn thumbnail_galleries_switch_between_grid_and_responsive_masonry_layouts() {
+        let state = include_str!("../../ui/app-state.slint");
+        let toggle = include_str!("../../ui/components/gallery-layout-toggle.slint");
+        let panel = include_str!("../../ui/components/generation-result-panel.slint");
+        let assets = include_str!("../../ui/pages/assets-page.slint");
+        let inspiration = include_str!("../../ui/pages/inspiration-page.slint");
+        let groups = include_str!("../../ui/components/time-grouped-gallery.slint");
+        let thumbnail = include_str!("../../ui/components/thumbnail-card.slint");
+        let waterfall_column = include_str!("../../ui/components/waterfall-column.slint");
+        let waterfall = include_str!("../../ui/components/gallery-waterfall.slint");
+        let generation_waterfall =
+            include_str!("../../ui/components/generation-waterfall.slint");
+
+        for property in [
+            "generation-gallery-layout",
+            "asset-gallery-layout",
+            "inspiration-gallery-layout",
+        ] {
+            assert!(state.contains(property), "missing gallery layout state {property}");
+        }
+        assert!(toggle.contains("root.mode = root.mode == \"grid\" ? \"waterfall\" : \"grid\";"));
+        assert!(panel.contains("mode <=> AppState.generation-gallery-layout;"));
+        assert!(assets.contains("mode <=> AppState.asset-gallery-layout;"));
+        assert!(inspiration.contains("mode <=> AppState.inspiration-gallery-layout;"));
+        assert!(groups.contains("layout-mode: root.layout-mode;"));
+        assert!(thumbnail.contains("in property <bool> masonry: false;"));
+        assert!(thumbnail.contains("root.item.height / root.item.width"));
+        assert!(waterfall_column.contains("masonry: true;"));
+        assert!(waterfall
+            .contains("floor((root.grid-width() + root.grid-gap()) / root.item-slot-width())"));
+        assert!(!waterfall.contains("min(root.items.length"));
+        assert!(waterfall.contains(
+            "(root.grid-width() - (root.column-count() - 1) * root.grid-gap()) / root.column-count()"
+        ));
+        assert!(generation_waterfall.contains("card-width: root.item-width();"));
+        assert!(generation_waterfall.contains("function column-count() -> int"));
+        assert!(panel.contains(
+            "AppState.generation-gallery-layout == \"waterfall\" ? root.base-thumb-width() : root.item-width()"
+        ));
+    }
+
+    #[test]
+    fn application_brand_and_release_artifacts_are_elunvi_canvas() {
+        let app = include_str!("../../ui/app.slint");
+        let sidebar = include_str!("../../ui/components/sidebar.slint");
+        let welcome = include_str!("../../ui/pages/welcome-page.slint");
+        let settings = include_str!("../../ui/pages/settings-page.slint");
+        let windows_resources = include_str!("../../build.rs");
+        let installer = include_str!("../../../installer/ElunviCanvas.iss");
+        let windows_package = include_str!("../../../scripts/package-native-client.ps1");
+        let macos_package = include_str!("../../../scripts/package-macos.sh");
+
+        assert!(app.contains("title: \"Elunvi Canvas\";"));
+        assert!(sidebar.contains("text: \"Elunvi Canvas\";"));
+        assert!(welcome.contains("利用 Elunvi Canvas"));
+        assert!(settings.contains("text: \"Elunvi Canvas\";"));
+        assert!(windows_resources.contains("res.set(\"ProductName\", \"Elunvi Canvas\")"));
+        assert!(windows_resources.contains("res.set(\"FileDescription\", \"Elunvi Canvas\")"));
+        assert!(installer.contains("#define AppName \"Elunvi Canvas\""));
+        assert!(installer.contains("#define AppFileStem \"ElunviCanvas\""));
+        assert!(installer.contains("#define AppExeName \"ElunviCanvas.exe\""));
+        assert!(installer.contains("AppName={#AppName}"));
+        assert!(windows_package.contains("<string>Elunvi Canvas</string>"));
+        assert!(macos_package.contains("<string>Elunvi Canvas</string>"));
+        assert!(windows_package.contains("$AppName = \"ElunviCanvas\""));
+        assert!(macos_package.contains("APP_NAME=\"ElunviCanvas\""));
+    }
+
+    #[test]
+    fn loading_dots_use_staggered_bouncing_motion() {
+        let dots = include_str!("../../ui/components/loading-dots.slint");
+
+        assert!(dots.contains("dot-one := Rectangle"));
+        assert!(dots.contains("dot-two := Rectangle"));
+        assert!(dots.contains("dot-three := Rectangle"));
+        assert!(dots.contains("interval: 120ms"));
+        assert!(dots.matches("animate y").count() >= 3);
+    }
+
+    #[test]
+    fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
+        let page = include_str!("../../ui/pages/studio-split-page.slint");
+
+        assert!(page.contains("width: 480px;"));
+        assert!(page.contains("Rectangle { x: 480px;"));
+        assert!(page.contains("x: 481px;"));
+        assert!(page.contains("width: parent.width - 481px;"));
+    }
+
+    #[test]
+    fn sidebar_toolbox_opens_a_six_tool_page() {
+        let sidebar = include_str!("../../ui/components/sidebar.slint");
+        let glyph = include_str!("../../ui/components/nav-glyph.slint");
+        let app = include_str!("../../ui/app.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let page = include_str!("../../ui/pages/toolbox-page.slint");
+
+        let canvas = sidebar.find("page: \"canvas\"").expect("canvas nav");
+        let toolbox = sidebar.find("page: \"toolbox\"").expect("toolbox nav");
+        let assets = sidebar.find("page: \"assets\"").expect("assets nav");
+        assert!(canvas < toolbox && toolbox < assets);
+        assert!(glyph.contains("root.kind == \"toolbox\""));
+        assert!(app.contains("AppState.page == \"toolbox\""));
+        assert!(state.contains("toolbox-selected-tool"));
+        for title in [
+            "去水印",
+            "图片清晰",
+            "老照片上色",
+            "图片裁剪",
+            "图片转格式",
+            "图片压缩",
+        ] {
+            assert!(page.contains(title), "missing toolbox card: {title}");
+        }
+        assert_eq!(page.matches("tool-id: ").count(), 6);
+        assert_eq!(page.matches("target-page: \"toolbox-").count(), 6);
+        assert!(page.contains("target-page: \"toolbox-watermark\""));
+        assert!(page.contains("target-page: \"toolbox-enhance\""));
+        assert!(page.contains("target-page: \"toolbox-colorize\""));
+        assert!(page.contains("target-page: \"toolbox-crop\""));
+        assert!(page.contains("target-page: \"toolbox-convert\""));
+        assert!(page.contains("target-page: \"toolbox-compress\""));
+        assert!(page.contains("../../assets/icons/toolbox-watermark.svg"));
+        assert!(page.contains("../../assets/icons/toolbox-enhance.svg"));
+        assert!(page.contains("../../assets/icons/toolbox-convert.svg"));
+        assert!(page.contains("../../assets/icons/toolbox-compress.svg"));
+        assert!(page.contains("AppState.toolbox-selected-tool = root.tool-id"));
+        assert!(state.contains("toolbox-coming-soon-open"));
+        assert!(page.contains("AppState.toolbox-coming-soon-open = true"));
+        assert!(page.contains("AppState.en ? \"Coming soon\" : \"即将开放\""));
+        assert!(page.contains("AppState.en ? \"Got it\" : \"知道了\""));
+        assert!(!page.contains("\"选择工具\""));
+        assert!(!page.contains("\"已选择\""));
+        assert!(sidebar.contains("active: AppState.page == \"toolbox\""));
+        for subpage in [
+            "toolbox-watermark",
+            "toolbox-enhance",
+            "toolbox-colorize",
+            "toolbox-crop",
+            "toolbox-convert",
+            "toolbox-compress",
+        ] {
+            assert!(
+                sidebar.contains(&format!("AppState.page == \"{subpage}\"")),
+                "toolbox navigation should remain active on {subpage}"
+            );
+        }
+        let nav_item = include_str!("../../ui/components/nav-item.slint");
+        assert!(nav_item.contains("in property <bool> active: AppState.page == root.page;"));
+        assert!(nav_item.contains("background: root.active ? AppTheme.panel-soft"));
+        assert!(nav_item.contains("border-width: root.active ? 1px : 0px;"));
+        assert!(sidebar.contains(
+            "active: AppState.page == \"settings\" || AppState.page == \"custom-prompt-editor\";"
+        ));
+    }
+
+    #[test]
+    fn toolbox_conversion_reuses_the_batch_upload_layout() {
+        let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
+        let conversion = include_str!("../../ui/pages/toolbox-conversion-page.slint");
+        let compression = include_str!("../../ui/pages/toolbox-compression-page.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let app_ui = include_str!("../../ui/app.slint");
+        let callbacks = include_str!("callbacks/toolbox.rs");
+        let reference = include_str!("callbacks/reference.rs");
+
+        assert!(toolbox.contains("target-page: \"toolbox-convert\""));
+        assert!(app_ui.contains("AppState.page == \"toolbox-convert\""));
+        assert!(app_ui.contains("ToolboxConversionPage"));
+        assert!(compression.contains("export component CompressionDropArea"));
+        assert!(compression.contains("export component CompressionListRow"));
+        assert!(conversion.contains(
         "import { CompressionDropArea, CompressionListRow } from \"toolbox-compression-page.slint\""
     ));
-    assert!(conversion.contains("AppState.choose-conversion-images()"));
-    assert!(conversion.contains("AppState.paste-conversion-images()"));
-    assert!(conversion.contains("AppState.remove-conversion-image(item.id)"));
-    assert!(conversion.contains("AppState.reveal-conversion-result(item.id)"));
-    assert!(conversion.contains("AppState.clear-conversion-images()"));
-    assert!(conversion.contains("value <=> AppState.conversion-target-format"));
-    assert!(!conversion.contains("AppState.conversion-quality"));
-    assert!(!conversion.contains("quality-track"));
-    assert!(conversion.contains("AppState.conversion-source-format + \" → \""));
-    for format in [
-        "JPEG (.jpg)",
-        "PNG (.png)",
-        "WebP (.webp)",
-        "BMP (.bmp)",
-        "AVIF (.avif)",
-    ] {
-        assert!(conversion.contains(format), "missing conversion option: {format}");
+        assert!(conversion.contains("AppState.choose-conversion-images()"));
+        assert!(conversion.contains("AppState.paste-conversion-images()"));
+        assert!(conversion.contains("AppState.remove-conversion-image(item.id)"));
+        assert!(conversion.contains("AppState.save-conversion-result(item.id)"));
+        assert!(conversion.contains("AppState.clear-conversion-images()"));
+        assert!(conversion.contains("value <=> AppState.conversion-target-format"));
+        assert!(!conversion.contains("AppState.conversion-quality"));
+        assert!(!conversion.contains("quality-track"));
+        assert!(conversion.contains("AppState.conversion-source-format + \" → \""));
+        for format in [
+            "JPEG (.jpg)",
+            "PNG (.png)",
+            "WebP (.webp)",
+            "BMP (.bmp)",
+            "AVIF (.avif)",
+        ] {
+            assert!(
+                conversion.contains(format),
+                "missing conversion option: {format}"
+            );
+        }
+        assert!(conversion.contains("AppState.conversion-images.length"));
+        assert!(conversion.contains("AppState.start-conversion()"));
+        assert!(state.contains("in-out property <[CompressionImageItem]> conversion-images"));
+        assert!(state.contains("conversion-target-format: \"jpeg\""));
+        assert!(state.contains("conversion-saving: false"));
+        assert!(state.contains("conversion-has-results: false"));
+        assert!(!state.contains("conversion-quality"));
+        assert!(!state.contains("conversion-estimated-credits"));
+        assert!(conversion.contains("\"转换仅在本地进行，不会上传图片\""));
+        assert!(conversion.contains("result-action-text: AppState.en ? \"Save\" : \"保存\""));
+        assert!(conversion.contains("result-action-visible: item.status == \"completed\""));
+        assert!(callbacks.contains("const MAX_CONVERSION_IMAGES: usize = 50;"));
+        assert!(callbacks.contains("state.on_choose_conversion_images"));
+        assert!(callbacks.contains("state.on_add_conversion_images_from_drag"));
+        assert!(callbacks.contains("state.on_paste_conversion_images"));
+        assert!(callbacks.contains("state.on_save_conversion_result"));
+        assert!(callbacks.contains("state.on_start_conversion"));
+        assert!(callbacks.contains("run_local_conversion_worker"));
+        assert!(callbacks.contains("convert_image_file"));
+        assert!(callbacks.contains("rfd::AsyncFileDialog::new()"));
+        assert!(callbacks.contains("fs::copy(&result_path, &destination)"));
+        assert!(callbacks.contains("conversion_source_format"));
+        assert!(reference.contains("page.as_str() == \"toolbox-convert\""));
+        assert!(reference.contains("toolbox_callbacks::add_conversion_paths"));
     }
-    assert!(conversion.contains("AppState.conversion-images.length"));
-    assert!(conversion.contains("AppState.start-conversion()"));
-    assert!(state.contains("in-out property <[CompressionImageItem]> conversion-images"));
-    assert!(state.contains("conversion-target-format: \"jpeg\""));
-    assert!(!state.contains("conversion-quality"));
-    assert!(state.contains("conversion-estimated-credits: \"--\""));
-    assert!(conversion.contains(
-        "\"本次预计扣除 \" + AppState.conversion-estimated-credits + \" 积分\""
-    ));
-    assert!(callbacks.contains("const MAX_CONVERSION_IMAGES: usize = 50;"));
-    assert!(callbacks.contains("state.on_choose_conversion_images"));
-    assert!(callbacks.contains("state.on_add_conversion_images_from_drag"));
-    assert!(callbacks.contains("state.on_paste_conversion_images"));
-    assert!(callbacks.contains("state.on_start_conversion"));
-    assert!(callbacks.contains("conversion_source_format"));
-    assert!(reference.contains("page.as_str() == \"toolbox-convert\""));
-    assert!(reference.contains("toolbox_callbacks::add_conversion_paths"));
-}
 
-#[test]
-fn toolbox_colorize_matches_the_watermark_original_and_result_layout() {
-    let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
-    let page = include_str!("../../ui/pages/toolbox-colorize-page.slint");
-    let state = include_str!("../../ui/app-state.slint");
-    let app_ui = include_str!("../../ui/app.slint");
-    let callbacks = include_str!("callbacks/toolbox.rs");
+    #[test]
+    fn toolbox_colorize_matches_the_watermark_original_and_result_layout() {
+        let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
+        let page = include_str!("../../ui/pages/toolbox-colorize-page.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let app_ui = include_str!("../../ui/app.slint");
+        let callbacks = include_str!("callbacks/toolbox.rs");
+        let api = include_str!("api/generation.rs");
+        let recovery = include_str!("generation/backend.rs");
+        let viewer = include_str!("presentation/sync.rs");
+        let reference_callbacks = include_str!("callbacks/reference.rs");
 
-    assert!(toolbox.contains("target-page: \"toolbox-colorize\""));
-    assert!(app_ui.contains("AppState.page == \"toolbox-colorize\""));
-    assert!(app_ui.contains("ToolboxColorizePage"));
-    assert_eq!(page.matches("ColorizePreviewPanel {").count(), 3);
-    assert!(page.contains("AppState.choose-colorize-source()"));
-    assert!(page.contains("AppState.start-colorize()"));
-    assert!(page.contains("AppState.reveal-colorize-result()"));
-    assert!(page.contains("title: AppState.en ? \"Original\" : \"原图\""));
-    assert!(page.contains("result-panel: true"));
-    assert!(state.contains("colorize-estimated-credits: \"--\""));
-    assert!(callbacks.contains("state.on_choose_colorize_source"));
-    assert!(callbacks.contains("state.on_start_colorize"));
-    assert!(callbacks.contains("state.on_reveal_colorize_result"));
-}
-
-#[test]
-fn toolbox_crop_reuses_the_conversion_batch_workspace() {
-    let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
-    let page = include_str!("../../ui/pages/toolbox-crop-page.slint");
-    let state = include_str!("../../ui/app-state.slint");
-    let app_ui = include_str!("../../ui/app.slint");
-    let callbacks = include_str!("callbacks/toolbox.rs");
-    let reference = include_str!("callbacks/reference.rs");
-
-    assert!(toolbox.contains("target-page: \"toolbox-crop\""));
-    assert!(app_ui.contains("AppState.page == \"toolbox-crop\""));
-    assert!(app_ui.contains("ToolboxCropPage"));
-    assert!(page.contains(
-        "import { CompressionDropArea, CompressionListRow } from \"toolbox-compression-page.slint\""
-    ));
-    assert!(page.contains("AppState.choose-crop-images()"));
-    assert!(page.contains("AppState.paste-crop-images()"));
-    assert!(page.contains("AppState.remove-crop-image(item.id)"));
-    assert!(page.contains("AppState.reveal-crop-result(item.id)"));
-    assert!(page.contains("AppState.clear-crop-images()"));
-    assert!(page.contains("AppState.start-crop()"));
-    for ratio in ["free", "1:1", "4:3", "16:9"] {
-        assert!(page.contains(&format!("value: \"{ratio}\"")));
+        assert!(toolbox.contains("target-page: \"toolbox-colorize\""));
+        assert!(app_ui.contains("AppState.page == \"toolbox-colorize\""));
+        assert!(app_ui.contains("ToolboxColorizePage"));
+        assert_eq!(page.matches("ColorizePreviewPanel {").count(), 3);
+        assert!(page.contains("AppState.choose-colorize-source()"));
+        assert!(page.contains("AppState.add-colorize-source-from-drag(mime-type, data)"));
+        assert!(page.contains("AppState.start-colorize()"));
+        assert!(page.contains("AppState.reveal-colorize-result()"));
+        assert!(page.contains("title: AppState.en ? \"Original\" : \"原图\""));
+        assert!(page.contains("result-panel: true"));
+        assert!(state.contains("colorize-estimated-credits: \"20\""));
+        assert!(state.contains("callback add-colorize-source-from-drag(string, string) -> bool;"));
+        assert!(callbacks.contains("state.on_choose_colorize_source"));
+        assert!(callbacks.contains("state.on_add_colorize_source_from_drag"));
+        assert!(callbacks.contains("add_colorization_from_drag_data"));
+        assert!(callbacks.contains("start_external_colorization_import"));
+        assert!(callbacks.contains("persist_colorization_source(&source)"));
+        assert!(callbacks.contains("state.on_start_colorize"));
+        assert!(callbacks.contains("state.on_reveal_colorize_result"));
+        assert!(callbacks.contains("start_image_colorization"));
+        assert!(callbacks.contains("CreateImageColorization"));
+        assert!(callbacks.contains("create_image_colorization"));
+        assert!(callbacks.contains("model_code: \"aliyun_image_colorization\""));
+        assert!(callbacks.contains("origin: \"image_colorization\".to_string()"));
+        assert!(callbacks.contains("model: \"老照片上色\".to_string()"));
+        assert!(callbacks.contains("本次老照片上色需要 20 积分"));
+        assert!(!callbacks.contains("老照片上色能力等待后端配置"));
+        assert!(api.contains("/v1/toolbox/image-colorizations"));
+        assert!(recovery.contains("resume_pending_image_colorization"));
+        assert!(viewer.contains("item.origin != \"image_colorization\""));
+        assert!(reference_callbacks.contains("page.as_str() == \"toolbox-colorize\""));
+        assert!(reference_callbacks.contains("toolbox_callbacks::add_colorization_paths"));
+        assert!(page.contains("text: AppState.en ? \"Change image\" : \"更换图片\""));
+        assert!(page.contains("drop-enabled: !AppState.colorize-processing"));
     }
-    assert!(state.contains("in-out property <[CompressionImageItem]> crop-images"));
-    assert!(state.contains("in-out property <string> crop-width-px"));
-    assert!(state.contains("in-out property <string> crop-height-px"));
-    assert!(page.contains("if AppState.crop-ratio == \"free\": HorizontalLayout"));
-    assert!(page.contains("value <=> AppState.crop-width-px"));
-    assert!(page.contains("value <=> AppState.crop-height-px"));
-    assert!(page.contains("text: \"PX\""));
-    assert!(state.contains("crop-estimated-credits: \"--\""));
-    assert!(callbacks.contains("const MAX_CROP_IMAGES: usize = 50;"));
-    assert!(callbacks.contains("state.on_choose_crop_images"));
-    assert!(callbacks.contains("state.on_start_crop"));
-    assert!(reference.contains("page.as_str() == \"toolbox-crop\""));
-    assert!(reference.contains("toolbox_callbacks::add_crop_paths"));
-}
 
-#[test]
-fn toolbox_compression_supports_batch_input_and_server_pricing() {
-    let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
-    let page = include_str!("../../ui/pages/toolbox-compression-page.slint");
-    let state = include_str!("../../ui/app-state.slint");
-    let types = include_str!("../../ui/types.slint");
-    let app_ui = include_str!("../../ui/app.slint");
-    let callbacks = include_str!("callbacks/toolbox.rs");
-    let reference = include_str!("callbacks/reference.rs");
-    let formats = include_str!("../image_formats.rs");
+    #[test]
+    fn toolbox_crop_is_a_free_local_editor_that_saves_other_assets() {
+        let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
+        let page = include_str!("../../ui/pages/toolbox-crop-page.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let app_ui = include_str!("../../ui/app.slint");
+        let callbacks = include_str!("callbacks/toolbox.rs");
+        let reference = include_str!("callbacks/reference.rs");
 
-    assert!(toolbox.contains("target-page: \"toolbox-compress\""));
-    assert!(app_ui.contains("AppState.page == \"toolbox-compress\""));
-    assert!(app_ui.contains("ToolboxCompressionPage"));
-    assert!(types.contains("export struct CompressionImageItem"));
-    assert!(types.contains("status: string"));
-    assert!(types.contains("result-path: string"));
-    assert!(state.contains("in-out property <[CompressionImageItem]> compression-images"));
-    assert!(state.contains("compression-estimated-credits: \"--\""));
-
-    assert!(page.contains("CompressionDropArea"));
-    assert!(page.contains("CompressionListRow"));
-    assert!(page.contains("AppState.choose-compression-images()"));
-    assert!(page.contains("AppState.paste-compression-images()"));
-    assert!(page.contains("AppState.remove-compression-image(item.id)"));
-    assert!(page.contains("AppState.reveal-compression-result(item.id)"));
-    assert!(page.contains("root.item.status == \"completed\""));
-    assert!(page.contains("AppState.en ? \"Completed\" : \"已完成\""));
-    assert!(page.contains("AppState.en ? \"View\" : \"查看\""));
-    assert!(page.contains("AppState.clear-compression-images()"));
-    assert!(page.contains("@image-url(\"../../assets/icons/trash.svg\")"));
-    assert!(page.contains("AppState.compression-mode = \"quality\""));
-    assert!(page.contains("AppState.compression-mode = \"size\""));
-    assert!(page.contains("AppState.compression-target-kb"));
-    assert!(page.contains("AppState.compression-target-mb + \" MB\""));
-    assert!(page.contains("x: 0px;"));
-    assert!(page.contains("AppState.compression-estimated-credits"));
-    assert!(page.contains("AppState.start-compression()"));
-
-    assert!(callbacks.contains("const MAX_COMPRESSION_IMAGES: usize = 50;"));
-    assert!(callbacks.contains(".pick_files()"));
-    assert!(callbacks.contains("state.on_paste_compression_images"));
-    assert!(callbacks.contains("state.on_remove_compression_image"));
-    assert!(callbacks.contains("state.on_reveal_compression_result"));
-    assert!(callbacks.contains("reveal_path_in_file_manager(&path)"));
-    assert!(callbacks.contains("status: \"pending\".into()"));
-    assert!(callbacks.contains("state.on_update_compression_target_preview"));
-    assert!(callbacks.contains("kilobytes / 1024.0"));
-    assert!(callbacks.contains("state.on_start_compression"));
-    assert!(callbacks.contains("set_compression_estimated_credits(\"--\""));
-    assert!(callbacks.contains("\"jpg\" | \"jpeg\" | \"png\" | \"webp\" | \"bmp\""));
-    assert!(callbacks.contains("crate::image_formats::picker_image_extensions()"));
-    assert!(reference.contains("page.as_str() == \"toolbox-compress\""));
-    assert!(reference.contains("toolbox_callbacks::add_compression_paths"));
-    assert!(formats.contains("\"bmp\""));
-    assert!(formats.contains("\"gif\""));
-    assert!(formats.contains("\"tiff\""));
-}
-
-#[test]
-fn toolbox_enhance_uses_two_preview_panels_with_left_quality_controls() {
-    let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
-    let page = include_str!("../../ui/pages/toolbox-enhance-page.slint");
-    let state = include_str!("../../ui/app-state.slint");
-    let app_ui = include_str!("../../ui/app.slint");
-    let app = include_str!("app.rs");
-    let callbacks = include_str!("callbacks/toolbox.rs");
-
-    assert!(toolbox.contains("target-page: \"toolbox-enhance\""));
-    assert!(app_ui.contains("AppState.page == \"toolbox-enhance\""));
-    assert!(app_ui.contains("ToolboxEnhancePage"));
-    assert!(app.contains("page.starts_with(\"toolbox-\")"));
-    assert_eq!(page.matches("EnhancePreviewPanel {").count(), 3);
-    assert!(page.contains("title: AppState.en ? \"Original\" : \"原图\""));
-    assert!(page.contains("title: AppState.en ? \"Result\" : \"处理结果\""));
-    assert!(page.contains("AppState.choose-enhance-source()"));
-    assert!(page.contains("upload-panel: true"));
-    assert!(page.contains("x: 96px;"));
-    assert!(page.contains("x: 32px + root.panel-width() - 146px;"));
-    for quality in ["1K", "2K", "4K"] {
-        assert!(page.contains(&format!("value: \"{quality}\"")));
+        assert!(toolbox.contains("target-page: \"toolbox-crop\""));
+        assert!(app_ui.contains("AppState.page == \"toolbox-crop\""));
+        assert!(app_ui.contains("ToolboxCropPage"));
+        assert!(page.contains("AppState.choose-crop-source()"));
+        assert!(page.contains("AppState.paste-crop-source()"));
+        assert!(page.contains("AppState.add-crop-source-from-drag"));
+        assert!(page.contains("AppState.update-crop-rect"));
+        assert!(page.contains("AppState.transform-crop-source"));
+        assert!(page.contains("AppState.save-crop-result()"));
+        for ratio in ["original", "free", "1:1", "4:3", "3:4", "16:9", "9:16"] {
+            assert!(page.contains(&format!("value: \"{ratio}\"")));
+        }
+        assert!(state.contains("in-out property <string> crop-source-path"));
+        assert!(state.contains("in-out property <float> crop-x"));
+        assert!(state.contains("in-out property <float> crop-width"));
+        assert!(page.contains("保持原始像素，不放大"));
+        assert!(page.contains("本地处理 · 0积分"));
+        assert!(!page.contains("crop-width-px"));
+        assert!(!page.contains("crop-estimated-credits"));
+        assert!(callbacks.contains("state.on_choose_crop_source"));
+        assert!(callbacks.contains("state.on_save_crop_result"));
+        assert!(callbacks.contains("process_crop_result"));
+        assert!(callbacks.contains("origin: \"image_crop\""));
+        assert!(callbacks.contains("category: \"other\""));
+        assert!(callbacks.contains("store.assets.insert(0, item)"));
+        assert!(reference.contains("page.as_str() == \"toolbox-crop\""));
+        assert!(reference.contains("toolbox_callbacks::add_crop_paths"));
     }
-    assert!(page.contains("AppState.start-enhance(AppState.enhance-quality)"));
-    assert!(page.contains("AppState.reveal-enhance-result()"));
-    assert!(page.contains("disabled: AppState.enhance-result-path == \"\""));
-    assert!(state.contains("in-out property <string> enhance-quality: \"1K\""));
-    assert!(state.contains("enhance-estimated-credits: \"--\""));
-    assert!(page.contains(
-        "\"本次预计扣除 \" + AppState.enhance-estimated-credits + \" 积分\""
-    ));
-    assert!(state.contains("enhance-result-path"));
-    assert!(state.contains("enhance-result-image"));
-    assert!(state.contains("callback choose-enhance-source()"));
-    assert!(state.contains("callback start-enhance(string)"));
-    assert!(state.contains("callback reveal-enhance-result()"));
-    assert!(callbacks.contains("state.on_choose_enhance_source"));
-    assert!(callbacks.contains("state.on_start_enhance"));
-    assert!(callbacks.contains("state.on_reveal_enhance_result"));
-    assert!(callbacks.contains("\"1K\" | \"2K\" | \"4K\""));
-    assert!(callbacks.contains("图片变清晰能力等待后端配置"));
-}
 
-#[test]
-fn watermark_tool_uses_a_local_result_workspace_without_assets() {
-    let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
-    let page = include_str!("../../ui/pages/toolbox-watermark-page.slint");
-    let state = include_str!("../../ui/app-state.slint");
-    let app = include_str!("app.rs");
-    let callbacks = include_str!("callbacks/toolbox.rs");
+    #[test]
+    fn toolbox_compression_runs_locally_and_saves_results() {
+        let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
+        let page = include_str!("../../ui/pages/toolbox-compression-page.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let types = include_str!("../../ui/types.slint");
+        let app_ui = include_str!("../../ui/app.slint");
+        let callbacks = include_str!("callbacks/toolbox.rs");
+        let image_processing = include_str!("services/image_processing.rs");
+        let reference = include_str!("callbacks/reference.rs");
+        let formats = include_str!("../image_formats.rs");
 
-    assert!(toolbox.contains("target-page: \"toolbox-watermark\""));
-    assert!(page.contains("AppState.choose-watermark-source()"));
-    assert!(page.contains("AppState.start-watermark-removal()"));
-    assert!(page.contains("AppState.reveal-watermark-result()"));
-    assert_eq!(
-        page.matches("AppState.choose-watermark-source()").count(),
-        1
-    );
-    assert!(page.contains("x: 32px + root.panel-width() - 166px;"));
-    assert!(!page.contains("Upload an image. The processed file stays local"));
-    assert!(!page.contains("结果仅保存在本地"));
-    assert_eq!(page.matches("y: 76px;").count(), 2);
-    assert!(page.contains("查看图片"));
-    assert!(page.contains("去水印中("));
-    assert!(state.contains("watermark-result-path"));
-    assert!(state.contains("watermark-estimated-credits: \"--\""));
-    assert!(page.contains(
-        "\"本次预计扣除 \" + AppState.watermark-estimated-credits + \" 积分\""
-    ));
-    assert!(callbacks.contains("rfd::FileDialog::new()"));
-    assert!(callbacks.contains("reveal_path_in_file_manager(&path)"));
-    assert!(callbacks.contains("去水印服务等待后端配置"));
-    assert!(!callbacks.contains("push_assets"));
-    assert!(!callbacks.contains("save_local_store"));
-    assert!(!callbacks.contains(".generations"));
-    assert!(app.contains("if page.starts_with(\"toolbox-\")"));
-    assert!(app.contains("state.set_page(\"toolbox\".into())"));
-}
+        assert!(toolbox.contains("target-page: \"toolbox-compress\""));
+        assert!(app_ui.contains("AppState.page == \"toolbox-compress\""));
+        assert!(app_ui.contains("ToolboxCompressionPage"));
+        assert!(types.contains("export struct CompressionImageItem"));
+        assert!(types.contains("status: string"));
+        assert!(types.contains("result-path: string"));
+        assert!(state.contains("in-out property <[CompressionImageItem]> compression-images"));
+        assert!(state.contains("compression-saving: false"));
+        assert!(state.contains("compression-has-results: false"));
+        assert!(!state.contains("compression-estimated-credits"));
 
-#[test]
-fn idle_generation_area_rotates_slash_usage_tips() {
-    let panel = include_str!("../../ui/components/studio-work-panel.slint");
-    let tips = include_str!("../../ui/components/usage-tip-carousel.slint");
+        assert!(page.contains("CompressionDropArea"));
+        assert!(page.contains("CompressionListRow"));
+        assert!(page.contains("AppState.choose-compression-images()"));
+        assert!(page.contains("AppState.paste-compression-images()"));
+        assert!(page.contains("AppState.remove-compression-image(item.id)"));
+        assert!(page.contains("AppState.save-compression-result(item.id)"));
+        assert!(page.contains("root.item.status == \"completed\""));
+        assert!(page.contains("AppState.en ? \"Completed\" : \"已完成\""));
+        assert!(page.contains("result-action-text: AppState.en ? \"Save\" : \"保存\""));
+        assert!(page.contains(
+            "result-action-visible: item.status == \"completed\" && item.result-path != \"\""
+        ));
+        assert!(page.contains("result-action-disabled: AppState.compression-saving"));
+        assert!(page.contains("remove-disabled: root.busy"));
+        assert!(page.contains("AppState.clear-compression-images()"));
+        assert!(page.contains("@image-url(\"../../assets/icons/trash.svg\")"));
+        assert!(page.contains("AppState.compression-mode = \"quality\""));
+        assert!(page.contains("AppState.compression-mode = \"size\""));
+        assert!(page.contains("AppState.compression-target-kb"));
+        assert!(page.contains("AppState.compression-target-mb + \" MB\""));
+        assert!(page.contains(
+            "property <bool> busy: AppState.compression-processing || AppState.compression-saving"
+        ));
+        assert!(page.contains("disabled: root.busy"));
+        assert!(page.contains("enabled: !root.busy"));
+        assert!(!page.contains("compression-estimated-credits"));
+        assert!(!page.contains("Estimated cost"));
+        assert!(!page.contains("本次压缩预计消耗"));
+        assert!(page.contains("AppState.start-compression()"));
 
-    assert!(panel.contains("UsageTipCarousel"));
-    assert!(panel.contains("AppState.generation-status == \"\""));
-    assert!(tips.contains("interval: 4200ms"));
-    assert!(tips.contains("Math.mod(root.active-tip + 1, 2)"));
-    assert!(tips.contains(": \"输入“/”可查看最近的提示词记录\""));
-    assert!(tips.contains(": \"输入“//”可查看自定义提示词\""));
-    assert!(!tips.contains("Tip 1"));
-    assert!(!tips.contains("Tip 2"));
-    assert!(!tips.contains("1、"));
-    assert!(!tips.contains("2、"));
-    assert_eq!(tips.matches("animate y").count(), 2);
-}
+        assert!(callbacks.contains("const MAX_COMPRESSION_IMAGES: usize = 50;"));
+        assert!(callbacks.contains(".pick_files()"));
+        assert!(callbacks.contains("state.on_paste_compression_images"));
+        assert!(callbacks.contains("state.on_remove_compression_image"));
+        assert!(callbacks.contains("state.on_save_compression_result"));
+        assert!(callbacks.contains("status: \"pending\".into()"));
+        assert!(callbacks.contains("state.on_update_compression_target_preview"));
+        assert!(callbacks.contains("kilobytes / 1024.0"));
+        assert!(callbacks.contains("state.on_start_compression"));
+        assert!(callbacks.contains("start_local_compression"));
+        assert!(callbacks.contains("run_local_compression_worker"));
+        assert!(callbacks.contains("compress_image_file"));
+        assert!(callbacks.contains("start_compression_result_save"));
+        assert!(callbacks.contains("normalize_compression_destination"));
+        assert!(callbacks.contains("rfd::AsyncFileDialog::new()"));
+        assert!(callbacks.contains("fs::copy(&result_path, &destination)"));
+        assert!(!callbacks.contains("state.on_reveal_compression_result"));
+        assert!(!callbacks.contains("set_compression_estimated_credits"));
+        assert!(!callbacks.contains("图片压缩能力等待后端配置"));
+        assert!(callbacks.contains("crate::image_formats::picker_image_extensions()"));
+        let compression_import = callbacks
+            .split("pub(super) fn add_compression_paths")
+            .nth(1)
+            .and_then(|block| block.split("fn paste_compression_image").next())
+            .expect("compression import implementation");
+        assert!(compression_import.contains("compression_source_extension(&canonical)"));
+        assert!(compression_import.contains("load_image(&canonical)"));
+        assert!(!compression_import.contains("is_compression_image_path"));
+        assert!(!compression_import.contains("image::open(&canonical)"));
+        assert!(image_processing.contains("ImageCompressionMode::Quality"));
+        assert!(image_processing.contains("ImageCompressionMode::TargetBytes"));
+        assert!(image_processing.contains("resize_image_by_scale"));
+        assert!(image_processing.contains("CompressionFormat::Jpeg"));
+        assert!(image_processing.contains("CompressionFormat::Png"));
+        assert!(image_processing.contains("CompressionFormat::WebP"));
+        assert!(image_processing.contains("CompressionFormat::Bmp"));
+        assert!(reference.contains("page.as_str() == \"toolbox-compress\""));
+        assert!(reference.contains("toolbox_callbacks::add_compression_paths"));
+        assert!(formats.contains("\"bmp\""));
+        assert!(formats.contains("\"gif\""));
+        assert!(formats.contains("\"tiff\""));
+    }
+
+    #[test]
+    fn toolbox_enhance_submits_a_fixed_price_task_and_saves_an_other_asset() {
+        let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
+        let page = include_str!("../../ui/pages/toolbox-enhance-page.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let app_ui = include_str!("../../ui/app.slint");
+        let app = include_str!("app.rs");
+        let callbacks = include_str!("callbacks/image_enhancement.rs");
+        let api = include_str!("api/generation.rs");
+        let reference_callbacks = include_str!("callbacks/reference.rs");
+        let recovery = include_str!("generation/backend.rs");
+        let viewer = include_str!("presentation/sync.rs");
+
+        assert!(toolbox.contains("target-page: \"toolbox-enhance\""));
+        assert!(toolbox.contains("title: AppState.en ? \"Image Enhance\" : \"图片清晰\""));
+        assert!(app_ui.contains("AppState.page == \"toolbox-enhance\""));
+        assert!(app_ui.contains("ToolboxEnhancePage"));
+        assert!(app.contains("page.starts_with(\"toolbox-\")"));
+        assert_eq!(page.matches("EnhancePreviewPanel {").count(), 3);
+        assert!(page.contains("text: AppState.en ? \"Image Enhance\" : \"图片清晰\""));
+        assert!(!page.contains("图片变清晰"));
+        assert!(!page.contains("一键智能超分"));
+        assert!(!page.contains("One-click smart super resolution"));
+        assert!(page.contains("title: AppState.en ? \"Original\" : \"原图\""));
+        assert!(page.contains("AppState.choose-enhance-source()"));
+        assert_eq!(page.matches("AppState.choose-enhance-source()").count(), 2);
+        assert!(page.contains("source-drop := DropArea"));
+        assert!(page.contains("AppState.add-enhance-source-from-drag(mime-type, data)"));
+        assert!(page.contains("drop-enabled: !AppState.enhance-processing"));
+        assert!(page.contains("text: AppState.en ? \"Change image\" : \"更换图片\""));
+        assert_eq!(page.matches("EnhanceQualityButton {").count(), 3);
+        assert!(page.contains("value: \"2K\""));
+        assert!(page.contains("value: \"4K\""));
+        assert!(page.contains("AppState.start-enhance(AppState.enhance-quality)"));
+        assert!(page.contains("AppState.reveal-enhance-result()"));
+        assert!(page.contains("disabled: AppState.enhance-result-path == \"\""));
+        assert!(state.contains("in-out property <string> enhance-quality: \"2K\""));
+        assert!(state.contains("enhance-estimated-credits: \"20\""));
+        assert!(state.contains("in-out property <int> enhance-progress: 0"));
+        assert!(page.contains("\"本次预计扣除 \" + AppState.enhance-estimated-credits + \" 积分\""));
+        assert!(state.contains("enhance-result-path"));
+        assert!(state.contains("enhance-result-image"));
+        assert!(state.contains("callback choose-enhance-source()"));
+        assert!(state.contains("callback add-enhance-source-from-drag(string, string) -> bool"));
+        assert!(state.contains("callback start-enhance(string)"));
+        assert!(state.contains("callback reveal-enhance-result()"));
+        assert!(callbacks.contains("state.on_choose_enhance_source"));
+        assert!(callbacks.contains("state.on_add_enhance_source_from_drag"));
+        assert!(callbacks.contains("state.on_start_enhance"));
+        assert!(callbacks.contains("state.on_reveal_enhance_result"));
+        assert!(callbacks.contains("normalized_enhancement_quality"));
+        assert!(callbacks.contains("ENHANCEMENT_MAX_INPUT_BYTES: u64 = 20 * 1024 * 1024"));
+        assert!(callbacks.contains("ENHANCEMENT_MIN_EDGE: u32 = 64"));
+        assert!(callbacks.contains("ENHANCEMENT_MAX_LONG_EDGE: u32 = 5000"));
+        assert!(!callbacks.contains("ENHANCEMENT_MAX_SHORT_EDGE"));
+        assert!(callbacks.contains("ENHANCEMENT_MAX_ASPECT_RATIO: u32 = 2"));
+        assert!(callbacks.contains("state.set_enhance_estimated_credits(\"20\""));
+        assert!(!callbacks.contains("state.set_enhance_estimated_credits(\"10\""));
+        assert!(callbacks.contains("model: \"图片清晰\".to_string()"));
+        assert!(callbacks.contains("target_quality:"));
+        assert!(callbacks.contains("CreateImageEnhancement"));
+        assert!(callbacks.contains("image_enhancement"));
+        assert!(callbacks.contains("category: \"other\".to_string()"));
+        assert!(callbacks.contains("origin: \"image_enhancement\".to_string()"));
+        assert!(callbacks.contains("upscale_done: true"));
+        assert!(api.contains("/v1/toolbox/image-enhancements"));
+        assert!(api.contains("pub(crate) target_quality: String"));
+        assert!(reference_callbacks.contains("page.as_str() == \"toolbox-enhance\""));
+        assert!(reference_callbacks.contains("image_enhancement_callbacks::add_enhancement_paths"));
+        assert!(recovery.contains("resume_pending_image_enhancement"));
+        assert!(recovery.contains("model.code == \"aliyun_super_resolution\""));
+        assert!(viewer.contains("item.origin != \"image_enhancement\""));
+    }
+
+    #[test]
+    fn watermark_tool_submits_a_fixed_price_task_and_saves_an_other_asset() {
+        let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
+        let page = include_str!("../../ui/pages/toolbox-watermark-page.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let app = include_str!("app.rs");
+        let callbacks = include_str!("callbacks/toolbox.rs");
+        let reference_callbacks = include_str!("callbacks/reference.rs");
+
+        assert!(toolbox.contains("target-page: \"toolbox-watermark\""));
+        assert!(page.contains("AppState.choose-watermark-source()"));
+        assert!(page.contains("AppState.start-watermark-removal()"));
+        assert!(page.contains("AppState.reveal-watermark-result()"));
+        assert_eq!(
+            page.matches("AppState.choose-watermark-source()").count(),
+            2
+        );
+        assert!(page.contains("text: AppState.en ? \"Change image\" : \"更换图片\""));
+        assert!(page.contains("disabled: AppState.watermark-processing"));
+        assert!(page.contains("source-drop := DropArea"));
+        assert!(page.contains("event.mime-type == \"text/uri-list\""));
+        assert!(page.contains("event.mime-type == \"text/plain\""));
+        assert!(page.contains("event.mime-type == \"text/html\""));
+        assert!(page.contains("AppState.add-watermark-source-from-drag(mime-type, data)"));
+        assert!(page.contains("松开即可上传图片"));
+        assert!(page.contains("x: 32px + root.panel-width() - 166px;"));
+        assert!(!page.contains("Upload an image. The processed file stays local"));
+        assert!(!page.contains("结果仅保存在本地"));
+        assert_eq!(page.matches("y: 76px;").count(), 2);
+        assert!(page.contains("查看图片"));
+        assert!(page.contains("去水印中("));
+        assert!(state.contains("watermark-result-path"));
+        assert!(state.contains("watermark-estimated-credits: \"20\""));
+        assert!(state.contains("callback add-watermark-source-from-drag(string, string) -> bool"));
+        assert!(
+            page.contains("\"本次预计扣除 \" + AppState.watermark-estimated-credits + \" 积分\"")
+        );
+        assert!(callbacks.contains("rfd::FileDialog::new()"));
+        assert!(callbacks.contains("state.on_add_watermark_source_from_drag"));
+        assert!(callbacks.contains("add_watermark_from_drag_data"));
+        assert!(callbacks.contains("set_watermark_source_from_path"));
+        assert!(callbacks.contains("external_image_url(data)"));
+        assert!(callbacks.contains("start_external_watermark_import"));
+        assert!(reference_callbacks.contains("page.as_str() == \"toolbox-watermark\""));
+        assert!(reference_callbacks.contains("toolbox_callbacks::add_watermark_paths"));
+        assert!(callbacks.contains("reveal_path_in_file_manager(&path)"));
+        assert!(callbacks.contains("CreateWatermarkRemoval"));
+        assert!(callbacks.contains("image_watermark_removal"));
+        assert!(callbacks.contains("category: \"other\".to_string()"));
+        assert!(callbacks.contains("origin: \"watermark_removal\".to_string()"));
+        assert!(callbacks.contains("model: \"去水印\".to_string()"));
+        assert!(callbacks.contains("store.assets.insert(0, item)"));
+        assert!(callbacks.contains("save_local_store(app, &store)"));
+        assert!(!callbacks.contains("store.generations.insert"));
+        assert!(state.contains("viewer-repeat-enabled"));
+        assert!(include_str!("../../ui/dialogs/viewer-overlay.slint")
+            .contains("AppState.viewer-repeat-enabled"));
+        assert!(app.contains("if page.starts_with(\"toolbox-\")"));
+        assert!(app.contains("state.set_page(\"toolbox\".into())"));
+    }
+
+    #[test]
+    fn idle_generation_area_rotates_slash_usage_tips() {
+        let panel = include_str!("../../ui/components/studio-work-panel.slint");
+        let tips = include_str!("../../ui/components/usage-tip-carousel.slint");
+
+        assert!(panel.contains("UsageTipCarousel"));
+        assert!(panel.contains("AppState.generation-status == \"\""));
+        assert!(tips.contains("interval: 4200ms"));
+        assert!(tips.contains("Math.mod(root.active-tip + 1, 2)"));
+        assert!(tips.contains(": \"输入“/”可查看最近的提示词记录\""));
+        assert!(tips.contains(": \"输入“//”可查看自定义提示词\""));
+        assert!(!tips.contains("Tip 1"));
+        assert!(!tips.contains("Tip 2"));
+        assert!(!tips.contains("1、"));
+        assert!(!tips.contains("2、"));
+        assert_eq!(tips.matches("animate y").count(), 2);
+    }
 
     #[test]
     fn legacy_double_slash_prompt_drafts_are_cleared_without_touching_real_prompts() {
@@ -1576,14 +1754,12 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         assert!(composer.matches("min(10, AppState.").count() >= 2);
         assert_eq!(composer.matches("wrap: no-wrap;").count(), 3);
-        assert!(composer.contains(
-            "root.apply-selected-prompt(AppState.prompt-history[index])"
-        ));
+        assert!(composer.contains("root.apply-selected-prompt(AppState.prompt-history[index])"));
         assert!(composer.contains("root.queue-custom-prompt-selection(item.content)"));
         assert!(composer.contains("viewport-height: AppState.prompt-history.length * 32px"));
-        assert!(composer.contains(
-            "viewport-width: max(self.width, custom-prompt-row.preferred-width)"
-        ));
+        assert!(
+            composer.contains("viewport-width: max(self.width, custom-prompt-row.preferred-width)")
+        );
         assert!(composer.contains("for item[index] in AppState.custom-prompt-items"));
         assert!(composer.contains("text: item.name"));
     }
@@ -1628,10 +1804,18 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(field.contains("accepted => { root.accepted(); }"));
 
         assert!(auth.contains("function confirm-auth()"));
-        assert_eq!(auth.matches("accepted => { root.confirm-auth(); }").count(), 2);
+        assert_eq!(
+            auth.matches("accepted => { root.confirm-auth(); }").count(),
+            2
+        );
 
         assert!(invoice.contains("function submit-form()"));
-        assert_eq!(invoice.matches("accepted => { root.submit-form(); }").count(), 3);
+        assert_eq!(
+            invoice
+                .matches("accepted => { root.submit-form(); }")
+                .count(),
+            3
+        );
 
         assert!(prompt.contains("event.text == Key.Return"));
         assert!(prompt.contains("event.modifiers.alt"));
@@ -1645,7 +1829,8 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         let prompt = include_str!("../../ui/components/prompt-composer.slint");
 
         assert!(prompt.contains("prompt-scroll := ScrollView"));
-        assert!(prompt.contains("viewport-height: max(self.visible-height, prompt-input.preferred-height);"));
+        assert!(prompt
+            .contains("viewport-height: max(self.visible-height, prompt-input.preferred-height);"));
         assert!(prompt.contains("page-height: prompt-scroll.visible-height;"));
         assert!(prompt.contains("cursor-position-changed(position)"));
         assert!(prompt.contains("prompt-scroll.viewport-y"));
@@ -1664,12 +1849,8 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(drawer.contains("text: AppState.prompt;"));
         assert!(drawer.contains("color: AppTheme.muted;"));
         assert!(drawer.contains("wrap: word-wrap;"));
-        assert!(drawer.contains(
-            "vertical-scrollbar-policy: ScrollBarPolicy.always-on;",
-        ));
-        assert!(drawer.contains(
-            "horizontal-scrollbar-policy: ScrollBarPolicy.always-off;",
-        ));
+        assert!(drawer.contains("vertical-scrollbar-policy: ScrollBarPolicy.always-on;",));
+        assert!(drawer.contains("horizontal-scrollbar-policy: ScrollBarPolicy.always-off;",));
         assert!(drawer.contains("mouse-drag-pan-enabled: true;"));
         assert!(drawer.contains("progress-fill := Rectangle"));
         assert!(drawer.contains("x: 0px;"));
@@ -1688,7 +1869,10 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         let panel = include_str!("../../ui/components/studio-work-panel.slint");
         let prompt = include_str!("../../ui/components/prompt-composer.slint");
 
-        assert_eq!(chooser.matches("\n        CompactSelectButton {").count(), 3);
+        assert_eq!(
+            chooser.matches("\n        CompactSelectButton {").count(),
+            3
+        );
         assert!(chooser.contains("ratio-popup := PopupWindow"));
         assert!(chooser.contains("quality-popup := PopupWindow"));
         assert!(chooser.contains("count-popup := PopupWindow"));
@@ -1767,9 +1951,12 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         let top_bar = include_str!("../../ui/components/top-bar.slint").replace("\r\n", "\n");
 
         assert!(top_bar.contains("x: 18px;\n            y: 0px;"));
-        assert!(top_bar.contains("width: max(360px, parent.width - 18px - root.actions-width() - 32px);"));
+        assert!(top_bar
+            .contains("width: max(360px, parent.width - 18px - root.actions-width() - 32px);"));
         assert!(top_bar.contains("(root.width - 18px - root.actions-width() - 70px) / 2"));
-        assert!(top_bar.contains("x: 0px;\n                    y: 6px;\n                    kind: \"image\";"));
+        assert!(top_bar.contains(
+            "x: 0px;\n                    y: 6px;\n                    kind: \"image\";"
+        ));
         assert!(top_bar.contains("x: root.model-picker-width() + 18px;\n                    y: 6px;\n                    kind: \"reasoning\";"));
         assert!(!top_bar.contains("root.models-width()"));
     }
@@ -1847,17 +2034,11 @@ fn idle_generation_area_rotates_slash_usage_tips() {
 
         assert!(prompts.contains("AppState.pending-delete-kind = \"custom-prompt\""));
         assert!(prompts.contains("AppState.delete-confirm-open = true"));
-        assert!(!prompts.contains(
-            "clicked => { AppState.remove-custom-prompt(item.content); }"
-        ));
+        assert!(!prompts.contains("clicked => { AppState.remove-custom-prompt(item.content); }"));
         assert!(notifications.contains("AppState.pending-delete-kind = \"notification\""));
         assert!(notifications.contains("AppState.pending-delete-kind = \"notifications-all\""));
-        assert!(!notifications.contains(
-            "clicked => { AppState.delete-notification(item.id); }"
-        ));
-        assert!(!notifications.contains(
-            "clicked => { AppState.clear-all-notifications(); }"
-        ));
+        assert!(!notifications.contains("clicked => { AppState.delete-notification(item.id); }"));
+        assert!(!notifications.contains("clicked => { AppState.clear-all-notifications(); }"));
         assert!(viewer_callbacks.contains("state.set_pending_delete_kind(\"asset\".into())"));
     }
 
@@ -1895,12 +2076,15 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let page = std::fs::read_to_string(manifest.join("ui/pages/infinite-canvas-page.slint"))
             .unwrap_or_default();
-        let callbacks = std::fs::read_to_string(manifest.join("src/runtime/callbacks/infinite_canvas.rs"))
-            .unwrap_or_default();
+        let callbacks =
+            std::fs::read_to_string(manifest.join("src/runtime/callbacks/infinite_canvas.rs"))
+                .unwrap_or_default();
         let local_store = include_str!("storage/local_store.rs");
         let sync = include_str!("presentation/sync.rs");
 
-        let workbench = sidebar.find("CategoryWorkspaceMenu {").expect("workbench menu");
+        let workbench = sidebar
+            .find("CategoryWorkspaceMenu {")
+            .expect("workbench menu");
         let canvas = sidebar.find("page: \"canvas\"").expect("canvas nav item");
         let assets = sidebar.find("page: \"assets\"").expect("assets nav item");
         assert!(workbench < canvas && canvas < assets);
@@ -1918,7 +2102,9 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(state.contains("callback add-canvas-node(string, float, float)"));
         assert!(state.contains("callback update-canvas-node(string, string, float, float)"));
         assert!(state.contains("callback remove-canvas-node(string)"));
-        assert!(state.contains("callback finish-canvas-link(string, float, float, float) -> string"));
+        assert!(
+            state.contains("callback finish-canvas-link(string, float, float, float) -> string")
+        );
         assert!(state.contains("callback remove-canvas-link(string)"));
         assert!(state.contains("callback undo-canvas()"));
         assert!(state.contains("callback redo-canvas()"));
@@ -2023,10 +2209,7 @@ fn idle_generation_area_rotates_slash_usage_tips() {
             "on_group_canvas_selection",
             "on_ungroup_canvas_selection",
         ] {
-            assert!(
-                callbacks.contains(registration),
-                "missing {registration}"
-            );
+            assert!(callbacks.contains(registration), "missing {registration}");
         }
     }
 
@@ -2055,13 +2238,11 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(include_str!("../../ui/app-state.slint")
             .contains("in-out property <string> canvas-tool: \"pan\""));
         assert!(!page.contains("label: AppState.en ? \"Select\" : \"选择\""));
-        assert!(page.contains(
-            "AppState.select-canvas-node(root.note.id, event.modifiers.shift);"
-        ));
+        assert!(page.contains("AppState.select-canvas-node(root.note.id, event.modifiers.shift);"));
         assert!(page.contains("root.marquee-additive = event.modifiers.shift;"));
-        assert!(!page.contains(
-            "AppState.select-canvas-node(root.note.id, event.modifiers.control);"
-        ));
+        assert!(
+            !page.contains("AppState.select-canvas-node(root.note.id, event.modifiers.control);")
+        );
         assert!(!page.contains("root.marquee-additive = event.modifiers.control;"));
         assert!(page.contains("link.source-selected"));
         assert!(page.contains("link.target-selected"));
@@ -2148,9 +2329,8 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(dialog.contains("init => { group-name-input.focus(); }"));
         assert!(dialog.contains("AppState.rename-canvas-group("));
         assert!(delete.contains("是否删除当前分组以及组内节点？"));
-        assert!(delete.contains(
-            "AppState.remove-canvas-group-with-children(AppState.pending-delete-id)"
-        ));
+        assert!(delete
+            .contains("AppState.remove-canvas-group-with-children(AppState.pending-delete-id)"));
     }
 
     #[test]
@@ -2326,7 +2506,11 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(page.contains("AppState.canvas-node-info-tab == \"json\""));
         assert!(page.contains("AppState.canvas-node-info-width + \" x \""));
         assert!(page.contains("AppState.canvas-node-info-x + \", \""));
-        assert!(node.matches("AppState.show-canvas-node-info(root.note.id)").count() >= 2);
+        assert!(
+            node.matches("AppState.show-canvas-node-info(root.note.id)")
+                .count()
+                >= 2
+        );
         assert!(callbacks.contains("state.on_show_canvas_node_info"));
         assert!(callbacks.contains("serde_json::to_string_pretty"));
         assert!(callbacks.contains("\"status\": \"idle\""));
@@ -2455,14 +2639,11 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(curve.contains("property <int> hit-count:"));
         assert!(curve.contains("in property <float> flow-phase: 0;"));
         assert!(curve.contains("function flow-distance(t: float)"));
-        assert!(curve.contains(
-            "root.link.flow-reversed ? 1 - root.flow-phase : root.flow-phase"
-        ));
+        assert!(curve.contains("root.link.flow-reversed ? 1 - root.flow-phase : root.flow-phase"));
         assert!(types.contains("flow-reversed: bool"));
         assert!(callbacks.contains("connect_nodes_with_flow("));
-        assert!(callbacks.contains(
-            "state.on_finish_canvas_reconnect(move |target_id, x, y, tolerance|"
-        ));
+        assert!(callbacks
+            .contains("state.on_finish_canvas_reconnect(move |target_id, x, y, tolerance|"));
         assert!(callbacks.contains("target_id.as_str(),\n                true,"));
         assert!(curve.contains("property <bool> in-sweep:"));
         assert!(curve.contains("for dash-index in root.dash-count"));
@@ -2690,7 +2871,10 @@ fn idle_generation_area_rotates_slash_usage_tips() {
             7
         );
         for label in ["信息", "删除", "存素材", "编辑", "生图", "缩小", "放大"] {
-            assert!(text_bar.contains(label), "missing text node action: {label}");
+            assert!(
+                text_bar.contains(label),
+                "missing text node action: {label}"
+            );
         }
         assert!(!text_bar.contains("编辑文字"));
         assert!(text_bar.contains("AppState.adjust-canvas-text-font-size(root.note.id, -1)"));
@@ -2707,11 +2891,8 @@ fn idle_generation_area_rotates_slash_usage_tips() {
                 .count(),
             3
         );
-        assert!(
-            !text_bar.contains("CanvasMediaAction { scale-factor: root.node-scale(); width:")
-        );
-        assert!(!media_bar
-            .contains("CanvasMediaAction { scale-factor: root.node-scale(); width:"));
+        assert!(!text_bar.contains("CanvasMediaAction { scale-factor: root.node-scale(); width:"));
+        assert!(!media_bar.contains("CanvasMediaAction { scale-factor: root.node-scale(); width:"));
     }
 
     #[test]
@@ -2729,9 +2910,7 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(node.contains(
             "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-editor-panel"
         ));
-        assert!(node.contains(
-            "visible: root.note.kind == \"group\" && root.zoom-percent >= 30"
-        ));
+        assert!(node.contains("visible: root.note.kind == \"group\" && root.zoom-percent >= 30"));
     }
 
     #[test]
@@ -2754,9 +2933,8 @@ fn idle_generation_area_rotates_slash_usage_tips() {
             .and_then(|value| value.split("image-model-popup := PopupWindow").next())
             .expect("right connector touch area");
 
-        assert!(input_connector.contains(
-            "root.reconnect-started(root.note.id, root.x, root.y + root.height / 2)"
-        ));
+        assert!(input_connector
+            .contains("root.reconnect-started(root.note.id, root.x, root.y + root.height / 2)"));
         assert!(input_connector.contains("root.reconnect-finished"));
         assert!(output_connector.contains(
             "root.connection-started(root.note.id, root.x + root.width, root.y + root.height / 2)"
@@ -2834,7 +3012,9 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(!payment_checkout.contains("WebViewBuilder"));
         assert!(callbacks.contains("open_payment_checkout"));
         assert!(callbacks.contains("Duration::from_secs(3)"));
-        assert!(callbacks.contains("continue_payment_order(&app, context, backend, started, false)"));
+        assert!(
+            callbacks.contains("continue_payment_order(&app, context, backend, started, false)")
+        );
         assert!(callbacks.contains("暂时无法确认支付结果，请稍后查看订单状态"));
         assert!(membership.contains("PurchaseAgreements"));
         assert!(credit_page.contains("PurchaseAgreements"));
@@ -2853,7 +3033,10 @@ fn idle_generation_area_rotates_slash_usage_tips() {
 
         let combined = format!("{checkout}\n{membership}\n{top_bar}");
         for removed in ["支付宝扫码支付", "关闭支付码", "加载支付二维码"] {
-            assert!(!combined.contains(removed), "obsolete payment copy: {removed}");
+            assert!(
+                !combined.contains(removed),
+                "obsolete payment copy: {removed}"
+            );
         }
     }
 
@@ -2912,13 +3095,7 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(dialog.contains("所选订单"));
         assert!(!dialog.contains("AppState.invoice-"));
 
-        for label in [
-            "发票类型",
-            "抬头类型",
-            "发票抬头",
-            "税号",
-            "接收邮箱",
-        ] {
+        for label in ["发票类型", "抬头类型", "发票抬头", "税号", "接收邮箱"] {
             assert!(dialog.contains(label), "missing required field: {label}");
         }
         assert!(dialog.contains("电子增值税普通发票"));
@@ -2993,12 +3170,11 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(agreement_viewer.contains("width: min(860px, root.width - 32px);"));
         assert!(agreement_viewer.contains("height: parent.height - 120px;"));
         assert!(update_prompt.contains("? min(500px, root.width - 32px)"));
-        assert!(update_prompt.contains(
-            "min(AppState.update-active ? 420px : 390px, root.height - 40px)"
-        ));
-        assert!(settings.contains(
-            "visible: AppState.update-available || AppState.update-checking;"
-        ));
+        assert!(update_prompt
+            .contains("min(AppState.update-active ? 420px : 390px, root.height - 40px)"));
+        assert!(
+            settings.contains("visible: AppState.update-available || AppState.update-checking;")
+        );
         assert!(!settings.contains("AppState.update-message != \"\""));
 
         assert!(!models.contains("ScrollView"));
@@ -3022,9 +3198,7 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         assert!(card.contains("root.delete-hit()"));
         assert!(card.contains("root.source == \"asset\" || root.source == \"generation\""));
         assert!(!card.contains("root.source == \"inspiration\""));
-        assert!(card.contains(
-            "AppState.request-delete-thumbnail(root.item.id, root.source)"
-        ));
+        assert!(card.contains("AppState.request-delete-thumbnail(root.item.id, root.source)"));
         assert!(state.contains("callback request-delete-thumbnail(string, string);"));
         assert!(callbacks.contains("state.on_request_delete_thumbnail"));
 
@@ -3105,32 +3279,54 @@ fn idle_generation_area_rotates_slash_usage_tips() {
     }
 
     #[test]
-    fn viewer_cutout_opens_the_server_configured_frontend_workspace() {
+    fn viewer_cutout_submits_a_recoverable_task_and_saves_an_other_asset() {
         let app = include_str!("../../ui/app.slint");
         let state = include_str!("../../ui/app-state.slint");
         let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
         let cutout = include_str!("../../ui/pages/cutout-page.slint");
-        let callbacks = include_str!("callbacks/viewer.rs");
-        let feature = include_str!("features/viewer.rs");
+        let viewer_callbacks = include_str!("callbacks/viewer.rs");
+        let callbacks = include_str!("callbacks/image_cutout.rs");
+        let api = include_str!("api/generation.rs");
+        let recovery = include_str!("generation/backend.rs");
 
         assert!(app.contains("import { CutoutPage }"));
         assert!(app.contains("CutoutPage {"));
         assert!(state.contains("in-out property <bool> cutout-open: false;"));
         assert!(state.contains("in-out property <string> cutout-type: \"general\";"));
+        assert!(state.contains("in-out property <bool> cutout-processing: false;"));
+        assert!(state.contains("in-out property <int> cutout-progress: 0;"));
+        assert!(state.contains("in-out property <string> cutout-result-path: \"\";"));
+        assert!(state.contains("in-out property <image> cutout-result-image;"));
+        assert!(state.contains("cutout-estimated-credits: \"20\""));
         assert!(state.contains("callback close-cutout();"));
         assert!(state.contains("callback submit-cutout(string);"));
+        assert!(state.contains("callback reveal-cutout-result();"));
         assert!(viewer.contains("AppState.viewer-cutout-image();"));
-        assert!(callbacks.contains("state.on_viewer_cutout_image"));
-        assert!(callbacks.contains("state.set_viewer_open(false);"));
-        assert!(callbacks.contains("state.set_cutout_open(true);"));
-        assert!(callbacks.contains("state.on_close_cutout"));
-        assert!(callbacks.contains("state.set_viewer_open(true);"));
+        assert!(viewer_callbacks.contains("state.on_viewer_cutout_image"));
+        assert!(viewer_callbacks.contains("state.set_viewer_open(false);"));
+        assert!(viewer_callbacks.contains("state.set_cutout_open(true);"));
+        assert!(viewer_callbacks.contains("state.on_close_cutout"));
+        assert!(viewer_callbacks.contains("state.set_viewer_open(true);"));
         assert!(callbacks.contains("state.on_submit_cutout"));
-        assert!(callbacks.contains("抠图能力由服务端配置，当前仅完成前端界面"));
+        assert!(callbacks.contains("CreateImageCutout"));
+        assert!(callbacks.contains("subject_type:"));
+        assert!(callbacks.contains("task_type: \"image_cutout\".to_string()"));
+        assert!(callbacks.contains("model_code: \"aliyun_image_segmentation\".to_string()"));
+        assert!(callbacks.contains("pending_delivery_saved"));
+        assert!(callbacks.contains("acknowledge_delivery_after_local_save"));
+        assert!(callbacks.contains("category: \"other\".to_string()"));
+        assert!(callbacks.contains("origin: \"image_cutout\".to_string()"));
+        assert!(callbacks.contains("cutout_done: true"));
+        assert!(callbacks.contains("store.assets.insert(0, item)"));
+        assert!(!callbacks.contains("store.generations.insert"));
+        assert!(api.contains("/v1/toolbox/image-cutouts"));
+        assert!(api.contains("pub(crate) subject_type: String"));
+        assert!(recovery.contains("resume_pending_image_cutout"));
+        assert!(recovery.contains("\"image_cutout\""));
 
         assert!(cutout.contains("if AppState.cutout-open: Rectangle"));
-        assert!(cutout.contains("text: AppState.en ? \"Original\" : \"原图\""));
-        assert!(cutout.contains("source: AppState.viewer-image;"));
+        assert!(cutout.contains("title: AppState.en ? \"Original\" : \"原图\";"));
+        assert!(cutout.contains("preview: AppState.viewer-image;"));
         for (value, label) in [
             ("general", "通用"),
             ("portrait", "人像"),
@@ -3144,9 +3340,10 @@ fn idle_generation_area_rotates_slash_usage_tips() {
             assert!(cutout.contains(label));
         }
         assert!(cutout.contains("AppState.submit-cutout(AppState.cutout-type)"));
-        assert!(!callbacks.contains("ProcessImageMode::Cutout"));
-        assert!(!feature.contains("ProcessImageMode::Cutout"));
-        assert!(!feature.contains("cutout_edge_background"));
+        assert!(cutout.contains(
+            "if AppState.cutout-message != \"\" && AppState.cutout-result-path == \"\": Text",
+        ));
+        assert!(!callbacks.contains("当前仅完成前端界面"));
     }
 
     #[test]
@@ -3160,7 +3357,11 @@ fn idle_generation_area_rotates_slash_usage_tips() {
         let repeat = viewer
             .split("viewer-repeat-card := Rectangle")
             .nth(1)
-            .and_then(|value| value.split("if AppState.viewer-source == \"inspiration\"").next())
+            .and_then(|value| {
+                value
+                    .split("if AppState.viewer-source == \"inspiration\"")
+                    .next()
+            })
             .expect("viewer repeat card");
         let prompt_scroll_index = viewer
             .find("prompt-scroll := ScrollView")
@@ -3287,9 +3488,7 @@ fn idle_generation_area_rotates_slash_usage_tips() {
             .expect("thumbnail hover outline");
 
         assert!(card.contains("property <length> outline-pad: 0px;"));
-        assert!(card.contains(
-            "border-radius: AppState.card-style == \"rounded\" ? 10px : 0px;"
-        ));
+        assert!(card.contains("border-radius: AppState.card-style == \"rounded\" ? 10px : 0px;"));
         assert!(
             content_index < outline_index,
             "the outline must be painted over the full-bleed image"
@@ -3303,12 +3502,8 @@ fn idle_generation_area_rotates_slash_usage_tips() {
 
         assert!(card.contains("failed-hover := TouchArea"));
         assert!(card.contains("failed-delete-touch := TouchArea"));
-        assert!(card.contains(
-            "visible: failed-hover.has-hover || failed-delete-touch.has-hover"
-        ));
-        assert!(card.contains(
-            "AppState.request-delete-thumbnail(root.item.id, \"generation\")"
-        ));
+        assert!(card.contains("visible: failed-hover.has-hover || failed-delete-touch.has-hover"));
+        assert!(card.contains("AppState.request-delete-thumbnail(root.item.id, \"generation\")"));
         assert!(card.contains("visible: root.item.source-path != \"failed\";"));
         assert!(callbacks.contains("store_mut.generations.retain(|a| a.id != id)"));
     }
@@ -3326,9 +3521,9 @@ fn idle_generation_area_rotates_slash_usage_tips() {
     #[test]
     fn recovered_pending_payment_does_not_launch_the_browser_automatically() {
         let callbacks = include_str!("callbacks/payment.rs");
-        assert!(callbacks.contains(
-            "continue_payment_order(&app, context, backend, started, false);"
-        ));
+        assert!(
+            callbacks.contains("continue_payment_order(&app, context, backend, started, false);")
+        );
         assert!(callbacks.contains("已恢复未完成订单，可重新打开支付宝继续支付"));
     }
 

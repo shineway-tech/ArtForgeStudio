@@ -243,7 +243,10 @@ pub(super) fn prompt_controls_text(controls: &PromptControls, language: PromptLa
         .join(", ")
 }
 
-pub(super) fn advanced_prompt_preview_text(controls: &PromptControls, language: PromptLanguage) -> String {
+pub(super) fn advanced_prompt_preview_text(
+    controls: &PromptControls,
+    language: PromptLanguage,
+) -> String {
     visible_prompt_control_entries(controls)
         .iter()
         .map(|(kind, value)| {

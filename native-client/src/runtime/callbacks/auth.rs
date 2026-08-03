@@ -7,7 +7,10 @@ struct StartupAuthResult {
 }
 
 type LoginResult = std::result::Result<
-    (LoginResponse, std::result::Result<BackendSnapshot, ApiError>),
+    (
+        LoginResponse,
+        std::result::Result<BackendSnapshot, ApiError>,
+    ),
     ApiError,
 >;
 
@@ -16,7 +19,10 @@ enum WechatPollOutcome {
     Scanned(String),
     AgreementRequired(String),
     Failed(String),
-    Completed(LoginResponse, std::result::Result<BackendSnapshot, ApiError>),
+    Completed(
+        LoginResponse,
+        std::result::Result<BackendSnapshot, ApiError>,
+    ),
 }
 
 fn expire_wechat_login(state: &AppState) {
@@ -42,7 +48,8 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
                 return;
             };
             let state = app.global::<AppState>();
-            if state.get_auth_busy() || state.get_auth_code_busy() || state.get_auth_countdown() > 0 {
+            if state.get_auth_busy() || state.get_auth_code_busy() || state.get_auth_countdown() > 0
+            {
                 return;
             }
             let email = state.get_auth_email().trim().to_ascii_lowercase();
@@ -64,7 +71,11 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
                             let seconds = response.resend_after_seconds.min(i32::MAX as u64) as i32;
                             state.set_auth_countdown(seconds);
                             state.set_auth_error(
-                                format!("验证码已发送至 {}，{} 秒内有效", response.email_masked, response.expires_in_seconds).into(),
+                                format!(
+                                    "验证码已发送至 {}，{} 秒内有效",
+                                    response.email_masked, response.expires_in_seconds
+                                )
+                                .into(),
                             );
                             start_countdown(app.as_weak());
                         }
@@ -80,7 +91,9 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
         let backend = backend.clone();
         let context = context.clone();
         state.on_start_wechat_login(move || {
-            let Some(app) = app_weak.upgrade() else { return; };
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             begin_wechat_login(&app, context.clone(), backend.clone());
         });
     }
@@ -89,12 +102,18 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
         let app_weak = app.as_weak();
         let backend = backend.clone();
         state.on_revoke_session(move |session_id| {
-            let Some(app) = app_weak.upgrade() else { return; };
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             let session_id = session_id.to_string();
-            if session_id.trim().is_empty() { return; }
+            if session_id.trim().is_empty() {
+                return;
+            }
             let state = app.global::<AppState>();
             state.set_account_sessions(ModelRc::new(VecModel::from(
-                state.get_account_sessions().iter()
+                state
+                    .get_account_sessions()
+                    .iter()
                     .filter(|session| session.id.as_str() != session_id)
                     .collect::<Vec<_>>(),
             )));
@@ -102,13 +121,13 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
             let weak = app.as_weak();
             std::thread::spawn(move || {
                 let result = api.revoke_session(&session_id);
-                let _ = weak.upgrade_in_event_loop(move |app| {
-                    match result {
-                        Ok(()) => app.global::<AppState>().set_generation_status("设备会话已撤销".into()),
-                        Err(error) => app.global::<AppState>().set_generation_status(
-                            format!("撤销设备失败：{}", error.user_message()).into(),
-                        ),
-                    }
+                let _ = weak.upgrade_in_event_loop(move |app| match result {
+                    Ok(()) => app
+                        .global::<AppState>()
+                        .set_generation_status("设备会话已撤销".into()),
+                    Err(error) => app.global::<AppState>().set_generation_status(
+                        format!("撤销设备失败：{}", error.user_message()).into(),
+                    ),
                 });
             });
         });
@@ -201,7 +220,9 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         state.on_open_agreement(move |title, url| {
-            let Some(app) = app_weak.upgrade() else { return; };
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             let state = app.global::<AppState>();
             let title = title.trim().to_string();
             let url = url.trim().to_string();
@@ -236,9 +257,13 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
         let app_weak = app.as_weak();
         let backend = backend.clone();
         state.on_accept_current_agreements(move || {
-            let Some(app) = app_weak.upgrade() else { return; };
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             let state = app.global::<AppState>();
-            if state.get_agreement_update_busy() { return; }
+            if state.get_agreement_update_busy() {
+                return;
+            }
             if state.get_auth_user_terms_required() && !state.get_auth_user_terms_accepted() {
                 state.set_agreement_update_message("请同意用户协议".into());
                 return;
@@ -271,13 +296,17 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
                     state.set_agreement_update_busy(false);
                     match result {
                         Ok(()) => {
-                            state.set_accepted_user_terms_version(state.get_auth_user_terms_version());
+                            state.set_accepted_user_terms_version(
+                                state.get_auth_user_terms_version(),
+                            );
                             state.set_accepted_privacy_version(state.get_auth_privacy_version());
                             state.set_agreement_update_open(false);
                             state.set_agreement_update_message("".into());
                             save_user_profile(&app);
                         }
-                        Err(error) => state.set_agreement_update_message(auth_error_message(&error).into()),
+                        Err(error) => {
+                            state.set_agreement_update_message(auth_error_message(&error).into())
+                        }
                     }
                 });
             });
@@ -305,7 +334,9 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
         let app_weak = app.as_weak();
         let backend = backend.clone();
         state.on_logout_all(move || {
-            let Some(app) = app_weak.upgrade() else { return; };
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             sign_out_locally(&app, false);
             let api = AuthApi::new(backend.api.clone());
             let backend = backend.clone();
@@ -343,7 +374,11 @@ pub(super) fn initialize_auth(app: &AppWindow, context: AppContext) {
         } else {
             None
         };
-        let result = StartupAuthResult { agreements, refresh, snapshot };
+        let result = StartupAuthResult {
+            agreements,
+            refresh,
+            snapshot,
+        };
         let _ = sender.send(result);
     });
     poll_startup_auth_result(
@@ -356,7 +391,9 @@ pub(super) fn initialize_auth(app: &AppWindow, context: AppContext) {
 
 fn schedule_network_recovery(app_weak: Weak<AppWindow>, context: AppContext) {
     slint::Timer::single_shot(Duration::from_secs(8), move || {
-        let Some(app) = app_weak.upgrade() else { return; };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
         try_network_recovery(&app, context.clone());
         schedule_network_recovery(app.as_weak(), context);
     });
@@ -370,8 +407,12 @@ fn try_network_recovery(app: &AppWindow, context: AppContext) {
     if !matches!(state.get_session_state().as_str(), "offline" | "signed_out") {
         return;
     }
-    let Some(backend) = context.backend.clone() else { return; };
-    let Ok(true) = backend.api.session().has_refresh_token() else { return; };
+    let Some(backend) = context.backend.clone() else {
+        return;
+    };
+    let Ok(true) = backend.api.session().has_refresh_token() else {
+        return;
+    };
     state.set_auth_busy(true);
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
@@ -393,7 +434,15 @@ fn try_network_recovery(app: &AppWindow, context: AppContext) {
 fn poll_network_recovery(
     app_weak: Weak<AppWindow>,
     context: AppContext,
-    receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<(BackendSnapshot, Vec<AgreementItem>), ApiError>>>>>,
+    receiver: Rc<
+        RefCell<
+            Option<
+                mpsc::Receiver<
+                    std::result::Result<(BackendSnapshot, Vec<AgreementItem>), ApiError>,
+                >,
+            >,
+        >,
+    >,
 ) {
     slint::Timer::single_shot(Duration::from_millis(100), move || {
         let result = poll_receiver(&receiver);
@@ -401,7 +450,9 @@ fn poll_network_recovery(
             poll_network_recovery(app_weak, context, receiver);
             return;
         };
-        let Some(app) = app_weak.upgrade() else { return; };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
         let state = app.global::<AppState>();
         state.set_auth_busy(false);
         match result {
@@ -449,7 +500,11 @@ fn selected_login_agreement_acceptances(state: &AppState) -> Vec<AgreementAccept
     acceptances
 }
 
-pub(super) fn begin_wechat_login(app: &AppWindow, context: AppContext, backend: Arc<BackendRuntime>) {
+pub(super) fn begin_wechat_login(
+    app: &AppWindow,
+    context: AppContext,
+    backend: Arc<BackendRuntime>,
+) {
     let state = app.global::<AppState>();
     if state.get_auth_wechat_busy() || state.get_auth_busy() {
         return;
@@ -477,7 +532,9 @@ pub(super) fn begin_wechat_login(app: &AppWindow, context: AppContext, backend: 
 fn poll_wechat_start_result(
     app_weak: Weak<AppWindow>,
     context: AppContext,
-    receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<WechatLoginStartResponse, ApiError>>>>>,
+    receiver: Rc<
+        RefCell<Option<mpsc::Receiver<std::result::Result<WechatLoginStartResponse, ApiError>>>>,
+    >,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
         let result = poll_receiver(&receiver);
@@ -485,7 +542,9 @@ fn poll_wechat_start_result(
             poll_wechat_start_result(app_weak, context, receiver);
             return;
         };
-        let Some(app) = app_weak.upgrade() else { return; };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
         let state = app.global::<AppState>();
         state.set_auth_wechat_busy(false);
         if !state.get_auth_open() || state.get_auth_method().as_str() != "wechat" {
@@ -499,7 +558,8 @@ fn poll_wechat_start_result(
             } {
                 Ok(image) => {
                     let expires = response.expires_in_seconds.min(i32::MAX as u64) as i32;
-                    let poll_after_ms = response.poll_after_milliseconds
+                    let poll_after_ms = response
+                        .poll_after_milliseconds
                         .unwrap_or_else(|| response.poll_after_seconds.saturating_mul(1000))
                         .clamp(250, 10_000) as i32;
                     state.set_auth_wechat_qr_image(image);
@@ -541,56 +601,71 @@ fn schedule_wechat_status_poll(
     login_id: String,
     delay_milliseconds: u64,
 ) {
-    slint::Timer::single_shot(Duration::from_millis(delay_milliseconds.max(250)), move || {
-        let Some(app) = app_weak.upgrade() else { return; };
-        let state = app.global::<AppState>();
-        if !state.get_auth_open()
-            || state.get_auth_method().as_str() != "wechat"
-            || state.get_auth_wechat_login_id().as_str() != login_id
-        {
-            return;
-        }
-        let Some(backend) = context.backend.clone() else { return; };
-        let api = AuthApi::new(backend.api.clone());
-        let account_api = AccountApi::new(backend.api.clone());
-        let request_login_id = login_id.clone();
-        let acceptances = selected_login_agreement_acceptances(&state);
-        let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
-            let result = api.wechat_login_status(&request_login_id, &acceptances).and_then(|status| {
-                match (status.status.as_str(), status.qr_status.as_deref()) {
-                    ("pending", Some("scanned")) | ("scanned", _) => Ok(WechatPollOutcome::Scanned(
-                        status.message.unwrap_or_else(|| "已扫码，请在手机微信中确认登录".to_string()),
-                    )),
-                    ("pending", _) => Ok(WechatPollOutcome::Pending),
-                    ("agreement_required", _) => Ok(WechatPollOutcome::AgreementRequired(
-                        status.message.unwrap_or_else(|| "请先阅读并同意用户协议和隐私政策".to_string()),
-                    )),
-                    ("failed", _) => Ok(WechatPollOutcome::Failed(
-                        status.message.unwrap_or_else(|| "微信登录未完成，请刷新二维码重试".to_string()),
-                    )),
-                    ("completed", _) => {
-                        let login = status.login.ok_or_else(|| ApiError::Protocol {
-                            message: "微信登录响应缺少登录信息".to_string(),
-                            request_id: None,
-                        })?;
-                        Ok(WechatPollOutcome::Completed(login, account_api.snapshot()))
-                    }
-                    _ => Err(ApiError::Protocol {
-                        message: "微信登录响应状态无效".to_string(),
-                        request_id: None,
-                    }),
-                }
+    slint::Timer::single_shot(
+        Duration::from_millis(delay_milliseconds.max(250)),
+        move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            if !state.get_auth_open()
+                || state.get_auth_method().as_str() != "wechat"
+                || state.get_auth_wechat_login_id().as_str() != login_id
+            {
+                return;
+            }
+            let Some(backend) = context.backend.clone() else {
+                return;
+            };
+            let api = AuthApi::new(backend.api.clone());
+            let account_api = AccountApi::new(backend.api.clone());
+            let request_login_id = login_id.clone();
+            let acceptances = selected_login_agreement_acceptances(&state);
+            let (sender, receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                let result = api
+                    .wechat_login_status(&request_login_id, &acceptances)
+                    .and_then(|status| {
+                        match (status.status.as_str(), status.qr_status.as_deref()) {
+                            ("pending", Some("scanned")) | ("scanned", _) => {
+                                Ok(WechatPollOutcome::Scanned(status.message.unwrap_or_else(
+                                    || "已扫码，请在手机微信中确认登录".to_string(),
+                                )))
+                            }
+                            ("pending", _) => Ok(WechatPollOutcome::Pending),
+                            ("agreement_required", _) => Ok(WechatPollOutcome::AgreementRequired(
+                                status.message.unwrap_or_else(|| {
+                                    "请先阅读并同意用户协议和隐私政策".to_string()
+                                }),
+                            )),
+                            ("failed", _) => {
+                                Ok(WechatPollOutcome::Failed(status.message.unwrap_or_else(
+                                    || "微信登录未完成，请刷新二维码重试".to_string(),
+                                )))
+                            }
+                            ("completed", _) => {
+                                let login = status.login.ok_or_else(|| ApiError::Protocol {
+                                    message: "微信登录响应缺少登录信息".to_string(),
+                                    request_id: None,
+                                })?;
+                                Ok(WechatPollOutcome::Completed(login, account_api.snapshot()))
+                            }
+                            _ => Err(ApiError::Protocol {
+                                message: "微信登录响应状态无效".to_string(),
+                                request_id: None,
+                            }),
+                        }
+                    });
+                let _ = sender.send(result);
             });
-            let _ = sender.send(result);
-        });
-        poll_wechat_status_result(
-            app.as_weak(),
-            context,
-            login_id,
-            Rc::new(RefCell::new(Some(receiver))),
-        );
-    });
+            poll_wechat_status_result(
+                app.as_weak(),
+                context,
+                login_id,
+                Rc::new(RefCell::new(Some(receiver))),
+            );
+        },
+    );
 }
 
 fn poll_wechat_status_result(
@@ -605,7 +680,9 @@ fn poll_wechat_status_result(
             poll_wechat_status_result(app_weak, context, login_id, receiver);
             return;
         };
-        let Some(app) = app_weak.upgrade() else { return; };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
         let state = app.global::<AppState>();
         if state.get_auth_wechat_login_id().as_str() != login_id {
             return;
@@ -627,12 +704,7 @@ fn poll_wechat_status_result(
                 state.set_auth_wechat_status(
                     format!("等待扫码，二维码 {remaining} 秒后失效").into(),
                 );
-                schedule_wechat_status_poll(
-                    app.as_weak(),
-                    context,
-                    login_id,
-                    poll_after_ms as u64,
-                );
+                schedule_wechat_status_poll(app.as_weak(), context, login_id, poll_after_ms as u64);
             }
             Ok(WechatPollOutcome::Scanned(message)) => {
                 let poll_after_ms = state.get_auth_wechat_poll_after_ms().max(250);
@@ -650,12 +722,7 @@ fn poll_wechat_status_result(
                 state.set_auth_wechat_scanned(true);
                 state.set_auth_wechat_status(message.into());
                 state.set_auth_error("".into());
-                schedule_wechat_status_poll(
-                    app.as_weak(),
-                    context,
-                    login_id,
-                    poll_after_ms as u64,
-                );
+                schedule_wechat_status_poll(app.as_weak(), context, login_id, poll_after_ms as u64);
             }
             Ok(WechatPollOutcome::AgreementRequired(message)) => {
                 let poll_after_ms = state.get_auth_wechat_poll_after_ms().max(250);
@@ -673,12 +740,7 @@ fn poll_wechat_status_result(
                 state.set_auth_wechat_scanned(true);
                 state.set_auth_wechat_status(message.clone().into());
                 state.set_auth_error(message.into());
-                schedule_wechat_status_poll(
-                    app.as_weak(),
-                    context,
-                    login_id,
-                    poll_after_ms as u64,
-                );
+                schedule_wechat_status_poll(app.as_weak(), context, login_id, poll_after_ms as u64);
             }
             Ok(WechatPollOutcome::Failed(message)) => {
                 state.set_auth_wechat_login_id("".into());
@@ -890,10 +952,7 @@ enum StartupErrorDisposition {
     Recoverable,
 }
 
-fn startup_error_disposition(
-    error: &ApiError,
-    offline_available: bool,
-) -> StartupErrorDisposition {
+fn startup_error_disposition(error: &ApiError, offline_available: bool) -> StartupErrorDisposition {
     if error.is_client_update_required() {
         StartupErrorDisposition::UpdateRequired
     } else if error.is_terminal_session_error() {
@@ -906,7 +965,9 @@ fn startup_error_disposition(
 }
 
 pub(super) fn refresh_backend_snapshot(app: &AppWindow, context: AppContext) {
-    let Some(backend) = context.backend.clone() else { return; };
+    let Some(backend) = context.backend.clone() else {
+        return;
+    };
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let _ = sender.send(AccountApi::new(backend.api.clone()).snapshot());
@@ -929,7 +990,9 @@ fn poll_backend_snapshot(
             poll_backend_snapshot(app_weak, context, receiver);
             return;
         };
-        let Some(app) = app_weak.upgrade() else { return; };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
         match result {
             Ok(snapshot) => apply_backend_snapshot(&app, &context, snapshot),
             Err(error) if error.is_terminal_session_error() => sign_out_locally(&app, true),
@@ -940,38 +1003,69 @@ fn poll_backend_snapshot(
     });
 }
 
-pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snapshot: BackendSnapshot) {
+pub(super) fn apply_backend_snapshot(
+    app: &AppWindow,
+    context: &AppContext,
+    snapshot: BackendSnapshot,
+) {
     let state = app.global::<AppState>();
     state.set_email_mask(snapshot.account.user.email_masked.clone().into());
-    state.set_nickname(snapshot.account.user.nickname.clone().unwrap_or_default().into());
+    state.set_nickname(
+        snapshot
+            .account
+            .user
+            .nickname
+            .clone()
+            .unwrap_or_default()
+            .into(),
+    );
     state.set_email_bound(snapshot.account.auth_methods.email.bound);
     state.set_wechat_bound(snapshot.account.auth_methods.wechat.bound);
     state.set_wechat_can_unbind(snapshot.account.auth_methods.wechat.can_unbind);
     state.set_wechat_bound_name(
-        snapshot.account.auth_methods.wechat.nickname.clone().unwrap_or_default().into(),
+        snapshot
+            .account
+            .auth_methods
+            .wechat
+            .nickname
+            .clone()
+            .unwrap_or_default()
+            .into(),
     );
     if let Some(plan) = snapshot.account.membership.plan.as_ref() {
         state.set_membership_plan_code(plan.code.clone().into());
         state.set_membership_plan_name(plan.name.clone().into());
         state.set_membership_tier_rank(plan.tier_rank);
     }
-    let membership_ends_at = snapshot.account.membership.ends_at.clone().unwrap_or_default();
+    let membership_ends_at = snapshot
+        .account
+        .membership
+        .ends_at
+        .clone()
+        .unwrap_or_default();
     state.set_membership_ends_at(format_membership_ends_at(&membership_ends_at).into());
     state.set_membership_expiry_message(membership_expiry_message(&membership_ends_at).into());
     if let Some(credits) = snapshot.account.credits.as_ref() {
         state.set_credit_balance(credits.available.clone().into());
         state.set_credit_reserved(credits.reserved.clone().into());
     }
-    let packs = snapshot.packs.iter().map(|pack| CreditPackView {
-        code: pack.code.clone().into(),
-        name: pack.name.clone().into(),
-        credits: pack.credits.clone().into(),
-        price: format_cents(credit_pack_price_cents(pack)).into(),
-        price_cents: credit_pack_price_cents(pack).into(),
-        note: credit_pack_note(pack).into(),
-    }).collect::<Vec<_>>();
+    let packs = snapshot
+        .packs
+        .iter()
+        .map(|pack| CreditPackView {
+            code: pack.code.clone().into(),
+            name: pack.name.clone().into(),
+            credits: pack.credits.clone().into(),
+            price: format_cents(credit_pack_price_cents(pack)).into(),
+            price_cents: credit_pack_price_cents(pack).into(),
+            note: credit_pack_note(pack).into(),
+        })
+        .collect::<Vec<_>>();
     let selected_code = state.get_selected_credit_pack_code().to_string();
-    if let Some(selected) = snapshot.packs.iter().find(|pack| pack.code == selected_code)
+    if let Some(selected) = snapshot
+        .packs
+        .iter()
+        .find(|pack| pack.code == selected_code)
         .or_else(|| snapshot.packs.first())
     {
         state.set_selected_credit_pack_code(selected.code.clone().into());
@@ -984,14 +1078,18 @@ pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snap
     }
     state.set_credit_packs(ModelRc::new(VecModel::from(packs)));
     state.set_membership_plans(ModelRc::new(VecModel::from(
-        snapshot.plans.iter().map(|plan| MembershipPlanView {
-            code: plan.code.clone().into(),
-            name: plan.name.clone().into(),
-            price: format_cents(&plan.price_cents).into(),
-            grant_credits: plan.grant_credits.clone().into(),
-            period_days: plan.period_days,
-            tier_rank: plan.tier_rank,
-        }).collect::<Vec<_>>(),
+        snapshot
+            .plans
+            .iter()
+            .map(|plan| MembershipPlanView {
+                code: plan.code.clone().into(),
+                name: plan.name.clone().into(),
+                price: format_cents(&plan.price_cents).into(),
+                grant_credits: plan.grant_credits.clone().into(),
+                period_days: plan.period_days,
+                tier_rank: plan.tier_rank,
+            })
+            .collect::<Vec<_>>(),
     )));
     let catalog_models = snapshot
         .models
@@ -1028,14 +1126,18 @@ pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snap
         snapshot.ledger_next_cursor.clone(),
     );
     state.set_account_sessions(ModelRc::new(VecModel::from(
-        snapshot.sessions.iter().map(|session| AccountSession {
-            id: session.id.clone().into(),
-            device_name: session.device_name.clone().into(),
-            platform: session.platform.clone().into(),
-            app_version: session.app_version.clone().into(),
-            last_seen_at: session.last_seen_at.clone().into(),
-            is_current: session.is_current,
-        }).collect::<Vec<_>>(),
+        snapshot
+            .sessions
+            .iter()
+            .map(|session| AccountSession {
+                id: session.id.clone().into(),
+                device_name: session.device_name.clone().into(),
+                platform: session.platform.clone().into(),
+                app_version: session.app_version.clone().into(),
+                last_seen_at: session.last_seen_at.clone().into(),
+                is_current: session.is_current,
+            })
+            .collect::<Vec<_>>(),
     )));
 
     let image_models = snapshot
@@ -1090,7 +1192,9 @@ pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snap
             "image",
             "平台图像模型",
             image_models.clone(),
-            selected_image.map(|model| model.code.as_str()).unwrap_or_default(),
+            selected_image
+                .map(|model| model.code.as_str())
+                .unwrap_or_default(),
         ));
     }
     if !prompt_models.is_empty() {
@@ -1098,7 +1202,9 @@ pub(super) fn apply_backend_snapshot(app: &AppWindow, context: &AppContext, snap
             "reasoning",
             "平台提示词模型",
             prompt_models.clone(),
-            selected_prompt.map(|model| model.code.as_str()).unwrap_or_default(),
+            selected_prompt
+                .map(|model| model.code.as_str())
+                .unwrap_or_default(),
         ));
     }
     {
@@ -1199,19 +1305,28 @@ fn format_membership_ends_at(ends_at: &str) -> String {
 
 fn format_cents(value: &str) -> String {
     let value = value.trim();
-    let (sign, digits) = value.strip_prefix('-').map(|digits| ("-", digits)).unwrap_or(("", value));
+    let (sign, digits) = value
+        .strip_prefix('-')
+        .map(|digits| ("-", digits))
+        .unwrap_or(("", value));
     if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
         return format!("¥ {value}");
     }
     let normalized = digits.trim_start_matches('0');
-    let normalized = if normalized.is_empty() { "0" } else { normalized };
+    let normalized = if normalized.is_empty() {
+        "0"
+    } else {
+        normalized
+    };
     let padded = format!("{:0>3}", normalized);
     let split = padded.len() - 2;
     format!("¥ {sign}{}.{}", &padded[..split], &padded[split..])
 }
 
 fn credit_pack_price_cents(pack: &CreditPack) -> &str {
-    pack.payable_price_cents.as_deref().unwrap_or(&pack.price_cents)
+    pack.payable_price_cents
+        .as_deref()
+        .unwrap_or(&pack.price_cents)
 }
 
 fn credit_pack_note(pack: &CreditPack) -> String {
@@ -1229,7 +1344,11 @@ fn credit_pack_note(pack: &CreditPack) -> String {
 
 fn model_capabilities_text(model: &ModelCatalogItem) -> String {
     let mut parts = Vec::new();
-    if let Some(ratios) = model.capabilities.get("aspect_ratios").and_then(Value::as_array) {
+    if let Some(ratios) = model
+        .capabilities
+        .get("aspect_ratios")
+        .and_then(Value::as_array)
+    {
         let values = ratios
             .iter()
             .filter_map(Value::as_str)
@@ -1239,20 +1358,37 @@ fn model_capabilities_text(model: &ModelCatalogItem) -> String {
             parts.push(format!("比例：{}", values.join("/")));
         }
     }
-    if model.capabilities.get("supports_references").and_then(Value::as_bool) == Some(true) {
+    if model
+        .capabilities
+        .get("supports_references")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
         parts.push("支持参考图".to_string());
     }
-    if let Some(operations) = model.capabilities.get("operations").and_then(Value::as_array) {
-        let values = operations.iter().filter_map(Value::as_str).map(|operation| match operation {
-            "optimize" => "提示词优化",
-            "translate" => "提示词翻译",
-            value => value,
-        }).collect::<Vec<_>>();
+    if let Some(operations) = model
+        .capabilities
+        .get("operations")
+        .and_then(Value::as_array)
+    {
+        let values = operations
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|operation| match operation {
+                "optimize" => "提示词优化",
+                "translate" => "提示词翻译",
+                value => value,
+            })
+            .collect::<Vec<_>>();
         if !values.is_empty() {
             parts.push(values.join("/"));
         }
     }
-    if parts.is_empty() { "服务端模型能力".to_string() } else { parts.join(" · ") }
+    if parts.is_empty() {
+        "服务端模型能力".to_string()
+    } else {
+        parts.join(" · ")
+    }
 }
 
 pub(super) fn apply_agreements(app: &AppWindow, agreements: &[AgreementItem]) {
@@ -1330,7 +1466,10 @@ fn update_required_message(error: &ApiError) -> String {
 
 fn minimum_version_from_error(error: &ApiError) -> &str {
     match error {
-        ApiError::Http { details: Some(details), .. } => details
+        ApiError::Http {
+            details: Some(details),
+            ..
+        } => details
             .get("minimum_version")
             .and_then(Value::as_str)
             .unwrap_or("最新版本"),
@@ -1373,7 +1512,11 @@ fn sign_out_locally(app: &AppWindow, revoked: bool) {
     state.set_email_bind_busy(false);
     state.set_email_bind_countdown(0);
     state.set_email_bind_status("".into());
-    state.set_auth_error(if revoked { "登录状态已失效，请重新登录".into() } else { "".into() });
+    state.set_auth_error(if revoked {
+        "登录状态已失效，请重新登录".into()
+    } else {
+        "".into()
+    });
     state.set_page("welcome".into());
     state.set_profile_open(false);
     state.set_agreement_viewer_open(false);
@@ -1389,7 +1532,9 @@ pub(super) fn require_online_operation(app: &AppWindow, operation: &str) -> bool
         return true;
     }
     if state.get_session_state().as_str() == "offline" {
-        state.set_generation_status(format!("离线模式只能浏览本地内容，联网后才能{operation}").into());
+        state.set_generation_status(
+            format!("离线模式只能浏览本地内容，联网后才能{operation}").into(),
+        );
     } else {
         state.set_generation_status(format!("请先登录后再{operation}").into());
         state.set_auth_open(true);

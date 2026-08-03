@@ -183,6 +183,54 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
                     }
                 }
             }
+        } else if page.as_str() == "toolbox-enhance" {
+            for drop in drops {
+                match drop {
+                    ExternalImageDrop::Paths(paths) => {
+                        image_enhancement_callbacks::add_enhancement_paths(&app, paths);
+                    }
+                    #[cfg(windows)]
+                    ExternalImageDrop::Text(data) => {
+                        image_enhancement_callbacks::add_enhancement_from_drag_data(
+                            &app,
+                            TEXT_PLAIN_MIME,
+                            &data,
+                        );
+                    }
+                }
+            }
+        } else if page.as_str() == "toolbox-watermark" {
+            for drop in drops {
+                match drop {
+                    ExternalImageDrop::Paths(paths) => {
+                        toolbox_callbacks::add_watermark_paths(&app, paths);
+                    }
+                    #[cfg(windows)]
+                    ExternalImageDrop::Text(data) => {
+                        toolbox_callbacks::add_watermark_from_drag_data(
+                            &app,
+                            TEXT_PLAIN_MIME,
+                            &data,
+                        );
+                    }
+                }
+            }
+        } else if page.as_str() == "toolbox-colorize" {
+            for drop in drops {
+                match drop {
+                    ExternalImageDrop::Paths(paths) => {
+                        toolbox_callbacks::add_colorization_paths(&app, paths);
+                    }
+                    #[cfg(windows)]
+                    ExternalImageDrop::Text(data) => {
+                        toolbox_callbacks::add_colorization_from_drag_data(
+                            &app,
+                            TEXT_PLAIN_MIME,
+                            &data,
+                        );
+                    }
+                }
+            }
         } else if page.as_str() == "toolbox-compress" {
             for drop in drops {
                 match drop {
@@ -223,11 +271,7 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
                     }
                     #[cfg(windows)]
                     ExternalImageDrop::Text(data) => {
-                        toolbox_callbacks::add_crop_from_drag_data(
-                            &app,
-                            TEXT_PLAIN_MIME,
-                            &data,
-                        );
+                        toolbox_callbacks::add_crop_from_drag_data(&app, TEXT_PLAIN_MIME, &data);
                     }
                 }
             }
@@ -236,11 +280,7 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
     });
 }
 
-fn start_external_reference_import(
-    app: &AppWindow,
-    store: Rc<RefCell<Store>>,
-    url: String,
-) {
+fn start_external_reference_import(app: &AppWindow, store: Rc<RefCell<Store>>, url: String) {
     let state = app.global::<AppState>();
     state.set_generation_status(
         if state.get_language().as_str() == "en" {
@@ -254,11 +294,7 @@ fn start_external_reference_import(
     std::thread::spawn(move || {
         let _ = sender.send(download_external_reference(&url));
     });
-    poll_external_reference_import(
-        app.as_weak(),
-        store,
-        Rc::new(RefCell::new(Some(receiver))),
-    );
+    poll_external_reference_import(app.as_weak(), store, Rc::new(RefCell::new(Some(receiver))));
 }
 
 fn poll_external_reference_import(
@@ -295,14 +331,12 @@ fn poll_external_reference_import(
             Ok(path) => {
                 add_reference_from_path(&app, &store, &path);
             }
-            Err(error) => app
-                .global::<AppState>()
-                .set_generation_status(error.into()),
+            Err(error) => app.global::<AppState>().set_generation_status(error.into()),
         }
     });
 }
 
-fn download_external_reference(url: &str) -> std::result::Result<PathBuf, String> {
+pub(super) fn download_external_reference(url: &str) -> std::result::Result<PathBuf, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::limited(5))

@@ -22,11 +22,7 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                         return;
                     }
                     let category = current_workspace_category(&app);
-                    toggle_custom_prompt_selection_for_category(
-                        &mut store_mut,
-                        &category,
-                        &prompt,
-                    );
+                    toggle_custom_prompt_selection_for_category(&mut store_mut, &category, &prompt);
                 }
                 let state = app.global::<AppState>();
                 if state.get_prompt().trim() == "//" {
@@ -84,17 +80,14 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
             state.set_custom_prompt_category(
                 normalized_custom_prompt_category(&profile.category).into(),
             );
-            state
-                .set_custom_prompt_format(normalized_custom_prompt_format(&profile.format).into());
+            state.set_custom_prompt_format(normalized_custom_prompt_format(&profile.format).into());
             state.set_custom_prompt_negative(profile.negative_prompt.into());
             state.set_custom_prompt_reference_path(profile.reference_path.clone().into());
-            state.set_custom_prompt_reference_image(
-                if profile.reference_path.is_empty() {
-                    Image::default()
-                } else {
-                    load_image(Path::new(&profile.reference_path)).unwrap_or_default()
-                },
-            );
+            state.set_custom_prompt_reference_image(if profile.reference_path.is_empty() {
+                Image::default()
+            } else {
+                load_image(Path::new(&profile.reference_path)).unwrap_or_default()
+            });
             state.set_custom_prompt_message("".into());
             open_custom_prompt_editor(&app);
         });
@@ -255,9 +248,7 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                 return;
             }
             let timestamp = Local::now().format("%Y-%m-%d %H:%M").to_string();
-            let format = normalized_custom_prompt_format(
-                state.get_custom_prompt_format().as_str(),
-            );
+            let format = normalized_custom_prompt_format(state.get_custom_prompt_format().as_str());
             let profile = CustomPromptProfile {
                 name,
                 category: normalized_custom_prompt_category(
@@ -279,11 +270,7 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                 if result == SaveCustomPromptResult::Saved {
                     save_custom_prompt_profile(&mut store, &original, &prompt, profile);
                     if !original_prompt.is_empty() {
-                        replace_selected_custom_prompt(
-                            &mut store,
-                            &original_prompt,
-                            prompt.trim(),
-                        );
+                        replace_selected_custom_prompt(&mut store, &original_prompt, prompt.trim());
                     }
                 }
                 result
@@ -418,10 +405,7 @@ fn start_custom_prompt_reference_analysis(
         })();
         let _ = sender.send(result);
     });
-    poll_custom_prompt_reference_analysis(
-        app.as_weak(),
-        Rc::new(RefCell::new(Some(receiver))),
-    );
+    poll_custom_prompt_reference_analysis(app.as_weak(), Rc::new(RefCell::new(Some(receiver))));
 }
 
 fn poll_custom_prompt_reference_analysis(
@@ -535,12 +519,7 @@ pub(super) fn normalized_custom_prompt_format(value: &str) -> String {
 }
 
 #[allow(dead_code)]
-fn legacy_reference_style(
-    rgba: &[u8],
-    width: u32,
-    height: u32,
-    english: bool,
-) -> Option<String> {
+fn legacy_reference_style(rgba: &[u8], width: u32, height: u32, english: bool) -> Option<String> {
     let pixel_count = rgba.len() / 4;
     if pixel_count == 0 || width == 0 || height == 0 {
         return None;
@@ -588,59 +567,101 @@ fn legacy_reference_style(
     let average_blue = blue / samples;
     let average_luminance = luminance / samples;
     let average_saturation = saturation / samples;
-    let variance =
-        (luminance_squared / samples - average_luminance * average_luminance).max(0.0);
+    let variance = (luminance_squared / samples - average_luminance * average_luminance).max(0.0);
     let contrast = variance.sqrt();
-    let warm_balance =
-        average_red - average_blue + (average_green - average_blue) * 0.12;
+    let warm_balance = average_red - average_blue + (average_green - average_blue) * 0.12;
 
     let orientation = if width > height.saturating_mul(6) / 5 {
-        if english { "landscape" } else { "横向" }
+        if english {
+            "landscape"
+        } else {
+            "横向"
+        }
     } else if height > width.saturating_mul(6) / 5 {
-        if english { "portrait" } else { "竖向" }
+        if english {
+            "portrait"
+        } else {
+            "竖向"
+        }
     } else if english {
         "square"
     } else {
         "方形"
     };
     let brightness = if average_luminance > 0.68 {
-        if english { "bright and airy" } else { "明亮通透" }
+        if english {
+            "bright and airy"
+        } else {
+            "明亮通透"
+        }
     } else if average_luminance < 0.34 {
-        if english { "deep low-key lighting" } else { "低调暗部" }
+        if english {
+            "deep low-key lighting"
+        } else {
+            "低调暗部"
+        }
     } else if english {
         "balanced lighting"
     } else {
         "明暗均衡"
     };
     let temperature = if warm_balance > 0.07 {
-        if english { "warm palette" } else { "暖色调" }
+        if english {
+            "warm palette"
+        } else {
+            "暖色调"
+        }
     } else if warm_balance < -0.06 {
-        if english { "cool palette" } else { "冷色调" }
+        if english {
+            "cool palette"
+        } else {
+            "冷色调"
+        }
     } else if english {
         "neutral palette"
     } else {
         "中性色调"
     };
     let chroma = if average_saturation > 0.55 {
-        if english { "vivid saturated color" } else { "色彩高饱和鲜明" }
+        if english {
+            "vivid saturated color"
+        } else {
+            "色彩高饱和鲜明"
+        }
     } else if average_saturation < 0.20 {
-        if english { "soft restrained color" } else { "色彩低饱和柔和" }
+        if english {
+            "soft restrained color"
+        } else {
+            "色彩低饱和柔和"
+        }
     } else if english {
         "natural color saturation"
     } else {
         "色彩饱和度自然"
     };
     let tonal_contrast = if contrast > 0.24 {
-        if english { "strong tonal contrast" } else { "强对比光影" }
+        if english {
+            "strong tonal contrast"
+        } else {
+            "强对比光影"
+        }
     } else if contrast < 0.11 {
-        if english { "soft low contrast" } else { "柔和低对比光影" }
+        if english {
+            "soft low contrast"
+        } else {
+            "柔和低对比光影"
+        }
     } else if english {
         "balanced tonal contrast"
     } else {
         "均衡对比光影"
     };
     let detail = if width.max(height) >= 2_000 {
-        if english { "fine detailed texture" } else { "细节与纹理丰富" }
+        if english {
+            "fine detailed texture"
+        } else {
+            "细节与纹理丰富"
+        }
     } else if english {
         "clean controlled detail"
     } else {

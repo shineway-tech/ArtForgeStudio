@@ -22,6 +22,12 @@ pub(super) fn open_viewer(app: &AppWindow, store: &Store, id: &str, source: &str
     state.set_viewer_ratio(item.ratio.clone().into());
     state.set_viewer_quality(item.quality.clone().into());
     state.set_viewer_model(item.model.clone().into());
+    state.set_viewer_repeat_enabled(
+        item.origin != "watermark_removal"
+            && item.origin != "image_enhancement"
+            && item.origin != "image_colorization"
+            && item.origin != "image_crop",
+    );
     state.set_viewer_cutout_done(item.cutout_done);
     state.set_viewer_remove_black_done(item.remove_black_done);
     state.set_viewer_upscale_done(item.upscale_done);
@@ -35,10 +41,7 @@ pub(super) fn open_viewer(app: &AppWindow, store: &Store, id: &str, source: &str
     state.set_viewer_open(true);
 }
 
-fn readable_deep_prompt(
-    prompt: &str,
-    bindings: &BTreeMap<String, DeepPromptBinding>,
-) -> String {
+fn readable_deep_prompt(prompt: &str, bindings: &BTreeMap<String, DeepPromptBinding>) -> String {
     let prompt = prompt.trim();
     for binding in bindings.values() {
         let english = binding.english.trim();
@@ -277,11 +280,15 @@ pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
                 content: prompt.clone().into(),
                 selected: custom_prompt_selected_for_category(store, &category, prompt),
                 category: normalized_custom_prompt_category(
-                    profile.map(|profile| profile.category.as_str()).unwrap_or("default"),
+                    profile
+                        .map(|profile| profile.category.as_str())
+                        .unwrap_or("default"),
                 )
                 .into(),
                 format: normalized_custom_prompt_format(
-                    profile.map(|profile| profile.format.as_str()).unwrap_or("json"),
+                    profile
+                        .map(|profile| profile.format.as_str())
+                        .unwrap_or("json"),
                 )
                 .into(),
                 time: store

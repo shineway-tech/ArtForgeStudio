@@ -184,6 +184,9 @@ mod tests {
             1.0,
         )
         .expect("agreement config");
-        assert_eq!((config.x, config.y, config.width, config.height), (320, 180, 800, 560));
+        assert_eq!(
+            (config.x, config.y, config.width, config.height),
+            (320, 180, 800, 560)
+        );
     }
 }

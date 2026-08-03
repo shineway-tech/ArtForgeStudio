@@ -4,13 +4,14 @@ import { AppTheme } from "../theme.slint";
 
 component EnhanceQualityButton {
     in property <string> value;
+    in property <bool> disabled: false;
     property <bool> selected: AppState.enhance-quality == root.value;
     callback clicked();
 
     Rectangle {
         background: root.selected
             ? AppTheme.accent.with-alpha(0.16)
-            : (quality-touch.has-hover ? AppTheme.panel-soft : transparent);
+            : (quality-touch.has-hover && !root.disabled ? AppTheme.panel-soft : transparent);
         border-radius: 8px;
         border-width: 1px;
         border-color: root.selected ? AppTheme.accent : AppTheme.border;
@@ -19,7 +20,9 @@ component EnhanceQualityButton {
             width: parent.width;
             height: parent.height;
             text: root.value;
-            color: root.selected ? AppTheme.accent-dark : AppTheme.text;
+            color: root.disabled
+                ? AppTheme.muted
+                : (root.selected ? AppTheme.accent-dark : AppTheme.text);
             font-size: 15px;
             font-weight: root.selected ? 500 : 400;
             horizontal-alignment: center;
@@ -27,9 +30,10 @@ component EnhanceQualityButton {
         }
 
         quality-touch := TouchArea {
+            enabled: !root.disabled;
             width: parent.width;
             height: parent.height;
-            mouse-cursor: pointer;
+            mouse-cursor: root.disabled ? default : pointer;
             clicked => { root.clicked(); }
         }
     }
@@ -40,105 +44,175 @@ component EnhancePreviewPanel {
     in property <string> detail;
     in property <image> preview;
     in property <bool> has-image: false;
-    in property <bool> upload-panel: false;
+    in property <bool> processing: false;
+    in property <int> progress: 0;
+    in property <bool> result-panel: false;
+    in property <bool> drop-enabled: false;
     callback choose-image();
+    callback dropped(string, string);
 
     Rectangle {
-        background: AppTheme.panel;
-        border-radius: 12px;
-        border-width: 1px;
-        border-color: AppTheme.border;
+        background: transparent;
 
         Text {
-            x: 20px;
-            y: 16px;
-            width: 100px;
+            x: 0px;
+            y: 0px;
+            width: parent.width;
             height: 28px;
-            text: root.title;
+            text: root.processing
+                ? (AppState.en ? "Enhancing image (" + root.progress + "%)..." : "图片清晰处理中(" + root.progress + "%)...")
+                : root.title;
             color: AppTheme.text;
             font-size: 16px;
             font-weight: 600;
             vertical-alignment: center;
+            overflow: elide;
         }
 
         Text {
-            x: 120px;
-            y: 16px;
-            width: parent.width - 140px;
-            height: 28px;
+            x: 0px;
+            y: 30px;
+            width: parent.width;
+            height: 20px;
             text: root.detail;
             color: AppTheme.muted;
             font-size: 12px;
-            font-weight: 400;
-            horizontal-alignment: right;
             vertical-alignment: center;
             overflow: elide;
         }
 
         preview-frame := Rectangle {
-            x: 20px;
-            y: 56px;
-            width: parent.width - 40px;
-            height: parent.height - 76px;
-            background: AppTheme.bg;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: root.upload-panel && preview-touch.has-hover
+            x: 0px;
+            y: 62px;
+            width: parent.width;
+            height: parent.height - 62px;
+            background: source-drop.contains-drag
+                ? AppTheme.accent.with-alpha(0.08)
+                : AppTheme.panel;
+            border-radius: 12px;
+            border-width: source-drop.contains-drag ? 2px : 1px;
+            border-color: source-drop.contains-drag || root.processing
                 ? AppTheme.accent
                 : AppTheme.border;
             clip: true;
 
             if root.has-image: Image {
-                width: parent.width;
-                height: parent.height;
+                x: 12px;
+                y: 12px;
+                width: parent.width - 24px;
+                height: parent.height - 24px;
                 source: root.preview;
                 image-fit: contain;
             }
 
-            if !root.has-image: Image {
-                x: (parent.width - 44px) / 2;
-                y: (parent.height - 88px) / 2;
-                width: 44px;
-                height: 44px;
-                source: @image-url("../../assets/icons/image.svg");
-                colorize: AppTheme.muted;
-                image-fit: contain;
+            if !root.has-image: Rectangle {
+                background: transparent;
+
+                Rectangle {
+                    x: (parent.width - 58px) / 2;
+                    y: (parent.height - 108px) / 2;
+                    width: 58px;
+                    height: 58px;
+                    border-radius: 14px;
+                    background: AppTheme.panel-soft;
+
+                    Image {
+                        x: 16px;
+                        y: 16px;
+                        width: 26px;
+                        height: 26px;
+                        source: root.result-panel
+                            ? @image-url("../../assets/icons/image.svg")
+                            : @image-url("../../assets/icons/upload.svg");
+                        colorize: AppTheme.muted;
+                        image-fit: contain;
+                    }
+                }
+
+                Text {
+                    x: 24px;
+                    y: (parent.height - 108px) / 2 + 72px;
+                    width: parent.width - 48px;
+                    height: 24px;
+                    text: source-drop.contains-drag
+                        ? (AppState.en ? "Release to upload image" : "松开即可上传图片")
+                        : root.result-panel
+                        ? (AppState.en ? "The enhanced image will appear here" : "清晰增强结果将在这里显示")
+                        : (AppState.en ? "Drag an image here, or click to upload" : "拖放图片到这里，或点击上传");
+                    color: source-drop.contains-drag ? AppTheme.accent : AppTheme.muted;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                if !root.result-panel: TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => { root.choose-image(); }
+                }
             }
 
-            if !root.has-image: Text {
-                x: 20px;
-                y: (parent.height - 88px) / 2 + 54px;
-                width: parent.width - 40px;
-                height: 28px;
-                text: root.upload-panel
-                    ? (AppState.en ? "Click to upload an image" : "点击上传图片")
-                    : (AppState.en ? "The enhanced result will appear here" : "清晰处理结果将在这里显示");
-                color: AppTheme.muted;
-                font-size: 14px;
-                font-weight: 400;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+            if root.processing: Rectangle {
+                x: 0px;
+                y: parent.height - 4px;
+                width: parent.width * root.progress / 100;
+                height: 4px;
+                background: AppTheme.accent;
             }
 
-            preview-touch := TouchArea {
-                enabled: root.upload-panel;
-                width: parent.width;
-                height: parent.height;
-                mouse-cursor: root.upload-panel ? pointer : default;
-                clicked => {
-                    if root.upload-panel {
-                        root.choose-image();
+            if source-drop.contains-drag && root.has-image: Rectangle {
+                background: AppTheme.accent.with-alpha(0.12);
+
+                Rectangle {
+                    x: (parent.width - 220px) / 2;
+                    y: (parent.height - 48px) / 2;
+                    width: 220px;
+                    height: 48px;
+                    border-radius: 12px;
+                    background: AppTheme.panel;
+                    border-width: 1px;
+                    border-color: AppTheme.accent;
+
+                    Text {
+                        width: parent.width;
+                        height: parent.height;
+                        text: AppState.en ? "Release to replace image" : "松开即可更换图片";
+                        color: AppTheme.accent;
+                        font-size: 14px;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
                     }
                 }
             }
-        }
 
+            source-drop := DropArea {
+                width: parent.width;
+                height: parent.height;
+                can-drop(event) => {
+                    return root.drop-enabled
+                        && (event.mime-type == "text/uri-list"
+                            || event.mime-type == "text/plain"
+                            || event.mime-type == "text/html"
+                            || event.mime-type == "application/x-artforge-image-path");
+                }
+                dropped(event) => {
+                    root.dropped(event.mime-type, event.data);
+                }
+            }
+        }
     }
 }
 
 export component ToolboxEnhancePage {
+    function panel-gap() -> length {
+        return 20px;
+    }
+
     function panel-width() -> length {
-        return max(420px, (root.width - 84px) / 2);
+        return (root.width - 64px - root.panel-gap()) / 2;
     }
 
     Rectangle {
@@ -149,49 +223,43 @@ export component ToolboxEnhancePage {
             y: 28px;
             width: parent.width - 64px;
             height: 32px;
-            text: AppState.en ? "Image Enhance" : "图片变清晰";
+            text: AppState.en ? "Image Enhance" : "图片清晰";
             color: AppTheme.text;
             font-size: 24px;
             font-weight: 600;
             vertical-alignment: center;
         }
 
-        Text {
-            x: 32px;
-            y: 68px;
-            width: parent.width - 64px;
-            height: 22px;
-            text: AppState.en
-                ? "Upload an image, choose the target quality, and compare the result"
-                : "上传图片，选择目标清晰度并对比处理结果";
-            color: AppTheme.muted;
-            font-size: 13px;
-            font-weight: 400;
-            vertical-alignment: center;
-        }
-
         source-panel := EnhancePreviewPanel {
             x: 32px;
-            y: 112px;
+            y: 76px;
             width: root.panel-width();
-            height: parent.height - 218px;
+            height: parent.height - 182px;
             title: AppState.en ? "Original" : "原图";
             detail: AppState.enhance-source-name;
             preview: AppState.enhance-source-image;
             has-image: AppState.enhance-source-path != "";
-            upload-panel: true;
+            drop-enabled: !AppState.enhance-processing;
             choose-image => { AppState.choose-enhance-source(); }
+            dropped(mime-type, data) => {
+                AppState.add-enhance-source-from-drag(mime-type, data);
+            }
         }
 
         result-panel := EnhancePreviewPanel {
-            x: 52px + root.panel-width();
-            y: 112px;
+            x: 32px + root.panel-width() + root.panel-gap();
+            y: 76px;
             width: root.panel-width();
-            height: parent.height - 218px;
-            title: AppState.en ? "Result" : "处理结果";
+            height: parent.height - 182px;
+            title: AppState.enhance-result-path != ""
+                ? (AppState.en ? "Enhanced image" : "清晰增强结果")
+                : (AppState.en ? "Waiting for processing" : "等待处理");
             detail: AppState.enhance-result-name;
             preview: AppState.enhance-result-image;
             has-image: AppState.enhance-result-path != "";
+            processing: AppState.enhance-processing;
+            progress: AppState.enhance-progress;
+            result-panel: true;
         }
 
         Text {
@@ -202,36 +270,30 @@ export component ToolboxEnhancePage {
             text: AppState.en ? "Quality" : "清晰度";
             color: AppTheme.text;
             font-size: 14px;
-            font-weight: 400;
             vertical-alignment: center;
         }
 
         HorizontalLayout {
             x: 96px;
             y: parent.height - 78px;
-            width: min(204px, root.panel-width() - 262px);
+            width: 140px;
             height: 42px;
             spacing: 8px;
 
             EnhanceQualityButton {
                 horizontal-stretch: 1;
-                value: "1K";
-                clicked => {
-                    AppState.enhance-quality = "1K";
-                    AppState.enhance-message = "";
-                }
-            }
-            EnhanceQualityButton {
-                horizontal-stretch: 1;
                 value: "2K";
+                disabled: AppState.enhance-processing;
                 clicked => {
                     AppState.enhance-quality = "2K";
                     AppState.enhance-message = "";
                 }
             }
+
             EnhanceQualityButton {
                 horizontal-stretch: 1;
                 value: "4K";
+                disabled: AppState.enhance-processing;
                 clicked => {
                     AppState.enhance-quality = "4K";
                     AppState.enhance-message = "";
@@ -239,30 +301,39 @@ export component ToolboxEnhancePage {
             }
         }
 
-        PillButton {
-            x: 32px + root.panel-width() - 146px;
+        if AppState.enhance-source-path != "": PillButton {
+            x: 32px + root.panel-width() - 304px;
             y: parent.height - 78px;
-            width: 146px;
+            width: 126px;
+            height: 42px;
+            text: AppState.en ? "Change image" : "更换图片";
+            disabled: AppState.enhance-processing;
+            clicked => { AppState.choose-enhance-source(); }
+        }
+
+        PillButton {
+            x: 32px + root.panel-width() - 166px;
+            y: parent.height - 78px;
+            width: 166px;
             height: 42px;
             text: AppState.enhance-processing
                 ? (AppState.en ? "Enhancing..." : "处理中...")
-                : (AppState.en ? "Start Enhance" : "开始变清晰");
+                : (AppState.en ? "Enhance image" : "一键变清晰");
             primary: true;
             disabled: AppState.enhance-source-path == "" || AppState.enhance-processing;
             clicked => { AppState.start-enhance(AppState.enhance-quality); }
         }
 
         Text {
-            x: 32px + root.panel-width() - 146px;
+            x: 32px + root.panel-width() - 166px;
             y: parent.height - 33px;
-            width: 146px;
+            width: 166px;
             height: 20px;
             text: AppState.en
                 ? "Estimated charge: " + AppState.enhance-estimated-credits + " credits"
                 : "本次预计扣除 " + AppState.enhance-estimated-credits + " 积分";
             color: AppTheme.muted;
             font-size: 10px;
-            font-weight: 400;
             horizontal-alignment: center;
             vertical-alignment: center;
             overflow: elide;
@@ -279,14 +350,13 @@ export component ToolboxEnhancePage {
         }
 
         if AppState.enhance-message != "": Text {
-            x: 52px + root.panel-width();
+            x: 32px + root.panel-width() + root.panel-gap();
             y: parent.height - 69px;
             width: root.panel-width() - 162px;
             height: 24px;
             text: AppState.enhance-message;
             color: AppTheme.muted;
             font-size: 12px;
-            font-weight: 400;
             vertical-alignment: center;
             overflow: elide;
         }

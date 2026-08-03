@@ -41,12 +41,14 @@ pub(crate) struct PaymentApi {
 }
 
 impl PaymentApi {
-    pub(crate) fn new(client: ApiClient) -> Self { Self { client } }
+    pub(crate) fn new(client: ApiClient) -> Self {
+        Self { client }
+    }
 
     pub(crate) fn packs(&self) -> Result<Vec<CreditPack>, ApiError> {
-        self.client.authenticated_json::<Vec<CreditPack>>(
-            Method::GET, "/v1/credits/packs", None, None,
-        ).map(|response| response.data)
+        self.client
+            .authenticated_json::<Vec<CreditPack>>(Method::GET, "/v1/credits/packs", None, None)
+            .map(|response| response.data)
     }
 
     pub(crate) fn create_credit_order(
@@ -54,32 +56,43 @@ impl PaymentApi {
         pack_code: &str,
         client_request_id: &str,
     ) -> Result<OrderDetail, ApiError> {
-        let body = serde_json::to_value(CreditOrderRequest { pack_code, client_request_id })
-            .map_err(|error| ApiError::Protocol { message: error.to_string(), request_id: None })?;
-        self.client.authenticated_json::<OrderDetail>(
-            Method::POST,
-            "/v1/credits/orders",
-            Some(body),
-            Some(client_request_id),
-        ).map(|response| response.data)
+        let body = serde_json::to_value(CreditOrderRequest {
+            pack_code,
+            client_request_id,
+        })
+        .map_err(|error| ApiError::Protocol {
+            message: error.to_string(),
+            request_id: None,
+        })?;
+        self.client
+            .authenticated_json::<OrderDetail>(
+                Method::POST,
+                "/v1/credits/orders",
+                Some(body),
+                Some(client_request_id),
+            )
+            .map(|response| response.data)
     }
 
     pub(crate) fn sync_order(&self, order_id: &str) -> Result<OrderDetail, ApiError> {
-        self.client.authenticated_json::<OrderDetail>(
-            Method::POST,
-            &format!("/v1/orders/{order_id}/sync"),
-            None,
-            None,
-        ).map(|response| response.data)
+        self.client
+            .authenticated_json::<OrderDetail>(
+                Method::POST,
+                &format!("/v1/orders/{order_id}/sync"),
+                None,
+                None,
+            )
+            .map(|response| response.data)
     }
 
-
     pub(crate) fn order(&self, order_id: &str) -> Result<OrderDetail, ApiError> {
-        self.client.authenticated_json::<OrderDetail>(
-            Method::GET,
-            &format!("/v1/orders/{order_id}"),
-            None,
-            None,
-        ).map(|response| response.data)
+        self.client
+            .authenticated_json::<OrderDetail>(
+                Method::GET,
+                &format!("/v1/orders/{order_id}"),
+                None,
+                None,
+            )
+            .map(|response| response.data)
     }
 }

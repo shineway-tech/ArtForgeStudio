@@ -8,11 +8,12 @@ use std::time::Duration;
 use uuid::Uuid;
 
 const MOCK_PNG: [u8; 68] = [
-    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0,
-    0, 1, 8, 4, 0, 0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99,
-    100, 248, 15, 0, 1, 5, 1, 1, 39, 24, 227, 102, 0, 0, 0, 0, 73, 69, 78, 68, 174,
-    66, 96, 130,
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 4, 0,
+    0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 100, 248, 15, 0, 1, 5, 1, 1,
+    39, 24, 227, 102, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
 ];
+const VALID_UPLOAD_SHA256: &str =
+    "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460";
 
 fn base_url() -> Url {
     Url::parse(
@@ -134,7 +135,9 @@ fn assert_http_error_field<T>(
                     .and_then(Value::as_array)
                     .expect("validation error details array");
                 assert!(
-                    fields.iter().any(|detail| detail.get("field").and_then(Value::as_str) == Some(field)),
+                    fields
+                        .iter()
+                        .any(|detail| detail.get("field").and_then(Value::as_str) == Some(field)),
                     "expected validation detail for {field}, got {details:?}"
                 );
             }
@@ -244,7 +247,11 @@ fn cross_stack_auth_validation_and_error_envelopes() {
     let auth = AuthApi::new(client.clone());
     let email = format!("auth-matrix-{}@example.com", Uuid::new_v4());
     auth.request_email_code(&email).expect("request Mock code");
-    assert_http_error(auth.login(&email, "000000", &agreement_acceptances(&auth)), 400, "email_code_invalid");
+    assert_http_error(
+        auth.login(&email, "000000", &agreement_acceptances(&auth)),
+        400,
+        "email_code_invalid",
+    );
     let login = auth
         .login(&email, &mock_code(), &agreement_acceptances(&auth))
         .expect("correct code remains usable after one failed attempt");
@@ -319,7 +326,10 @@ fn cross_stack_account_catalog_and_pagination_parameters() {
     assert!(snapshot.plans.len() >= 4);
     assert!(snapshot.packs.len() >= 4);
     assert!(snapshot.models.len() >= 2);
-    assert!(snapshot.ledger.iter().any(|entry| entry.available_delta == "500"));
+    assert!(snapshot
+        .ledger
+        .iter()
+        .any(|entry| entry.available_delta == "500"));
 
     for path in [
         "/v1/credits/ledger?limit=0",
@@ -347,7 +357,9 @@ fn cross_stack_account_catalog_and_pagination_parameters() {
         .expect("valid ledger page");
     assert_eq!(ledger.data.len(), 1);
     assert!(ledger.meta.is_some());
-    AuthApi::new(client).logout(false).expect("logout account test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout account test");
 }
 
 #[test]
@@ -438,7 +450,11 @@ fn cross_stack_generation_parameter_matrix_and_idempotency() {
         model_code: "missing_model".to_string(),
         ..prompt_request(valid_id(), "prompt")
     };
-    assert_http_error(generation.create_task(&unavailable), 409, "model_unavailable");
+    assert_http_error(
+        generation.create_task(&unavailable),
+        409,
+        "model_unavailable",
+    );
 
     let image_request = CreateGenerationTask {
         client_request_id: valid_id(),
@@ -454,12 +470,18 @@ fn cross_stack_generation_parameter_matrix_and_idempotency() {
         .create_task(&image_request)
         .expect("valid image task");
     assert_eq!(image_task.requested_count, 4);
-    generation.cancel(&image_task.id).expect("cancel valid image task");
+    generation
+        .cancel(&image_task.id)
+        .expect("cancel valid image task");
 
     let request_id = valid_id();
     let original = prompt_request(request_id.clone(), "same prompt");
-    let first = generation.create_task(&original).expect("create prompt task");
-    let replay = generation.create_task(&original).expect("replay prompt task");
+    let first = generation
+        .create_task(&original)
+        .expect("create prompt task");
+    let replay = generation
+        .create_task(&original)
+        .expect("replay prompt task");
     assert_eq!(replay.id, first.id);
     let conflict = prompt_request(request_id, "different prompt");
     assert_http_error(
@@ -478,7 +500,9 @@ fn cross_stack_generation_parameter_matrix_and_idempotency() {
         "generation_task_not_found",
     );
     generation.cancel(&first.id).expect("cancel prompt task");
-    AuthApi::new(client).logout(false).expect("logout generation test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout generation test");
 }
 
 #[test]
@@ -499,7 +523,10 @@ fn cross_stack_payment_parameter_matrix_and_idempotency() {
         "validation_failed",
     );
     assert_http_error(
-        payment.create_credit_order("missing_pack", &format!("credit_{}", Uuid::new_v4().simple())),
+        payment.create_credit_order(
+            "missing_pack",
+            &format!("credit_{}", Uuid::new_v4().simple()),
+        ),
         404,
         "credit_pack_unavailable",
     );
@@ -529,7 +556,10 @@ fn cross_stack_payment_parameter_matrix_and_idempotency() {
         "idempotency_key_conflict",
     );
     assert_eq!(
-        payment.sync_order(&order.id).expect("sync pending order").status,
+        payment
+            .sync_order(&order.id)
+            .expect("sync pending order")
+            .status,
         "pending_payment"
     );
     assert_http_error(
@@ -570,7 +600,9 @@ fn cross_stack_payment_parameter_matrix_and_idempotency() {
         409,
         "membership_missing",
     );
-    AuthApi::new(client).logout(false).expect("logout payment test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout payment test");
 }
 
 #[test]
@@ -578,9 +610,10 @@ fn cross_stack_payment_parameter_matrix_and_idempotency() {
 fn cross_stack_reference_upload_and_notification_parameters() {
     let (client, _) = login_new_user();
     for body in [
-        json!({ "filename": "", "mime_type": "image/png", "size_bytes": 68 }),
-        json!({ "filename": "test.gif", "mime_type": "image/gif", "size_bytes": 68 }),
-        json!({ "filename": "test.png", "mime_type": "image/png", "size_bytes": 0 }),
+        json!({ "filename": "", "mime_type": "image/png", "size_bytes": 68, "sha256": VALID_UPLOAD_SHA256 }),
+        json!({ "filename": "test.gif", "mime_type": "image/gif", "size_bytes": 68, "sha256": VALID_UPLOAD_SHA256 }),
+        json!({ "filename": "test.png", "mime_type": "image/png", "size_bytes": 0, "sha256": VALID_UPLOAD_SHA256 }),
+        json!({ "filename": "test.png", "mime_type": "image/png", "size_bytes": 68, "sha256": "invalid" }),
     ] {
         assert_http_error(
             client.authenticated_json::<Value>(
@@ -601,6 +634,7 @@ fn cross_stack_reference_upload_and_notification_parameters() {
                 "filename": "large.png",
                 "mime_type": "image/png",
                 "size_bytes": 10_485_761,
+                "sha256": VALID_UPLOAD_SHA256,
             })),
             None,
         ),
@@ -618,14 +652,19 @@ fn cross_stack_reference_upload_and_notification_parameters() {
     generation.delete_reference(&file_id);
 
     let notifications = NotificationsApi::new(client.clone());
-    assert!(notifications.list().expect("empty notifications").is_empty());
+    assert!(notifications
+        .list()
+        .expect("empty notifications")
+        .is_empty());
     notifications.mark_all_read().expect("mark empty list read");
     assert_http_error(
         notifications.mark_read(&Uuid::new_v4().to_string()),
         404,
         "notification_not_found",
     );
-    AuthApi::new(client).logout(false).expect("logout upload test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout upload test");
 }
 
 #[test]
@@ -641,7 +680,10 @@ fn cross_stack_email_code_fields_report_exact_validation_details() {
             json!({ "email": format!("{}@example.com", "a".repeat(250)), "app_version": env!("CARGO_PKG_VERSION") }),
             "email",
         ),
-        (json!({ "email": "valid@example.com", "app_version": "1.0" }), "app_version"),
+        (
+            json!({ "email": "valid@example.com", "app_version": "1.0" }),
+            "app_version",
+        ),
         (json!({ "email": "valid@example.com" }), "app_version"),
     ] {
         assert_http_error_field(
@@ -659,7 +701,8 @@ fn cross_stack_login_fields_report_exact_validation_details() {
     let client = new_client();
     let auth = AuthApi::new(client.clone());
     let email = format!("login-fields-{}@example.com", Uuid::new_v4());
-    auth.request_email_code(&email).expect("request login field code");
+    auth.request_email_code(&email)
+        .expect("request login field code");
     let device_id = format!("device-{}", Uuid::new_v4());
     let valid_body = || {
         json!({
@@ -742,7 +785,9 @@ fn cross_stack_agreement_acceptance_fields_and_duplicates() {
         400,
         "validation_failed",
     );
-    AuthApi::new(client).logout(false).expect("logout agreement test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout agreement test");
 }
 
 #[test]
@@ -841,7 +886,9 @@ fn cross_stack_prompt_task_fields_report_exact_validation_details() {
             Some(field),
         );
     }
-    AuthApi::new(client).logout(false).expect("logout prompt field test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout prompt field test");
 }
 
 #[test]
@@ -905,7 +952,9 @@ fn cross_stack_image_task_fields_report_exact_validation_details() {
         403,
         "membership_quality_forbidden",
     );
-    AuthApi::new(client).logout(false).expect("logout image field test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout image field test");
 }
 
 #[test]
@@ -924,8 +973,12 @@ fn cross_stack_generation_success_variants_and_credit_reservation_limit() {
         reference_file_ids: None,
         target_language: Some("English".to_string()),
     };
-    let translate_task = generation.create_task(&translate).expect("valid translate task");
-    generation.cancel(&translate_task.id).expect("cancel translate task");
+    let translate_task = generation
+        .create_task(&translate)
+        .expect("valid translate task");
+    generation
+        .cancel(&translate_task.id)
+        .expect("cancel translate task");
 
     for (ratio, normalized, width, height) in [
         ("1:1", "1:1", 1024, 1024),
@@ -975,22 +1028,30 @@ fn cross_stack_generation_success_variants_and_credit_reservation_limit() {
         reference_file_ids: Some(Vec::new()),
         target_language: None,
     };
-    let first = generation.create_task(&four_images("reserve_a")).expect("reserve 200 credits A");
-    let second = generation.create_task(&four_images("reserve_b")).expect("reserve 200 credits B");
+    let first = generation
+        .create_task(&four_images("reserve_a"))
+        .expect("reserve 200 credits A");
+    let second = generation
+        .create_task(&four_images("reserve_b"))
+        .expect("reserve 200 credits B");
     assert_http_error(
         generation.create_task(&four_images("reserve_c")),
         409,
         "insufficient_credits",
     );
     generation.cancel(&first.id).expect("release reservation A");
-    generation.cancel(&second.id).expect("release reservation B");
+    generation
+        .cancel(&second.id)
+        .expect("release reservation B");
     let credits = client
         .authenticated_json::<CreditAccount>(Method::GET, "/v1/credits/account", None, None)
         .expect("load credits after cancellation")
         .data;
     assert_eq!(credits.available, "500");
     assert_eq!(credits.reserved, "0");
-    AuthApi::new(client).logout(false).expect("logout generation success test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout generation success test");
 }
 
 #[test]
@@ -1006,7 +1067,13 @@ fn cross_stack_generation_queue_limit_is_exactly_twenty() {
         );
         task_ids.push(generation.create_task(&request).expect("queue task").id);
     }
-    assert_eq!(generation.list_tasks("queued").expect("list queued tasks").len(), 20);
+    assert_eq!(
+        generation
+            .list_tasks("queued")
+            .expect("list queued tasks")
+            .len(),
+        20
+    );
     assert_http_error(
         generation.create_task(&prompt_request(
             format!("queue_over_{}", Uuid::new_v4().simple()),
@@ -1018,7 +1085,9 @@ fn cross_stack_generation_queue_limit_is_exactly_twenty() {
     for task_id in task_ids {
         generation.cancel(&task_id).expect("cancel queued task");
     }
-    AuthApi::new(client).logout(false).expect("logout queue limit test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout queue limit test");
 }
 
 #[test]
@@ -1053,7 +1122,9 @@ fn cross_stack_order_request_id_boundaries_report_exact_fields() {
         "validation_failed",
         Some("plan_code"),
     );
-    AuthApi::new(client).logout(false).expect("logout order boundary test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout order boundary test");
 }
 
 #[test]
@@ -1093,7 +1164,9 @@ fn cross_stack_upgrade_and_order_identifier_boundaries() {
         404,
         "session_not_found",
     );
-    AuthApi::new(client).logout(false).expect("logout identifier test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout identifier test");
 }
 
 #[test]
@@ -1102,20 +1175,28 @@ fn cross_stack_upload_filename_and_size_boundaries_report_exact_fields() {
     let (client, _) = login_new_user();
     let cases = [
         (
-            json!({ "filename": "", "mime_type": "image/png", "size_bytes": 68 }),
+            json!({ "filename": "", "mime_type": "image/png", "size_bytes": 68, "sha256": VALID_UPLOAD_SHA256 }),
             "filename",
         ),
         (
-            json!({ "filename": "x".repeat(256), "mime_type": "image/png", "size_bytes": 68 }),
+            json!({ "filename": "x".repeat(256), "mime_type": "image/png", "size_bytes": 68, "sha256": VALID_UPLOAD_SHA256 }),
             "filename",
         ),
         (
-            json!({ "filename": "test.gif", "mime_type": "image/gif", "size_bytes": 68 }),
+            json!({ "filename": "test.gif", "mime_type": "image/gif", "size_bytes": 68, "sha256": VALID_UPLOAD_SHA256 }),
             "mime_type",
         ),
         (
-            json!({ "filename": "test.png", "mime_type": "image/png", "size_bytes": 0 }),
+            json!({ "filename": "test.png", "mime_type": "image/png", "size_bytes": 0, "sha256": VALID_UPLOAD_SHA256 }),
             "size_bytes",
+        ),
+        (
+            json!({ "filename": "test.png", "mime_type": "image/png", "size_bytes": 68, "sha256": "invalid" }),
+            "sha256",
+        ),
+        (
+            json!({ "filename": "test.png", "mime_type": "image/png", "size_bytes": 68 }),
+            "sha256",
         ),
     ];
     for (body, field) in cases {
@@ -1139,13 +1220,16 @@ fn cross_stack_upload_filename_and_size_boundaries_report_exact_fields() {
                 "filename": "large.png",
                 "mime_type": "image/png",
                 "size_bytes": 10_485_761,
+                "sha256": VALID_UPLOAD_SHA256,
             })),
             None,
         ),
         413,
         "reference_image_too_large",
     );
-    AuthApi::new(client).logout(false).expect("logout upload boundary test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout upload boundary test");
 }
 
 #[test]
@@ -1165,7 +1249,8 @@ fn cross_stack_auth_required_fields_and_minimum_accepted_boundaries() {
 
     let email = format!("required-fields-{}@example.com", Uuid::new_v4());
     let auth = AuthApi::new(client.clone());
-    auth.request_email_code(&email).expect("request required field code");
+    auth.request_email_code(&email)
+        .expect("request required field code");
     let valid_login = json!({
         "email": email,
         "code": mock_code(),
@@ -1193,7 +1278,11 @@ fn cross_stack_auth_required_fields_and_minimum_accepted_boundaries() {
         env!("CARGO_PKG_VERSION"),
     );
     AuthApi::new(min_client.clone())
-        .login(&email, &mock_code(), &agreement_acceptances(&AuthApi::new(min_client.clone())))
+        .login(
+            &email,
+            &mock_code(),
+            &agreement_acceptances(&AuthApi::new(min_client.clone())),
+        )
         .expect("minimum device and empty optional name are accepted");
     let raw_sessions = min_client
         .authenticated_json::<Value>(Method::GET, "/v1/account/sessions", None, None)
@@ -1213,7 +1302,9 @@ fn cross_stack_auth_required_fields_and_minimum_accepted_boundaries() {
         .expect("current minimum boundary session");
     assert_eq!(min_session.device_name, "");
     assert_eq!(min_session.platform, "windows");
-    AuthApi::new(min_client).logout(false).expect("logout minimum boundary user");
+    AuthApi::new(min_client)
+        .logout(false)
+        .expect("logout minimum boundary user");
 }
 
 #[test]
@@ -1227,9 +1318,15 @@ fn cross_stack_auth_maximum_boundaries_and_email_normalization() {
     );
     let max_auth = AuthApi::new(max_client.clone());
     let normalized_email = format!("  Boundary-{}@Example.COM  ", Uuid::new_v4());
-    max_auth.request_email_code(&normalized_email).expect("request normalized email code");
     max_auth
-        .login(&normalized_email, &mock_code(), &agreement_acceptances(&max_auth))
+        .request_email_code(&normalized_email)
+        .expect("request normalized email code");
+    max_auth
+        .login(
+            &normalized_email,
+            &mock_code(),
+            &agreement_acceptances(&max_auth),
+        )
         .expect("maximum device and name lengths are accepted");
     let max_session = AccountApi::new(max_client.clone())
         .snapshot()
@@ -1240,7 +1337,9 @@ fn cross_stack_auth_maximum_boundaries_and_email_normalization() {
         .expect("current maximum boundary session");
     assert_eq!(max_session.device_name.chars().count(), 128);
     assert_eq!(max_session.platform, "macos");
-    AuthApi::new(max_client).logout(false).expect("logout maximum boundary user");
+    AuthApi::new(max_client)
+        .logout(false)
+        .expect("logout maximum boundary user");
 }
 
 #[test]
@@ -1297,7 +1396,9 @@ fn cross_stack_refresh_required_fields_and_authenticated_client_version() {
         .expect("dev minimum client version is accepted")
         .request_id
         .is_empty());
-    AuthApi::new(client).logout(false).expect("logout refresh field user");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout refresh field user");
 }
 
 #[test]
@@ -1306,7 +1407,8 @@ fn cross_stack_email_code_cooldown_and_attempt_exhaustion() {
     let client = new_client();
     let auth = AuthApi::new(client.clone());
     let cooldown_email = format!("cooldown-{}@example.com", Uuid::new_v4());
-    auth.request_email_code(&cooldown_email).expect("first code request");
+    auth.request_email_code(&cooldown_email)
+        .expect("first code request");
     assert_http_error(
         auth.request_email_code(&cooldown_email),
         429,
@@ -1314,7 +1416,8 @@ fn cross_stack_email_code_cooldown_and_attempt_exhaustion() {
     );
 
     let attempts_email = format!("attempts-{}@example.com", Uuid::new_v4());
-    auth.request_email_code(&attempts_email).expect("request attempt limit code");
+    auth.request_email_code(&attempts_email)
+        .expect("request attempt limit code");
     let agreements = agreement_acceptances(&auth);
     for _ in 0..4 {
         assert_http_error(
@@ -1342,7 +1445,10 @@ fn cross_stack_agreement_item_required_fields_and_version_boundaries() {
     for (agreement, field) in [
         (json!({ "version": "1" }), "agreements.0.type"),
         (json!({ "type": "user_terms" }), "agreements.0.version"),
-        (json!({ "type": "user_terms", "version": "" }), "agreements.0.version"),
+        (
+            json!({ "type": "user_terms", "version": "" }),
+            "agreements.0.version",
+        ),
         (
             json!({ "type": "user_terms", "version": "v".repeat(33) }),
             "agreements.0.version",
@@ -1367,7 +1473,9 @@ fn cross_stack_agreement_item_required_fields_and_version_boundaries() {
     AuthApi::new(client.clone())
         .accept_agreements(&current)
         .expect("re-accept current agreements idempotently");
-    AuthApi::new(client).logout(false).expect("logout agreement item test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout agreement item test");
 }
 
 #[test]
@@ -1378,7 +1486,9 @@ fn cross_stack_generation_required_fields_and_forbidden_combinations() {
         .expect("serialize valid prompt request");
     for field in ["client_request_id", "task_type", "model_code", "prompt"] {
         let mut body = valid.clone();
-        body.as_object_mut().expect("task body object").remove(field);
+        body.as_object_mut()
+            .expect("task body object")
+            .remove(field);
         assert_http_error_field(
             client.authenticated_json::<Value>(
                 Method::POST,
@@ -1411,7 +1521,9 @@ fn cross_stack_generation_required_fields_and_forbidden_combinations() {
             Some(field),
         );
     }
-    AuthApi::new(client).logout(false).expect("logout generation required field test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout generation required field test");
 }
 
 #[test]
@@ -1447,7 +1559,12 @@ fn cross_stack_generation_exact_valid_boundaries_defaults_and_header_idempotency
     ];
     let mut task_ids = Vec::new();
     for request in boundary_requests {
-        task_ids.push(generation.create_task(&request).expect("accepted generation boundary").id);
+        task_ids.push(
+            generation
+                .create_task(&request)
+                .expect("accepted generation boundary")
+                .id,
+        );
     }
     let image_default = json!({
         "client_request_id": format!("defaults_{}", Uuid::new_v4().simple()),
@@ -1462,7 +1579,11 @@ fn cross_stack_generation_exact_valid_boundaries_defaults_and_header_idempotency
             Method::POST,
             "/v1/generation/tasks",
             Some(image_default.clone()),
-            Some(image_default["client_request_id"].as_str().expect("default request id")),
+            Some(
+                image_default["client_request_id"]
+                    .as_str()
+                    .expect("default request id"),
+            ),
         )
         .expect("image defaults are accepted")
         .data;
@@ -1499,9 +1620,13 @@ fn cross_stack_generation_exact_valid_boundaries_defaults_and_header_idempotency
         .data;
     task_ids.push(header_task.id);
     for task_id in task_ids {
-        generation.cancel(&task_id).expect("cancel accepted boundary task");
+        generation
+            .cancel(&task_id)
+            .expect("cancel accepted boundary task");
     }
-    AuthApi::new(client).logout(false).expect("logout generation boundary test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout generation boundary test");
 }
 
 #[test]
@@ -1548,7 +1673,9 @@ fn cross_stack_generation_list_cancel_purge_and_delivery_state_matrix() {
         "generation_task_active",
     );
     generation.cancel(&task.id).expect("first cancellation");
-    generation.cancel(&task.id).expect("idempotent second cancellation");
+    generation
+        .cancel(&task.id)
+        .expect("idempotent second cancellation");
     let cancelled = generation.task(&task.id).expect("load cancelled task");
     assert_eq!(cancelled.status, "cancelled");
     for _ in 0..2 {
@@ -1573,7 +1700,10 @@ fn cross_stack_generation_list_cancel_purge_and_delivery_state_matrix() {
         (json!({ "size_bytes": 1 }), "sha256"),
         (json!({ "sha256": "0".repeat(64) }), "size_bytes"),
         (json!({ "sha256": "bad", "size_bytes": 1 }), "sha256"),
-        (json!({ "sha256": "0".repeat(64), "size_bytes": 0 }), "size_bytes"),
+        (
+            json!({ "sha256": "0".repeat(64), "size_bytes": 0 }),
+            "size_bytes",
+        ),
     ] {
         assert_http_error_field(
             client.authenticated_json::<Value>(Method::POST, &ack_path, Some(body), None),
@@ -1594,8 +1724,14 @@ fn cross_stack_generation_list_cancel_purge_and_delivery_state_matrix() {
     );
     for method_path in [
         (Method::GET, "/v1/generation/tasks/not-a-uuid".to_string()),
-        (Method::POST, "/v1/generation/tasks/not-a-uuid/cancel".to_string()),
-        (Method::DELETE, "/v1/generation/tasks/not-a-uuid/content".to_string()),
+        (
+            Method::POST,
+            "/v1/generation/tasks/not-a-uuid/cancel".to_string(),
+        ),
+        (
+            Method::DELETE,
+            "/v1/generation/tasks/not-a-uuid/content".to_string(),
+        ),
     ] {
         assert_http_error(
             client.authenticated_json::<Value>(method_path.0, &method_path.1, None, None),
@@ -1603,7 +1739,9 @@ fn cross_stack_generation_list_cancel_purge_and_delivery_state_matrix() {
             "generation_task_not_found",
         );
     }
-    AuthApi::new(client).logout(false).expect("logout generation state test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout generation state test");
 }
 
 #[test]
@@ -1612,12 +1750,7 @@ fn cross_stack_upload_accepted_boundaries_repeated_states_and_pending_limit() {
     let (client, _) = login_new_user();
     let prepare = |body: Value| {
         client
-            .authenticated_json::<Value>(
-                Method::POST,
-                "/v1/uploads/references",
-                Some(body),
-                None,
-            )
+            .authenticated_json::<Value>(Method::POST, "/v1/uploads/references", Some(body), None)
             .expect("prepare accepted reference")
             .data["file"]["id"]
             .as_str()
@@ -1625,10 +1758,10 @@ fn cross_stack_upload_accepted_boundaries_repeated_states_and_pending_limit() {
             .to_string()
     };
     for body in [
-        json!({ "filename": "x", "mime_type": "image/png", "size_bytes": 1 }),
-        json!({ "filename": "x".repeat(255), "mime_type": "image/png", "size_bytes": 10_485_760 }),
-        json!({ "filename": "a.jpg", "mime_type": "image/jpeg", "size_bytes": 68 }),
-        json!({ "filename": "a.webp", "mime_type": "image/webp", "size_bytes": 68 }),
+        json!({ "filename": "x", "mime_type": "image/png", "size_bytes": 1, "sha256": VALID_UPLOAD_SHA256 }),
+        json!({ "filename": "x".repeat(255), "mime_type": "image/png", "size_bytes": 10_485_760, "sha256": VALID_UPLOAD_SHA256 }),
+        json!({ "filename": "a.jpg", "mime_type": "image/jpeg", "size_bytes": 68, "sha256": VALID_UPLOAD_SHA256 }),
+        json!({ "filename": "a.webp", "mime_type": "image/webp", "size_bytes": 68, "sha256": VALID_UPLOAD_SHA256 }),
     ] {
         let file_id = prepare(body);
         client
@@ -1645,6 +1778,7 @@ fn cross_stack_upload_accepted_boundaries_repeated_states_and_pending_limit() {
         "filename": "state.png",
         "mime_type": "image/png",
         "size_bytes": 68,
+        "sha256": VALID_UPLOAD_SHA256,
     }));
     for _ in 0..2 {
         let completed = client
@@ -1687,6 +1821,7 @@ fn cross_stack_upload_accepted_boundaries_repeated_states_and_pending_limit() {
             "filename": format!("pending-{index}.png"),
             "mime_type": "image/png",
             "size_bytes": 1,
+            "sha256": VALID_UPLOAD_SHA256,
         })));
     }
     assert_http_error(
@@ -1697,6 +1832,7 @@ fn cross_stack_upload_accepted_boundaries_repeated_states_and_pending_limit() {
                 "filename": "pending-overflow.png",
                 "mime_type": "image/png",
                 "size_bytes": 1,
+                "sha256": VALID_UPLOAD_SHA256,
             })),
             None,
         ),
@@ -1713,7 +1849,9 @@ fn cross_stack_upload_accepted_boundaries_repeated_states_and_pending_limit() {
             )
             .expect("delete pending limit fixture");
     }
-    AuthApi::new(client).logout(false).expect("logout upload state test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout upload state test");
 }
 
 #[test]
@@ -1731,7 +1869,11 @@ fn cross_stack_cross_user_resource_and_idempotency_isolation() {
         .create_task(&prompt_request(shared_request_id, "user B"))
         .expect("same idempotency key is isolated by user");
     assert_ne!(task_a.id, task_b.id);
-    assert_http_error(generation_b.task(&task_a.id), 404, "generation_task_not_found");
+    assert_http_error(
+        generation_b.task(&task_a.id),
+        404,
+        "generation_task_not_found",
+    );
     assert_http_error(
         client_b.authenticated_json::<Value>(
             Method::POST,
@@ -1768,7 +1910,11 @@ fn cross_stack_cross_user_resource_and_idempotency_isolation() {
     let order_a = PaymentApi::new(client_a.clone())
         .create_credit_order("pack_1000", &format!("order_a_{}", Uuid::new_v4().simple()))
         .expect("create user A order");
-    assert_http_error(PaymentApi::new(client_b.clone()).order(&order_a.id), 404, "order_not_found");
+    assert_http_error(
+        PaymentApi::new(client_b.clone()).order(&order_a.id),
+        404,
+        "order_not_found",
+    );
     assert_http_error(
         PaymentApi::new(client_b.clone()).sync_order(&order_a.id),
         404,
@@ -1779,12 +1925,20 @@ fn cross_stack_cross_user_resource_and_idempotency_isolation() {
         .authenticated_json::<Value>(
             Method::POST,
             "/v1/uploads/references",
-            Some(json!({ "filename": "owned.png", "mime_type": "image/png", "size_bytes": 68 })),
+            Some(json!({
+                "filename": "owned.png",
+                "mime_type": "image/png",
+                "size_bytes": 68,
+                "sha256": VALID_UPLOAD_SHA256,
+            })),
             None,
         )
         .expect("prepare user A reference")
         .data;
-    let file_a = prepared["file"]["id"].as_str().expect("user A file id").to_string();
+    let file_a = prepared["file"]["id"]
+        .as_str()
+        .expect("user A file id")
+        .to_string();
     client_a
         .authenticated_json::<Value>(
             Method::POST,
@@ -1829,8 +1983,12 @@ fn cross_stack_cross_user_resource_and_idempotency_isolation() {
         409,
         "reference_file_unavailable",
     );
-    generation_a.cancel(&task_a.id).expect("cancel user A fixture");
-    generation_b.cancel(&task_b.id).expect("cancel user B fixture");
+    generation_a
+        .cancel(&task_a.id)
+        .expect("cancel user A fixture");
+    generation_b
+        .cancel(&task_b.id)
+        .expect("cancel user B fixture");
     client_a
         .authenticated_json::<Value>(
             Method::DELETE,
@@ -1861,7 +2019,9 @@ fn cross_stack_payment_required_fields_exact_boundaries_and_repeated_sync() {
     ] {
         for field in missing_fields {
             let mut body = valid.clone();
-            body.as_object_mut().expect("order body object").remove(field);
+            body.as_object_mut()
+                .expect("order body object")
+                .remove(field);
             assert_http_error_field(
                 client.authenticated_json::<Value>(Method::POST, path, Some(body), None),
                 400,
@@ -1886,7 +2046,9 @@ fn cross_stack_payment_required_fields_exact_boundaries_and_repeated_sync() {
             "quote_id": Uuid::new_v4(),
             "client_request_id": "12345678",
         });
-        body.as_object_mut().expect("upgrade body object").remove(field);
+        body.as_object_mut()
+            .expect("upgrade body object")
+            .remove(field);
         assert_http_error_field(
             client.authenticated_json::<Value>(
                 Method::POST,
@@ -1943,7 +2105,9 @@ fn cross_stack_payment_required_fields_exact_boundaries_and_repeated_sync() {
         assert_eq!(second.status, "pending_payment");
         assert_eq!(first.id, second.id);
     }
-    AuthApi::new(client).logout(false).expect("logout payment required field test");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout payment required field test");
 }
 
 #[test]
@@ -1995,7 +2159,11 @@ fn cross_stack_http_route_errors_and_request_ids() {
     let http = reqwest::blocking::Client::new();
     let supplied_request_id = "protocol.request-0001";
     let response = http
-        .get(base_url().join("/v1/route-does-not-exist").expect("unknown route URL"))
+        .get(
+            base_url()
+                .join("/v1/route-does-not-exist")
+                .expect("unknown route URL"),
+        )
         .header("X-Request-ID", supplied_request_id)
         .send()
         .expect("unknown route response");
@@ -2003,13 +2171,23 @@ fn cross_stack_http_route_errors_and_request_ids() {
     assert_eq!(body["request_id"], supplied_request_id);
 
     let response = http
-        .get(base_url().join("/v1/another-missing-route").expect("missing route URL"))
+        .get(
+            base_url()
+                .join("/v1/another-missing-route")
+                .expect("missing route URL"),
+        )
         .header("X-Request-ID", "short")
         .send()
         .expect("invalid request ID response");
     let body = assert_raw_problem(response, 404, "route_not_found");
     assert_ne!(body["request_id"], "short");
-    assert!(body["request_id"].as_str().expect("generated request ID").len() >= 8);
+    assert!(
+        body["request_id"]
+            .as_str()
+            .expect("generated request ID")
+            .len()
+            >= 8
+    );
 }
 
 #[test]
@@ -2021,9 +2199,18 @@ fn cross_stack_method_not_allowed_uses_json_error_envelope() {
         .header("X-Request-ID", "method-test-0001")
         .send()
         .expect("method not allowed response");
-    assert_eq!(response.headers().get("Allow").and_then(|value| value.to_str().ok()), Some("HEAD, GET"));
     assert_eq!(
-        response.headers().get("Content-Type").and_then(|value| value.to_str().ok()),
+        response
+            .headers()
+            .get("Allow")
+            .and_then(|value| value.to_str().ok()),
+        Some("HEAD, GET")
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("Content-Type")
+            .and_then(|value| value.to_str().ok()),
         Some("application/json; charset=utf-8"),
         "405 responses must use the same JSON envelope as other API errors"
     );
@@ -2035,7 +2222,11 @@ fn cross_stack_method_not_allowed_uses_json_error_envelope() {
 fn cross_stack_body_parser_errors_use_json_envelopes() {
     let http = reqwest::blocking::Client::new();
     let response = http
-        .post(base_url().join("/v1/auth/email/code").expect("bad JSON URL"))
+        .post(
+            base_url()
+                .join("/v1/auth/email/code")
+                .expect("bad JSON URL"),
+        )
         .header("Content-Type", "application/json")
         .body("{")
         .send()
@@ -2048,7 +2239,11 @@ fn cross_stack_body_parser_errors_use_json_envelopes() {
     })
     .to_string();
     let response = http
-        .post(base_url().join("/v1/auth/email/code").expect("oversized JSON URL"))
+        .post(
+            base_url()
+                .join("/v1/auth/email/code")
+                .expect("oversized JSON URL"),
+        )
         .header("Content-Type", "application/json")
         .body(oversized)
         .send()
@@ -2065,7 +2260,10 @@ fn cross_stack_authentication_header_matrix() {
 
     let response = http
         .get(account_url.clone())
-        .header("Authorization", format!("Bearer {}", login.tokens.access_token))
+        .header(
+            "Authorization",
+            format!("Bearer {}", login.tokens.access_token),
+        )
         .header("X-Client-Version", client.app_version())
         .header("X-Device-ID", &client.device().id)
         .send()
@@ -2112,7 +2310,9 @@ fn cross_stack_authentication_header_matrix() {
         .send()
         .expect("invalid authenticated client version response");
     assert_raw_problem(response, 400, "client_version_invalid");
-    AuthApi::new(client).logout(false).expect("logout header matrix user");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout header matrix user");
 }
 
 #[test]
@@ -2124,7 +2324,11 @@ fn cross_stack_exact_http_success_statuses_and_envelopes() {
     let task_body = serde_json::to_value(prompt_request(request_id.clone(), "status contract"))
         .expect("serialize status task");
     let response = http
-        .post(base_url().join("/v1/generation/tasks").expect("create task URL"))
+        .post(
+            base_url()
+                .join("/v1/generation/tasks")
+                .expect("create task URL"),
+        )
         .header("Content-Type", "application/json")
         .header("X-Token", &login.tokens.access_token)
         .header("X-Client-Version", client.app_version())
@@ -2136,7 +2340,10 @@ fn cross_stack_exact_http_success_statuses_and_envelopes() {
         .expect("raw task creation response");
     assert_eq!(response.status().as_u16(), 202);
     assert_eq!(
-        response.headers().get("X-Request-ID").and_then(|value| value.to_str().ok()),
+        response
+            .headers()
+            .get("X-Request-ID")
+            .and_then(|value| value.to_str().ok()),
         Some("success-status-0001")
     );
     let body: Value = response.json().expect("task success envelope");
@@ -2164,7 +2371,11 @@ fn cross_stack_exact_http_success_statuses_and_envelopes() {
 
     let order_request_id = format!("status_order_{}", Uuid::new_v4().simple());
     let response = http
-        .post(base_url().join("/v1/credits/orders").expect("credit order URL"))
+        .post(
+            base_url()
+                .join("/v1/credits/orders")
+                .expect("credit order URL"),
+        )
         .header("X-Token", &login.tokens.access_token)
         .header("X-Client-Version", client.app_version())
         .header("X-Device-ID", &client.device().id)
@@ -2179,7 +2390,9 @@ fn cross_stack_exact_http_success_statuses_and_envelopes() {
     let body: Value = response.json().expect("order success envelope");
     assert!(body["error"].is_null());
     assert_eq!(body["data"]["status"], "pending_payment");
-    AuthApi::new(client).logout(false).expect("logout status contract user");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout status contract user");
 }
 
 #[test]
@@ -2200,7 +2413,12 @@ fn cross_stack_concurrent_refresh_is_single_flight_against_backend() {
         .collect();
     let tokens: Vec<String> = handles
         .into_iter()
-        .map(|handle| handle.join().expect("refresh thread").expect("concurrent refresh"))
+        .map(|handle| {
+            handle
+                .join()
+                .expect("refresh thread")
+                .expect("concurrent refresh")
+        })
         .collect();
     assert_eq!(tokens.len(), workers);
     assert!(tokens.iter().all(|token| token == &tokens[0]));
@@ -2209,7 +2427,9 @@ fn cross_stack_concurrent_refresh_is_single_flight_against_backend() {
         .expect("account works after concurrent refresh")
         .request_id
         .is_empty());
-    AuthApi::new(client).logout(false).expect("logout concurrent refresh user");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout concurrent refresh user");
 }
 
 #[test]
@@ -2235,7 +2455,10 @@ fn cross_stack_concurrent_generation_idempotency_never_duplicates_resource() {
         .collect();
     let mut task_ids = HashSet::new();
     let mut in_progress = 0;
-    for result in handles.into_iter().map(|handle| handle.join().expect("generation thread")) {
+    for result in handles
+        .into_iter()
+        .map(|handle| handle.join().expect("generation thread"))
+    {
         match result {
             Ok(task) => {
                 task_ids.insert(task.id);
@@ -2248,13 +2471,19 @@ fn cross_stack_concurrent_generation_idempotency_never_duplicates_resource() {
             Err(error) => panic!("unexpected concurrent idempotency error: {error:?}"),
         }
     }
-    assert_eq!(task_ids.len(), 1, "concurrent replays created more than one task");
+    assert_eq!(
+        task_ids.len(),
+        1,
+        "concurrent replays created more than one task"
+    );
     assert!(task_ids.len() + in_progress >= 1);
     let task_id = task_ids.into_iter().next().expect("one idempotent task");
     GenerationApi::new(client.clone())
         .cancel(&task_id)
         .expect("cancel concurrent idempotency task");
-    AuthApi::new(client).logout(false).expect("logout concurrent idempotency user");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout concurrent idempotency user");
 }
 
 #[test]
@@ -2275,12 +2504,7 @@ fn cross_stack_generation_and_ledger_cursor_continuity() {
         );
     }
     let first = client
-        .authenticated_json::<Value>(
-            Method::GET,
-            "/v1/generation/tasks?limit=2",
-            None,
-            None,
-        )
+        .authenticated_json::<Value>(Method::GET, "/v1/generation/tasks?limit=2", None, None)
         .expect("first task page")
         .data;
     let first_items = first["items"].as_array().expect("first task items");
@@ -2298,7 +2522,10 @@ fn cross_stack_generation_and_ledger_cursor_continuity() {
     let second_items = second["items"].as_array().expect("second task items");
     assert_eq!(second_items.len(), 1);
     assert!(second["next_cursor"].is_null());
-    let first_ids: HashSet<_> = first_items.iter().map(|item| item["id"].as_str().unwrap()).collect();
+    let first_ids: HashSet<_> = first_items
+        .iter()
+        .map(|item| item["id"].as_str().unwrap())
+        .collect();
     assert!(second_items
         .iter()
         .all(|item| !first_ids.contains(item["id"].as_str().expect("second task ID"))));
@@ -2330,17 +2557,24 @@ fn cross_stack_generation_and_ledger_cursor_continuity() {
     for task_id in created_ids {
         generation.cancel(&task_id).expect("cancel cursor fixture");
     }
-    AuthApi::new(client).logout(false).expect("logout cursor continuity user");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout cursor continuity user");
 }
 
 #[test]
 #[ignore = "requires the dev Mock API server"]
 fn cross_stack_reference_attachment_lifecycle_prevents_delete_and_reuse() {
     let (client, _) = login_new_user();
-    let path = std::env::temp_dir().join(format!("artforge-reference-lifecycle-{}.png", Uuid::new_v4()));
+    let path = std::env::temp_dir().join(format!(
+        "artforge-reference-lifecycle-{}.png",
+        Uuid::new_v4()
+    ));
     std::fs::write(&path, MOCK_PNG).expect("write lifecycle reference fixture");
     let generation = GenerationApi::new(client.clone());
-    let file_id = generation.upload_reference(&path).expect("upload lifecycle reference");
+    let file_id = generation
+        .upload_reference(&path)
+        .expect("upload lifecycle reference");
     let _ = std::fs::remove_file(&path);
     let request = CreateGenerationTask {
         client_request_id: format!("reference_owner_{}", Uuid::new_v4().simple()),
@@ -2353,7 +2587,9 @@ fn cross_stack_reference_attachment_lifecycle_prevents_delete_and_reuse() {
         reference_file_ids: Some(vec![file_id.clone()]),
         target_language: None,
     };
-    let task = generation.create_task(&request).expect("attach lifecycle reference");
+    let task = generation
+        .create_task(&request)
+        .expect("attach lifecycle reference");
     assert_eq!(task.request["reference_file_ids"], json!([file_id]));
     assert_http_error(
         client.authenticated_json::<Value>(
@@ -2375,15 +2611,21 @@ fn cross_stack_reference_attachment_lifecycle_prevents_delete_and_reuse() {
         409,
         "reference_file_unavailable",
     );
-    generation.cancel(&task.id).expect("cancel reference lifecycle task");
-    AuthApi::new(client).logout(false).expect("logout reference lifecycle user");
+    generation
+        .cancel(&task.id)
+        .expect("cancel reference lifecycle task");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout reference lifecycle user");
 }
 
 #[test]
 #[ignore = "requires the dev Mock API server"]
 fn cross_stack_catalog_and_account_dto_invariants() {
     let (client, login) = login_new_user();
-    let snapshot = AccountApi::new(client.clone()).snapshot().expect("load invariant snapshot");
+    let snapshot = AccountApi::new(client.clone())
+        .snapshot()
+        .expect("load invariant snapshot");
     assert!(Uuid::parse_str(&snapshot.account.user.id).is_ok());
     assert_eq!(snapshot.account.user.id, login.user.id);
     assert_eq!(snapshot.account.user.status, "active");
@@ -2396,10 +2638,17 @@ fn cross_stack_catalog_and_account_dto_invariants() {
         &credits.lifetime_granted,
         &credits.lifetime_spent,
     ] {
-        assert!(value.parse::<u64>().is_ok(), "credit amount is not an unsigned decimal: {value}");
+        assert!(
+            value.parse::<u64>().is_ok(),
+            "credit amount is not an unsigned decimal: {value}"
+        );
     }
 
-    let plan_codes: HashSet<_> = snapshot.plans.iter().map(|plan| plan.code.as_str()).collect();
+    let plan_codes: HashSet<_> = snapshot
+        .plans
+        .iter()
+        .map(|plan| plan.code.as_str())
+        .collect();
     assert_eq!(plan_codes.len(), snapshot.plans.len());
     for plan in &snapshot.plans {
         assert!(!plan.name.is_empty());
@@ -2411,14 +2660,22 @@ fn cross_stack_catalog_and_account_dto_invariants() {
         assert!((0..=10_000).contains(&plan.recharge_discount_bps));
         assert!(plan.entitlements.is_object());
     }
-    let pack_codes: HashSet<_> = snapshot.packs.iter().map(|pack| pack.code.as_str()).collect();
+    let pack_codes: HashSet<_> = snapshot
+        .packs
+        .iter()
+        .map(|pack| pack.code.as_str())
+        .collect();
     assert_eq!(pack_codes.len(), snapshot.packs.len());
     for pack in &snapshot.packs {
         assert!(!pack.name.is_empty());
         assert!(pack.price_cents.parse::<u64>().expect("pack price") > 0);
         assert!(pack.credits.parse::<u64>().expect("pack credits") > 0);
     }
-    let model_codes: HashSet<_> = snapshot.models.iter().map(|model| model.code.as_str()).collect();
+    let model_codes: HashSet<_> = snapshot
+        .models
+        .iter()
+        .map(|model| model.code.as_str())
+        .collect();
     assert_eq!(model_codes.len(), snapshot.models.len());
     for model in &snapshot.models {
         assert!(model.version > 0);
@@ -2434,7 +2691,14 @@ fn cross_stack_catalog_and_account_dto_invariants() {
             }
         }
     }
-    assert_eq!(snapshot.sessions.iter().filter(|session| session.is_current).count(), 1);
+    assert_eq!(
+        snapshot
+            .sessions
+            .iter()
+            .filter(|session| session.is_current)
+            .count(),
+        1
+    );
     for session in &snapshot.sessions {
         assert!(Uuid::parse_str(&session.id).is_ok());
         assert!(["windows", "macos"].contains(&session.platform.as_str()));
@@ -2451,5 +2715,7 @@ fn cross_stack_catalog_and_account_dto_invariants() {
         assert!(!entry.description.is_empty());
         assert!(entry.created_at.contains('T'));
     }
-    AuthApi::new(client).logout(false).expect("logout DTO invariant user");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout DTO invariant user");
 }

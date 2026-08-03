@@ -116,6 +116,32 @@ pub(crate) struct CreateUpscaleGenerationTask {
     pub(crate) target_height: u32,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct CreateWatermarkRemoval {
+    pub(crate) client_request_id: String,
+    pub(crate) reference_file_id: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct CreateImageColorization {
+    pub(crate) client_request_id: String,
+    pub(crate) reference_file_id: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct CreateImageEnhancement {
+    pub(crate) client_request_id: String,
+    pub(crate) reference_file_id: String,
+    pub(crate) target_quality: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct CreateImageCutout {
+    pub(crate) client_request_id: String,
+    pub(crate) reference_file_id: String,
+    pub(crate) subject_type: String,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct UploadFile {
     id: String,
@@ -140,6 +166,7 @@ struct PrepareUploadRequest<'a> {
     filename: &'a str,
     mime_type: &'a str,
     size_bytes: u64,
+    sha256: &'a str,
 }
 
 #[derive(Serialize)]
@@ -171,12 +198,17 @@ impl GenerationApi {
         let bytes = fs::read(path).map_err(|error| ApiError::LocalState {
             message: format!("无法读取参考图：{error}"),
         })?;
-        let filename = path.file_name().and_then(|value| value.to_str()).unwrap_or("reference.png");
+        let filename = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("reference.png");
         let mime = mime_for_path(path)?;
+        let sha256 = sha256_hex(&bytes);
         let body = serde_json::to_value(PrepareUploadRequest {
             filename,
             mime_type: mime,
             size_bytes: bytes.len() as u64,
+            sha256: &sha256,
         })
         .map_err(protocol_error)?;
         let prepared = self
@@ -201,9 +233,15 @@ impl GenerationApi {
         let part = Part::bytes(bytes)
             .file_name(filename.to_string())
             .mime_str(mime)
-            .map_err(|error| ApiError::LocalState { message: error.to_string() })?;
+            .map_err(|error| ApiError::LocalState {
+                message: error.to_string(),
+            })?;
         form = form.part(prepared.upload.file_field, part);
-        let response = self.download.post(&prepared.upload.url).multipart(form).send()?;
+        let response = self
+            .download
+            .post(&prepared.upload.url)
+            .multipart(form)
+            .send()?;
         if !response.status().is_success() {
             return Err(ApiError::Protocol {
                 message: format!("参考图上传失败（HTTP {}）", response.status().as_u16()),
@@ -228,7 +266,10 @@ impl GenerationApi {
         );
     }
 
-    pub(crate) fn create_task(&self, request: &CreateGenerationTask) -> Result<GenerationTaskDetail, ApiError> {
+    pub(crate) fn create_task(
+        &self,
+        request: &CreateGenerationTask,
+    ) -> Result<GenerationTaskDetail, ApiError> {
         let body = serde_json::to_value(request).map_err(protocol_error)?;
         self.create_task_body(&request.client_request_id, body)
     }
@@ -239,6 +280,66 @@ impl GenerationApi {
     ) -> Result<GenerationTaskDetail, ApiError> {
         let body = serde_json::to_value(request).map_err(protocol_error)?;
         self.create_task_body(&request.client_request_id, body)
+    }
+
+    pub(crate) fn create_watermark_removal(
+        &self,
+        request: &CreateWatermarkRemoval,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .authenticated_json::<GenerationTaskDetail>(
+                Method::POST,
+                "/v1/toolbox/watermark-removals",
+                Some(body),
+                Some(&request.client_request_id),
+            )
+            .map(|response| response.data)
+    }
+
+    pub(crate) fn create_image_colorization(
+        &self,
+        request: &CreateImageColorization,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .authenticated_json::<GenerationTaskDetail>(
+                Method::POST,
+                "/v1/toolbox/image-colorizations",
+                Some(body),
+                Some(&request.client_request_id),
+            )
+            .map(|response| response.data)
+    }
+
+    pub(crate) fn create_image_enhancement(
+        &self,
+        request: &CreateImageEnhancement,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .authenticated_json::<GenerationTaskDetail>(
+                Method::POST,
+                "/v1/toolbox/image-enhancements",
+                Some(body),
+                Some(&request.client_request_id),
+            )
+            .map(|response| response.data)
+    }
+
+    pub(crate) fn create_image_cutout(
+        &self,
+        request: &CreateImageCutout,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .authenticated_json::<GenerationTaskDetail>(
+                Method::POST,
+                "/v1/toolbox/image-cutouts",
+                Some(body),
+                Some(&request.client_request_id),
+            )
+            .map(|response| response.data)
     }
 
     fn create_task_body(
@@ -288,19 +389,28 @@ impl GenerationApi {
         Ok(())
     }
 
-    pub(crate) fn download_verified(
-        &self,
-        file: &TaskOutputFile,
-    ) -> Result<Vec<u8>, ApiError> {
-        let url = file.download_url.as_deref().ok_or_else(|| ApiError::Protocol {
-            message: "生成文件下载地址暂不可用".to_string(),
-            request_id: None,
-        })?;
-        let bytes = self.download.get(url).send()?.error_for_status()?.bytes()?.to_vec();
-        let expected_size = file.size_bytes.parse::<usize>().map_err(|_| ApiError::Protocol {
-            message: "服务端返回了无效的文件大小".to_string(),
-            request_id: None,
-        })?;
+    pub(crate) fn download_verified(&self, file: &TaskOutputFile) -> Result<Vec<u8>, ApiError> {
+        let url = file
+            .download_url
+            .as_deref()
+            .ok_or_else(|| ApiError::Protocol {
+                message: "生成文件下载地址暂不可用".to_string(),
+                request_id: None,
+            })?;
+        let bytes = self
+            .download
+            .get(url)
+            .send()?
+            .error_for_status()?
+            .bytes()?
+            .to_vec();
+        let expected_size = file
+            .size_bytes
+            .parse::<usize>()
+            .map_err(|_| ApiError::Protocol {
+                message: "服务端返回了无效的文件大小".to_string(),
+                request_id: None,
+            })?;
         verify_downloaded_bytes(bytes, expected_size, &file.sha256)
     }
 
@@ -311,7 +421,8 @@ impl GenerationApi {
         sha256: &str,
         size_bytes: u64,
     ) -> Result<(), ApiError> {
-        let body = serde_json::to_value(DeliveryAck { sha256, size_bytes }).map_err(protocol_error)?;
+        let body =
+            serde_json::to_value(DeliveryAck { sha256, size_bytes }).map_err(protocol_error)?;
         self.client.authenticated_json::<serde_json::Value>(
             Method::POST,
             &format!("/v1/generation/tasks/{task_id}/deliveries/{file_id}/ack"),
@@ -323,16 +434,31 @@ impl GenerationApi {
 }
 
 fn mime_for_path(path: &Path) -> Result<&'static str, ApiError> {
-    match path.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "jpg" | "jpeg" => Ok("image/jpeg"),
         "png" => Ok("image/png"),
         "webp" => Ok("image/webp"),
-        _ => Err(ApiError::LocalState { message: "参考图只支持 JPEG、PNG 或 WebP".to_string() }),
+        _ => Err(ApiError::LocalState {
+            message: "参考图只支持 JPEG、PNG 或 WebP".to_string(),
+        }),
     }
 }
 
 fn protocol_error(error: serde_json::Error) -> ApiError {
-    ApiError::Protocol { message: error.to_string(), request_id: None }
+    ApiError::Protocol {
+        message: error.to_string(),
+        request_id: None,
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 fn verify_downloaded_bytes(
@@ -393,5 +519,23 @@ mod tests {
         );
         assert!(verify_downloaded_bytes(bytes.clone(), bytes.len() + 1, &hash).is_err());
         assert!(verify_downloaded_bytes(bytes, 15, &"0".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn prepared_upload_includes_the_actual_content_sha256() {
+        let bytes = b"reference-image";
+        let sha256 = sha256_hex(bytes);
+        let body = serde_json::to_value(PrepareUploadRequest {
+            filename: "reference.png",
+            mime_type: "image/png",
+            size_bytes: bytes.len() as u64,
+            sha256: &sha256,
+        })
+        .unwrap();
+
+        assert_eq!(
+            body["sha256"],
+            "4110dd12af975f556bdac0299d0bfa04d42fa22d94f56b8550f1762e48fff7fb"
+        );
     }
 }

@@ -21,15 +21,24 @@ struct NotificationList {
 }
 
 #[derive(Clone)]
-pub(crate) struct NotificationsApi { client: ApiClient }
+pub(crate) struct NotificationsApi {
+    client: ApiClient,
+}
 
 impl NotificationsApi {
-    pub(crate) fn new(client: ApiClient) -> Self { Self { client } }
+    pub(crate) fn new(client: ApiClient) -> Self {
+        Self { client }
+    }
 
     pub(crate) fn list(&self) -> Result<Vec<ServerNotification>, ApiError> {
-        self.client.authenticated_json::<NotificationList>(
-            Method::GET, "/v1/notifications?limit=50", None, None,
-        ).map(|response| response.data.items)
+        self.client
+            .authenticated_json::<NotificationList>(
+                Method::GET,
+                "/v1/notifications?limit=50",
+                None,
+                None,
+            )
+            .map(|response| response.data.items)
     }
 
     pub(crate) fn mark_read(&self, id: &str) -> Result<(), ApiError> {
@@ -44,7 +53,10 @@ impl NotificationsApi {
 
     pub(crate) fn mark_all_read(&self) -> Result<(), ApiError> {
         self.client.authenticated_json::<Value>(
-            Method::POST, "/v1/notifications/read_all", None, None,
+            Method::POST,
+            "/v1/notifications/read_all",
+            None,
+            None,
         )?;
         Ok(())
     }
@@ -60,9 +72,8 @@ impl NotificationsApi {
     }
 
     pub(crate) fn delete_all(&self) -> Result<(), ApiError> {
-        self.client.authenticated_json::<Value>(
-            Method::DELETE, "/v1/notifications", None, None,
-        )?;
+        self.client
+            .authenticated_json::<Value>(Method::DELETE, "/v1/notifications", None, None)?;
         Ok(())
     }
 }

@@ -6,6 +6,7 @@ import { AppTheme } from "../theme.slint";
 component ConversionFormatSelect {
     in-out property <string> value: "jpeg";
     property <bool> open: false;
+    in property <bool> disabled: false;
 
     function format-label(value: string) -> string {
         if value == "png" {
@@ -24,6 +25,7 @@ component ConversionFormatSelect {
     }
 
     Rectangle {
+        opacity: root.disabled ? 0.55 : 1.0;
         background: AppTheme.bg;
         border-radius: 8px;
         border-width: 1px;
@@ -54,10 +56,12 @@ component ConversionFormatSelect {
         TouchArea {
             width: parent.width;
             height: parent.height;
-            mouse-cursor: pointer;
+            mouse-cursor: root.disabled ? default : pointer;
             clicked => {
-                root.open = true;
-                format-popup.show();
+                if !root.disabled {
+                    root.open = true;
+                    format-popup.show();
+                }
             }
         }
     }
@@ -219,6 +223,7 @@ export component ToolboxConversionPage {
                 width: 92px;
                 height: 34px;
                 text: AppState.en ? "Add images" : "继续添加";
+                disabled: AppState.conversion-processing || AppState.conversion-saving;
                 clicked => { AppState.choose-conversion-images(); }
             }
 
@@ -229,6 +234,7 @@ export component ToolboxConversionPage {
                 height: 34px;
                 text: AppState.en ? "Clear" : "清空";
                 danger: true;
+                disabled: AppState.conversion-processing || AppState.conversion-saving;
                 clicked => { AppState.clear-conversion-images(); }
             }
 
@@ -247,8 +253,12 @@ export component ToolboxConversionPage {
                     height: 62px;
                     item: item;
                     processing-text: AppState.en ? "Converting" : "转换中";
+                    result-action-text: AppState.en ? "Save" : "保存";
+                    result-action-visible: item.status == "completed" && item.result-path != "";
+                    result-action-disabled: AppState.conversion-saving;
+                    remove-disabled: AppState.conversion-processing || AppState.conversion-saving;
                     remove => { AppState.remove-conversion-image(item.id); }
-                    reveal => { AppState.reveal-conversion-result(item.id); }
+                    result-action => { AppState.save-conversion-result(item.id); }
                 }
             }
 
@@ -256,9 +266,10 @@ export component ToolboxConversionPage {
                 width: parent.width;
                 height: parent.height;
                 can-drop(event) => {
-                    return event.mime-type == "text/uri-list"
-                        || event.mime-type == "text/plain"
-                        || event.mime-type == "application/x-artforge-image-path";
+                    return !AppState.conversion-processing && !AppState.conversion-saving
+                        && (event.mime-type == "text/uri-list"
+                            || event.mime-type == "text/plain"
+                            || event.mime-type == "application/x-artforge-image-path");
                 }
                 dropped(event) => { root.accept-drop(event.mime-type, event.data); }
             }
@@ -339,6 +350,7 @@ export component ToolboxConversionPage {
                 width: min(190px, parent.width - 118px);
                 height: 42px;
                 value <=> AppState.conversion-target-format;
+                disabled: AppState.conversion-processing || AppState.conversion-saving;
             }
 
             Text {
@@ -375,8 +387,8 @@ export component ToolboxConversionPage {
                 width: parent.width - 44px;
                 height: 20px;
                 text: AppState.en
-                    ? "Estimated charge: " + AppState.conversion-estimated-credits + " credits"
-                    : "本次预计扣除 " + AppState.conversion-estimated-credits + " 积分";
+                    ? "Conversion runs locally. Images are not uploaded."
+                    : "转换仅在本地进行，不会上传图片";
                 color: AppTheme.muted;
                 font-size: 12px;
                 font-weight: 400;
@@ -392,9 +404,13 @@ export component ToolboxConversionPage {
                 height: 48px;
                 text: AppState.conversion-processing
                     ? (AppState.en ? "Converting..." : "转换中...")
-                    : (AppState.en ? "Start conversion" : "开始转换");
+                    : (AppState.conversion-has-results
+                        ? (AppState.en ? "Convert again" : "重新转换")
+                        : (AppState.en ? "Start conversion" : "开始转换"));
                 primary: true;
-                disabled: AppState.conversion-images.length == 0 || AppState.conversion-processing;
+                disabled: AppState.conversion-images.length == 0
+                    || AppState.conversion-processing
+                    || AppState.conversion-saving;
                 clicked => { AppState.start-conversion(); }
             }
         }
