@@ -1,0 +1,103 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component NegativePromptEditor {
+    height: AppState.negative-prompt-expanded ? 132px : 46px;
+
+    Rectangle {
+        background: AppTheme.panel-soft;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: AppState.negative-prompt-expanded ? AppTheme.accent : AppTheme.border;
+
+        Text {
+            x: 16px;
+            y: 0px;
+            width: 92px;
+            height: 46px;
+            text: AppState.en ? "Negative prompt" : "反向提示词";
+            color: AppTheme.text;
+            font-size: 14px;
+            font-weight: 500;
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: 112px;
+            y: 0px;
+            width: parent.width - 166px;
+            height: 46px;
+            text: AppState.en ? "Content you do not want in the image" : "填写不希望画面中出现的内容";
+            color: AppTheme.weak;
+            font-size: 12px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        toggle-button := Rectangle {
+            x: parent.width - 42px;
+            y: 7px;
+            width: 32px;
+            height: 32px;
+            background: toggle-touch.has-hover ? AppTheme.panel : transparent;
+            border-radius: 8px;
+
+            Text {
+                width: parent.width;
+                height: parent.height;
+                text: AppState.negative-prompt-expanded ? "⌃" : "⌄";
+                color: AppTheme.muted;
+                font-size: 18px;
+                font-weight: 500;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            toggle-touch := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: pointer;
+                clicked => {
+                    AppState.negative-prompt-expanded = !AppState.negative-prompt-expanded;
+                }
+            }
+        }
+
+        if AppState.negative-prompt-expanded: Rectangle {
+            x: 12px;
+            y: 46px;
+            width: parent.width - 24px;
+            height: parent.height - 58px;
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: negative-input.has-focus ? AppTheme.accent : AppTheme.border;
+
+            negative-input := TextInput {
+                x: 12px;
+                y: 8px;
+                width: parent.width - 24px;
+                height: parent.height - 16px;
+                text <=> AppState.negative-prompt;
+                single-line: false;
+                color: AppTheme.text;
+                font-size: AppState.settings-font-size * 1px;
+                font-weight: 400;
+                wrap: word-wrap;
+            }
+
+            if AppState.negative-prompt == "" && !negative-input.has-focus: Text {
+                x: 12px;
+                y: 8px;
+                width: parent.width - 24px;
+                height: parent.height - 16px;
+                text: AppState.en ? "Describe elements to exclude, such as text, watermark, blur..." : "例如：文字、水印、模糊、畸形手指等不希望出现的内容";
+                color: AppTheme.weak;
+                font-size: AppState.settings-font-size * 1px;
+                font-weight: 400;
+                wrap: word-wrap;
+            }
+        }
+    }
+}

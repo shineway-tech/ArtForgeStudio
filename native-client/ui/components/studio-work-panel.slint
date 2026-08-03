@@ -1,6 +1,7 @@
 import { AppState } from "../app-state.slint";
 import { GenerateActionButton } from "generate-action-button.slint";
 import { InlineCardChooser } from "inline-card-chooser.slint";
+import { NegativePromptEditor } from "negative-prompt-editor.slint";
 import { PromptComposer } from "prompt-composer.slint";
 import { SmallToggle } from "small-toggle.slint";
 import { TranslateTipArea } from "translate-tip-area.slint";
@@ -52,14 +53,19 @@ export component StudioWorkPanel {
             width: parent.width - 44px;
             height: min(
                 AppState.references.length > 0 || AppState.quote-title != "" ? 650px : 600px,
-                parent.height - 254px,
+                parent.height - 266px - negative-editor.height,
             );
             generation: root.generation;
             show-generate-button: false;
         }
+        negative-editor := NegativePromptEditor {
+            x: 22px;
+            y: composer.y + composer.height + 12px;
+            width: parent.width - 44px;
+        }
         InlineCardChooser {
             x: 22px;
-            y: composer.y + composer.height + 14px;
+            y: negative-editor.y + negative-editor.height + 12px;
             width: parent.width - 44px;
             height: 42px;
         }

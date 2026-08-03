@@ -214,6 +214,9 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
     let category = resolve_category(&state.get_asset_type().to_string(), "");
     state.set_asset_type(category.clone().into());
     state.set_prompt(prompt_draft_for_category(&store.borrow().prompt_drafts, &category).into());
+    state.set_negative_prompt(
+        negative_prompt_draft_for_category(&store.borrow().prompt_drafts, &category).into(),
+    );
     sync_deep_prompt_binding_for_category(app, &store.borrow(), &category);
     if migrated_local_store {
         save_local_store(app, &store.borrow());
@@ -283,13 +286,48 @@ pub(super) fn set_prompt_draft_for_category(
     }
 }
 
+pub(super) fn negative_prompt_draft_for_category(
+    drafts: &PromptDrafts,
+    category: &str,
+) -> String {
+    match category {
+        "scene" => drafts.negative_scene.clone(),
+        "ui" => drafts.negative_ui.clone(),
+        "effect" => drafts.negative_effect.clone(),
+        "action-sequence" => drafts.negative_action_sequence.clone(),
+        _ => drafts.negative_character.clone(),
+    }
+}
+
+pub(super) fn set_negative_prompt_draft_for_category(
+    drafts: &mut PromptDrafts,
+    category: &str,
+    prompt: String,
+) {
+    match category {
+        "scene" => drafts.negative_scene = prompt,
+        "ui" => drafts.negative_ui = prompt,
+        "effect" => drafts.negative_effect = prompt,
+        "action-sequence" => drafts.negative_action_sequence = prompt,
+        _ => drafts.negative_character = prompt,
+    }
+}
+
 pub(super) fn store_current_prompt_draft(
     app: &AppWindow,
     store: &Rc<RefCell<Store>>,
     category: &str,
 ) {
-    let prompt = app.global::<AppState>().get_prompt().to_string();
-    set_prompt_draft_for_category(&mut store.borrow_mut().prompt_drafts, category, prompt);
+    let state = app.global::<AppState>();
+    let prompt = state.get_prompt().to_string();
+    let negative_prompt = state.get_negative_prompt().to_string();
+    let mut store = store.borrow_mut();
+    set_prompt_draft_for_category(&mut store.prompt_drafts, category, prompt);
+    set_negative_prompt_draft_for_category(
+        &mut store.prompt_drafts,
+        category,
+        negative_prompt,
+    );
 }
 
 pub(super) fn sync_deep_prompt_binding_for_category(

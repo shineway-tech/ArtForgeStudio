@@ -241,6 +241,10 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
             if previous_category != category {
                 let prompt = prompt_draft_for_category(&store.borrow().prompt_drafts, &category);
                 state.set_prompt(prompt.into());
+                let negative_prompt =
+                    negative_prompt_draft_for_category(&store.borrow().prompt_drafts, &category);
+                state.set_negative_prompt(negative_prompt.into());
+                state.set_negative_prompt_expanded(false);
                 sync_deep_prompt_binding_for_category(&app, &store.borrow(), &category);
             }
             push_custom_prompts(&app, &store.borrow());

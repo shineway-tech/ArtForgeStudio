@@ -130,6 +130,7 @@ pub(super) fn start_backend_generation(
     };
     let generation_prompt = build_generation_prompt(
         &raw_prompt,
+        &state.get_negative_prompt().to_string(),
         &controls,
         &quote,
         &category,

@@ -444,6 +444,16 @@ struct PromptDrafts {
     effect: String,
     #[serde(default)]
     action_sequence: String,
+    #[serde(default)]
+    negative_character: String,
+    #[serde(default)]
+    negative_scene: String,
+    #[serde(default)]
+    negative_ui: String,
+    #[serde(default)]
+    negative_effect: String,
+    #[serde(default)]
+    negative_action_sequence: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

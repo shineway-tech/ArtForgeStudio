@@ -249,6 +249,7 @@ mod tests {
 
         let prompt = build_generation_prompt(
             "未来城市街道",
+            "watermark, blurry",
             &controls,
             &quote,
             "scene",
@@ -260,6 +261,42 @@ mod tests {
         assert!(prompt.contains("未来城市街道"));
         assert!(prompt.contains("16:9"));
         assert!(prompt.contains("2K"));
+        assert!(prompt.contains("watermark, blurry"));
+    }
+
+    #[test]
+    fn empty_negative_prompt_does_not_add_an_exclusion_section() {
+        let prompt = append_negative_prompt_instruction(
+            "a quiet forest",
+            "   ",
+            PromptLanguage::English,
+        );
+        assert_eq!(prompt, "a quiet forest");
+    }
+
+    #[test]
+    fn negative_prompt_drafts_are_scoped_by_workspace_category() {
+        let mut drafts = PromptDrafts::default();
+        set_negative_prompt_draft_for_category(
+            &mut drafts,
+            "character",
+            "extra fingers".to_string(),
+        );
+        set_negative_prompt_draft_for_category(
+            &mut drafts,
+            "scene",
+            "people".to_string(),
+        );
+
+        assert_eq!(
+            negative_prompt_draft_for_category(&drafts, "character"),
+            "extra fingers"
+        );
+        assert_eq!(
+            negative_prompt_draft_for_category(&drafts, "scene"),
+            "people"
+        );
+        assert_eq!(negative_prompt_draft_for_category(&drafts, "ui"), "");
     }
 
     #[test]
@@ -1864,10 +1901,11 @@ mod tests {
     }
 
     #[test]
-    fn studio_generation_settings_use_three_compact_dropdowns_and_a_taller_prompt() {
+    fn studio_generation_settings_include_collapsible_negative_prompt_and_compact_dropdowns() {
         let chooser = include_str!("../../ui/components/inline-card-chooser.slint");
         let panel = include_str!("../../ui/components/studio-work-panel.slint");
         let prompt = include_str!("../../ui/components/prompt-composer.slint");
+        let negative = include_str!("../../ui/components/negative-prompt-editor.slint");
 
         assert_eq!(
             chooser.matches("\n        CompactSelectButton {").count(),
@@ -1882,7 +1920,12 @@ mod tests {
         assert!(chooser.contains("disabled: AppState.asset-type == \"action-sequence\""));
         assert!(panel.contains("InlineCardChooser {"));
         assert!(!panel.contains("viewport-height: AppState.ratio-more-open"));
-        assert!(panel.contains("parent.height - 254px"));
+        assert!(panel.contains("parent.height - 266px - negative-editor.height"));
+        assert!(panel.contains("negative-editor := NegativePromptEditor"));
+        assert!(negative.contains("height: AppState.negative-prompt-expanded ? 132px : 46px"));
+        assert!(negative.contains("text <=> AppState.negative-prompt"));
+        assert!(negative.contains("填写不希望画面中出现的内容"));
+        assert!(negative.contains("x: parent.width - 42px"));
         assert!(prompt.contains("? 650px : 600px"));
     }
 

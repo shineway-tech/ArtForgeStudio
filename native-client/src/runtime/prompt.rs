@@ -300,6 +300,7 @@ pub(super) fn append_action_sequence_instruction(prompt: &str, language: PromptL
 
 pub(super) fn build_generation_prompt(
     prompt: &str,
+    negative_prompt: &str,
     controls: &PromptControls,
     quote: &QuoteContext,
     category: &str,
@@ -340,7 +341,26 @@ pub(super) fn build_generation_prompt(
     if category == "action-sequence" {
         final_prompt = append_action_sequence_instruction(&final_prompt, language);
     }
+    final_prompt = append_negative_prompt_instruction(&final_prompt, negative_prompt, language);
     append_parameter_priority_instruction(&final_prompt, category, ratio, quality, language)
+}
+
+pub(super) fn append_negative_prompt_instruction(
+    prompt: &str,
+    negative_prompt: &str,
+    language: PromptLanguage,
+) -> String {
+    let negative_prompt = negative_prompt.trim();
+    if negative_prompt.is_empty() {
+        return prompt.to_string();
+    }
+    if language == PromptLanguage::Chinese {
+        format!("{prompt}\n\n反向提示词（画面中必须避免出现）：{negative_prompt}。")
+    } else {
+        format!(
+            "{prompt}\n\nNegative prompt (must not appear in the image): {negative_prompt}."
+        )
+    }
 }
 
 pub(super) fn append_parameter_priority_instruction(
