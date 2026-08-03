@@ -1,5 +1,5 @@
 use super::*;
-use crate::platform::{self, ExternalImageDrop};
+use crate::platform::{self, ExternalDropPosition, ExternalImageDrop};
 use std::io::Read;
 
 const MAX_DROPPED_IMAGE_BYTES: u64 = 100 * 1024 * 1024;
@@ -168,29 +168,32 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
         if page.as_str() == "generation" {
             for drop in drops {
                 match drop {
-                    ExternalImageDrop::Paths(paths) => {
+                    ExternalImageDrop::Paths(paths, position)
+                        if external_drop_inside_reference_input(&app, position.as_ref()) => {
                         for path in paths {
                             add_reference_from_path(&app, &store, &path);
                         }
                     }
                     #[cfg(windows)]
-                    ExternalImageDrop::Text(data) => {
+                    ExternalImageDrop::Text(data, position)
+                        if external_drop_inside_reference_input(&app, position.as_ref()) => {
                         if let Some(url) = external_image_url(&data) {
                             start_external_reference_import(&app, store.clone(), url);
                         } else {
                             add_reference_from_drag_data(&app, &store, TEXT_PLAIN_MIME, &data);
                         }
                     }
+                    _ => {}
                 }
             }
         } else if page.as_str() == "toolbox-enhance" {
             for drop in drops {
                 match drop {
-                    ExternalImageDrop::Paths(paths) => {
+                    ExternalImageDrop::Paths(paths, _) => {
                         image_enhancement_callbacks::add_enhancement_paths(&app, paths);
                     }
                     #[cfg(windows)]
-                    ExternalImageDrop::Text(data) => {
+                    ExternalImageDrop::Text(data, _) => {
                         image_enhancement_callbacks::add_enhancement_from_drag_data(
                             &app,
                             TEXT_PLAIN_MIME,
@@ -202,11 +205,11 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
         } else if page.as_str() == "toolbox-watermark" {
             for drop in drops {
                 match drop {
-                    ExternalImageDrop::Paths(paths) => {
+                    ExternalImageDrop::Paths(paths, _) => {
                         toolbox_callbacks::add_watermark_paths(&app, paths);
                     }
                     #[cfg(windows)]
-                    ExternalImageDrop::Text(data) => {
+                    ExternalImageDrop::Text(data, _) => {
                         toolbox_callbacks::add_watermark_from_drag_data(
                             &app,
                             TEXT_PLAIN_MIME,
@@ -218,11 +221,11 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
         } else if page.as_str() == "toolbox-colorize" {
             for drop in drops {
                 match drop {
-                    ExternalImageDrop::Paths(paths) => {
+                    ExternalImageDrop::Paths(paths, _) => {
                         toolbox_callbacks::add_colorization_paths(&app, paths);
                     }
                     #[cfg(windows)]
-                    ExternalImageDrop::Text(data) => {
+                    ExternalImageDrop::Text(data, _) => {
                         toolbox_callbacks::add_colorization_from_drag_data(
                             &app,
                             TEXT_PLAIN_MIME,
@@ -234,11 +237,11 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
         } else if page.as_str() == "toolbox-compress" {
             for drop in drops {
                 match drop {
-                    ExternalImageDrop::Paths(paths) => {
+                    ExternalImageDrop::Paths(paths, _) => {
                         toolbox_callbacks::add_compression_paths(&app, paths);
                     }
                     #[cfg(windows)]
-                    ExternalImageDrop::Text(data) => {
+                    ExternalImageDrop::Text(data, _) => {
                         toolbox_callbacks::add_compression_from_drag_data(
                             &app,
                             TEXT_PLAIN_MIME,
@@ -250,11 +253,11 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
         } else if page.as_str() == "toolbox-convert" {
             for drop in drops {
                 match drop {
-                    ExternalImageDrop::Paths(paths) => {
+                    ExternalImageDrop::Paths(paths, _) => {
                         toolbox_callbacks::add_conversion_paths(&app, paths);
                     }
                     #[cfg(windows)]
-                    ExternalImageDrop::Text(data) => {
+                    ExternalImageDrop::Text(data, _) => {
                         toolbox_callbacks::add_conversion_from_drag_data(
                             &app,
                             TEXT_PLAIN_MIME,
@@ -266,11 +269,11 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
         } else if page.as_str() == "toolbox-crop" {
             for drop in drops {
                 match drop {
-                    ExternalImageDrop::Paths(paths) => {
+                    ExternalImageDrop::Paths(paths, _) => {
                         toolbox_callbacks::add_crop_paths(&app, paths);
                     }
                     #[cfg(windows)]
-                    ExternalImageDrop::Text(data) => {
+                    ExternalImageDrop::Text(data, _) => {
                         toolbox_callbacks::add_crop_from_drag_data(&app, TEXT_PLAIN_MIME, &data);
                     }
                 }
@@ -278,6 +281,33 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
         }
         poll_external_image_drops(app.as_weak(), store);
     });
+}
+
+fn external_drop_inside_reference_input(
+    app: &AppWindow,
+    position: Option<&ExternalDropPosition>,
+) -> bool {
+    let Some(position) = position else {
+        return false;
+    };
+    let state = app.global::<AppState>();
+    let scale = if position.physical {
+        app.window().scale_factor().max(f32::EPSILON)
+    } else {
+        1.0
+    };
+    let x = position.x / scale;
+    let y = position.y / scale;
+    let left = state.get_reference_drop_x();
+    let top = state.get_reference_drop_y();
+    let width = state.get_reference_drop_width();
+    let height = state.get_reference_drop_height();
+    width > 0.0
+        && height > 0.0
+        && x >= left
+        && x <= left + width
+        && y >= top
+        && y <= top + height
 }
 
 fn start_external_reference_import(app: &AppWindow, store: Rc<RefCell<Store>>, url: String) {

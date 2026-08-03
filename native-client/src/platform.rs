@@ -2,10 +2,17 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone)]
+pub(crate) struct ExternalDropPosition {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) physical: bool,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) enum ExternalImageDrop {
-    Paths(Vec<PathBuf>),
+    Paths(Vec<PathBuf>, Option<ExternalDropPosition>),
     #[cfg(windows)]
-    Text(String),
+    Text(String, Option<ExternalDropPosition>),
 }
 
 static EXTERNAL_IMAGE_DROPS: OnceLock<Mutex<Vec<ExternalImageDrop>>> = OnceLock::new();
@@ -103,7 +110,9 @@ fn install_macos_app_icon() -> anyhow::Result<()> {
 #[cfg(target_os = "macos")]
 #[allow(deprecated)] // winit 0.30 registers Finder drops with NSFilenamesPboardType.
 mod macos_drop_target {
-    use super::{queue_external_image_drop, take_macos_file_drag, ExternalImageDrop};
+    use super::{
+        queue_external_image_drop, take_macos_file_drag, ExternalDropPosition, ExternalImageDrop,
+    };
     use objc2::{
         ffi, msg_send,
         rc::Retained,
@@ -111,7 +120,7 @@ mod macos_drop_target {
         sel,
     };
     use objc2_app_kit::{NSEvent, NSFilenamesPboardType, NSPasteboard, NSView};
-    use objc2_foundation::{NSArray, NSRect, NSSize, NSString};
+    use objc2_foundation::{NSArray, NSPoint, NSRect, NSSize, NSString};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use std::path::PathBuf;
     use std::sync::OnceLock;
@@ -281,7 +290,18 @@ mod macos_drop_target {
         if paths.is_empty() {
             return Bool::NO;
         }
-        queue_external_image_drop(ExternalImageDrop::Paths(paths));
+        // AppKit reports the drop in window coordinates with a bottom-left origin.
+        let location: NSPoint = unsafe { msg_send![sender, draggingLocation] };
+        let content_view: *mut AnyObject = unsafe { msg_send![_window, contentView] };
+        let position = unsafe { content_view.as_ref() }.map(|view| {
+            let frame: NSRect = unsafe { msg_send![view, frame] };
+            ExternalDropPosition {
+                x: location.x as f32,
+                y: (frame.size.height - location.y) as f32,
+                physical: false,
+            }
+        });
+        queue_external_image_drop(ExternalImageDrop::Paths(paths, position));
         Bool::YES
     }
 
@@ -348,7 +368,7 @@ mod macos_drop_target {
 
 #[cfg(windows)]
 mod windows_drop_target {
-    use super::{queue_external_image_drop, ExternalImageDrop};
+    use super::{queue_external_image_drop, ExternalDropPosition, ExternalImageDrop};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use std::{
         cell::{RefCell, UnsafeCell},
@@ -361,6 +381,7 @@ mod windows_drop_target {
         core::{implement, PCWSTR},
         Win32::{
             Foundation::HWND,
+            Graphics::Gdi::ScreenToClient,
             System::{
                 Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL},
                 DataExchange::RegisterClipboardFormatW,
@@ -389,7 +410,7 @@ mod windows_drop_target {
             return false;
         };
         let hwnd = HWND(handle.hwnd.get() as *mut _);
-        let target: IDropTarget = NativeImageDropTarget::new().into();
+        let target: IDropTarget = NativeImageDropTarget::new(hwnd).into();
 
         let _ = unsafe { RevokeDragDrop(hwnd) };
         if unsafe { RegisterDragDrop(hwnd, &target) }.is_err() {
@@ -404,12 +425,14 @@ mod windows_drop_target {
     #[implement(IDropTarget)]
     struct NativeImageDropTarget {
         accepted: UnsafeCell<bool>,
+        hwnd: HWND,
     }
 
     impl NativeImageDropTarget {
-        fn new() -> Self {
+        fn new(hwnd: HWND) -> Self {
             Self {
                 accepted: UnsafeCell::new(false),
+                hwnd,
             }
         }
     }
@@ -462,7 +485,7 @@ mod windows_drop_target {
             &self,
             data_object: windows_core::Ref<'_, IDataObject>,
             _key_state: MODIFIERKEYS_FLAGS,
-            _point: &windows::Win32::Foundation::POINTL,
+            point: &windows::Win32::Foundation::POINTL,
             effect: *mut DROPEFFECT,
         ) -> windows::core::Result<()> {
             let payload = extract_drop(data_object);
@@ -475,7 +498,17 @@ mod windows_drop_target {
                 };
             }
             if let Some(payload) = payload {
-                queue_external_image_drop(payload);
+                let mut client_point = windows::Win32::Foundation::POINT {
+                    x: point.x,
+                    y: point.y,
+                };
+                let converted = unsafe { ScreenToClient(self.hwnd, &mut client_point) }.as_bool();
+                let position = converted.then_some(ExternalDropPosition {
+                    x: client_point.x as f32,
+                    y: client_point.y as f32,
+                    physical: true,
+                });
+                queue_external_image_drop(with_position(payload, position));
             }
             Ok(())
         }
@@ -485,10 +518,20 @@ mod windows_drop_target {
         let data_object = data_object.as_ref()?;
         if let Some(paths) = extract_file_paths(data_object) {
             if !paths.is_empty() {
-                return Some(ExternalImageDrop::Paths(paths));
+                return Some(ExternalImageDrop::Paths(paths, None));
             }
         }
-        extract_browser_text(data_object).map(ExternalImageDrop::Text)
+        extract_browser_text(data_object).map(|text| ExternalImageDrop::Text(text, None))
+    }
+
+    fn with_position(
+        drop: ExternalImageDrop,
+        position: Option<ExternalDropPosition>,
+    ) -> ExternalImageDrop {
+        match drop {
+            ExternalImageDrop::Paths(paths, _) => ExternalImageDrop::Paths(paths, position),
+            ExternalImageDrop::Text(text, _) => ExternalImageDrop::Text(text, position),
+        }
     }
 
     fn extract_file_paths(data_object: &IDataObject) -> Option<Vec<PathBuf>> {

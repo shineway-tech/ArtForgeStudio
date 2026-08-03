@@ -55,6 +55,17 @@ export component PromptComposer {
         }
     }
 
+    Timer {
+        interval: 50ms;
+        running: true;
+        triggered => {
+            AppState.reference-drop-x = reference-drop.absolute-position.x / 1px;
+            AppState.reference-drop-y = reference-drop.absolute-position.y / 1px;
+            AppState.reference-drop-width = reference-drop.width / 1px;
+            AppState.reference-drop-height = reference-drop.height / 1px;
+        }
+    }
+
     Rectangle {
         background: AppTheme.panel-soft;
         border-radius: 16px;
@@ -63,8 +74,10 @@ export component PromptComposer {
         clip: false;
 
         reference-drop := DropArea {
-            width: parent.width;
-            height: parent.height;
+            x: 24px;
+            y: root.prompt-input-y();
+            width: parent.width - 48px;
+            height: root.prompt-input-height();
             can-drop(event) => {
                 return event.mime-type == "text/uri-list"
                     || event.mime-type == "text/plain"
@@ -417,10 +430,10 @@ export component PromptComposer {
             overflow: elide;
         }
         if reference-drop.contains-drag: Rectangle {
-            x: 8px;
-            y: 8px;
-            width: parent.width - 16px;
-            height: parent.height - 16px;
+            x: reference-drop.x;
+            y: reference-drop.y;
+            width: reference-drop.width;
+            height: reference-drop.height;
             background: #00d98218;
             border-radius: 14px;
             border-width: 2px;

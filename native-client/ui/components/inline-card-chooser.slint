@@ -83,7 +83,8 @@ component CompactSelectOption {
 }
 
 export component InlineCardChooser {
-    height: 42px;
+    property <string> open-panel: "";
+    height: 42px + (root.open-panel == "" ? 0px : (root.open-panel == "ratio" ? 170px : 122px));
 
     HorizontalLayout {
         spacing: 8px;
@@ -91,17 +92,13 @@ export component InlineCardChooser {
         CompactSelectButton {
             text: (AppState.en ? "Ratio · " : "比例 · ") + AppState.ratio;
             clicked => {
-                quality-popup.close();
-                count-popup.close();
-                ratio-popup.show();
+                root.open-panel = root.open-panel == "ratio" ? "" : "ratio";
             }
         }
         CompactSelectButton {
             text: (AppState.en ? "Quality · " : "清晰度 · ") + AppState.quality;
             clicked => {
-                ratio-popup.close();
-                count-popup.close();
-                quality-popup.show();
+                root.open-panel = root.open-panel == "quality" ? "" : "quality";
             }
         }
         CompactSelectButton {
@@ -110,19 +107,16 @@ export component InlineCardChooser {
                 : "张数 · " + AppState.count + "张";
             disabled: AppState.asset-type == "action-sequence";
             clicked => {
-                ratio-popup.close();
-                quality-popup.close();
-                count-popup.show();
+                root.open-panel = root.open-panel == "count" ? "" : "count";
             }
         }
     }
 
-    ratio-popup := PopupWindow {
+    if root.open-panel == "ratio": Rectangle {
         x: 0px;
         y: 48px;
         width: root.width;
         height: 164px;
-        close-policy: close-on-click-outside;
 
         Rectangle {
             background: AppTheme.panel;
@@ -138,25 +132,25 @@ export component InlineCardChooser {
                 spacing: 4px;
 
                 Row {
-                    CompactSelectOption { text: "1:1"; active: AppState.ratio == "1:1"; clicked => { AppState.ratio = "1:1"; ratio-popup.close(); } }
-                    CompactSelectOption { text: "3:2"; active: AppState.ratio == "3:2"; clicked => { AppState.ratio = "3:2"; ratio-popup.close(); } }
-                    CompactSelectOption { text: "2:3"; active: AppState.ratio == "2:3"; clicked => { AppState.ratio = "2:3"; ratio-popup.close(); } }
-                    CompactSelectOption { text: "4:3"; active: AppState.ratio == "4:3"; clicked => { AppState.ratio = "4:3"; ratio-popup.close(); } }
+                    CompactSelectOption { text: "1:1"; active: AppState.ratio == "1:1"; clicked => { AppState.ratio = "1:1"; root.open-panel = ""; } }
+                    CompactSelectOption { text: "3:2"; active: AppState.ratio == "3:2"; clicked => { AppState.ratio = "3:2"; root.open-panel = ""; } }
+                    CompactSelectOption { text: "2:3"; active: AppState.ratio == "2:3"; clicked => { AppState.ratio = "2:3"; root.open-panel = ""; } }
+                    CompactSelectOption { text: "4:3"; active: AppState.ratio == "4:3"; clicked => { AppState.ratio = "4:3"; root.open-panel = ""; } }
                 }
                 Row {
-                    CompactSelectOption { text: "3:4"; active: AppState.ratio == "3:4"; clicked => { AppState.ratio = "3:4"; ratio-popup.close(); } }
-                    CompactSelectOption { text: "5:4"; active: AppState.ratio == "5:4"; clicked => { AppState.ratio = "5:4"; ratio-popup.close(); } }
-                    CompactSelectOption { text: "4:5"; active: AppState.ratio == "4:5"; clicked => { AppState.ratio = "4:5"; ratio-popup.close(); } }
-                    CompactSelectOption { text: "16:9"; active: AppState.ratio == "16:9"; clicked => { AppState.ratio = "16:9"; ratio-popup.close(); } }
+                    CompactSelectOption { text: "3:4"; active: AppState.ratio == "3:4"; clicked => { AppState.ratio = "3:4"; root.open-panel = ""; } }
+                    CompactSelectOption { text: "5:4"; active: AppState.ratio == "5:4"; clicked => { AppState.ratio = "5:4"; root.open-panel = ""; } }
+                    CompactSelectOption { text: "4:5"; active: AppState.ratio == "4:5"; clicked => { AppState.ratio = "4:5"; root.open-panel = ""; } }
+                    CompactSelectOption { text: "16:9"; active: AppState.ratio == "16:9"; clicked => { AppState.ratio = "16:9"; root.open-panel = ""; } }
                 }
                 Row {
-                    CompactSelectOption { text: "9:16"; active: AppState.ratio == "9:16"; clicked => { AppState.ratio = "9:16"; ratio-popup.close(); } }
-                    CompactSelectOption { text: "2:1"; active: AppState.ratio == "2:1"; clicked => { AppState.ratio = "2:1"; ratio-popup.close(); } }
-                    CompactSelectOption { text: "1:2"; active: AppState.ratio == "1:2"; clicked => { AppState.ratio = "1:2"; ratio-popup.close(); } }
-                    CompactSelectOption { text: "21:9"; active: AppState.ratio == "21:9"; clicked => { AppState.ratio = "21:9"; ratio-popup.close(); } }
+                    CompactSelectOption { text: "9:16"; active: AppState.ratio == "9:16"; clicked => { AppState.ratio = "9:16"; root.open-panel = ""; } }
+                    CompactSelectOption { text: "2:1"; active: AppState.ratio == "2:1"; clicked => { AppState.ratio = "2:1"; root.open-panel = ""; } }
+                    CompactSelectOption { text: "1:2"; active: AppState.ratio == "1:2"; clicked => { AppState.ratio = "1:2"; root.open-panel = ""; } }
+                    CompactSelectOption { text: "21:9"; active: AppState.ratio == "21:9"; clicked => { AppState.ratio = "21:9"; root.open-panel = ""; } }
                 }
                 Row {
-                    CompactSelectOption { text: "9:21"; active: AppState.ratio == "9:21"; clicked => { AppState.ratio = "9:21"; ratio-popup.close(); } }
+                    CompactSelectOption { text: "9:21"; active: AppState.ratio == "9:21"; clicked => { AppState.ratio = "9:21"; root.open-panel = ""; } }
                     Rectangle { background: transparent; }
                     Rectangle { background: transparent; }
                     Rectangle { background: transparent; }
@@ -165,12 +159,11 @@ export component InlineCardChooser {
         }
     }
 
-    quality-popup := PopupWindow {
+    if root.open-panel == "quality": Rectangle {
         x: root.button-width() + 8px;
         y: 48px;
         width: root.button-width();
         height: 116px;
-        close-policy: close-on-click-outside;
 
         Rectangle {
             background: AppTheme.panel;
@@ -184,28 +177,27 @@ export component InlineCardChooser {
                 CompactSelectOption {
                     text: "1K";
                     active: AppState.quality == "1K";
-                    clicked => { AppState.quality = "1K"; quality-popup.close(); }
+                    clicked => { AppState.quality = "1K"; root.open-panel = ""; }
                 }
                 CompactSelectOption {
                     text: "2K";
                     active: AppState.quality == "2K";
-                    clicked => { AppState.quality = "2K"; quality-popup.close(); }
+                    clicked => { AppState.quality = "2K"; root.open-panel = ""; }
                 }
                 CompactSelectOption {
                     text: "4K";
                     active: AppState.quality == "4K";
-                    clicked => { AppState.quality = "4K"; quality-popup.close(); }
+                    clicked => { AppState.quality = "4K"; root.open-panel = ""; }
                 }
             }
         }
     }
 
-    count-popup := PopupWindow {
+    if root.open-panel == "count": Rectangle {
         x: (root.button-width() + 8px) * 2;
         y: 48px;
         width: root.button-width();
         height: 116px;
-        close-policy: close-on-click-outside;
 
         Rectangle {
             background: AppTheme.panel;
@@ -219,17 +211,17 @@ export component InlineCardChooser {
                 CompactSelectOption {
                     text: AppState.en ? "1 img" : "1张";
                     active: AppState.count == 1;
-                    clicked => { AppState.count = 1; count-popup.close(); }
+                    clicked => { AppState.count = 1; root.open-panel = ""; }
                 }
                 CompactSelectOption {
                     text: AppState.en ? "2 imgs" : "2张";
                     active: AppState.count == 2;
-                    clicked => { AppState.count = 2; count-popup.close(); }
+                    clicked => { AppState.count = 2; root.open-panel = ""; }
                 }
                 CompactSelectOption {
                     text: AppState.en ? "4 imgs" : "4张";
                     active: AppState.count == 4;
-                    clicked => { AppState.count = 4; count-popup.close(); }
+                    clicked => { AppState.count = 4; root.open-panel = ""; }
                 }
             }
         }

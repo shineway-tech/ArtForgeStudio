@@ -937,12 +937,17 @@ mod tests {
         assert!(composer.contains("event.mime-type == \"text/uri-list\""));
         assert!(composer.contains("event.mime-type == \"text/plain\""));
         assert!(composer.contains("AppState.add-reference-from-drag(event.mime-type, event.data)"));
+        assert!(composer.contains("y: root.prompt-input-y();"));
+        assert!(composer.contains("height: root.prompt-input-height();"));
+        assert!(composer.contains("AppState.reference-drop-x = reference-drop.absolute-position.x / 1px"));
         assert!(callbacks.contains("external_image_url(data.as_str())"));
         assert!(callbacks.contains("start_external_reference_import"));
         assert!(callbacks.contains("download_external_reference"));
         assert!(callbacks.contains("take_external_image_drops"));
         assert!(callbacks.contains("ExternalImageDrop::Paths"));
         assert!(callbacks.contains("ExternalImageDrop::Text"));
+        assert!(callbacks.contains("external_drop_inside_reference_input"));
+        assert!(callbacks.contains("position.physical"));
         assert!(viewer.contains("pub(super) fn external_image_url"));
         assert!(viewer.contains("pub(super) fn drag_data_to_paths"));
         assert!(viewer.contains("let url = reqwest::Url::parse(raw).ok()?;"));
@@ -956,7 +961,9 @@ mod tests {
         assert!(platform.contains("NSFilenamesPboardType"));
         assert!(platform.contains("class_replaceMethod"));
         assert!(platform.contains("sel!(performDragOperation:)"));
-        assert!(platform.contains("ExternalImageDrop::Paths(paths)"));
+        assert!(platform.contains("ExternalImageDrop::Paths(paths, position)"));
+        assert!(platform.contains("ScreenToClient"));
+        assert!(platform.contains("draggingLocation"));
         assert!(!platform.contains("AnyObject::set_class"));
         assert!(app.contains("schedule_external_image_drop_install"));
     }
@@ -1913,21 +1920,27 @@ mod tests {
             chooser.matches("\n        CompactSelectButton {").count(),
             3
         );
-        assert!(chooser.contains("ratio-popup := PopupWindow"));
-        assert!(chooser.contains("quality-popup := PopupWindow"));
-        assert!(chooser.contains("count-popup := PopupWindow"));
+        assert!(chooser.contains("property <string> open-panel"));
+        assert!(chooser.contains("if root.open-panel == \"ratio\": Rectangle"));
+        assert!(chooser.contains("if root.open-panel == \"quality\": Rectangle"));
+        assert!(chooser.contains("if root.open-panel == \"count\": Rectangle"));
+        assert!(!chooser.contains("PopupWindow"));
         assert!(chooser.contains("\"比例 · \""));
         assert!(chooser.contains("\"清晰度 · \""));
         assert!(chooser.contains("\"张数 · \""));
         assert!(chooser.contains("disabled: AppState.asset-type == \"action-sequence\""));
         assert!(panel.contains("InlineCardChooser {"));
-        assert!(!panel.contains("viewport-height: AppState.ratio-more-open"));
-        assert!(panel.contains("parent.height - 266px - negative-editor.height"));
+        assert!(panel.contains("work-scroll := ScrollView"));
+        assert!(panel.contains("viewport-height: max(self.visible-height, work-content.height)"));
+        assert!(panel.contains("y: chooser.y + chooser.height + 24px"));
+        assert!(!panel.contains("parent.height - 266px - negative-editor.height"));
         assert!(panel.contains("negative-editor := NegativePromptEditor"));
         assert!(negative.contains("height: AppState.negative-prompt-expanded ? 132px : 46px"));
         assert!(negative.contains("text <=> AppState.negative-prompt"));
         assert!(negative.contains("填写不希望画面中出现的内容"));
         assert!(negative.contains("x: parent.width - 42px"));
+        assert!(negative.contains("negative-prompt-dropdown.svg"));
+        assert!(negative.contains("transform-rotation: AppState.negative-prompt-expanded ? 180deg : 0deg"));
         assert!(prompt.contains("? 650px : 600px"));
     }
 

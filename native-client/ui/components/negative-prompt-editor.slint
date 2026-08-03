@@ -43,15 +43,15 @@ export component NegativePromptEditor {
             background: toggle-touch.has-hover ? AppTheme.panel : transparent;
             border-radius: 8px;
 
-            Text {
-                width: parent.width;
-                height: parent.height;
-                text: AppState.negative-prompt-expanded ? "⌃" : "⌄";
-                color: AppTheme.muted;
-                font-size: 18px;
-                font-weight: 500;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+            Image {
+                x: 8px;
+                y: 8px;
+                width: 16px;
+                height: 16px;
+                source: @image-url("../../assets/icons/negative-prompt-dropdown.svg");
+                colorize: toggle-touch.has-hover ? AppTheme.accent : AppTheme.muted;
+                image-fit: contain;
+                transform-rotation: AppState.negative-prompt-expanded ? 180deg : 0deg;
             }
 
             toggle-touch := TouchArea {
