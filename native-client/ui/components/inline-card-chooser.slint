@@ -84,7 +84,8 @@ component CompactSelectOption {
 
 export component InlineCardChooser {
     property <string> open-panel: "";
-    height: 42px + (root.open-panel == "" ? 0px : (root.open-panel == "ratio" ? 170px : 122px));
+    property <length> panel-gap: 6px;
+    height: 42px;
 
     HorizontalLayout {
         spacing: 8px;
@@ -114,9 +115,9 @@ export component InlineCardChooser {
 
     if root.open-panel == "ratio": Rectangle {
         x: 0px;
-        y: 48px;
         width: root.width;
         height: 164px;
+        y: 0px - self.height - root.panel-gap;
 
         Rectangle {
             background: AppTheme.panel;
@@ -161,9 +162,9 @@ export component InlineCardChooser {
 
     if root.open-panel == "quality": Rectangle {
         x: root.button-width() + 8px;
-        y: 48px;
         width: root.button-width();
         height: 116px;
+        y: 0px - self.height - root.panel-gap;
 
         Rectangle {
             background: AppTheme.panel;
@@ -195,9 +196,9 @@ export component InlineCardChooser {
 
     if root.open-panel == "count": Rectangle {
         x: (root.button-width() + 8px) * 2;
-        y: 48px;
         width: root.button-width();
         height: 116px;
+        y: 0px - self.height - root.panel-gap;
 
         Rectangle {
             background: AppTheme.panel;

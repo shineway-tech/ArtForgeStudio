@@ -1925,6 +1925,15 @@ mod tests {
         assert!(chooser.contains("if root.open-panel == \"quality\": Rectangle"));
         assert!(chooser.contains("if root.open-panel == \"count\": Rectangle"));
         assert!(!chooser.contains("PopupWindow"));
+        assert!(chooser.contains("property <length> panel-gap: 6px;"));
+        assert!(chooser.contains("height: 42px;"));
+        assert_eq!(
+            chooser
+                .matches("y: 0px - self.height - root.panel-gap;")
+                .count(),
+            3
+        );
+        assert!(!chooser.contains("y: 48px;"));
         assert!(chooser.contains("\"比例 · \""));
         assert!(chooser.contains("\"清晰度 · \""));
         assert!(chooser.contains("\"张数 · \""));
@@ -3383,6 +3392,9 @@ mod tests {
         assert!(recovery.contains("\"image_cutout\""));
 
         assert!(cutout.contains("if AppState.cutout-open: Rectangle"));
+        assert!(cutout.contains("page-hit-blocker := TouchArea"));
+        assert!(cutout.contains("pointer-event(event) => { }"));
+        assert!(cutout.contains("scroll-event(event) => { return accept; }"));
         assert!(cutout.contains("title: AppState.en ? \"Original\" : \"原图\";"));
         assert!(cutout.contains("preview: AppState.viewer-image;"));
         for (value, label) in [

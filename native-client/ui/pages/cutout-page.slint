@@ -242,6 +242,16 @@ export component CutoutPage {
     if AppState.cutout-open: Rectangle {
         background: AppTheme.bg;
 
+        // Keep this page modal: pointer movement over either preview must not
+        // reach the gallery/viewer underneath and start a native image drag.
+        page-hit-blocker := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: default;
+            pointer-event(event) => { }
+            scroll-event(event) => { return accept; }
+        }
+
         Rectangle {
             x: 0px;
             y: 0px;
