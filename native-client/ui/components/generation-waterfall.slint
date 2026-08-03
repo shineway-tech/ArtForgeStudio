@@ -4,29 +4,39 @@ import { AssetItem } from "../types.slint";
 export component GenerationWaterfall {
     in property <[AssetItem]> items;
     in property <length> card-width: 120px;
-    in property <int> column-count: 1;
     in property <int> loading-count: 0;
-    width: root.column-count * root.column-width() + max(0, root.column-count - 1) * 10px;
     height: columns.preferred-height;
     columns := HorizontalLayout {
         x: 0px;
         width: root.used-width();
         height: root.height;
-        spacing: 10px;
+        spacing: root.grid-gap();
         alignment: start;
-        if root.column-count >= 1: GenerationMasonryColumn { items: root.items; card-width: root.card-width; column-index: 0; column-count: root.column-count; loading-count: root.loading-count; }
-        if root.column-count >= 2: GenerationMasonryColumn { items: root.items; card-width: root.card-width; column-index: 1; column-count: root.column-count; loading-count: root.loading-count; }
-        if root.column-count >= 3: GenerationMasonryColumn { items: root.items; card-width: root.card-width; column-index: 2; column-count: root.column-count; loading-count: root.loading-count; }
-        if root.column-count >= 4: GenerationMasonryColumn { items: root.items; card-width: root.card-width; column-index: 3; column-count: root.column-count; loading-count: root.loading-count; }
-        if root.column-count >= 5: GenerationMasonryColumn { items: root.items; card-width: root.card-width; column-index: 4; column-count: root.column-count; loading-count: root.loading-count; }
-        if root.column-count >= 6: GenerationMasonryColumn { items: root.items; card-width: root.card-width; column-index: 5; column-count: root.column-count; loading-count: root.loading-count; }
-        if root.column-count >= 7: GenerationMasonryColumn { items: root.items; card-width: root.card-width; column-index: 6; column-count: root.column-count; loading-count: root.loading-count; }
-        if root.column-count >= 8: GenerationMasonryColumn { items: root.items; card-width: root.card-width; column-index: 7; column-count: root.column-count; loading-count: root.loading-count; }
+        if root.column-count() >= 1: GenerationMasonryColumn { items: root.items; card-width: root.item-width(); column-index: 0; column-count: root.column-count(); loading-count: root.loading-count; }
+        if root.column-count() >= 2: GenerationMasonryColumn { items: root.items; card-width: root.item-width(); column-index: 1; column-count: root.column-count(); loading-count: root.loading-count; }
+        if root.column-count() >= 3: GenerationMasonryColumn { items: root.items; card-width: root.item-width(); column-index: 2; column-count: root.column-count(); loading-count: root.loading-count; }
+        if root.column-count() >= 4: GenerationMasonryColumn { items: root.items; card-width: root.item-width(); column-index: 3; column-count: root.column-count(); loading-count: root.loading-count; }
+        if root.column-count() >= 5: GenerationMasonryColumn { items: root.items; card-width: root.item-width(); column-index: 4; column-count: root.column-count(); loading-count: root.loading-count; }
+        if root.column-count() >= 6: GenerationMasonryColumn { items: root.items; card-width: root.item-width(); column-index: 5; column-count: root.column-count(); loading-count: root.loading-count; }
+        if root.column-count() >= 7: GenerationMasonryColumn { items: root.items; card-width: root.item-width(); column-index: 6; column-count: root.column-count(); loading-count: root.loading-count; }
+        if root.column-count() >= 8: GenerationMasonryColumn { items: root.items; card-width: root.item-width(); column-index: 7; column-count: root.column-count(); loading-count: root.loading-count; }
     }
-    function column-width() -> length {
-        return root.card-width;
+    function column-count() -> int {
+        return max(1, min(8, floor((root.grid-width() + root.grid-gap()) / root.item-slot-width())));
+    }
+    function grid-width() -> length {
+        return max(1px, root.width);
+    }
+    function grid-gap() -> length {
+        return 10px;
+    }
+    function item-slot-width() -> length {
+        return root.card-width + root.grid-gap();
+    }
+    function item-width() -> length {
+        return max(1px, (root.grid-width() - (root.column-count() - 1) * root.grid-gap()) / root.column-count());
     }
     function used-width() -> length {
-        return root.column-count * root.column-width() + max(0, root.column-count - 1) * 10px;
+        return root.column-count() * root.item-width() + max(0, root.column-count() - 1) * root.grid-gap();
     }
 }

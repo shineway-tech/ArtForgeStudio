@@ -51,7 +51,7 @@ export component GenerationResultPanel {
                         width: parent.width;
                         height: self.preferred-height;
                         groups: AppState.generation-groups;
-                        card-width: root.item-width();
+                        card-width: AppState.generation-gallery-layout == "waterfall" ? root.base-thumb-width() : root.item-width();
                         source: "generation";
                         loading-count: root.loading-count();
                         loading-group-title: AppState.en ? "Today" : "今天";

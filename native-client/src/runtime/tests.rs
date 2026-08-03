@@ -1137,6 +1137,8 @@ fn thumbnail_galleries_switch_between_grid_and_masonry_layouts() {
     let groups = include_str!("../../ui/components/time-grouped-gallery.slint");
     let thumbnail = include_str!("../../ui/components/thumbnail-card.slint");
     let waterfall_column = include_str!("../../ui/components/waterfall-column.slint");
+    let waterfall = include_str!("../../ui/components/gallery-waterfall.slint");
+    let generation_waterfall = include_str!("../../ui/components/generation-waterfall.slint");
 
     for property in [
         "generation-gallery-layout",
@@ -1153,6 +1155,12 @@ fn thumbnail_galleries_switch_between_grid_and_masonry_layouts() {
     assert!(thumbnail.contains("in property <bool> masonry: false;"));
     assert!(thumbnail.contains("root.item.height / root.item.width"));
     assert!(waterfall_column.contains("masonry: true;"));
+    assert!(waterfall.contains("floor((root.grid-width() + root.grid-gap()) / root.item-slot-width())"));
+    assert!(!waterfall.contains("min(root.items.length"));
+    assert!(waterfall.contains("(root.grid-width() - (root.column-count() - 1) * root.grid-gap()) / root.column-count()"));
+    assert!(generation_waterfall.contains("card-width: root.item-width();"));
+    assert!(generation_waterfall.contains("function column-count() -> int"));
+    assert!(panel.contains("AppState.generation-gallery-layout == \"waterfall\" ? root.base-thumb-width() : root.item-width()"));
 }
 
 #[test]

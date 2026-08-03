@@ -27,7 +27,7 @@ export component GalleryWaterfall {
         }
     }
     function column-count() -> int {
-        return max(1, min(root.items.length, min(8, floor((root.grid-width() + root.grid-gap()) / root.item-slot-width()))));
+        return max(1, min(8, floor((root.grid-width() + root.grid-gap()) / root.item-slot-width())));
     }
     function grid-width() -> length {
         return max(1px, root.width);
@@ -39,7 +39,7 @@ export component GalleryWaterfall {
         return root.card-width + root.grid-gap();
     }
     function item-width() -> length {
-        return min(root.card-width, max(139px, (root.grid-width() - (root.column-count() - 1) * root.grid-gap()) / root.column-count()));
+        return max(1px, (root.grid-width() - (root.column-count() - 1) * root.grid-gap()) / root.column-count());
     }
     function used-width() -> length {
         return root.column-count() * root.item-width() + max(0, root.column-count() - 1) * root.grid-gap();
