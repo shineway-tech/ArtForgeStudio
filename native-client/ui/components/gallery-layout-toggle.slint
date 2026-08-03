@@ -19,7 +19,7 @@ export component GalleryLayoutToggle {
             y: 9px;
             width: 16px;
             height: 16px;
-            source: root.mode == "grid"
+            source: root.mode == "waterfall"
                 ? @image-url("../../assets/icons/gallery-grid.svg")
                 : @image-url("../../assets/icons/gallery-waterfall.svg");
             colorize: touch.has-hover ? AppTheme.accent : AppTheme.muted;
@@ -29,7 +29,7 @@ export component GalleryLayoutToggle {
             x: 36px;
             width: parent.width - 46px;
             height: parent.height;
-            text: root.mode == "grid"
+            text: root.mode == "waterfall"
                 ? (AppState.en ? "Grid" : "网格")
                 : (AppState.en ? "Masonry" : "瀑布流");
             color: touch.has-hover ? AppTheme.accent : AppTheme.text;

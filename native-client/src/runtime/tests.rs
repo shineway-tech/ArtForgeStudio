@@ -1232,6 +1232,8 @@ mod tests {
             assert!(state.contains(property), "missing gallery layout state {property}");
         }
         assert!(toggle.contains("root.mode = root.mode == \"grid\" ? \"waterfall\" : \"grid\";"));
+        assert!(toggle.contains("source: root.mode == \"waterfall\""));
+        assert!(toggle.contains("text: root.mode == \"waterfall\""));
         assert!(panel.contains("mode <=> AppState.generation-gallery-layout;"));
         assert!(assets.contains("mode <=> AppState.asset-gallery-layout;"));
         assert!(inspiration.contains("mode <=> AppState.inspiration-gallery-layout;"));
