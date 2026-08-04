@@ -1226,6 +1226,19 @@ mod tests {
     }
 
     #[test]
+    fn asset_gallery_scrolls_to_its_measured_grid_or_waterfall_height() {
+        let assets = include_str!("../../ui/components/asset-gallery.slint");
+
+        assert!(assets.contains(
+            "viewport-height: max(self.height, asset-gallery-content.preferred-height);"
+        ));
+        assert!(assets.contains("asset-gallery-content := TimeGroupedGallery"));
+        assert!(assets.contains("height: self.preferred-height;"));
+        assert!(!assets.contains("root.groups.length * 66px"));
+        assert!(!assets.contains("root.row-count() * root.row-height()"));
+    }
+
+    #[test]
     fn reference_images_are_capped_at_eight_outside_action_sequences() {
         let model = include_str!("model.rs");
         let configuration = include_str!("configuration.rs");
@@ -3351,6 +3364,12 @@ mod tests {
 
         assert!(viewer.contains("component ViewerFooterActionButton"));
         assert!(viewer.contains("viewer-footer-actions := HorizontalLayout"));
+        assert!(viewer.contains(
+            "if AppState.viewer-source != \"reference\" && AppState.viewer-source != \"inspiration\": Rectangle"
+        ));
+        assert!(viewer.contains(
+            "AppState.viewer-source == \"inspiration\" ? parent.height - 96px"
+        ));
         assert_eq!(viewer.matches("ViewerFooterActionButton {").count(), 5);
         assert!(viewer.contains("AppState.viewer-download-image();"));
         assert!(viewer.contains("AppState.viewer-open-image();"));
