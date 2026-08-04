@@ -85,11 +85,21 @@ export component GenerationLoadingCard {
                 clicked => { AppState.stop-generation(); }
             }
         }
-        animate y { duration: 100ms; easing: ease-in-out; }
+        animate y { duration: 65ms; easing: ease-in-out; }
     }
 
     function bounce-offset() -> length {
-        let phase = Math.mod(root.bounce-step - root.sequence-index * 2 + 20, 20);
-        return phase == 1 ? 0px - 6px : 0px;
+        let phase = Math.mod(root.bounce-step - root.sequence-index * 4 + 40, 40);
+        return phase == 1 ? 0px - 1px
+            : phase == 2 ? 0px - 2px
+            : phase == 3 ? 0px - 4px
+            : phase == 4 ? 0px - 6px
+            : phase == 5 ? 0px - 7px
+            : phase == 6 ? 0px - 6px
+            : phase == 7 ? 0px - 4px
+            : phase == 8 ? 0px - 2px
+            : phase == 9 ? 0px - 1px
+            : phase == 11 ? 1px
+            : 0px;
     }
 }

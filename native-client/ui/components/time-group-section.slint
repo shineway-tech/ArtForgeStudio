@@ -14,10 +14,10 @@ export component TimeGroupSection {
     in-out property <int> loading-bounce-step: 0;
     height: root.content-height();
     Timer {
-        interval: 100ms;
+        interval: 50ms;
         running: root.loading-count > 0;
         triggered => {
-            root.loading-bounce-step = Math.mod(root.loading-bounce-step + 1, 20);
+            root.loading-bounce-step = Math.mod(root.loading-bounce-step + 1, 40);
         }
     }
     Rectangle {

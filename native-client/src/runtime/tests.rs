@@ -1177,12 +1177,13 @@ mod tests {
 
         assert!(card.contains("in property <int> sequence-index: 0;"));
         assert!(card.contains("in property <int> bounce-step: 0;"));
-        assert!(card.contains("root.bounce-step - root.sequence-index * 2 + 20"));
-        assert!(card.contains("return phase == 1 ? 0px - 6px : 0px;"));
-        assert!(card.contains("animate y { duration: 100ms; easing: ease-in-out; }"));
-        assert!(section.contains("interval: 100ms;"));
+        assert!(card.contains("root.bounce-step - root.sequence-index * 4 + 40"));
+        assert!(card.contains("phase == 5 ? 0px - 7px"));
+        assert!(card.contains("phase == 11 ? 1px"));
+        assert!(card.contains("animate y { duration: 65ms; easing: ease-in-out; }"));
+        assert!(section.contains("interval: 50ms;"));
         assert!(section.contains("running: root.loading-count > 0;"));
-        assert!(section.contains("Math.mod(root.loading-bounce-step + 1, 20)"));
+        assert!(section.contains("Math.mod(root.loading-bounce-step + 1, 40)"));
         for index in 0..4 {
             assert!(section.contains(&format!("sequence-index: {index};")));
             assert!(column.contains(&format!("sequence-index: {index};")));
