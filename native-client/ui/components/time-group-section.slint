@@ -11,7 +11,15 @@ export component TimeGroupSection {
     in property <string> source: "asset";
     in property <int> loading-count: 0;
     in property <string> layout-mode: "grid";
+    in-out property <int> loading-bounce-step: 0;
     height: root.content-height();
+    Timer {
+        interval: 100ms;
+        running: root.loading-count > 0;
+        triggered => {
+            root.loading-bounce-step = Math.mod(root.loading-bounce-step + 1, 20);
+        }
+    }
     Rectangle {
         width: root.width;
         height: root.height;
@@ -33,24 +41,32 @@ export component TimeGroupSection {
             y: root.item-y(0);
             card-width: root.item-width();
             card-gap: 0px;
+            sequence-index: 0;
+            bounce-step: root.loading-bounce-step;
         }
         if root.layout-mode == "grid" && root.loading-count > 1: GenerationLoadingCard {
             x: root.item-x(1);
             y: root.item-y(1);
             card-width: root.item-width();
             card-gap: 0px;
+            sequence-index: 1;
+            bounce-step: root.loading-bounce-step;
         }
         if root.layout-mode == "grid" && root.loading-count > 2: GenerationLoadingCard {
             x: root.item-x(2);
             y: root.item-y(2);
             card-width: root.item-width();
             card-gap: 0px;
+            sequence-index: 2;
+            bounce-step: root.loading-bounce-step;
         }
         if root.layout-mode == "grid" && root.loading-count > 3: GenerationLoadingCard {
             x: root.item-x(3);
             y: root.item-y(3);
             card-width: root.item-width();
             card-gap: 0px;
+            sequence-index: 3;
+            bounce-step: root.loading-bounce-step;
         }
         for item[index] in root.group.items: ThumbnailCard {
             active: root.layout-mode == "grid";
@@ -70,6 +86,7 @@ export component TimeGroupSection {
         items: root.group.items;
         card-width: root.card-width;
         loading-count: root.loading-count;
+        bounce-step: root.loading-bounce-step;
     }
     gallery-waterfall := GalleryWaterfall {
         visible: root.layout-mode == "waterfall" && root.source != "generation";

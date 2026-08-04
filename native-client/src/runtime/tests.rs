@@ -1169,6 +1169,30 @@ mod tests {
     }
 
     #[test]
+    fn generation_loading_cards_bounce_left_to_right_every_two_seconds() {
+        let card = include_str!("../../ui/components/generation-loading-card.slint");
+        let section = include_str!("../../ui/components/time-group-section.slint");
+        let waterfall = include_str!("../../ui/components/generation-waterfall.slint");
+        let column = include_str!("../../ui/components/generation-masonry-column.slint");
+
+        assert!(card.contains("in property <int> sequence-index: 0;"));
+        assert!(card.contains("in property <int> bounce-step: 0;"));
+        assert!(card.contains("root.bounce-step - root.sequence-index * 2 + 20"));
+        assert!(card.contains("return phase == 1 ? 0px - 6px : 0px;"));
+        assert!(card.contains("animate y { duration: 100ms; easing: ease-in-out; }"));
+        assert!(section.contains("interval: 100ms;"));
+        assert!(section.contains("running: root.loading-count > 0;"));
+        assert!(section.contains("Math.mod(root.loading-bounce-step + 1, 20)"));
+        for index in 0..4 {
+            assert!(section.contains(&format!("sequence-index: {index};")));
+            assert!(column.contains(&format!("sequence-index: {index};")));
+        }
+        assert!(section.contains("bounce-step: root.loading-bounce-step;"));
+        assert!(waterfall.contains("bounce-step: root.bounce-step;"));
+        assert!(column.contains("bounce-step: root.bounce-step;"));
+    }
+
+    #[test]
     fn generation_loading_and_completed_items_share_the_time_grouped_template() {
         let panel = include_str!("../../ui/components/generation-result-panel.slint");
         let gallery = include_str!("../../ui/components/time-grouped-gallery.slint");

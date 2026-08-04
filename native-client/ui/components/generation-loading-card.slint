@@ -5,6 +5,8 @@ import { AppTheme } from "../theme.slint";
 export component GenerationLoadingCard {
     in property <length> card-width: 188px;
     in property <length> card-gap: 10px;
+    in property <int> sequence-index: 0;
+    in property <int> bounce-step: 0;
     property <bool> pulse-bright: false;
     width: root.card-width;
     height: root.card-width + root.card-gap;
@@ -15,7 +17,8 @@ export component GenerationLoadingCard {
         triggered => { root.pulse-bright = !root.pulse-bright; }
     }
 
-    Rectangle {
+    visual-card := Rectangle {
+        y: root.bounce-offset();
         width: root.width;
         height: root.card-width;
         background: AppTheme.panel-soft;
@@ -82,5 +85,11 @@ export component GenerationLoadingCard {
                 clicked => { AppState.stop-generation(); }
             }
         }
+        animate y { duration: 100ms; easing: ease-in-out; }
+    }
+
+    function bounce-offset() -> length {
+        let phase = Math.mod(root.bounce-step - root.sequence-index * 2 + 20, 20);
+        return phase == 1 ? 0px - 6px : 0px;
     }
 }
