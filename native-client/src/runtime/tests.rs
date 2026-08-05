@@ -117,6 +117,7 @@ mod tests {
         assert!(dialog.contains("visible-progress: max(0, min(100"));
         assert!(dialog.contains("progress-fill := Rectangle"));
         assert!(dialog.contains("x: 0px;"));
+        assert!(dialog.contains("width: max(0px, active-progress.width - 32px);"));
         assert!(dialog.contains("animate width { duration: 220ms; easing: ease-out; }"));
         assert!(dialog.contains("\"正在核对文件大小与 SHA-256\""));
         assert!(dialog.contains("AppState.cancel-update()"));
