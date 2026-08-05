@@ -2,7 +2,7 @@
 
 use artait_model::AppConfig;
 
-/// 判断页面路由是否为 workspace 页面（含生图和动作序列）。
+/// 判断页面路由是否为 workspace 页面。
 pub fn is_workspace_page(page: &str) -> bool {
     matches!(
         page,
@@ -13,12 +13,11 @@ pub fn is_workspace_page(page: &str) -> bool {
             | "animation_scene"
             | "animation_character"
             | "character_turnaround"
-            | "action_sequence"
             | "video"
     )
 }
 
-/// 判断页面路由是否为 workspace 生图页面（不含动作序列和视频）。
+/// 判断页面路由是否为 workspace 生图页面（不含视频）。
 pub fn is_ws_gen_page(page: &str) -> bool {
     matches!(
         page,
@@ -74,15 +73,14 @@ mod tests {
     fn workspace_page_recognizes_all_modes() {
         assert!(is_workspace_page("scene"));
         assert!(is_workspace_page("character"));
-        assert!(is_workspace_page("action_sequence"));
         assert!(!is_workspace_page("settings"));
         assert!(!is_workspace_page("welcome"));
     }
 
     #[test]
-    fn ws_gen_page_excludes_action_sequence() {
+    fn ws_gen_page_excludes_non_generation_routes() {
         assert!(is_ws_gen_page("scene"));
-        assert!(!is_ws_gen_page("action_sequence"));
+        assert!(!is_ws_gen_page("video"));
     }
 
     #[test]

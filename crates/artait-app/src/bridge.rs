@@ -77,7 +77,6 @@ impl UiTaskState {
             TaskKind::Video => "video",
             TaskKind::Analysis => "analysis",
             TaskKind::PromptOptimization => "prompt_opt",
-            TaskKind::ActionBatch => "action_batch",
             TaskKind::ScriptGeneration => "script_gen",
         };
         let finished = self
@@ -147,7 +146,6 @@ fn task_kind_history_str(kind: TaskKind) -> &'static str {
         TaskKind::Video => "video",
         TaskKind::Analysis => "analysis",
         TaskKind::PromptOptimization => "prompt_optimization",
-        TaskKind::ActionBatch => "action_batch",
         TaskKind::ScriptGeneration => "script_generation",
     }
 }
@@ -585,8 +583,6 @@ fn task_generation_mode(item: &UiTaskState) -> Option<String> {
     mode.or_else(|| {
         if item.kind == TaskKind::PromptOptimization {
             Some("prompt_opt".to_string())
-        } else if item.kind == TaskKind::ActionBatch {
-            Some("action_sequence".to_string())
         } else if item.kind == TaskKind::Image {
             infer_generation_mode_from_legacy_item(item)
         } else {
@@ -596,7 +592,7 @@ fn task_generation_mode(item: &UiTaskState) -> Option<String> {
 }
 
 fn is_gallery_generation_task(item: &UiTaskState) -> bool {
-    item.label.starts_with("生成 · ") || item.label.starts_with("批量 ")
+    item.label.starts_with("生成 · ")
 }
 
 fn infer_generation_mode_from_legacy_item(item: &UiTaskState) -> Option<String> {
@@ -621,9 +617,6 @@ fn infer_generation_mode_from_legacy_item(item: &UiTaskState) -> Option<String> 
     }
     if label.contains("分镜板") {
         return Some("storyboard".to_string());
-    }
-    if label.contains("动作序列") || label.starts_with("批量 ") {
-        return Some("action_sequence".to_string());
     }
     if label.contains("创建场景") {
         return Some("scene".to_string());
@@ -650,9 +643,6 @@ fn infer_generation_mode_from_legacy_item(item: &UiTaskState) -> Option<String> 
     }
     if output.contains("/storyboards") {
         return Some("storyboard".to_string());
-    }
-    if output.contains("/batch") {
-        return Some("action_sequence".to_string());
     }
     if output.contains("/scenes") {
         return Some("scene".to_string());

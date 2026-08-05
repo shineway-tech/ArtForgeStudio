@@ -106,7 +106,6 @@ export component InlineCardChooser {
             text: AppState.en
                 ? "Count · " + AppState.count
                 : "张数 · " + AppState.count + "张";
-            disabled: AppState.asset-type == "action-sequence";
             clicked => {
                 root.open-panel = root.open-panel == "count" ? "" : "count";
             }

@@ -99,12 +99,6 @@ pub(super) fn load_user_profile(app: &AppWindow) {
     state.set_card_style(card_style.into());
     if !profile.asset_type.trim().is_empty() {
         let category = resolve_category(&profile.asset_type, "");
-        if category == "action-sequence" {
-            state.set_creation_mode("anim-idle".into());
-            state.set_count(1);
-            state.set_ratio("1:1".into());
-            state.set_ratio_more_open(false);
-        }
         state.set_asset_type(category.into());
     }
 }
@@ -230,7 +224,6 @@ pub(super) fn normalize_reserved_prompt_drafts(drafts: &mut PromptDrafts) -> boo
         &mut drafts.scene,
         &mut drafts.ui,
         &mut drafts.effect,
-        &mut drafts.action_sequence,
     ] {
         if prompt.trim() == "//" {
             prompt.clear();
@@ -267,7 +260,6 @@ pub(super) fn prompt_draft_for_category(drafts: &PromptDrafts, category: &str) -
         "scene" => drafts.scene.clone(),
         "ui" => drafts.ui.clone(),
         "effect" => drafts.effect.clone(),
-        "action-sequence" => drafts.action_sequence.clone(),
         _ => drafts.character.clone(),
     }
 }
@@ -281,7 +273,6 @@ pub(super) fn set_prompt_draft_for_category(
         "scene" => drafts.scene = prompt,
         "ui" => drafts.ui = prompt,
         "effect" => drafts.effect = prompt,
-        "action-sequence" => drafts.action_sequence = prompt,
         _ => drafts.character = prompt,
     }
 }
@@ -294,7 +285,6 @@ pub(super) fn negative_prompt_draft_for_category(
         "scene" => drafts.negative_scene.clone(),
         "ui" => drafts.negative_ui.clone(),
         "effect" => drafts.negative_effect.clone(),
-        "action-sequence" => drafts.negative_action_sequence.clone(),
         _ => drafts.negative_character.clone(),
     }
 }
@@ -308,7 +298,6 @@ pub(super) fn set_negative_prompt_draft_for_category(
         "scene" => drafts.negative_scene = prompt,
         "ui" => drafts.negative_ui = prompt,
         "effect" => drafts.negative_effect = prompt,
-        "action-sequence" => drafts.negative_action_sequence = prompt,
         _ => drafts.negative_character = prompt,
     }
 }
@@ -539,7 +528,6 @@ pub(super) fn references_for_category<'a>(
         "scene" => &references.scene,
         "ui" => &references.ui,
         "effect" => &references.effect,
-        "action-sequence" => &references.action_sequence,
         _ => &references.character,
     }
 }
@@ -552,7 +540,6 @@ pub(super) fn references_for_category_mut<'a>(
         "scene" => &mut references.scene,
         "ui" => &mut references.ui,
         "effect" => &mut references.effect,
-        "action-sequence" => &mut references.action_sequence,
         _ => &mut references.character,
     }
 }

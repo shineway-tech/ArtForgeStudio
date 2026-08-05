@@ -719,7 +719,6 @@ fn build_feature_model(cfg: &AppConfig, mode: &str, has_project: bool) -> ModelR
         FeatureId::SceneLibrary,
         FeatureId::UiConcept,
         FeatureId::Effect,
-        FeatureId::ActionSequence,
         FeatureId::AnimationScript,
         FeatureId::Storyboard,
         FeatureId::AssetBrowser,

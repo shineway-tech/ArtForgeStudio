@@ -396,8 +396,8 @@ export component PromptComposer {
             y: parent.height - 70px;
             spacing: 10px;
             CreationModeChip {}
-            if AppState.asset-type != "action-sequence": StyleModeChip {}
-            if AppState.asset-type != "action-sequence": AdvancedControlChip {}
+            StyleModeChip {}
+            AdvancedControlChip {}
         }
         GenerateActionButton {
             x: root.width < 560px ? parent.width - 190px : parent.width - 178px;
@@ -720,17 +720,14 @@ export component PromptComposer {
     }
 
     function max-reference-count() -> int {
-        if AppState.asset-type == "action-sequence" { return 1; }
         return 8;
     }
 
     function reference-columns() -> int {
-        if AppState.asset-type == "action-sequence" { return 1; }
         return 4;
     }
 
     function reference-card-size() -> length {
-        if root.reference-columns() == 1 { return 88px; }
         return min(88px, max(56px, (root.width - 48px - 30px) / 4));
     }
 

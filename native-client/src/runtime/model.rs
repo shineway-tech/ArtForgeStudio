@@ -4,8 +4,6 @@ const MAX_REFERENCE_IMAGES: usize = 8;
 const IMAGE_DRAG_MIME: &str = "application/x-artforge-image-path";
 const URI_LIST_MIME: &str = "text/uri-list";
 const TEXT_PLAIN_MIME: &str = "text/plain";
-const ACTION_SEQUENCE_RATIOS: [(&'static str, i32, i32); 3] =
-    [("1:1", 1, 1), ("9:16", 9, 16), ("16:9", 16, 9)];
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct ModelOptionData {
@@ -169,7 +167,6 @@ struct ReferenceGroups {
     scene: Vec<ReferenceData>,
     ui: Vec<ReferenceData>,
     effect: Vec<ReferenceData>,
-    action_sequence: Vec<ReferenceData>,
 }
 
 #[derive(Clone)]
@@ -443,8 +440,6 @@ struct PromptDrafts {
     #[serde(default)]
     effect: String,
     #[serde(default)]
-    action_sequence: String,
-    #[serde(default)]
     negative_character: String,
     #[serde(default)]
     negative_scene: String,
@@ -452,8 +447,6 @@ struct PromptDrafts {
     negative_ui: String,
     #[serde(default)]
     negative_effect: String,
-    #[serde(default)]
-    negative_action_sequence: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

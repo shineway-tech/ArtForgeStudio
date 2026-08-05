@@ -261,11 +261,9 @@ component FeatureSidebarItem {
                 ? @image-url("../assets/icons/ui-concept.svg")
                 : root.id == "effect"
                     ? @image-url("../assets/icons/effect.svg")
-                    : root.id == "action_sequence"
-                        ? @image-url("../assets/icons/action-sequence.svg")
-                        : root.id == "animation_scene"
+                    : root.id == "animation_scene"
                             ? @image-url("../assets/icons/animation-scene.svg")
-                            : root.id == "animation_character"
+                        : root.id == "animation_character"
                                 ? @image-url("../assets/icons/animation-character.svg")
                                 : root.id == "character_turnaround"
                                     ? @image-url("../assets/icons/character-turnaround.svg")

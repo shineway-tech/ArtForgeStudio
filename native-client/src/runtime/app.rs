@@ -226,17 +226,6 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
                 state.set_advanced_preview_open(false);
                 state.set_advanced_prompt_preview("".into());
             }
-            if category == "action-sequence" {
-                state.set_creation_mode("anim-idle".into());
-                state.set_count(1);
-                state.set_ratio_more_open(false);
-                if !action_sequence_ratio_allowed(&state.get_ratio().to_string()) {
-                    state.set_ratio("1:1".into());
-                }
-                let mut store_mut = store.borrow_mut();
-                references_for_category_mut(&mut store_mut.references, &category)
-                    .truncate(max_reference_images_for_category(&category));
-            }
             state.set_asset_type(category.clone().into());
             state.set_mode("game".into());
             if previous_category != category {

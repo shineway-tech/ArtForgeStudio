@@ -217,7 +217,7 @@ impl AssetPurpose {
             CreationMode::CharacterTurnaround => Self::CharacterTurnaround,
             CreationMode::Effect => Self::SkillEffect,
             CreationMode::Storyboard => Self::SceneConcept,
-            CreationMode::Scene | CreationMode::AnimationScene | CreationMode::ActionSequence => {
+            CreationMode::Scene | CreationMode::AnimationScene => {
                 Self::SceneConcept
             }
         }

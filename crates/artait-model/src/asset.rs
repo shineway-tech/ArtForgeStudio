@@ -26,7 +26,6 @@ pub enum AssetDomain {
     AnimationCharacter,
     CharacterTurnaround,
     Storyboard,
-    ActionSequence,
     AnimationScript,
 }
 

@@ -1,4 +1,4 @@
-//! 图片生成回调：提交生图任务、批量模式、结果回调。
+//! 图片生成回调：提交生图任务与处理结果回调。
 
 use std::time::Duration;
 
@@ -328,71 +328,6 @@ pub(crate) fn init(ctx: &CbCtx, app: &AppShell) {
         let label = format!("生成 · {} · {}", mode.display_name(), utils::short(&prompt, 24));
         let refs: Vec<ReferenceImage> = ref_images.borrow().clone();
 
-        // ── 批量模式 ──────────────────────────────────────────────
-        if mode == CreationMode::ActionSequence {
-            let skip_existing = app_weak.upgrade()
-                .map(|a| a.global::<AppState>().get_ws_skip_existing()).unwrap_or(false);
-            let lines: Vec<String> = prompt.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
-            if lines.is_empty() { return; }
-            let count = lines.len();
-            for (i, line) in lines.into_iter().enumerate() {
-                let sub_label = format!("批量 {}/{} · {}", i + 1, count, utils::short(&line, 20));
-                let out_dir = output_dir.clone();
-                let inst_c = inst.clone();
-                let reg_c = registry.clone();
-                let http_p = http_for_provider.clone();
-                let aw = app_weak_inner.clone();
-                let asp = aspect.clone();
-                let qual = quality.clone();
-                let refs_c = refs.clone();
-                let skip = skip_existing;
-                let out_dir_check = out_dir.clone();
-                let line_idx = i + 1;
-                runner.spawn(
-                    TaskSpec::new(sub_label, TaskKind::Image).with_timeout(Duration::from_secs(300)),
-                    move |ctx| async move {
-                        if skip {
-                            let has_existing = std::fs::read_dir(&out_dir_check).map(|entries| {
-                                entries.flatten().any(|e| e.file_name().to_string_lossy().starts_with(&format!("batch-{}", line_idx)))
-                            }).unwrap_or(false);
-                            if has_existing {
-                                ctx.info(format!("跳过 batch-{}（已存在）", line_idx));
-                                ctx.progress(1.0);
-                                return Ok(());
-                            }
-                        }
-                        let result = run_image_generation(
-                            &inst_c, &line, &out_dir, &format!("batch-{}", i + 1),
-                            CreationMode::ActionSequence, &asp, &qual, count as u32, line_idx as u32,
-                            &DirectorControls::default(),
-                            &refs_c, &reg_c, http_p, &ctx,
-                        ).await;
-                        ctx.progress(1.0);
-                        match result {
-                            Ok(info) => {
-                                let ps = info.path.display().to_string();
-                                let _ = slint::invoke_from_event_loop(move || {
-                                    if let Some(app) = aw.upgrade() {
-                                        app.global::<AppState>().set_ws_last_output(ps.clone().into());
-                                        app.global::<AppState>().set_status_text(format!("批量完成 → {ps}").into());
-                                    }
-                                });
-                                Ok(())
-                            }
-                            Err(e) => Err(e),
-                        }
-                    },
-                );
-            }
-            if let Some(app) = app_weak.upgrade() {
-                let s = app.global::<AppState>();
-                s.set_gallery_generating_count(1);
-                s.set_status_text(format!("已提交 {} 个批量任务", count).into());
-            }
-            return;
-        }
-
-        // ── 单图模式 ──────────────────────────────────────────────
         for image_index in 0..count {
             let task_label = if count > 1 { format!("{label} · {}/{}", image_index + 1, count) } else { label.clone() };
             let registry = registry.clone();
@@ -505,9 +440,6 @@ pub(crate) fn build_final_generation_prompt(
     manual_prompt: &str,
     director_controls: &DirectorControls,
 ) -> anyhow::Result<String> {
-    if mode == CreationMode::ActionSequence {
-        return Ok(manual_prompt.to_string());
-    }
     let prompt = build_generation_prompt(cfg, mode.route_id(), selected_template, manual_prompt)?;
     Ok(append_director_prompt(&prompt, mode, director_controls))
 }

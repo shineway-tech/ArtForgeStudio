@@ -83,14 +83,6 @@ pub(super) fn control_label(kind: &str, value: &str, language: PromptLanguage) -
             ("creation", "fx-scene") => "场景环境特效",
             ("creation", "fx-ui") => "UI 反馈特效",
             ("creation", "fx-weapon-trail") => "武器拖尾轨迹",
-            ("creation", "anim-run") => "跑步循环动画",
-            ("creation", "anim-walk") => "走路动作",
-            ("creation", "anim-attack") => "攻击动作",
-            ("creation", "anim-hit") => "受击动作",
-            ("creation", "anim-idle") => "待机循环动画",
-            ("creation", "anim-jump") => "跳跃动作",
-            ("creation", "anim-death") => "死亡动作",
-            ("creation", "anim-skill") => "技能动作",
             ("creation", _) => "自由创作",
             ("style", "warm") => "温暖治愈风格",
             ("style", "cold") => "冷系压迫风格",
@@ -162,14 +154,6 @@ pub(super) fn control_label(kind: &str, value: &str, language: PromptLanguage) -
         ("creation", "fx-scene") => "scene environmental visual effect",
         ("creation", "fx-ui") => "UI feedback visual effect",
         ("creation", "fx-weapon-trail") => "weapon trail visual effect",
-        ("creation", "anim-run") => "run cycle animation",
-        ("creation", "anim-walk") => "walk animation",
-        ("creation", "anim-attack") => "attack animation",
-        ("creation", "anim-hit") => "hit reaction animation",
-        ("creation", "anim-idle") => "idle loop animation",
-        ("creation", "anim-jump") => "jump animation",
-        ("creation", "anim-death") => "death animation",
-        ("creation", "anim-skill") => "skill action animation",
         ("creation", _) => "free creation",
         ("style", "warm") => "warm healing style",
         ("style", "cold") => "cold oppressive style",
@@ -216,9 +200,6 @@ pub(super) fn control_label(kind: &str, value: &str, language: PromptLanguage) -
 pub(super) fn visible_prompt_control_entries<'a>(
     controls: &'a PromptControls,
 ) -> Vec<(&'static str, &'a str)> {
-    if controls.category == "action-sequence" {
-        return vec![("creation", controls.creation.as_str())];
-    }
     let mut entries = vec![
         ("creation", controls.creation.as_str()),
         ("style", controls.style.as_str()),
@@ -286,18 +267,6 @@ pub(super) fn prompt_with_controls(
     }
 }
 
-pub(super) fn append_action_sequence_instruction(prompt: &str, language: PromptLanguage) -> String {
-    if language == PromptLanguage::Chinese {
-        format!(
-            "{prompt}\n\n动作序列规则：如果上传了参考图，请以参考图中的角色或主体为基础，生成所选动作类型对应的动作资源，保持角色外观、服装、配色和识别特征一致。动作类型只从待机、跑步、走路、攻击、死亡中选择，不要生成无关动作。"
-        )
-    } else {
-        format!(
-            "{prompt}\n\nAction sequence rule: If a reference image is uploaded, use the character or subject in the reference image as the basis for the selected action asset. Keep the character appearance, outfit, colors, and identifying traits consistent. The action type must be one of idle, run, walk, attack, or death; do not generate unrelated actions."
-        )
-    }
-}
-
 pub(super) fn build_generation_prompt(
     prompt: &str,
     negative_prompt: &str,
@@ -337,9 +306,6 @@ pub(super) fn build_generation_prompt(
                 quote.height
             ));
         }
-    }
-    if category == "action-sequence" {
-        final_prompt = append_action_sequence_instruction(&final_prompt, language);
     }
     final_prompt = append_negative_prompt_instruction(&final_prompt, negative_prompt, language);
     append_parameter_priority_instruction(&final_prompt, category, ratio, quality, language)
@@ -386,10 +352,8 @@ pub(super) fn display_generation_prompt(prompt: &str) -> String {
     let hidden_prefixes = [
         "生成控制：",
         "参数优先规则：",
-        "动作序列规则：",
         "Generation controls:",
         "Parameter priority rule:",
-        "Action sequence rule:",
     ];
     normalized
         .split("\n\n")

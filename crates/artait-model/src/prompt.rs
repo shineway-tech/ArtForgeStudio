@@ -23,7 +23,6 @@ pub enum PromptDomain {
     AnimationCharacter,
     CharacterTurnaround,
     Storyboard,
-    ActionSequence,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

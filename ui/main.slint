@@ -13,7 +13,6 @@ import { RuntimeLogPage } from "pages/runtime-log.slint";
 import { OnboardingPage } from "pages/onboarding.slint";
 import { ScriptPage } from "pages/script.slint";
 import { StoryboardPage } from "pages/storyboard.slint";
-import { ActionSequencePage } from "pages/action-sequence.slint";
 import { VideoWorkspacePage } from "pages/video-workspace.slint";
 import { ProjectPage } from "pages/project.slint";
 import { CreateProjectPage } from "pages/create-project.slint";
@@ -131,8 +130,6 @@ export component AppShell inherits Window {
                 if AppState.current-page == "character_detail": CharacterDetailPage {}
 
                 if AppState.current-page == "scene_library": SceneLibraryPage {}
-
-                if AppState.current-page == "action_sequence": ActionSequencePage {}
 
                 if AppState.current-page == "video": VideoWorkspacePage {
                     title: "视频创作";

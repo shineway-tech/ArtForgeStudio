@@ -15,7 +15,6 @@ pub enum TaskKind {
     Video,
     Analysis,
     PromptOptimization,
-    ActionBatch,
     ScriptGeneration,
 }
 
@@ -28,7 +27,6 @@ impl TaskKind {
             "video" => TaskKind::Video,
             "analysis" => TaskKind::Analysis,
             "prompt_optimization" | "promptoptimization" => TaskKind::PromptOptimization,
-            "action_batch" => TaskKind::ActionBatch,
             "script_generation" => TaskKind::ScriptGeneration,
             _ => TaskKind::Image,
         }
@@ -79,7 +77,6 @@ pub enum CreationMode {
     AnimationCharacter,
     CharacterTurnaround,
     Storyboard,
-    ActionSequence,
 }
 
 impl CreationMode {
@@ -93,7 +90,6 @@ impl CreationMode {
             "animation_scene" => Self::AnimationScene,
             "animation_character" => Self::AnimationCharacter,
             "character_turnaround" => Self::CharacterTurnaround,
-            "action_sequence" => Self::ActionSequence,
             "storyboard" => Self::Storyboard,
             _ => Self::Scene,
         }
@@ -110,7 +106,6 @@ impl CreationMode {
             Self::AnimationCharacter => "animation_character",
             Self::CharacterTurnaround => "character_turnaround",
             Self::Storyboard => "storyboard",
-            Self::ActionSequence => "action_sequence",
         }
     }
 
@@ -125,7 +120,6 @@ impl CreationMode {
             Self::AnimationCharacter => "动画角色",
             Self::CharacterTurnaround => "角色三视图",
             Self::Storyboard => "分镜板",
-            Self::ActionSequence => "动作序列",
         }
     }
 
@@ -139,7 +133,6 @@ impl CreationMode {
             Self::AnimationScene => "animation_scenes",
             Self::AnimationCharacter => "animation_characters",
             Self::CharacterTurnaround => "character_turnarounds",
-            Self::ActionSequence => "batch",
             Self::Storyboard => "storyboards",
         }
     }
@@ -154,15 +147,10 @@ impl CreationMode {
             Self::AnimationCharacter => "animation_character",
             Self::CharacterTurnaround => "character_turnaround",
             Self::Storyboard => "storyboard",
-            Self::ActionSequence => "action_sequence",
             Self::Scene => "scene",
         }
     }
 
-    /// 是否为生图模式（不含动作序列）。
-    pub fn is_gen(self) -> bool {
-        !matches!(self, Self::ActionSequence)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

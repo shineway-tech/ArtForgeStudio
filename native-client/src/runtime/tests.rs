@@ -1240,7 +1240,7 @@ mod tests {
     }
 
     #[test]
-    fn reference_images_are_capped_at_eight_outside_action_sequences() {
+    fn reference_images_are_capped_at_eight_for_every_workspace_category() {
         let model = include_str!("model.rs");
         let configuration = include_str!("configuration.rs");
         let composer = include_str!("../../ui/components/prompt-composer.slint");
@@ -1249,11 +1249,32 @@ mod tests {
         assert_eq!(max_reference_images_for_category("scene"), 8);
         assert_eq!(max_reference_images_for_category("ui"), 8);
         assert_eq!(max_reference_images_for_category("effect"), 8);
-        assert_eq!(max_reference_images_for_category("action-sequence"), 1);
+        assert_eq!(max_reference_images_for_category("unsupported-category"), 8);
         assert!(model.contains("const MAX_REFERENCE_IMAGES: usize = 8;"));
         assert!(configuration.contains("最多上传 8 张参考图"));
-        assert!(composer.contains("if AppState.asset-type == \"action-sequence\" { return 1; }"));
         assert!(composer.contains("return 8;"));
+    }
+
+    #[test]
+    fn removed_workspace_feature_does_not_reappear_in_active_sources() {
+        let removed_slug = ["action", "sequence"].join("-");
+        let removed_type = ["Action", "Sequence"].join("");
+        let sources = [
+            include_str!("app.rs"),
+            include_str!("configuration.rs"),
+            include_str!("model.rs"),
+            include_str!("prompt.rs"),
+            include_str!("generation/backend.rs"),
+            include_str!("storage/local_store.rs"),
+            include_str!("../../ui/components/prompt-composer.slint"),
+            include_str!("../../ui/components/creation-mode-chip.slint"),
+            include_str!("../../ui/components/category-workspace-menu.slint"),
+        ];
+
+        for source in sources {
+            assert!(!source.contains(&removed_slug));
+            assert!(!source.contains(&removed_type));
+        }
     }
 
     #[test]
@@ -1987,7 +2008,6 @@ mod tests {
         assert!(chooser.contains("\"比例 · \""));
         assert!(chooser.contains("\"清晰度 · \""));
         assert!(chooser.contains("\"张数 · \""));
-        assert!(chooser.contains("disabled: AppState.asset-type == \"action-sequence\""));
         assert!(panel.contains("InlineCardChooser {"));
         assert!(panel.contains("work-scroll := ScrollView"));
         assert!(panel.contains("viewport-height: max(self.visible-height, work-content.height)"));

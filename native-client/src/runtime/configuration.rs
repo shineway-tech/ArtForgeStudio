@@ -35,46 +35,20 @@ pub(super) fn client_ratio_from_api(ratio: &str) -> String {
     }
 }
 
-pub(super) fn supported_ratios_for_category(category: &str) -> &'static [(&'static str, i32, i32)] {
-    if category == "action-sequence" {
-        &ACTION_SEQUENCE_RATIOS
-    } else {
-        supported_ratios()
-    }
+pub(super) fn supported_ratios_for_category(_category: &str) -> &'static [(&'static str, i32, i32)] {
+    supported_ratios()
 }
 
-pub(super) fn action_sequence_ratio_allowed(ratio: &str) -> bool {
-    ACTION_SEQUENCE_RATIOS
-        .iter()
-        .any(|(label, _, _)| *label == ratio)
+pub(super) fn max_reference_images_for_category(_category: &str) -> usize {
+    MAX_REFERENCE_IMAGES
 }
 
-pub(super) fn max_reference_images_for_category(category: &str) -> usize {
-    if category == "action-sequence" {
-        1
-    } else {
-        MAX_REFERENCE_IMAGES
-    }
+pub(super) fn reference_limit_message(_max_references: usize) -> &'static str {
+    "最多上传 8 张参考图"
 }
 
-pub(super) fn reference_limit_message(max_references: usize) -> &'static str {
-    if max_references == 1 {
-        "动作序列只能上传 1 张参考图"
-    } else {
-        "最多上传 8 张参考图"
-    }
-}
-
-pub(super) fn normalize_creation_mode_for_category(category: &str, creation: &str) -> String {
-    if category != "action-sequence" {
-        return creation.to_string();
-    }
-    match creation {
-        "anim-idle" | "anim-run" | "anim-walk" | "anim-attack" | "anim-death" => {
-            creation.to_string()
-        }
-        _ => "anim-idle".to_string(),
-    }
+pub(super) fn normalize_creation_mode_for_category(_category: &str, creation: &str) -> String {
+    creation.to_string()
 }
 
 pub(super) fn normalized_quality(quality: &str) -> &'static str {

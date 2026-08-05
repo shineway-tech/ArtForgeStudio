@@ -257,7 +257,6 @@ fn build_default_zh_cn() -> Translations {
     map.insert("feature-scene".into(), "创建场景".into());
     map.insert("feature-character".into(), "创建角色".into());
     map.insert("feature-effect".into(), "特效".into());
-    map.insert("feature-action-sequence".into(), "动作序列".into());
     map.insert("feature-asset-browser".into(), "图库".into());
     map.insert("feature-animation-scene".into(), "动画场景".into());
     map.insert("feature-animation-character".into(), "动画角色".into());
@@ -283,7 +282,6 @@ fn build_default_zh_cn() -> Translations {
     map.insert("task-kind-video".into(), "video".into());
     map.insert("task-kind-analysis".into(), "analysis".into());
     map.insert("task-kind-prompt-opt".into(), "prompt_opt".into());
-    map.insert("task-kind-action-batch".into(), "action_batch".into());
     map.insert("task-kind-script-gen".into(), "script_gen".into());
 
     // ── Clear task labels ────────────────────────────────────────────
@@ -300,7 +298,6 @@ fn build_default_zh_cn() -> Translations {
     map.insert("mode-animation-character".into(), "animation_character".into());
     map.insert("mode-character-turnaround".into(), "character_turnaround".into());
     map.insert("mode-storyboard".into(), "storyboard".into());
-    map.insert("mode-action-sequence".into(), "action_sequence".into());
 
     // ── Mode display names ───────────────────────────────────────────
     map.insert("display-mode-scene".into(), "创建场景".into());

@@ -26,7 +26,6 @@ pub const FEATURE_ORDER: &[FeatureId] = &[
     FeatureId::Character,
     FeatureId::UiConcept,
     FeatureId::Effect,
-    FeatureId::ActionSequence,
     FeatureId::AssetBrowser,
     FeatureId::AnimationScene,
     FeatureId::AnimationCharacter,

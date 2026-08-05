@@ -9,7 +9,6 @@ pub enum FeatureId {
     Scene,
     Character,
     Effect,
-    ActionSequence,
     AssetBrowser,
     AnimationScene,
     AnimationCharacter,
@@ -28,7 +27,6 @@ impl FeatureId {
         FeatureId::Scene,
         FeatureId::Character,
         FeatureId::Effect,
-        FeatureId::ActionSequence,
         FeatureId::Video,
         FeatureId::AssetBrowser,
         FeatureId::AnimationScene,
@@ -47,7 +45,6 @@ impl FeatureId {
             FeatureId::Scene => "创建场景",
             FeatureId::Character => "创建角色",
             FeatureId::Effect => "特效",
-            FeatureId::ActionSequence => "动作序列",
             FeatureId::Video => "视频",
             FeatureId::AssetBrowser => "图库",
             FeatureId::AnimationScene => "动画场景",
@@ -68,7 +65,6 @@ impl FeatureId {
             FeatureId::Scene => "scene",
             FeatureId::Character => "character",
             FeatureId::Effect => "effect",
-            FeatureId::ActionSequence => "action_sequence",
             FeatureId::Video => "video",
             FeatureId::AssetBrowser => "asset_browser",
             FeatureId::AnimationScene => "animation_scene",
@@ -89,7 +85,6 @@ impl FeatureId {
             | FeatureId::Scene
             | FeatureId::Character
             | FeatureId::Effect
-            | FeatureId::ActionSequence
             | FeatureId::Video
             | FeatureId::AnimationScene
             | FeatureId::AnimationCharacter
@@ -110,7 +105,6 @@ pub fn feature_id_from_route(route: &str) -> Option<FeatureId> {
         "character" => FeatureId::Character,
         "ui_concept" => FeatureId::UiConcept,
         "effect" => FeatureId::Effect,
-        "action_sequence" => FeatureId::ActionSequence,
         "video" => FeatureId::Video,
         "animation_scene" => FeatureId::AnimationScene,
         "animation_character" => FeatureId::AnimationCharacter,
@@ -142,7 +136,6 @@ impl FeaturePreset {
                 FeatureId::Scene,
                 FeatureId::Character,
                 FeatureId::Effect,
-                FeatureId::ActionSequence,
                 FeatureId::Video,
                 FeatureId::AssetBrowser,
                 FeatureId::CharacterLibrary,
@@ -214,8 +207,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn general_preset_has_ten_features() {
-        assert_eq!(FeaturePreset::General.enabled_features().len(), 10);
+    fn general_preset_has_nine_features() {
+        assert_eq!(FeaturePreset::General.enabled_features().len(), 9);
     }
 
     #[test]

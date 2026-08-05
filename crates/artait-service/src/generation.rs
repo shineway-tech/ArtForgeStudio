@@ -487,14 +487,12 @@ mod tests {
         assert_eq!(CreationMode::Character.output_subdir(), "creations");
         assert_eq!(CreationMode::Effect.output_subdir(), "effects");
         assert_eq!(CreationMode::Storyboard.output_subdir(), "storyboards");
-        assert_eq!(CreationMode::ActionSequence.output_subdir(), "batch");
     }
 
     #[test]
     fn display_mode_labels() {
         assert_eq!(CreationMode::Scene.display_name(), "创建场景");
         assert_eq!(CreationMode::Character.display_name(), "创建角色");
-        assert_eq!(CreationMode::ActionSequence.display_name(), "动作序列");
     }
 
     #[test]

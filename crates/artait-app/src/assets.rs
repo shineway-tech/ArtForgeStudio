@@ -210,7 +210,6 @@ fn domain_str(d: AssetDomain) -> &'static str {
         AssetDomain::AnimationCharacter => "animation_character",
         AssetDomain::CharacterTurnaround => "character_turnaround",
         AssetDomain::Storyboard => "storyboard",
-        AssetDomain::ActionSequence => "action_sequence",
         AssetDomain::AnimationScript => "animation_script",
     }
 }

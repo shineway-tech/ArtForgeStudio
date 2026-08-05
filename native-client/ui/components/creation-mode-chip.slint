@@ -65,26 +65,13 @@ export component CreationModeChip {
                 if AppState.asset-type == "effect": TextOption { left: AppState.en ? "UI VFX" : "UI特效"; right: AppState.en ? "Feedback" : "反馈"; active: AppState.creation-mode == "fx-ui"; clicked => { AppState.creation-mode = "fx-ui"; root.open = false; popup.close(); } }
                 if AppState.asset-type == "effect": TextOption { left: AppState.en ? "Weapon Trail" : "武器拖尾"; right: AppState.en ? "Trail" : "轨迹"; active: AppState.creation-mode == "fx-weapon-trail"; clicked => { AppState.creation-mode = "fx-weapon-trail"; root.open = false; popup.close(); } }
 
-                if AppState.asset-type == "action-sequence": TextOption { left: AppState.en ? "Idle" : "待机"; right: AppState.en ? "Idle" : "待机"; active: AppState.creation-mode == "anim-idle" || AppState.creation-mode == "free"; clicked => { AppState.creation-mode = "anim-idle"; root.open = false; popup.close(); } }
-                if AppState.asset-type == "action-sequence": TextOption { left: AppState.en ? "Run" : "跑步"; right: AppState.en ? "Run" : "跑步"; active: AppState.creation-mode == "anim-run"; clicked => { AppState.creation-mode = "anim-run"; root.open = false; popup.close(); } }
-                if AppState.asset-type == "action-sequence": TextOption { left: AppState.en ? "Walk" : "走路"; right: AppState.en ? "Walk" : "走路"; active: AppState.creation-mode == "anim-walk"; clicked => { AppState.creation-mode = "anim-walk"; root.open = false; popup.close(); } }
-                if AppState.asset-type == "action-sequence": TextOption { left: AppState.en ? "Attack" : "攻击"; right: AppState.en ? "Atk" : "攻击"; active: AppState.creation-mode == "anim-attack"; clicked => { AppState.creation-mode = "anim-attack"; root.open = false; popup.close(); } }
-                if AppState.asset-type == "action-sequence": TextOption { left: AppState.en ? "Death" : "死亡"; right: AppState.en ? "Death" : "死亡"; active: AppState.creation-mode == "anim-death"; clicked => { AppState.creation-mode = "anim-death"; root.open = false; popup.close(); } }
             }
         }
     }
     function options-height() -> length {
-        if AppState.asset-type == "action-sequence" { return 174px; }
         return 252px;
     }
     function label() -> string {
-        if AppState.asset-type == "action-sequence" {
-            if AppState.creation-mode == "anim-run" { return AppState.en ? "Run" : "跑步"; }
-            if AppState.creation-mode == "anim-walk" { return AppState.en ? "Walk" : "走路"; }
-            if AppState.creation-mode == "anim-attack" { return AppState.en ? "Attack" : "攻击"; }
-            if AppState.creation-mode == "anim-death" { return AppState.en ? "Death" : "死亡"; }
-            return AppState.en ? "Idle" : "待机";
-        }
         if AppState.creation-mode == "character-standee" { return AppState.en ? "Character Full Body" : "角色立绘"; }
         if AppState.creation-mode == "character-turnaround" { return AppState.en ? "Three Views" : "三视图"; }
         if AppState.creation-mode == "character-8dir" { return AppState.en ? "8 Directions" : "8方向"; }
@@ -112,14 +99,6 @@ export component CreationModeChip {
         if AppState.creation-mode == "fx-scene" { return AppState.en ? "Scene VFX" : "场景特效"; }
         if AppState.creation-mode == "fx-ui" { return AppState.en ? "UI VFX" : "UI特效"; }
         if AppState.creation-mode == "fx-weapon-trail" { return AppState.en ? "Weapon Trail" : "武器拖尾"; }
-        if AppState.creation-mode == "anim-run" { return AppState.en ? "Run Cycle" : "跑步循环"; }
-        if AppState.creation-mode == "anim-walk" { return AppState.en ? "Walk" : "走路"; }
-        if AppState.creation-mode == "anim-attack" { return AppState.en ? "Attack" : "攻击动作"; }
-        if AppState.creation-mode == "anim-hit" { return AppState.en ? "Hit React" : "受击动作"; }
-        if AppState.creation-mode == "anim-idle" { return AppState.en ? "Idle Loop" : "待机动作"; }
-        if AppState.creation-mode == "anim-jump" { return AppState.en ? "Jump" : "跳跃动作"; }
-        if AppState.creation-mode == "anim-death" { return AppState.en ? "Death" : "死亡动作"; }
-        if AppState.creation-mode == "anim-skill" { return AppState.en ? "Skill Move" : "技能动作"; }
         return AppState.en ? "Free Create" : "自由创作";
     }
 }

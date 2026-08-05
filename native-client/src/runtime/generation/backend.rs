@@ -60,13 +60,7 @@ pub(super) fn start_backend_generation(
         &state.get_quote_ratio().to_string(),
     );
     let quality = state.get_quality().to_string();
-    let count = forced_count.unwrap_or_else(|| {
-        if category == "action-sequence" {
-            1
-        } else {
-            state.get_count().clamp(1, 4)
-        }
-    });
+    let count = forced_count.unwrap_or_else(|| state.get_count().clamp(1, 4));
     let mode = state.get_mode().to_string();
     let original_references = references_for_category(&store.borrow().references, &category)
         .iter()
