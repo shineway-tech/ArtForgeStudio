@@ -84,6 +84,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
     wire_image_enhancement_callbacks(app, context.clone());
     wire_image_cutout_callbacks(app, context.clone());
     wire_contact_callbacks(app, store.clone());
+    wire_external_link_callbacks(app);
 
     {
         let app_weak = app.as_weak();

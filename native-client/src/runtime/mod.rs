@@ -85,6 +85,9 @@ use image_cutout_callbacks::*;
 #[path = "callbacks/contact.rs"]
 mod contact_callbacks;
 use contact_callbacks::*;
+#[path = "callbacks/external_link.rs"]
+mod external_link_callbacks;
+use external_link_callbacks::*;
 mod payment_checkout;
 use payment_checkout::*;
 mod agreement_window;

@@ -11,7 +11,75 @@ import { PillButton } from "../components/pill-button.slint";
 import { ThemeTile } from "../components/theme-tile.slint";
 import { AppTheme } from "../theme.slint";
 
+component RecommendationCard inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+    in property <string> url;
+
+    background: recommendation-touch.has-hover ? AppTheme.panel-soft : AppTheme.panel;
+    border-radius: 14px;
+    border-width: 1px;
+    border-color: recommendation-touch.has-hover ? AppTheme.accent : AppTheme.border;
+
+    Rectangle {
+        x: 18px;
+        y: 18px;
+        width: 38px;
+        height: 38px;
+        border-radius: 10px;
+        background: AppTheme.accent.with-alpha(0.14);
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: "↗";
+            color: AppTheme.accent;
+            font-size: 20px;
+            font-weight: 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+    Text {
+        x: 18px;
+        y: 72px;
+        width: parent.width - 36px;
+        text: root.title;
+        color: AppTheme.text;
+        font-size: 18px;
+        font-weight: 600;
+        overflow: elide;
+    }
+    Text {
+        x: 18px;
+        y: 108px;
+        width: parent.width - 36px;
+        height: parent.height - 146px;
+        text: root.description;
+        color: AppTheme.muted;
+        font-size: 13px;
+        font-weight: 400;
+        wrap: word-wrap;
+        vertical-alignment: top;
+    }
+    Text {
+        x: 18px;
+        y: parent.height - 38px;
+        text: AppState.en ? "Open website" : "打开网页";
+        color: recommendation-touch.has-hover ? AppTheme.accent : AppTheme.weak;
+        font-size: 12px;
+        font-weight: 500;
+    }
+    recommendation-touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: pointer;
+        clicked => { AppState.open-external-link(root.url); }
+    }
+}
+
 export component SettingsPage {
+    out property <length> card-size: min(230px, max(160px, (root.width - 370px) / 2));
+
     function models-height() -> length {
         if AppState.catalog-models.length == 0 {
             return 360px;
@@ -342,6 +410,32 @@ export component SettingsPage {
                     Rectangle { x: 18px; y: 150px; width: parent.width - 36px; height: 1px; background: AppTheme.border; }
                     Text { x: 18px; y: 176px; text: AppState.en ? "Config path" : "配置位置"; color: AppTheme.text; font-size: 14px; font-weight: 400; }
                     Text { x: 18px; y: 206px; width: parent.width - 36px; text: AppState.input-dir; color: AppTheme.muted; font-size: 13px; font-weight: 400; overflow: elide; }
+                }
+                if AppState.settings-section == "about": Text {
+                    x: content-x;
+                    y: 404px;
+                    text: AppState.en ? "You may also like" : "你可能喜欢";
+                    color: AppTheme.text;
+                    font-size: 20px;
+                    font-weight: 600;
+                }
+                if AppState.settings-section == "about": RecommendationCard {
+                    x: content-x;
+                    y: 444px;
+                    width: root.card-size;
+                    height: root.card-size;
+                    title: AppState.en ? "Audio Separation" : "声音分离";
+                    description: AppState.en ? "Extract complete audio from a video" : "从视频完整分离音频";
+                    url: "https://www.shineway.tech/biyi/feature/audio";
+                }
+                if AppState.settings-section == "about": RecommendationCard {
+                    x: content-x + root.card-size + 20px;
+                    y: 444px;
+                    width: root.card-size;
+                    height: root.card-size;
+                    title: AppState.en ? "Beyond Words" : "言外之意";
+                    description: AppState.en ? "Understand what they really mean" : "读懂ta的弦外之音";
+                    url: "https://www.shineway.tech/biyi/feature/chat";
                 }
             }
         }

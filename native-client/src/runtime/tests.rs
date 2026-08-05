@@ -3757,6 +3757,26 @@ mod tests {
     }
 
     #[test]
+    fn about_page_recommends_related_products_with_trusted_external_links() {
+        let state = include_str!("../../ui/app-state.slint");
+        let settings = include_str!("../../ui/pages/settings-page.slint");
+        let app = include_str!("app.rs");
+
+        assert!(state.contains("callback open-external-link(string);"));
+        assert!(settings.contains("你可能喜欢"));
+        assert!(settings.contains("声音分离"));
+        assert!(settings.contains("从视频完整分离音频"));
+        assert!(settings.contains("https://www.shineway.tech/biyi/feature/audio"));
+        assert!(settings.contains("言外之意"));
+        assert!(settings.contains("读懂ta的弦外之音"));
+        assert!(settings.contains("https://www.shineway.tech/biyi/feature/chat"));
+        assert!(settings.contains("width: root.card-size"));
+        assert!(settings.contains("height: root.card-size"));
+        assert_eq!(settings.matches("AppState.open-external-link(").count(), 1);
+        assert!(app.contains("wire_external_link_callbacks(app);"));
+    }
+
+    #[test]
     fn legacy_local_store_shows_the_first_launch_contact_popup() {
         let data: LocalStoreData =
             serde_json::from_str("{}").expect("deserialize legacy local store");
