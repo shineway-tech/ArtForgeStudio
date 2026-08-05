@@ -3776,9 +3776,16 @@ mod tests {
         assert!(settings.contains("width: root.card-size"));
         assert!(settings.contains("height: root.card-size"));
         assert!(settings.contains("root.recommendations-wrap"));
-        assert!(settings.contains("text: AppState.en ? \"Launch\" : \"启动方式\""));
-        assert!(settings.contains("launch-button := Rectangle"));
-        assert!(settings.contains("launch-touch := TouchArea"));
+        assert!(settings.contains("in property <image> artwork;"));
+        assert!(settings.contains("../../assets/recommendations/audio-separation.png"));
+        assert!(settings.contains("../../assets/recommendations/conversation-insight.png"));
+        assert!(settings.contains("../../assets/recommendations/marketing-master.png"));
+        assert!(settings.contains("card-touch := TouchArea"));
+        assert!(settings.contains("card-touch.has-hover ? -5px : 0px"));
+        assert!(settings.contains("animate y"));
+        assert!(!settings.contains("launch-button := Rectangle"));
+        assert!(!settings.contains("launch-touch := TouchArea"));
+        assert!(!settings.contains("启动方式"));
         assert_eq!(settings.matches("AppState.open-external-link(").count(), 1);
         assert!(app.contains("wire_external_link_callbacks(app);"));
     }
