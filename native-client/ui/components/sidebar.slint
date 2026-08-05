@@ -98,6 +98,7 @@ export component Sidebar {
                 label: AppState.en ? "Settings" : "设置";
                 page: "settings";
                 active: AppState.page == "settings" || AppState.page == "custom-prompt-editor";
+                show-dot: AppState.update-available;
             }
         }
     }

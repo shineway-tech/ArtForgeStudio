@@ -2,11 +2,13 @@ use super::*;
 
 const AUDIO_SEPARATION_URL: &str = "https://www.shineway.tech/biyi/feature/audio";
 const CHAT_INSIGHT_URL: &str = "https://www.shineway.tech/biyi/feature/chat";
+const MARKETING_MASTER_URL: &str = "https://www.shineway.tech/product/marketing-master/";
 
 fn trusted_recommendation_url(candidate: &str) -> Option<&'static str> {
     match candidate.trim() {
         AUDIO_SEPARATION_URL => Some(AUDIO_SEPARATION_URL),
         CHAT_INSIGHT_URL => Some(CHAT_INSIGHT_URL),
+        MARKETING_MASTER_URL => Some(MARKETING_MASTER_URL),
         _ => None,
     }
 }
@@ -62,6 +64,10 @@ mod tests {
         assert_eq!(
             trusted_recommendation_url(CHAT_INSIGHT_URL),
             Some(CHAT_INSIGHT_URL)
+        );
+        assert_eq!(
+            trusted_recommendation_url(MARKETING_MASTER_URL),
+            Some(MARKETING_MASTER_URL)
         );
         assert_eq!(
             trusted_recommendation_url(

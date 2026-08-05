@@ -3770,13 +3770,28 @@ mod tests {
         assert!(settings.contains("言外之意"));
         assert!(settings.contains("读懂ta的弦外之音"));
         assert!(settings.contains("https://www.shineway.tech/biyi/feature/chat"));
+        assert!(settings.contains("营销大师"));
+        assert!(settings.contains("AI 营销内容创作工具"));
+        assert!(settings.contains("https://www.shineway.tech/product/marketing-master/"));
         assert!(settings.contains("width: root.card-size"));
         assert!(settings.contains("height: root.card-size"));
+        assert!(settings.contains("root.recommendations-wrap"));
         assert!(settings.contains("text: AppState.en ? \"Launch\" : \"启动方式\""));
         assert!(settings.contains("launch-button := Rectangle"));
         assert!(settings.contains("launch-touch := TouchArea"));
         assert_eq!(settings.matches("AppState.open-external-link(").count(), 1);
         assert!(app.contains("wire_external_link_callbacks(app);"));
+    }
+
+    #[test]
+    fn available_update_shows_red_dots_on_settings_and_about_entries() {
+        let sidebar = include_str!("../../ui/components/sidebar.slint");
+        let settings = include_str!("../../ui/pages/settings-page.slint");
+
+        assert!(sidebar.contains("show-dot: AppState.update-available"));
+        assert!(settings.contains("update-indicator := Rectangle"));
+        assert!(settings.contains("visible: AppState.update-available"));
+        assert!(settings.contains("background: AppTheme.danger"));
     }
 
     #[test]

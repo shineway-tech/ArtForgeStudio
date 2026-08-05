@@ -91,6 +91,7 @@ component RecommendationCard inherits Rectangle {
 
 export component SettingsPage {
     out property <length> card-size: min(230px, max(160px, (root.width - 370px) / 2));
+    out property <bool> recommendations-wrap: root.width < 1080px;
 
     function models-height() -> length {
         if AppState.catalog-models.length == 0 {
@@ -180,6 +181,15 @@ export component SettingsPage {
                         if AppState.settings-section == "about": Rectangle { x: 0px; y: 14px; width: 3px; height: 24px; border-radius: 2px; background: AppTheme.accent; }
                         Text { x: 18px; y: 10px; text: AppState.en ? "About" : "关于"; color: AppState.settings-section == "about" ? AppTheme.text : AppTheme.muted; font-size: 14px; font-weight: 400; }
                         Text { x: 18px; y: 34px; text: AppState.en ? "Version and paths" : "版本与配置位置"; color: AppTheme.weak; font-size: 12px; font-weight: 400; }
+                        update-indicator := Rectangle {
+                            visible: AppState.update-available;
+                            x: parent.width - 24px;
+                            y: 12px;
+                            width: 8px;
+                            height: 8px;
+                            border-radius: 4px;
+                            background: AppTheme.danger;
+                        }
                         TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.settings-section = "about"; } }
                     }
                     Rectangle {
@@ -448,6 +458,15 @@ export component SettingsPage {
                     title: AppState.en ? "Beyond Words" : "言外之意";
                     description: AppState.en ? "Understand what they really mean" : "读懂ta的弦外之音";
                     url: "https://www.shineway.tech/biyi/feature/chat";
+                }
+                if AppState.settings-section == "about": RecommendationCard {
+                    x: root.recommendations-wrap ? content-x : content-x + 2 * (root.card-size + 20px);
+                    y: root.recommendations-wrap ? 444px + root.card-size + 20px : 444px;
+                    width: root.card-size;
+                    height: root.card-size;
+                    title: AppState.en ? "Marketing Master" : "营销大师";
+                    description: AppState.en ? "AI marketing content creation tool" : "AI 营销内容创作工具";
+                    url: "https://www.shineway.tech/product/marketing-master/";
                 }
             }
         }
