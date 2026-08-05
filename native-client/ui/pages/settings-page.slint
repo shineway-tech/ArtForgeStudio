@@ -16,10 +16,10 @@ component RecommendationCard inherits Rectangle {
     in property <string> description;
     in property <string> url;
 
-    background: recommendation-touch.has-hover ? AppTheme.panel-soft : AppTheme.panel;
+    background: AppTheme.panel;
     border-radius: 14px;
     border-width: 1px;
-    border-color: recommendation-touch.has-hover ? AppTheme.accent : AppTheme.border;
+    border-color: AppTheme.border;
 
     Rectangle {
         x: 18px;
@@ -61,19 +61,31 @@ component RecommendationCard inherits Rectangle {
         wrap: word-wrap;
         vertical-alignment: top;
     }
-    Text {
+    launch-button := Rectangle {
         x: 18px;
-        y: parent.height - 38px;
-        text: AppState.en ? "Open website" : "打开网页";
-        color: recommendation-touch.has-hover ? AppTheme.accent : AppTheme.weak;
-        font-size: 12px;
-        font-weight: 500;
-    }
-    recommendation-touch := TouchArea {
-        width: parent.width;
-        height: parent.height;
-        mouse-cursor: pointer;
-        clicked => { AppState.open-external-link(root.url); }
+        y: parent.height - 52px;
+        width: parent.width - 36px;
+        height: 34px;
+        border-radius: 17px;
+        border-width: 1px;
+        border-color: launch-touch.has-hover ? AppTheme.accent : AppTheme.border;
+        background: launch-touch.has-hover ? AppTheme.accent.with-alpha(0.12) : transparent;
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: AppState.en ? "Launch" : "启动方式";
+            color: launch-touch.has-hover ? AppTheme.accent : AppTheme.text;
+            font-size: 12px;
+            font-weight: 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        launch-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { AppState.open-external-link(root.url); }
+        }
     }
 }
 

@@ -3772,6 +3772,9 @@ mod tests {
         assert!(settings.contains("https://www.shineway.tech/biyi/feature/chat"));
         assert!(settings.contains("width: root.card-size"));
         assert!(settings.contains("height: root.card-size"));
+        assert!(settings.contains("text: AppState.en ? \"Launch\" : \"启动方式\""));
+        assert!(settings.contains("launch-button := Rectangle"));
+        assert!(settings.contains("launch-touch := TouchArea"));
         assert_eq!(settings.matches("AppState.open-external-link(").count(), 1);
         assert!(app.contains("wire_external_link_callbacks(app);"));
     }
