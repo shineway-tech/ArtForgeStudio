@@ -103,13 +103,15 @@ export component PromptComposer {
         for ref[index] in AppState.references: ReferenceThumb {
             x: root.reference-x(index);
             y: root.reference-y(index);
+            width: root.reference-card-size();
+            height: root.reference-card-size();
             item: ref;
         }
         if AppState.references.length < root.max-reference-count(): UploadCard {
             x: root.reference-x(AppState.references.length);
             y: root.reference-y(AppState.references.length);
-            width: 88px;
-            height: 88px;
+            width: root.reference-card-size();
+            height: root.reference-card-size();
             label: AppState.en ? "Add image" : "添加图片";
             clicked => { AppState.add-reference(); }
         }
@@ -723,7 +725,27 @@ export component PromptComposer {
     }
 
     function reference-columns() -> int {
-        return max(1, min(4, floor((root.width - 48px) / 98px)));
+        if AppState.asset-type == "action-sequence" { return 1; }
+        return 4;
+    }
+
+    function reference-card-size() -> length {
+        if root.reference-columns() == 1 { return 88px; }
+        return min(88px, max(56px, (root.width - 48px - 30px) / 4));
+    }
+
+    function reference-grid-width() -> length {
+        return root.reference-columns() * root.reference-card-size()
+            + (root.reference-columns() - 1) * 10px;
+    }
+
+    function reference-grid-x() -> length {
+        if root.reference-columns() == 1 { return 24px; }
+        return max(24px, (root.width - root.reference-grid-width()) / 2);
+    }
+
+    function reference-row-height() -> length {
+        return root.reference-card-size() + 10px;
     }
 
     function reference-row-count() -> int {
@@ -731,15 +753,17 @@ export component PromptComposer {
     }
 
     function reference-tray-y() -> length {
-        return root.height - 80px - root.reference-row-count() * 98px;
+        return root.height - 80px - root.reference-row-count() * root.reference-row-height();
     }
 
     function reference-x(index: int) -> length {
-        return 24px + Math.mod(index, root.reference-columns()) * 98px;
+        return root.reference-grid-x()
+            + Math.mod(index, root.reference-columns()) * root.reference-row-height();
     }
 
     function reference-y(index: int) -> length {
-        return root.reference-tray-y() + floor(index / root.reference-columns()) * 98px;
+        return root.reference-tray-y()
+            + floor(index / root.reference-columns()) * root.reference-row-height();
     }
 
     function prompt-input-y() -> length {

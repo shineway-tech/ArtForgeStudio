@@ -1257,6 +1257,17 @@ mod tests {
     }
 
     #[test]
+    fn reference_thumbnails_use_a_responsive_four_column_grid() {
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+
+        assert!(composer.contains("return 4;"));
+        assert!(composer.contains("function reference-card-size() -> length"));
+        assert!(composer.contains("width: root.reference-card-size();"));
+        assert!(composer.contains("height: root.reference-card-size();"));
+        assert!(composer.contains("(root.width - 48px - 30px) / 4"));
+    }
+
+    #[test]
     fn thumbnail_galleries_switch_between_grid_and_responsive_masonry_layouts() {
         let state = include_str!("../../ui/app-state.slint");
         let toggle = include_str!("../../ui/components/gallery-layout-toggle.slint");
