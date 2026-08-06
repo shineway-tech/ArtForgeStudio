@@ -297,6 +297,28 @@ mod tests {
         );
 
         assert!(prompt.contains("UI 组件图集规则（必须遵守）"));
+        assert!(prompt.contains("默认采用 2D 手绘游戏 UI 风格"));
+        assert!(prompt.contains("优先服从用户指定"));
+        assert!(prompt.contains("默认生成 32 至 48 个"));
+        assert!(prompt.contains("约 5 至 8 列和多行"));
+        assert!(prompt.contains("约 85% 的有效画布区域"));
+        assert!(prompt.contains("至少覆盖以下 11 类"));
+        for required_component in [
+            "角色头像",
+            "血条或能量条",
+            "按钮",
+            "通用图标",
+            "虚拟摇杆",
+            "物品格",
+            "技能图标",
+            "货币",
+            "设置图标",
+            "小地图",
+            "宝箱",
+        ] {
+            assert!(prompt.contains(required_component));
+        }
+        assert!(prompt.contains("不要只生成少数大型组件"));
         assert!(prompt.contains("只输出独立 UI 组件图集"));
         assert!(prompt.contains("不要生成游戏场景"));
         assert!(prompt.contains("不重叠、不裁切"));
