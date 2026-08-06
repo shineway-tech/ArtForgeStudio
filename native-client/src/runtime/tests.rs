@@ -266,6 +266,67 @@ mod tests {
     }
 
     #[test]
+    fn ui_generation_prompt_requires_an_isolated_component_atlas() {
+        let controls = PromptControls {
+            category: "ui".to_string(),
+            creation: "ui-hud".to_string(),
+            style: "fantasy".to_string(),
+            view: "free".to_string(),
+            weather: "natural".to_string(),
+            time: "natural".to_string(),
+            light: "soft".to_string(),
+        };
+        let quote = QuoteContext {
+            title: String::new(),
+            prompt: String::new(),
+            ratio: String::new(),
+            quality: String::new(),
+            width: 0,
+            height: 0,
+        };
+
+        let prompt = build_generation_prompt(
+            "暗黑地牢风格的战斗界面",
+            "",
+            &controls,
+            &quote,
+            "ui",
+            "1:1",
+            "2K",
+            PromptLanguage::Chinese,
+        );
+
+        assert!(prompt.contains("UI 组件图集规则（必须遵守）"));
+        assert!(prompt.contains("只输出独立 UI 组件图集"));
+        assert!(prompt.contains("不要生成游戏场景"));
+        assert!(prompt.contains("不重叠、不裁切"));
+        assert!(prompt.contains("暗黑地牢风格的战斗界面"));
+    }
+
+    #[test]
+    fn ui_component_atlas_instruction_is_hidden_from_display_prompt() {
+        let generated = append_category_generation_instruction(
+            "fantasy inventory icons",
+            "ui",
+            PromptLanguage::English,
+        );
+
+        assert!(generated.contains("UI component atlas rule (mandatory)"));
+        assert_eq!(display_generation_prompt(&generated), "fantasy inventory icons");
+    }
+
+    #[test]
+    fn non_ui_generation_does_not_add_the_component_atlas_instruction() {
+        let prompt = append_category_generation_instruction(
+            "a misty mountain village",
+            "scene",
+            PromptLanguage::English,
+        );
+
+        assert_eq!(prompt, "a misty mountain village");
+    }
+
+    #[test]
     fn empty_negative_prompt_does_not_add_an_exclusion_section() {
         let prompt = append_negative_prompt_instruction(
             "a quiet forest",

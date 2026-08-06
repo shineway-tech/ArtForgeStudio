@@ -308,7 +308,9 @@ pub(super) fn build_generation_prompt(
         }
     }
     final_prompt = append_negative_prompt_instruction(&final_prompt, negative_prompt, language);
-    append_parameter_priority_instruction(&final_prompt, category, ratio, quality, language)
+    final_prompt =
+        append_parameter_priority_instruction(&final_prompt, category, ratio, quality, language);
+    append_category_generation_instruction(&final_prompt, category, language)
 }
 
 pub(super) fn append_negative_prompt_instruction(
@@ -323,9 +325,7 @@ pub(super) fn append_negative_prompt_instruction(
     if language == PromptLanguage::Chinese {
         format!("{prompt}\n\n反向提示词（画面中必须避免出现）：{negative_prompt}。")
     } else {
-        format!(
-            "{prompt}\n\nNegative prompt (must not appear in the image): {negative_prompt}."
-        )
+        format!("{prompt}\n\nNegative prompt (must not appear in the image): {negative_prompt}.")
     }
 }
 
@@ -347,13 +347,35 @@ pub(super) fn append_parameter_priority_instruction(
     }
 }
 
+pub(super) fn append_category_generation_instruction(
+    prompt: &str,
+    category: &str,
+    language: PromptLanguage,
+) -> String {
+    if category != "ui" {
+        return prompt.to_string();
+    }
+
+    if language == PromptLanguage::Chinese {
+        format!(
+            "{prompt}\n\nUI 组件图集规则（必须遵守）：只生成一张可复用的游戏 UI 组件图集，根据用户提示词决定主题、材质、配色和具体组件集合。画面只包含彼此独立的 UI 组件，例如状态条、按钮、图标、摇杆、物品格、状态标记和面板边框；把已选择的 UI 子类型理解为组件用途，而不是完整界面。所有组件使用正视图、完整清晰边界、统一风格和一致尺度，按整齐的行列排列，组件之间留出充足空白，不重叠、不裁切。不要生成游戏场景、角色、环境、设备样机、完整界面、应用截图、说明文字、标签或水印。使用均匀的纯色中性背景；如果模型支持透明通道，则优先透明背景，以便后续逐个抠图拆分。即使用户提示词提到场景、游戏画面或完整界面，也必须优先遵守本规则，只输出独立 UI 组件图集。"
+        )
+    } else {
+        format!(
+            "{prompt}\n\nUI component atlas rule (mandatory): Generate exactly one reusable game UI component asset sheet. Use the user's prompt only to determine the theme, materials, colors, and relevant component set. The image must contain isolated UI components only, such as status bars, buttons, icons, joysticks, inventory slots, status markers, and panel frames. Treat the selected UI subtype as the purpose of the component set, not as a request for a complete screen. Show every component front-facing with complete crisp boundaries, consistent style and scale, arranged in clean rows with generous empty spacing; no overlap and no cropping. Do not render gameplay scenes, characters, environments, device mockups, complete screens, app screenshots, explanatory text, labels, or watermarks. Use a uniform neutral solid background, or a transparent background when alpha output is supported, so each component can be extracted later. This rule overrides any request for a scene, gameplay image, or complete interface."
+        )
+    }
+}
+
 pub(super) fn display_generation_prompt(prompt: &str) -> String {
     let normalized = prompt.replace("\r\n", "\n");
     let hidden_prefixes = [
         "生成控制：",
         "参数优先规则：",
+        "UI 组件图集规则（必须遵守）：",
         "Generation controls:",
         "Parameter priority rule:",
+        "UI component atlas rule (mandatory):",
     ];
     normalized
         .split("\n\n")
