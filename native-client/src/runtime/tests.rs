@@ -297,7 +297,10 @@ mod tests {
         );
 
         assert!(prompt.contains("UI 组件图集规则（必须遵守）"));
-        assert!(prompt.contains("默认采用 2D 手绘游戏 UI 风格"));
+        assert!(prompt.contains("默认采用精制商业级 2D 数字手绘奇幻 RPG 游戏 UI 资产包风格"));
+        assert!(prompt.contains("深灰钢制倒角边框"));
+        assert!(prompt.contains("严禁粗糙木纹"));
+        assert!(prompt.contains("绝对不要生成字母、数字、乱码或不可读的伪文字"));
         assert!(prompt.contains("优先服从用户指定"));
         assert!(prompt.contains("默认生成 32 至 48 个"));
         assert!(prompt.contains("约 5 至 8 列和多行"));
