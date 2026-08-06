@@ -277,10 +277,7 @@ pub(super) fn set_prompt_draft_for_category(
     }
 }
 
-pub(super) fn negative_prompt_draft_for_category(
-    drafts: &PromptDrafts,
-    category: &str,
-) -> String {
+pub(super) fn negative_prompt_draft_for_category(drafts: &PromptDrafts, category: &str) -> String {
     match category {
         "scene" => drafts.negative_scene.clone(),
         "ui" => drafts.negative_ui.clone(),
@@ -312,11 +309,7 @@ pub(super) fn store_current_prompt_draft(
     let negative_prompt = state.get_negative_prompt().to_string();
     let mut store = store.borrow_mut();
     set_prompt_draft_for_category(&mut store.prompt_drafts, category, prompt);
-    set_negative_prompt_draft_for_category(
-        &mut store.prompt_drafts,
-        category,
-        negative_prompt,
-    );
+    set_negative_prompt_draft_for_category(&mut store.prompt_drafts, category, negative_prompt);
 }
 
 pub(super) fn sync_deep_prompt_binding_for_category(
@@ -600,6 +593,7 @@ pub(super) fn recover_output_assets(app: &AppWindow, store: &Rc<RefCell<Store>>)
             cutout_done: false,
             remove_black_done: false,
             upscale_done: false,
+            is_new: false,
         });
     }
     if recovered.is_empty() {
@@ -702,5 +696,6 @@ pub(super) fn asset_from_stored(asset: StoredAssetData) -> Option<AssetData> {
         cutout_done: asset.cutout_done,
         remove_black_done: asset.remove_black_done,
         upscale_done: asset.upscale_done,
+        is_new: false,
     })
 }

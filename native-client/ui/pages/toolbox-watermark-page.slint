@@ -171,6 +171,7 @@ component PreviewPanel {
 }
 
 export component ToolboxWatermarkPage {
+    in property <bool> remove-black-mode: false;
     function panel-gap() -> length {
         return 20px;
     }
@@ -187,7 +188,9 @@ export component ToolboxWatermarkPage {
             y: 28px;
             width: parent.width - 64px;
             height: 32px;
-            text: AppState.en ? "Remove Watermark" : "去水印";
+            text: root.remove-black-mode
+                ? (AppState.en ? "Remove Black" : "去黑")
+                : (AppState.en ? "Remove Watermark" : "去水印");
             color: AppTheme.text;
             font-size: 24px;
             font-weight: 600;
@@ -216,7 +219,9 @@ export component ToolboxWatermarkPage {
             width: root.panel-width();
             height: parent.height - 182px;
             title: AppState.watermark-result-path != ""
-                ? (AppState.en ? "Processed image" : "去水印结果")
+                ? (root.remove-black-mode
+                    ? (AppState.en ? "Transparent result" : "透明背景结果")
+                    : (AppState.en ? "Processed image" : "去水印结果"))
                 : (AppState.en ? "Waiting for processing" : "等待处理");
             detail: AppState.watermark-result-name;
             preview: AppState.watermark-result-image;
@@ -243,13 +248,21 @@ export component ToolboxWatermarkPage {
             height: 42px;
             text: AppState.watermark-processing
                 ? (AppState.en ? "Processing..." : "处理中...")
-                : (AppState.en ? "Remove watermark" : "去水印");
+                : root.remove-black-mode
+                    ? (AppState.en ? "Remove black" : "去黑")
+                    : (AppState.en ? "Remove watermark" : "去水印");
             primary: true;
             disabled: AppState.watermark-source-path == "" || AppState.watermark-processing;
-            clicked => { AppState.start-watermark-removal(); }
+            clicked => {
+                if root.remove-black-mode {
+                    AppState.start-remove-black-tool();
+                } else {
+                    AppState.start-watermark-removal();
+                }
+            }
         }
 
-        Text {
+        if !root.remove-black-mode: Text {
             x: 32px + root.panel-width() - 166px;
             y: parent.height - 33px;
             width: 166px;

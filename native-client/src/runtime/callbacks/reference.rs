@@ -169,14 +169,16 @@ fn poll_external_image_drops(app_weak: Weak<AppWindow>, store: Rc<RefCell<Store>
             for drop in drops {
                 match drop {
                     ExternalImageDrop::Paths(paths, position)
-                        if external_drop_inside_reference_input(&app, position.as_ref()) => {
+                        if external_drop_inside_reference_input(&app, position.as_ref()) =>
+                    {
                         for path in paths {
                             add_reference_from_path(&app, &store, &path);
                         }
                     }
                     #[cfg(windows)]
                     ExternalImageDrop::Text(data, position)
-                        if external_drop_inside_reference_input(&app, position.as_ref()) => {
+                        if external_drop_inside_reference_input(&app, position.as_ref()) =>
+                    {
                         if let Some(url) = external_image_url(&data) {
                             start_external_reference_import(&app, store.clone(), url);
                         } else {
@@ -302,12 +304,7 @@ fn external_drop_inside_reference_input(
     let top = state.get_reference_drop_y();
     let width = state.get_reference_drop_width();
     let height = state.get_reference_drop_height();
-    width > 0.0
-        && height > 0.0
-        && x >= left
-        && x <= left + width
-        && y >= top
-        && y <= top + height
+    width > 0.0 && height > 0.0 && x >= left && x <= left + width && y >= top && y <= top + height
 }
 
 fn start_external_reference_import(app: &AppWindow, store: Rc<RefCell<Store>>, url: String) {

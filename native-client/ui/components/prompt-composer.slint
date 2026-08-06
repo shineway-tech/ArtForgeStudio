@@ -10,6 +10,43 @@ import { StyleModeChip } from "style-mode-chip.slint";
 import { UploadCard } from "upload-card.slint";
 import { AppTheme } from "../theme.slint";
 
+component PromptOptimizationAction {
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> disabled: false;
+    callback clicked();
+    height: 28px;
+
+    Rectangle {
+        opacity: root.disabled ? 0.38 : 1;
+        background: transparent;
+        border-width: 0px;
+
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.text;
+            color: root.active || (action-touch.has-hover && !root.disabled) ? AppTheme.accent : AppTheme.muted;
+            font-size: 13px;
+            font-weight: 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: no-wrap;
+            overflow: elide;
+        }
+        action-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: root.disabled ? default : pointer;
+            clicked => {
+                if !root.disabled {
+                    root.clicked();
+                }
+            }
+        }
+    }
+}
+
 export component PromptComposer {
     in property <bool> generation: false;
     in property <bool> show-generate-button: true;
@@ -115,27 +152,25 @@ export component PromptComposer {
             label: AppState.en ? "Add image" : "添加图片";
             clicked => { AppState.add-reference(); }
         }
-        PillButton {
+        PromptOptimizationAction {
             x: 24px;
             y: 14px;
             width: 96px;
             height: 28px;
             text: AppState.optimizing-prompt ? (AppState.en ? "Optimizing..." : "正在优化...") : (AppState.en ? "AI Optimize" : "AI优化");
-            primary: true;
             disabled: AppState.reasoning-model == "" || AppState.optimizing-prompt;
             clicked => { AppState.optimize-current-prompt(); }
         }
-        PillButton {
+        PromptOptimizationAction {
             x: 128px;
             y: 14px;
             width: 104px;
             height: 28px;
             text: AppState.en ? "Image+Text" : "图文优化";
-            primary: true;
             disabled: AppState.reasoning-model == "" || AppState.optimizing-prompt || AppState.references.length == 0;
             clicked => { AppState.visual-optimize-current-prompt(); }
         }
-        PillButton {
+        PromptOptimizationAction {
             x: 240px;
             y: 14px;
             width: 112px;
@@ -143,7 +178,7 @@ export component PromptComposer {
             text: AppState.deep-optimization-active
                 ? (AppState.en ? "View Deep Optimize" : "查看深度优化")
                 : (AppState.en ? "Deep Optimize" : "深度优化");
-            primary: true;
+            active: AppState.deep-optimization-active;
             disabled: AppState.optimizing-prompt || AppState.translating-prompt;
             clicked => { AppState.open-deep-optimization(); }
         }

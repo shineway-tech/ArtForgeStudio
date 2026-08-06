@@ -793,8 +793,10 @@ mod tests {
 
     #[test]
     fn external_png_is_reencoded_before_upload_even_when_it_is_small() {
-        let source =
-            std::env::temp_dir().join(format!("artforge-external-reference-{}.png", Uuid::new_v4()));
+        let source = std::env::temp_dir().join(format!(
+            "artforge-external-reference-{}.png",
+            Uuid::new_v4()
+        ));
         image::RgbaImage::from_pixel(4, 3, image::Rgba([20, 80, 160, 200]))
             .save_with_format(&source, image::ImageFormat::Png)
             .expect("write external png");
@@ -810,17 +812,18 @@ mod tests {
 
     #[test]
     fn exif_orientation_is_applied_before_reference_metadata_is_removed() {
-        let source =
-            std::env::temp_dir().join(format!("artforge-oriented-reference-{}.jpg", Uuid::new_v4()));
+        let source = std::env::temp_dir().join(format!(
+            "artforge-oriented-reference-{}.jpg",
+            Uuid::new_v4()
+        ));
         let mut encoded = Vec::new();
         let mut encoder =
             image::codecs::jpeg::JpegEncoder::new_with_quality(Cursor::new(&mut encoded), 95);
         image::ImageEncoder::set_exif_metadata(
             &mut encoder,
             vec![
-                0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x12, 0x01,
-                0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00,
+                0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x12, 0x01, 0x03, 0x00,
+                0x01, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             ],
         )
         .expect("attach exif orientation");
@@ -879,10 +882,8 @@ mod tests {
             (true, image::ImageFormat::Png, "png"),
             (false, image::ImageFormat::Jpeg, "jpg"),
         ] {
-            let source = std::env::temp_dir().join(format!(
-                "artforge-reference-source-{}.webp",
-                Uuid::new_v4()
-            ));
+            let source = std::env::temp_dir()
+                .join(format!("artforge-reference-source-{}.webp", Uuid::new_v4()));
             let mut source_bytes = Vec::new();
             let encoder =
                 image::codecs::webp::WebPEncoder::new_lossless(Cursor::new(&mut source_bytes));
@@ -922,8 +923,12 @@ mod tests {
                     .format(),
                 Some(expected_format)
             );
-            assert!(fs::metadata(&prepared_path).expect("prepared metadata").len()
-                <= REFERENCE_UPLOAD_TARGET_BYTES);
+            assert!(
+                fs::metadata(&prepared_path)
+                    .expect("prepared metadata")
+                    .len()
+                    <= REFERENCE_UPLOAD_TARGET_BYTES
+            );
             drop(prepared);
             assert!(!prepared_path.exists());
             let _ = fs::remove_file(source);

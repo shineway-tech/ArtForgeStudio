@@ -410,11 +410,41 @@ export component CustomPromptEditorPage {
                         border-width: 1px;
                         border-color: prompt-input.has-focus ? AppTheme.accent : AppTheme.border;
                         clip: true;
+                        optimize-content-button := Rectangle {
+                            x: parent.width - 112px;
+                            y: 10px;
+                            width: 100px;
+                            height: 30px;
+                            background: optimize-content-touch.has-hover ? AppTheme.panel-soft : transparent;
+                            border-radius: 15px;
+                            border-width: 1px;
+                            border-color: AppTheme.border;
+                            opacity: AppState.optimizing-prompt ? 0.5 : 1;
+                            Text {
+                                width: parent.width;
+                                height: parent.height;
+                                text: AppState.optimizing-prompt
+                                    ? (AppState.en ? "Optimizing" : "优化中")
+                                    : (AppState.en ? "AI Optimize" : "AI优化");
+                                color: AppTheme.accent-dark;
+                                font-size: 12px;
+                                font-weight: 400;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            optimize-content-touch := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                enabled: !AppState.optimizing-prompt;
+                                mouse-cursor: AppState.optimizing-prompt ? default : pointer;
+                                clicked => { AppState.optimize-custom-prompt-content(); }
+                            }
+                        }
                         prompt-scroll := ScrollView {
                             x: 12px;
-                            y: 10px;
+                            y: 48px;
                             width: parent.width - 24px;
-                            height: parent.height - 20px;
+                            height: parent.height - 58px;
                             viewport-width: self.visible-width;
                             viewport-height: max(self.visible-height, prompt-input.preferred-height);
                             prompt-input := TextInput {
@@ -430,9 +460,9 @@ export component CustomPromptEditorPage {
                         }
                         if AppState.custom-prompt-input == "" && !prompt-input.has-focus: Text {
                             x: 12px;
-                            y: 10px;
+                            y: 48px;
                             width: parent.width - 24px;
-                            height: parent.height - 20px;
+                            height: parent.height - 58px;
                             text: AppState.en
                                 ? "Enter the reusable prompt content"
                                 : "输入可复用的提示词内容";

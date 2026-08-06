@@ -3,6 +3,7 @@ use super::*;
 #[derive(Clone)]
 enum PromptResultTarget {
     Composer,
+    CustomPrompt,
     CanvasNode {
         store: Rc<RefCell<Store>>,
         id: String,
@@ -172,6 +173,40 @@ pub(super) fn wire_generation_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
+        let context = context.clone();
+        state.on_optimize_custom_prompt_content(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            optimize_custom_prompt_content(&app, context.clone());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        state.on_dismiss_new_generation(move |id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let id = id.to_string();
+            let mut store_mut = store.borrow_mut();
+            for item in store_mut.generations.iter_mut() {
+                if item.id == id {
+                    item.is_new = false;
+                }
+            }
+            for item in store_mut.assets.iter_mut() {
+                if item.id == id {
+                    item.is_new = false;
+                }
+            }
+            push_all(&app, &store_mut);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
         let store = store.clone();
         state.on_quote_generation(move |id| {
             let Some(app) = app_weak.upgrade() else {
@@ -242,6 +277,41 @@ pub(super) fn optimize_current_prompt(app: &AppWindow, context: AppContext, visu
             target_language: None,
             optimize: true,
             target: PromptResultTarget::Composer,
+        },
+    );
+}
+
+fn optimize_custom_prompt_content(app: &AppWindow, context: AppContext) {
+    let state = app.global::<AppState>();
+    if !require_online_operation(app, "优化提示词") || state.get_optimizing_prompt() {
+        return;
+    }
+    let raw_prompt = state.get_custom_prompt_input().trim().to_string();
+    if raw_prompt.is_empty() {
+        state.set_generation_status("请先输入需要优化的提示词内容".into());
+        return;
+    }
+    let Some(backend) = context.backend else {
+        state.set_generation_status("服务端尚未初始化，请重启客户端后重试".into());
+        return;
+    };
+    let model_code = state.get_reasoning_model().to_string();
+    if model_code.trim().is_empty() {
+        state.set_generation_status("服务端没有可用的提示词模型".into());
+        return;
+    }
+    state.set_optimizing_prompt(true);
+    state.set_generation_status("正在优化提示词内容...".into());
+    start_backend_prompt_task(
+        app,
+        PromptTaskRequest {
+            backend,
+            model_code,
+            task_type: "prompt_optimize",
+            prompt: raw_prompt,
+            target_language: None,
+            optimize: true,
+            target: PromptResultTarget::CustomPrompt,
         },
     );
 }
@@ -425,6 +495,10 @@ fn poll_backend_prompt_result(
                     } else {
                         "提示词翻译完成".into()
                     });
+                }
+                PromptResultTarget::CustomPrompt => {
+                    state.set_custom_prompt_input(prompt.into());
+                    state.set_generation_status("提示词内容优化完成".into());
                 }
                 PromptResultTarget::CanvasNode { store, id } => {
                     let position = store

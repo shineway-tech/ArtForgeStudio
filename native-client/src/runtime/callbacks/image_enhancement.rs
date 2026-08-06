@@ -861,6 +861,7 @@ fn save_image_enhancement_asset(
         cutout_done: false,
         remove_black_done: false,
         upscale_done: true,
+        is_new: false,
     };
     let mut store = store.borrow_mut();
     store.assets.insert(0, item);

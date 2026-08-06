@@ -801,6 +801,7 @@ pub(super) fn to_asset_view(asset: &AssetData) -> AssetItem {
         cutout_done: asset.cutout_done,
         remove_black_done: asset.remove_black_done,
         upscale_done: asset.upscale_done,
+        is_new: asset.is_new,
     }
 }
 

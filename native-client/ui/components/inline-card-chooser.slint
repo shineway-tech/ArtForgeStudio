@@ -2,68 +2,28 @@ import { AppState } from "../app-state.slint";
 import { DropdownIcon } from "dropdown-icon.slint";
 import { AppTheme } from "../theme.slint";
 
-component CompactSelectButton {
+component ImageSettingPill {
     in property <string> text;
+    in property <bool> selected: false;
     in property <bool> disabled: false;
     callback clicked();
-    height: 42px;
+    height: 36px;
     horizontal-stretch: 1;
 
     Rectangle {
-        opacity: root.disabled ? 0.45 : 1;
-        background: selector-touch.has-hover && !root.disabled ? AppTheme.panel-soft : AppTheme.panel;
+        opacity: root.disabled ? 0.42 : 1;
+        background: option-touch.has-hover && !root.disabled ? AppTheme.panel-soft : transparent;
         border-radius: 18px;
-        border-width: 1px;
-        border-color: selector-touch.has-hover && !root.disabled ? AppTheme.accent : AppTheme.border;
+        border-width: root.selected ? 2px : 1px;
+        border-color: root.selected ? AppTheme.text : AppTheme.border;
 
         Text {
-            x: 14px;
-            width: parent.width - 42px;
+            width: parent.width;
             height: parent.height;
             text: root.text;
             color: AppTheme.text;
-            font-size: AppState.settings-font-size * 1px;
-            font-weight: 400;
-            vertical-alignment: center;
-            wrap: no-wrap;
-            overflow: elide;
-        }
-        DropdownIcon {
-            x: parent.width - 26px;
-            y: (parent.height - 12px) / 2;
-        }
-        selector-touch := TouchArea {
-            width: parent.width;
-            height: parent.height;
-            mouse-cursor: root.disabled ? default : pointer;
-            clicked => {
-                if !root.disabled {
-                    root.clicked();
-                }
-            }
-        }
-    }
-}
-
-component CompactSelectOption {
-    in property <string> text;
-    in property <bool> active: false;
-    in property <bool> disabled: false;
-    callback clicked();
-    height: 32px;
-
-    Rectangle {
-        opacity: root.disabled ? 0.4 : 1;
-        background: root.active ? AppTheme.accent : (option-touch.has-hover && !root.disabled ? AppTheme.panel-soft : transparent);
-        border-radius: 6px;
-
-        Text {
-            width: parent.width;
-            height: parent.height;
-            text: root.text;
-            color: root.active ? #ffffff : AppTheme.text;
-            font-size: AppState.settings-font-size * 1px;
-            font-weight: root.active ? 500 : 400;
+            font-size: 13px;
+            font-weight: root.selected ? 500 : 400;
             horizontal-alignment: center;
             vertical-alignment: center;
             wrap: no-wrap;
@@ -82,152 +42,184 @@ component CompactSelectOption {
     }
 }
 
+component ImageRatioOption {
+    in property <string> value;
+    in property <bool> selected: false;
+    callback clicked();
+    height: 66px;
+    horizontal-stretch: 1;
+
+    Rectangle {
+        background: ratio-touch.has-hover ? AppTheme.panel-soft : transparent;
+        border-radius: 8px;
+        border-width: root.selected ? 2px : 1px;
+        border-color: root.selected ? AppTheme.text : AppTheme.border;
+
+        Rectangle {
+            x: (parent.width - root.preview-width()) / 2;
+            y: 10px;
+            width: root.preview-width();
+            height: root.preview-height();
+            background: transparent;
+            border-width: 2px;
+            border-color: AppTheme.text;
+        }
+        Text {
+            x: 4px;
+            y: 36px;
+            width: parent.width - 8px;
+            height: 24px;
+            text: root.value;
+            color: AppTheme.text;
+            font-size: 12px;
+            font-weight: 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        ratio-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+
+    function preview-width() -> length {
+        if root.value == "2:3" || root.value == "3:4" || root.value == "9:16" || root.value == "1:2" || root.value == "9:21" { return 12px; }
+        if root.value == "3:2" || root.value == "4:3" || root.value == "16:9" || root.value == "2:1" || root.value == "21:9" { return 28px; }
+        return 20px;
+    }
+
+    function preview-height() -> length {
+        if root.value == "2:3" || root.value == "3:4" || root.value == "9:16" || root.value == "1:2" || root.value == "9:21" { return 28px; }
+        if root.value == "3:2" || root.value == "4:3" || root.value == "16:9" || root.value == "2:1" || root.value == "21:9" { return 14px; }
+        return 20px;
+    }
+}
+
 export component InlineCardChooser {
-    property <string> open-panel: "";
-    property <length> panel-gap: 6px;
     height: 42px;
 
-    HorizontalLayout {
-        spacing: 8px;
+    Rectangle {
+        background: settings-touch.has-hover ? AppTheme.panel-soft : AppTheme.panel;
+        border-radius: 18px;
+        border-width: 1px;
+        border-color: settings-touch.has-hover ? AppTheme.accent : AppTheme.border;
 
-        CompactSelectButton {
-            text: (AppState.en ? "Ratio · " : "比例 · ") + AppState.ratio;
-            clicked => {
-                root.open-panel = root.open-panel == "ratio" ? "" : "ratio";
-            }
+        Image {
+            x: 14px;
+            y: (parent.height - 16px) / 2;
+            width: 16px;
+            height: 16px;
+            source: @image-url("../../assets/icons/controls.svg");
+            colorize: AppTheme.muted;
+            image-fit: contain;
         }
-        CompactSelectButton {
-            text: (AppState.en ? "Quality · " : "清晰度 · ") + AppState.quality;
-            clicked => {
-                root.open-panel = root.open-panel == "quality" ? "" : "quality";
-            }
+        Text {
+            x: 38px;
+            width: parent.width - 72px;
+            height: parent.height;
+            text: root.settings-summary();
+            color: AppTheme.text;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 400;
+            vertical-alignment: center;
+            wrap: no-wrap;
+            overflow: elide;
         }
-        CompactSelectButton {
-            text: AppState.en
-                ? "Count · " + AppState.count
-                : "张数 · " + AppState.count + "张";
-            clicked => {
-                root.open-panel = root.open-panel == "count" ? "" : "count";
-            }
+        DropdownIcon {
+            x: parent.width - 28px;
+            y: (parent.height - 12px) / 2;
+        }
+        settings-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { settings-popup.show(); }
         }
     }
 
-    if root.open-panel == "ratio": Rectangle {
-        x: 0px;
-        width: root.width;
-        height: 164px;
-        y: 0px - self.height - root.panel-gap;
+    settings-popup := PopupWindow {
+        width: min(378px, root.width);
+        height: 488px;
+        x: (root.width - self.width) / 2;
+        y: 0px - self.height - 8px;
+        close-policy: close-on-click-outside;
 
         Rectangle {
             background: AppTheme.panel;
-            border-radius: 10px;
+            border-radius: 12px;
             border-width: 1px;
             border-color: AppTheme.border;
 
+            Text { x: 18px; y: 10px; width: parent.width - 36px; height: 28px; text: AppState.en ? "Image settings" : "图片设置"; color: AppTheme.text; font-size: 16px; font-weight: 600; vertical-alignment: center; }
+            Rectangle { x: 18px; y: 44px; width: (parent.width - 60px) / 2; height: 36px; background: AppTheme.panel-soft; border-radius: 10px; Text { x: 12px; width: 26px; height: parent.height; text: "W"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; } Text { x: 48px; width: parent.width - 60px; height: parent.height; text: root.image-width-text(); color: AppTheme.text; font-size: 13px; vertical-alignment: center; } }
+            Text { x: (parent.width - 24px) / 2; y: 44px; width: 24px; height: 36px; text: "↔"; color: AppTheme.muted; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
+            Rectangle { x: (parent.width + 24px) / 2; y: 44px; width: (parent.width - 60px) / 2; height: 36px; background: AppTheme.panel-soft; border-radius: 10px; Text { x: 12px; width: 26px; height: parent.height; text: "H"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; } Text { x: 48px; width: parent.width - 60px; height: parent.height; text: root.image-height-text(); color: AppTheme.text; font-size: 13px; vertical-alignment: center; } }
+
+            Text { x: 18px; y: 88px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Quality" : "质量"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; }
+            HorizontalLayout {
+                x: 18px; y: 114px; width: parent.width - 36px; height: 36px; spacing: 10px;
+                ImageSettingPill { text: "1K"; selected: AppState.quality == "1K"; clicked => { AppState.quality = "1K"; } }
+                ImageSettingPill { text: "2K"; selected: AppState.quality == "2K"; clicked => { AppState.quality = "2K"; } }
+                ImageSettingPill { text: "4K"; selected: AppState.quality == "4K"; clicked => { AppState.quality = "4K"; } }
+            }
+
+            Text { x: 18px; y: 158px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Aspect ratio" : "宽高比"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; }
             GridLayout {
-                x: 8px;
-                y: 8px;
-                width: parent.width - 16px;
-                height: parent.height - 16px;
-                spacing: 4px;
+                x: 18px; y: 184px; width: parent.width - 36px; height: 208px; spacing: 8px;
+                Row {
+                    ImageRatioOption { value: "1:1"; selected: AppState.ratio == "1:1"; clicked => { AppState.ratio = "1:1"; } }
+                    ImageRatioOption { value: "3:2"; selected: AppState.ratio == "3:2"; clicked => { AppState.ratio = "3:2"; } }
+                    ImageRatioOption { value: "2:3"; selected: AppState.ratio == "2:3"; clicked => { AppState.ratio = "2:3"; } }
+                    ImageRatioOption { value: "4:3"; selected: AppState.ratio == "4:3"; clicked => { AppState.ratio = "4:3"; } }
+                }
+                Row {
+                    ImageRatioOption { value: "3:4"; selected: AppState.ratio == "3:4"; clicked => { AppState.ratio = "3:4"; } }
+                    ImageRatioOption { value: "16:9"; selected: AppState.ratio == "16:9"; clicked => { AppState.ratio = "16:9"; } }
+                    ImageRatioOption { value: "9:16"; selected: AppState.ratio == "9:16"; clicked => { AppState.ratio = "9:16"; } }
+                    ImageRatioOption { value: "2:1"; selected: AppState.ratio == "2:1"; clicked => { AppState.ratio = "2:1"; } }
+                }
+                Row {
+                    ImageRatioOption { value: "1:2"; selected: AppState.ratio == "1:2"; clicked => { AppState.ratio = "1:2"; } }
+                    ImageRatioOption { value: "21:9"; selected: AppState.ratio == "21:9"; clicked => { AppState.ratio = "21:9"; } }
+                    ImageRatioOption { value: "9:21"; selected: AppState.ratio == "9:21"; clicked => { AppState.ratio = "9:21"; } }
+                    Rectangle { background: transparent; }
+                }
+            }
 
-                Row {
-                    CompactSelectOption { text: "1:1"; active: AppState.ratio == "1:1"; clicked => { AppState.ratio = "1:1"; root.open-panel = ""; } }
-                    CompactSelectOption { text: "3:2"; active: AppState.ratio == "3:2"; clicked => { AppState.ratio = "3:2"; root.open-panel = ""; } }
-                    CompactSelectOption { text: "2:3"; active: AppState.ratio == "2:3"; clicked => { AppState.ratio = "2:3"; root.open-panel = ""; } }
-                    CompactSelectOption { text: "4:3"; active: AppState.ratio == "4:3"; clicked => { AppState.ratio = "4:3"; root.open-panel = ""; } }
-                }
-                Row {
-                    CompactSelectOption { text: "3:4"; active: AppState.ratio == "3:4"; clicked => { AppState.ratio = "3:4"; root.open-panel = ""; } }
-                    CompactSelectOption { text: "5:4"; active: AppState.ratio == "5:4"; clicked => { AppState.ratio = "5:4"; root.open-panel = ""; } }
-                    CompactSelectOption { text: "4:5"; active: AppState.ratio == "4:5"; clicked => { AppState.ratio = "4:5"; root.open-panel = ""; } }
-                    CompactSelectOption { text: "16:9"; active: AppState.ratio == "16:9"; clicked => { AppState.ratio = "16:9"; root.open-panel = ""; } }
-                }
-                Row {
-                    CompactSelectOption { text: "9:16"; active: AppState.ratio == "9:16"; clicked => { AppState.ratio = "9:16"; root.open-panel = ""; } }
-                    CompactSelectOption { text: "2:1"; active: AppState.ratio == "2:1"; clicked => { AppState.ratio = "2:1"; root.open-panel = ""; } }
-                    CompactSelectOption { text: "1:2"; active: AppState.ratio == "1:2"; clicked => { AppState.ratio = "1:2"; root.open-panel = ""; } }
-                    CompactSelectOption { text: "21:9"; active: AppState.ratio == "21:9"; clicked => { AppState.ratio = "21:9"; root.open-panel = ""; } }
-                }
-                Row {
-                    CompactSelectOption { text: "9:21"; active: AppState.ratio == "9:21"; clicked => { AppState.ratio = "9:21"; root.open-panel = ""; } }
-                    Rectangle { background: transparent; }
-                    Rectangle { background: transparent; }
-                    Rectangle { background: transparent; }
-                }
+            Text { x: 18px; y: 402px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Generation count" : "生成张数"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; }
+            HorizontalLayout {
+                x: 18px; y: 430px; width: parent.width - 36px; height: 36px; spacing: 10px;
+                ImageSettingPill { text: AppState.en ? "1 image" : "1张"; selected: AppState.count == 1; clicked => { AppState.count = 1; } }
+                ImageSettingPill { text: AppState.en ? "2 images" : "2张"; selected: AppState.count == 2; clicked => { AppState.count = 2; } }
+                ImageSettingPill { text: AppState.en ? "3 images" : "3张"; selected: AppState.count == 3; clicked => { AppState.count = 3; } }
+                ImageSettingPill { text: AppState.en ? "4 images" : "4张"; selected: AppState.count == 4; clicked => { AppState.count = 4; } }
             }
         }
     }
 
-    if root.open-panel == "quality": Rectangle {
-        x: root.button-width() + 8px;
-        width: root.button-width();
-        height: 116px;
-        y: 0px - self.height - root.panel-gap;
-
-        Rectangle {
-            background: AppTheme.panel;
-            border-radius: 10px;
-            border-width: 1px;
-            border-color: AppTheme.border;
-
-            VerticalLayout {
-                padding: 8px;
-                spacing: 2px;
-                CompactSelectOption {
-                    text: "1K";
-                    active: AppState.quality == "1K";
-                    clicked => { AppState.quality = "1K"; root.open-panel = ""; }
-                }
-                CompactSelectOption {
-                    text: "2K";
-                    active: AppState.quality == "2K";
-                    clicked => { AppState.quality = "2K"; root.open-panel = ""; }
-                }
-                CompactSelectOption {
-                    text: "4K";
-                    active: AppState.quality == "4K";
-                    clicked => { AppState.quality = "4K"; root.open-panel = ""; }
-                }
-            }
-        }
+    function settings-summary() -> string {
+        return (AppState.en ? "Image settings · " : "图片设置 · ")
+            + AppState.ratio + " · " + AppState.quality + " · " + AppState.count
+            + (AppState.en ? " images" : "张");
     }
 
-    if root.open-panel == "count": Rectangle {
-        x: (root.button-width() + 8px) * 2;
-        width: root.button-width();
-        height: 116px;
-        y: 0px - self.height - root.panel-gap;
-
-        Rectangle {
-            background: AppTheme.panel;
-            border-radius: 10px;
-            border-width: 1px;
-            border-color: AppTheme.border;
-
-            VerticalLayout {
-                padding: 8px;
-                spacing: 2px;
-                CompactSelectOption {
-                    text: AppState.en ? "1 img" : "1张";
-                    active: AppState.count == 1;
-                    clicked => { AppState.count = 1; root.open-panel = ""; }
-                }
-                CompactSelectOption {
-                    text: AppState.en ? "2 imgs" : "2张";
-                    active: AppState.count == 2;
-                    clicked => { AppState.count = 2; root.open-panel = ""; }
-                }
-                CompactSelectOption {
-                    text: AppState.en ? "4 imgs" : "4张";
-                    active: AppState.count == 4;
-                    clicked => { AppState.count = 4; root.open-panel = ""; }
-                }
-            }
-        }
+    function image-width-text() -> string {
+        if AppState.ratio == "2:3" { return "680"; }
+        if AppState.ratio == "3:4" { return "768"; }
+        if AppState.ratio == "9:16" { return "576"; }
+        if AppState.ratio == "1:2" { return "512"; }
+        if AppState.ratio == "9:21" { return "440"; }
+        return "1024";
     }
 
-    function button-width() -> length {
-        return (root.width - 16px) / 3;
+    function image-height-text() -> string {
+        if AppState.ratio == "3:2" { return "680"; }
+        if AppState.ratio == "4:3" { return "768"; }
+        if AppState.ratio == "16:9" { return "576"; }
+        if AppState.ratio == "2:1" { return "512"; }
+        if AppState.ratio == "21:9" { return "440"; }
+        return "1024";
     }
 }

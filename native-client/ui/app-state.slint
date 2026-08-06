@@ -534,6 +534,7 @@ export global AppState {
     callback choose-watermark-source();
     callback add-watermark-source-from-drag(string, string) -> bool;
     callback start-watermark-removal();
+    callback start-remove-black-tool();
     callback reveal-watermark-result();
     callback choose-colorize-source();
     callback add-colorize-source-from-drag(string, string) -> bool;
@@ -614,6 +615,7 @@ export global AppState {
     callback remove-reference(string);
     callback open-reference(string);
     callback optimize-current-prompt();
+    callback optimize-custom-prompt-content();
     callback visual-optimize-current-prompt();
     callback open-deep-optimization();
     callback close-deep-optimization();
@@ -659,6 +661,7 @@ export global AppState {
     callback open-conversation(string);
     callback request-delete-asset(string);
     callback request-delete-thumbnail(string, string);
+    callback dismiss-new-generation(string);
     callback confirm-delete();
     callback mark-notification-read(string);
     callback mark-all-notifications-read();

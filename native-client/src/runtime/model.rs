@@ -141,6 +141,7 @@ struct AssetData {
     cutout_done: bool,
     remove_black_done: bool,
     upscale_done: bool,
+    is_new: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

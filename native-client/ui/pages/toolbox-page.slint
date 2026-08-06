@@ -91,7 +91,7 @@ export component ToolboxPage {
     }
 
     function card-height() -> length {
-        return 154px;
+        return 130px;
     }
 
     Rectangle {
@@ -127,7 +127,7 @@ export component ToolboxPage {
             x: 32px;
             y: 112px;
             width: root.content-width();
-            height: root.card-height() * 3 + root.card-gap() * 2;
+            height: root.card-height() * 4 + root.card-gap() * 3;
             background: transparent;
 
             ToolboxCard {
@@ -195,6 +195,17 @@ export component ToolboxPage {
                 title: AppState.en ? "Compress Image" : "图片压缩";
                 description: AppState.en ? "Reduce file size while retaining image quality" : "在保留画质的同时减小图片体积";
                 icon: @image-url("../../assets/icons/toolbox-compress.svg");
+            }
+            ToolboxCard {
+                x: 0px;
+                y: (root.card-height() + root.card-gap()) * 3;
+                width: root.card-width();
+                height: root.card-height();
+                tool-id: "remove-black";
+                target-page: "toolbox-remove-black";
+                title: AppState.en ? "Remove Black" : "去黑";
+                description: AppState.en ? "Convert black backgrounds into transparent pixels" : "将黑色背景转换为透明像素，保留发光与颜色细节";
+                icon: @image-url("../../assets/icons/palette.svg");
             }
         }
 

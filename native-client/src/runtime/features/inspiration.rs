@@ -93,6 +93,7 @@ pub(super) fn seed_inspiration(app: &AppWindow, store: &Rc<RefCell<Store>>) -> R
                     cutout_done: false,
                     remove_black_done: false,
                     upscale_done: false,
+                    is_new: false,
                 });
             }
         }

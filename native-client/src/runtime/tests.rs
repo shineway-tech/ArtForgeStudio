@@ -1482,7 +1482,7 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_toolbox_opens_a_six_tool_page() {
+    fn sidebar_toolbox_opens_a_seven_tool_page() {
         let sidebar = include_str!("../../ui/components/sidebar.slint");
         let glyph = include_str!("../../ui/components/nav-glyph.slint");
         let app = include_str!("../../ui/app.slint");
@@ -1503,17 +1503,19 @@ mod tests {
             "图片裁剪",
             "图片转格式",
             "图片压缩",
+            "去黑",
         ] {
             assert!(page.contains(title), "missing toolbox card: {title}");
         }
-        assert_eq!(page.matches("tool-id: ").count(), 6);
-        assert_eq!(page.matches("target-page: \"toolbox-").count(), 6);
+        assert_eq!(page.matches("tool-id: ").count(), 7);
+        assert_eq!(page.matches("target-page: \"toolbox-").count(), 7);
         assert!(page.contains("target-page: \"toolbox-watermark\""));
         assert!(page.contains("target-page: \"toolbox-enhance\""));
         assert!(page.contains("target-page: \"toolbox-colorize\""));
         assert!(page.contains("target-page: \"toolbox-crop\""));
         assert!(page.contains("target-page: \"toolbox-convert\""));
         assert!(page.contains("target-page: \"toolbox-compress\""));
+        assert!(page.contains("target-page: \"toolbox-remove-black\""));
         assert!(page.contains("../../assets/icons/toolbox-watermark.svg"));
         assert!(page.contains("../../assets/icons/toolbox-enhance.svg"));
         assert!(page.contains("../../assets/icons/toolbox-convert.svg"));
@@ -1971,7 +1973,7 @@ mod tests {
 
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         assert!(composer.matches("min(10, AppState.").count() >= 2);
-        assert_eq!(composer.matches("wrap: no-wrap;").count(), 3);
+        assert!(composer.matches("wrap: no-wrap;").count() >= 3);
         assert!(composer.contains("root.apply-selected-prompt(AppState.prompt-history[index])"));
         assert!(composer.contains("root.queue-custom-prompt-selection(item.content)"));
         assert!(composer.contains("viewport-height: AppState.prompt-history.length * 32px"));
@@ -2082,33 +2084,25 @@ mod tests {
     }
 
     #[test]
-    fn studio_generation_settings_include_collapsible_negative_prompt_and_compact_dropdowns() {
+    fn studio_generation_settings_include_collapsible_negative_prompt_and_unified_image_settings() {
         let chooser = include_str!("../../ui/components/inline-card-chooser.slint");
         let panel = include_str!("../../ui/components/studio-work-panel.slint");
         let prompt = include_str!("../../ui/components/prompt-composer.slint");
         let negative = include_str!("../../ui/components/negative-prompt-editor.slint");
 
-        assert_eq!(
-            chooser.matches("\n        CompactSelectButton {").count(),
-            3
-        );
-        assert!(chooser.contains("property <string> open-panel"));
-        assert!(chooser.contains("if root.open-panel == \"ratio\": Rectangle"));
-        assert!(chooser.contains("if root.open-panel == \"quality\": Rectangle"));
-        assert!(chooser.contains("if root.open-panel == \"count\": Rectangle"));
-        assert!(!chooser.contains("PopupWindow"));
-        assert!(chooser.contains("property <length> panel-gap: 6px;"));
+        assert_eq!(chooser.matches("settings-popup := PopupWindow {").count(), 1);
+        assert!(chooser.contains("text: root.settings-summary();"));
+        assert!(chooser.contains("Image settings · "));
+        assert!(chooser.contains("图片设置 · "));
+        assert!(chooser.contains("text: AppState.en ? \"Image settings\" : \"图片设置\""));
+        assert!(chooser.contains("text: AppState.en ? \"Quality\" : \"质量\""));
+        assert!(chooser.contains("text: AppState.en ? \"Aspect ratio\" : \"宽高比\""));
+        assert!(chooser.contains("text: AppState.en ? \"Generation count\" : \"生成张数\""));
+        assert!(chooser.contains("source: @image-url(\"../../assets/icons/controls.svg\")"));
         assert!(chooser.contains("height: 42px;"));
-        assert_eq!(
-            chooser
-                .matches("y: 0px - self.height - root.panel-gap;")
-                .count(),
-            3
-        );
-        assert!(!chooser.contains("y: 48px;"));
-        assert!(chooser.contains("\"比例 · \""));
-        assert!(chooser.contains("\"清晰度 · \""));
-        assert!(chooser.contains("\"张数 · \""));
+        assert!(chooser.contains("y: 0px - self.height - 8px;"));
+        assert_eq!(chooser.matches("ImageRatioOption { value:").count(), 11);
+        assert_eq!(chooser.matches("ImageSettingPill { text:").count(), 7);
         assert!(panel.contains("InlineCardChooser {"));
         assert!(panel.contains("work-scroll := ScrollView"));
         assert!(panel.contains("viewport-height: max(self.visible-height, work-content.height)"));
@@ -2122,6 +2116,20 @@ mod tests {
         assert!(negative.contains("negative-prompt-dropdown.svg"));
         assert!(negative.contains("transform-rotation: AppState.negative-prompt-expanded ? 180deg : 0deg"));
         assert!(prompt.contains("? 650px : 600px"));
+    }
+
+    #[test]
+    fn prompt_optimization_actions_are_backgroundless_and_low_emphasis() {
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+
+        assert!(composer.contains("component PromptOptimizationAction"));
+        assert_eq!(composer.matches("PromptOptimizationAction {").count(), 4);
+        assert!(composer.contains("background: transparent;"));
+        assert!(composer.contains("border-width: 0px;"));
+        assert!(composer.contains("? AppTheme.accent : AppTheme.muted;"));
+        assert!(composer.contains("font-size: 13px;"));
+        assert!(composer.contains("font-weight: 400;"));
+        assert!(!composer.contains("primary: true;\n            disabled: AppState.reasoning-model"));
     }
 
     #[test]
@@ -3473,9 +3481,7 @@ mod tests {
         assert!(viewer.contains("spacing: 8px;"));
         assert!(viewer.contains("alignment: center;"));
         assert!(viewer.contains("width: min(self.preferred-width, 180px);"));
-        assert!(viewer.contains(
-            "property <length> detail-panel-width: AppState.viewer-source == \"reference\" ? 0px : 460px;"
-        ));
+        assert!(viewer.contains("root.detail-collapsed || root.image-fullscreen ? 0px : 460px"));
         assert_eq!(viewer.matches("ViewerInfoText {").count(), 4);
         assert!(viewer.contains("AppState.viewer-width + \"X\" + AppState.viewer-height"));
         for color in ["#24b8ff", "#42d79e", "#ffb454", "#bda4ff"] {
@@ -3498,21 +3504,19 @@ mod tests {
         assert!(viewer.contains("component ViewerFooterActionButton"));
         assert!(viewer.contains("viewer-footer-actions := HorizontalLayout"));
         assert!(viewer.contains(
-            "if AppState.viewer-source != \"reference\" && AppState.viewer-source != \"inspiration\": Rectangle"
+            "if AppState.viewer-source != \"reference\" && AppState.viewer-source != \"inspiration\" && !root.image-fullscreen: Rectangle"
         ));
         assert!(viewer.contains(
             "AppState.viewer-source == \"inspiration\" ? parent.height - 96px"
         ));
-        assert_eq!(viewer.matches("ViewerFooterActionButton {").count(), 5);
+        assert_eq!(viewer.matches("ViewerFooterActionButton {").count(), 4);
         assert!(viewer.contains("AppState.viewer-download-image();"));
-        assert!(viewer.contains("AppState.viewer-open-image();"));
         assert!(viewer.contains("AppState.viewer-use-reference();"));
         assert!(viewer.contains("AppState.viewer-edit();"));
         assert!(viewer.contains("AppState.request-delete-asset(AppState.viewer-id);"));
         assert!(viewer.contains("@image-url(\"../../assets/icons/download.svg\")"));
-        assert!(viewer.contains("@image-url(\"../../assets/icons/image.svg\")"));
+        assert!(viewer.contains("@image-url(\"../../assets/icons/edit.svg\")"));
         assert!(viewer.contains("@image-url(\"../../assets/icons/upload.svg\")"));
-        assert!(viewer.contains("@image-url(\"../../assets/icons/text.svg\")"));
         assert!(viewer.contains("@image-url(\"../../assets/icons/trash.svg\")"));
 
         assert!(state.contains("callback viewer-open-image();"));
@@ -3520,6 +3524,59 @@ mod tests {
         assert!(callbacks.contains("open_viewer_image(&app, &store.borrow())"));
         assert!(feature.contains("pub(super) fn open_viewer_image"));
         assert!(feature.contains("open_path_with_default_app(&source)"));
+    }
+
+    #[test]
+    fn viewer_supports_zoom_fullscreen_and_collapsing_the_detail_panel() {
+        let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+
+        assert!(viewer.contains("property <float> image-zoom: 1.0;"));
+        assert!(viewer.contains("max(0.5, min(3.0, root.image-zoom"));
+        assert!(viewer.contains("root.image-fullscreen = !root.image-fullscreen;"));
+        assert!(viewer.contains("root.detail-collapsed = true;"));
+        assert!(viewer.contains("root.detail-collapsed = false;"));
+        assert!(viewer.contains("if AppState.viewer-source != \"inspiration\": PillButton"));
+        assert!(viewer.contains("text: AppState.en ? \"Use Prompt\""));
+    }
+
+    #[test]
+    fn new_generation_badge_can_be_dismissed() {
+        let state = include_str!("../../ui/app-state.slint");
+        let card = include_str!("../../ui/components/thumbnail-card.slint");
+        let callbacks = include_str!("callbacks/generation.rs");
+
+        assert!(state.contains("callback dismiss-new-generation(string);"));
+        assert!(card.contains("return root.item.is-new && root.source == \"generation\""));
+        assert!(card.contains("text: \"NEW\";"));
+        assert!(card.contains("AppState.dismiss-new-generation(root.item.id);"));
+        assert!(callbacks.contains("state.on_dismiss_new_generation"));
+    }
+
+    #[test]
+    fn custom_prompt_editor_exposes_ai_optimization() {
+        let state = include_str!("../../ui/app-state.slint");
+        let editor = include_str!("../../ui/pages/custom-prompt-editor-page.slint");
+        let callbacks = include_str!("callbacks/generation.rs");
+
+        assert!(state.contains("callback optimize-custom-prompt-content();"));
+        assert!(editor.contains("AppState.optimize-custom-prompt-content();"));
+        assert!(callbacks.contains("state.on_optimize_custom_prompt_content"));
+        assert!(callbacks.contains("PromptResultTarget::CustomPrompt"));
+    }
+
+    #[test]
+    fn remove_black_is_a_local_toolbox_page() {
+        let app = include_str!("../../ui/app.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let page = include_str!("../../ui/pages/toolbox-watermark-page.slint");
+        let callbacks = include_str!("callbacks/toolbox.rs");
+
+        assert!(app.contains("AppState.page == \"toolbox-remove-black\""));
+        assert!(state.contains("callback start-remove-black-tool();"));
+        assert!(page.contains("in property <bool> remove-black-mode: false;"));
+        assert!(page.contains("AppState.start-remove-black-tool();"));
+        assert!(callbacks.contains("state.on_start_remove_black_tool"));
+        assert!(callbacks.contains("remove_black_pixels"));
     }
 
     #[test]
@@ -3632,10 +3689,10 @@ mod tests {
         assert!(tools.contains("GridLayout"));
         assert_eq!(tools.matches("Row {").count(), 2);
         assert!(tools.contains("label: AppState.en ? \"Cutout\" : \"抠图\""));
-        assert!(tools.contains("label: AppState.en ? \"Remove Black\" : \"去黑\""));
+        assert!(!tools.contains("label: AppState.en ? \"Remove Black\" : \"去黑\""));
         assert!(tools.contains("label: AppState.en ? \"Clear Upscale\" : \"清晰放大\""));
         assert!(tools.contains("@image-url(\"../../assets/icons/fit.svg\")"));
-        assert!(tools.contains("@image-url(\"../../assets/icons/palette.svg\")"));
+        assert!(!tools.contains("@image-url(\"../../assets/icons/palette.svg\")"));
         assert!(tools.contains("@image-url(\"../../assets/icons/focus.svg\")"));
         assert!(repeat.contains("HorizontalLayout"));
         assert_eq!(repeat.matches("ViewerToolActionButton {").count(), 2);

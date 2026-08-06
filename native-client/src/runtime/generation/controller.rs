@@ -302,6 +302,7 @@ pub(super) fn add_stream_success_item(
         cutout_done: false,
         remove_black_done: false,
         upscale_done,
+        is_new: true,
     };
     let conversation_image = item.image.clone();
     let generated_id = item.id.clone();
@@ -365,6 +366,7 @@ pub(super) fn add_stream_failure_item(
             cutout_done: false,
             remove_black_done: false,
             upscale_done: false,
+            is_new: false,
         },
     );
     store_mut.notifications.insert(

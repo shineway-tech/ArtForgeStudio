@@ -641,9 +641,7 @@ fn poll_image_cutout_outcomes(
                 );
             }
             ImageCutoutOutcome::Progress { percent } => {
-                state.set_cutout_progress(
-                    state.get_cutout_progress().max(percent.clamp(1, 99)),
-                );
+                state.set_cutout_progress(state.get_cutout_progress().max(percent.clamp(1, 99)));
                 state.set_cutout_message(
                     if state.get_language().as_str() == "en" {
                         "Extracting the selected subject..."
@@ -865,6 +863,7 @@ fn save_image_cutout_asset(
         cutout_done: true,
         remove_black_done: false,
         upscale_done: false,
+        is_new: false,
     };
     let mut store = store.borrow_mut();
     store.assets.insert(0, item);
@@ -931,9 +930,8 @@ mod tests {
             "artforge-cutout-mask-source-{}.png",
             Uuid::new_v4()
         ));
-        let source = image::RgbImage::from_fn(2, 2, |x, y| {
-            image::Rgb([10 + x as u8, 20 + y as u8, 30])
-        });
+        let source =
+            image::RgbImage::from_fn(2, 2, |x, y| image::Rgb([10 + x as u8, 20 + y as u8, 30]));
         source
             .save_with_format(&source_path, image::ImageFormat::Png)
             .expect("write source");
@@ -953,12 +951,10 @@ mod tests {
             let (result_bytes, _, width, height) =
                 decode_cutout_result(&source_path, subject_type, &mask_bytes)
                     .expect("compose mask");
-            let result = image::load_from_memory_with_format(
-                &result_bytes,
-                image::ImageFormat::Png,
-            )
-            .expect("decode composed result")
-            .to_rgba8();
+            let result =
+                image::load_from_memory_with_format(&result_bytes, image::ImageFormat::Png)
+                    .expect("decode composed result")
+                    .to_rgba8();
             assert_eq!((width, height), (2, 2));
             assert_eq!(result.get_pixel(0, 0).0, [10, 20, 30, 0]);
             assert_eq!(result.get_pixel(1, 1).0, [11, 21, 30, 255]);

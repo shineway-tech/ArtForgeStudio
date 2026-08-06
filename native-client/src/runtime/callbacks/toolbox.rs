@@ -553,6 +553,16 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
+        state.on_start_remove_black_tool(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            start_remove_black_tool(&app);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
         state.on_reveal_watermark_result(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -876,6 +886,59 @@ fn set_watermark_source_from_path(app: &AppWindow, path: &Path) -> bool {
     state.set_watermark_estimated_credits("20".into());
     state.set_watermark_message("".into());
     true
+}
+
+fn start_remove_black_tool(app: &AppWindow) {
+    let state = app.global::<AppState>();
+    let source = PathBuf::from(state.get_watermark_source_path().to_string());
+    if !source.is_file() {
+        state.set_watermark_message("请先上传图片".into());
+        return;
+    }
+    state.set_watermark_processing(true);
+    state.set_watermark_progress(12);
+    state.set_watermark_message("正在去黑...".into());
+
+    let result = (|| -> Result<(PathBuf, String, Image)> {
+        let decoded = image::open(&source).context("无法读取图片")?;
+        let mut rgba = decoded.to_rgba8();
+        remove_black_pixels(rgba.as_mut());
+        let bytes = encode_png_rgba(&rgba, rgba.width(), rgba.height())?;
+        let dir = output_dir_path(app);
+        fs::create_dir_all(&dir)?;
+        let stem = source
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("image");
+        let path = unique_path(dir.join(format!(
+            "{}-{}-remove-black.png",
+            Local::now().format("%Y%m%d%H%M%S%3f"),
+            sanitize_filename(stem)
+        )));
+        fs::write(&path, bytes)?;
+        let preview = load_image(&path)?;
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_string();
+        Ok((path, name, preview))
+    })();
+
+    match result {
+        Ok((path, name, preview)) => {
+            state.set_watermark_result_path(path.display().to_string().into());
+            state.set_watermark_result_name(name.into());
+            state.set_watermark_result_image(preview);
+            state.set_watermark_progress(100);
+            state.set_watermark_message("去黑完成".into());
+        }
+        Err(error) => {
+            state.set_watermark_progress(0);
+            state.set_watermark_message(format!("去黑失败：{error}").into());
+        }
+    }
+    state.set_watermark_processing(false);
 }
 
 fn set_watermark_unsupported_message(app: &AppWindow) {
@@ -2485,6 +2548,7 @@ fn save_crop_asset(
         cutout_done: false,
         remove_black_done: false,
         upscale_done: false,
+        is_new: false,
     };
     let mut store = store.borrow_mut();
     store.assets.insert(0, item);
@@ -3046,6 +3110,7 @@ fn save_watermark_asset(
         cutout_done: false,
         remove_black_done: false,
         upscale_done: false,
+        is_new: false,
     };
     let mut store = store.borrow_mut();
     store.assets.insert(0, item);
@@ -3578,6 +3643,7 @@ fn save_image_colorization_asset(
         cutout_done: false,
         remove_black_done: false,
         upscale_done: false,
+        is_new: false,
     };
     let mut store = store.borrow_mut();
     store.assets.insert(0, item);

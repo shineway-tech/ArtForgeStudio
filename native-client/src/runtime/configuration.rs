@@ -35,7 +35,9 @@ pub(super) fn client_ratio_from_api(ratio: &str) -> String {
     }
 }
 
-pub(super) fn supported_ratios_for_category(_category: &str) -> &'static [(&'static str, i32, i32)] {
+pub(super) fn supported_ratios_for_category(
+    _category: &str,
+) -> &'static [(&'static str, i32, i32)] {
     supported_ratios()
 }
 
