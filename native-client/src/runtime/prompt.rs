@@ -200,10 +200,14 @@ pub(super) fn control_label(kind: &str, value: &str, language: PromptLanguage) -
 pub(super) fn visible_prompt_control_entries<'a>(
     controls: &'a PromptControls,
 ) -> Vec<(&'static str, &'a str)> {
-    let mut entries = vec![
-        ("creation", controls.creation.as_str()),
-        ("style", controls.style.as_str()),
-    ];
+    let mut entries = Vec::new();
+    let hide_ui_default = controls.category == "ui";
+    if !hide_ui_default || controls.creation != "free" {
+        entries.push(("creation", controls.creation.as_str()));
+    }
+    if !hide_ui_default || controls.style != "free" {
+        entries.push(("style", controls.style.as_str()));
+    }
     if controls.category == "scene" || controls.category == "character" {
         entries.push(("view", controls.view.as_str()));
     }
@@ -211,7 +215,9 @@ pub(super) fn visible_prompt_control_entries<'a>(
         entries.push(("weather", controls.weather.as_str()));
         entries.push(("time", controls.time.as_str()));
     }
-    entries.push(("light", controls.light.as_str()));
+    if !hide_ui_default || controls.light != "free" {
+        entries.push(("light", controls.light.as_str()));
+    }
     entries
 }
 
@@ -350,21 +356,15 @@ pub(super) fn append_parameter_priority_instruction(
 pub(super) fn append_category_generation_instruction(
     prompt: &str,
     category: &str,
-    language: PromptLanguage,
+    _language: PromptLanguage,
 ) -> String {
     if category != "ui" {
         return prompt.to_string();
     }
 
-    if language == PromptLanguage::Chinese {
-        format!(
-            "{prompt}\n\nUI 组件图集规则（必须遵守）：只生成一张高密度、可复用的游戏 UI 组件图集，根据用户提示词决定主题、材质和配色。如果用户提示词和已选择的风格都没有明确指定视觉风格，默认采用精制商业级 2D 数字手绘奇幻 RPG 游戏 UI 资产包风格：规整锐利的深色轮廓，平滑干净的数字绘制表面和体积明暗，深灰钢制倒角边框，低饱和炭灰面板，少量克制的金色饰边，技能和状态使用清晰的彩色高光；整体必须像可直接交付的专业游戏素材，图标轮廓清楚、材质统一、细节可读。在默认风格下严禁粗糙木纹、皮革底纹、蚀刻纹、交叉排线、铅笔、蜡笔、厚重油画颗粒、纸张纹理、脏污颗粒和高频噪点，不要做成草稿、手工雕刻或老旧物件。如果用户明确指定像素、扁平、赛博、写实或其他风格，则优先服从用户指定，不要强制使用默认风格。默认生成 32 至 48 个彼此独立且有明显差异的 UI 组件，按画布比例组织为约 5 至 8 列和多行，紧凑覆盖约 85% 的有效画布区域。组件集合必须丰富且有层次，并至少覆盖以下 11 类，每类至少出现一组：角色头像、血条或能量条、按钮、通用图标、虚拟摇杆、物品格、技能图标、货币、设置图标、小地图、宝箱。还可以按用户主题补充状态标记、钥匙、消耗品和面板边框；不要只生成少数大型组件。把已选择的 UI 子类型理解为组件用途，而不是完整界面。所有组件使用正视图、完整清晰边界、统一风格和一致尺度，组件之间保留清晰窄间隔，不重叠、不裁切。不要生成游戏场景、角色全身、环境、设备样机、完整界面、应用截图、说明文字、标签或水印。所有按钮、面板和图标都保持无文字，绝对不要生成字母、数字、乱码或不可读的伪文字。使用均匀的纯色浅灰或米白背景；如果模型支持透明通道，则优先透明背景，以便后续逐个抠图拆分。即使用户提示词提到场景、游戏画面或完整界面，也必须优先遵守本规则，只输出独立 UI 组件图集。"
-        )
-    } else {
-        format!(
-            "{prompt}\n\nUI component atlas rule (mandatory): Generate exactly one dense, reusable game UI component asset sheet. Use the user's prompt only to determine the theme, materials, and colors. If neither the user's prompt nor the selected style specifies a visual style, default to a polished, production-ready 2D digitally hand-painted fantasy RPG game UI asset-pack style: precise crisp dark silhouettes, smooth clean digital surfaces and volumetric shading, dark graphite-steel beveled frames, low-saturation charcoal panels, restrained gold trim, and clear colored highlights for skills and status. The result must look like professional shippable game assets with readable icons, coherent materials, and controlled detail. Under this default style, strictly avoid rough wood grain, leather texture, etching, cross-hatching, pencil, crayon, heavy oil-paint grain, paper texture, dirt, speckling, and high-frequency noise; never make it look like a sketch, hand carving, or weathered prop. If the user explicitly requests pixel art, flat design, cyberpunk, realism, or any other style, follow that request instead of forcing the default. Generate 32 to 48 distinct isolated UI components by default, arranged in roughly 5 to 8 columns with multiple rows according to the canvas aspect ratio, compactly filling about 85% of the usable canvas. The set must be varied and hierarchical and must include at least one group from each of these 11 categories: character portraits, health or energy bars, buttons, general icons, a virtual joystick, inventory slots, skill icons, currencies, a settings icon, a minimap, and treasure chests. Add status markers, keys, consumables, and panel frames when relevant to the user's theme; never return only a few oversized components. Treat the selected UI subtype as the purpose of the component set, not as a request for a complete screen. Show every component front-facing with complete crisp boundaries, consistent style and scale, and narrow clear gutters; no overlap and no cropping. Do not render gameplay scenes, full-body characters, environments, device mockups, complete screens, app screenshots, explanatory text, labels, or watermarks. Keep every button, panel, and icon text-free: absolutely no letters, numbers, gibberish, pseudo-text, or illegible labels. Use a uniform light gray or off-white background, or a transparent background when alpha output is supported, so each component can be extracted later. This rule overrides any request for a scene, gameplay image, or complete interface."
-        )
-    }
+    format!(
+        "{prompt}\n\nUI component atlas rule (mandatory): Create one clean 2D mobile RPG game UI sprite sheet on a flat warm-white background. Visual target: polished casual-game art, smooth solid color fills, crisp dark-navy outlines, simple two-step cel shading, small controlled highlights, rounded geometric shapes, consistent line weight, and clear colorful pictograms. Keep every surface visually smooth and every icon immediately readable at thumbnail size. Use the user's words only for theme, palette, and motif; keep this clean rendering unless the user explicitly names a different rendering method such as pixel art or flat vector art. Arrange about 40 isolated front-facing sprites in a balanced 6-column atlas with even white gutters. Include: four portrait frames; four health or energy bars; six inventory slots; six circular skill icons; four icon-only buttons; one virtual joystick; one minimap frame; four coins or gems; one settings gear; four treasure chests; and two blank dialog or inventory panels. Add a few matching keys, potions, status markers, or panel corners when space remains. Every element must be a separate reusable sprite with a complete silhouette and practical game function. Button faces stay blank and all communication is through icons. The canvas contains only isolated UI sprites and whitespace."
+    )
 }
 
 pub(super) fn display_generation_prompt(prompt: &str) -> String {

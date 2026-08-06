@@ -296,36 +296,51 @@ mod tests {
             PromptLanguage::Chinese,
         );
 
-        assert!(prompt.contains("UI 组件图集规则（必须遵守）"));
-        assert!(prompt.contains("默认采用精制商业级 2D 数字手绘奇幻 RPG 游戏 UI 资产包风格"));
-        assert!(prompt.contains("深灰钢制倒角边框"));
-        assert!(prompt.contains("严禁粗糙木纹"));
-        assert!(prompt.contains("绝对不要生成字母、数字、乱码或不可读的伪文字"));
-        assert!(prompt.contains("优先服从用户指定"));
-        assert!(prompt.contains("默认生成 32 至 48 个"));
-        assert!(prompt.contains("约 5 至 8 列和多行"));
-        assert!(prompt.contains("约 85% 的有效画布区域"));
-        assert!(prompt.contains("至少覆盖以下 11 类"));
+        assert!(prompt.contains("UI component atlas rule (mandatory)"));
+        assert!(prompt.contains("clean 2D mobile RPG game UI sprite sheet"));
+        assert!(prompt.contains("smooth solid color fills"));
+        assert!(prompt.contains("simple two-step cel shading"));
+        assert!(prompt.contains("about 40 isolated front-facing sprites"));
+        assert!(prompt.contains("balanced 6-column atlas"));
         for required_component in [
-            "角色头像",
-            "血条或能量条",
-            "按钮",
-            "通用图标",
-            "虚拟摇杆",
-            "物品格",
-            "技能图标",
-            "货币",
-            "设置图标",
-            "小地图",
-            "宝箱",
+            "portrait frames",
+            "health or energy bars",
+            "inventory slots",
+            "skill icons",
+            "icon-only buttons",
+            "virtual joystick",
+            "minimap frame",
+            "coins or gems",
+            "settings gear",
+            "treasure chests",
+            "dialog or inventory panels",
         ] {
             assert!(prompt.contains(required_component));
         }
-        assert!(prompt.contains("不要只生成少数大型组件"));
-        assert!(prompt.contains("只输出独立 UI 组件图集"));
-        assert!(prompt.contains("不要生成游戏场景"));
-        assert!(prompt.contains("不重叠、不裁切"));
+        assert!(prompt.contains("Button faces stay blank"));
+        assert!(prompt.contains("only isolated UI sprites and whitespace"));
         assert!(prompt.contains("暗黑地牢风格的战斗界面"));
+    }
+
+    #[test]
+    fn ui_default_controls_do_not_add_free_style_or_natural_light_noise() {
+        let controls = PromptControls {
+            category: "ui".to_string(),
+            creation: "free".to_string(),
+            style: "free".to_string(),
+            view: "free".to_string(),
+            weather: "natural".to_string(),
+            time: "natural".to_string(),
+            light: "free".to_string(),
+        };
+
+        let prompt = prompt_with_controls(
+            "clean fantasy inventory",
+            &controls,
+            PromptLanguage::English,
+        );
+
+        assert_eq!(prompt, "clean fantasy inventory");
     }
 
     #[test]
