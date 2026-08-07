@@ -1497,10 +1497,10 @@ mod tests {
     fn studio_work_panel_is_wider_and_results_fill_the_remainder() {
         let page = include_str!("../../ui/pages/studio-split-page.slint");
 
-        assert!(page.contains("width: 480px;"));
-        assert!(page.contains("Rectangle { x: 480px;"));
-        assert!(page.contains("x: 481px;"));
-        assert!(page.contains("width: parent.width - 481px;"));
+        assert!(page.contains("width: 540px;"));
+        assert!(page.contains("Rectangle { x: 540px;"));
+        assert!(page.contains("x: 541px;"));
+        assert!(page.contains("width: parent.width - 541px;"));
     }
 
     #[test]
@@ -2129,16 +2129,16 @@ mod tests {
         assert!(chooser.contains("y: 0px - self.height - 8px;"));
         assert_eq!(chooser.matches("ImageRatioOption { value:").count(), 11);
         assert_eq!(chooser.matches("ImageSettingPill { text:").count(), 7);
-        assert!(!panel.contains("InlineCardChooser {"));
-        assert!(prompt.contains("import { InlineCardChooser }"));
-        assert!(prompt.contains("InlineCardChooser {"));
-        assert!(prompt.contains("width: parent.width - 48px"));
-        assert!(prompt.contains("CreationModeChip {"));
-        assert!(prompt.contains("StyleModeChip {"));
-        assert!(prompt.contains("AdvancedControlChip {"));
+        assert!(panel.contains("settings-row := HorizontalLayout"));
+        assert!(panel.contains("y: negative-editor.y + negative-editor.height + 12px"));
+        assert!(panel.contains("CreationModeChip { width: 100px; height: 42px; }"));
+        assert!(panel.contains("StyleModeChip { width: 100px; height: 42px; }"));
+        assert!(panel.contains("AdvancedControlChip { width: 100px; height: 42px; }"));
+        assert!(panel.contains("InlineCardChooser { horizontal-stretch: 1; }"));
+        assert!(!prompt.contains("InlineCardChooser"));
         assert!(panel.contains("work-scroll := ScrollView"));
         assert!(panel.contains("viewport-height: max(self.visible-height, work-content.height)"));
-        assert!(panel.contains("y: negative-editor.y + negative-editor.height + 24px"));
+        assert!(panel.contains("y: settings-row.y + settings-row.height + 24px"));
         assert!(!panel.contains("parent.height - 266px - negative-editor.height"));
         assert!(panel.contains("negative-editor := NegativePromptEditor"));
         assert!(negative.contains("height: AppState.negative-prompt-expanded ? 132px : 46px"));

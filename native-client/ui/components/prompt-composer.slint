@@ -1,13 +1,9 @@
 import { ScrollView } from "std-widgets.slint";
 import { AppState } from "../app-state.slint";
-import { AdvancedControlChip } from "advanced-control-chip.slint";
-import { CreationModeChip } from "creation-mode-chip.slint";
 import { GenerateActionButton } from "generate-action-button.slint";
-import { InlineCardChooser } from "inline-card-chooser.slint";
 import { LoadingDots } from "loading-dots.slint";
 import { PillButton } from "pill-button.slint";
 import { ReferenceThumb } from "reference-thumb.slint";
-import { StyleModeChip } from "style-mode-chip.slint";
 import { UploadCard } from "upload-card.slint";
 import { AppTheme } from "../theme.slint";
 
@@ -426,17 +422,6 @@ export component PromptComposer {
             font-size: AppState.settings-font-size * 1px;
             font-weight: 400;
             wrap: word-wrap;
-        }
-        HorizontalLayout {
-            x: 24px;
-            y: parent.height - 72px;
-            width: parent.width - 48px;
-            height: 42px;
-            spacing: 8px;
-            CreationModeChip { height: 42px; }
-            StyleModeChip { height: 42px; }
-            AdvancedControlChip { height: 42px; }
-            InlineCardChooser { horizontal-stretch: 1; }
         }
         GenerateActionButton {
             x: root.width < 560px ? parent.width - 190px : parent.width - 178px;

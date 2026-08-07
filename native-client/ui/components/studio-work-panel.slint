@@ -1,9 +1,13 @@
 import { ScrollView } from "std-widgets.slint";
 import { AppState } from "../app-state.slint";
 import { GenerateActionButton } from "generate-action-button.slint";
+import { AdvancedControlChip } from "advanced-control-chip.slint";
+import { CreationModeChip } from "creation-mode-chip.slint";
+import { InlineCardChooser } from "inline-card-chooser.slint";
 import { NegativePromptEditor } from "negative-prompt-editor.slint";
 import { PromptComposer } from "prompt-composer.slint";
 import { SmallToggle } from "small-toggle.slint";
+import { StyleModeChip } from "style-mode-chip.slint";
 import { TranslateTipArea } from "translate-tip-area.slint";
 import { UsageTipCarousel } from "usage-tip-carousel.slint";
 import { AppTheme } from "../theme.slint";
@@ -72,9 +76,21 @@ export component StudioWorkPanel {
                     y: composer.y + composer.height + 12px;
                     width: parent.width - 44px;
                 }
+                settings-row := HorizontalLayout {
+                    x: 22px;
+                    y: negative-editor.y + negative-editor.height + 12px;
+                    width: parent.width - 44px;
+                    height: 42px;
+                    spacing: 8px;
+
+                    CreationModeChip { width: 100px; height: 42px; }
+                    StyleModeChip { width: 100px; height: 42px; }
+                    AdvancedControlChip { width: 100px; height: 42px; }
+                    InlineCardChooser { horizontal-stretch: 1; }
+                }
                 GenerateActionButton {
                     x: 22px;
-                    y: negative-editor.y + negative-editor.height + 24px;
+                    y: settings-row.y + settings-row.height + 24px;
                     width: parent.width - 44px;
                     height: 56px;
                     disabled: !AppState.generating && AppState.reasoning-model == "";
@@ -88,7 +104,7 @@ export component StudioWorkPanel {
                 }
                 status-line := Rectangle {
                     x: 22px;
-                    y: negative-editor.y + negative-editor.height + 94px;
+                    y: settings-row.y + settings-row.height + 94px;
                     width: parent.width - 44px;
                     height: 18px;
                     background: transparent;
