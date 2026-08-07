@@ -1,4 +1,4 @@
-import { AccountSession, AssetGroup, AssetItem, CanvasLink, CanvasNote, CatalogModelView, CompressionImageItem, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
+import { AccountSession, AssetGroup, AssetItem, CanvasLink, CanvasNote, CatalogModelView, CompressionImageItem, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, InvitedUserView, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 
 export global AppState {
     callback dismiss-payment();
@@ -382,13 +382,13 @@ export global AppState {
     in-out property <bool> invitation-code-busy: false;
     in-out property <bool> invitation-code-success: false;
     in-out property <string> invitation-code-status: "";
-    // Invitation reward values are populated by the server when the program opens.
-    // Keep decimal and amount fields as strings so the client never invents business values.
-    in-out property <string> invitation-reward-rate: "--";
+    // The current promotional reward rate is 10%. Other summary values and invited-user
+    // rows remain server-authoritative and stay empty until the service provides them.
+    in-out property <string> invitation-reward-rate: "10";
     in-out property <string> invitation-count: "--";
     in-out property <string> invitation-history-reward: "--";
     in-out property <string> invitation-own-code: "";
-    in-out property <string> invitation-share-link: "";
+    in-out property <[InvitedUserView]> invitation-users: [];
     in-out property <bool> email-bound: false;
     in-out property <bool> email-bind-open: false;
     in-out property <string> email-bind-email: "";

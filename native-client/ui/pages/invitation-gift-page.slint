@@ -2,6 +2,7 @@ import { ScrollView } from "std-widgets.slint";
 import { AppState } from "../app-state.slint";
 import { PillButton } from "../components/pill-button.slint";
 import { AppTheme } from "../theme.slint";
+import { InvitedUserView } from "../types.slint";
 
 component RewardSummaryCard inherits Rectangle {
     in property <string> title;
@@ -60,8 +61,6 @@ component InvitationCopyField {
     in property <string> button-text;
 
     Text {
-        x: 0px;
-        y: 0px;
         width: parent.width;
         height: 22px;
         text: root.label;
@@ -71,7 +70,6 @@ component InvitationCopyField {
         vertical-alignment: center;
     }
     Rectangle {
-        x: 0px;
         y: 28px;
         width: parent.width;
         height: 48px;
@@ -79,9 +77,9 @@ component InvitationCopyField {
         border-radius: 9px;
         border-width: 1px;
         border-color: AppTheme.border;
+
         Text {
             x: 14px;
-            y: 0px;
             width: parent.width - 142px;
             height: parent.height;
             text: root.value == "" ? root.empty-value : root.value;
@@ -104,8 +102,71 @@ component InvitationCopyField {
     }
 }
 
+component InvitedUserRow inherits Rectangle {
+    in property <InvitedUserView> item;
+
+    height: 52px;
+    background: transparent;
+
+    Text {
+        x: 16px;
+        width: (parent.width - 32px) * 0.30;
+        height: parent.height;
+        text: root.item.email;
+        color: AppTheme.text;
+        font-size: 12px;
+        font-weight: 400;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Text {
+        x: 16px + (parent.width - 32px) * 0.30;
+        width: (parent.width - 32px) * 0.28;
+        height: parent.height;
+        text: root.item.username == "" ? "-" : root.item.username;
+        color: AppTheme.text;
+        font-size: 12px;
+        font-weight: 400;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Text {
+        x: 16px + (parent.width - 32px) * 0.58;
+        width: (parent.width - 32px) * 0.18;
+        height: parent.height;
+        text: root.item.reward-detail;
+        color: AppTheme.success;
+        font-size: 12px;
+        font-weight: 400;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Text {
+        x: 16px + (parent.width - 32px) * 0.76;
+        width: (parent.width - 32px) * 0.24;
+        height: parent.height;
+        text: root.item.registered-at;
+        color: AppTheme.muted;
+        font-size: 12px;
+        font-weight: 400;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Rectangle {
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: AppTheme.border;
+    }
+}
+
 export component InvitationGiftPage {
-    function content-height() -> length { return max(root.height, 610px); }
+    function invited-list-height() -> length {
+        return max(1, AppState.invitation-users.length) * 52px;
+    }
+    function content-height() -> length {
+        return max(root.height, 720px + root.invited-list-height());
+    }
 
     Rectangle {
         width: root.width;
@@ -126,8 +187,6 @@ export component InvitationGiftPage {
                 background: transparent;
 
                 Text {
-                    x: 0px;
-                    y: 0px;
                     width: parent.width;
                     height: 36px;
                     text: AppState.en ? "Invitation Rewards" : "邀请有礼";
@@ -137,7 +196,6 @@ export component InvitationGiftPage {
                     vertical-alignment: center;
                 }
                 Text {
-                    x: 0px;
                     y: 38px;
                     width: parent.width;
                     height: 24px;
@@ -149,20 +207,18 @@ export component InvitationGiftPage {
                 }
 
                 summary := Rectangle {
-                    x: 0px;
                     y: 82px;
                     width: parent.width;
                     height: 122px;
                     background: transparent;
 
                     RewardSummaryCard {
-                        x: 0px;
                         width: (parent.width - 32px) / 3;
                         height: parent.height;
                         title: AppState.en ? "My reward rate" : "我的返利比例";
                         value: AppState.invitation-reward-rate;
-                        suffix: AppState.invitation-reward-rate == "--" ? "" : "%";
-                        note: AppState.en ? "The final rate is provided by the server" : "实际返利比例以服务端规则为准";
+                        suffix: "%";
+                        note: AppState.en ? "Current promotional rate" : "当前暂定返利比例";
                         highlighted: true;
                     }
                     RewardSummaryCard {
@@ -186,10 +242,9 @@ export component InvitationGiftPage {
                 }
 
                 invitation-card := Rectangle {
-                    x: 0px;
                     y: 226px;
                     width: parent.width;
-                    height: 326px;
+                    height: 288px;
                     background: AppTheme.panel;
                     border-radius: 14px;
                     border-width: 1px;
@@ -211,7 +266,7 @@ export component InvitationGiftPage {
                         y: 48px;
                         width: parent.width - 48px;
                         height: 22px;
-                        text: AppState.en ? "Share your code or invitation link with friends" : "将邀请码或邀请链接分享给新用户";
+                        text: AppState.en ? "Share your invitation code with new users" : "将邀请码分享给新用户";
                         color: AppTheme.muted;
                         font-size: 12px;
                         font-weight: 400;
@@ -220,39 +275,30 @@ export component InvitationGiftPage {
 
                     InvitationCopyField {
                         x: 24px;
-                        y: 86px;
-                        width: (parent.width - 64px) / 2;
+                        y: 82px;
+                        width: parent.width - 48px;
                         height: 76px;
                         label: AppState.en ? "My invitation code" : "我的邀请码";
                         value: AppState.invitation-own-code;
                         empty-value: AppState.en ? "Not available yet" : "待服务端开放";
                         button-text: AppState.en ? "Copy code" : "复制邀请码";
                     }
-                    InvitationCopyField {
-                        x: (parent.width - 64px) / 2 + 40px;
-                        y: 86px;
-                        width: (parent.width - 64px) / 2;
-                        height: 76px;
-                        label: AppState.en ? "Invitation link" : "邀请链接";
-                        value: AppState.invitation-share-link;
-                        empty-value: AppState.en ? "Not available yet" : "待服务端开放";
-                        button-text: AppState.en ? "Copy link" : "复制链接";
-                    }
 
                     Rectangle {
                         x: 24px;
-                        y: 184px;
+                        y: 178px;
                         width: parent.width - 48px;
-                        height: 118px;
+                        height: 86px;
                         background: AppTheme.panel-soft;
                         border-radius: 10px;
                         border-width: 1px;
                         border-color: AppTheme.accent;
+
                         Text {
                             x: 16px;
-                            y: 12px;
+                            y: 10px;
                             width: parent.width - 32px;
-                            height: 22px;
+                            height: 20px;
                             text: AppState.en ? "How it works" : "使用说明";
                             color: AppTheme.accent-dark;
                             font-size: 13px;
@@ -261,17 +307,76 @@ export component InvitationGiftPage {
                         }
                         Text {
                             x: 16px;
-                            y: 40px;
+                            y: 34px;
                             width: parent.width - 32px;
-                            height: 64px;
+                            height: 44px;
                             text: AppState.en
-                                ? "1. Share your invitation code or link with a new user.\n2. Rewards are calculated after the invited user meets the server-defined conditions.\n3. Reward rates and settlement rules are subject to the server."
-                                : "1. 将邀请码或邀请链接分享给新用户。\n2. 被邀请用户满足服务端规定的条件后，系统计算邀请奖励。\n3. 返利比例及结算规则以服务端实际规则为准。";
+                                ? "1. Share your invitation code with a new user.\n2. The current reward rate is 10%; settlement rules are subject to the server."
+                                : "1. 将邀请码分享给新用户。\n2. 当前返利比例暂定为 10%，结算规则以服务端实际规则为准。";
                             color: AppTheme.muted;
                             font-size: 12px;
                             font-weight: 400;
                             wrap: word-wrap;
                             vertical-alignment: top;
+                        }
+                    }
+                }
+
+                invited-card := Rectangle {
+                    y: 536px;
+                    width: parent.width;
+                    height: 108px + root.invited-list-height();
+                    background: AppTheme.panel;
+                    border-radius: 14px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+
+                    Text {
+                        x: 24px;
+                        y: 16px;
+                        width: parent.width - 48px;
+                        height: 28px;
+                        text: AppState.en ? "Invited users" : "已邀请用户";
+                        color: AppTheme.text;
+                        font-size: 15px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+
+                    header := Rectangle {
+                        x: 24px;
+                        y: 54px;
+                        width: parent.width - 48px;
+                        height: 36px;
+                        background: transparent;
+
+                        Text { x: 16px; width: (parent.width - 32px) * 0.30; height: parent.height; text: AppState.en ? "Email" : "邮箱"; color: AppTheme.muted; font-size: 12px; font-weight: 400; vertical-alignment: center; }
+                        Text { x: 16px + (parent.width - 32px) * 0.30; width: (parent.width - 32px) * 0.28; height: parent.height; text: AppState.en ? "Username" : "用户名"; color: AppTheme.muted; font-size: 12px; font-weight: 400; vertical-alignment: center; }
+                        Text { x: 16px + (parent.width - 32px) * 0.58; width: (parent.width - 32px) * 0.18; height: parent.height; text: AppState.en ? "Reward" : "返利明细"; color: AppTheme.muted; font-size: 12px; font-weight: 400; vertical-alignment: center; }
+                        Text { x: 16px + (parent.width - 32px) * 0.76; width: (parent.width - 32px) * 0.24; height: parent.height; text: AppState.en ? "Registered at" : "注册时间"; color: AppTheme.muted; font-size: 12px; font-weight: 400; vertical-alignment: center; }
+                        Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: AppTheme.border; }
+                    }
+
+                    if AppState.invitation-users.length == 0: Text {
+                        x: 24px;
+                        y: 90px;
+                        width: parent.width - 48px;
+                        height: 52px;
+                        text: AppState.en ? "No invited users yet" : "暂无已邀请用户";
+                        color: AppTheme.weak;
+                        font-size: 12px;
+                        font-weight: 400;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    if AppState.invitation-users.length > 0: VerticalLayout {
+                        x: 24px;
+                        y: 90px;
+                        width: parent.width - 48px;
+                        height: root.invited-list-height();
+                        spacing: 0px;
+                        for user in AppState.invitation-users: InvitedUserRow {
+                            item: user;
                         }
                     }
                 }

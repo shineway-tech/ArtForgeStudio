@@ -4093,22 +4093,32 @@ mod tests {
     }
 
     #[test]
-    fn invitation_rewards_page_matches_the_summary_and_share_layout() {
+    fn invitation_rewards_page_shows_the_ten_percent_rate_and_invited_users() {
         let state = include_str!("../../ui/app-state.slint");
         let page = include_str!("../../ui/pages/invitation-gift-page.slint");
+        let types = include_str!("../../ui/types.slint");
 
-        assert!(state.contains("invitation-reward-rate"));
+        assert!(state.contains("invitation-reward-rate: \"10\""));
         assert!(state.contains("invitation-count"));
         assert!(state.contains("invitation-history-reward"));
         assert!(state.contains("invitation-own-code"));
-        assert!(state.contains("invitation-share-link"));
+        assert!(state.contains("property <[InvitedUserView]> invitation-users: []"));
+        assert!(types.contains("export struct InvitedUserView"));
+        assert!(types.contains("reward-detail: string"));
+        assert!(types.contains("registered-at: string"));
         assert!(page.contains("我的返利比例"));
+        assert!(page.contains("当前暂定返利比例"));
         assert!(page.contains("邀请人数"));
         assert!(page.contains("历史返利额度"));
         assert!(page.contains("我的邀请码"));
-        assert!(page.contains("邀请链接"));
         assert!(page.contains("复制邀请码"));
-        assert!(page.contains("复制链接"));
+        assert!(page.contains("已邀请用户"));
+        assert!(page.contains("返利明细"));
+        assert!(page.contains("注册时间"));
+        assert!(page.contains("for user in AppState.invitation-users"));
+        assert!(!page.contains("邀请链接"));
+        assert!(!page.contains("复制链接"));
+        assert!(!state.contains("invitation-share-link"));
         assert!(page.contains("AppState.copy-contact-detail(root.value)"));
         assert!(!page.contains("可转返利"));
     }
