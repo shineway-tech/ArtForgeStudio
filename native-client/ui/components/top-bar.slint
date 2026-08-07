@@ -4,6 +4,66 @@ import { PillButton } from "pill-button.slint";
 import { ThemeMenuButton } from "theme-menu-button.slint";
 import { AppTheme } from "../theme.slint";
 
+component InvitationGiftButton {
+    property <int> wobble-step: 0;
+    property <bool> wobbling: false;
+    width: 42px;
+    height: 36px;
+
+    Timer {
+        interval: 5s;
+        running: true;
+        triggered => {
+            root.wobble-step = 1;
+            root.wobbling = true;
+        }
+    }
+    Timer {
+        interval: 110ms;
+        running: root.wobbling;
+        triggered => {
+            if root.wobble-step >= 6 {
+                root.wobble-step = 0;
+                root.wobbling = false;
+            } else {
+                root.wobble-step += 1;
+            }
+        }
+    }
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: gift-touch.has-hover ? AppTheme.panel-soft : transparent;
+        border-radius: 10px;
+        gift-image := Image {
+            x: 4px;
+            y: 1px;
+            width: 34px;
+            height: 34px;
+            source: @image-url("../../assets/invitation-gift.png");
+            image-fit: contain;
+            transform-rotation: root.wobble-angle();
+            animate transform-rotation { duration: 110ms; easing: ease-in-out; }
+        }
+        gift-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { AppState.navigate("invitation-gift"); }
+        }
+    }
+
+    function wobble-angle() -> angle {
+        return root.wobble-step == 1 ? -7deg
+            : root.wobble-step == 2 ? 7deg
+            : root.wobble-step == 3 ? -5deg
+            : root.wobble-step == 4 ? 5deg
+            : root.wobble-step == 5 ? -2deg
+            : 0deg;
+    }
+}
+
 export component TopBar {
     height: 58px;
     Rectangle {
@@ -72,6 +132,7 @@ export component TopBar {
                     text: AppState.en ? "Payment status" : "查看支付状态";
                     clicked => { AppState.payment-dialog-open = true; }
                 }
+                if AppState.logged-in: InvitationGiftButton {}
                 PillButton { width: 94px; text: AppState.language == "zh" ? "中文" : "English"; clicked => { AppState.set-language(AppState.language == "zh" ? "en" : "zh"); } }
                 ThemeMenuButton { width: 94px; }
                 if AppState.logged-in: PillButton { width: 104px; text: AppState.en ? ("Credits " + AppState.credit-balance) : ("积分 " + AppState.credit-balance); clicked => { AppState.navigate("credits"); } }
@@ -91,7 +152,7 @@ export component TopBar {
         }
     }
     function actions-width() -> length {
-        return (AppState.logged-in ? 446px : 318px) + (AppState.payment-active ? 120px : 0px);
+        return (AppState.logged-in ? 496px : 318px) + (AppState.payment-active ? 120px : 0px);
     }
     function model-picker-width() -> length {
         return min(330px, max(180px, (root.width - 18px - root.actions-width() - 70px) / 2));

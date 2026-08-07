@@ -258,6 +258,12 @@ export component ProfileDialog {
                         active: AppState.profile-section == "devices";
                         clicked => { AppState.profile-section = "devices"; }
                     }
+                    AccountNavItem {
+                        text: AppState.en ? "Invitation code" : "填写邀请码";
+                        icon: AppState.icon-account-shield-check;
+                        active: AppState.profile-section == "invitation";
+                        clicked => { AppState.profile-section = "invitation"; }
+                    }
                 }
                 Rectangle {
                     x: 26px;
@@ -437,6 +443,92 @@ export component ProfileDialog {
                         }
                     }
                     PillButton { x: parent.width - 158px; y: 386px; width: 142px; text: AppState.en ? "Logout all devices" : "退出全部设备"; danger: true; clicked => { AppState.logout-all(); } }
+                }
+
+                if AppState.profile-section == "invitation": Rectangle {
+                    x: 44px;
+                    y: 20px;
+                    width: parent.width - 88px;
+                    height: parent.height - 100px;
+                    background: transparent;
+                    Text {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: 42px;
+                        text: AppState.en ? "Invitation code" : "填写邀请码";
+                        color: AppTheme.text;
+                        font-size: 25px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        x: 0px;
+                        y: 46px;
+                        width: parent.width;
+                        height: 28px;
+                        text: AppState.en
+                            ? "Enter an invitation code and confirm to validate it"
+                            : "填写邀请码，确认后将由服务端验证";
+                        color: AppTheme.muted;
+                        font-size: 14px;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { x: 0px; y: 86px; width: parent.width; height: 1px; background: AppTheme.border; }
+
+                    Rectangle {
+                        x: 0px;
+                        y: 116px;
+                        width: parent.width - 148px;
+                        height: 48px;
+                        background: AppTheme.panel-soft;
+                        border-radius: 9px;
+                        border-width: 1px;
+                        border-color: invitation-input.has-focus ? AppTheme.accent : AppTheme.border;
+                        invitation-input := TextInput {
+                            x: 16px;
+                            width: parent.width - 32px;
+                            height: parent.height;
+                            text <=> AppState.invitation-code;
+                            single-line: true;
+                            color: AppTheme.text;
+                            font-size: 14px;
+                            vertical-alignment: center;
+                            accepted => { AppState.submit-invitation-code(); }
+                        }
+                        if AppState.invitation-code == "" && !invitation-input.has-focus: Text {
+                            x: 16px;
+                            width: parent.width - 32px;
+                            height: parent.height;
+                            text: AppState.en ? "Enter invitation code" : "请填写邀请码";
+                            color: AppTheme.weak;
+                            font-size: 14px;
+                            vertical-alignment: center;
+                        }
+                    }
+                    PillButton {
+                        x: parent.width - 132px;
+                        y: 120px;
+                        width: 132px;
+                        height: 40px;
+                        primary: true;
+                        disabled: AppState.invitation-code-busy;
+                        text: AppState.invitation-code-busy
+                            ? (AppState.en ? "Validating..." : "验证中...")
+                            : (AppState.en ? "Confirm" : "确认");
+                        clicked => { AppState.submit-invitation-code(); }
+                    }
+                    Text {
+                        x: 0px;
+                        y: 180px;
+                        width: parent.width;
+                        height: 48px;
+                        text: AppState.invitation-code-status;
+                        color: AppState.invitation-code-success ? AppTheme.success : AppTheme.muted;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                        vertical-alignment: top;
+                    }
                 }
 
                 PillButton { x: parent.width - 320px; y: parent.height - 62px; width: 118px; text: AppState.en ? "Close" : "关闭"; clicked => { AppState.profile-open = false; } }

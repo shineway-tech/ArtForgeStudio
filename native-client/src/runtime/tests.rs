@@ -4054,6 +4054,40 @@ mod tests {
     }
 
     #[test]
+    fn invitation_code_ui_is_reachable_and_uses_the_reserved_backend_contract() {
+        let state = include_str!("../../ui/app-state.slint");
+        let profile = include_str!("../../ui/dialogs/profile-dialog.slint");
+        let page = include_str!("../../ui/pages/invitation-gift-page.slint");
+        let top_bar = include_str!("../../ui/components/top-bar.slint");
+        let app = include_str!("../../ui/app.slint");
+        let account_api = include_str!("api/account.rs");
+        let callback = include_str!("callbacks/invitation_code.rs");
+
+        assert!(state.contains("callback submit-invitation-code();"));
+        assert!(profile.contains("AppState.profile-section == \"invitation\""));
+        assert!(profile.contains("请填写邀请码"));
+        assert!(page.contains("点击确认后，将由服务端判断邀请码是否正确"));
+        assert!(top_bar.contains("AppState.navigate(\"invitation-gift\")"));
+        assert!(top_bar.contains("interval: 5s"));
+        assert!(top_bar.contains("running: root.wobbling"));
+        assert!(top_bar.contains("function wobble-angle() -> angle"));
+        assert!(app.contains("AppState.page == \"invitation-gift\""));
+        assert!(account_api.contains("/v1/account/invitation-code"));
+        assert!(callback.contains("api.submit_invitation_code(&code)"));
+        assert!(!callback.contains("ELUNVI-2026"));
+    }
+
+    #[test]
+    fn invitation_gift_asset_is_packaged_as_a_compact_transparent_icon() {
+        let icon = image::load_from_memory(include_bytes!("../../assets/invitation-gift.png"))
+            .expect("decode invitation gift icon")
+            .to_rgba8();
+
+        assert_eq!(icon.dimensions(), (256, 256));
+        assert_eq!(icon.get_pixel(0, 0).0[3], 0);
+    }
+
+    #[test]
     fn legacy_local_store_shows_the_first_launch_contact_popup() {
         let data: LocalStoreData =
             serde_json::from_str("{}").expect("deserialize legacy local store");

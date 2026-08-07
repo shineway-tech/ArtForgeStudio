@@ -133,6 +133,11 @@ struct EmailBindingRequest<'a> {
     code: &'a str,
 }
 
+#[derive(Serialize)]
+struct InvitationCodeRequest<'a> {
+    code: &'a str,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct ModelPrice {
     pub(crate) quality: String,
@@ -405,6 +410,29 @@ impl AccountApi {
             )
             .map(|response| response.data)
     }
+
+    pub(crate) fn submit_invitation_code(&self, code: &str) -> Result<Option<String>, ApiError> {
+        let body = serde_json::to_value(InvitationCodeRequest { code }).map_err(|error| {
+            ApiError::Protocol {
+                message: error.to_string(),
+                request_id: None,
+            }
+        })?;
+        self.client
+            .authenticated_json::<Value>(
+                Method::POST,
+                "/v1/account/invitation-code",
+                Some(body),
+                None,
+            )
+            .map(|response| {
+                response
+                    .data
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+    }
 }
 
 fn credit_ledger_page(response: ApiResponse<Vec<CreditLedgerItem>>) -> CreditLedgerPage {
@@ -467,5 +495,15 @@ mod tests {
         let page = credit_ledger_page(response);
 
         assert_eq!(page.next_cursor, None);
+    }
+
+    #[test]
+    fn invitation_code_request_serializes_only_the_code() {
+        let body = serde_json::to_value(InvitationCodeRequest {
+            code: "ELUNVI-2026",
+        })
+        .expect("invitation-code request should serialize");
+
+        assert_eq!(body, serde_json::json!({ "code": "ELUNVI-2026" }));
     }
 }

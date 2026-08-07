@@ -378,6 +378,10 @@ export global AppState {
     in-out property <bool> profile-open: false;
     in-out property <string> profile-name: "";
     in-out property <string> profile-section: "login";
+    in-out property <string> invitation-code: "";
+    in-out property <bool> invitation-code-busy: false;
+    in-out property <bool> invitation-code-success: false;
+    in-out property <string> invitation-code-status: "";
     in-out property <bool> email-bound: false;
     in-out property <bool> email-bind-open: false;
     in-out property <string> email-bind-email: "";
@@ -496,6 +500,7 @@ export global AppState {
     callback logout-all();
     callback purchase-membership(string);
     callback revoke-session(string);
+    callback submit-invitation-code();
     callback start-wechat-binding();
     callback close-wechat-binding();
     callback unbind-wechat();

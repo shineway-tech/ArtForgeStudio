@@ -61,6 +61,9 @@ use wechat_binding_callbacks::*;
 #[path = "callbacks/email_binding.rs"]
 mod email_binding_callbacks;
 use email_binding_callbacks::*;
+#[path = "callbacks/invitation_code.rs"]
+mod invitation_code_callbacks;
+use invitation_code_callbacks::*;
 #[path = "callbacks/payment.rs"]
 mod payment_callbacks;
 use payment_callbacks::*;

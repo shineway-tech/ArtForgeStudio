@@ -75,6 +75,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
     wire_auth_callbacks(app, context.clone());
     wire_wechat_binding_callbacks(app, context.clone());
     wire_email_binding_callbacks(app, context.clone());
+    wire_invitation_code_callbacks(app, context.clone());
     wire_payment_callbacks(app, context.clone());
     wire_credit_callbacks(app, context.clone());
     wire_custom_prompt_callbacks(app, context.clone());

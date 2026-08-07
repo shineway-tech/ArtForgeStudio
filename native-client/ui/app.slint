@@ -25,6 +25,7 @@ import { CreditsPage } from "pages/credits-page.slint";
 import { CustomPromptEditorPage } from "pages/custom-prompt-editor-page.slint";
 import { InspirationPage } from "pages/inspiration-page.slint";
 import { InfiniteCanvasPage } from "pages/infinite-canvas-page.slint";
+import { InvitationGiftPage } from "pages/invitation-gift-page.slint";
 import { NotificationsPage } from "pages/notifications-page.slint";
 import { SettingsPage } from "pages/settings-page.slint";
 import { StudioSplitPage } from "pages/studio-split-page.slint";
@@ -84,6 +85,7 @@ export component AppWindow inherits Window {
                 if AppState.page == "assets": AssetsPage { width: parent.width; height: parent.height; }
                 if AppState.page == "inspiration": InspirationPage { width: parent.width; height: parent.height; }
                 if AppState.page == "notifications": NotificationsPage { width: parent.width; height: parent.height; }
+                if AppState.page == "invitation-gift": InvitationGiftPage { width: parent.width; height: parent.height; }
                 if AppState.page == "credits": CreditsPage {
                     width: parent.width;
                     height: parent.height;

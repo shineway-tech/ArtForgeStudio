@@ -1512,6 +1512,10 @@ fn sign_out_locally(app: &AppWindow, revoked: bool) {
     state.set_email_bind_busy(false);
     state.set_email_bind_countdown(0);
     state.set_email_bind_status("".into());
+    state.set_invitation_code("".into());
+    state.set_invitation_code_busy(false);
+    state.set_invitation_code_success(false);
+    state.set_invitation_code_status("".into());
     state.set_auth_error(if revoked {
         "登录状态已失效，请重新登录".into()
     } else {
