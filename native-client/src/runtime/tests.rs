@@ -2147,7 +2147,9 @@ mod tests {
         assert!(!prompt.contains("InlineCardChooser"));
         assert!(panel.contains("work-scroll := ScrollView"));
         assert!(panel.contains("viewport-height: max(self.visible-height, work-content.height)"));
-        assert!(panel.contains("y: settings-row.y + settings-row.height + 24px"));
+        assert!(panel.contains("generate-action := GenerateActionButton"));
+        assert!(panel.contains("y: settings-row.y + settings-row.height + 52px"));
+        assert!(panel.contains("y: generate-action.y + generate-action.height + 14px"));
         assert!(!panel.contains("parent.height - 266px - negative-editor.height"));
         assert!(panel.contains("negative-editor := NegativePromptEditor"));
         assert!(negative.contains("height: AppState.negative-prompt-expanded ? 132px : 46px"));
