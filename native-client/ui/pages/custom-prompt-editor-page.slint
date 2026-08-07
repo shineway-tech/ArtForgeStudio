@@ -2,6 +2,7 @@ import { ScrollView } from "std-widgets.slint";
 import { AppState } from "../app-state.slint";
 import { PillButton } from "../components/pill-button.slint";
 import { AppTheme } from "../theme.slint";
+import { ReferenceItem } from "../types.slint";
 
 component PromptCategorySelect {
     in-out property <string> value: "default";
@@ -133,6 +134,58 @@ component FormatOption {
             height: parent.height;
             mouse-cursor: pointer;
             clicked => { root.selected(); }
+        }
+    }
+}
+
+component CustomPromptReferenceThumb {
+    in property <ReferenceItem> item;
+    callback open-image();
+    callback remove-image();
+
+    Rectangle {
+        background: AppTheme.panel-soft;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: thumb-touch.has-hover ? AppTheme.accent : AppTheme.border;
+        clip: true;
+
+        Image {
+            x: 4px;
+            y: 4px;
+            width: parent.width - 8px;
+            height: parent.height - 8px;
+            source: root.item.image;
+            image-fit: cover;
+        }
+        thumb-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.open-image(); }
+        }
+        Rectangle {
+            x: parent.width - 28px;
+            y: 4px;
+            width: 24px;
+            height: 24px;
+            background: delete-touch.has-hover ? #dc2626 : #ef4444;
+            border-radius: 12px;
+            Image {
+                x: 5px;
+                y: 5px;
+                width: 14px;
+                height: 14px;
+                source: @image-url("../../assets/icons/trash.svg");
+                colorize: #ffffff;
+                image-fit: contain;
+            }
+            delete-touch := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: pointer;
+                clicked => { root.remove-image(); }
+            }
         }
     }
 }
@@ -312,6 +365,7 @@ export component CustomPromptEditorPage {
                             horizontal-stretch: 1;
                             height: 36px;
                             text: AppState.en ? "Upload image" : "上传参考图";
+                            disabled: AppState.custom-prompt-reference-items.length >= 8;
                             clicked => { AppState.choose-custom-prompt-reference(); }
                         }
                         PillButton {
@@ -320,22 +374,24 @@ export component CustomPromptEditorPage {
                             text: AppState.custom-prompt-analyzing
                                 ? (AppState.en ? "Analyzing..." : "分析中...")
                                 : (AppState.en ? "AI style analysis" : "AI 分析风格");
-                            disabled: AppState.custom-prompt-reference-path == "" || AppState.custom-prompt-analyzing;
+                            disabled: AppState.custom-prompt-reference-items.length == 0 || AppState.custom-prompt-analyzing;
                             clicked => { AppState.analyze-custom-prompt-reference(); }
                         }
                     }
-                    Rectangle {
+                    reference-panel := Rectangle {
                         x: 20px;
                         y: 340px;
                         width: parent.width - 40px;
                         height: max(116px, parent.height - 360px);
+                        property <length> thumb-gap: 8px;
+                        property <length> thumb-size: min(96px, max(52px, (self.width - 24px - self.thumb-gap * 3) / 4));
                         background: AppTheme.panel;
                         border-radius: 8px;
                         border-width: 1px;
                         border-color: AppTheme.border;
                         clip: true;
 
-                        if AppState.custom-prompt-reference-path == "": Text {
+                        if AppState.custom-prompt-reference-items.length == 0: Text {
                             x: 14px;
                             width: parent.width - 28px;
                             height: parent.height;
@@ -348,33 +404,14 @@ export component CustomPromptEditorPage {
                             horizontal-alignment: center;
                             vertical-alignment: center;
                         }
-                        if AppState.custom-prompt-reference-path != "": Image {
-                            x: 12px;
-                            y: 12px;
-                            width: min(132px, parent.width * 0.42);
-                            height: parent.height - 24px;
-                            source: AppState.custom-prompt-reference-image;
-                            image-fit: contain;
-                        }
-                        if AppState.custom-prompt-reference-path != "": Text {
-                            x: min(156px, parent.width * 0.48);
-                            y: 16px;
-                            width: parent.width - self.x - 16px;
-                            height: parent.height - 66px;
-                            text: AppState.custom-prompt-reference-path;
-                            color: AppTheme.muted;
-                            font-size: 12px;
-                            font-weight: 400;
-                            wrap: word-wrap;
-                            overflow: elide;
-                        }
-                        if AppState.custom-prompt-reference-path != "": PillButton {
-                            x: parent.width - 88px;
-                            y: parent.height - 44px;
-                            width: 72px;
-                            height: 30px;
-                            text: AppState.en ? "Remove" : "移除";
-                            clicked => { AppState.clear-custom-prompt-reference(); }
+                        for item[index] in AppState.custom-prompt-reference-items: CustomPromptReferenceThumb {
+                            x: 12px + Math.mod(index, 4) * (reference-panel.thumb-size + reference-panel.thumb-gap);
+                            y: 12px + floor(index / 4) * (reference-panel.thumb-size + reference-panel.thumb-gap);
+                            width: reference-panel.thumb-size;
+                            height: reference-panel.thumb-size;
+                            item: item;
+                            open-image => { AppState.open-custom-prompt-reference(item.id); }
+                            remove-image => { AppState.remove-custom-prompt-reference(item.id); }
                         }
                     }
                 }

@@ -1,7 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { AppState } from "../app-state.slint";
 import { GenerateActionButton } from "generate-action-button.slint";
-import { InlineCardChooser } from "inline-card-chooser.slint";
 import { NegativePromptEditor } from "negative-prompt-editor.slint";
 import { PromptComposer } from "prompt-composer.slint";
 import { SmallToggle } from "small-toggle.slint";
@@ -73,14 +72,9 @@ export component StudioWorkPanel {
                     y: composer.y + composer.height + 12px;
                     width: parent.width - 44px;
                 }
-                chooser := InlineCardChooser {
-                    x: 22px;
-                    y: negative-editor.y + negative-editor.height + 12px;
-                    width: parent.width - 44px;
-                }
                 GenerateActionButton {
                     x: 22px;
-                    y: chooser.y + chooser.height + 24px;
+                    y: negative-editor.y + negative-editor.height + 24px;
                     width: parent.width - 44px;
                     height: 56px;
                     disabled: !AppState.generating && AppState.reasoning-model == "";
@@ -94,7 +88,7 @@ export component StudioWorkPanel {
                 }
                 status-line := Rectangle {
                     x: 22px;
-                    y: chooser.y + chooser.height + 94px;
+                    y: negative-editor.y + negative-editor.height + 94px;
                     width: parent.width - 44px;
                     height: 18px;
                     background: transparent;

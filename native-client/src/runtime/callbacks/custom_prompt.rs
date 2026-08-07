@@ -59,6 +59,7 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                 .get(&prompt)
                 .cloned()
                 .unwrap_or_default();
+            let reference_paths = custom_prompt_profile_reference_paths(&profile);
             let state = app.global::<AppState>();
             let fallback_name = prompt
                 .split_whitespace()
@@ -82,12 +83,21 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
             );
             state.set_custom_prompt_format(normalized_custom_prompt_format(&profile.format).into());
             state.set_custom_prompt_negative(profile.negative_prompt.into());
-            state.set_custom_prompt_reference_path(profile.reference_path.clone().into());
-            state.set_custom_prompt_reference_image(if profile.reference_path.is_empty() {
-                Image::default()
-            } else {
-                load_image(Path::new(&profile.reference_path)).unwrap_or_default()
-            });
+            set_custom_prompt_references(
+                &app,
+                reference_paths
+                    .into_iter()
+                    .filter_map(|path| {
+                        load_image(Path::new(&path))
+                            .ok()
+                            .map(|image| ReferenceItem {
+                                id: path.clone().into(),
+                                image,
+                                source_path: path.into(),
+                            })
+                    })
+                    .collect(),
+            );
             state.set_custom_prompt_message("".into());
             open_custom_prompt_editor(&app);
         });
@@ -109,28 +119,49 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let Some(path) = rfd::FileDialog::new()
+            let Some(paths) = rfd::FileDialog::new()
                 .add_filter("Images", crate::image_formats::picker_image_extensions())
-                .pick_file()
+                .pick_files()
             else {
                 return;
             };
             let state = app.global::<AppState>();
-            match load_image(&path) {
-                Ok(image) => {
-                    state.set_custom_prompt_reference_path(path.display().to_string().into());
-                    state.set_custom_prompt_reference_image(image);
-                    state.set_custom_prompt_message("".into());
+            let model = state.get_custom_prompt_reference_items();
+            let mut items = (0..model.row_count())
+                .filter_map(|index| model.row_data(index))
+                .collect::<Vec<_>>();
+            let mut rejected = false;
+            for path in paths {
+                if items.len() >= MAX_CUSTOM_PROMPT_REFERENCES {
+                    break;
                 }
-                Err(_) => state.set_custom_prompt_message(
-                    if state.get_language().as_str() == "en" {
-                        "The selected file is not a supported image"
-                    } else {
-                        "所选文件不是受支持的图片"
-                    }
-                    .into(),
-                ),
+                let path_text = path.display().to_string();
+                if items
+                    .iter()
+                    .any(|item| item.source_path.as_str().eq_ignore_ascii_case(&path_text))
+                {
+                    continue;
+                }
+                match load_image(&path) {
+                    Ok(image) => items.push(ReferenceItem {
+                        id: path_text.clone().into(),
+                        image,
+                        source_path: path_text.into(),
+                    }),
+                    Err(_) => rejected = true,
+                }
             }
+            set_custom_prompt_references(&app, items);
+            state.set_custom_prompt_message(if rejected {
+                if state.get_language().as_str() == "en" {
+                    "Some selected files are not supported images"
+                } else {
+                    "部分所选文件不是受支持的图片"
+                }
+                .into()
+            } else {
+                "".into()
+            });
         });
     }
 
@@ -140,9 +171,60 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            set_custom_prompt_references(&app, Vec::new());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_remove_custom_prompt_reference(move |reference_id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             let state = app.global::<AppState>();
-            state.set_custom_prompt_reference_path("".into());
-            state.set_custom_prompt_reference_image(Image::default());
+            let model = state.get_custom_prompt_reference_items();
+            let items = (0..model.row_count())
+                .filter_map(|index| model.row_data(index))
+                .filter(|item| item.id != reference_id)
+                .collect::<Vec<_>>();
+            set_custom_prompt_references(&app, items);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_open_custom_prompt_reference(move |reference_id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            let model = state.get_custom_prompt_reference_items();
+            let Some(item) = (0..model.row_count())
+                .filter_map(|index| model.row_data(index))
+                .find(|item| item.id == reference_id)
+            else {
+                return;
+            };
+            state.set_viewer_id(item.id);
+            state.set_viewer_source("reference".into());
+            state.set_viewer_image(item.image);
+            state.set_viewer_title(if state.get_language().as_str() == "en" {
+                "Reference image".into()
+            } else {
+                "参考图".into()
+            });
+            state.set_viewer_prompt("".into());
+            state.set_viewer_prompt_lines(1);
+            state.set_viewer_time("".into());
+            state.set_viewer_ratio("".into());
+            state.set_viewer_quality("".into());
+            state.set_viewer_model("".into());
+            state.set_viewer_width(0);
+            state.set_viewer_height(0);
+            state.set_viewer_cutout_done(false);
+            state.set_viewer_remove_black_done(false);
+            state.set_viewer_upscale_done(false);
+            state.set_viewer_open(true);
         });
     }
 
@@ -249,6 +331,7 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
             }
             let timestamp = Local::now().format("%Y-%m-%d %H:%M").to_string();
             let format = normalized_custom_prompt_format(state.get_custom_prompt_format().as_str());
+            let reference_paths = custom_prompt_reference_paths(&app);
             let profile = CustomPromptProfile {
                 name,
                 category: normalized_custom_prompt_category(
@@ -260,7 +343,8 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                 } else {
                     String::new()
                 },
-                reference_path: state.get_custom_prompt_reference_path().to_string(),
+                reference_path: reference_paths.first().cloned().unwrap_or_default(),
+                reference_paths,
             };
             let result = {
                 let mut store = store.borrow_mut();
@@ -441,6 +525,7 @@ fn poll_custom_prompt_reference_analysis(
         state.set_custom_prompt_analyzing(false);
         match result {
             Ok(analysis) => {
+                let analysis = normalize_prompt_task_result(&analysis);
                 let current = state.get_custom_prompt_input().trim().to_string();
                 state.set_custom_prompt_input(
                     if current.is_empty() {
@@ -464,6 +549,43 @@ fn poll_custom_prompt_reference_analysis(
     });
 }
 
+const MAX_CUSTOM_PROMPT_REFERENCES: usize = 8;
+
+fn custom_prompt_profile_reference_paths(profile: &CustomPromptProfile) -> Vec<String> {
+    let source = if profile.reference_paths.is_empty() {
+        std::slice::from_ref(&profile.reference_path)
+    } else {
+        profile.reference_paths.as_slice()
+    };
+    source
+        .iter()
+        .filter(|path| !path.trim().is_empty())
+        .take(MAX_CUSTOM_PROMPT_REFERENCES)
+        .cloned()
+        .collect()
+}
+
+fn custom_prompt_reference_paths(app: &AppWindow) -> Vec<String> {
+    let model = app.global::<AppState>().get_custom_prompt_reference_items();
+    (0..model.row_count())
+        .filter_map(|index| model.row_data(index))
+        .map(|item| item.source_path.to_string())
+        .take(MAX_CUSTOM_PROMPT_REFERENCES)
+        .collect()
+}
+
+fn set_custom_prompt_references(app: &AppWindow, items: Vec<ReferenceItem>) {
+    let state = app.global::<AppState>();
+    if let Some(first) = items.first() {
+        state.set_custom_prompt_reference_path(first.source_path.clone());
+        state.set_custom_prompt_reference_image(first.image.clone());
+    } else {
+        state.set_custom_prompt_reference_path("".into());
+        state.set_custom_prompt_reference_image(Image::default());
+    }
+    state.set_custom_prompt_reference_items(ModelRc::new(VecModel::from(items)));
+}
+
 fn reset_custom_prompt_editor(app: &AppWindow) {
     let state = app.global::<AppState>();
     state.set_custom_prompt_name("".into());
@@ -471,8 +593,7 @@ fn reset_custom_prompt_editor(app: &AppWindow) {
     state.set_custom_prompt_category("default".into());
     state.set_custom_prompt_format("json".into());
     state.set_custom_prompt_negative("".into());
-    state.set_custom_prompt_reference_path("".into());
-    state.set_custom_prompt_reference_image(Image::default());
+    set_custom_prompt_references(app, Vec::new());
     state.set_custom_prompt_message("".into());
     state.set_custom_prompt_analyzing(false);
     state.set_custom_prompt_editing_original("".into());

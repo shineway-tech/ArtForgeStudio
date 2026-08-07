@@ -208,23 +208,26 @@ export component ViewerOverlay {
                     return reject;
                 }
             }
-            if image-touch.has-hover || root.image-fullscreen: fullscreen-button := Rectangle {
+            fullscreen-button := Rectangle {
                 x: parent.width - 52px;
                 y: 12px;
                 width: 40px;
                 height: 40px;
+                opacity: image-touch.has-hover || fullscreen-touch.has-hover || root.image-fullscreen ? 1 : 0;
                 background: fullscreen-touch.has-hover ? #111827e8 : #111827b8;
                 border-radius: 8px;
                 border-width: 1px;
                 border-color: #ffffff38;
-                Text {
-                    width: parent.width;
-                    height: parent.height;
-                    text: root.image-fullscreen ? "↙" : "⛶";
-                    color: #ffffff;
-                    font-size: 19px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
+                Image {
+                    x: 10px;
+                    y: 10px;
+                    width: 20px;
+                    height: 20px;
+                    source: root.image-fullscreen
+                        ? @image-url("../../assets/icons/restore.svg")
+                        : @image-url("../../assets/icons/fit.svg");
+                    colorize: #ffffff;
+                    image-fit: contain;
                 }
                 fullscreen-touch := TouchArea {
                     width: parent.width;
@@ -379,34 +382,30 @@ export component ViewerOverlay {
                 Text { text: AppState.viewer-time; color: AppTheme.muted; font-size: 12px; font-weight: 400; }
                 Rectangle { height: 1px; background: AppTheme.border; }
                 if AppState.viewer-source != "inspiration": cutout-tools-card := Rectangle {
-                    height: 112px;
+                    height: 62px;
                     background: AppTheme.panel-soft;
                     border-radius: 10px;
                     border-width: 1px;
                     border-color: AppTheme.border;
-                    GridLayout {
+                    HorizontalLayout {
                         x: 8px;
                         y: 8px;
                         width: parent.width - 16px;
                         height: parent.height - 16px;
                         spacing: 4px;
-                        Row {
-                            ViewerToolActionButton {
-                                icon: @image-url("../../assets/icons/fit.svg");
-                                label: AppState.en ? "Cutout" : "抠图";
-                                disabled: AppState.viewer-processing || AppState.cutout-processing || AppState.viewer-cutout-done;
-                                clicked => { AppState.viewer-cutout-image(); }
-                            }
-                            Rectangle { background: transparent; }
+                        ViewerToolActionButton {
+                            horizontal-stretch: 1;
+                            icon: @image-url("../../assets/icons/fit.svg");
+                            label: AppState.en ? "Cutout" : "抠图";
+                            disabled: AppState.viewer-processing || AppState.cutout-processing || AppState.viewer-cutout-done;
+                            clicked => { AppState.viewer-cutout-image(); }
                         }
-                        Row {
-                            ViewerToolActionButton {
-                                icon: @image-url("../../assets/icons/focus.svg");
-                                label: AppState.en ? "Clear Upscale" : "清晰放大";
-                                disabled: AppState.viewer-processing || AppState.viewer-upscale-done;
-                                clicked => { AppState.open-upscale-dialog(); }
-                            }
-                            Rectangle { background: transparent; }
+                        ViewerToolActionButton {
+                            horizontal-stretch: 1;
+                            icon: @image-url("../../assets/icons/focus.svg");
+                            label: AppState.en ? "Clear Upscale" : "清晰放大";
+                            disabled: AppState.viewer-processing || AppState.viewer-upscale-done;
+                            clicked => { AppState.open-upscale-dialog(); }
                         }
                     }
                 }

@@ -101,6 +101,7 @@ export global AppState {
     in-out property <string> custom-prompt-negative: "";
     in-out property <string> custom-prompt-reference-path: "";
     in-out property <image> custom-prompt-reference-image;
+    in-out property <[ReferenceItem]> custom-prompt-reference-items: [];
     in-out property <string> custom-prompt-message: "";
     in-out property <bool> custom-prompt-analyzing: false;
     in-out property <string> custom-prompt-editing-original: "";
@@ -531,6 +532,8 @@ export global AppState {
     callback choose-custom-prompt-reference();
     callback analyze-custom-prompt-reference();
     callback clear-custom-prompt-reference();
+    callback remove-custom-prompt-reference(string);
+    callback open-custom-prompt-reference(string);
     callback choose-watermark-source();
     callback add-watermark-source-from-drag(string, string) -> bool;
     callback start-watermark-removal();

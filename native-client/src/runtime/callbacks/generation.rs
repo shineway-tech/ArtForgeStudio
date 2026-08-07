@@ -487,34 +487,37 @@ fn poll_backend_prompt_result(
         state.set_optimizing_prompt(false);
         state.set_translating_prompt(false);
         match result {
-            Ok(prompt) => match target {
-                PromptResultTarget::Composer => {
-                    state.set_prompt(prompt.into());
-                    state.set_generation_status(if optimize {
-                        "提示词优化完成".into()
-                    } else {
-                        "提示词翻译完成".into()
-                    });
-                }
-                PromptResultTarget::CustomPrompt => {
-                    state.set_custom_prompt_input(prompt.into());
-                    state.set_generation_status("提示词内容优化完成".into());
-                }
-                PromptResultTarget::CanvasNode { store, id } => {
-                    let position = store
-                        .borrow()
-                        .canvas_notes
-                        .iter()
-                        .find(|node| node.id == id && node.kind == "text")
-                        .map(|node| (node.x, node.y));
-                    if let Some((x, y)) = position {
-                        state.invoke_update_canvas_node(id.into(), prompt.into(), x, y);
-                        state.set_generation_status("文字节点提示词优化完成".into());
-                    } else {
-                        state.set_generation_status("文字节点已不存在，未写入优化结果".into());
+            Ok(prompt) => {
+                let prompt = normalize_prompt_task_result(&prompt);
+                match target {
+                    PromptResultTarget::Composer => {
+                        state.set_prompt(prompt.into());
+                        state.set_generation_status(if optimize {
+                            "提示词优化完成".into()
+                        } else {
+                            "提示词翻译完成".into()
+                        });
+                    }
+                    PromptResultTarget::CustomPrompt => {
+                        state.set_custom_prompt_input(prompt.into());
+                        state.set_generation_status("提示词内容优化完成".into());
+                    }
+                    PromptResultTarget::CanvasNode { store, id } => {
+                        let position = store
+                            .borrow()
+                            .canvas_notes
+                            .iter()
+                            .find(|node| node.id == id && node.kind == "text")
+                            .map(|node| (node.x, node.y));
+                        if let Some((x, y)) = position {
+                            state.invoke_update_canvas_node(id.into(), prompt.into(), x, y);
+                            state.set_generation_status("文字节点提示词优化完成".into());
+                        } else {
+                            state.set_generation_status("文字节点已不存在，未写入优化结果".into());
+                        }
                     }
                 }
-            },
+            }
             Err(reason) => {
                 state.set_generation_status(format!("提示词处理失败：{reason}").into());
                 if !optimize {
@@ -523,4 +526,45 @@ fn poll_backend_prompt_result(
             }
         }
     });
+}
+
+pub(super) fn normalize_prompt_task_result(raw: &str) -> String {
+    let mut candidate = raw.trim().to_string();
+    for _ in 0..4 {
+        let trimmed = candidate.trim();
+        let unwrapped = if trimmed.starts_with('(') && trimmed.ends_with(')') {
+            trimmed[1..trimmed.len() - 1].trim()
+        } else {
+            trimmed
+        };
+        let Ok(value) = serde_json::from_str::<Value>(unwrapped) else {
+            return unwrapped.to_string();
+        };
+        let Some(decoded) = prompt_text_from_json(&value) else {
+            return unwrapped.to_string();
+        };
+        if decoded.trim() == unwrapped {
+            return decoded.trim().to_string();
+        }
+        candidate = decoded;
+    }
+    candidate.trim().to_string()
+}
+
+fn prompt_text_from_json(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(values) => values.iter().find_map(prompt_text_from_json),
+        Value::Object(object) => [
+            "prompt",
+            "result_prompt",
+            "optimized_prompt",
+            "content",
+            "text",
+            "chinese_prompt",
+        ]
+        .iter()
+        .find_map(|key| object.get(*key).and_then(prompt_text_from_json)),
+        _ => None,
+    }
 }

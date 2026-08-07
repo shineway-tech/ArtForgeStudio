@@ -580,6 +580,7 @@ mod tests {
                 format: "json".to_string(),
                 negative_prompt: "blur".to_string(),
                 reference_path: "reference.png".to_string(),
+                reference_paths: vec!["reference.png".to_string()],
             },
         );
         assert_eq!(
@@ -965,6 +966,7 @@ mod tests {
             "custom-prompt-negative",
             "custom-prompt-reference-path",
             "custom-prompt-reference-image",
+            "custom-prompt-reference-items",
         ] {
             assert!(state.contains(field), "missing state field {field}");
         }
@@ -980,16 +982,23 @@ mod tests {
         assert!(page.contains("提示词内容 *"));
         assert!(page.contains("反向提示词（仅 JSON 格式有效）"));
         assert!(page.contains("AppState.choose-custom-prompt-reference()"));
-        assert!(page.contains("AppState.clear-custom-prompt-reference()"));
+        assert!(page.contains("for item[index] in AppState.custom-prompt-reference-items"));
+        assert!(page.contains("Math.mod(index, 4)"));
+        assert!(page.contains("AppState.open-custom-prompt-reference(item.id)"));
+        assert!(page.contains("AppState.remove-custom-prompt-reference(item.id)"));
+        assert!(page.contains("AppState.custom-prompt-reference-items.length >= 8"));
+        assert!(!page.contains("text: AppState.custom-prompt-reference-path"));
         assert!(page.contains("AppState.close-custom-prompt-editor()"));
         assert!(state.contains("callback analyze-custom-prompt-reference();"));
         assert!(state.contains("callback close-custom-prompt-editor();"));
         assert!(page.contains("AppState.analyze-custom-prompt-reference();"));
-        assert!(page.contains(
-            "disabled: AppState.custom-prompt-reference-path == \"\" || AppState.custom-prompt-analyzing;"
-        ));
+        assert!(page.contains("disabled: AppState.custom-prompt-reference-items.length == 0"));
         assert!(!page.contains("等待服务端开放图片风格分析"));
         assert!(callbacks.contains("state.on_analyze_custom_prompt_reference"));
+        assert!(callbacks.contains("state.on_remove_custom_prompt_reference"));
+        assert!(callbacks.contains("state.on_open_custom_prompt_reference"));
+        assert!(callbacks.contains(".pick_files()"));
+        assert!(callbacks.contains("MAX_CUSTOM_PROMPT_REFERENCES: usize = 8"));
         assert!(!page.contains("Analyzed locally; the image is not uploaded"));
         assert!(!page.contains("由本地客户端分析，不会上传参考图"));
         assert!(state.contains("custom-prompt-analyzing"));
@@ -1010,6 +1019,19 @@ mod tests {
         assert!(callbacks.contains("reference_file_ids: Some(vec![file_id.clone()])"));
         assert!(callbacks.contains("api.delete_reference(&file_id)"));
         assert!(callbacks.contains("IMAGE_POLL_INTERVAL_MS"));
+    }
+
+    #[test]
+    fn prompt_task_results_decode_json_and_unicode_wrappers() {
+        assert_eq!(
+            normalize_prompt_task_result(r#"("\u5730\u7262")"#),
+            "地牢"
+        );
+        assert_eq!(
+            normalize_prompt_task_result(r#"{"result_prompt":"\u6e38\u620f UI"}"#),
+            "游戏 UI"
+        );
+        assert_eq!(normalize_prompt_task_result("普通提示词"), "普通提示词");
     }
 
     #[test]
@@ -2098,15 +2120,25 @@ mod tests {
         assert!(chooser.contains("text: AppState.en ? \"Quality\" : \"质量\""));
         assert!(chooser.contains("text: AppState.en ? \"Aspect ratio\" : \"宽高比\""));
         assert!(chooser.contains("text: AppState.en ? \"Generation count\" : \"生成张数\""));
+        assert!(!chooser.contains("text: \"W\""));
+        assert!(!chooser.contains("text: \"H\""));
+        assert!(!chooser.contains("image-width-text"));
+        assert!(!chooser.contains("image-height-text"));
         assert!(chooser.contains("source: @image-url(\"../../assets/icons/controls.svg\")"));
         assert!(chooser.contains("height: 42px;"));
         assert!(chooser.contains("y: 0px - self.height - 8px;"));
         assert_eq!(chooser.matches("ImageRatioOption { value:").count(), 11);
         assert_eq!(chooser.matches("ImageSettingPill { text:").count(), 7);
-        assert!(panel.contains("InlineCardChooser {"));
+        assert!(!panel.contains("InlineCardChooser {"));
+        assert!(prompt.contains("import { InlineCardChooser }"));
+        assert!(prompt.contains("InlineCardChooser {"));
+        assert!(prompt.contains("width: parent.width - 48px"));
+        assert!(prompt.contains("CreationModeChip {"));
+        assert!(prompt.contains("StyleModeChip {"));
+        assert!(prompt.contains("AdvancedControlChip {"));
         assert!(panel.contains("work-scroll := ScrollView"));
         assert!(panel.contains("viewport-height: max(self.visible-height, work-content.height)"));
-        assert!(panel.contains("y: chooser.y + chooser.height + 24px"));
+        assert!(panel.contains("y: negative-editor.y + negative-editor.height + 24px"));
         assert!(!panel.contains("parent.height - 266px - negative-editor.height"));
         assert!(panel.contains("negative-editor := NegativePromptEditor"));
         assert!(negative.contains("height: AppState.negative-prompt-expanded ? 132px : 46px"));
@@ -3533,6 +3565,11 @@ mod tests {
         assert!(viewer.contains("property <float> image-zoom: 1.0;"));
         assert!(viewer.contains("max(0.5, min(3.0, root.image-zoom"));
         assert!(viewer.contains("root.image-fullscreen = !root.image-fullscreen;"));
+        assert!(viewer.contains("fullscreen-button := Rectangle"));
+        assert!(!viewer.contains("if image-touch.has-hover: fullscreen-button"));
+        assert!(viewer.contains("image-touch.has-hover || fullscreen-touch.has-hover || root.image-fullscreen"));
+        assert!(viewer.contains("@image-url(\"../../assets/icons/fit.svg\")"));
+        assert!(viewer.contains("@image-url(\"../../assets/icons/restore.svg\")"));
         assert!(viewer.contains("root.detail-collapsed = true;"));
         assert!(viewer.contains("root.detail-collapsed = false;"));
         assert!(viewer.contains("if AppState.viewer-source != \"inspiration\": PillButton"));
@@ -3686,8 +3723,11 @@ mod tests {
         assert!(!viewer.contains("Rectangle { vertical-stretch: 1; }"));
         assert!(prompt_scroll_index < tools_index);
         assert!(tools_index < repeat_index);
-        assert!(tools.contains("GridLayout"));
-        assert_eq!(tools.matches("Row {").count(), 2);
+        assert!(tools.contains("HorizontalLayout"));
+        assert!(!tools.contains("GridLayout"));
+        assert!(!tools.contains("Row {"));
+        assert_eq!(tools.matches("ViewerToolActionButton {").count(), 2);
+        assert_eq!(tools.matches("horizontal-stretch: 1;").count(), 2);
         assert!(tools.contains("label: AppState.en ? \"Cutout\" : \"抠图\""));
         assert!(!tools.contains("label: AppState.en ? \"Remove Black\" : \"去黑\""));
         assert!(tools.contains("label: AppState.en ? \"Clear Upscale\" : \"清晰放大\""));

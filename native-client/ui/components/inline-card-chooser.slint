@@ -141,7 +141,7 @@ export component InlineCardChooser {
 
     settings-popup := PopupWindow {
         width: min(378px, root.width);
-        height: 488px;
+        height: 444px;
         x: (root.width - self.width) / 2;
         y: 0px - self.height - 8px;
         close-policy: close-on-click-outside;
@@ -153,21 +153,17 @@ export component InlineCardChooser {
             border-color: AppTheme.border;
 
             Text { x: 18px; y: 10px; width: parent.width - 36px; height: 28px; text: AppState.en ? "Image settings" : "图片设置"; color: AppTheme.text; font-size: 16px; font-weight: 600; vertical-alignment: center; }
-            Rectangle { x: 18px; y: 44px; width: (parent.width - 60px) / 2; height: 36px; background: AppTheme.panel-soft; border-radius: 10px; Text { x: 12px; width: 26px; height: parent.height; text: "W"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; } Text { x: 48px; width: parent.width - 60px; height: parent.height; text: root.image-width-text(); color: AppTheme.text; font-size: 13px; vertical-alignment: center; } }
-            Text { x: (parent.width - 24px) / 2; y: 44px; width: 24px; height: 36px; text: "↔"; color: AppTheme.muted; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
-            Rectangle { x: (parent.width + 24px) / 2; y: 44px; width: (parent.width - 60px) / 2; height: 36px; background: AppTheme.panel-soft; border-radius: 10px; Text { x: 12px; width: 26px; height: parent.height; text: "H"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; } Text { x: 48px; width: parent.width - 60px; height: parent.height; text: root.image-height-text(); color: AppTheme.text; font-size: 13px; vertical-alignment: center; } }
-
-            Text { x: 18px; y: 88px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Quality" : "质量"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; }
+            Text { x: 18px; y: 44px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Quality" : "质量"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; }
             HorizontalLayout {
-                x: 18px; y: 114px; width: parent.width - 36px; height: 36px; spacing: 10px;
+                x: 18px; y: 70px; width: parent.width - 36px; height: 36px; spacing: 10px;
                 ImageSettingPill { text: "1K"; selected: AppState.quality == "1K"; clicked => { AppState.quality = "1K"; } }
                 ImageSettingPill { text: "2K"; selected: AppState.quality == "2K"; clicked => { AppState.quality = "2K"; } }
                 ImageSettingPill { text: "4K"; selected: AppState.quality == "4K"; clicked => { AppState.quality = "4K"; } }
             }
 
-            Text { x: 18px; y: 158px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Aspect ratio" : "宽高比"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; }
+            Text { x: 18px; y: 114px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Aspect ratio" : "宽高比"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; }
             GridLayout {
-                x: 18px; y: 184px; width: parent.width - 36px; height: 208px; spacing: 8px;
+                x: 18px; y: 140px; width: parent.width - 36px; height: 208px; spacing: 8px;
                 Row {
                     ImageRatioOption { value: "1:1"; selected: AppState.ratio == "1:1"; clicked => { AppState.ratio = "1:1"; } }
                     ImageRatioOption { value: "3:2"; selected: AppState.ratio == "3:2"; clicked => { AppState.ratio = "3:2"; } }
@@ -188,9 +184,9 @@ export component InlineCardChooser {
                 }
             }
 
-            Text { x: 18px; y: 402px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Generation count" : "生成张数"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; }
+            Text { x: 18px; y: 358px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Generation count" : "生成张数"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; }
             HorizontalLayout {
-                x: 18px; y: 430px; width: parent.width - 36px; height: 36px; spacing: 10px;
+                x: 18px; y: 386px; width: parent.width - 36px; height: 36px; spacing: 10px;
                 ImageSettingPill { text: AppState.en ? "1 image" : "1张"; selected: AppState.count == 1; clicked => { AppState.count = 1; } }
                 ImageSettingPill { text: AppState.en ? "2 images" : "2张"; selected: AppState.count == 2; clicked => { AppState.count = 2; } }
                 ImageSettingPill { text: AppState.en ? "3 images" : "3张"; selected: AppState.count == 3; clicked => { AppState.count = 3; } }
@@ -205,21 +201,4 @@ export component InlineCardChooser {
             + (AppState.en ? " images" : "张");
     }
 
-    function image-width-text() -> string {
-        if AppState.ratio == "2:3" { return "680"; }
-        if AppState.ratio == "3:4" { return "768"; }
-        if AppState.ratio == "9:16" { return "576"; }
-        if AppState.ratio == "1:2" { return "512"; }
-        if AppState.ratio == "9:21" { return "440"; }
-        return "1024";
-    }
-
-    function image-height-text() -> string {
-        if AppState.ratio == "3:2" { return "680"; }
-        if AppState.ratio == "4:3" { return "768"; }
-        if AppState.ratio == "16:9" { return "576"; }
-        if AppState.ratio == "2:1" { return "512"; }
-        if AppState.ratio == "21:9" { return "440"; }
-        return "1024";
-    }
 }

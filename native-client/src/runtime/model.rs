@@ -428,6 +428,8 @@ struct CustomPromptProfile {
     negative_prompt: String,
     #[serde(default)]
     reference_path: String,
+    #[serde(default)]
+    reference_paths: Vec<String>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
