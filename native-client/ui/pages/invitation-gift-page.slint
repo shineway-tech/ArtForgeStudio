@@ -212,32 +212,36 @@ export component InvitationGiftPage {
                     height: 122px;
                     background: transparent;
 
-                    RewardSummaryCard {
-                        width: (parent.width - 32px) / 3;
+                    HorizontalLayout {
+                        width: parent.width;
                         height: parent.height;
-                        title: AppState.en ? "My reward rate" : "我的返利比例";
-                        value: AppState.invitation-reward-rate;
-                        suffix: "%";
-                        note: AppState.en ? "Current promotional rate" : "当前暂定返利比例";
-                        highlighted: true;
-                    }
-                    RewardSummaryCard {
-                        x: (parent.width - 32px) / 3 + 16px;
-                        width: (parent.width - 32px) / 3;
-                        height: parent.height;
-                        title: AppState.en ? "Invited users" : "邀请人数";
-                        value: AppState.invitation-count;
-                        suffix: "";
-                        note: "";
-                    }
-                    RewardSummaryCard {
-                        x: ((parent.width - 32px) / 3 + 16px) * 2;
-                        width: (parent.width - 32px) / 3;
-                        height: parent.height;
-                        title: AppState.en ? "Historical rewards" : "历史返利额度";
-                        value: AppState.invitation-history-reward;
-                        suffix: "";
-                        note: "";
+                        spacing: 16px;
+
+                        RewardSummaryCard {
+                            horizontal-stretch: 1;
+                            height: parent.height;
+                            title: AppState.en ? "My reward rate" : "我的返利比例";
+                            value: AppState.invitation-reward-rate;
+                            suffix: "%";
+                            note: AppState.en ? "Current promotional rate" : "当前暂定返利比例";
+                            highlighted: true;
+                        }
+                        RewardSummaryCard {
+                            horizontal-stretch: 1;
+                            height: parent.height;
+                            title: AppState.en ? "Invited users" : "邀请人数";
+                            value: AppState.invitation-count;
+                            suffix: "";
+                            note: "";
+                        }
+                        RewardSummaryCard {
+                            horizontal-stretch: 1;
+                            height: parent.height;
+                            title: AppState.en ? "Historical rewards" : "历史返利额度";
+                            value: AppState.invitation-history-reward;
+                            suffix: "";
+                            note: "";
+                        }
                     }
                 }
 

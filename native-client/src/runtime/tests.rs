@@ -4110,6 +4110,14 @@ mod tests {
         assert!(page.contains("当前暂定返利比例"));
         assert!(page.contains("邀请人数"));
         assert!(page.contains("历史返利额度"));
+        let summary = page
+            .split("summary := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("invitation-card := Rectangle").next())
+            .expect("invitation reward summary");
+        assert!(summary.contains("HorizontalLayout"));
+        assert_eq!(summary.matches("RewardSummaryCard").count(), 3);
+        assert_eq!(summary.matches("horizontal-stretch: 1").count(), 3);
         assert!(page.contains("我的邀请码"));
         assert!(page.contains("复制邀请码"));
         assert!(page.contains("已邀请用户"));
