@@ -1061,8 +1061,15 @@ mod tests {
         assert!(composer.contains("event.mime-type == \"text/uri-list\""));
         assert!(composer.contains("event.mime-type == \"text/plain\""));
         assert!(composer.contains("AppState.add-reference-from-drag(event.mime-type, event.data)"));
-        assert!(composer.contains("y: root.prompt-input-y();"));
-        assert!(composer.contains("height: root.prompt-input-height();"));
+        let drop_layer = composer
+            .split("reference-drop := DropArea")
+            .nth(1)
+            .and_then(|value| value.split("if AppState.quote-title").next())
+            .expect("reference drop block");
+        assert!(drop_layer.contains("x: 0px;"));
+        assert!(drop_layer.contains("y: 0px;"));
+        assert!(drop_layer.contains("width: parent.width;"));
+        assert!(drop_layer.contains("height: parent.height;"));
         assert!(composer.contains("AppState.reference-drop-x = reference-drop.absolute-position.x / 1px"));
         assert!(callbacks.contains("external_image_url(data.as_str())"));
         assert!(callbacks.contains("start_external_reference_import"));
@@ -2178,7 +2185,7 @@ mod tests {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
 
         assert!(composer.contains("component PromptOptimizationAction"));
-        assert_eq!(composer.matches("PromptOptimizationAction {").count(), 4);
+        assert_eq!(composer.matches("PromptOptimizationAction {").count(), 5);
         assert!(composer.contains("background: transparent;"));
         assert!(composer.contains("border-width: 1px;"));
         assert!(composer.contains("border-radius: 12px;"));
@@ -2186,6 +2193,29 @@ mod tests {
         assert!(composer.contains("font-size: 12px;"));
         assert!(composer.contains("font-weight: 400;"));
         assert!(!composer.contains("primary: true;\n            disabled: AppState.reasoning-model"));
+    }
+
+    #[test]
+    fn prompt_clear_tag_clears_prompt_content_without_touching_reference_or_negative_state() {
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let clear_action = composer
+            .split("text: AppState.en ? \"Clear\" : \"清空\";")
+            .nth(1)
+            .and_then(|value| value.split("if AppState.optimizing-prompt").next())
+            .expect("clear prompt action");
+        let clear_function = composer
+            .split("function clear-current-prompt()")
+            .nth(1)
+            .and_then(|value| value.split("Timer {").next())
+            .expect("clear prompt function");
+
+        assert!(clear_action.contains("clicked => { root.clear-current-prompt(); }"));
+        assert!(clear_function.contains("AppState.prompt = \"\";"));
+        assert!(clear_function.contains("prompt-input.text = \"\";"));
+        assert!(clear_function.contains("AppState.toggle-custom-prompt-selection("));
+        assert!(clear_function.contains("AppState.invalidate-deep-prompt-binding();"));
+        assert!(!clear_function.contains("AppState.references"));
+        assert!(!clear_function.contains("AppState.negative-prompt"));
     }
 
     #[test]

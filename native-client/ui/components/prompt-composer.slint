@@ -76,6 +76,25 @@ export component PromptComposer {
         prompt-input.set-selection-offsets(2147483647, 2147483647);
     }
 
+    function clear-current-prompt() {
+        AppState.prompt-history-open = false;
+        AppState.custom-prompt-open = false;
+        history-popup.close();
+        custom-prompt-popup.close();
+        if AppState.selected-custom-prompt-items.length > 0 {
+            AppState.toggle-custom-prompt-selection(
+                AppState.selected-custom-prompt-items[0].content,
+            );
+        }
+        AppState.prompt = "";
+        prompt-input.text = "";
+        AppState.deep-optimization-applied-chinese = "";
+        AppState.deep-optimization-applied-english = "";
+        AppState.invalidate-deep-prompt-binding();
+        prompt-input.focus();
+        prompt-input.set-selection-offsets(0, 0);
+    }
+
     Timer {
         interval: 1ms;
         running: root.custom-prompt-selection-pending;
@@ -110,10 +129,10 @@ export component PromptComposer {
         clip: false;
 
         reference-drop := DropArea {
-            x: 24px;
-            y: root.prompt-input-y();
-            width: parent.width - 48px;
-            height: root.prompt-input-height();
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
             can-drop(event) => {
                 return event.mime-type == "text/uri-list"
                     || event.mime-type == "text/plain"
@@ -181,6 +200,15 @@ export component PromptComposer {
             disabled: AppState.optimizing-prompt || AppState.translating-prompt;
             clicked => { AppState.open-deep-optimization(); }
         }
+        PromptOptimizationAction {
+            x: parent.width - 76px;
+            y: 14px;
+            width: 52px;
+            height: 24px;
+            text: AppState.en ? "Clear" : "清空";
+            disabled: AppState.prompt == "" && AppState.selected-custom-prompt-items.length == 0;
+            clicked => { root.clear-current-prompt(); }
+        }
         if AppState.optimizing-prompt: LoadingDots {
             x: AppState.deep-optimization-active ? 282px : 250px;
             y: 7px;
@@ -191,7 +219,7 @@ export component PromptComposer {
             visible: AppState.optimizing-prompt || AppState.translating-prompt;
             x: root.action-status-wraps() ? 24px : (AppState.deep-optimization-active ? 318px : 286px);
             y: root.action-status-wraps() ? 48px : 20px;
-            width: root.action-status-wraps() ? parent.width - 48px : parent.width - self.x - 24px;
+            width: root.action-status-wraps() ? parent.width - 48px : parent.width - self.x - 88px;
             height: 18px;
             text: AppState.optimizing-prompt ? (AppState.en ? "Optimizing prompt..." : "正在优化提示词...")
                 : (AppState.en ? "Translating prompt..." : "正在翻译提示词...");
