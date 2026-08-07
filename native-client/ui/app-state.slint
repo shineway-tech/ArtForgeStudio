@@ -439,7 +439,12 @@ export global AppState {
     in-out property <int> image-editor-source-width: 0;
     in-out property <int> image-editor-source-height: 0;
     in-out property <float> image-editor-brush-size: 28;
+    in-out property <string> image-editor-brush-shape: "circle";
+    in-out property <color> image-editor-brush-color: #ff4d4f;
     in-out property <[BrushPoint]> image-editor-points: [];
+    in-out property <string> image-editor-prompt: "";
+    in-out property <string> image-editor-status: "";
+    in-out property <bool> image-editor-generating: false;
     in-out property <string> image-editor-return-page: "generation";
     in-out property <bool> cutout-open: false;
     in-out property <string> cutout-type: "general";
@@ -668,9 +673,10 @@ export global AppState {
     callback viewer-edit();
     callback viewer-open-image-editor();
     callback close-image-editor();
-    callback begin-image-editor-stroke(float, float, float, float);
-    callback continue-image-editor-stroke(float, float, float, float);
+    callback begin-image-editor-stroke(float, float, float, float, string, color);
+    callback continue-image-editor-stroke(float, float, float, float, string, color);
     callback end-image-editor-stroke();
+    callback submit-image-edit();
     callback viewer-use-same();
     callback viewer-use-reference();
     callback viewer-copy-image();

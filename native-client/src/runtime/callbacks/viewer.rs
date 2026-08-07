@@ -286,6 +286,11 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
             state.set_image_editor_source_width(source_width.max(1));
             state.set_image_editor_source_height(source_height.max(1));
             state.set_image_editor_brush_size(28.0);
+            state.set_image_editor_brush_shape("circle".into());
+            state.set_image_editor_brush_color(slint::Color::from_rgb_u8(255, 77, 79));
+            state.set_image_editor_prompt("".into());
+            state.set_image_editor_status("".into());
+            state.set_image_editor_generating(false);
             state.set_image_editor_return_page(state.get_page());
             state.set_viewer_open(false);
             navigate_to(&app, "image-editor");
@@ -310,8 +315,8 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     {
         let points = image_editor_points.clone();
         let last_point = image_editor_last_point.clone();
-        state.on_begin_image_editor_stroke(move |x, y, size, aspect| {
-            append_brush_segment(&points, None, (x, y, size), aspect);
+        state.on_begin_image_editor_stroke(move |x, y, size, aspect, shape, color| {
+            append_brush_segment(&points, None, (x, y, size), aspect, &shape, color);
             *last_point.borrow_mut() = Some((x, y, size));
         });
     }
@@ -319,9 +324,9 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     {
         let points = image_editor_points.clone();
         let last_point = image_editor_last_point.clone();
-        state.on_continue_image_editor_stroke(move |x, y, size, aspect| {
+        state.on_continue_image_editor_stroke(move |x, y, size, aspect, shape, color| {
             let previous = *last_point.borrow();
-            append_brush_segment(&points, previous, (x, y, size), aspect);
+            append_brush_segment(&points, previous, (x, y, size), aspect, &shape, color);
             *last_point.borrow_mut() = Some((x, y, size));
         });
     }
@@ -330,6 +335,26 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
         let last_point = image_editor_last_point;
         state.on_end_image_editor_stroke(move || {
             *last_point.borrow_mut() = None;
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let points = image_editor_points.clone();
+        state.on_submit_image_edit(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            if points.row_count() == 0 {
+                state.set_image_editor_status("请先用笔刷标记需要修改的区域".into());
+                return;
+            }
+            if state.get_image_editor_prompt().trim().is_empty() {
+                state.set_image_editor_status("请填写希望如何修改涂抹区域".into());
+                return;
+            }
+            state.set_image_editor_status("局部重绘服务接口待接入".into());
         });
     }
 
@@ -491,13 +516,15 @@ fn append_brush_segment(
     from: Option<(f32, f32, f32)>,
     to: (f32, f32, f32),
     aspect: f32,
+    shape: &str,
+    color: slint::Color,
 ) {
     const MAX_BRUSH_POINTS: usize = 25_000;
     if model.row_count() >= MAX_BRUSH_POINTS {
         return;
     }
 
-    for point in interpolated_brush_points(from, to, aspect)
+    for point in interpolated_brush_points(from, to, aspect, shape, color)
         .into_iter()
         .take(MAX_BRUSH_POINTS - model.row_count())
     {
@@ -509,7 +536,14 @@ fn interpolated_brush_points(
     from: Option<(f32, f32, f32)>,
     to: (f32, f32, f32),
     aspect: f32,
+    shape: &str,
+    color: slint::Color,
 ) -> Vec<BrushPoint> {
+    let shape = if shape == "square" {
+        "square"
+    } else {
+        "circle"
+    };
     let clamp_point = |(x, y, size): (f32, f32, f32)| {
         (
             if x.is_finite() {
@@ -535,6 +569,8 @@ fn interpolated_brush_points(
             x: to.0,
             y: to.1,
             size: to.2,
+            shape: shape.into(),
+            color,
         }];
     };
 
@@ -556,6 +592,8 @@ fn interpolated_brush_points(
                 x: from.0 + (to.0 - from.0) * progress,
                 y: from.1 + (to.1 - from.1) * progress,
                 size: from.2 + (to.2 - from.2) * progress,
+                shape: shape.into(),
+                color,
             }
         })
         .collect()
@@ -567,13 +605,34 @@ mod image_editor_tests {
 
     #[test]
     fn brush_segments_are_interpolated_without_large_gaps() {
-        let points = interpolated_brush_points(Some((0.1, 0.2, 0.02)), (0.9, 0.2, 0.02), 1.0);
+        let color = slint::Color::from_rgb_u8(36, 184, 255);
+        let points = interpolated_brush_points(
+            Some((0.1, 0.2, 0.02)),
+            (0.9, 0.2, 0.02),
+            1.0,
+            "square",
+            color,
+        );
 
         assert!(points.len() > 20);
         assert!((points.last().unwrap().x - 0.9).abs() < f32::EPSILON);
         assert!(points.iter().all(|point| {
-            (0.0..=1.0).contains(&point.x) && (0.0..=1.0).contains(&point.y) && point.size > 0.0
+            (0.0..=1.0).contains(&point.x)
+                && (0.0..=1.0).contains(&point.y)
+                && point.size > 0.0
+                && point.shape == "square"
+                && point.color == color
         }));
+    }
+
+    #[test]
+    fn unknown_brush_shape_falls_back_to_circle() {
+        let color = slint::Color::from_rgb_u8(255, 77, 79);
+        let points = interpolated_brush_points(None, (0.5, 0.5, 0.02), 1.0, "triangle", color);
+
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].shape, "circle");
+        assert_eq!(points[0].color, color);
     }
 }
 

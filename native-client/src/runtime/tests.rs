@@ -3594,14 +3594,26 @@ mod tests {
         assert!(viewer.contains("AppState.viewer-open-image-editor();"));
         assert!(state.contains("callback viewer-open-image-editor();"));
         assert!(state.contains("property <[BrushPoint]> image-editor-points"));
+        assert!(state.contains("property <string> image-editor-brush-shape"));
+        assert!(state.contains("property <color> image-editor-brush-color"));
+        assert!(state.contains("callback submit-image-edit();"));
         assert!(app.contains("if AppState.page == \"image-editor\": ImageEditorPage"));
         assert!(editor.contains("for point in AppState.image-editor-points"));
         assert!(editor.contains("mouse-cursor: none;"));
         assert!(editor.contains("AppState.begin-image-editor-stroke("));
         assert!(editor.contains("AppState.continue-image-editor-stroke("));
         assert!(editor.contains("AppState.image-editor-brush-size = max(8, min(80"));
+        assert!(editor.contains("property <[color]> brush-palette"));
+        assert!(editor.contains("point.shape == \"circle\""));
+        assert!(editor.contains("point.color.with-alpha"));
+        assert!(editor.contains("AppState.image-editor-brush-shape = \"square\""));
+        assert!(editor.contains("AppState.image-editor-brush-color = color"));
+        assert!(editor.contains("text <=> AppState.image-editor-prompt"));
+        assert!(editor.contains("AppState.submit-image-edit();"));
         assert!(callbacks.contains("state.on_viewer_open_image_editor"));
         assert!(callbacks.contains("interpolated_brush_points"));
+        assert!(callbacks.contains("state.on_submit_image_edit"));
+        assert!(callbacks.contains("请先用笔刷标记需要修改的区域"));
     }
 
     #[test]
