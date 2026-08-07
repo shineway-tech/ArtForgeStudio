@@ -382,6 +382,13 @@ export global AppState {
     in-out property <bool> invitation-code-busy: false;
     in-out property <bool> invitation-code-success: false;
     in-out property <string> invitation-code-status: "";
+    // Invitation reward values are populated by the server when the program opens.
+    // Keep decimal and amount fields as strings so the client never invents business values.
+    in-out property <string> invitation-reward-rate: "--";
+    in-out property <string> invitation-count: "--";
+    in-out property <string> invitation-history-reward: "--";
+    in-out property <string> invitation-own-code: "";
+    in-out property <string> invitation-share-link: "";
     in-out property <bool> email-bound: false;
     in-out property <bool> email-bind-open: false;
     in-out property <string> email-bind-email: "";

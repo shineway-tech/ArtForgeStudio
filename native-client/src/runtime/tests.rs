@@ -3599,6 +3599,21 @@ mod tests {
     }
 
     #[test]
+    fn viewer_prompt_allows_read_only_partial_text_selection_and_copy() {
+        let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+        let prompt = viewer
+            .split("prompt-selection-input := TextInput")
+            .nth(1)
+            .and_then(|value| value.split("Text { text: AppState.viewer-time").next())
+            .expect("selectable viewer prompt input");
+
+        assert!(prompt.contains("text: AppState.viewer-prompt;"));
+        assert!(prompt.contains("single-line: false;"));
+        assert!(prompt.contains("wrap: word-wrap;"));
+        assert!(prompt.contains("read-only: true;"));
+    }
+
+    #[test]
     fn new_generation_badge_can_be_dismissed() {
         let state = include_str!("../../ui/app-state.slint");
         let card = include_str!("../../ui/components/thumbnail-card.slint");
@@ -4057,7 +4072,6 @@ mod tests {
     fn invitation_code_ui_is_reachable_and_uses_the_reserved_backend_contract() {
         let state = include_str!("../../ui/app-state.slint");
         let profile = include_str!("../../ui/dialogs/profile-dialog.slint");
-        let page = include_str!("../../ui/pages/invitation-gift-page.slint");
         let top_bar = include_str!("../../ui/components/top-bar.slint");
         let app = include_str!("../../ui/app.slint");
         let account_api = include_str!("api/account.rs");
@@ -4066,15 +4080,37 @@ mod tests {
         assert!(state.contains("callback submit-invitation-code();"));
         assert!(profile.contains("AppState.profile-section == \"invitation\""));
         assert!(profile.contains("请填写邀请码"));
-        assert!(page.contains("点击确认后，将由服务端判断邀请码是否正确"));
+        assert!(profile.contains("填写邀请码，确认后将由服务端验证"));
         assert!(top_bar.contains("AppState.navigate(\"invitation-gift\")"));
         assert!(top_bar.contains("interval: 5s"));
+        assert!(top_bar.contains("width: 44px"));
         assert!(top_bar.contains("running: root.wobbling"));
         assert!(top_bar.contains("function wobble-angle() -> angle"));
         assert!(app.contains("AppState.page == \"invitation-gift\""));
         assert!(account_api.contains("/v1/account/invitation-code"));
         assert!(callback.contains("api.submit_invitation_code(&code)"));
         assert!(!callback.contains("ELUNVI-2026"));
+    }
+
+    #[test]
+    fn invitation_rewards_page_matches_the_summary_and_share_layout() {
+        let state = include_str!("../../ui/app-state.slint");
+        let page = include_str!("../../ui/pages/invitation-gift-page.slint");
+
+        assert!(state.contains("invitation-reward-rate"));
+        assert!(state.contains("invitation-count"));
+        assert!(state.contains("invitation-history-reward"));
+        assert!(state.contains("invitation-own-code"));
+        assert!(state.contains("invitation-share-link"));
+        assert!(page.contains("我的返利比例"));
+        assert!(page.contains("邀请人数"));
+        assert!(page.contains("历史返利额度"));
+        assert!(page.contains("我的邀请码"));
+        assert!(page.contains("邀请链接"));
+        assert!(page.contains("复制邀请码"));
+        assert!(page.contains("复制链接"));
+        assert!(page.contains("AppState.copy-contact-detail(root.value)"));
+        assert!(!page.contains("可转返利"));
     }
 
     #[test]

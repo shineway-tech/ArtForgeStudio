@@ -369,14 +369,16 @@ export component ViewerOverlay {
                     horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
                     viewport-width: self.width;
                     viewport-height: max(self.height, AppState.viewer-prompt-lines * 18px);
-                    Text {
+                    prompt-selection-input := TextInput {
                         width: parent.width;
                         height: parent.viewport-height;
                         text: AppState.viewer-prompt;
                         color: AppTheme.text;
                         font-size: 13px;
                         font-weight: 400;
+                        single-line: false;
                         wrap: word-wrap;
+                        read-only: true;
                     }
                 }
                 Text { text: AppState.viewer-time; color: AppTheme.muted; font-size: 12px; font-weight: 400; }

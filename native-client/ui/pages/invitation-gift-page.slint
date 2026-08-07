@@ -1,178 +1,279 @@
+import { ScrollView } from "std-widgets.slint";
 import { AppState } from "../app-state.slint";
 import { PillButton } from "../components/pill-button.slint";
 import { AppTheme } from "../theme.slint";
 
+component RewardSummaryCard inherits Rectangle {
+    in property <string> title;
+    in property <string> value;
+    in property <string> suffix;
+    in property <string> note;
+    in property <bool> highlighted: false;
+
+    background: AppTheme.panel;
+    border-radius: 14px;
+    border-width: 1px;
+    border-color: AppTheme.border;
+
+    Text {
+        x: 20px;
+        y: 16px;
+        width: parent.width - 40px;
+        height: 22px;
+        text: root.title;
+        color: AppTheme.muted;
+        font-size: 13px;
+        font-weight: 400;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Text {
+        x: 20px;
+        y: 43px;
+        width: parent.width - 40px;
+        height: 36px;
+        text: root.value + root.suffix;
+        color: root.highlighted ? AppTheme.accent-dark : AppTheme.text;
+        font-size: 24px;
+        font-weight: 600;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    if root.note != "": Text {
+        x: 20px;
+        y: 84px;
+        width: parent.width - 40px;
+        height: 20px;
+        text: root.note;
+        color: AppTheme.weak;
+        font-size: 11px;
+        font-weight: 400;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+component InvitationCopyField {
+    in property <string> label;
+    in property <string> value;
+    in property <string> empty-value;
+    in property <string> button-text;
+
+    Text {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: 22px;
+        text: root.label;
+        color: AppTheme.text;
+        font-size: 12px;
+        font-weight: 400;
+        vertical-alignment: center;
+    }
+    Rectangle {
+        x: 0px;
+        y: 28px;
+        width: parent.width;
+        height: 48px;
+        background: AppTheme.panel-soft;
+        border-radius: 9px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        Text {
+            x: 14px;
+            y: 0px;
+            width: parent.width - 142px;
+            height: parent.height;
+            text: root.value == "" ? root.empty-value : root.value;
+            color: root.value == "" ? AppTheme.weak : AppTheme.text;
+            font-size: 12px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        PillButton {
+            x: parent.width - 118px;
+            y: 7px;
+            width: 106px;
+            height: 34px;
+            label-font-size: 12px;
+            disabled: root.value == "";
+            text: root.button-text;
+            clicked => { AppState.copy-contact-detail(root.value); }
+        }
+    }
+}
+
 export component InvitationGiftPage {
+    function content-height() -> length { return max(root.height, 610px); }
+
     Rectangle {
         width: root.width;
         height: root.height;
         background: AppTheme.bg;
 
-        Rectangle {
-            x: 48px;
-            y: 34px;
-            width: parent.width - 96px;
-            height: parent.height - 68px;
-            background: transparent;
+        ScrollView {
+            width: parent.width;
+            height: parent.height;
+            viewport-width: parent.width;
+            viewport-height: root.content-height();
 
-            Text {
-                x: 0px;
-                y: 0px;
-                width: parent.width;
-                height: 46px;
-                text: AppState.en ? "Invitation Rewards" : "邀请有礼";
-                color: AppTheme.text;
-                font-size: 28px;
-                font-weight: 600;
-                vertical-alignment: center;
-            }
-            Text {
-                x: 0px;
-                y: 50px;
-                width: parent.width;
-                height: 28px;
-                text: AppState.en
-                    ? "Enter an invitation code to join the invitation rewards program"
-                    : "填写邀请码，参与邀请有礼活动";
-                color: AppTheme.muted;
-                font-size: 14px;
-                vertical-alignment: center;
-            }
+            content := Rectangle {
+                x: 24px;
+                y: 22px;
+                width: parent.width - 48px;
+                height: root.content-height() - 44px;
+                background: transparent;
 
-            hero := Rectangle {
-                x: 0px;
-                y: 104px;
-                width: parent.width;
-                height: min(260px, parent.height * 0.38);
-                background: AppTheme.panel-soft;
-                border-radius: 18px;
-                border-width: 1px;
-                border-color: AppTheme.border;
-                clip: true;
-
-                Rectangle {
-                    x: 34px;
-                    y: 34px;
-                    width: parent.width - 300px;
-                    height: parent.height - 68px;
-                    background: transparent;
-                    Text {
-                        x: 0px;
-                        y: 4px;
-                        width: parent.width;
-                        height: 38px;
-                        text: AppState.en ? "A gift for every connection" : "每一次邀请，都值得一份好礼";
-                        color: AppTheme.text;
-                        font-size: 22px;
-                        font-weight: 600;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        x: 0px;
-                        y: 50px;
-                        width: parent.width;
-                        height: 56px;
-                        text: AppState.en
-                            ? "Reward details and invitation records are provided by the server and will appear here when available."
-                            : "奖励规则与邀请记录由服务端统一返回，开放后将在这里展示。";
-                        color: AppTheme.muted;
-                        font-size: 14px;
-                        wrap: word-wrap;
-                        vertical-alignment: top;
-                    }
-                }
-                Image {
-                    x: parent.width - 246px;
-                    y: (parent.height - 220px) / 2;
-                    width: 220px;
-                    height: 220px;
-                    source: @image-url("../../assets/invitation-gift.png");
-                    image-fit: contain;
-                }
-            }
-
-            form-card := Rectangle {
-                x: 0px;
-                y: hero.y + hero.height + 22px;
-                width: min(720px, parent.width);
-                height: 220px;
-                background: AppTheme.panel;
-                border-radius: 14px;
-                border-width: 1px;
-                border-color: AppTheme.border;
                 Text {
-                    x: 24px;
-                    y: 20px;
-                    width: parent.width - 48px;
-                    height: 32px;
-                    text: AppState.en ? "Enter invitation code" : "填写邀请码";
+                    x: 0px;
+                    y: 0px;
+                    width: parent.width;
+                    height: 36px;
+                    text: AppState.en ? "Invitation Rewards" : "邀请有礼";
                     color: AppTheme.text;
-                    font-size: 18px;
+                    font-size: 24px;
                     font-weight: 600;
                     vertical-alignment: center;
                 }
                 Text {
-                    x: 24px;
-                    y: 54px;
-                    width: parent.width - 48px;
+                    x: 0px;
+                    y: 38px;
+                    width: parent.width;
                     height: 24px;
-                    text: AppState.en ? "The code will be validated by the server after confirmation" : "点击确认后，将由服务端判断邀请码是否正确";
+                    text: AppState.en ? "Invite friends and enjoy rewards together" : "邀请好友，共享专属奖励";
                     color: AppTheme.muted;
                     font-size: 13px;
+                    font-weight: 400;
                     vertical-alignment: center;
                 }
-                Rectangle {
-                    x: 24px;
-                    y: 94px;
-                    width: parent.width - 196px;
-                    height: 48px;
-                    background: AppTheme.panel-soft;
-                    border-radius: 9px;
+
+                summary := Rectangle {
+                    x: 0px;
+                    y: 82px;
+                    width: parent.width;
+                    height: 122px;
+                    background: transparent;
+
+                    RewardSummaryCard {
+                        x: 0px;
+                        width: (parent.width - 32px) / 3;
+                        height: parent.height;
+                        title: AppState.en ? "My reward rate" : "我的返利比例";
+                        value: AppState.invitation-reward-rate;
+                        suffix: AppState.invitation-reward-rate == "--" ? "" : "%";
+                        note: AppState.en ? "The final rate is provided by the server" : "实际返利比例以服务端规则为准";
+                        highlighted: true;
+                    }
+                    RewardSummaryCard {
+                        x: (parent.width - 32px) / 3 + 16px;
+                        width: (parent.width - 32px) / 3;
+                        height: parent.height;
+                        title: AppState.en ? "Invited users" : "邀请人数";
+                        value: AppState.invitation-count;
+                        suffix: "";
+                        note: "";
+                    }
+                    RewardSummaryCard {
+                        x: ((parent.width - 32px) / 3 + 16px) * 2;
+                        width: (parent.width - 32px) / 3;
+                        height: parent.height;
+                        title: AppState.en ? "Historical rewards" : "历史返利额度";
+                        value: AppState.invitation-history-reward;
+                        suffix: "";
+                        note: "";
+                    }
+                }
+
+                invitation-card := Rectangle {
+                    x: 0px;
+                    y: 226px;
+                    width: parent.width;
+                    height: 326px;
+                    background: AppTheme.panel;
+                    border-radius: 14px;
                     border-width: 1px;
-                    border-color: page-invitation-input.has-focus ? AppTheme.accent : AppTheme.border;
-                    page-invitation-input := TextInput {
-                        x: 16px;
-                        width: parent.width - 32px;
-                        height: parent.height;
-                        text <=> AppState.invitation-code;
-                        single-line: true;
+                    border-color: AppTheme.border;
+
+                    Text {
+                        x: 24px;
+                        y: 18px;
+                        width: parent.width - 48px;
+                        height: 30px;
+                        text: AppState.en ? "Invitation rewards" : "邀请返利";
                         color: AppTheme.text;
-                        font-size: 14px;
-                        vertical-alignment: center;
-                        accepted => { AppState.submit-invitation-code(); }
-                    }
-                    if AppState.invitation-code == "" && !page-invitation-input.has-focus: Text {
-                        x: 16px;
-                        width: parent.width - 32px;
-                        height: parent.height;
-                        text: AppState.en ? "Enter invitation code" : "请填写邀请码";
-                        color: AppTheme.weak;
-                        font-size: 14px;
+                        font-size: 17px;
+                        font-weight: 600;
                         vertical-alignment: center;
                     }
-                }
-                PillButton {
-                    x: parent.width - 156px;
-                    y: 98px;
-                    width: 132px;
-                    height: 40px;
-                    primary: true;
-                    disabled: AppState.invitation-code-busy;
-                    text: AppState.invitation-code-busy
-                        ? (AppState.en ? "Validating..." : "验证中...")
-                        : (AppState.en ? "Confirm" : "确认");
-                    clicked => { AppState.submit-invitation-code(); }
-                }
-                Text {
-                    x: 24px;
-                    y: 154px;
-                    width: parent.width - 48px;
-                    height: 46px;
-                    text: AppState.invitation-code-status;
-                    color: AppState.invitation-code-success ? AppTheme.success : AppTheme.muted;
-                    font-size: 13px;
-                    wrap: word-wrap;
-                    vertical-alignment: top;
+                    Text {
+                        x: 24px;
+                        y: 48px;
+                        width: parent.width - 48px;
+                        height: 22px;
+                        text: AppState.en ? "Share your code or invitation link with friends" : "将邀请码或邀请链接分享给新用户";
+                        color: AppTheme.muted;
+                        font-size: 12px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                    }
+
+                    InvitationCopyField {
+                        x: 24px;
+                        y: 86px;
+                        width: (parent.width - 64px) / 2;
+                        height: 76px;
+                        label: AppState.en ? "My invitation code" : "我的邀请码";
+                        value: AppState.invitation-own-code;
+                        empty-value: AppState.en ? "Not available yet" : "待服务端开放";
+                        button-text: AppState.en ? "Copy code" : "复制邀请码";
+                    }
+                    InvitationCopyField {
+                        x: (parent.width - 64px) / 2 + 40px;
+                        y: 86px;
+                        width: (parent.width - 64px) / 2;
+                        height: 76px;
+                        label: AppState.en ? "Invitation link" : "邀请链接";
+                        value: AppState.invitation-share-link;
+                        empty-value: AppState.en ? "Not available yet" : "待服务端开放";
+                        button-text: AppState.en ? "Copy link" : "复制链接";
+                    }
+
+                    Rectangle {
+                        x: 24px;
+                        y: 184px;
+                        width: parent.width - 48px;
+                        height: 118px;
+                        background: AppTheme.panel-soft;
+                        border-radius: 10px;
+                        border-width: 1px;
+                        border-color: AppTheme.accent;
+                        Text {
+                            x: 16px;
+                            y: 12px;
+                            width: parent.width - 32px;
+                            height: 22px;
+                            text: AppState.en ? "How it works" : "使用说明";
+                            color: AppTheme.accent-dark;
+                            font-size: 13px;
+                            font-weight: 500;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            x: 16px;
+                            y: 40px;
+                            width: parent.width - 32px;
+                            height: 64px;
+                            text: AppState.en
+                                ? "1. Share your invitation code or link with a new user.\n2. Rewards are calculated after the invited user meets the server-defined conditions.\n3. Reward rates and settlement rules are subject to the server."
+                                : "1. 将邀请码或邀请链接分享给新用户。\n2. 被邀请用户满足服务端规定的条件后，系统计算邀请奖励。\n3. 返利比例及结算规则以服务端实际规则为准。";
+                            color: AppTheme.muted;
+                            font-size: 12px;
+                            font-weight: 400;
+                            wrap: word-wrap;
+                            vertical-alignment: top;
+                        }
+                    }
                 }
             }
         }

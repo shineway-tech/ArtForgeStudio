@@ -7,7 +7,7 @@ import { AppTheme } from "../theme.slint";
 component InvitationGiftButton {
     property <int> wobble-step: 0;
     property <bool> wobbling: false;
-    width: 42px;
+    width: 48px;
     height: 36px;
 
     Timer {
@@ -37,10 +37,10 @@ component InvitationGiftButton {
         background: gift-touch.has-hover ? AppTheme.panel-soft : transparent;
         border-radius: 10px;
         gift-image := Image {
-            x: 4px;
-            y: 1px;
-            width: 34px;
-            height: 34px;
+            x: 2px;
+            y: -5px;
+            width: 44px;
+            height: 44px;
             source: @image-url("../../assets/invitation-gift.png");
             image-fit: contain;
             transform-rotation: root.wobble-angle();
@@ -152,7 +152,7 @@ export component TopBar {
         }
     }
     function actions-width() -> length {
-        return (AppState.logged-in ? 496px : 318px) + (AppState.payment-active ? 120px : 0px);
+        return (AppState.logged-in ? 502px : 318px) + (AppState.payment-active ? 120px : 0px);
     }
     function model-picker-width() -> length {
         return min(330px, max(180px, (root.width - 18px - root.actions-width() - 70px) / 2));
