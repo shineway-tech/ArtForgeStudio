@@ -1409,6 +1409,11 @@ mod tests {
         assert!(composer.contains("width: root.reference-card-size();"));
         assert!(composer.contains("height: root.reference-card-size();"));
         assert!(composer.contains("(root.width - 48px - 30px) / 4"));
+        assert!(composer.contains("function reference-grid-x() -> length"));
+        assert!(composer.contains("return 24px;"));
+        assert!(composer.contains("- root.reference-card-size()"));
+        assert!(composer.contains("(root.reference-row-count() - 1) * root.reference-row-height()"));
+        assert!(!composer.contains("root.height - 80px"));
     }
 
     #[test]
@@ -2127,6 +2132,10 @@ mod tests {
         assert!(chooser.contains("source: @image-url(\"../../assets/icons/controls.svg\")"));
         assert!(chooser.contains("height: 42px;"));
         assert!(chooser.contains("y: 0px - self.height - 8px;"));
+        assert!(chooser.contains("width: 378px;"));
+        assert!(chooser.contains("x: root.width - self.width;"));
+        assert!(!chooser.contains("min(378px, root.width)"));
+        assert!(chooser.contains("border-color: root.selected ? AppTheme.accent : AppTheme.border;"));
         assert_eq!(chooser.matches("ImageRatioOption { value:").count(), 11);
         assert_eq!(chooser.matches("ImageSettingPill { text:").count(), 7);
         assert!(panel.contains("settings-row := HorizontalLayout"));
@@ -2148,18 +2157,31 @@ mod tests {
         assert!(negative.contains("negative-prompt-dropdown.svg"));
         assert!(negative.contains("transform-rotation: AppState.negative-prompt-expanded ? 180deg : 0deg"));
         assert!(prompt.contains("? 650px : 600px"));
+        assert!(prompt.contains("border-radius: 12px;"));
+        assert!(prompt.contains("width: 64px;"));
+        assert!(prompt.contains("x: 94px;"));
+        assert!(prompt.contains("x: 172px;"));
+
+        for chip in [
+            include_str!("../../ui/components/creation-mode-chip.slint"),
+            include_str!("../../ui/components/style-mode-chip.slint"),
+            include_str!("../../ui/components/advanced-control-chip.slint"),
+        ] {
+            assert!(chip.contains("y: 0px - self.height - 8px;"));
+        }
     }
 
     #[test]
-    fn prompt_optimization_actions_are_backgroundless_and_low_emphasis() {
+    fn prompt_optimization_actions_are_compact_backgroundless_tags() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
 
         assert!(composer.contains("component PromptOptimizationAction"));
         assert_eq!(composer.matches("PromptOptimizationAction {").count(), 4);
         assert!(composer.contains("background: transparent;"));
-        assert!(composer.contains("border-width: 0px;"));
+        assert!(composer.contains("border-width: 1px;"));
+        assert!(composer.contains("border-radius: 12px;"));
         assert!(composer.contains("? AppTheme.accent : AppTheme.muted;"));
-        assert!(composer.contains("font-size: 13px;"));
+        assert!(composer.contains("font-size: 12px;"));
         assert!(composer.contains("font-weight: 400;"));
         assert!(!composer.contains("primary: true;\n            disabled: AppState.reasoning-model"));
     }

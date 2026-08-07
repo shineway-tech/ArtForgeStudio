@@ -17,14 +17,16 @@ component PromptOptimizationAction {
     Rectangle {
         opacity: root.disabled ? 0.38 : 1;
         background: transparent;
-        border-width: 0px;
+        border-width: 1px;
+        border-color: root.active || (action-touch.has-hover && !root.disabled) ? AppTheme.accent : AppTheme.border;
+        border-radius: 12px;
 
         Text {
             width: parent.width;
             height: parent.height;
             text: root.text;
             color: root.active || (action-touch.has-hover && !root.disabled) ? AppTheme.accent : AppTheme.muted;
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 400;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -152,26 +154,26 @@ export component PromptComposer {
         PromptOptimizationAction {
             x: 24px;
             y: 14px;
-            width: 96px;
-            height: 28px;
+            width: 64px;
+            height: 24px;
             text: AppState.optimizing-prompt ? (AppState.en ? "Optimizing..." : "正在优化...") : (AppState.en ? "AI Optimize" : "AI优化");
             disabled: AppState.reasoning-model == "" || AppState.optimizing-prompt;
             clicked => { AppState.optimize-current-prompt(); }
         }
         PromptOptimizationAction {
-            x: 128px;
+            x: 94px;
             y: 14px;
-            width: 104px;
-            height: 28px;
+            width: 72px;
+            height: 24px;
             text: AppState.en ? "Image+Text" : "图文优化";
             disabled: AppState.reasoning-model == "" || AppState.optimizing-prompt || AppState.references.length == 0;
             clicked => { AppState.visual-optimize-current-prompt(); }
         }
         PromptOptimizationAction {
-            x: 240px;
+            x: 172px;
             y: 14px;
-            width: 112px;
-            height: 28px;
+            width: AppState.deep-optimization-active ? 104px : 72px;
+            height: 24px;
             text: AppState.deep-optimization-active
                 ? (AppState.en ? "View Deep Optimize" : "查看深度优化")
                 : (AppState.en ? "Deep Optimize" : "深度优化");
@@ -180,16 +182,16 @@ export component PromptComposer {
             clicked => { AppState.open-deep-optimization(); }
         }
         if AppState.optimizing-prompt: LoadingDots {
-            x: 358px;
+            x: AppState.deep-optimization-active ? 282px : 250px;
             y: 7px;
             width: 30px;
             height: 30px;
         }
         Text {
             visible: AppState.optimizing-prompt || AppState.translating-prompt;
-            x: root.action-status-wraps() ? 24px : 394px;
+            x: root.action-status-wraps() ? 24px : (AppState.deep-optimization-active ? 318px : 286px);
             y: root.action-status-wraps() ? 48px : 20px;
-            width: root.action-status-wraps() ? parent.width - 48px : parent.width - 418px;
+            width: root.action-status-wraps() ? parent.width - 48px : parent.width - self.x - 24px;
             height: 18px;
             text: AppState.optimizing-prompt ? (AppState.en ? "Optimizing prompt..." : "正在优化提示词...")
                 : (AppState.en ? "Translating prompt..." : "正在翻译提示词...");
@@ -761,8 +763,7 @@ export component PromptComposer {
     }
 
     function reference-grid-x() -> length {
-        if root.reference-columns() == 1 { return 24px; }
-        return max(24px, (root.width - root.reference-grid-width()) / 2);
+        return 24px;
     }
 
     function reference-row-height() -> length {
@@ -774,7 +775,10 @@ export component PromptComposer {
     }
 
     function reference-tray-y() -> length {
-        return root.height - 80px - root.reference-row-count() * root.reference-row-height();
+        return root.height
+            - 24px
+            - root.reference-card-size()
+            - (root.reference-row-count() - 1) * root.reference-row-height();
     }
 
     function reference-x(index: int) -> length {

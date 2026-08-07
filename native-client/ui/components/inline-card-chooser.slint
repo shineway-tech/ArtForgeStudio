@@ -12,16 +12,16 @@ component ImageSettingPill {
 
     Rectangle {
         opacity: root.disabled ? 0.42 : 1;
-        background: option-touch.has-hover && !root.disabled ? AppTheme.panel-soft : transparent;
+        background: root.selected || (option-touch.has-hover && !root.disabled) ? AppTheme.panel-soft : transparent;
         border-radius: 18px;
         border-width: root.selected ? 2px : 1px;
-        border-color: root.selected ? AppTheme.text : AppTheme.border;
+        border-color: root.selected ? AppTheme.accent : AppTheme.border;
 
         Text {
             width: parent.width;
             height: parent.height;
             text: root.text;
-            color: AppTheme.text;
+            color: root.selected ? AppTheme.accent-dark : AppTheme.text;
             font-size: 13px;
             font-weight: root.selected ? 500 : 400;
             horizontal-alignment: center;
@@ -50,10 +50,10 @@ component ImageRatioOption {
     horizontal-stretch: 1;
 
     Rectangle {
-        background: ratio-touch.has-hover ? AppTheme.panel-soft : transparent;
+        background: root.selected || ratio-touch.has-hover ? AppTheme.panel-soft : transparent;
         border-radius: 8px;
         border-width: root.selected ? 2px : 1px;
-        border-color: root.selected ? AppTheme.text : AppTheme.border;
+        border-color: root.selected ? AppTheme.accent : AppTheme.border;
 
         Rectangle {
             x: (parent.width - root.preview-width()) / 2;
@@ -62,7 +62,7 @@ component ImageRatioOption {
             height: root.preview-height();
             background: transparent;
             border-width: 2px;
-            border-color: AppTheme.text;
+            border-color: root.selected ? AppTheme.accent : AppTheme.text;
         }
         Text {
             x: 4px;
@@ -70,7 +70,7 @@ component ImageRatioOption {
             width: parent.width - 8px;
             height: 24px;
             text: root.value;
-            color: AppTheme.text;
+            color: root.selected ? AppTheme.accent-dark : AppTheme.text;
             font-size: 12px;
             font-weight: 500;
             horizontal-alignment: center;
@@ -140,9 +140,9 @@ export component InlineCardChooser {
     }
 
     settings-popup := PopupWindow {
-        width: min(378px, root.width);
+        width: 378px;
         height: 444px;
-        x: (root.width - self.width) / 2;
+        x: root.width - self.width;
         y: 0px - self.height - 8px;
         close-policy: close-on-click-outside;
 
@@ -150,7 +150,7 @@ export component InlineCardChooser {
             background: AppTheme.panel;
             border-radius: 12px;
             border-width: 1px;
-            border-color: AppTheme.border;
+            border-color: AppTheme.accent;
 
             Text { x: 18px; y: 10px; width: parent.width - 36px; height: 28px; text: AppState.en ? "Image settings" : "图片设置"; color: AppTheme.text; font-size: 16px; font-weight: 600; vertical-alignment: center; }
             Text { x: 18px; y: 44px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Quality" : "质量"; color: AppTheme.muted; font-size: 12px; vertical-alignment: center; }
