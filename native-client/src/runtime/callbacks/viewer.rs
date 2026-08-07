@@ -3,6 +3,9 @@ use super::*;
 pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
     let store = context.store.clone();
+    let image_editor_points = Rc::new(VecModel::<BrushPoint>::default());
+    let image_editor_last_point = Rc::new(RefCell::new(None::<(f32, f32, f32)>));
+    state.set_image_editor_points(image_editor_points.clone().into());
 
     {
         let app_weak = app.as_weak();
@@ -260,6 +263,78 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
+        let points = image_editor_points.clone();
+        let last_point = image_editor_last_point.clone();
+        state.on_viewer_open_image_editor(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            let viewer_image = state.get_viewer_image();
+            let mut source_width = state.get_viewer_width();
+            let mut source_height = state.get_viewer_height();
+            if source_width <= 0 || source_height <= 0 {
+                if let Some(buffer) = viewer_image.to_rgba8() {
+                    source_width = buffer.width() as i32;
+                    source_height = buffer.height() as i32;
+                }
+            }
+
+            points.clear();
+            *last_point.borrow_mut() = None;
+            state.set_image_editor_image(viewer_image);
+            state.set_image_editor_source_width(source_width.max(1));
+            state.set_image_editor_source_height(source_height.max(1));
+            state.set_image_editor_brush_size(28.0);
+            state.set_image_editor_return_page(state.get_page());
+            state.set_viewer_open(false);
+            navigate_to(&app, "image-editor");
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let last_point = image_editor_last_point.clone();
+        state.on_close_image_editor(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            let return_page = state.get_image_editor_return_page().to_string();
+            *last_point.borrow_mut() = None;
+            navigate_to(&app, &return_page);
+            state.set_viewer_open(true);
+        });
+    }
+
+    {
+        let points = image_editor_points.clone();
+        let last_point = image_editor_last_point.clone();
+        state.on_begin_image_editor_stroke(move |x, y, size, aspect| {
+            append_brush_segment(&points, None, (x, y, size), aspect);
+            *last_point.borrow_mut() = Some((x, y, size));
+        });
+    }
+
+    {
+        let points = image_editor_points.clone();
+        let last_point = image_editor_last_point.clone();
+        state.on_continue_image_editor_stroke(move |x, y, size, aspect| {
+            let previous = *last_point.borrow();
+            append_brush_segment(&points, previous, (x, y, size), aspect);
+            *last_point.borrow_mut() = Some((x, y, size));
+        });
+    }
+
+    {
+        let last_point = image_editor_last_point;
+        state.on_end_image_editor_stroke(move || {
+            *last_point.borrow_mut() = None;
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
         let store = store.clone();
         state.on_viewer_use_same(move || {
             let Some(app) = app_weak.upgrade() else {
@@ -408,6 +483,97 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
             state.set_viewer_open(false);
             push_all(&app, &store.borrow());
         });
+    }
+}
+
+fn append_brush_segment(
+    model: &VecModel<BrushPoint>,
+    from: Option<(f32, f32, f32)>,
+    to: (f32, f32, f32),
+    aspect: f32,
+) {
+    const MAX_BRUSH_POINTS: usize = 25_000;
+    if model.row_count() >= MAX_BRUSH_POINTS {
+        return;
+    }
+
+    for point in interpolated_brush_points(from, to, aspect)
+        .into_iter()
+        .take(MAX_BRUSH_POINTS - model.row_count())
+    {
+        model.push(point);
+    }
+}
+
+fn interpolated_brush_points(
+    from: Option<(f32, f32, f32)>,
+    to: (f32, f32, f32),
+    aspect: f32,
+) -> Vec<BrushPoint> {
+    let clamp_point = |(x, y, size): (f32, f32, f32)| {
+        (
+            if x.is_finite() {
+                x.clamp(0.0, 1.0)
+            } else {
+                0.0
+            },
+            if y.is_finite() {
+                y.clamp(0.0, 1.0)
+            } else {
+                0.0
+            },
+            if size.is_finite() {
+                size.clamp(0.002, 0.5)
+            } else {
+                0.02
+            },
+        )
+    };
+    let to = clamp_point(to);
+    let Some(from) = from.map(clamp_point) else {
+        return vec![BrushPoint {
+            x: to.0,
+            y: to.1,
+            size: to.2,
+        }];
+    };
+
+    let safe_aspect = if aspect.is_finite() {
+        aspect.clamp(0.05, 20.0)
+    } else {
+        1.0
+    };
+    let dx = to.0 - from.0;
+    let dy = (to.1 - from.1) / safe_aspect;
+    let distance = (dx * dx + dy * dy).sqrt();
+    let spacing = (to.2 * 0.32).max(0.0005);
+    let steps = ((distance / spacing).ceil() as usize).clamp(1, 512);
+
+    (1..=steps)
+        .map(|index| {
+            let progress = index as f32 / steps as f32;
+            BrushPoint {
+                x: from.0 + (to.0 - from.0) * progress,
+                y: from.1 + (to.1 - from.1) * progress,
+                size: from.2 + (to.2 - from.2) * progress,
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod image_editor_tests {
+    use super::*;
+
+    #[test]
+    fn brush_segments_are_interpolated_without_large_gaps() {
+        let points = interpolated_brush_points(Some((0.1, 0.2, 0.02)), (0.9, 0.2, 0.02), 1.0);
+
+        assert!(points.len() > 20);
+        assert!((points.last().unwrap().x - 0.9).abs() < f32::EPSILON);
+        assert!(points.iter().all(|point| {
+            (0.0..=1.0).contains(&point.x) && (0.0..=1.0).contains(&point.y) && point.size > 0.0
+        }));
     }
 }
 

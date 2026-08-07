@@ -1,0 +1,221 @@
+import { AppState } from "../app-state.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component ImageEditorPage inherits Rectangle {
+    function source-aspect() -> float {
+        return AppState.image-editor-source-width > 0 && AppState.image-editor-source-height > 0
+            ? AppState.image-editor-source-width / AppState.image-editor-source-height
+            : 1;
+    }
+
+    function fitted-image-width() -> length {
+        return min(editor-stage.width - 48px, (editor-stage.height - 48px) * root.source-aspect());
+    }
+
+    function fitted-image-height() -> length {
+        return root.fitted-image-width() / root.source-aspect();
+    }
+
+    background: AppTheme.bg;
+
+    Rectangle {
+        x: 28px;
+        y: 18px;
+        width: parent.width - 56px;
+        height: 44px;
+        background: transparent;
+
+        PillButton {
+            x: 0px;
+            width: 88px;
+            height: 40px;
+            text: AppState.en ? "← Back" : "← 返回";
+            clicked => { AppState.close-image-editor(); }
+        }
+
+        Text {
+            x: 112px;
+            width: parent.width - 224px;
+            height: 40px;
+            text: AppState.en ? "Image Editor" : "图片编辑";
+            color: AppTheme.text;
+            font-size: 22px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    editor-stage := Rectangle {
+        x: 36px;
+        y: 76px;
+        width: parent.width - 72px;
+        height: max(280px, parent.height - 190px);
+        background: AppTheme.panel-soft;
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        clip: true;
+
+        image-frame := Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: root.fitted-image-width();
+            height: root.fitted-image-height();
+            background: #090d16;
+            border-radius: 6px;
+            clip: true;
+
+            Image {
+                width: parent.width;
+                height: parent.height;
+                source: AppState.image-editor-image;
+                image-fit: fill;
+            }
+
+            for point in AppState.image-editor-points: Rectangle {
+                x: point.x * image-frame.width - self.width / 2;
+                y: point.y * image-frame.height - self.height / 2;
+                width: point.size * image-frame.width;
+                height: self.width;
+                background: AppTheme.accent.with-alpha(0.48);
+                border-radius: self.width / 2;
+            }
+
+            draw-touch := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: none;
+                pointer-event(event) => {
+                    if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                        AppState.begin-image-editor-stroke(
+                            self.mouse-x / self.width,
+                            self.mouse-y / self.height,
+                            AppState.image-editor-brush-size / (self.width / 1px),
+                            root.source-aspect()
+                        );
+                    } else if event.button == PointerEventButton.left
+                        && (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                        AppState.end-image-editor-stroke();
+                    }
+                }
+                moved => {
+                    if self.pressed {
+                        AppState.continue-image-editor-stroke(
+                            max(0, min(1, self.mouse-x / self.width)),
+                            max(0, min(1, self.mouse-y / self.height)),
+                            AppState.image-editor-brush-size / (self.width / 1px),
+                            root.source-aspect()
+                        );
+                    }
+                }
+            }
+
+            if draw-touch.has-hover: Rectangle {
+                x: max(-self.width / 2, min(image-frame.width - self.width / 2, draw-touch.mouse-x - self.width / 2));
+                y: max(-self.height / 2, min(image-frame.height - self.height / 2, draw-touch.mouse-y - self.height / 2));
+                width: AppState.image-editor-brush-size * 1px;
+                height: self.width;
+                background: AppTheme.accent.with-alpha(0.18);
+                border-radius: self.width / 2;
+                border-width: 1px;
+                border-color: AppTheme.accent;
+                z: 20;
+            }
+        }
+    }
+
+    brush-toolbar := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - 94px;
+        width: min(560px, parent.width - 72px);
+        height: 64px;
+        background: AppTheme.panel;
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+
+        Text {
+            x: 22px;
+            width: 70px;
+            height: parent.height;
+            text: AppState.en ? "Brush" : "笔刷";
+            color: AppTheme.text;
+            font-size: 14px;
+            font-weight: 500;
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: 92px;
+            width: 64px;
+            height: parent.height;
+            text: AppState.en ? "Size" : "大小";
+            color: AppTheme.muted;
+            font-size: 13px;
+            font-weight: 400;
+            vertical-alignment: center;
+        }
+
+        brush-slider := Rectangle {
+            x: 154px;
+            y: 17px;
+            width: parent.width - 248px;
+            height: 30px;
+            background: transparent;
+
+            Rectangle {
+                x: 0px;
+                y: 13px;
+                width: parent.width;
+                height: 4px;
+                background: AppTheme.border;
+                border-radius: 2px;
+            }
+            Rectangle {
+                x: 0px;
+                y: 13px;
+                width: parent.width * (AppState.image-editor-brush-size - 8) / 72;
+                height: 4px;
+                background: AppTheme.accent;
+                border-radius: 2px;
+            }
+            Rectangle {
+                x: (parent.width - self.width) * (AppState.image-editor-brush-size - 8) / 72;
+                y: 6px;
+                width: 18px;
+                height: 18px;
+                background: AppTheme.accent;
+                border-radius: 9px;
+                border-width: 2px;
+                border-color: AppTheme.panel;
+            }
+            brush-slider-touch := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: pointer;
+                clicked => {
+                    AppState.image-editor-brush-size = max(8, min(80, round(self.mouse-x / self.width * 72 + 8)));
+                }
+                moved => {
+                    if self.pressed {
+                        AppState.image-editor-brush-size = max(8, min(80, round(max(0px, min(self.width, self.mouse-x)) / self.width * 72 + 8)));
+                    }
+                }
+            }
+        }
+
+        Text {
+            x: parent.width - 78px;
+            width: 56px;
+            height: parent.height;
+            text: round(AppState.image-editor-brush-size) + " px";
+            color: AppTheme.accent;
+            font-size: 13px;
+            font-weight: 500;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+}

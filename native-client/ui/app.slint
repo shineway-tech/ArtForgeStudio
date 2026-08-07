@@ -1,6 +1,6 @@
 import { AppState } from "app-state.slint";
 import { AppTheme } from "theme.slint";
-import { AccountSession, AssetGroup, AssetItem, CanvasNote, CompressionImageItem, ConversationItem, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, InvoiceOrderView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
+import { AccountSession, AssetGroup, AssetItem, BrushPoint, CanvasNote, CompressionImageItem, ConversationItem, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, InvoiceOrderView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 import { Sidebar } from "components/sidebar.slint";
 import { TopBar } from "components/top-bar.slint";
 import { AlipayPaymentDialog } from "dialogs/alipay-payment-dialog.slint";
@@ -25,6 +25,7 @@ import { CreditsPage } from "pages/credits-page.slint";
 import { CustomPromptEditorPage } from "pages/custom-prompt-editor-page.slint";
 import { InspirationPage } from "pages/inspiration-page.slint";
 import { InfiniteCanvasPage } from "pages/infinite-canvas-page.slint";
+import { ImageEditorPage } from "pages/image-editor-page.slint";
 import { InvitationGiftPage } from "pages/invitation-gift-page.slint";
 import { NotificationsPage } from "pages/notifications-page.slint";
 import { SettingsPage } from "pages/settings-page.slint";
@@ -38,7 +39,7 @@ import { ToolboxColorizePage } from "pages/toolbox-colorize-page.slint";
 import { ToolboxCropPage } from "pages/toolbox-crop-page.slint";
 import { WelcomePage } from "pages/welcome-page.slint";
 
-export { AppState, AppTheme, AccountSession, ModelGroup, ModelOption, AssetItem, AssetGroup, CanvasNote, CompressionImageItem, ConversationItem, NotificationItem, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, InvoiceOrderView, ReferenceItem }
+export { AppState, AppTheme, AccountSession, ModelGroup, ModelOption, AssetItem, AssetGroup, BrushPoint, CanvasNote, CompressionImageItem, ConversationItem, NotificationItem, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, InvoiceOrderView, ReferenceItem }
 
 export component AppWindow inherits Window {
     property <bool> invoice-open: false;
@@ -74,6 +75,7 @@ export component AppWindow inherits Window {
                 vertical-stretch: 1;
                 if AppState.page == "generation": StudioSplitPage { width: parent.width; height: parent.height; generation: true; }
                 if AppState.page == "canvas": InfiniteCanvasPage { width: parent.width; height: parent.height; }
+                if AppState.page == "image-editor": ImageEditorPage { width: parent.width; height: parent.height; }
                 if AppState.page == "toolbox": ToolboxPage { width: parent.width; height: parent.height; }
                 if AppState.page == "toolbox-enhance": ToolboxEnhancePage { width: parent.width; height: parent.height; }
                 if AppState.page == "toolbox-compress": ToolboxCompressionPage { width: parent.width; height: parent.height; }

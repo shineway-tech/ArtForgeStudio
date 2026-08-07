@@ -3568,6 +3568,7 @@ mod tests {
         assert_eq!(viewer.matches("ViewerFooterActionButton {").count(), 4);
         assert!(viewer.contains("AppState.viewer-download-image();"));
         assert!(viewer.contains("AppState.viewer-use-reference();"));
+        assert!(viewer.contains("AppState.viewer-open-image-editor();"));
         assert!(viewer.contains("AppState.viewer-edit();"));
         assert!(viewer.contains("AppState.request-delete-asset(AppState.viewer-id);"));
         assert!(viewer.contains("@image-url(\"../../assets/icons/download.svg\")"));
@@ -3580,6 +3581,27 @@ mod tests {
         assert!(callbacks.contains("open_viewer_image(&app, &store.borrow())"));
         assert!(feature.contains("pub(super) fn open_viewer_image"));
         assert!(feature.contains("open_path_with_default_app(&source)"));
+    }
+
+    #[test]
+    fn viewer_edit_opens_the_brush_image_editor() {
+        let app = include_str!("../../ui/app.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+        let editor = include_str!("../../ui/pages/image-editor-page.slint");
+        let callbacks = include_str!("callbacks/viewer.rs");
+
+        assert!(viewer.contains("AppState.viewer-open-image-editor();"));
+        assert!(state.contains("callback viewer-open-image-editor();"));
+        assert!(state.contains("property <[BrushPoint]> image-editor-points"));
+        assert!(app.contains("if AppState.page == \"image-editor\": ImageEditorPage"));
+        assert!(editor.contains("for point in AppState.image-editor-points"));
+        assert!(editor.contains("mouse-cursor: none;"));
+        assert!(editor.contains("AppState.begin-image-editor-stroke("));
+        assert!(editor.contains("AppState.continue-image-editor-stroke("));
+        assert!(editor.contains("AppState.image-editor-brush-size = max(8, min(80"));
+        assert!(callbacks.contains("state.on_viewer_open_image_editor"));
+        assert!(callbacks.contains("interpolated_brush_points"));
     }
 
     #[test]
