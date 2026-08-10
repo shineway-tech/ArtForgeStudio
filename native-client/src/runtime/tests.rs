@@ -3667,6 +3667,24 @@ mod tests {
     }
 
     #[test]
+    fn viewer_zoomed_image_left_drag_pans_inside_the_visible_bounds() {
+        let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+
+        assert!(viewer.contains("property <bool> image-pan-active: false;"));
+        assert!(viewer.contains("property <length> max-pan-x:"));
+        assert!(viewer.contains("property <length> max-pan-y:"));
+        assert!(viewer.contains("property <bool> can-pan:"));
+        assert!(viewer.contains("AppState.viewer-width * 1.0 / AppState.viewer-height"));
+        assert!(viewer.contains("mouse-cursor: viewer-image-stage.can-pan ? move : pointer;"));
+        assert!(viewer.contains("if viewer-image-stage.can-pan"));
+        assert!(viewer.contains("root.image-pan-active = true;"));
+        assert!(viewer.contains("root.image-pan-start-x + self.mouse-x - root.image-pressed-x"));
+        assert!(viewer.contains("root.image-pan-start-y + self.mouse-y - root.image-pressed-y"));
+        assert!(viewer.contains("max(-viewer-image-stage.max-pan-x, min("));
+        assert!(viewer.contains("max(-viewer-image-stage.max-pan-y, min("));
+    }
+
+    #[test]
     fn viewer_prompt_allows_read_only_partial_text_selection_and_copy() {
         let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
         let prompt = viewer
@@ -3856,6 +3874,9 @@ mod tests {
         assert!(state.contains("callback start-viewer-file-drag() -> bool;"));
         assert!(viewer.contains("property <bool> image-drag-armed: false;"));
         assert!(viewer.contains("AppState.start-viewer-file-drag();"));
+        assert!(viewer.contains("if viewer-image-stage.can-pan"));
+        assert!(viewer.contains("root.image-drag-armed = false;"));
+        assert!(viewer.contains("root.image-drag-armed = true;"));
         let native_drag = viewer
             .find("AppState.start-viewer-file-drag();")
             .expect("viewer native drag call");

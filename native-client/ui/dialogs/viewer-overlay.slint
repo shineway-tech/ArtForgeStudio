@@ -119,6 +119,11 @@ export component ViewerOverlay {
     property <bool> image-system-drag-started: false;
     property <length> image-pressed-x: 0px;
     property <length> image-pressed-y: 0px;
+    property <bool> image-pan-active: false;
+    property <length> image-pan-x: 0px;
+    property <length> image-pan-y: 0px;
+    property <length> image-pan-start-x: 0px;
+    property <length> image-pan-start-y: 0px;
     if AppState.viewer-open: Rectangle {
         background: AppTheme.bg;
         Timer {
@@ -126,7 +131,7 @@ export component ViewerOverlay {
             running: AppState.viewer-message != "";
             triggered => { AppState.viewer-message = ""; }
         }
-        if !root.image-fullscreen: PillButton { x: 24px; y: 24px; width: 88px; text: AppState.en ? "← Back" : "← 返回"; clicked => { root.image-zoom = 1.0; root.detail-collapsed = false; AppState.close-viewer(); } }
+        if !root.image-fullscreen: PillButton { x: 24px; y: 24px; width: 88px; text: AppState.en ? "← Back" : "← 返回"; clicked => { root.image-zoom = 1.0; root.image-pan-x = 0px; root.image-pan-y = 0px; root.detail-collapsed = false; AppState.close-viewer(); } }
         if AppState.viewer-source != "reference" && !root.image-fullscreen: viewer-info := HorizontalLayout {
             x: 124px;
             y: 24px;
@@ -153,7 +158,7 @@ export component ViewerOverlay {
             }
             Rectangle { horizontal-stretch: 1; background: transparent; }
         }
-        Rectangle {
+        viewer-image-stage := Rectangle {
             x: root.image-fullscreen ? 0px : (AppState.viewer-source == "reference" ? 128px : root.viewer-padding + root.viewer-nav-lane);
             y: root.image-fullscreen ? 0px : 78px;
             width: root.image-fullscreen ? root.viewer-content-right : (AppState.viewer-source == "reference" ? parent.width - 256px : root.viewer-content-right - root.viewer-padding * 2 - root.viewer-nav-lane * 2);
@@ -162,18 +167,26 @@ export component ViewerOverlay {
                 : AppState.viewer-source == "inspiration" ? parent.height - 96px : parent.height - 172px);
             background: transparent;
             clip: true;
-            Image {
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
-                width: parent.width * root.image-zoom;
-                height: parent.height * root.image-zoom;
+            property <float> source-aspect: AppState.viewer-width > 0 && AppState.viewer-height > 0
+                ? AppState.viewer-width * 1.0 / AppState.viewer-height
+                : 1;
+            property <length> base-image-width: min(self.width, self.height * self.source-aspect);
+            property <length> base-image-height: min(self.height, self.width / self.source-aspect);
+            property <length> max-pan-x: max(0px, (self.base-image-width * root.image-zoom - self.width) / 2);
+            property <length> max-pan-y: max(0px, (self.base-image-height * root.image-zoom - self.height) / 2);
+            property <bool> can-pan: self.max-pan-x > 0px || self.max-pan-y > 0px;
+            viewer-image := Image {
+                x: (parent.width - self.width) / 2 + root.image-pan-x;
+                y: (parent.height - self.height) / 2 + root.image-pan-y;
+                width: parent.base-image-width * root.image-zoom;
+                height: parent.base-image-height * root.image-zoom;
                 source: AppState.viewer-image;
                 image-fit: contain;
             }
             image-touch := TouchArea {
                 width: parent.width;
                 height: parent.height;
-                mouse-cursor: pointer;
+                mouse-cursor: viewer-image-stage.can-pan ? move : pointer;
                 pointer-event(event) => {
                     if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
                         root.image-drag-armed = false;
@@ -182,10 +195,27 @@ export component ViewerOverlay {
                         root.context-menu-y = self.absolute-position.y + self.mouse-y;
                     } else if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                         root.context-menu-open = false;
-                        root.image-drag-armed = true;
                         root.image-system-drag-started = false;
                         root.image-pressed-x = self.mouse-x;
                         root.image-pressed-y = self.mouse-y;
+                        if viewer-image-stage.can-pan {
+                            root.image-pan-active = true;
+                            root.image-drag-armed = false;
+                            root.image-pan-start-x = root.image-pan-x;
+                            root.image-pan-start-y = root.image-pan-y;
+                        } else {
+                            root.image-pan-active = false;
+                            root.image-drag-armed = true;
+                        }
+                    } else if event.kind == PointerEventKind.move && root.image-pan-active {
+                        root.image-pan-x = max(-viewer-image-stage.max-pan-x, min(
+                            viewer-image-stage.max-pan-x,
+                            root.image-pan-start-x + self.mouse-x - root.image-pressed-x
+                        ));
+                        root.image-pan-y = max(-viewer-image-stage.max-pan-y, min(
+                            viewer-image-stage.max-pan-y,
+                            root.image-pan-start-y + self.mouse-y - root.image-pressed-y
+                        ));
                     } else if event.kind == PointerEventKind.move
                         && root.image-drag-armed
                         && !root.image-system-drag-started
@@ -196,6 +226,7 @@ export component ViewerOverlay {
                         root.image-drag-armed = false;
                         root.image-system-drag-started = false;
                     } else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                        root.image-pan-active = false;
                         root.image-drag-armed = false;
                         root.image-system-drag-started = false;
                     }
@@ -203,6 +234,8 @@ export component ViewerOverlay {
                 scroll-event(event) => {
                     if event.delta-y != 0 {
                         root.image-zoom = max(0.5, min(3.0, root.image-zoom + (event.delta-y > 0 ? 0.1 : -0.1)));
+                        root.image-pan-x = max(-viewer-image-stage.max-pan-x, min(viewer-image-stage.max-pan-x, root.image-pan-x));
+                        root.image-pan-y = max(-viewer-image-stage.max-pan-y, min(viewer-image-stage.max-pan-y, root.image-pan-y));
                         return accept;
                     }
                     return reject;
@@ -236,6 +269,8 @@ export component ViewerOverlay {
                     clicked => {
                         root.image-fullscreen = !root.image-fullscreen;
                         root.image-zoom = 1.0;
+                        root.image-pan-x = 0px;
+                        root.image-pan-y = 0px;
                         root.context-menu-open = false;
                     }
                 }
@@ -257,13 +292,13 @@ export component ViewerOverlay {
             x: root.viewer-padding + (root.viewer-nav-lane - root.viewer-nav-size) / 2;
             y: (parent.height - 52px) / 2;
             direction: "prev";
-            clicked => { AppState.viewer-prev(); }
+            clicked => { root.image-zoom = 1.0; root.image-pan-x = 0px; root.image-pan-y = 0px; AppState.viewer-prev(); }
         }
         if AppState.viewer-source != "reference" && !root.image-fullscreen: ViewerNavButton {
             x: root.viewer-content-right - root.viewer-padding - root.viewer-nav-lane + (root.viewer-nav-lane - root.viewer-nav-size) / 2;
             y: (parent.height - 52px) / 2;
             direction: "next";
-            clicked => { AppState.viewer-next(); }
+            clicked => { root.image-zoom = 1.0; root.image-pan-x = 0px; root.image-pan-y = 0px; AppState.viewer-next(); }
         }
         if AppState.viewer-source != "reference" && AppState.viewer-source != "inspiration" && !root.image-fullscreen: Rectangle {
             x: 0px;
