@@ -354,14 +354,7 @@ export component ViewerOverlay {
                         Text { width: parent.width; height: parent.height; text: "›"; color: AppTheme.muted; font-size: 24px; horizontal-alignment: center; vertical-alignment: center; }
                         collapse-detail-touch := TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.detail-collapsed = true; } }
                     }
-                    Text { x: 42px; width: parent.width - 176px; height: parent.height; text: AppState.en ? "Prompt" : "图片提示词"; color: AppTheme.muted; font-size: 14px; font-weight: 400; vertical-alignment: center; }
-                    if AppState.viewer-source != "inspiration": PillButton {
-                        x: parent.width - 124px;
-                        width: 124px;
-                        height: 32px;
-                        text: AppState.en ? "Use Prompt" : "使用提示词";
-                        clicked => { AppState.viewer-edit(); }
-                    }
+                    Text { x: 42px; width: parent.width - 42px; height: parent.height; text: AppState.en ? "Prompt" : "图片提示词"; color: AppTheme.muted; font-size: 14px; font-weight: 400; vertical-alignment: center; }
                 }
                 prompt-scroll := ScrollView {
                     horizontal-stretch: 1;
@@ -426,7 +419,7 @@ export component ViewerOverlay {
                         ViewerToolActionButton {
                             horizontal-stretch: 1;
                             icon: @image-url("../../assets/icons/edit.svg");
-                            label: AppState.en ? "Edit Again" : "重新编辑";
+                            label: AppState.en ? "Use Prompt" : "使用提示词";
                             clicked => { AppState.viewer-edit(); }
                         }
                         ViewerToolActionButton {

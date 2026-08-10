@@ -3640,6 +3640,8 @@ mod tests {
         assert!(editor.contains("AppState.image-editor-brush-color = color"));
         assert!(editor.contains("text <=> AppState.image-editor-prompt"));
         assert!(editor.contains("AppState.submit-image-edit();"));
+        assert!(editor.contains("text: AppState.en ? \"Close\" : \"关闭\";"));
+        assert!(!editor.contains("text: AppState.en ? \"← Back\" : \"← 返回\";"));
         assert!(callbacks.contains("state.on_viewer_open_image_editor"));
         assert!(callbacks.contains("interpolated_brush_points"));
         assert!(callbacks.contains("state.on_submit_image_edit"));
@@ -3660,8 +3662,8 @@ mod tests {
         assert!(viewer.contains("@image-url(\"../../assets/icons/restore.svg\")"));
         assert!(viewer.contains("root.detail-collapsed = true;"));
         assert!(viewer.contains("root.detail-collapsed = false;"));
-        assert!(viewer.contains("if AppState.viewer-source != \"inspiration\": PillButton"));
-        assert!(viewer.contains("text: AppState.en ? \"Use Prompt\""));
+        assert!(!viewer.contains("if AppState.viewer-source != \"inspiration\": PillButton"));
+        assert!(!viewer.contains("text: AppState.en ? \"Use Prompt\""));
     }
 
     #[test]
@@ -3839,7 +3841,7 @@ mod tests {
         assert!(tools.contains("@image-url(\"../../assets/icons/focus.svg\")"));
         assert!(repeat.contains("HorizontalLayout"));
         assert_eq!(repeat.matches("ViewerToolActionButton {").count(), 2);
-        assert!(repeat.contains("label: AppState.en ? \"Edit Again\" : \"重新编辑\""));
+        assert!(repeat.contains("label: AppState.en ? \"Use Prompt\" : \"使用提示词\""));
         assert!(repeat.contains("label: AppState.en ? \"Generate Again\" : \"再次生成\""));
         assert!(repeat.contains("@image-url(\"../../assets/icons/edit.svg\")"));
         assert!(repeat.contains("@image-url(\"../../assets/icons/redo.svg\")"));
