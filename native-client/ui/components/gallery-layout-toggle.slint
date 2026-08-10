@@ -3,6 +3,7 @@ import { AppTheme } from "../theme.slint";
 
 export component GalleryLayoutToggle {
     in-out property <string> mode: "grid";
+    in property <string> preference-key: "";
     width: 112px;
     height: 34px;
 
@@ -46,6 +47,7 @@ export component GalleryLayoutToggle {
             accessible-label: AppState.en ? "Switch gallery layout" : "切换缩略图布局";
             clicked => {
                 root.mode = root.mode == "grid" ? "waterfall" : "grid";
+                AppState.save-gallery-layout(root.preference-key, root.mode);
             }
         }
     }

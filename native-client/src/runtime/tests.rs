@@ -1430,6 +1430,8 @@ mod tests {
         let panel = include_str!("../../ui/components/generation-result-panel.slint");
         let assets = include_str!("../../ui/pages/assets-page.slint");
         let inspiration = include_str!("../../ui/pages/inspiration-page.slint");
+        let app = include_str!("app.rs");
+        let profile = include_str!("storage/local_store.rs");
         let groups = include_str!("../../ui/components/time-grouped-gallery.slint");
         let thumbnail = include_str!("../../ui/components/thumbnail-card.slint");
         let waterfall_column = include_str!("../../ui/components/waterfall-column.slint");
@@ -1445,11 +1447,20 @@ mod tests {
             assert!(state.contains(property), "missing gallery layout state {property}");
         }
         assert!(toggle.contains("root.mode = root.mode == \"grid\" ? \"waterfall\" : \"grid\";"));
+        assert!(toggle.contains("AppState.save-gallery-layout(root.preference-key, root.mode);"));
         assert!(toggle.contains("source: root.mode == \"waterfall\""));
         assert!(toggle.contains("text: root.mode == \"waterfall\""));
         assert!(panel.contains("mode <=> AppState.generation-gallery-layout;"));
+        assert!(panel.contains("preference-key: \"generation\";"));
         assert!(assets.contains("mode <=> AppState.asset-gallery-layout;"));
+        assert!(assets.contains("preference-key: \"assets\";"));
         assert!(inspiration.contains("mode <=> AppState.inspiration-gallery-layout;"));
+        assert!(inspiration.contains("preference-key: \"inspiration\";"));
+        assert!(state.contains("callback save-gallery-layout(string, string);"));
+        assert!(app.contains("state.on_save_gallery_layout"));
+        assert!(app.contains("save_user_profile(&app);"));
+        assert!(profile.contains("ui_preferences: UiPreferencesData"));
+        assert!(profile.contains("state.set_generation_gallery_layout"));
         assert!(groups.contains("layout-mode: root.layout-mode;"));
         assert!(thumbnail.contains("in property <bool> masonry: false;"));
         assert!(thumbnail.contains("root.item.height / root.item.width"));
@@ -1465,6 +1476,30 @@ mod tests {
         assert!(panel.contains(
             "AppState.generation-gallery-layout == \"waterfall\" ? root.base-thumb-width() : root.item-width()"
         ));
+    }
+
+    #[test]
+    fn gallery_layout_preferences_are_backward_compatible_and_normalized() {
+        let legacy: UserProfileData =
+            serde_json::from_str("{}").expect("deserialize legacy user profile");
+        assert_eq!(legacy.ui_preferences.generation_gallery_layout, "grid");
+        assert_eq!(legacy.ui_preferences.asset_gallery_layout, "grid");
+        assert_eq!(legacy.ui_preferences.inspiration_gallery_layout, "grid");
+
+        let saved = UserProfileData {
+            ui_preferences: UiPreferencesData {
+                generation_gallery_layout: "waterfall".to_string(),
+                asset_gallery_layout: "waterfall".to_string(),
+                inspiration_gallery_layout: "waterfall".to_string(),
+            },
+            ..UserProfileData::default()
+        };
+        let serialized = serde_json::to_string(&saved).expect("serialize user profile");
+        let restored: UserProfileData =
+            serde_json::from_str(&serialized).expect("restore user profile");
+        assert_eq!(restored.ui_preferences.generation_gallery_layout, "waterfall");
+        assert_eq!(normalize_gallery_layout(" WATERFALL "), "waterfall");
+        assert_eq!(normalize_gallery_layout("unsupported"), "grid");
     }
 
     #[test]

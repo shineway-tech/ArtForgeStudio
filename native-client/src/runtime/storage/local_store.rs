@@ -101,6 +101,15 @@ pub(super) fn load_user_profile(app: &AppWindow) {
         let category = resolve_category(&profile.asset_type, "");
         state.set_asset_type(category.into());
     }
+    state.set_generation_gallery_layout(
+        normalize_gallery_layout(&profile.ui_preferences.generation_gallery_layout).into(),
+    );
+    state.set_asset_gallery_layout(
+        normalize_gallery_layout(&profile.ui_preferences.asset_gallery_layout).into(),
+    );
+    state.set_inspiration_gallery_layout(
+        normalize_gallery_layout(&profile.ui_preferences.inspiration_gallery_layout).into(),
+    );
 }
 
 pub(super) fn save_user_profile(app: &AppWindow) {
@@ -122,10 +131,32 @@ pub(super) fn save_user_profile(app: &AppWindow) {
         },
         language: state.get_language().to_string(),
         asset_type: resolve_category(&state.get_asset_type().to_string(), ""),
+        ui_preferences: UiPreferencesData {
+            generation_gallery_layout: normalize_gallery_layout(
+                &state.get_generation_gallery_layout().to_string(),
+            )
+            .to_string(),
+            asset_gallery_layout: normalize_gallery_layout(
+                &state.get_asset_gallery_layout().to_string(),
+            )
+            .to_string(),
+            inspiration_gallery_layout: normalize_gallery_layout(
+                &state.get_inspiration_gallery_layout().to_string(),
+            )
+            .to_string(),
+        },
     };
     if let Ok(text) = serde_json::to_string_pretty(&profile) {
         let path = user_profile_path();
         let _ = replace_json_file(&path, &text);
+    }
+}
+
+pub(super) fn normalize_gallery_layout(value: &str) -> &'static str {
+    if value.trim().eq_ignore_ascii_case("waterfall") {
+        "waterfall"
+    } else {
+        "grid"
     }
 }
 

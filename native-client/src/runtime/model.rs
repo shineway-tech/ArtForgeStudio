@@ -503,6 +503,32 @@ struct UserProfileData {
     language: String,
     #[serde(default)]
     asset_type: String,
+    #[serde(default)]
+    ui_preferences: UiPreferencesData,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct UiPreferencesData {
+    #[serde(default = "default_gallery_layout")]
+    generation_gallery_layout: String,
+    #[serde(default = "default_gallery_layout")]
+    asset_gallery_layout: String,
+    #[serde(default = "default_gallery_layout")]
+    inspiration_gallery_layout: String,
+}
+
+impl Default for UiPreferencesData {
+    fn default() -> Self {
+        Self {
+            generation_gallery_layout: default_gallery_layout(),
+            asset_gallery_layout: default_gallery_layout(),
+            inspiration_gallery_layout: default_gallery_layout(),
+        }
+    }
+}
+
+fn default_gallery_layout() -> String {
+    "grid".to_string()
 }
 
 fn default_card_style() -> String {

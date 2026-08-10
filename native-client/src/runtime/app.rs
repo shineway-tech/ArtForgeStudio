@@ -207,6 +207,24 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
+        state.on_save_gallery_layout(move |scope, layout| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let layout = normalize_gallery_layout(&layout).into();
+            let state = app.global::<AppState>();
+            match scope.as_str() {
+                "generation" => state.set_generation_gallery_layout(layout),
+                "assets" => state.set_asset_gallery_layout(layout),
+                "inspiration" => state.set_inspiration_gallery_layout(layout),
+                _ => return,
+            }
+            save_user_profile(&app);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
         let store = store.clone();
         let context = context.clone();
         state.on_select_workspace_category(move |category| {
