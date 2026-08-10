@@ -78,6 +78,17 @@ impl ApiError {
         self.code() == Some("insufficient_credits")
     }
 
+    pub(crate) fn is_invitation_code_already_submitted(&self) -> bool {
+        matches!(
+            self.code(),
+            Some(
+                "invitation_code_already_submitted"
+                    | "invitation_code_already_used"
+                    | "invitation_already_bound"
+            )
+        )
+    }
+
     pub(crate) fn should_preserve_generation_recovery(&self) -> bool {
         match self {
             Self::Network { .. } | Self::Protocol { .. } => true,
@@ -95,6 +106,11 @@ impl ApiError {
                 "操作过于频繁，请稍后再试".to_string()
             }
             Some("email_already_bound") => "当前账号已经绑定邮箱".to_string(),
+            Some(
+                "invitation_code_already_submitted"
+                | "invitation_code_already_used"
+                | "invitation_already_bound",
+            ) => "当前账号已填写过邀请码，每个账号只能填写一次".to_string(),
             Some("email_identity_conflict") => "该邮箱已属于其他账号，不能直接绑定".to_string(),
             Some("email_delivery_failed") => "验证码发送失败，请稍后重试".to_string(),
             Some("wechat_login_unavailable") => "微信登录暂未开放，请使用邮箱登录".to_string(),
@@ -365,6 +381,23 @@ mod tests {
         assert!(http_error("client_update_required").is_client_update_required());
         assert!(http_error("access_token_invalid").is_access_token_rejected());
         assert!(!http_error("access_token_invalid").is_terminal_session_error());
+    }
+
+    #[test]
+    fn invitation_code_reuse_errors_lock_the_single_submission_flow() {
+        for code in [
+            "invitation_code_already_submitted",
+            "invitation_code_already_used",
+            "invitation_already_bound",
+        ] {
+            let error = http_error(code);
+            assert!(error.is_invitation_code_already_submitted(), "{code}");
+            assert_eq!(
+                error.user_message(),
+                "当前账号已填写过邀请码，每个账号只能填写一次"
+            );
+        }
+        assert!(!http_error("invitation_code_invalid").is_invitation_code_already_submitted());
     }
 
     #[test]

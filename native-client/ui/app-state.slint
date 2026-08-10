@@ -381,6 +381,9 @@ export global AppState {
     in-out property <string> invitation-code: "";
     in-out property <bool> invitation-code-busy: false;
     in-out property <bool> invitation-code-success: false;
+    // Server-authoritative. The current session is locked as soon as the server
+    // accepts a code, and future account snapshots can restore the locked state.
+    in-out property <bool> invitation-code-submitted: false;
     in-out property <string> invitation-code-status: "";
     // The current promotional reward rate is 10%. Other summary values and invited-user
     // rows remain server-authoritative and stay empty until the service provides them.

@@ -468,8 +468,12 @@ export component ProfileDialog {
                         width: parent.width;
                         height: 28px;
                         text: AppState.en
-                            ? "Enter an invitation code and confirm to validate it"
-                            : "填写邀请码，确认后将由服务端验证";
+                            ? (AppState.invitation-code-submitted
+                                ? "An invitation code can only be submitted once per account"
+                                : "Enter an invitation code and confirm to validate it")
+                            : (AppState.invitation-code-submitted
+                                ? "当前账号已填写过邀请码，每个账号只能填写一次"
+                                : "填写邀请码，确认后将由服务端验证");
                         color: AppTheme.muted;
                         font-size: 14px;
                         vertical-alignment: center;
@@ -490,6 +494,7 @@ export component ProfileDialog {
                             width: parent.width - 32px;
                             height: parent.height;
                             text <=> AppState.invitation-code;
+                            enabled: !AppState.invitation-code-submitted;
                             single-line: true;
                             color: AppTheme.text;
                             font-size: 14px;
@@ -500,7 +505,9 @@ export component ProfileDialog {
                             x: 16px;
                             width: parent.width - 32px;
                             height: parent.height;
-                            text: AppState.en ? "Enter invitation code" : "请填写邀请码";
+                            text: AppState.invitation-code-submitted
+                                ? (AppState.en ? "Already submitted" : "已填写")
+                                : (AppState.en ? "Enter invitation code" : "请填写邀请码");
                             color: AppTheme.weak;
                             font-size: 14px;
                             vertical-alignment: center;
@@ -512,10 +519,12 @@ export component ProfileDialog {
                         width: 132px;
                         height: 40px;
                         primary: true;
-                        disabled: AppState.invitation-code-busy;
-                        text: AppState.invitation-code-busy
-                            ? (AppState.en ? "Validating..." : "验证中...")
-                            : (AppState.en ? "Confirm" : "确认");
+                        disabled: AppState.invitation-code-busy || AppState.invitation-code-submitted;
+                        text: AppState.invitation-code-submitted
+                            ? (AppState.en ? "Submitted" : "已填写")
+                            : (AppState.invitation-code-busy
+                                ? (AppState.en ? "Validating..." : "验证中...")
+                                : (AppState.en ? "Confirm" : "确认"));
                         clicked => { AppState.submit-invitation-code(); }
                     }
                     Text {

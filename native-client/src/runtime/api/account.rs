@@ -11,6 +11,8 @@ pub(crate) struct AccountUser {
     pub(crate) nickname: Option<String>,
     pub(crate) status: String,
     pub(crate) registered_at: String,
+    #[serde(default)]
+    pub(crate) invitation_code_submitted: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -505,5 +507,19 @@ mod tests {
         .expect("invitation-code request should serialize");
 
         assert_eq!(body, serde_json::json!({ "code": "ELUNVI-2026" }));
+    }
+
+    #[test]
+    fn legacy_account_snapshot_defaults_invitation_code_to_unsubmitted() {
+        let user: AccountUser = serde_json::from_value(serde_json::json!({
+            "id": "user-1",
+            "email_masked": "u***@example.com",
+            "nickname": null,
+            "status": "active",
+            "registered_at": "2026-08-10T00:00:00Z"
+        }))
+        .expect("legacy account user should remain compatible");
+
+        assert!(!user.invitation_code_submitted);
     }
 }

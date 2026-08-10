@@ -12,7 +12,12 @@ pub(super) fn wire_invitation_code_callbacks(app: &AppWindow, context: AppContex
             return;
         };
         let state = app.global::<AppState>();
-        if state.get_invitation_code_busy() {
+        if state.get_invitation_code_busy() || state.get_invitation_code_submitted() {
+            if state.get_invitation_code_submitted() {
+                state.set_invitation_code_status(
+                    "当前账号已填写过邀请码，每个账号只能填写一次".into(),
+                );
+            }
             return;
         }
 
@@ -34,7 +39,9 @@ pub(super) fn wire_invitation_code_callbacks(app: &AppWindow, context: AppContex
                 state.set_invitation_code_busy(false);
                 match result {
                     Ok(message) => {
+                        state.set_invitation_code("".into());
                         state.set_invitation_code_success(true);
+                        state.set_invitation_code_submitted(true);
                         state.set_invitation_code_status(
                             message
                                 .filter(|value| !value.trim().is_empty())
@@ -44,6 +51,12 @@ pub(super) fn wire_invitation_code_callbacks(app: &AppWindow, context: AppContex
                     }
                     Err(ApiError::Http { status: 404, .. }) => {
                         state.set_invitation_code_status("邀请码功能暂未开放".into());
+                    }
+                    Err(error) if error.is_invitation_code_already_submitted() => {
+                        state.set_invitation_code("".into());
+                        state.set_invitation_code_success(true);
+                        state.set_invitation_code_submitted(true);
+                        state.set_invitation_code_status(error.user_message().into());
                     }
                     Err(error) => {
                         state.set_invitation_code_status(

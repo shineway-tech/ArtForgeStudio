@@ -1010,6 +1010,15 @@ pub(super) fn apply_backend_snapshot(
 ) {
     let state = app.global::<AppState>();
     state.set_email_mask(snapshot.account.user.email_masked.clone().into());
+    state.set_invitation_code_submitted(snapshot.account.user.invitation_code_submitted);
+    if snapshot.account.user.invitation_code_submitted {
+        state.set_invitation_code("".into());
+        state.set_invitation_code_success(true);
+        state.set_invitation_code_status("当前账号已填写过邀请码，每个账号只能填写一次".into());
+    } else {
+        state.set_invitation_code_success(false);
+        state.set_invitation_code_status("".into());
+    }
     state.set_nickname(
         snapshot
             .account
@@ -1515,6 +1524,7 @@ fn sign_out_locally(app: &AppWindow, revoked: bool) {
     state.set_invitation_code("".into());
     state.set_invitation_code_busy(false);
     state.set_invitation_code_success(false);
+    state.set_invitation_code_submitted(false);
     state.set_invitation_code_status("".into());
     state.set_auth_error(if revoked {
         "登录状态已失效，请重新登录".into()

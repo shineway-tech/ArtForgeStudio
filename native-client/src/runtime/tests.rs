@@ -4170,6 +4170,11 @@ mod tests {
         assert!(profile.contains("AppState.profile-section == \"invitation\""));
         assert!(profile.contains("请填写邀请码"));
         assert!(profile.contains("填写邀请码，确认后将由服务端验证"));
+        assert!(state.contains("invitation-code-submitted: false"));
+        assert!(profile.contains("每个账号只能填写一次"));
+        assert!(profile.contains(
+            "disabled: AppState.invitation-code-busy || AppState.invitation-code-submitted"
+        ));
         assert!(top_bar.contains("AppState.navigate(\"invitation-gift\")"));
         assert!(top_bar.contains("interval: 5s"));
         assert!(top_bar.contains("width: 44px"));
@@ -4178,6 +4183,9 @@ mod tests {
         assert!(app.contains("AppState.page == \"invitation-gift\""));
         assert!(account_api.contains("/v1/account/invitation-code"));
         assert!(callback.contains("api.submit_invitation_code(&code)"));
+        assert!(callback.contains("state.set_invitation_code_submitted(true)"));
+        assert!(callback.contains("error.is_invitation_code_already_submitted()"));
+        assert!(account_api.contains("invitation_code_submitted: bool"));
         assert!(!callback.contains("ELUNVI-2026"));
     }
 
