@@ -1,4 +1,4 @@
-use super::{ApiClient, ApiError, OrderDetail};
+use super::{ApiClient, ApiError, OrderDetail, SessionScope};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
@@ -58,6 +58,28 @@ impl MembershipApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn create_order_scoped(
+        &self,
+        plan_code: &str,
+        client_request_id: &str,
+        scope: &SessionScope,
+    ) -> Result<OrderDetail, ApiError> {
+        let body = serde_json::to_value(MembershipOrderRequest {
+            plan_code,
+            client_request_id,
+        })
+        .map_err(protocol_error)?;
+        self.client
+            .authenticated_json_scoped::<OrderDetail>(
+                Method::POST,
+                "/v1/membership/orders",
+                Some(body),
+                Some(client_request_id),
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
     pub(crate) fn create_upgrade_quote(
         &self,
         target_plan_code: &str,
@@ -70,6 +92,24 @@ impl MembershipApi {
                 "/v1/membership/upgrade-quotes",
                 Some(body),
                 None,
+            )
+            .map(|response| response.data)
+    }
+
+    pub(crate) fn create_upgrade_quote_scoped(
+        &self,
+        target_plan_code: &str,
+        scope: &SessionScope,
+    ) -> Result<UpgradeQuote, ApiError> {
+        let body = serde_json::to_value(UpgradeQuoteRequest { target_plan_code })
+            .map_err(protocol_error)?;
+        self.client
+            .authenticated_json_scoped::<UpgradeQuote>(
+                Method::POST,
+                "/v1/membership/upgrade-quotes",
+                Some(body),
+                None,
+                scope,
             )
             .map(|response| response.data)
     }
@@ -90,6 +130,28 @@ impl MembershipApi {
                 "/v1/membership/upgrade-orders",
                 Some(body),
                 Some(client_request_id),
+            )
+            .map(|response| response.data)
+    }
+
+    pub(crate) fn create_upgrade_order_scoped(
+        &self,
+        quote_id: &str,
+        client_request_id: &str,
+        scope: &SessionScope,
+    ) -> Result<OrderDetail, ApiError> {
+        let body = serde_json::to_value(UpgradeOrderRequest {
+            quote_id,
+            client_request_id,
+        })
+        .map_err(protocol_error)?;
+        self.client
+            .authenticated_json_scoped::<OrderDetail>(
+                Method::POST,
+                "/v1/membership/upgrade-orders",
+                Some(body),
+                Some(client_request_id),
+                scope,
             )
             .map(|response| response.data)
     }

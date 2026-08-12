@@ -8,11 +8,10 @@ import { AuthDialog } from "dialogs/auth-dialog.slint";
 import { CreditInsufficientDialog } from "dialogs/credit-insufficient-dialog.slint";
 import { ContactPopup } from "dialogs/contact-popup.slint";
 import { CanvasGroupNameDialog } from "dialogs/canvas-group-name-dialog.slint";
-import { InvoiceDialog } from "dialogs/invoice-dialog.slint";
-import { InvoiceOrderDialog } from "dialogs/invoice-order-dialog.slint";
 import { DeleteConfirm } from "dialogs/delete-confirm.slint";
 import { DeepPromptOptimizationDrawer } from "dialogs/deep-prompt-optimization-drawer.slint";
 import { ModelRequiredDialog } from "dialogs/model-required-dialog.slint";
+import { RecoveredPromptResultDialog } from "dialogs/recovered-prompt-result-dialog.slint";
 import { ProfileDialog } from "dialogs/profile-dialog.slint";
 import { AgreementUpdateDialog } from "dialogs/agreement-update-dialog.slint";
 import { AgreementViewerDialog } from "dialogs/agreement-viewer-dialog.slint";
@@ -42,13 +41,6 @@ import { WelcomePage } from "pages/welcome-page.slint";
 export { AppState, AppTheme, AccountSession, ModelGroup, ModelOption, AssetItem, AssetGroup, BrushPoint, CanvasNote, CompressionImageItem, ConversationItem, NotificationItem, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, InvoiceOrderView, ReferenceItem }
 
 export component AppWindow inherits Window {
-    property <bool> invoice-open: false;
-    property <bool> invoice-orders-open: false;
-    property <string> invoice-order-id: "";
-    property <string> invoice-order-title: "";
-    property <string> invoice-order-amount: "";
-    property <string> invoice-order-time: "";
-
     title: "Elunvi Canvas";
     preferred-width: 1440px;
     preferred-height: 900px;
@@ -88,11 +80,7 @@ export component AppWindow inherits Window {
                 if AppState.page == "inspiration": InspirationPage { width: parent.width; height: parent.height; }
                 if AppState.page == "notifications": NotificationsPage { width: parent.width; height: parent.height; }
                 if AppState.page == "invitation-gift": InvitationGiftPage { width: parent.width; height: parent.height; }
-                if AppState.page == "credits": CreditsPage {
-                    width: parent.width;
-                    height: parent.height;
-                    open-invoice-orders => { root.invoice-orders-open = true; }
-                }
+                if AppState.page == "credits": CreditsPage { width: parent.width; height: parent.height; }
                 if AppState.page == "settings": SettingsPage { width: parent.width; height: parent.height; }
                 if AppState.page == "custom-prompt-editor": CustomPromptEditorPage {
                     width: parent.width;
@@ -139,32 +127,7 @@ export component AppWindow inherits Window {
     CanvasGroupNameDialog { width: root.width; height: root.height; }
     ModelRequiredDialog { width: root.width; height: root.height; }
     CreditInsufficientDialog { width: root.width; height: root.height; }
-    InvoiceOrderDialog {
-        x: 0px;
-        y: 0px;
-        width: root.width;
-        height: root.height;
-        open <=> root.invoice-orders-open;
-        select-order(order-id, order-title, order-amount, order-time) => {
-            root.invoice-order-id = order-id;
-            root.invoice-order-title = order-title;
-            root.invoice-order-amount = order-amount;
-            root.invoice-order-time = order-time;
-            root.invoice-orders-open = false;
-            root.invoice-open = true;
-        }
-    }
-    InvoiceDialog {
-        x: 0px;
-        y: 0px;
-        width: root.width;
-        height: root.height;
-        open <=> root.invoice-open;
-        selected-order-id: root.invoice-order-id;
-        selected-order-title: root.invoice-order-title;
-        selected-order-amount: root.invoice-order-amount;
-        selected-order-time: root.invoice-order-time;
-    }
+    RecoveredPromptResultDialog { width: root.width; height: root.height; }
     AgreementViewerDialog { width: root.width; height: root.height; }
     DeepPromptOptimizationDrawer { width: root.width; height: root.height; }
     if AppState.contact-copy-toast-visible: Rectangle {

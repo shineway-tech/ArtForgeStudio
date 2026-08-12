@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ExternalDropPosition {
@@ -16,6 +16,9 @@ pub(crate) enum ExternalImageDrop {
 }
 
 static EXTERNAL_IMAGE_DROPS: OnceLock<Mutex<Vec<ExternalImageDrop>>> = OnceLock::new();
+type ExternalImageDropWakeup = Arc<dyn Fn() + Send + Sync + 'static>;
+static EXTERNAL_IMAGE_DROP_WAKEUP: OnceLock<Mutex<Option<ExternalImageDropWakeup>>> =
+    OnceLock::new();
 
 #[cfg(target_os = "macos")]
 static PENDING_MACOS_FILE_DRAG: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
@@ -24,9 +27,26 @@ fn external_image_drops() -> &'static Mutex<Vec<ExternalImageDrop>> {
     EXTERNAL_IMAGE_DROPS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+fn external_image_drop_wakeup() -> &'static Mutex<Option<ExternalImageDropWakeup>> {
+    EXTERNAL_IMAGE_DROP_WAKEUP.get_or_init(|| Mutex::new(None))
+}
+
+pub(crate) fn set_external_image_drop_wakeup(wakeup: impl Fn() + Send + Sync + 'static) {
+    if let Ok(mut slot) = external_image_drop_wakeup().lock() {
+        *slot = Some(Arc::new(wakeup));
+    }
+}
+
 fn queue_external_image_drop(drop: ExternalImageDrop) {
     if let Ok(mut drops) = external_image_drops().lock() {
         drops.push(drop);
+    }
+    let wakeup = external_image_drop_wakeup()
+        .lock()
+        .ok()
+        .and_then(|slot| slot.clone());
+    if let Some(wakeup) = wakeup {
+        wakeup();
     }
 }
 

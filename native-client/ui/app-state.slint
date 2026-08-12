@@ -1,6 +1,9 @@
-import { AccountSession, AssetGroup, AssetItem, BrushPoint, CanvasLink, CanvasNote, CatalogModelView, CompressionImageItem, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, InvitedUserView, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
+import { AccountSession, AssetGroup, AssetItem, BrushPoint, CanvasLink, CanvasNote, CatalogModelView, CompressionImageItem, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, GalleryHeader, GalleryLoadingPlacement, GalleryPlacement, InvitedUserView, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 
 export global AppState {
+    // The software renderer stays available for machines without a usable GPU. Expensive
+    // decorative animation is reduced automatically when that fallback is active.
+    in-out property <bool> reduced-motion: false;
     callback dismiss-payment();
     callback confirm-payment-success();
     callback retry-payment-browser();
@@ -8,6 +11,7 @@ export global AppState {
     callback open-contact-settings();
     callback copy-contact-detail(string);
     callback open-external-link(string);
+    callback process-external-image-drops();
     in-out property <string> page: "welcome";
     in-out property <bool> sidebar-collapsed: false;
     in-out property <bool> contact-popup-open: true;
@@ -79,6 +83,24 @@ export global AppState {
     in-out property <string> image-model-name: "";
     in-out property <string> reasoning-model: "";
     in-out property <string> reasoning-model-name: "";
+    // Image style analysis availability and pricing are selected from the server catalog.
+    in-out property <bool> style-analysis-available: false;
+    in-out property <string> style-analysis-model-code: "";
+    in-out property <string> style-analysis-display-name: "";
+    in-out property <string> style-analysis-credit-cost: "";
+
+    // A completed prompt task is only written back automatically while its original editor
+    // snapshot still matches. Otherwise it remains persisted until the user claims or discards it.
+    in-out property <bool> recovered-prompt-result-open: false;
+    in-out property <string> recovered-prompt-client-request-id: "";
+    in-out property <string> recovered-prompt-task-type: "";
+    in-out property <string> recovered-prompt-target-kind: "";
+    in-out property <string> recovered-prompt-result: "";
+    in-out property <string> recovered-prompt-error: "";
+    in-out property <string> optimizing-prompt-request-id: "";
+    in-out property <string> translating-prompt-request-id: "";
+    in-out property <string> custom-style-analysis-request-id: "";
+    in-out property <string> custom-prompt-recovered-request-id: "";
 
     in-out property <string> prompt: "";
     in-out property <float> reference-drop-x: 0;
@@ -96,6 +118,7 @@ export global AppState {
     in-out property <[CustomPromptItem]> selected-custom-prompt-items: [];
     in-out property <string> custom-prompt-name: "";
     in-out property <string> custom-prompt-input: "";
+    in-out property <string> custom-prompt-editor-session-id: "";
     in-out property <string> custom-prompt-category: "default";
     in-out property <string> custom-prompt-format: "json";
     in-out property <string> custom-prompt-negative: "";
@@ -279,6 +302,12 @@ export global AppState {
     in-out property <string> current-conversation-id: "";
     in-out property <[AssetItem]> generations: [];
     in-out property <[AssetGroup]> generation-groups: [];
+    in-out property <[GalleryPlacement]> generation-layout-items: [];
+    in-out property <[GalleryHeader]> generation-layout-headers: [];
+    in-out property <[GalleryLoadingPlacement]> generation-layout-loaders: [];
+    in-out property <float> generation-layout-height: 1;
+    in-out property <int> generation-visible-limit: 24;
+    in-out property <bool> generation-has-more: false;
     in-out property <[AssetItem]> generation-col-0: [];
     in-out property <[AssetItem]> generation-col-1: [];
     in-out property <[AssetItem]> generation-col-2: [];
@@ -286,12 +315,22 @@ export global AppState {
     in-out property <[AssetItem]> generation-col-4: [];
     in-out property <[AssetItem]> assets: [];
     in-out property <[AssetGroup]> asset-groups: [];
+    in-out property <[GalleryPlacement]> asset-layout-items: [];
+    in-out property <[GalleryHeader]> asset-layout-headers: [];
+    in-out property <float> asset-layout-height: 1;
+    in-out property <int> asset-visible-limit: 24;
+    in-out property <bool> asset-has-more: false;
     in-out property <[AssetItem]> asset-col-0: [];
     in-out property <[AssetItem]> asset-col-1: [];
     in-out property <[AssetItem]> asset-col-2: [];
     in-out property <[AssetItem]> asset-col-3: [];
     in-out property <[AssetItem]> asset-col-4: [];
     in-out property <[AssetItem]> inspiration: [];
+    in-out property <[GalleryPlacement]> inspiration-layout-items: [];
+    in-out property <[GalleryHeader]> inspiration-layout-headers: [];
+    in-out property <float> inspiration-layout-height: 1;
+    in-out property <int> inspiration-visible-limit: 24;
+    in-out property <bool> inspiration-has-more: false;
     in-out property <[AssetItem]> inspiration-col-0: [];
     in-out property <[AssetItem]> inspiration-col-1: [];
     in-out property <[AssetItem]> inspiration-col-2: [];
@@ -302,6 +341,10 @@ export global AppState {
     in-out property <string> inspiration-gallery-layout: "grid";
     in-out property <[NotificationItem]> notifications: [];
     in-out property <bool> has-unread: false;
+    in-out property <bool> notification-page-loading: false;
+    in-out property <bool> notification-page-has-more: false;
+    in-out property <string> notification-next-cursor: "";
+    in-out property <string> notification-page-message: "";
     in-out property <bool> theme-menu-open: false;
     in-out property <image> showcase-character;
     in-out property <image> showcase-scene;
@@ -385,13 +428,18 @@ export global AppState {
     // accepts a code, and future account snapshots can restore the locked state.
     in-out property <bool> invitation-code-submitted: false;
     in-out property <string> invitation-code-status: "";
-    // The current promotional reward rate is 10%. Other summary values and invited-user
-    // rows remain server-authoritative and stay empty until the service provides them.
-    in-out property <string> invitation-reward-rate: "10";
-    in-out property <string> invitation-count: "--";
-    in-out property <string> invitation-history-reward: "--";
+    // Invitation rules, statistics, and rows are all server-authoritative.
+    in-out property <string> invitation-reward-rate: "";
+    in-out property <string> invitation-count: "";
+    in-out property <string> invitation-history-reward: "";
     in-out property <string> invitation-own-code: "";
+    in-out property <string> invitation-rule-description: "";
+    in-out property <string> invitation-rewards-status: "";
     in-out property <[InvitedUserView]> invitation-users: [];
+    in-out property <bool> invitation-users-loading: false;
+    in-out property <bool> invitation-users-has-more: false;
+    in-out property <string> invitation-users-next-cursor: "";
+    in-out property <string> invitation-users-message: "";
     in-out property <bool> email-bound: false;
     in-out property <bool> email-bind-open: false;
     in-out property <string> email-bind-email: "";
@@ -420,6 +468,7 @@ export global AppState {
     in-out property <bool> viewer-open: false;
     in-out property <string> viewer-source: "";
     in-out property <string> viewer-id: "";
+    in-out property <string> viewer-source-path: "";
     in-out property <image> viewer-image;
     in-out property <string> viewer-title: "";
     in-out property <string> viewer-prompt: "";
@@ -439,6 +488,7 @@ export global AppState {
     in-out property <bool> viewer-remove-black-done: false;
     in-out property <bool> viewer-upscale-done: false;
     in-out property <image> image-editor-image;
+    in-out property <string> image-editor-source-path: "";
     in-out property <int> image-editor-source-width: 0;
     in-out property <int> image-editor-source-height: 0;
     in-out property <float> image-editor-brush-size: 28;
@@ -449,6 +499,15 @@ export global AppState {
     in-out property <string> image-editor-status: "";
     in-out property <bool> image-editor-generating: false;
     in-out property <string> image-editor-return-page: "generation";
+    in-out property <string> image-editor-model: "";
+    in-out property <string> image-editor-model-name: "";
+    in-out property <string> image-editor-quality: "1K";
+    in-out property <int> image-editor-price-1k: 0;
+    in-out property <int> image-editor-price-2k: 0;
+    in-out property <int> image-editor-price-4k: 0;
+    out property <int> image-editor-estimated-credit-cost: image-editor-quality == "4K"
+        ? image-editor-price-4k
+        : (image-editor-quality == "2K" ? image-editor-price-2k : image-editor-price-1k);
     in-out property <bool> cutout-open: false;
     in-out property <string> cutout-type: "general";
     in-out property <string> cutout-message: "";
@@ -471,6 +530,7 @@ export global AppState {
     in-out property <string> pending-delete-kind: "";
     in-out property <string> pending-delete-id: "";
     in-out property <string> pending-delete-source: "";
+    in-out property <bool> pending-delete-can-remove-file: false;
     in-out property <bool> model-required-open: false;
     in-out property <bool> advanced-open: false;
     in-out property <bool> translate-prompt: false;
@@ -492,6 +552,13 @@ export global AppState {
     in-out property <string> input-dir: ".\\data\\input";
     in-out property <string> output-dir: ".\\data\\out";
     in-out property <string> prompt-dir: ".\\data\\prompt";
+    in-out property <bool> storage-busy: false;
+    in-out property <string> storage-total-size: "--";
+    in-out property <string> storage-output-size: "--";
+    in-out property <string> storage-reference-size: "--";
+    in-out property <string> storage-cache-size: "--";
+    in-out property <string> storage-transient-size: "--";
+    in-out property <string> storage-message: "";
     in-out property <string> current-version: "";
     in-out property <string> latest-version: "";
     in-out property <bool> update-available: false;
@@ -522,6 +589,7 @@ export global AppState {
     callback purchase-membership(string);
     callback revoke-session(string);
     callback submit-invitation-code();
+    callback load-more-invitation-users();
     callback start-wechat-binding();
     callback close-wechat-binding();
     callback unbind-wechat();
@@ -544,6 +612,8 @@ export global AppState {
     callback save-gallery-layout(string, string);
     callback select-workspace-category(string);
     callback pick-dir(string);
+    callback refresh-storage-usage();
+    callback clear-preview-cache();
     callback load-fonts();
     callback check-version();
     callback start-update();
@@ -562,20 +632,20 @@ export global AppState {
     callback remove-custom-prompt-reference(string);
     callback open-custom-prompt-reference(string);
     callback choose-watermark-source();
-    callback add-watermark-source-from-drag(string, string) -> bool;
+    callback add-watermark-source-from-drag(data-transfer) -> bool;
     callback start-watermark-removal();
     callback start-remove-black-tool();
     callback reveal-watermark-result();
     callback choose-colorize-source();
-    callback add-colorize-source-from-drag(string, string) -> bool;
+    callback add-colorize-source-from-drag(data-transfer) -> bool;
     callback start-colorize();
     callback reveal-colorize-result();
     callback choose-enhance-source();
-    callback add-enhance-source-from-drag(string, string) -> bool;
+    callback add-enhance-source-from-drag(data-transfer) -> bool;
     callback start-enhance(string);
     callback reveal-enhance-result();
     callback choose-compression-images();
-    callback add-compression-images-from-drag(string, string) -> bool;
+    callback add-compression-images-from-drag(data-transfer) -> bool;
     callback paste-compression-images() -> bool;
     callback remove-compression-image(string);
     callback clear-compression-images();
@@ -583,14 +653,14 @@ export global AppState {
     callback update-compression-target-preview(string);
     callback start-compression();
     callback choose-conversion-images();
-    callback add-conversion-images-from-drag(string, string) -> bool;
+    callback add-conversion-images-from-drag(data-transfer) -> bool;
     callback paste-conversion-images() -> bool;
     callback remove-conversion-image(string);
     callback clear-conversion-images();
     callback save-conversion-result(string);
     callback start-conversion();
     callback choose-crop-source();
-    callback add-crop-source-from-drag(string, string) -> bool;
+    callback add-crop-source-from-drag(data-transfer) -> bool;
     callback paste-crop-source() -> bool;
     callback set-crop-ratio(string);
     callback update-crop-rect(string, float, float, float, float, float, float);
@@ -636,8 +706,12 @@ export global AppState {
     callback select-reasoning-model(string);
     callback refresh-assets();
     callback refresh-inspiration();
+    callback load-more-assets();
+    callback load-more-generations();
+    callback load-more-inspiration();
+    callback update-gallery-viewport(string, float, float, float, string, float, int);
     callback add-reference();
-    callback add-reference-from-drag(string, string) -> bool;
+    callback add-reference-from-transfer(data-transfer) -> bool;
     callback start-thumbnail-drag-preview(string) -> bool;
     callback start-thumbnail-file-drag(string) -> bool;
     callback start-viewer-file-drag() -> bool;
@@ -662,6 +736,9 @@ export global AppState {
     callback invalidate-deep-prompt-binding();
     callback begin-new-deep-optimization();
     callback translate-current-prompt();
+    callback apply-recovered-prompt-result();
+    callback copy-recovered-prompt-result();
+    callback dismiss-recovered-prompt-result();
     callback refresh-advanced-prompt-preview();
     callback generate();
     callback stop-generation();
@@ -699,8 +776,10 @@ export global AppState {
     callback request-delete-thumbnail(string, string);
     callback dismiss-new-generation(string);
     callback confirm-delete();
+    callback confirm-delete-local-file();
     callback mark-notification-read(string);
     callback mark-all-notifications-read();
     callback delete-notification(string);
     callback clear-all-notifications();
+    callback load-more-notifications();
 }

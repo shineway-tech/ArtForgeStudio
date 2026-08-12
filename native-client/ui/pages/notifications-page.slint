@@ -6,8 +6,12 @@ import { SectionTitle } from "../components/section-title.slint";
 import { AppTheme } from "../theme.slint";
 
 export component NotificationsPage {
+    function footer-height() -> length {
+        return (AppState.notification-page-loading || AppState.notification-page-has-more ? 54px : 0px)
+            + (AppState.notification-page-message != "" ? 40px : 0px);
+    }
     function list-height() -> length {
-        return max(root.height - 116px, AppState.notifications.length * 106px);
+        return max(root.height - 116px, AppState.notifications.length * 106px + root.footer-height());
     }
     Rectangle {
         background: AppTheme.bg;
@@ -53,8 +57,8 @@ export component NotificationsPage {
                     vertical-stretch: 1;
                     viewport-width: self.width;
                     viewport-height: root.list-height();
-                    if AppState.notifications.length == 0: EmptyState { width: parent.width; height: parent.height; }
-                    if AppState.notifications.length > 0: VerticalLayout {
+                    if AppState.notifications.length == 0 && !AppState.notification-page-loading && AppState.notification-page-message == "": EmptyState { width: parent.width; height: parent.height; }
+                    if AppState.notifications.length > 0 || AppState.notification-page-loading || AppState.notification-page-message != "": VerticalLayout {
                         width: parent.viewport-width;
                         height: parent.viewport-height;
                         spacing: 10px;
@@ -95,6 +99,34 @@ export component NotificationsPage {
                                     AppState.delete-confirm-open = true;
                                 }
                             }
+                        }
+                        if AppState.notification-page-loading: Text {
+                            height: 44px;
+                            text: AppState.en ? "Loading notifications…" : "正在加载通知…";
+                            color: AppTheme.muted;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        if !AppState.notification-page-loading && AppState.notification-page-has-more: Rectangle {
+                            height: 44px;
+                            background: transparent;
+                            PillButton {
+                                x: (parent.width - 144px) / 2;
+                                width: 144px;
+                                height: 36px;
+                                text: AppState.en ? "Load more" : "加载更多";
+                                clicked => { AppState.load-more-notifications(); }
+                            }
+                        }
+                        if AppState.notification-page-message != "": Text {
+                            height: 36px;
+                            text: AppState.notification-page-message;
+                            color: AppTheme.danger;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            overflow: elide;
                         }
                     }
                 }

@@ -11,14 +11,6 @@ component InvitationGiftButton {
     height: 36px;
 
     Timer {
-        interval: 5s;
-        running: true;
-        triggered => {
-            root.wobble-step = 1;
-            root.wobbling = true;
-        }
-    }
-    Timer {
         interval: 110ms;
         running: root.wobbling;
         triggered => {
@@ -44,12 +36,18 @@ component InvitationGiftButton {
             source: @image-url("../../assets/invitation-gift.png");
             image-fit: contain;
             transform-rotation: root.wobble-angle();
-            animate transform-rotation { duration: 110ms; easing: ease-in-out; }
+            animate transform-rotation { duration: AppState.reduced-motion ? 0ms : 110ms; easing: ease-in-out; }
         }
         gift-touch := TouchArea {
             width: parent.width;
             height: parent.height;
             mouse-cursor: pointer;
+            changed has-hover => {
+                if self.has-hover && !AppState.reduced-motion {
+                    root.wobble-step = 1;
+                    root.wobbling = true;
+                }
+            }
             clicked => { AppState.navigate("invitation-gift"); }
         }
     }

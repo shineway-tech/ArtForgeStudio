@@ -10,8 +10,12 @@ pub(super) fn wire_notification_callbacks(app: &AppWindow, context: AppContext) 
         let app_weak = app.as_weak();
         let store = context.store.clone();
         let backend = backend.clone();
+        let context = context.clone();
         state.on_mark_notification_read(move |id| {
             let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let Some(session_scope) = current_notification_session_scope(&context) else {
                 return;
             };
             let id = id.to_string();
@@ -23,9 +27,18 @@ pub(super) fn wire_notification_callbacks(app: &AppWindow, context: AppContext) 
                 push_notifications(&app, &store);
             }
             let api = NotificationsApi::new(backend.api.clone());
+            let (sender, receiver) = mpsc::channel();
+            let worker_scope = session_scope.clone();
             std::thread::spawn(move || {
-                let _ = api.mark_read(&id);
+                let _ = sender.send(api.mark_read_scoped(&id, &worker_scope));
             });
+            poll_notification_operation(
+                app.as_weak(),
+                context.clone(),
+                session_scope,
+                Rc::new(RefCell::new(Some(receiver))),
+                None,
+            );
         });
     }
 
@@ -33,8 +46,12 @@ pub(super) fn wire_notification_callbacks(app: &AppWindow, context: AppContext) 
         let app_weak = app.as_weak();
         let store = context.store.clone();
         let backend = backend.clone();
+        let context = context.clone();
         state.on_mark_all_notifications_read(move || {
             let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let Some(session_scope) = current_notification_session_scope(&context) else {
                 return;
             };
             {
@@ -45,9 +62,18 @@ pub(super) fn wire_notification_callbacks(app: &AppWindow, context: AppContext) 
                 push_notifications(&app, &store);
             }
             let api = NotificationsApi::new(backend.api.clone());
+            let (sender, receiver) = mpsc::channel();
+            let worker_scope = session_scope.clone();
             std::thread::spawn(move || {
-                let _ = api.mark_all_read();
+                let _ = sender.send(api.mark_all_read_scoped(&worker_scope));
             });
+            poll_notification_operation(
+                app.as_weak(),
+                context.clone(),
+                session_scope,
+                Rc::new(RefCell::new(Some(receiver))),
+                None,
+            );
         });
     }
 
@@ -55,8 +81,12 @@ pub(super) fn wire_notification_callbacks(app: &AppWindow, context: AppContext) 
         let app_weak = app.as_weak();
         let store = context.store.clone();
         let backend = backend.clone();
+        let context = context.clone();
         state.on_delete_notification(move |id| {
             let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let Some(session_scope) = current_notification_session_scope(&context) else {
                 return;
             };
             let id = id.to_string();
@@ -66,16 +96,18 @@ pub(super) fn wire_notification_callbacks(app: &AppWindow, context: AppContext) 
                 push_notifications(&app, &store);
             }
             let api = NotificationsApi::new(backend.api.clone());
-            let app_weak = app.as_weak();
+            let (sender, receiver) = mpsc::channel();
+            let worker_scope = session_scope.clone();
             std::thread::spawn(move || {
-                if let Err(error) = api.delete(&id) {
-                    let _ = app_weak.upgrade_in_event_loop(move |app| {
-                        app.global::<AppState>().set_generation_status(
-                            format!("通知删除失败：{}", error.user_message()).into(),
-                        );
-                    });
-                }
+                let _ = sender.send(api.delete_scoped(&id, &worker_scope));
             });
+            poll_notification_operation(
+                app.as_weak(),
+                context.clone(),
+                session_scope,
+                Rc::new(RefCell::new(Some(receiver))),
+                Some("通知删除失败"),
+            );
         });
     }
 
@@ -83,43 +115,231 @@ pub(super) fn wire_notification_callbacks(app: &AppWindow, context: AppContext) 
         let app_weak = app.as_weak();
         let store = context.store.clone();
         let backend = backend.clone();
+        let context = context.clone();
         state.on_clear_all_notifications(move || {
             let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let Some(session_scope) = current_notification_session_scope(&context) else {
                 return;
             };
             {
                 let mut store = store.borrow_mut();
                 store.notifications.clear();
+                store.notification_page_epoch = store.notification_page_epoch.wrapping_add(1);
                 push_notifications(&app, &store);
             }
+            reset_notification_pagination_ui(&app);
             let api = NotificationsApi::new(backend.api.clone());
-            let app_weak = app.as_weak();
+            let (sender, receiver) = mpsc::channel();
+            let worker_scope = session_scope.clone();
             std::thread::spawn(move || {
-                if let Err(error) = api.delete_all() {
-                    let _ = app_weak.upgrade_in_event_loop(move |app| {
-                        app.global::<AppState>().set_generation_status(
-                            format!("通知清空失败：{}", error.user_message()).into(),
-                        );
-                    });
-                }
+                let _ = sender.send(api.delete_all_scoped(&worker_scope));
             });
+            poll_notification_operation(
+                app.as_weak(),
+                context.clone(),
+                session_scope,
+                Rc::new(RefCell::new(Some(receiver))),
+                Some("通知清空失败"),
+            );
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let context = context.clone();
+        state.on_load_more_notifications(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            if state.get_notification_page_loading() || !state.get_notification_page_has_more() {
+                return;
+            }
+            let cursor = state.get_notification_next_cursor().trim().to_string();
+            if cursor.is_empty() {
+                state.set_notification_page_has_more(false);
+                return;
+            }
+            start_notification_page(&app, context.clone(), Some(cursor), true);
         });
     }
 }
 
 pub(super) fn refresh_server_notifications(app: &AppWindow, context: AppContext) {
+    start_notification_page(app, context, None, false);
+}
+
+pub(super) fn clear_notification_account_state(app: &AppWindow, context: &AppContext) {
+    let mut store = context.store.borrow_mut();
+    store.notifications.clear();
+    store.notification_page_epoch = store.notification_page_epoch.wrapping_add(1);
+    push_notifications(app, &store);
+    drop(store);
+    reset_notification_pagination_ui(app);
+}
+
+fn reset_notification_pagination_ui(app: &AppWindow) {
+    let state = app.global::<AppState>();
+    state.set_notification_page_loading(false);
+    state.set_notification_page_has_more(false);
+    state.set_notification_next_cursor("".into());
+    state.set_notification_page_message("".into());
+}
+
+fn start_notification_page(
+    app: &AppWindow,
+    context: AppContext,
+    cursor: Option<String>,
+    append: bool,
+) {
     let Some(backend) = context.backend.clone() else {
         return;
     };
+    let Some(session_scope) = current_notification_session_scope(&context) else {
+        return;
+    };
+    let request_epoch = {
+        let mut store = context.store.borrow_mut();
+        store.notification_page_epoch = store.notification_page_epoch.wrapping_add(1);
+        store.notification_page_epoch
+    };
+    let state = app.global::<AppState>();
+    state.set_notification_page_loading(true);
+    state.set_notification_page_message("".into());
+    if !append {
+        state.set_notification_page_has_more(false);
+        state.set_notification_next_cursor("".into());
+    }
+
     let (sender, receiver) = mpsc::channel();
+    let worker_scope = session_scope.clone();
     std::thread::spawn(move || {
-        let _ = sender.send(NotificationsApi::new(backend.api.clone()).list());
+        let result = NotificationsApi::new(backend.api.clone())
+            .list_page_scoped(cursor.as_deref(), &worker_scope);
+        let _ = sender.send(result);
     });
     poll_server_notifications(
         app.as_weak(),
         context,
+        session_scope,
+        request_epoch,
+        append,
         Rc::new(RefCell::new(Some(receiver))),
     );
+}
+
+fn current_notification_session_scope(context: &AppContext) -> Option<SessionScope> {
+    let owner_user_id = context
+        .current_user_id
+        .lock()
+        .unwrap_or_else(|value| value.into_inner())
+        .clone()
+        .filter(|value| !value.trim().is_empty())?;
+    context
+        .backend
+        .as_ref()?
+        .api
+        .session()
+        .scope_for_user(&owner_user_id)
+}
+
+fn notification_scope_is_current(
+    current_user_id: &Arc<Mutex<Option<String>>>,
+    session: &Arc<SessionManager>,
+    scope: &SessionScope,
+) -> bool {
+    current_user_id
+        .lock()
+        .unwrap_or_else(|value| value.into_inner())
+        .as_deref()
+        == Some(scope.owner_user_id.as_str())
+        && session.is_scope_current(scope)
+}
+
+fn notification_session_ended(error: &ApiError) -> bool {
+    matches!(error, ApiError::AuthenticationRequired) || error.is_terminal_session_error()
+}
+
+fn handle_notification_operation_error(
+    app: &AppWindow,
+    context: &AppContext,
+    scope: &SessionScope,
+    error: ApiError,
+    status_prefix: Option<&str>,
+) {
+    if notification_session_ended(&error)
+        && terminal_auth_scope_matches_context(context, scope)
+    {
+        sign_out_locally(app, context, true, Some(scope.auth_epoch));
+        return;
+    }
+    let Some(backend) = context.backend.as_ref() else {
+        return;
+    };
+    if !notification_scope_is_current(
+        &context.current_user_id,
+        backend.api.session(),
+        scope,
+    ) {
+        return;
+    }
+    if let Some(prefix) = status_prefix {
+        app.global::<AppState>().set_generation_status(
+            format!("{prefix}：{}", error.user_message()).into(),
+        );
+    }
+}
+
+fn poll_notification_operation(
+    app_weak: Weak<AppWindow>,
+    context: AppContext,
+    session_scope: SessionScope,
+    receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<(), ApiError>>>>>,
+    status_prefix: Option<&'static str>,
+) {
+    slint::Timer::single_shot(Duration::from_millis(80), move || {
+        let result = {
+            let mut slot = receiver.borrow_mut();
+            let Some(rx) = slot.as_ref() else {
+                return;
+            };
+            match rx.try_recv() {
+                Ok(result) => {
+                    slot.take();
+                    Some(result)
+                }
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => {
+                    slot.take();
+                    return;
+                }
+            }
+        };
+        let Some(result) = result else {
+            poll_notification_operation(
+                app_weak,
+                context,
+                session_scope,
+                receiver,
+                status_prefix,
+            );
+            return;
+        };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
+        if let Err(error) = result {
+            handle_notification_operation_error(
+                &app,
+                &context,
+                &session_scope,
+                error,
+                status_prefix,
+            );
+        }
+    });
 }
 
 pub(super) fn notification_is_success(item: &ServerNotification) -> bool {
@@ -170,48 +390,142 @@ fn notification_display_model(item: &ServerNotification) -> String {
 fn poll_server_notifications(
     app_weak: Weak<AppWindow>,
     context: AppContext,
+    session_scope: SessionScope,
+    request_epoch: u64,
+    append: bool,
     receiver: Rc<
-        RefCell<Option<mpsc::Receiver<std::result::Result<Vec<ServerNotification>, ApiError>>>>,
+        RefCell<Option<mpsc::Receiver<std::result::Result<NotificationPage, ApiError>>>>,
     >,
 ) {
     slint::Timer::single_shot(Duration::from_millis(100), move || {
-        let result = receiver
-            .borrow()
-            .as_ref()
-            .and_then(|value| value.try_recv().ok());
+        let result = {
+            let mut slot = receiver.borrow_mut();
+            let Some(rx) = slot.as_ref() else {
+                return;
+            };
+            match rx.try_recv() {
+                Ok(result) => {
+                    slot.take();
+                    Some(result)
+                }
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => {
+                    slot.take();
+                    Some(Err(ApiError::LocalState {
+                        message: "通知加载任务意外中断".to_string(),
+                    }))
+                }
+            }
+        };
         let Some(result) = result else {
-            poll_server_notifications(app_weak, context, receiver);
+            poll_server_notifications(
+                app_weak,
+                context,
+                session_scope,
+                request_epoch,
+                append,
+                receiver,
+            );
             return;
         };
         let Some(app) = app_weak.upgrade() else {
             return;
         };
+        if context.store.borrow().notification_page_epoch != request_epoch {
+            return;
+        }
+        let state = app.global::<AppState>();
         match result {
-            Ok(items) => {
-                let mut store = context.store.borrow_mut();
-                store.notifications = items
+            Ok(page) => {
+                let Some(backend) = context.backend.as_ref() else {
+                    return;
+                };
+                if !notification_scope_is_current(
+                    &context.current_user_id,
+                    backend.api.session(),
+                    &session_scope,
+                ) {
+                    return;
+                }
+                state.set_notification_page_loading(false);
+                let mapped = page
+                    .items
                     .into_iter()
-                    .map(|item| {
-                        let model = notification_display_model(&item);
-                        let success = notification_is_success(&item);
-                        NotificationData {
-                            id: item.id,
-                            title: item.title,
-                            model,
-                            time: format_notification_time(&item.created_at),
-                            reason: item.body,
-                            success,
-                            read: item.read_at.is_some(),
-                        }
-                    })
-                    .collect();
+                    .map(notification_data)
+                    .collect::<Vec<_>>();
+                let mut store = context.store.borrow_mut();
+                if append {
+                    let mut ids = store
+                        .notifications
+                        .iter()
+                        .map(|item| item.id.clone())
+                        .collect::<BTreeSet<_>>();
+                    store.notifications.extend(
+                        mapped
+                            .into_iter()
+                            .filter(|item| ids.insert(item.id.clone())),
+                    );
+                } else {
+                    store.notifications = mapped;
+                }
                 push_notifications(&app, &store);
+                drop(store);
+                let next_cursor = page.next_cursor.unwrap_or_default();
+                state.set_notification_page_has_more(!next_cursor.is_empty());
+                state.set_notification_next_cursor(next_cursor.into());
+                state.set_notification_page_message("".into());
             }
-            Err(error) => app
-                .global::<AppState>()
-                .set_generation_status(format!("通知刷新失败：{}", error.user_message()).into()),
+            Err(error) => {
+                if notification_session_ended(&error)
+                    && terminal_auth_scope_matches_context(&context, &session_scope)
+                {
+                    handle_notification_operation_error(
+                        &app,
+                        &context,
+                        &session_scope,
+                        error,
+                        None,
+                    );
+                    return;
+                }
+                let Some(backend) = context.backend.as_ref() else {
+                    return;
+                };
+                if !notification_scope_is_current(
+                    &context.current_user_id,
+                    backend.api.session(),
+                    &session_scope,
+                ) {
+                    return;
+                }
+                state.set_notification_page_loading(false);
+                state.set_notification_page_message(
+                    format!("通知加载失败：{}", error.user_message()).into(),
+                );
+                handle_notification_operation_error(
+                    &app,
+                    &context,
+                    &session_scope,
+                    error,
+                    None,
+                );
+            }
         }
     });
+}
+
+fn notification_data(item: ServerNotification) -> NotificationData {
+    let model = notification_display_model(&item);
+    let success = notification_is_success(&item);
+    NotificationData {
+        id: item.id,
+        title: item.title,
+        model,
+        time: format_notification_time(&item.created_at),
+        reason: item.body,
+        success,
+        read: item.read_at.is_some(),
+    }
 }
 
 fn format_notification_time(value: &str) -> String {

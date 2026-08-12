@@ -162,10 +162,12 @@ export component ToolboxCropPage {
         return max(1, round(AppState.crop-source-height * AppState.crop-height));
     }
 
-    function accept-drop(mime-type: string, data: string) {
-        if AppState.add-crop-source-from-drag(mime-type, data) {
+    function accept-drop(data: data-transfer) -> bool {
+        if AppState.add-crop-source-from-drag(data) {
             crop-keys.focus();
+            return true;
         }
+        return false;
     }
 
     Rectangle {
@@ -190,8 +192,8 @@ export component ToolboxCropPage {
             height: parent.height - 116px;
             background: AppTheme.panel;
             border-radius: 12px;
-            border-width: empty-drop-area.contains-drag ? 2px : 1px;
-            border-color: empty-drop-area.contains-drag ? AppTheme.accent : AppTheme.border;
+            border-width: empty-drop-area.has-drag ? 2px : 1px;
+            border-color: empty-drop-area.has-drag ? AppTheme.accent : AppTheme.border;
 
             Rectangle {
                 x: (parent.width - 72px) / 2;
@@ -240,11 +242,11 @@ export component ToolboxCropPage {
                 width: parent.width;
                 height: parent.height;
                 can-drop(event) => {
-                    return event.mime-type == "text/uri-list"
-                        || event.mime-type == "text/plain"
-                        || event.mime-type == "application/x-artforge-image-path";
+                    return DragAction.copy;
                 }
-                dropped(event) => { root.accept-drop(event.mime-type, event.data); }
+                dropped(event) => {
+                    return root.accept-drop(event.data) ? DragAction.copy : DragAction.none;
+                }
             }
 
             TouchArea {
@@ -431,14 +433,14 @@ export component ToolboxCropPage {
                 width: parent.width;
                 height: parent.height;
                 can-drop(event) => {
-                    return event.mime-type == "text/uri-list"
-                        || event.mime-type == "text/plain"
-                        || event.mime-type == "application/x-artforge-image-path";
+                    return DragAction.copy;
                 }
-                dropped(event) => { root.accept-drop(event.mime-type, event.data); }
+                dropped(event) => {
+                    return root.accept-drop(event.data) ? DragAction.copy : DragAction.none;
+                }
             }
 
-            if editor-drop.contains-drag: Rectangle {
+            if editor-drop.has-drag: Rectangle {
                 x: 8px;
                 y: 8px;
                 width: parent.width - 16px;

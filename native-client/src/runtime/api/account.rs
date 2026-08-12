@@ -1,4 +1,6 @@
-use super::{ApiClient, ApiError, ApiResponse, CreditPack, PaymentApi};
+use super::{
+    ApiClient, ApiError, ApiResponse, CreditPack, PaymentApi, SessionManager, SessionScope,
+};
 use reqwest::Method;
 use serde::Deserialize;
 use serde::Serialize;
@@ -141,6 +143,50 @@ struct InvitationCodeRequest<'a> {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub(crate) struct InvitationOverview {
+    pub(crate) enabled: bool,
+    pub(crate) reward_type: String,
+    pub(crate) reward_rate_bps: u32,
+    pub(crate) reward_rate_percent: String,
+    pub(crate) invitation_code: Option<String>,
+    pub(crate) invitation_count: u64,
+    pub(crate) total_reward_credits: String,
+    pub(crate) pending_reward_credits: String,
+    pub(crate) reversed_reward_credits: String,
+    pub(crate) reversal_debt_credits: String,
+    pub(crate) rule_description: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct InvitedUserDto {
+    pub(crate) id: String,
+    pub(crate) email_masked: String,
+    pub(crate) nickname: String,
+    pub(crate) reward_credits: String,
+    pub(crate) registered_at: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct InvitationUserList {
+    items: Vec<InvitedUserDto>,
+    #[serde(default)]
+    next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct InvitationUserPage {
+    pub(crate) items: Vec<InvitedUserDto>,
+    pub(crate) next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct InvitationDashboard {
+    pub(crate) overview: InvitationOverview,
+    pub(crate) users: Vec<InvitedUserDto>,
+    pub(crate) users_next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub(crate) struct ModelPrice {
     pub(crate) quality: String,
     pub(crate) max_long_edge: Option<u32>,
@@ -184,6 +230,47 @@ pub(crate) struct CreditLedgerPage {
     pub(crate) next_cursor: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AccountScopeDisposition {
+    Current,
+    CapturedTerminal,
+    Stale,
+}
+
+pub(crate) fn account_scope_disposition(
+    current_owner_user_id: Option<&str>,
+    session: &SessionManager,
+    scope: &SessionScope,
+) -> AccountScopeDisposition {
+    classify_account_scope(
+        current_owner_user_id == Some(scope.owner_user_id.as_str()),
+        session.is_scope_current(scope),
+        session.access().is_some(),
+        session.auth_epoch(),
+        scope.auth_epoch,
+    )
+}
+
+fn classify_account_scope(
+    owner_matches: bool,
+    scope_is_current: bool,
+    session_has_access: bool,
+    current_auth_epoch: u64,
+    captured_auth_epoch: u64,
+) -> AccountScopeDisposition {
+    if owner_matches && scope_is_current {
+        AccountScopeDisposition::Current
+    } else if owner_matches
+        && !session_has_access
+        && (current_auth_epoch == captured_auth_epoch
+            || current_auth_epoch == captured_auth_epoch.wrapping_add(1))
+    {
+        AccountScopeDisposition::CapturedTerminal
+    } else {
+        AccountScopeDisposition::Stale
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct BackendSnapshot {
     pub(crate) account: AccountSnapshot,
@@ -193,6 +280,7 @@ pub(crate) struct BackendSnapshot {
     pub(crate) ledger: Vec<CreditLedgerItem>,
     pub(crate) ledger_next_cursor: Option<String>,
     pub(crate) sessions: Vec<AccountSessionDto>,
+    pub(crate) invitation: Option<InvitationDashboard>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -221,73 +309,140 @@ impl AccountApi {
     }
 
     pub(crate) fn snapshot(&self) -> Result<BackendSnapshot, ApiError> {
+        let auth_epoch = self
+            .client
+            .session()
+            .access()
+            .ok_or(ApiError::AuthenticationRequired)?
+            .auth_epoch;
+        self.snapshot_epoch(auth_epoch)
+    }
+
+    pub(crate) fn snapshot_epoch(&self, auth_epoch: u64) -> Result<BackendSnapshot, ApiError> {
         std::thread::scope(|scope| {
             let account_client = self.client.clone();
             let account = scope.spawn(move || {
                 account_client
-                    .authenticated_json::<AccountSnapshot>(Method::GET, "/v1/account", None, None)
+                    .authenticated_json_epoch::<AccountSnapshot>(
+                        Method::GET,
+                        "/v1/account",
+                        None,
+                        None,
+                        auth_epoch,
+                    )
                     .map(|response| response.data)
             });
             let credit_client = self.client.clone();
             let credits = scope.spawn(move || {
                 credit_client
-                    .authenticated_json::<CreditAccount>(
+                    .authenticated_json_epoch::<CreditAccount>(
                         Method::GET,
                         "/v1/credits/account",
                         None,
                         None,
+                        auth_epoch,
                     )
                     .map(|response| response.data)
             });
             let plan_client = self.client.clone();
             let plans = scope.spawn(move || {
                 plan_client
-                    .authenticated_json::<Vec<MembershipPlan>>(
+                    .authenticated_json_epoch::<Vec<MembershipPlan>>(
                         Method::GET,
                         "/v1/membership/plans",
                         None,
                         None,
+                        auth_epoch,
                     )
                     .map(|response| response.data)
             });
             let membership_client = self.client.clone();
             let membership = scope.spawn(move || {
                 membership_client
-                    .authenticated_json::<Value>(Method::GET, "/v1/membership/current", None, None)
+                    .authenticated_json_epoch::<Value>(
+                        Method::GET,
+                        "/v1/membership/current",
+                        None,
+                        None,
+                        auth_epoch,
+                    )
                     .map(|response| response.data)
             });
             let pack_client = self.client.clone();
-            let packs = scope.spawn(move || PaymentApi::new(pack_client).packs());
+            let packs =
+                scope.spawn(move || PaymentApi::new(pack_client).packs_epoch(auth_epoch));
             let model_client = self.client.clone();
             let models = scope.spawn(move || {
                 model_client
-                    .authenticated_json::<ModelCatalog>(Method::GET, "/v1/models", None, None)
+                    .authenticated_json_epoch::<ModelCatalog>(
+                        Method::GET,
+                        "/v1/models",
+                        None,
+                        None,
+                        auth_epoch,
+                    )
                     .map(|response| response.data.items)
             });
             let ledger_client = self.client.clone();
             let ledger = scope.spawn(move || {
-                AccountApi::new(ledger_client).ledger_page(None, CREDIT_LEDGER_PAGE_SIZE)
+                AccountApi::new(ledger_client).ledger_page_epoch(
+                    None,
+                    CREDIT_LEDGER_PAGE_SIZE,
+                    auth_epoch,
+                )
             });
             let session_client = self.client.clone();
             let sessions = scope.spawn(move || {
                 session_client
-                    .authenticated_json::<SessionList>(
+                    .authenticated_json_epoch::<SessionList>(
                         Method::GET,
                         "/v1/account/sessions",
                         None,
                         None,
+                        auth_epoch,
                     )
                     .map(|response| response.data.items)
             });
+            let invitation_client = self.client.clone();
+            let invitation = scope.spawn(move || {
+                AccountApi::new(invitation_client).invitation_dashboard_epoch(auth_epoch)
+            });
 
-            let mut account = join_snapshot(account)??;
-            account.credits = Some(join_snapshot(credits)??);
-            let plans = join_snapshot(plans)??;
-            let _current_membership = join_snapshot(membership)??;
-            let packs = join_snapshot(packs)??;
-            let models = join_snapshot(models)??;
-            let ledger_page = join_snapshot(ledger)??;
-            let sessions = join_snapshot(sessions)??;
+            // Join every sibling before choosing an error. A terminal response can clear the
+            // captured lease while another sibling, which has not cloned its token yet, observes
+            // AuthenticationRequired. Fixed join order must not downgrade that terminal outcome.
+            let account = join_snapshot(account).and_then(|value| value);
+            let credits = join_snapshot(credits).and_then(|value| value);
+            let plans = join_snapshot(plans).and_then(|value| value);
+            let membership = join_snapshot(membership).and_then(|value| value);
+            let packs = join_snapshot(packs).and_then(|value| value);
+            let models = join_snapshot(models).and_then(|value| value);
+            let ledger_page = join_snapshot(ledger).and_then(|value| value);
+            let sessions = join_snapshot(sessions).and_then(|value| value);
+            let invitation = join_snapshot(invitation).and_then(|value| value);
+            if let Some(error) = preferred_session_snapshot_error([
+                account.as_ref().err(),
+                credits.as_ref().err(),
+                plans.as_ref().err(),
+                membership.as_ref().err(),
+                packs.as_ref().err(),
+                models.as_ref().err(),
+                ledger_page.as_ref().err(),
+                sessions.as_ref().err(),
+                invitation.as_ref().err(),
+            ]) {
+                return Err(error);
+            }
+
+            let mut account = account?;
+            account.credits = Some(credits?);
+            let plans = plans?;
+            let _current_membership = membership?;
+            let packs = packs?;
+            let models = models?;
+            let ledger_page = ledger_page?;
+            let sessions = sessions?;
+            let invitation = invitation.ok();
             Ok(BackendSnapshot {
                 account,
                 plans,
@@ -296,6 +451,7 @@ impl AccountApi {
                 ledger: ledger_page.items,
                 ledger_next_cursor: ledger_page.next_cursor,
                 sessions,
+                invitation,
             })
         })
     }
@@ -319,12 +475,71 @@ impl AccountApi {
         Ok(credit_ledger_page(response))
     }
 
+    pub(crate) fn ledger_page_epoch(
+        &self,
+        cursor: Option<&str>,
+        limit: usize,
+        auth_epoch: u64,
+    ) -> Result<CreditLedgerPage, ApiError> {
+        let mut path = format!("/v1/credits/ledger?limit={limit}");
+        if let Some(cursor) = cursor {
+            path.push_str("&cursor=");
+            path.push_str(cursor);
+        }
+        let response = self.client.authenticated_json_epoch::<Vec<CreditLedgerItem>>(
+            Method::GET,
+            &path,
+            None,
+            None,
+            auth_epoch,
+        )?;
+        Ok(credit_ledger_page(response))
+    }
+
+    pub(crate) fn ledger_page_scoped(
+        &self,
+        cursor: Option<&str>,
+        limit: usize,
+        scope: &SessionScope,
+    ) -> Result<CreditLedgerPage, ApiError> {
+        let mut path = format!("/v1/credits/ledger?limit={limit}");
+        if let Some(cursor) = cursor {
+            path.push_str("&cursor=");
+            path.push_str(cursor);
+        }
+        let response = self
+            .client
+            .authenticated_json_scoped::<Vec<CreditLedgerItem>>(
+                Method::GET,
+                &path,
+                None,
+                None,
+                scope,
+            )?;
+        Ok(credit_ledger_page(response))
+    }
+
     pub(crate) fn revoke_session(&self, session_id: &str) -> Result<(), ApiError> {
         self.client.authenticated_json::<serde_json::Value>(
             Method::DELETE,
             &format!("/v1/account/sessions/{session_id}"),
             None,
             None,
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn revoke_session_scoped(
+        &self,
+        session_id: &str,
+        scope: &SessionScope,
+    ) -> Result<(), ApiError> {
+        self.client.authenticated_json_scoped::<serde_json::Value>(
+            Method::DELETE,
+            &format!("/v1/account/sessions/{session_id}"),
+            None,
+            None,
+            scope,
         )?;
         Ok(())
     }
@@ -336,6 +551,21 @@ impl AccountApi {
                 "/v1/account/wechat/bind/session",
                 None,
                 None,
+            )
+            .map(|response| response.data)
+    }
+
+    pub(crate) fn start_wechat_binding_scoped(
+        &self,
+        scope: &SessionScope,
+    ) -> Result<WechatBindingStartResponse, ApiError> {
+        self.client
+            .authenticated_json_scoped::<WechatBindingStartResponse>(
+                Method::POST,
+                "/v1/account/wechat/bind/session",
+                None,
+                None,
+                scope,
             )
             .map(|response| response.data)
     }
@@ -361,6 +591,29 @@ impl AccountApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn wechat_binding_status_scoped(
+        &self,
+        login_id: &str,
+        scope: &SessionScope,
+    ) -> Result<WechatBindingStatusResponse, ApiError> {
+        let body =
+            serde_json::to_value(WechatBindingStatusRequest { login_id }).map_err(|error| {
+                ApiError::Protocol {
+                    message: error.to_string(),
+                    request_id: None,
+                }
+            })?;
+        self.client
+            .authenticated_json_scoped::<WechatBindingStatusResponse>(
+                Method::POST,
+                "/v1/account/wechat/bind/session/status",
+                Some(body),
+                None,
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
     pub(crate) fn unbind_wechat(&self) -> Result<WechatAuthMethod, ApiError> {
         self.client
             .authenticated_json::<WechatAuthMethod>(
@@ -368,6 +621,21 @@ impl AccountApi {
                 "/v1/account/wechat",
                 None,
                 None,
+            )
+            .map(|response| response.data)
+    }
+
+    pub(crate) fn unbind_wechat_scoped(
+        &self,
+        scope: &SessionScope,
+    ) -> Result<WechatAuthMethod, ApiError> {
+        self.client
+            .authenticated_json_scoped::<WechatAuthMethod>(
+                Method::DELETE,
+                "/v1/account/wechat",
+                None,
+                None,
+                scope,
             )
             .map(|response| response.data)
     }
@@ -392,6 +660,28 @@ impl AccountApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn request_email_binding_code_scoped(
+        &self,
+        email: &str,
+        scope: &SessionScope,
+    ) -> Result<EmailBindingCodeResponse, ApiError> {
+        let body = serde_json::to_value(EmailBindingCodeRequest { email }).map_err(|error| {
+            ApiError::Protocol {
+                message: error.to_string(),
+                request_id: None,
+            }
+        })?;
+        self.client
+            .authenticated_json_scoped::<EmailBindingCodeResponse>(
+                Method::POST,
+                "/v1/account/email/code",
+                Some(body),
+                None,
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
     pub(crate) fn bind_email(
         &self,
         email: &str,
@@ -409,6 +699,29 @@ impl AccountApi {
                 "/v1/account/email/bind",
                 Some(body),
                 None,
+            )
+            .map(|response| response.data)
+    }
+
+    pub(crate) fn bind_email_scoped(
+        &self,
+        email: &str,
+        code: &str,
+        scope: &SessionScope,
+    ) -> Result<EmailBindingResponse, ApiError> {
+        let body = serde_json::to_value(EmailBindingRequest { email, code }).map_err(|error| {
+            ApiError::Protocol {
+                message: error.to_string(),
+                request_id: None,
+            }
+        })?;
+        self.client
+            .authenticated_json_scoped::<EmailBindingResponse>(
+                Method::POST,
+                "/v1/account/email/bind",
+                Some(body),
+                None,
+                scope,
             )
             .map(|response| response.data)
     }
@@ -435,6 +748,142 @@ impl AccountApi {
                     .map(str::to_string)
             })
     }
+
+    pub(crate) fn submit_invitation_code_scoped(
+        &self,
+        code: &str,
+        scope: &SessionScope,
+    ) -> Result<Option<String>, ApiError> {
+        let body = serde_json::to_value(InvitationCodeRequest { code }).map_err(|error| {
+            ApiError::Protocol {
+                message: error.to_string(),
+                request_id: None,
+            }
+        })?;
+        self.client
+            .authenticated_json_scoped::<Value>(
+                Method::POST,
+                "/v1/account/invitation-code",
+                Some(body),
+                None,
+                scope,
+            )
+            .map(|response| {
+                response
+                    .data
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+    }
+
+    pub(crate) fn invitation_dashboard(&self) -> Result<InvitationDashboard, ApiError> {
+        let overview = self
+            .client
+            .authenticated_json::<InvitationOverview>(
+                Method::GET,
+                "/v1/account/invitation",
+                None,
+                None,
+            )?
+            .data;
+        let users = self
+            .client
+            .authenticated_json::<InvitationUserList>(
+                Method::GET,
+                "/v1/account/invitations?limit=50",
+                None,
+                None,
+            )?
+            .data;
+        Ok(InvitationDashboard {
+            overview,
+            users: users.items,
+            users_next_cursor: users.next_cursor,
+        })
+    }
+
+    pub(crate) fn invitation_dashboard_epoch(
+        &self,
+        auth_epoch: u64,
+    ) -> Result<InvitationDashboard, ApiError> {
+        let overview = self
+            .client
+            .authenticated_json_epoch::<InvitationOverview>(
+                Method::GET,
+                "/v1/account/invitation",
+                None,
+                None,
+                auth_epoch,
+            )?
+            .data;
+        let users = self
+            .client
+            .authenticated_json_epoch::<InvitationUserList>(
+                Method::GET,
+                "/v1/account/invitations?limit=50",
+                None,
+                None,
+                auth_epoch,
+            )?
+            .data;
+        Ok(InvitationDashboard {
+            overview,
+            users: users.items,
+            users_next_cursor: users.next_cursor,
+        })
+    }
+
+    pub(crate) fn invitation_dashboard_scoped(
+        &self,
+        scope: &SessionScope,
+    ) -> Result<InvitationDashboard, ApiError> {
+        let overview = self
+            .client
+            .authenticated_json_scoped::<InvitationOverview>(
+                Method::GET,
+                "/v1/account/invitation",
+                None,
+                None,
+                scope,
+            )?
+            .data;
+        let users = self
+            .client
+            .authenticated_json_scoped::<InvitationUserList>(
+                Method::GET,
+                "/v1/account/invitations?limit=50",
+                None,
+                None,
+                scope,
+            )?
+            .data;
+        Ok(InvitationDashboard {
+            overview,
+            users: users.items,
+            users_next_cursor: users.next_cursor,
+        })
+    }
+
+    pub(crate) fn invitation_users_scoped(
+        &self,
+        cursor: &str,
+        scope: &SessionScope,
+    ) -> Result<InvitationUserPage, ApiError> {
+        let path = format!("/v1/account/invitations?limit=50&cursor={cursor}");
+        self.client
+            .authenticated_json_scoped::<InvitationUserList>(
+                Method::GET,
+                &path,
+                None,
+                None,
+                scope,
+            )
+            .map(|response| InvitationUserPage {
+                items: response.data.items,
+                next_cursor: response.data.next_cursor,
+            })
+    }
 }
 
 fn credit_ledger_page(response: ApiResponse<Vec<CreditLedgerItem>>) -> CreditLedgerPage {
@@ -448,6 +897,23 @@ fn join_snapshot<T>(handle: std::thread::ScopedJoinHandle<'_, T>) -> Result<T, A
     handle.join().map_err(|_| ApiError::LocalState {
         message: "账号数据同步线程异常退出".to_string(),
     })
+}
+
+fn preferred_session_snapshot_error<'a>(
+    errors: impl IntoIterator<Item = Option<&'a ApiError>>,
+) -> Option<ApiError> {
+    let errors = errors.into_iter().flatten().collect::<Vec<_>>();
+    errors
+        .iter()
+        .copied()
+        .find(|error| error.is_terminal_session_error())
+        .or_else(|| {
+            errors
+                .iter()
+                .copied()
+                .find(|error| matches!(error, ApiError::AuthenticationRequired))
+        })
+        .cloned()
 }
 
 #[cfg(test)]
@@ -497,6 +963,57 @@ mod tests {
         let page = credit_ledger_page(response);
 
         assert_eq!(page.next_cursor, None);
+    }
+
+    #[test]
+    fn snapshot_prefers_a_terminal_sibling_over_earlier_authentication_required() {
+        let authentication_required = ApiError::AuthenticationRequired;
+        let terminal = ApiError::Http {
+            status: 401,
+            code: "refresh_token_reused".to_string(),
+            message: "revoked".to_string(),
+            request_id: None,
+            details: None,
+        };
+
+        let selected = preferred_session_snapshot_error([
+            Some(&authentication_required),
+            Some(&terminal),
+        ])
+        .expect("terminal sibling must win");
+
+        assert!(selected.is_terminal_session_error());
+        assert_eq!(selected.code(), Some("refresh_token_reused"));
+    }
+
+    #[test]
+    fn snapshot_propagates_optional_invitation_authentication_required() {
+        let authentication_required = ApiError::AuthenticationRequired;
+
+        let selected = preferred_session_snapshot_error([Some(&authentication_required)])
+            .expect("captured session loss cannot be downgraded as optional");
+
+        assert!(matches!(selected, ApiError::AuthenticationRequired));
+    }
+
+    #[test]
+    fn account_scope_classifier_distinguishes_current_terminal_and_stale_leases() {
+        assert_eq!(
+            classify_account_scope(true, true, true, 7, 7),
+            AccountScopeDisposition::Current
+        );
+        assert_eq!(
+            classify_account_scope(true, false, false, 8, 7),
+            AccountScopeDisposition::CapturedTerminal
+        );
+        assert_eq!(
+            classify_account_scope(false, false, true, 9, 7),
+            AccountScopeDisposition::Stale
+        );
+        assert_eq!(
+            classify_account_scope(true, false, true, 9, 7),
+            AccountScopeDisposition::Stale
+        );
     }
 
     #[test]

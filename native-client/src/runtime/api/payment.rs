@@ -1,4 +1,4 @@
-use super::{ApiClient, ApiError};
+use super::{ApiClient, ApiError, SessionScope};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
@@ -51,6 +51,18 @@ impl PaymentApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn packs_epoch(&self, auth_epoch: u64) -> Result<Vec<CreditPack>, ApiError> {
+        self.client
+            .authenticated_json_epoch::<Vec<CreditPack>>(
+                Method::GET,
+                "/v1/credits/packs",
+                None,
+                None,
+                auth_epoch,
+            )
+            .map(|response| response.data)
+    }
+
     pub(crate) fn create_credit_order(
         &self,
         pack_code: &str,
@@ -74,6 +86,31 @@ impl PaymentApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn create_credit_order_scoped(
+        &self,
+        pack_code: &str,
+        client_request_id: &str,
+        scope: &SessionScope,
+    ) -> Result<OrderDetail, ApiError> {
+        let body = serde_json::to_value(CreditOrderRequest {
+            pack_code,
+            client_request_id,
+        })
+        .map_err(|error| ApiError::Protocol {
+            message: error.to_string(),
+            request_id: None,
+        })?;
+        self.client
+            .authenticated_json_scoped::<OrderDetail>(
+                Method::POST,
+                "/v1/credits/orders",
+                Some(body),
+                Some(client_request_id),
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
     pub(crate) fn sync_order(&self, order_id: &str) -> Result<OrderDetail, ApiError> {
         self.client
             .authenticated_json::<OrderDetail>(
@@ -85,6 +122,22 @@ impl PaymentApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn sync_order_scoped(
+        &self,
+        order_id: &str,
+        scope: &SessionScope,
+    ) -> Result<OrderDetail, ApiError> {
+        self.client
+            .authenticated_json_scoped::<OrderDetail>(
+                Method::POST,
+                &format!("/v1/orders/{order_id}/sync"),
+                None,
+                None,
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
     pub(crate) fn order(&self, order_id: &str) -> Result<OrderDetail, ApiError> {
         self.client
             .authenticated_json::<OrderDetail>(
@@ -92,6 +145,22 @@ impl PaymentApi {
                 &format!("/v1/orders/{order_id}"),
                 None,
                 None,
+            )
+            .map(|response| response.data)
+    }
+
+    pub(crate) fn order_scoped(
+        &self,
+        order_id: &str,
+        scope: &SessionScope,
+    ) -> Result<OrderDetail, ApiError> {
+        self.client
+            .authenticated_json_scoped::<OrderDetail>(
+                Method::GET,
+                &format!("/v1/orders/{order_id}"),
+                None,
+                None,
+                scope,
             )
             .map(|response| response.data)
     }

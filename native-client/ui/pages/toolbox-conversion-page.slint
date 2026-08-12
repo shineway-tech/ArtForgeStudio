@@ -149,10 +149,12 @@ export component ToolboxConversionPage {
         return "JPEG (.jpg)";
     }
 
-    function accept-drop(mime-type: string, data: string) {
-        if AppState.add-conversion-images-from-drag(mime-type, data) {
+    function accept-drop(data: data-transfer) -> bool {
+        if AppState.add-conversion-images-from-drag(data) {
             conversion-keys.focus();
+            return true;
         }
+        return false;
     }
 
     Rectangle {
@@ -190,7 +192,7 @@ export component ToolboxConversionPage {
             width: root.content-width();
             height: 178px;
             choose-images => { AppState.choose-conversion-images(); }
-            dropped(mime-type, data) => { root.accept-drop(mime-type, data); }
+            dropped(data) => { return root.accept-drop(data); }
         }
 
         if AppState.conversion-images.length > 0: Rectangle {
@@ -267,14 +269,15 @@ export component ToolboxConversionPage {
                 height: parent.height;
                 can-drop(event) => {
                     return !AppState.conversion-processing && !AppState.conversion-saving
-                        && (event.mime-type == "text/uri-list"
-                            || event.mime-type == "text/plain"
-                            || event.mime-type == "application/x-artforge-image-path");
+                        ? DragAction.copy
+                        : DragAction.none;
                 }
-                dropped(event) => { root.accept-drop(event.mime-type, event.data); }
+                dropped(event) => {
+                    return root.accept-drop(event.data) ? DragAction.copy : DragAction.none;
+                }
             }
 
-            if list-drop.contains-drag: Rectangle {
+            if list-drop.has-drag: Rectangle {
                 x: 8px;
                 y: 56px;
                 width: parent.width - 16px;

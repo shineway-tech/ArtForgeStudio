@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
 use std::sync::{
+    atomic::{AtomicU64, Ordering},
     mpsc::{self, TryRecvError},
     Arc, Mutex,
 };
@@ -98,6 +99,9 @@ use agreement_window::*;
 #[path = "callbacks/generation.rs"]
 mod generation_callbacks;
 use generation_callbacks::*;
+#[path = "callbacks/prompt_tasks.rs"]
+mod prompt_task_callbacks;
+use prompt_task_callbacks::*;
 #[path = "callbacks/prompt_optimization.rs"]
 mod prompt_optimization_callbacks;
 use prompt_optimization_callbacks::*;
@@ -107,6 +111,9 @@ use notification_callbacks::*;
 #[path = "callbacks/model_catalog.rs"]
 mod model_catalog_callbacks;
 use model_catalog_callbacks::*;
+#[path = "callbacks/storage.rs"]
+mod storage_callbacks;
+use storage_callbacks::*;
 #[path = "callbacks/reference.rs"]
 mod reference_callbacks;
 use reference_callbacks::*;
@@ -144,9 +151,22 @@ use prompt::*;
 #[path = "services/image_processing.rs"]
 mod image_processing;
 use image_processing::*;
+#[path = "services/preview.rs"]
+mod preview;
+use preview::*;
 #[path = "storage/local_store.rs"]
 mod local_store;
 use local_store::*;
+#[path = "storage/client_state.rs"]
+mod client_state;
+use client_state::*;
+#[allow(dead_code)]
+#[path = "storage/file_index.rs"]
+mod file_index;
+use file_index::*;
+#[path = "storage/file_lifecycle.rs"]
+mod file_lifecycle;
+use file_lifecycle::*;
 #[path = "storage/paths.rs"]
 mod paths;
 use paths::*;

@@ -4,6 +4,186 @@ const MAX_COMPRESSION_IMAGES: usize = 50;
 const MAX_CONVERSION_IMAGES: usize = 50;
 const COLORIZATION_MAX_INPUT_BYTES: u64 = 10 * 1024 * 1024;
 const COLORIZATION_MAX_EDGE_EXCLUSIVE: u32 = 3000;
+const TOOLBOX_TEMP_FILE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+
+#[derive(Clone, Copy)]
+enum ManagedToolboxDirectory {
+    CompressionInputs,
+    CompressionResults,
+    ConversionInputs,
+    ConversionResults,
+    CropInputs,
+}
+
+impl ManagedToolboxDirectory {
+    fn name(self) -> &'static str {
+        match self {
+            Self::CompressionInputs => "compression-inputs",
+            Self::CompressionResults => "compression-results",
+            Self::ConversionInputs => "conversion-inputs",
+            Self::ConversionResults => "conversion-results",
+            Self::CropInputs => "crop-inputs",
+        }
+    }
+}
+
+const MANAGED_TOOLBOX_DIRECTORIES: [ManagedToolboxDirectory; 5] = [
+    ManagedToolboxDirectory::CompressionInputs,
+    ManagedToolboxDirectory::CompressionResults,
+    ManagedToolboxDirectory::ConversionInputs,
+    ManagedToolboxDirectory::ConversionResults,
+    ManagedToolboxDirectory::CropInputs,
+];
+
+fn managed_toolbox_directory(
+    data_directory: &Path,
+    directory: ManagedToolboxDirectory,
+) -> PathBuf {
+    data_directory.join("toolbox").join(directory.name())
+}
+
+fn resolve_safe_managed_toolbox_directory(
+    data_directory: &Path,
+    directory: ManagedToolboxDirectory,
+) -> Option<PathBuf> {
+    let toolbox_directory = data_directory.join("toolbox");
+    let managed_directory = managed_toolbox_directory(data_directory, directory);
+    for candidate in [data_directory, toolbox_directory.as_path(), managed_directory.as_path()] {
+        let metadata = fs::symlink_metadata(candidate).ok()?;
+        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+            return None;
+        }
+    }
+    let canonical_data_directory = fs::canonicalize(data_directory).ok()?;
+    let canonical_toolbox_directory = fs::canonicalize(&toolbox_directory).ok()?;
+    let canonical_managed_directory = fs::canonicalize(&managed_directory).ok()?;
+    if canonical_toolbox_directory.parent() != Some(canonical_data_directory.as_path())
+        || canonical_managed_directory.parent() != Some(canonical_toolbox_directory.as_path())
+    {
+        return None;
+    }
+    Some(canonical_managed_directory)
+}
+
+/// Resolves only regular files that are direct children of an explicitly managed toolbox
+/// directory. Every directory boundary and the file itself must be a real filesystem object,
+/// never a symbolic link; canonical comparison additionally rejects `..` traversal.
+fn resolve_managed_toolbox_file(
+    data_directory: &Path,
+    directory: ManagedToolboxDirectory,
+    path: &Path,
+) -> Option<PathBuf> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return None;
+    }
+    let managed_directory = resolve_safe_managed_toolbox_directory(data_directory, directory)?;
+    let candidate = fs::canonicalize(path).ok()?;
+    (candidate.parent() == Some(managed_directory.as_path())).then_some(candidate)
+}
+
+fn remove_managed_toolbox_file(
+    data_directory: &Path,
+    directory: ManagedToolboxDirectory,
+    path: &Path,
+) -> bool {
+    resolve_managed_toolbox_file(data_directory, directory, path)
+        .is_some_and(|path| fs::remove_file(path).is_ok())
+}
+
+fn remove_toolbox_item_files(
+    data_directory: &Path,
+    item: &CompressionImageItem,
+    input_directory: ManagedToolboxDirectory,
+    result_directory: ManagedToolboxDirectory,
+) {
+    if !item.source_path.trim().is_empty() {
+        let _ = remove_managed_toolbox_file(
+            data_directory,
+            input_directory,
+            Path::new(item.source_path.as_str()),
+        );
+    }
+    if !item.result_path.trim().is_empty() {
+        let _ = remove_managed_toolbox_file(
+            data_directory,
+            result_directory,
+            Path::new(item.result_path.as_str()),
+        );
+    }
+}
+
+fn copy_and_release_managed_toolbox_result(
+    source: &Path,
+    destination: &Path,
+    data_directory: &Path,
+    result_directory: ManagedToolboxDirectory,
+) -> std::io::Result<bool> {
+    fs::copy(source, destination)?;
+    Ok(remove_managed_toolbox_file(
+        data_directory,
+        result_directory,
+        source,
+    ))
+}
+
+fn clear_released_toolbox_result(
+    images: &mut [CompressionImageItem],
+    released_result_path: &Path,
+) -> bool {
+    let mut changed = false;
+    for item in images {
+        if Path::new(item.result_path.as_str()) == released_result_path {
+            item.result_path = "".into();
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn cleanup_stale_toolbox_files_in(
+    data_directory: &Path,
+    now: std::time::SystemTime,
+    max_age: Duration,
+) {
+    for directory in MANAGED_TOOLBOX_DIRECTORIES {
+        let Some(managed_directory) =
+            resolve_safe_managed_toolbox_directory(data_directory, directory)
+        else {
+            continue;
+        };
+        let Ok(entries) = fs::read_dir(&managed_directory) else {
+            continue;
+        };
+        for entry in entries.filter_map(|entry| entry.ok()) {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_file() {
+                continue;
+            }
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            let stale = metadata
+                .modified()
+                .ok()
+                .and_then(|modified| now.duration_since(modified).ok())
+                .is_some_and(|age| age > max_age);
+            if stale {
+                let _ = remove_managed_toolbox_file(data_directory, directory, &entry.path());
+            }
+        }
+    }
+}
+
+pub(super) fn cleanup_stale_toolbox_files() {
+    cleanup_stale_toolbox_files_in(
+        &app_data_dir(),
+        std::time::SystemTime::now(),
+        TOOLBOX_TEMP_FILE_MAX_AGE,
+    );
+}
 
 #[derive(Clone)]
 struct CompressionInput {
@@ -31,7 +211,10 @@ enum CompressionOutcome {
 }
 
 enum CompressionSaveOutcome {
-    Saved(PathBuf),
+    Saved {
+        destination: PathBuf,
+        released_result_path: Option<PathBuf>,
+    },
     Failed,
 }
 
@@ -61,7 +244,10 @@ enum ConversionOutcome {
 }
 
 enum ConversionSaveOutcome {
-    Saved(PathBuf),
+    Saved {
+        destination: PathBuf,
+        released_result_path: Option<PathBuf>,
+    },
     Failed,
 }
 
@@ -77,17 +263,13 @@ fn set_colorization_source_from_path(app: &AppWindow, path: &Path) -> Result<()>
     if fs::metadata(path)?.len() > COLORIZATION_MAX_INPUT_BYTES {
         return Err(anyhow!("colorization image exceeds 10 MB"));
     }
-    let image = load_image(path)?;
-    let buffer = image
-        .to_rgba8()
-        .ok_or_else(|| anyhow!("colorization image cannot be decoded"))?;
-    if buffer.width() == 0
-        || buffer.height() == 0
-        || buffer.width() >= COLORIZATION_MAX_EDGE_EXCLUSIVE
-        || buffer.height() >= COLORIZATION_MAX_EDGE_EXCLUSIVE
+    let (width, height) = inspect_image_dimensions(path)?;
+    if width >= COLORIZATION_MAX_EDGE_EXCLUSIVE
+        || height >= COLORIZATION_MAX_EDGE_EXCLUSIVE
     {
         return Err(anyhow!("colorization image dimensions are unsupported"));
     }
+    let image = load_preview_image(path, PreviewPurpose::Canvas)?;
     let name = path
         .file_name()
         .and_then(|value| value.to_str())
@@ -155,11 +337,14 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
-        state.on_add_compression_images_from_drag(move |mime_type, data| {
+        state.on_add_compression_images_from_drag(move |transfer| {
             let Some(app) = app_weak.upgrade() else {
                 return false;
             };
-            add_compression_from_drag_data(&app, mime_type.as_str(), data.as_str())
+            let Ok(data) = transfer.plain_text() else {
+                return false;
+            };
+            add_compression_from_drag_data(&app, TEXT_PLAIN_MIME, data.as_str())
         });
     }
 
@@ -184,12 +369,20 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow, context: AppContext) {
                 return;
             }
             let id = id.to_string();
-            let images = state
+            let (removed, images): (Vec<_>, Vec<_>) = state
                 .get_compression_images()
                 .iter()
-                .filter(|item| item.id.as_str() != id)
-                .collect::<Vec<_>>();
+                .partition(|item| item.id.as_str() == id);
             set_compression_images(&state, images);
+            let data_directory = app_data_dir();
+            for item in &removed {
+                remove_toolbox_item_files(
+                    &data_directory,
+                    item,
+                    ManagedToolboxDirectory::CompressionInputs,
+                    ManagedToolboxDirectory::CompressionResults,
+                );
+            }
             state.set_compression_message("".into());
         });
     }
@@ -204,7 +397,17 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow, context: AppContext) {
             if state.get_compression_processing() || state.get_compression_saving() {
                 return;
             }
+            let removed = state.get_compression_images().iter().collect::<Vec<_>>();
             set_compression_images(&state, Vec::new());
+            let data_directory = app_data_dir();
+            for item in &removed {
+                remove_toolbox_item_files(
+                    &data_directory,
+                    item,
+                    ManagedToolboxDirectory::CompressionInputs,
+                    ManagedToolboxDirectory::CompressionResults,
+                );
+            }
             state.set_compression_message("".into());
         });
     }
@@ -300,11 +503,14 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
-        state.on_add_conversion_images_from_drag(move |mime_type, data| {
+        state.on_add_conversion_images_from_drag(move |transfer| {
             let Some(app) = app_weak.upgrade() else {
                 return false;
             };
-            add_conversion_from_drag_data(&app, mime_type.as_str(), data.as_str())
+            let Ok(data) = transfer.plain_text() else {
+                return false;
+            };
+            add_conversion_from_drag_data(&app, TEXT_PLAIN_MIME, data.as_str())
         });
     }
 
@@ -329,12 +535,20 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow, context: AppContext) {
                 return;
             }
             let id = id.to_string();
-            let images = state
+            let (removed, images): (Vec<_>, Vec<_>) = state
                 .get_conversion_images()
                 .iter()
-                .filter(|item| item.id.as_str() != id)
-                .collect::<Vec<_>>();
+                .partition(|item| item.id.as_str() == id);
             set_conversion_images(&state, images);
+            let data_directory = app_data_dir();
+            for item in &removed {
+                remove_toolbox_item_files(
+                    &data_directory,
+                    item,
+                    ManagedToolboxDirectory::ConversionInputs,
+                    ManagedToolboxDirectory::ConversionResults,
+                );
+            }
             state.set_conversion_message("".into());
         });
     }
@@ -349,7 +563,17 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow, context: AppContext) {
             if state.get_conversion_processing() || state.get_conversion_saving() {
                 return;
             }
+            let removed = state.get_conversion_images().iter().collect::<Vec<_>>();
             set_conversion_images(&state, Vec::new());
+            let data_directory = app_data_dir();
+            for item in &removed {
+                remove_toolbox_item_files(
+                    &data_directory,
+                    item,
+                    ManagedToolboxDirectory::ConversionInputs,
+                    ManagedToolboxDirectory::ConversionResults,
+                );
+            }
             state.set_conversion_message("".into());
         });
     }
@@ -427,11 +651,14 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
-        state.on_add_crop_source_from_drag(move |mime_type, data| {
+        state.on_add_crop_source_from_drag(move |transfer| {
             let Some(app) = app_weak.upgrade() else {
                 return false;
             };
-            add_crop_from_drag_data(&app, mime_type.as_str(), data.as_str())
+            let Ok(data) = transfer.plain_text() else {
+                return false;
+            };
+            add_crop_from_drag_data(&app, TEXT_PLAIN_MIME, data.as_str())
         });
     }
 
@@ -502,11 +729,14 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
-        state.on_add_watermark_source_from_drag(move |mime_type, data| {
+        state.on_add_watermark_source_from_drag(move |transfer| {
             let Some(app) = app_weak.upgrade() else {
                 return false;
             };
-            add_watermark_from_drag_data(&app, mime_type.as_str(), data.as_str())
+            let Ok(data) = transfer.plain_text() else {
+                return false;
+            };
+            add_watermark_from_drag_data(&app, TEXT_PLAIN_MIME, data.as_str())
         });
     }
 
@@ -603,11 +833,14 @@ pub(super) fn wire_toolbox_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
-        state.on_add_colorize_source_from_drag(move |mime_type, data| {
+        state.on_add_colorize_source_from_drag(move |transfer| {
             let Some(app) = app_weak.upgrade() else {
                 return false;
             };
-            add_colorization_from_drag_data(&app, mime_type.as_str(), data.as_str())
+            let Ok(data) = transfer.plain_text() else {
+                return false;
+            };
+            add_colorization_from_drag_data(&app, TEXT_PLAIN_MIME, data.as_str())
         });
     }
 
@@ -866,7 +1099,7 @@ fn set_watermark_source_from_path(app: &AppWindow, path: &Path) -> bool {
     if !canonical.is_file() {
         return false;
     }
-    let Ok(image) = load_image(&canonical) else {
+    let Ok(image) = load_preview_image(&canonical, PreviewPurpose::Canvas) else {
         return false;
     };
     let name = canonical
@@ -916,7 +1149,7 @@ fn start_remove_black_tool(app: &AppWindow) {
             sanitize_filename(stem)
         )));
         fs::write(&path, bytes)?;
-        let preview = load_image(&path)?;
+        let preview = load_preview_image(&path, PreviewPurpose::Canvas)?;
         let name = path
             .file_name()
             .and_then(|value| value.to_str())
@@ -1055,7 +1288,7 @@ pub(super) fn add_compression_paths(app: &AppWindow, paths: Vec<PathBuf>) {
             skipped += 1;
             continue;
         }
-        let Ok(preview) = load_image(&canonical) else {
+        let Ok(preview) = load_preview_image(&canonical, PreviewPurpose::Toolbox) else {
             skipped += 1;
             continue;
         };
@@ -1117,7 +1350,7 @@ fn paste_compression_image(app: &AppWindow) -> bool {
             return false;
         };
         let directory = app_data_dir().join("toolbox").join("compression-inputs");
-        if fs::create_dir_all(&directory).is_err() {
+        if !ensure_managed_subdirectory(&directory) {
             return false;
         }
         let path = directory.join(format!("pasted-{}.png", Uuid::new_v4()));
@@ -1203,11 +1436,26 @@ fn start_local_compression(app: &AppWindow) {
             source_path: item.source_path.to_string(),
         })
         .collect::<Vec<_>>();
+    let abandoned_results = images
+        .iter()
+        .filter_map(|item| {
+            (!item.result_path.trim().is_empty())
+                .then(|| PathBuf::from(item.result_path.as_str()))
+        })
+        .collect::<Vec<_>>();
     for item in &mut images {
         item.status = "pending".into();
         item.result_path = "".into();
     }
     set_compression_images(&state, images);
+    let data_directory = app_data_dir();
+    for result_path in abandoned_results {
+        let _ = remove_managed_toolbox_file(
+            &data_directory,
+            ManagedToolboxDirectory::CompressionResults,
+            &result_path,
+        );
+    }
     state.set_compression_processing(true);
     state.set_compression_message(
         if state.get_language().as_str() == "en" {
@@ -1219,6 +1467,11 @@ fn start_local_compression(app: &AppWindow) {
     );
 
     let output_dir = app_data_dir().join("toolbox").join("compression-results");
+    if !ensure_managed_subdirectory(&output_dir) {
+        state.set_compression_processing(false);
+        state.set_compression_message("无法创建安全的压缩缓存目录".into());
+        return;
+    }
     let (sender, receiver) = mpsc::channel::<CompressionOutcome>();
     std::thread::spawn(move || {
         run_local_compression_worker(inputs, mode, output_dir, sender);
@@ -1453,10 +1706,19 @@ fn start_compression_result_save(app: &AppWindow, result_path: PathBuf, source_n
             .into(),
         );
         let (sender, receiver) = mpsc::channel::<CompressionSaveOutcome>();
+        let data_directory = app_data_dir();
         std::thread::spawn(move || {
-            let outcome = fs::copy(&result_path, &destination)
-                .map(|_| CompressionSaveOutcome::Saved(destination))
-                .unwrap_or(CompressionSaveOutcome::Failed);
+            let outcome = copy_and_release_managed_toolbox_result(
+                &result_path,
+                &destination,
+                &data_directory,
+                ManagedToolboxDirectory::CompressionResults,
+            )
+            .map(|released| CompressionSaveOutcome::Saved {
+                destination,
+                released_result_path: released.then_some(result_path),
+            })
+            .unwrap_or(CompressionSaveOutcome::Failed);
             let _ = sender.send(outcome);
         });
         poll_compression_result_save(app.as_weak(), Rc::new(RefCell::new(Some(receiver))));
@@ -1507,14 +1769,25 @@ fn poll_compression_result_save(
         let state = app.global::<AppState>();
         state.set_compression_saving(false);
         match outcome {
-            CompressionSaveOutcome::Saved(path) => state.set_compression_message(
-                if state.get_language().as_str() == "en" {
-                    format!("Saved to {}", path.display())
-                } else {
-                    format!("已保存到 {}", path.display())
+            CompressionSaveOutcome::Saved {
+                destination,
+                released_result_path,
+            } => {
+                if let Some(released_result_path) = released_result_path {
+                    let mut images = state.get_compression_images().iter().collect::<Vec<_>>();
+                    if clear_released_toolbox_result(&mut images, &released_result_path) {
+                        set_compression_images(&state, images);
+                    }
                 }
-                .into(),
-            ),
+                state.set_compression_message(
+                    if state.get_language().as_str() == "en" {
+                        format!("Saved to {}", destination.display())
+                    } else {
+                        format!("已保存到 {}", destination.display())
+                    }
+                    .into(),
+                );
+            }
             CompressionSaveOutcome::Failed => state.set_compression_message(
                 if state.get_language().as_str() == "en" {
                     "The compressed image could not be saved"
@@ -1570,7 +1843,7 @@ pub(super) fn add_conversion_paths(app: &AppWindow, paths: Vec<PathBuf>) {
             skipped += 1;
             continue;
         }
-        let Ok(preview) = load_image(&canonical) else {
+        let Ok(preview) = load_preview_image(&canonical, PreviewPurpose::Toolbox) else {
             skipped += 1;
             continue;
         };
@@ -1632,7 +1905,7 @@ fn paste_conversion_image(app: &AppWindow) -> bool {
             return false;
         };
         let directory = app_data_dir().join("toolbox").join("conversion-inputs");
-        if fs::create_dir_all(&directory).is_err() {
+        if !ensure_managed_subdirectory(&directory) {
             return false;
         }
         let path = directory.join(format!("pasted-{}.png", Uuid::new_v4()));
@@ -1719,11 +1992,26 @@ fn start_local_conversion(app: &AppWindow) {
             source_path: item.source_path.to_string(),
         })
         .collect::<Vec<_>>();
+    let abandoned_results = images
+        .iter()
+        .filter_map(|item| {
+            (!item.result_path.trim().is_empty())
+                .then(|| PathBuf::from(item.result_path.as_str()))
+        })
+        .collect::<Vec<_>>();
     for item in &mut images {
         item.status = "pending".into();
         item.result_path = "".into();
     }
     set_conversion_images(&state, images);
+    let data_directory = app_data_dir();
+    for result_path in abandoned_results {
+        let _ = remove_managed_toolbox_file(
+            &data_directory,
+            ManagedToolboxDirectory::ConversionResults,
+            &result_path,
+        );
+    }
     state.set_conversion_processing(true);
     state.set_conversion_message(
         if state.get_language().as_str() == "en" {
@@ -1735,6 +2023,11 @@ fn start_local_conversion(app: &AppWindow) {
     );
 
     let output_dir = app_data_dir().join("toolbox").join("conversion-results");
+    if !ensure_managed_subdirectory(&output_dir) {
+        state.set_conversion_processing(false);
+        state.set_conversion_message("无法创建安全的转换缓存目录".into());
+        return;
+    }
     let (sender, receiver) = mpsc::channel::<ConversionOutcome>();
     std::thread::spawn(move || {
         run_local_conversion_worker(inputs, target_format, output_dir, sender);
@@ -1966,10 +2259,19 @@ fn start_conversion_result_save(app: &AppWindow, result_path: PathBuf, source_na
             .into(),
         );
         let (sender, receiver) = mpsc::channel::<ConversionSaveOutcome>();
+        let data_directory = app_data_dir();
         std::thread::spawn(move || {
-            let outcome = fs::copy(&result_path, &destination)
-                .map(|_| ConversionSaveOutcome::Saved(destination))
-                .unwrap_or(ConversionSaveOutcome::Failed);
+            let outcome = copy_and_release_managed_toolbox_result(
+                &result_path,
+                &destination,
+                &data_directory,
+                ManagedToolboxDirectory::ConversionResults,
+            )
+            .map(|released| ConversionSaveOutcome::Saved {
+                destination,
+                released_result_path: released.then_some(result_path),
+            })
+            .unwrap_or(ConversionSaveOutcome::Failed);
             let _ = sender.send(outcome);
         });
         poll_conversion_result_save(app.as_weak(), Rc::new(RefCell::new(Some(receiver))));
@@ -2020,14 +2322,25 @@ fn poll_conversion_result_save(
         let state = app.global::<AppState>();
         state.set_conversion_saving(false);
         match outcome {
-            ConversionSaveOutcome::Saved(path) => state.set_conversion_message(
-                if state.get_language().as_str() == "en" {
-                    format!("Saved to {}", path.display())
-                } else {
-                    format!("已保存到 {}", path.display())
+            ConversionSaveOutcome::Saved {
+                destination,
+                released_result_path,
+            } => {
+                if let Some(released_result_path) = released_result_path {
+                    let mut images = state.get_conversion_images().iter().collect::<Vec<_>>();
+                    if clear_released_toolbox_result(&mut images, &released_result_path) {
+                        set_conversion_images(&state, images);
+                    }
                 }
-                .into(),
-            ),
+                state.set_conversion_message(
+                    if state.get_language().as_str() == "en" {
+                        format!("Saved to {}", destination.display())
+                    } else {
+                        format!("已保存到 {}", destination.display())
+                    }
+                    .into(),
+                );
+            }
             ConversionSaveOutcome::Failed => state.set_conversion_message(
                 if state.get_language().as_str() == "en" {
                     "The converted image could not be saved"
@@ -2081,18 +2394,18 @@ pub(super) fn add_crop_paths(app: &AppWindow, paths: Vec<PathBuf>) -> bool {
         );
         return true;
     }
+    let previous_source = PathBuf::from(state.get_crop_source_path().to_string());
     for path in paths {
         let canonical = fs::canonicalize(&path).unwrap_or(path);
         if !canonical.is_file() {
             continue;
         }
-        let Ok(preview) = load_image(&canonical) else {
+        let Ok(preview) = load_preview_image(&canonical, PreviewPurpose::Canvas) else {
             continue;
         };
-        let size = preview.size();
-        if size.width == 0 || size.height == 0 {
+        let Ok((source_width, source_height)) = inspect_image_dimensions(&canonical) else {
             continue;
-        }
+        };
         let name = canonical
             .file_name()
             .and_then(|value| value.to_str())
@@ -2101,8 +2414,8 @@ pub(super) fn add_crop_paths(app: &AppWindow, paths: Vec<PathBuf>) -> bool {
         state.set_crop_source_path(canonical.display().to_string().into());
         state.set_crop_source_name(name.into());
         state.set_crop_source_image(preview);
-        state.set_crop_source_width(size.width as i32);
-        state.set_crop_source_height(size.height as i32);
+        state.set_crop_source_width(source_width as i32);
+        state.set_crop_source_height(source_height as i32);
         state.set_crop_transform_steps("".into());
         state.set_crop_ratio("original".into());
         state.set_crop_x(0.0);
@@ -2111,6 +2424,13 @@ pub(super) fn add_crop_paths(app: &AppWindow, paths: Vec<PathBuf>) -> bool {
         state.set_crop_height(1.0);
         state.set_crop_processing(false);
         state.set_crop_message("".into());
+        if !previous_source.as_os_str().is_empty() && previous_source != canonical {
+            let _ = remove_managed_toolbox_file(
+                &app_data_dir(),
+                ManagedToolboxDirectory::CropInputs,
+                &previous_source,
+            );
+        }
         return true;
     }
     state.set_crop_message(
@@ -2152,7 +2472,7 @@ fn paste_crop_image(app: &AppWindow) -> bool {
             return false;
         };
         let directory = app_data_dir().join("toolbox").join("crop-inputs");
-        if fs::create_dir_all(&directory).is_err() {
+        if !ensure_managed_subdirectory(&directory) {
             return false;
         }
         let path = directory.join(format!("pasted-{}.png", Uuid::new_v4()));
@@ -2343,14 +2663,7 @@ fn refresh_crop_preview(app: &AppWindow) -> Result<()> {
 }
 
 fn transformed_crop_image(path: &Path, steps: &str) -> Result<image::DynamicImage> {
-    let source = load_image(path)?;
-    let buffer = source
-        .to_rgba8()
-        .ok_or_else(|| anyhow!("crop source pixels are unavailable"))?;
-    let rgba =
-        image::RgbaImage::from_raw(buffer.width(), buffer.height(), buffer.as_bytes().to_vec())
-            .ok_or_else(|| anyhow!("crop source pixels are invalid"))?;
-    let mut image = image::DynamicImage::ImageRgba8(rgba);
+    let (mut image, _) = decode_image_file(path)?;
     for step in steps.chars() {
         image = match step {
             'L' => image.rotate270(),
@@ -2519,14 +2832,14 @@ fn save_crop_asset(
     source_path: &str,
     bytes: &[u8],
 ) -> Result<()> {
-    let (bytes, image, width, height) = generated_image_from_bytes(bytes)?;
+    let (width, height) = generated_image_dimensions(bytes)?;
     let source_title = Path::new(source_path)
         .file_stem()
         .and_then(|value| value.to_str())
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("图片");
     let title = format!("{} 裁剪", short_text(source_title, 18));
-    let result_path = save_generated_bytes(app, &bytes, &title)?;
+    let result_path = save_generated_bytes(app, bytes, &title)?;
     let now = Local::now().format("%Y-%m-%d %H:%M").to_string();
     let item = AssetData {
         id: Uuid::new_v4().to_string(),
@@ -2542,7 +2855,6 @@ fn save_crop_asset(
         origin: "image_crop".to_string(),
         width,
         height,
-        image,
         source_path: result_path,
         reference_paths: vec![source_path.to_string()],
         cutout_done: false,
@@ -2619,6 +2931,10 @@ fn start_watermark_removal(app: &AppWindow, context: AppContext) {
     if context.backend.is_none() || state.get_watermark_processing() {
         return;
     }
+    let Some(session_scope) = current_generation_session_scope(&context) else {
+        state.set_watermark_message("登录状态已变化，请重新发起去水印".into());
+        return;
+    };
 
     let source = PathBuf::from(state.get_watermark_source_path().to_string());
     let persisted_source = match persist_reference_source(&source) {
@@ -2637,10 +2953,20 @@ fn start_watermark_removal(app: &AppWindow, context: AppContext) {
     };
     state.set_watermark_source_path(persisted_source.display().to_string().into());
     let client_request_id = Uuid::new_v4().simple().to_string();
+    let (reference_sha256, reference_size_bytes) =
+        match reference_fingerprints(std::slice::from_ref(&persisted_source)) {
+            Ok(fingerprints) => fingerprints,
+            Err(error) => {
+                state.set_watermark_message(format!("原图校验失败：{error}").into());
+                return;
+            }
+        };
     let record = PendingGenerationRecord {
         schema_version: 1,
         created_at_epoch_ms: Local::now().timestamp_millis(),
         client_request_id,
+        owner_user_id: session_scope.owner_user_id.clone(),
+        auth_epoch: session_scope.auth_epoch,
         local_task_id: Uuid::new_v4().to_string(),
         server_task_id: String::new(),
         raw_prompt: "去除图片水印".to_string(),
@@ -2657,12 +2983,21 @@ fn start_watermark_removal(app: &AppWindow, context: AppContext) {
         target_height: 0,
         create_conversation: false,
         reference_paths: vec![persisted_source.display().to_string()],
+        reference_sha256,
+        reference_size_bytes,
+        lineage_reference_paths: vec![persisted_source.display().to_string()],
         uploaded_file_ids: vec![],
         deliveries: vec![],
         terminal: false,
         expected_success_count: 0,
     };
-    if upsert_pending_generation(record.clone()).is_err() {
+    if upsert_pending_generation_scoped(
+        record.clone(),
+        &session_scope.owner_user_id,
+        session_scope.auth_epoch,
+    )
+    .is_err()
+    {
         state.set_watermark_message(
             if state.get_language().as_str() == "en" {
                 "The task could not be saved locally"
@@ -2681,6 +3016,13 @@ pub(super) fn resume_pending_watermark_removal(
     context: AppContext,
     record: PendingGenerationRecord,
 ) {
+    let session_scope = SessionScope {
+        owner_user_id: record.owner_user_id.clone(),
+        auth_epoch: record.auth_epoch,
+    };
+    if !generation_scope_matches_context(&context, &session_scope) {
+        return;
+    }
     if app.global::<AppState>().get_watermark_processing() {
         return;
     }
@@ -2695,7 +3037,7 @@ pub(super) fn resume_pending_watermark_removal(
                     .unwrap_or_default()
                     .into(),
             );
-            if let Ok(image) = load_image(&path) {
+            if let Ok(image) = load_preview_image(&path, PreviewPurpose::Canvas) {
                 state.set_watermark_source_image(image);
             }
         }
@@ -2712,6 +3054,13 @@ fn launch_watermark_removal(
     let Some(backend) = context.backend.clone() else {
         return;
     };
+    let session_scope = SessionScope {
+        owner_user_id: record.owner_user_id.clone(),
+        auth_epoch: record.auth_epoch,
+    };
+    if !generation_scope_matches_context(&context, &session_scope) {
+        return;
+    }
     let state = app.global::<AppState>();
     state.set_watermark_processing(true);
     state.set_watermark_progress(if recovering { 5 } else { 1 });
@@ -2736,10 +3085,12 @@ fn launch_watermark_removal(
 
     let source_path = record.reference_paths.first().cloned().unwrap_or_default();
     let (sender, receiver) = mpsc::channel::<WatermarkOutcome>();
-    std::thread::spawn(move || run_watermark_worker(backend, record, sender));
+    let worker_scope = session_scope.clone();
+    std::thread::spawn(move || run_watermark_worker(backend, worker_scope, record, sender));
     poll_watermark_outcomes(
         app.as_weak(),
         context,
+        session_scope,
         Rc::new(RefCell::new(Some(receiver))),
         source_path,
     );
@@ -2747,14 +3098,33 @@ fn launch_watermark_removal(
 
 fn run_watermark_worker(
     backend: Arc<BackendRuntime>,
+    session_scope: SessionScope,
     mut record: PendingGenerationRecord,
     sender: mpsc::Sender<WatermarkOutcome>,
 ) {
+    if record.owner_user_id != session_scope.owner_user_id
+        || record.auth_epoch != session_scope.auth_epoch
+        || !backend_generation_scope_active(&backend, &session_scope)
+    {
+        return;
+    }
     let api = GenerationApi::new(backend.api.clone());
+    let verified_delivery_file_ids = match sanitize_recovered_delivery_paths(&mut record) {
+        Ok(file_ids) => file_ids,
+        Err(_) => {
+            let _ = sender.send(WatermarkOutcome::Failure {
+                reason: "本地去水印恢复记录无法安全更新，已暂停交付，请重启后重试"
+                    .to_string(),
+            });
+            return;
+        }
+    };
     if record.terminal {
-        if let Some(saved) = record.deliveries.iter().find(|delivery| {
-            !delivery.local_path.is_empty() && Path::new(&delivery.local_path).is_file()
-        }) {
+        if let Some(saved) = record
+            .deliveries
+            .iter()
+            .find(|delivery| verified_delivery_file_ids.contains(&delivery.file_id))
+        {
             let delivery = (!saved.acknowledged).then(|| DeliveryConfirmation {
                 client_request_id: record.client_request_id.clone(),
                 item_index: saved.item_index,
@@ -2773,24 +3143,47 @@ fn run_watermark_worker(
 
     let mut uploaded = record.uploaded_file_ids.clone();
     if uploaded.is_empty() && record.server_task_id.is_empty() {
+        if !generation_references_match(&record) {
+            let _ = sender.send(WatermarkOutcome::Failure {
+                reason: "原图内容已变化，恢复任务已暂停，请重新发起".to_string(),
+            });
+            return;
+        }
         let Some(path) = record.reference_paths.first() else {
-            let _ = remove_pending_generation(&record.client_request_id);
             let _ = sender.send(WatermarkOutcome::Failure {
                 reason: "找不到待处理的原图，请重新上传".to_string(),
             });
             return;
         };
-        match api.upload_reference(Path::new(path)) {
+        match api.upload_reference_scoped(Path::new(path), &session_scope) {
             Ok(file_id) => {
                 uploaded.push(file_id);
                 let snapshot = uploaded.clone();
-                let _ = update_pending_generation(&record.client_request_id, |item| {
-                    item.uploaded_file_ids = snapshot;
-                });
+                if !matches!(
+                    update_pending_generation_scoped(
+                        &session_scope.owner_user_id,
+                        session_scope.auth_epoch,
+                        &record.client_request_id,
+                        |item| item.uploaded_file_ids = snapshot,
+                    ),
+                    Ok(true)
+                ) {
+                    if let Some(file_id) = uploaded.last() {
+                        let _ = api.delete_reference_scoped(file_id, &session_scope);
+                    }
+                    return;
+                }
             }
             Err(error) => {
+                if !backend_generation_scope_active(&backend, &session_scope) {
+                    return;
+                }
                 if !error.should_preserve_generation_recovery() {
-                    let _ = remove_pending_generation(&record.client_request_id);
+                    let _ = remove_pending_generation_scoped(
+                        &session_scope.owner_user_id,
+                        session_scope.auth_epoch,
+                        &record.client_request_id,
+                    );
                 }
                 let _ = sender.send(WatermarkOutcome::Failure {
                     reason: error.generation_message(),
@@ -2805,14 +3198,21 @@ fn run_watermark_worker(
             client_request_id: record.client_request_id.clone(),
             reference_file_id: uploaded[0].clone(),
         };
-        match api.create_watermark_removal(&request) {
+        match api.create_watermark_removal_scoped(&request, &session_scope) {
             Ok(detail) => detail,
             Err(error) => {
+                if !backend_generation_scope_active(&backend, &session_scope) {
+                    return;
+                }
                 if error.is_insufficient_credits() {
                     for file_id in &uploaded {
-                        api.delete_reference(file_id);
+                        let _ = api.delete_reference_scoped(file_id, &session_scope);
                     }
-                    let _ = remove_pending_generation(&record.client_request_id);
+                    let _ = remove_pending_generation_scoped(
+                        &session_scope.owner_user_id,
+                        session_scope.auth_epoch,
+                        &record.client_request_id,
+                    );
                     let _ = sender.send(WatermarkOutcome::CreditInsufficient {
                         message: "本次去水印需要 20 积分，请先充值".to_string(),
                     });
@@ -2820,9 +3220,13 @@ fn run_watermark_worker(
                 }
                 if !error.should_preserve_generation_recovery() {
                     for file_id in &uploaded {
-                        api.delete_reference(file_id);
+                        let _ = api.delete_reference_scoped(file_id, &session_scope);
                     }
-                    let _ = remove_pending_generation(&record.client_request_id);
+                    let _ = remove_pending_generation_scoped(
+                        &session_scope.owner_user_id,
+                        session_scope.auth_epoch,
+                        &record.client_request_id,
+                    );
                 }
                 let _ = sender.send(WatermarkOutcome::Failure {
                     reason: error.generation_message(),
@@ -2831,7 +3235,7 @@ fn run_watermark_worker(
             }
         }
     } else {
-        match api.task(&record.server_task_id) {
+        match api.task_scoped(&record.server_task_id, &session_scope) {
             Ok(detail) => detail,
             Err(error) => {
                 let _ = sender.send(WatermarkOutcome::Failure {
@@ -2846,26 +3250,49 @@ fn run_watermark_worker(
     let server_task_id = detail.id.clone();
     let server_id_snapshot = server_task_id.clone();
     let uploaded_snapshot = uploaded.clone();
-    let _ = update_pending_generation(&record.client_request_id, |item| {
-        item.server_task_id = server_id_snapshot;
-        item.uploaded_file_ids = uploaded_snapshot;
-    });
+    if !matches!(
+        update_pending_generation_scoped(
+            &session_scope.owner_user_id,
+            session_scope.auth_epoch,
+            &record.client_request_id,
+            |item| {
+                item.server_task_id = server_id_snapshot;
+                item.uploaded_file_ids = uploaded_snapshot;
+            },
+        ),
+        Ok(true)
+    ) {
+        return;
+    }
     let _ = sender.send(WatermarkOutcome::Accepted {
         task_id: server_task_id.clone(),
     });
 
     loop {
+        if !backend_generation_scope_active(&backend, &session_scope) {
+            return;
+        }
         let _ = sender.send(WatermarkOutcome::Progress {
             percent: detail.progress_percent,
         });
         if let Some(item) = detail.items.iter().find(|item| item.status == "succeeded") {
             if let Some(file) = item.file.as_ref() {
-                match api.download_verified(file) {
+                match api.download_verified_scoped(file, &session_scope) {
                     Ok(bytes) => {
-                        let _ = update_pending_generation(&record.client_request_id, |pending| {
-                            pending.terminal = true;
-                            pending.expected_success_count = 1;
-                        });
+                        if !matches!(
+                            update_pending_generation_scoped(
+                                &session_scope.owner_user_id,
+                                session_scope.auth_epoch,
+                                &record.client_request_id,
+                                |pending| {
+                                    pending.terminal = true;
+                                    pending.expected_success_count = 1;
+                                },
+                            ),
+                            Ok(true)
+                        ) {
+                            return;
+                        }
                         let _ = sender.send(WatermarkOutcome::Success {
                             bytes,
                             delivery: DeliveryConfirmation {
@@ -2900,15 +3327,25 @@ fn run_watermark_worker(
                     })
                 })
                 .unwrap_or_else(|| "服务端未能完成去水印".to_string());
-            let _ = update_pending_generation(&record.client_request_id, |pending| {
-                pending.terminal = true;
-                pending.expected_success_count = 0;
-            });
+            if !matches!(
+                update_pending_generation_scoped(
+                    &session_scope.owner_user_id,
+                    session_scope.auth_epoch,
+                    &record.client_request_id,
+                    |pending| {
+                        pending.terminal = true;
+                        pending.expected_success_count = 0;
+                    },
+                ),
+                Ok(true)
+            ) {
+                return;
+            }
             let _ = sender.send(WatermarkOutcome::Failure { reason });
             return;
         }
         std::thread::sleep(Duration::from_millis(IMAGE_POLL_INTERVAL_MS));
-        detail = match api.task(&record.server_task_id) {
+        detail = match api.task_scoped(&record.server_task_id, &session_scope) {
             Ok(detail) => detail,
             Err(error) => {
                 let _ = sender.send(WatermarkOutcome::Failure {
@@ -2923,10 +3360,15 @@ fn run_watermark_worker(
 fn poll_watermark_outcomes(
     app_weak: Weak<AppWindow>,
     context: AppContext,
+    session_scope: SessionScope,
     receiver: Rc<RefCell<Option<mpsc::Receiver<WatermarkOutcome>>>>,
     source_path: String,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
+        if !generation_scope_allows_polling(&app_weak, &context, &session_scope) {
+            receiver.borrow_mut().take();
+            return;
+        }
         let outcome = {
             let mut slot = receiver.borrow_mut();
             let Some(rx) = slot.as_ref() else {
@@ -2944,9 +3386,13 @@ fn poll_watermark_outcomes(
             }
         };
         let Some(outcome) = outcome else {
-            poll_watermark_outcomes(app_weak, context, receiver, source_path);
+            poll_watermark_outcomes(app_weak, context, session_scope, receiver, source_path);
             return;
         };
+        if !generation_scope_allows_polling(&app_weak, &context, &session_scope) {
+            receiver.borrow_mut().take();
+            return;
+        }
         let Some(app) = app_weak.upgrade() else {
             return;
         };
@@ -2998,13 +3444,20 @@ fn poll_watermark_outcomes(
                             }
                             .into(),
                         );
-                        let _ = pending_delivery_saved(
+                        let saved = pending_delivery_saved(
+                            &session_scope.owner_user_id,
+                            session_scope.auth_epoch,
                             &delivery.client_request_id,
                             &delivery,
                             &result_path,
                         );
-                        if let Some(backend) = context.backend.clone() {
-                            acknowledge_delivery_after_local_save(backend, delivery);
+                        if matches!(saved, Ok(true)) {
+                            acknowledge_delivery_after_local_save(
+                                app.as_weak(),
+                                context.clone(),
+                                session_scope.clone(),
+                                delivery,
+                            );
                         }
                     }
                     Err(error) => {
@@ -3025,21 +3478,62 @@ fn poll_watermark_outcomes(
                 keep_polling = false;
                 receiver.borrow_mut().take();
                 let path = PathBuf::from(&local_path);
-                if let Ok(image) = load_image(&path) {
-                    state.set_watermark_result_path(local_path.clone().into());
-                    state.set_watermark_result_name(
-                        path.file_name()
-                            .and_then(|value| value.to_str())
-                            .unwrap_or("去水印结果")
-                            .into(),
-                    );
-                    state.set_watermark_result_image(image);
-                    state.set_watermark_progress(100);
-                    state.set_watermark_message("已恢复上次完成的去水印结果".into());
-                }
-                state.set_watermark_processing(false);
-                if let (Some(backend), Some(delivery)) = (context.backend.clone(), delivery) {
-                    acknowledge_delivery_after_local_save(backend, delivery);
+                let locally_verified = delivery.as_ref().map_or(true, |delivery| {
+                    recovered_delivery_path_matches(
+                        &local_path,
+                        &delivery.sha256,
+                        delivery.size_bytes,
+                    )
+                });
+                match (
+                    locally_verified,
+                    load_preview_image(&path, PreviewPurpose::Canvas),
+                ) {
+                    (true, Ok(image)) => {
+                        state.set_watermark_result_path(local_path.clone().into());
+                        state.set_watermark_result_name(
+                            path.file_name()
+                                .and_then(|value| value.to_str())
+                                .unwrap_or("去水印结果")
+                                .into(),
+                        );
+                        state.set_watermark_result_image(image);
+                        state.set_watermark_progress(100);
+                        state.set_watermark_processing(false);
+                        state.set_watermark_message("已恢复上次完成的去水印结果".into());
+                        if let Some(delivery) = delivery {
+                            acknowledge_delivery_after_local_save(
+                                app.as_weak(),
+                                context.clone(),
+                                session_scope.clone(),
+                                delivery,
+                            );
+                        }
+                    }
+                    _ => {
+                        let retrying = delivery.as_ref().is_some_and(|delivery| {
+                            matches!(
+                                clear_recovered_delivery_local_path(
+                                    &session_scope,
+                                    &delivery.client_request_id,
+                                    &delivery.file_id,
+                                ),
+                                Ok(true)
+                            )
+                        });
+                        if retrying {
+                            state.set_watermark_processing(false);
+                            state.set_watermark_message(
+                                "本地去水印结果校验失败，正在从服务端重新下载...".into(),
+                            );
+                            recover_pending_generations(&app, context.clone());
+                        } else {
+                            state.set_watermark_processing(false);
+                            state.set_watermark_message(
+                                "本地去水印结果已损坏，且暂时无法恢复，请重启后重试".into(),
+                            );
+                        }
+                    }
                 }
             }
             WatermarkOutcome::CreditInsufficient { message } => {
@@ -3066,7 +3560,7 @@ fn poll_watermark_outcomes(
             }
         }
         if keep_polling {
-            poll_watermark_outcomes(app_weak, context, receiver, source_path);
+            poll_watermark_outcomes(app_weak, context, session_scope, receiver, source_path);
         }
     });
 }
@@ -3077,7 +3571,7 @@ fn save_watermark_asset(
     source_path: &str,
     bytes: &[u8],
 ) -> Result<(String, Image)> {
-    let (bytes, image, width, height) = generated_image_from_bytes(bytes)?;
+    let (width, height) = generated_image_dimensions(bytes)?;
     let source = Path::new(source_path);
     let source_title = source
         .file_stem()
@@ -3085,7 +3579,8 @@ fn save_watermark_asset(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("图片");
     let title = format!("{} 去水印", short_text(source_title, 18));
-    let result_path = save_generated_bytes(app, &bytes, &title)?;
+    let result_path = save_generated_bytes(app, bytes, &title)?;
+    let image = load_preview_image(Path::new(&result_path), PreviewPurpose::Canvas)?;
     let now = Local::now().format("%Y-%m-%d %H:%M").to_string();
     let item = AssetData {
         id: Uuid::new_v4().to_string(),
@@ -3101,7 +3596,6 @@ fn save_watermark_asset(
         origin: "watermark_removal".to_string(),
         width,
         height,
-        image: image.clone(),
         source_path: result_path.clone(),
         reference_paths: (!source_path.is_empty())
             .then(|| source_path.to_string())
@@ -3112,21 +3606,17 @@ fn save_watermark_asset(
         upscale_done: false,
         is_new: false,
     };
+    let notification = NotificationData {
+        id: Uuid::new_v4().to_string(),
+        title: format!("去水印处理完成：{title}"),
+        model: "去水印".to_string(),
+        time: now,
+        reason: String::new(),
+        success: true,
+        read: false,
+    };
     let mut store = store.borrow_mut();
-    store.assets.insert(0, item);
-    store.notifications.insert(
-        0,
-        NotificationData {
-            id: Uuid::new_v4().to_string(),
-            title: format!("去水印处理完成：{title}"),
-            model: "去水印".to_string(),
-            time: now,
-            reason: String::new(),
-            success: true,
-            read: false,
-        },
-    );
-    save_local_store(app, &store);
+    persist_generated_asset_checked(app, &mut store, item, notification, false, None)?;
     push_all(app, &store);
     Ok((result_path, image))
 }
@@ -3148,6 +3638,10 @@ fn start_image_colorization(app: &AppWindow, context: AppContext) {
     if context.backend.is_none() || state.get_colorize_processing() {
         return;
     }
+    let Some(session_scope) = current_generation_session_scope(&context) else {
+        state.set_colorize_message("登录状态已变化，请重新发起老照片上色".into());
+        return;
+    };
 
     let source = PathBuf::from(state.get_colorize_source_path().to_string());
     if let Err(error) = set_colorization_source_from_path(app, &source) {
@@ -3170,10 +3664,20 @@ fn start_image_colorization(app: &AppWindow, context: AppContext) {
     };
     state.set_colorize_source_path(persisted_source.display().to_string().into());
     let client_request_id = Uuid::new_v4().simple().to_string();
+    let (reference_sha256, reference_size_bytes) =
+        match reference_fingerprints(std::slice::from_ref(&persisted_source)) {
+            Ok(fingerprints) => fingerprints,
+            Err(error) => {
+                state.set_colorize_message(format!("原图校验失败：{error}").into());
+                return;
+            }
+        };
     let record = PendingGenerationRecord {
         schema_version: 1,
         created_at_epoch_ms: Local::now().timestamp_millis(),
         client_request_id,
+        owner_user_id: session_scope.owner_user_id.clone(),
+        auth_epoch: session_scope.auth_epoch,
         local_task_id: Uuid::new_v4().to_string(),
         server_task_id: String::new(),
         raw_prompt: "老照片上色".to_string(),
@@ -3190,12 +3694,21 @@ fn start_image_colorization(app: &AppWindow, context: AppContext) {
         target_height: 0,
         create_conversation: false,
         reference_paths: vec![persisted_source.display().to_string()],
+        reference_sha256,
+        reference_size_bytes,
+        lineage_reference_paths: vec![persisted_source.display().to_string()],
         uploaded_file_ids: vec![],
         deliveries: vec![],
         terminal: false,
         expected_success_count: 0,
     };
-    if upsert_pending_generation(record.clone()).is_err() {
+    if upsert_pending_generation_scoped(
+        record.clone(),
+        &session_scope.owner_user_id,
+        session_scope.auth_epoch,
+    )
+    .is_err()
+    {
         state.set_colorize_message(
             if state.get_language().as_str() == "en" {
                 "The task could not be saved locally"
@@ -3214,6 +3727,13 @@ pub(super) fn resume_pending_image_colorization(
     context: AppContext,
     record: PendingGenerationRecord,
 ) {
+    let session_scope = SessionScope {
+        owner_user_id: record.owner_user_id.clone(),
+        auth_epoch: record.auth_epoch,
+    };
+    if !generation_scope_matches_context(&context, &session_scope) {
+        return;
+    }
     if app.global::<AppState>().get_colorize_processing() {
         return;
     }
@@ -3228,7 +3748,7 @@ pub(super) fn resume_pending_image_colorization(
                     .unwrap_or_default()
                     .into(),
             );
-            if let Ok(image) = load_image(&path) {
+            if let Ok(image) = load_preview_image(&path, PreviewPurpose::Canvas) {
                 state.set_colorize_source_image(image);
             }
         }
@@ -3245,6 +3765,13 @@ fn launch_image_colorization(
     let Some(backend) = context.backend.clone() else {
         return;
     };
+    let session_scope = SessionScope {
+        owner_user_id: record.owner_user_id.clone(),
+        auth_epoch: record.auth_epoch,
+    };
+    if !generation_scope_matches_context(&context, &session_scope) {
+        return;
+    }
     let state = app.global::<AppState>();
     state.set_colorize_processing(true);
     state.set_colorize_progress(if recovering { 5 } else { 1 });
@@ -3269,10 +3796,14 @@ fn launch_image_colorization(
 
     let source_path = record.reference_paths.first().cloned().unwrap_or_default();
     let (sender, receiver) = mpsc::channel::<ImageColorizationOutcome>();
-    std::thread::spawn(move || run_image_colorization_worker(backend, record, sender));
+    let worker_scope = session_scope.clone();
+    std::thread::spawn(move || {
+        run_image_colorization_worker(backend, worker_scope, record, sender)
+    });
     poll_image_colorization_outcomes(
         app.as_weak(),
         context,
+        session_scope,
         Rc::new(RefCell::new(Some(receiver))),
         source_path,
     );
@@ -3280,14 +3811,33 @@ fn launch_image_colorization(
 
 fn run_image_colorization_worker(
     backend: Arc<BackendRuntime>,
+    session_scope: SessionScope,
     mut record: PendingGenerationRecord,
     sender: mpsc::Sender<ImageColorizationOutcome>,
 ) {
+    if record.owner_user_id != session_scope.owner_user_id
+        || record.auth_epoch != session_scope.auth_epoch
+        || !backend_generation_scope_active(&backend, &session_scope)
+    {
+        return;
+    }
     let api = GenerationApi::new(backend.api.clone());
+    let verified_delivery_file_ids = match sanitize_recovered_delivery_paths(&mut record) {
+        Ok(file_ids) => file_ids,
+        Err(_) => {
+            let _ = sender.send(ImageColorizationOutcome::Failure {
+                reason: "本地上色恢复记录无法安全更新，已暂停交付，请重启后重试"
+                    .to_string(),
+            });
+            return;
+        }
+    };
     if record.terminal {
-        if let Some(saved) = record.deliveries.iter().find(|delivery| {
-            !delivery.local_path.is_empty() && Path::new(&delivery.local_path).is_file()
-        }) {
+        if let Some(saved) = record
+            .deliveries
+            .iter()
+            .find(|delivery| verified_delivery_file_ids.contains(&delivery.file_id))
+        {
             let delivery = (!saved.acknowledged).then(|| DeliveryConfirmation {
                 client_request_id: record.client_request_id.clone(),
                 item_index: saved.item_index,
@@ -3306,24 +3856,47 @@ fn run_image_colorization_worker(
 
     let mut uploaded = record.uploaded_file_ids.clone();
     if uploaded.is_empty() && record.server_task_id.is_empty() {
+        if !generation_references_match(&record) {
+            let _ = sender.send(ImageColorizationOutcome::Failure {
+                reason: "原图内容已变化，恢复任务已暂停，请重新发起".to_string(),
+            });
+            return;
+        }
         let Some(path) = record.reference_paths.first() else {
-            let _ = remove_pending_generation(&record.client_request_id);
             let _ = sender.send(ImageColorizationOutcome::Failure {
                 reason: "找不到待上色的原图，请重新上传".to_string(),
             });
             return;
         };
-        match api.upload_reference(Path::new(path)) {
+        match api.upload_reference_scoped(Path::new(path), &session_scope) {
             Ok(file_id) => {
                 uploaded.push(file_id);
                 let snapshot = uploaded.clone();
-                let _ = update_pending_generation(&record.client_request_id, |item| {
-                    item.uploaded_file_ids = snapshot;
-                });
+                if !matches!(
+                    update_pending_generation_scoped(
+                        &session_scope.owner_user_id,
+                        session_scope.auth_epoch,
+                        &record.client_request_id,
+                        |item| item.uploaded_file_ids = snapshot,
+                    ),
+                    Ok(true)
+                ) {
+                    if let Some(file_id) = uploaded.last() {
+                        let _ = api.delete_reference_scoped(file_id, &session_scope);
+                    }
+                    return;
+                }
             }
             Err(error) => {
+                if !backend_generation_scope_active(&backend, &session_scope) {
+                    return;
+                }
                 if !error.should_preserve_generation_recovery() {
-                    let _ = remove_pending_generation(&record.client_request_id);
+                    let _ = remove_pending_generation_scoped(
+                        &session_scope.owner_user_id,
+                        session_scope.auth_epoch,
+                        &record.client_request_id,
+                    );
                 }
                 let _ = sender.send(ImageColorizationOutcome::Failure {
                     reason: error.generation_message(),
@@ -3338,14 +3911,21 @@ fn run_image_colorization_worker(
             client_request_id: record.client_request_id.clone(),
             reference_file_id: uploaded[0].clone(),
         };
-        match api.create_image_colorization(&request) {
+        match api.create_image_colorization_scoped(&request, &session_scope) {
             Ok(detail) => detail,
             Err(error) => {
+                if !backend_generation_scope_active(&backend, &session_scope) {
+                    return;
+                }
                 if error.is_insufficient_credits() {
                     for file_id in &uploaded {
-                        api.delete_reference(file_id);
+                        let _ = api.delete_reference_scoped(file_id, &session_scope);
                     }
-                    let _ = remove_pending_generation(&record.client_request_id);
+                    let _ = remove_pending_generation_scoped(
+                        &session_scope.owner_user_id,
+                        session_scope.auth_epoch,
+                        &record.client_request_id,
+                    );
                     let _ = sender.send(ImageColorizationOutcome::CreditInsufficient {
                         message: "本次老照片上色需要 20 积分，请先充值".to_string(),
                     });
@@ -3353,9 +3933,13 @@ fn run_image_colorization_worker(
                 }
                 if !error.should_preserve_generation_recovery() {
                     for file_id in &uploaded {
-                        api.delete_reference(file_id);
+                        let _ = api.delete_reference_scoped(file_id, &session_scope);
                     }
-                    let _ = remove_pending_generation(&record.client_request_id);
+                    let _ = remove_pending_generation_scoped(
+                        &session_scope.owner_user_id,
+                        session_scope.auth_epoch,
+                        &record.client_request_id,
+                    );
                 }
                 let _ = sender.send(ImageColorizationOutcome::Failure {
                     reason: error.generation_message(),
@@ -3364,7 +3948,7 @@ fn run_image_colorization_worker(
             }
         }
     } else {
-        match api.task(&record.server_task_id) {
+        match api.task_scoped(&record.server_task_id, &session_scope) {
             Ok(detail) => detail,
             Err(error) => {
                 let _ = sender.send(ImageColorizationOutcome::Failure {
@@ -3379,26 +3963,49 @@ fn run_image_colorization_worker(
     let server_task_id = detail.id.clone();
     let server_id_snapshot = server_task_id.clone();
     let uploaded_snapshot = uploaded.clone();
-    let _ = update_pending_generation(&record.client_request_id, |item| {
-        item.server_task_id = server_id_snapshot;
-        item.uploaded_file_ids = uploaded_snapshot;
-    });
+    if !matches!(
+        update_pending_generation_scoped(
+            &session_scope.owner_user_id,
+            session_scope.auth_epoch,
+            &record.client_request_id,
+            |item| {
+                item.server_task_id = server_id_snapshot;
+                item.uploaded_file_ids = uploaded_snapshot;
+            },
+        ),
+        Ok(true)
+    ) {
+        return;
+    }
     let _ = sender.send(ImageColorizationOutcome::Accepted {
         task_id: server_task_id.clone(),
     });
 
     loop {
+        if !backend_generation_scope_active(&backend, &session_scope) {
+            return;
+        }
         let _ = sender.send(ImageColorizationOutcome::Progress {
             percent: detail.progress_percent,
         });
         if let Some(item) = detail.items.iter().find(|item| item.status == "succeeded") {
             if let Some(file) = item.file.as_ref() {
-                match api.download_verified(file) {
+                match api.download_verified_scoped(file, &session_scope) {
                     Ok(bytes) => {
-                        let _ = update_pending_generation(&record.client_request_id, |pending| {
-                            pending.terminal = true;
-                            pending.expected_success_count = 1;
-                        });
+                        if !matches!(
+                            update_pending_generation_scoped(
+                                &session_scope.owner_user_id,
+                                session_scope.auth_epoch,
+                                &record.client_request_id,
+                                |pending| {
+                                    pending.terminal = true;
+                                    pending.expected_success_count = 1;
+                                },
+                            ),
+                            Ok(true)
+                        ) {
+                            return;
+                        }
                         let _ = sender.send(ImageColorizationOutcome::Success {
                             bytes,
                             delivery: DeliveryConfirmation {
@@ -3433,15 +4040,25 @@ fn run_image_colorization_worker(
                     })
                 })
                 .unwrap_or_else(|| "服务端未能完成老照片上色".to_string());
-            let _ = update_pending_generation(&record.client_request_id, |pending| {
-                pending.terminal = true;
-                pending.expected_success_count = 0;
-            });
+            if !matches!(
+                update_pending_generation_scoped(
+                    &session_scope.owner_user_id,
+                    session_scope.auth_epoch,
+                    &record.client_request_id,
+                    |pending| {
+                        pending.terminal = true;
+                        pending.expected_success_count = 0;
+                    },
+                ),
+                Ok(true)
+            ) {
+                return;
+            }
             let _ = sender.send(ImageColorizationOutcome::Failure { reason });
             return;
         }
         std::thread::sleep(Duration::from_millis(IMAGE_POLL_INTERVAL_MS));
-        detail = match api.task(&record.server_task_id) {
+        detail = match api.task_scoped(&record.server_task_id, &session_scope) {
             Ok(detail) => detail,
             Err(error) => {
                 let _ = sender.send(ImageColorizationOutcome::Failure {
@@ -3456,10 +4073,15 @@ fn run_image_colorization_worker(
 fn poll_image_colorization_outcomes(
     app_weak: Weak<AppWindow>,
     context: AppContext,
+    session_scope: SessionScope,
     receiver: Rc<RefCell<Option<mpsc::Receiver<ImageColorizationOutcome>>>>,
     source_path: String,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
+        if !generation_scope_allows_polling(&app_weak, &context, &session_scope) {
+            receiver.borrow_mut().take();
+            return;
+        }
         let outcome = {
             let mut slot = receiver.borrow_mut();
             let Some(rx) = slot.as_ref() else {
@@ -3477,9 +4099,19 @@ fn poll_image_colorization_outcomes(
             }
         };
         let Some(outcome) = outcome else {
-            poll_image_colorization_outcomes(app_weak, context, receiver, source_path);
+            poll_image_colorization_outcomes(
+                app_weak,
+                context,
+                session_scope,
+                receiver,
+                source_path,
+            );
             return;
         };
+        if !generation_scope_allows_polling(&app_weak, &context, &session_scope) {
+            receiver.borrow_mut().take();
+            return;
+        }
         let Some(app) = app_weak.upgrade() else {
             return;
         };
@@ -3531,13 +4163,20 @@ fn poll_image_colorization_outcomes(
                             }
                             .into(),
                         );
-                        let _ = pending_delivery_saved(
+                        let saved = pending_delivery_saved(
+                            &session_scope.owner_user_id,
+                            session_scope.auth_epoch,
                             &delivery.client_request_id,
                             &delivery,
                             &result_path,
                         );
-                        if let Some(backend) = context.backend.clone() {
-                            acknowledge_delivery_after_local_save(backend, delivery);
+                        if matches!(saved, Ok(true)) {
+                            acknowledge_delivery_after_local_save(
+                                app.as_weak(),
+                                context.clone(),
+                                session_scope.clone(),
+                                delivery,
+                            );
                         }
                     }
                     Err(error) => {
@@ -3558,21 +4197,62 @@ fn poll_image_colorization_outcomes(
                 keep_polling = false;
                 receiver.borrow_mut().take();
                 let path = PathBuf::from(&local_path);
-                if let Ok(image) = load_image(&path) {
-                    state.set_colorize_result_path(local_path.clone().into());
-                    state.set_colorize_result_name(
-                        path.file_name()
-                            .and_then(|value| value.to_str())
-                            .unwrap_or("上色结果")
-                            .into(),
-                    );
-                    state.set_colorize_result_image(image);
-                    state.set_colorize_progress(100);
-                    state.set_colorize_message("已恢复上次完成的老照片上色结果".into());
-                }
-                state.set_colorize_processing(false);
-                if let (Some(backend), Some(delivery)) = (context.backend.clone(), delivery) {
-                    acknowledge_delivery_after_local_save(backend, delivery);
+                let locally_verified = delivery.as_ref().map_or(true, |delivery| {
+                    recovered_delivery_path_matches(
+                        &local_path,
+                        &delivery.sha256,
+                        delivery.size_bytes,
+                    )
+                });
+                match (
+                    locally_verified,
+                    load_preview_image(&path, PreviewPurpose::Canvas),
+                ) {
+                    (true, Ok(image)) => {
+                        state.set_colorize_result_path(local_path.clone().into());
+                        state.set_colorize_result_name(
+                            path.file_name()
+                                .and_then(|value| value.to_str())
+                                .unwrap_or("上色结果")
+                                .into(),
+                        );
+                        state.set_colorize_result_image(image);
+                        state.set_colorize_progress(100);
+                        state.set_colorize_processing(false);
+                        state.set_colorize_message("已恢复上次完成的老照片上色结果".into());
+                        if let Some(delivery) = delivery {
+                            acknowledge_delivery_after_local_save(
+                                app.as_weak(),
+                                context.clone(),
+                                session_scope.clone(),
+                                delivery,
+                            );
+                        }
+                    }
+                    _ => {
+                        let retrying = delivery.as_ref().is_some_and(|delivery| {
+                            matches!(
+                                clear_recovered_delivery_local_path(
+                                    &session_scope,
+                                    &delivery.client_request_id,
+                                    &delivery.file_id,
+                                ),
+                                Ok(true)
+                            )
+                        });
+                        if retrying {
+                            state.set_colorize_processing(false);
+                            state.set_colorize_message(
+                                "本地上色结果校验失败，正在从服务端重新下载...".into(),
+                            );
+                            recover_pending_generations(&app, context.clone());
+                        } else {
+                            state.set_colorize_processing(false);
+                            state.set_colorize_message(
+                                "本地上色结果已损坏，且暂时无法恢复，请重启后重试".into(),
+                            );
+                        }
+                    }
                 }
             }
             ImageColorizationOutcome::CreditInsufficient { message } => {
@@ -3599,7 +4279,13 @@ fn poll_image_colorization_outcomes(
             }
         }
         if keep_polling {
-            poll_image_colorization_outcomes(app_weak, context, receiver, source_path);
+            poll_image_colorization_outcomes(
+                app_weak,
+                context,
+                session_scope,
+                receiver,
+                source_path,
+            );
         }
     });
 }
@@ -3610,7 +4296,7 @@ fn save_image_colorization_asset(
     source_path: &str,
     bytes: &[u8],
 ) -> Result<(String, Image)> {
-    let (bytes, image, width, height) = generated_image_from_bytes(bytes)?;
+    let (width, height) = generated_image_dimensions(bytes)?;
     let source = Path::new(source_path);
     let source_title = source
         .file_stem()
@@ -3618,7 +4304,8 @@ fn save_image_colorization_asset(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("老照片");
     let title = format!("{} 上色", short_text(source_title, 18));
-    let result_path = save_generated_bytes(app, &bytes, &title)?;
+    let result_path = save_generated_bytes(app, bytes, &title)?;
+    let image = load_preview_image(Path::new(&result_path), PreviewPurpose::Canvas)?;
     let now = Local::now().format("%Y-%m-%d %H:%M").to_string();
     let item = AssetData {
         id: Uuid::new_v4().to_string(),
@@ -3634,7 +4321,6 @@ fn save_image_colorization_asset(
         origin: "image_colorization".to_string(),
         width,
         height,
-        image: image.clone(),
         source_path: result_path.clone(),
         reference_paths: (!source_path.is_empty())
             .then(|| source_path.to_string())
@@ -3645,21 +4331,17 @@ fn save_image_colorization_asset(
         upscale_done: false,
         is_new: false,
     };
+    let notification = NotificationData {
+        id: Uuid::new_v4().to_string(),
+        title: format!("老照片上色完成：{title}"),
+        model: "老照片上色".to_string(),
+        time: now,
+        reason: String::new(),
+        success: true,
+        read: false,
+    };
     let mut store = store.borrow_mut();
-    store.assets.insert(0, item);
-    store.notifications.insert(
-        0,
-        NotificationData {
-            id: Uuid::new_v4().to_string(),
-            title: format!("老照片上色完成：{title}"),
-            model: "老照片上色".to_string(),
-            time: now,
-            reason: String::new(),
-            success: true,
-            read: false,
-        },
-    );
-    save_local_store(app, &store);
+    persist_generated_asset_checked(app, &mut store, item, notification, false, None)?;
     push_all(app, &store);
     Ok((result_path, image))
 }
@@ -3667,6 +4349,270 @@ fn save_image_colorization_asset(
 #[cfg(test)]
 mod local_image_tests {
     use super::*;
+
+    fn toolbox_test_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("artforge-toolbox-{label}-{}", Uuid::new_v4()))
+    }
+
+    fn toolbox_test_item(source_path: &Path, result_path: &Path) -> CompressionImageItem {
+        CompressionImageItem {
+            id: Uuid::new_v4().to_string().into(),
+            name: "test.png".into(),
+            source_path: source_path.display().to_string().into(),
+            size_text: "1 KB".into(),
+            image: Image::default(),
+            status: "completed".into(),
+            result_path: result_path.display().to_string().into(),
+        }
+    }
+
+    #[test]
+    fn managed_toolbox_removal_never_crosses_the_exact_directory_boundary() {
+        let test_root = toolbox_test_root("path-safety");
+        let managed_directory = managed_toolbox_directory(
+            &test_root,
+            ManagedToolboxDirectory::CompressionInputs,
+        );
+        let other_managed_directory = managed_toolbox_directory(
+            &test_root,
+            ManagedToolboxDirectory::ConversionInputs,
+        );
+        fs::create_dir_all(&managed_directory).expect("create managed directory");
+        fs::create_dir_all(&other_managed_directory).expect("create other managed directory");
+
+        let managed_file = managed_directory.join("pasted-managed.png");
+        let outside_file = test_root.join("outside.png");
+        let wrong_kind_file = other_managed_directory.join("pasted-other.png");
+        let traversal_target = test_root.join("toolbox").join("escaped.png");
+        let traversal_path = managed_directory.join("..").join("escaped.png");
+        fs::write(&managed_file, b"managed").expect("write managed file");
+        fs::write(&outside_file, b"outside").expect("write outside file");
+        fs::write(&wrong_kind_file, b"other").expect("write other managed file");
+        fs::write(&traversal_target, b"escaped").expect("write traversal target");
+
+        assert!(!remove_managed_toolbox_file(
+            &test_root,
+            ManagedToolboxDirectory::CompressionInputs,
+            &outside_file,
+        ));
+        assert!(!remove_managed_toolbox_file(
+            &test_root,
+            ManagedToolboxDirectory::CompressionInputs,
+            &wrong_kind_file,
+        ));
+        assert!(!remove_managed_toolbox_file(
+            &test_root,
+            ManagedToolboxDirectory::CompressionInputs,
+            &traversal_path,
+        ));
+        assert!(outside_file.is_file());
+        assert!(wrong_kind_file.is_file());
+        assert!(traversal_target.is_file());
+        assert!(remove_managed_toolbox_file(
+            &test_root,
+            ManagedToolboxDirectory::CompressionInputs,
+            &managed_file,
+        ));
+        assert!(!managed_file.exists());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+
+            let linked_file = managed_directory.join("linked-outside.png");
+            symlink(&outside_file, &linked_file).expect("create file symlink");
+            assert!(!remove_managed_toolbox_file(
+                &test_root,
+                ManagedToolboxDirectory::CompressionInputs,
+                &linked_file,
+            ));
+            assert!(linked_file.exists());
+            assert!(outside_file.is_file());
+        }
+
+        let _ = fs::remove_dir_all(test_root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_toolbox_directory_symlink_never_deletes_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let test_root = toolbox_test_root("directory-symlink");
+        let toolbox_directory = test_root.join("toolbox");
+        let works_directory = test_root.join("out");
+        fs::create_dir_all(&toolbox_directory).expect("create toolbox root");
+        fs::create_dir_all(&works_directory).expect("create works directory");
+        let work = works_directory.join("generated-work.png");
+        fs::write(&work, b"user work").expect("write user work");
+        let linked_directory = managed_toolbox_directory(
+            &test_root,
+            ManagedToolboxDirectory::CompressionInputs,
+        );
+        symlink(&works_directory, &linked_directory).expect("create directory symlink");
+
+        cleanup_stale_toolbox_files_in(
+            &test_root,
+            std::time::SystemTime::now() + Duration::from_secs(2),
+            Duration::ZERO,
+        );
+        assert!(work.is_file());
+        assert!(!remove_managed_toolbox_file(
+            &test_root,
+            ManagedToolboxDirectory::CompressionInputs,
+            &linked_directory.join("generated-work.png"),
+        ));
+        assert!(work.is_file());
+
+        fs::remove_file(&linked_directory).expect("remove directory symlink");
+        let _ = fs::remove_dir_all(test_root);
+    }
+
+    #[test]
+    fn removing_an_item_cleans_only_its_managed_input_and_result() {
+        let test_root = toolbox_test_root("item-cleanup");
+        let input_directory = managed_toolbox_directory(
+            &test_root,
+            ManagedToolboxDirectory::CompressionInputs,
+        );
+        let result_directory = managed_toolbox_directory(
+            &test_root,
+            ManagedToolboxDirectory::CompressionResults,
+        );
+        fs::create_dir_all(&input_directory).expect("create input directory");
+        fs::create_dir_all(&result_directory).expect("create result directory");
+        let input = input_directory.join("pasted-input.png");
+        let result = result_directory.join("compressed.png");
+        fs::write(&input, b"input").expect("write input");
+        fs::write(&result, b"result").expect("write result");
+
+        remove_toolbox_item_files(
+            &test_root,
+            &toolbox_test_item(&input, &result),
+            ManagedToolboxDirectory::CompressionInputs,
+            ManagedToolboxDirectory::CompressionResults,
+        );
+        assert!(!input.exists());
+        assert!(!result.exists());
+
+        let external_input = test_root.join("external-input.png");
+        let external_result = test_root.join("external-result.png");
+        fs::write(&external_input, b"external input").expect("write external input");
+        fs::write(&external_result, b"external result").expect("write external result");
+        remove_toolbox_item_files(
+            &test_root,
+            &toolbox_test_item(&external_input, &external_result),
+            ManagedToolboxDirectory::CompressionInputs,
+            ManagedToolboxDirectory::CompressionResults,
+        );
+        assert!(external_input.is_file());
+        assert!(external_result.is_file());
+
+        let _ = fs::remove_dir_all(test_root);
+    }
+
+    #[test]
+    fn successful_export_releases_only_a_managed_temporary_result() {
+        let test_root = toolbox_test_root("export-cleanup");
+        let result_directory = managed_toolbox_directory(
+            &test_root,
+            ManagedToolboxDirectory::ConversionResults,
+        );
+        let export_directory = test_root.join("exports");
+        fs::create_dir_all(&result_directory).expect("create result directory");
+        fs::create_dir_all(&export_directory).expect("create export directory");
+
+        let managed_result = result_directory.join("converted.png");
+        let exported = export_directory.join("converted.png");
+        fs::write(&managed_result, b"converted").expect("write result");
+        assert!(
+            copy_and_release_managed_toolbox_result(
+                &managed_result,
+                &exported,
+                &test_root,
+                ManagedToolboxDirectory::ConversionResults,
+            )
+            .expect("export managed result")
+        );
+        assert!(!managed_result.exists());
+        assert_eq!(fs::read(&exported).expect("read export"), b"converted");
+
+        let external_result = test_root.join("external-result.png");
+        let external_export = export_directory.join("external.png");
+        fs::write(&external_result, b"external").expect("write external result");
+        assert!(
+            !copy_and_release_managed_toolbox_result(
+                &external_result,
+                &external_export,
+                &test_root,
+                ManagedToolboxDirectory::ConversionResults,
+            )
+            .expect("export external result")
+        );
+        assert!(external_result.is_file());
+        assert_eq!(
+            fs::read(&external_export).expect("read external export"),
+            b"external"
+        );
+
+        let mut items = vec![
+            toolbox_test_item(Path::new("source-a"), &managed_result),
+            toolbox_test_item(Path::new("source-b"), &external_result),
+        ];
+        assert!(clear_released_toolbox_result(&mut items, &managed_result));
+        assert!(items[0].result_path.is_empty());
+        assert_eq!(
+            Path::new(items[1].result_path.as_str()),
+            external_result.as_path()
+        );
+
+        let _ = fs::remove_dir_all(test_root);
+    }
+
+    #[test]
+    fn stale_cleanup_scans_only_known_direct_toolbox_files() {
+        let test_root = toolbox_test_root("stale-cleanup");
+        let mut stale_files = Vec::new();
+        for (index, directory) in MANAGED_TOOLBOX_DIRECTORIES.into_iter().enumerate() {
+            let path = managed_toolbox_directory(&test_root, directory);
+            fs::create_dir_all(&path).expect("create managed directory");
+            let file = path.join(format!("stale-{index}.tmp"));
+            fs::write(&file, b"stale").expect("write stale file");
+            stale_files.push(file);
+        }
+        let compression_inputs = managed_toolbox_directory(
+            &test_root,
+            ManagedToolboxDirectory::CompressionInputs,
+        );
+        let nested_directory = compression_inputs.join("nested");
+        fs::create_dir_all(&nested_directory).expect("create nested directory");
+        let nested_file = nested_directory.join("nested.tmp");
+        fs::write(&nested_file, b"nested").expect("write nested file");
+        let unknown_directory = test_root.join("toolbox").join("unknown");
+        fs::create_dir_all(&unknown_directory).expect("create unknown directory");
+        let unknown_file = unknown_directory.join("unknown.tmp");
+        fs::write(&unknown_file, b"unknown").expect("write unknown file");
+
+        cleanup_stale_toolbox_files_in(
+            &test_root,
+            std::time::SystemTime::now() + Duration::from_secs(2),
+            Duration::ZERO,
+        );
+        assert!(stale_files.iter().all(|path| !path.exists()));
+        assert!(nested_file.is_file());
+        assert!(unknown_file.is_file());
+
+        let fresh_file = compression_inputs.join("fresh.tmp");
+        fs::write(&fresh_file, b"fresh").expect("write fresh file");
+        cleanup_stale_toolbox_files_in(
+            &test_root,
+            std::time::SystemTime::now(),
+            TOOLBOX_TEMP_FILE_MAX_AGE,
+        );
+        assert!(fresh_file.is_file());
+
+        let _ = fs::remove_dir_all(test_root);
+    }
 
     #[test]
     fn local_compression_worker_preserves_detected_format_and_reports_batch_results() {

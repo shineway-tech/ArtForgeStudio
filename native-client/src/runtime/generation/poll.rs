@@ -3,6 +3,7 @@ use super::*;
 pub(super) fn poll_generation_stream(
     app_weak: Weak<AppWindow>,
     context: AppContext,
+    session_scope: SessionScope,
     receiver: Rc<RefCell<Option<mpsc::Receiver<GenerationOutcome>>>>,
     raw_prompt: String,
     category: String,
@@ -10,6 +11,7 @@ pub(super) fn poll_generation_stream(
     ratio: String,
     quality: String,
     image_model: String,
+    result_origin: String,
     conversation_id: String,
     create_conversation: bool,
     generation_reference_paths: Vec<String>,
@@ -21,21 +23,29 @@ pub(super) fn poll_generation_stream(
 ) {
     let store = context.store.clone();
     slint::Timer::single_shot(Duration::from_millis(80), move || {
-        if let Some(app) = app_weak.upgrade() {
-            if !active_generation_matches(&context, &category, &task_id) {
-                return;
-            }
-            let elapsed = started_at.elapsed().as_secs() as i32;
-            let wait_secs = IMAGE_GENERATION_WAIT_SECS as i32;
-            update_active_generation_progress(
-                &context,
-                &app,
-                &category,
-                &task_id,
-                (8 + elapsed * 88 / wait_secs).clamp(1, 96),
-                (wait_secs - elapsed).clamp(1, wait_secs),
-            );
+        if !generation_scope_allows_polling(&app_weak, &context, &session_scope) {
+            receiver.borrow_mut().take();
+            return;
         }
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
+        if !generation_scope_allows_polling(&app_weak, &context, &session_scope)
+            || !active_generation_matches_scope(&context, &category, &task_id, &session_scope)
+        {
+            receiver.borrow_mut().take();
+            return;
+        }
+        let elapsed = started_at.elapsed().as_secs() as i32;
+        let wait_secs = IMAGE_GENERATION_WAIT_SECS as i32;
+        update_active_generation_progress(
+            &context,
+            &app,
+            &category,
+            &task_id,
+            (8 + elapsed * 88 / wait_secs).clamp(1, 96),
+            (wait_secs - elapsed).clamp(1, wait_secs),
+        );
 
         let outcome = {
             let mut slot = receiver.borrow_mut();
@@ -59,6 +69,7 @@ pub(super) fn poll_generation_stream(
             poll_generation_stream(
                 app_weak,
                 context,
+                session_scope,
                 receiver,
                 raw_prompt,
                 category,
@@ -66,6 +77,7 @@ pub(super) fn poll_generation_stream(
                 ratio,
                 quality,
                 image_model,
+                result_origin,
                 conversation_id,
                 create_conversation,
                 generation_reference_paths,
@@ -78,9 +90,12 @@ pub(super) fn poll_generation_stream(
             return;
         };
 
-        let Some(app) = app_weak.upgrade() else {
+        if !generation_scope_allows_polling(&app_weak, &context, &session_scope)
+            || !active_generation_matches_scope(&context, &category, &task_id, &session_scope)
+        {
+            receiver.borrow_mut().take();
             return;
-        };
+        }
         let state = app.global::<AppState>();
         let mut keep_polling = true;
 
@@ -111,7 +126,7 @@ pub(super) fn poll_generation_stream(
                 );
             }
             GenerationOutcome::ImageSuccess {
-                bytes,
+                local_path,
                 display_prompt,
                 time,
                 upscale_done,
@@ -124,21 +139,31 @@ pub(super) fn poll_generation_stream(
                 &mode,
                 &quality,
                 &image_model,
+                &result_origin,
                 &conversation_id,
                 &display_prompt,
                 &time,
-                &bytes,
+                Path::new(&local_path),
                 &generation_reference_paths,
                 upscale_done,
             ) {
                 Ok((conversation_image, source_path, generated_id)) => {
-                    if let (Some(backend), Some(delivery)) = (context.backend.clone(), delivery) {
-                        let _ = pending_delivery_saved(
+                    if let Some(delivery) = delivery {
+                        let saved = pending_delivery_saved(
+                            &session_scope.owner_user_id,
+                            session_scope.auth_epoch,
                             &delivery.client_request_id,
                             &delivery,
                             &source_path,
                         );
-                        acknowledge_delivery_after_local_save(backend, delivery);
+                        if matches!(saved, Ok(true)) {
+                            acknowledge_delivery_after_local_save(
+                                app.as_weak(),
+                                context.clone(),
+                                session_scope.clone(),
+                                delivery,
+                            );
+                        }
                     }
                     state.set_asset_category_filter("all".into());
                     if create_conversation {
@@ -167,6 +192,10 @@ pub(super) fn poll_generation_stream(
                     }
                 }
                 Err(error) => {
+                    // The recovery record still has the server item and can download it again.
+                    // Remove only this app-managed staging file so a local save failure does not
+                    // accumulate full-size downloads indefinitely.
+                    cleanup_failed_delivery_staging(Path::new(&local_path));
                     let reason = zh_error(&error.to_string());
                     let time = Local::now().format("%Y-%m-%d %H:%M").to_string();
                     add_stream_failure_item(
@@ -178,6 +207,7 @@ pub(super) fn poll_generation_stream(
                         &ratio,
                         &quality,
                         &image_model,
+                        &result_origin,
                         &conversation_id,
                         &reason,
                         &time,
@@ -198,6 +228,7 @@ pub(super) fn poll_generation_stream(
                     &ratio,
                     &quality,
                     &image_model,
+                    &result_origin,
                     &conversation_id,
                     &reason,
                     &time,
@@ -293,6 +324,7 @@ pub(super) fn poll_generation_stream(
                         &ratio,
                         &quality,
                         &image_model,
+                        &result_origin,
                         &conversation_id,
                         &reason,
                         &time,
@@ -332,6 +364,7 @@ pub(super) fn poll_generation_stream(
             poll_generation_stream(
                 app_weak,
                 context,
+                session_scope,
                 receiver,
                 raw_prompt,
                 category,
@@ -339,6 +372,7 @@ pub(super) fn poll_generation_stream(
                 ratio,
                 quality,
                 image_model,
+                result_origin,
                 conversation_id,
                 create_conversation,
                 generation_reference_paths,
@@ -353,28 +387,48 @@ pub(super) fn poll_generation_stream(
 }
 
 pub(super) fn acknowledge_delivery_after_local_save(
-    backend: Arc<BackendRuntime>,
+    app_weak: Weak<AppWindow>,
+    context: AppContext,
+    session_scope: SessionScope,
     delivery: DeliveryConfirmation,
 ) {
+    let Some(backend) = context.backend.clone() else {
+        return;
+    };
+    let (sender, receiver) = mpsc::channel::<()>();
+    let worker_scope = session_scope.clone();
     std::thread::spawn(move || {
         let api = GenerationApi::new(backend.api.clone());
         for attempt in 0..5 {
             if api
-                .acknowledge_delivery(
+                .acknowledge_delivery_scoped(
                     &delivery.task_id,
                     &delivery.file_id,
                     &delivery.sha256,
                     delivery.size_bytes,
+                    &worker_scope,
                 )
                 .is_ok()
             {
-                let _ =
-                    pending_delivery_acknowledged(&delivery.client_request_id, &delivery.file_id);
+                let _ = pending_delivery_acknowledged(
+                    &worker_scope.owner_user_id,
+                    worker_scope.auth_epoch,
+                    &delivery.client_request_id,
+                    &delivery.file_id,
+                );
+                let _ = sender.send(());
                 return;
             }
             if attempt < 4 {
                 std::thread::sleep(Duration::from_secs(2_u64.pow(attempt)));
             }
         }
+        let _ = sender.send(());
     });
+    observe_detached_generation_scope(
+        app_weak,
+        context,
+        session_scope,
+        Rc::new(RefCell::new(Some(receiver))),
+    );
 }

@@ -25,6 +25,8 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
                 let state = app.global::<AppState>();
                 state.set_viewer_message("".into());
                 state.set_viewer_open(false);
+                state.set_viewer_image(Image::default());
+                state.set_viewer_source_path("".into());
             }
         });
     }
@@ -246,6 +248,7 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
+        let store = store.clone();
         state.on_viewer_edit(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -257,7 +260,9 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
             state.set_quote_ratio(state.get_viewer_ratio());
             state.set_quote_quality(state.get_viewer_quality());
             state.set_viewer_open(false);
-            navigate_to(&app, "generation");
+            state.set_viewer_image(Image::default());
+            state.set_viewer_source_path("".into());
+            navigate_to_with_store(&app, &store.borrow(), "generation");
         });
     }
 
@@ -270,7 +275,13 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
                 return;
             };
             let state = app.global::<AppState>();
-            let viewer_image = state.get_viewer_image();
+            let source_path = state.get_viewer_source_path().to_string();
+            let viewer_image = if source_path.trim().is_empty() {
+                state.get_viewer_image()
+            } else {
+                load_preview_image(Path::new(&source_path), PreviewPurpose::Viewer)
+                    .unwrap_or_else(|_| state.get_viewer_image())
+            };
             let mut source_width = state.get_viewer_width();
             let mut source_height = state.get_viewer_height();
             if source_width <= 0 || source_height <= 0 {
@@ -283,6 +294,7 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
             points.clear();
             *last_point.borrow_mut() = None;
             state.set_image_editor_image(viewer_image);
+            state.set_image_editor_source_path(source_path.into());
             state.set_image_editor_source_width(source_width.max(1));
             state.set_image_editor_source_height(source_height.max(1));
             state.set_image_editor_brush_size(28.0);
@@ -291,6 +303,7 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
             state.set_image_editor_prompt("".into());
             state.set_image_editor_status("".into());
             state.set_image_editor_generating(false);
+            configure_image_editor_model(&state);
             state.set_image_editor_return_page(state.get_page());
             state.set_viewer_open(false);
             navigate_to(&app, "image-editor");
@@ -300,6 +313,8 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         let last_point = image_editor_last_point.clone();
+        let points = image_editor_points.clone();
+        let store = store.clone();
         state.on_close_image_editor(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -307,7 +322,10 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
             let state = app.global::<AppState>();
             let return_page = state.get_image_editor_return_page().to_string();
             *last_point.borrow_mut() = None;
-            navigate_to(&app, &return_page);
+            points.clear();
+            state.set_image_editor_image(Image::default());
+            state.set_image_editor_source_path("".into());
+            navigate_to_with_store(&app, &store.borrow(), &return_page);
             state.set_viewer_open(true);
         });
     }
@@ -341,6 +359,7 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         let points = image_editor_points.clone();
+        let context = context.clone();
         state.on_submit_image_edit(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -354,7 +373,35 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
                 state.set_image_editor_status("请填写希望如何修改涂抹区域".into());
                 return;
             }
-            state.set_image_editor_status("局部重绘服务接口待接入".into());
+            if !require_online_operation(&app, "图片编辑") {
+                return;
+            }
+            let model_code = state.get_image_editor_model().to_string();
+            if model_code.trim().is_empty() {
+                state.set_image_editor_status("服务端没有可用的图片编辑模型".into());
+                return;
+            }
+            let quality = state.get_image_editor_quality().to_string();
+            let point_values = points.iter().collect::<Vec<_>>();
+            let (source_path, mask_path) = match prepare_image_edit_inputs(&app, &point_values) {
+                Ok(paths) => paths,
+                Err(error) => {
+                    state.set_image_editor_status(format!("图片编辑准备失败：{error}").into());
+                    return;
+                }
+            };
+            let prompt = state.get_image_editor_prompt().trim().to_string();
+            state.set_image_editor_generating(true);
+            state.set_image_editor_status("正在提交图片编辑任务...".into());
+            start_backend_image_edit(
+                &app,
+                context.clone(),
+                source_path,
+                mask_path,
+                prompt,
+                model_code,
+                quality,
+            );
         });
     }
 
@@ -374,7 +421,7 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
                 state.set_viewer_message(reference_limit_message(max_references).into());
                 return;
             }
-            let source_path = match persist_slint_reference(&state.get_viewer_image()) {
+            let source_path = match current_viewer_source_path(&state) {
                 Ok(path) => path.display().to_string(),
                 Err(_) => {
                     state.set_viewer_message("无法保存当前图片作为参考图".into());
@@ -401,15 +448,16 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
                 references_for_category_mut(&mut store_mut.references, &category).push(
                     ReferenceData {
                         id: Uuid::new_v4().to_string(),
-                        image: state.get_viewer_image(),
                         source_path,
                     },
                 );
             }
             push_references(&app, &store.borrow());
             state.set_viewer_open(false);
+            state.set_viewer_image(Image::default());
+            state.set_viewer_source_path("".into());
             state.set_prompt(prompt.into());
-            navigate_to(&app, "generation");
+            navigate_to_with_store(&app, &store.borrow(), "generation");
         });
     }
 
@@ -429,7 +477,7 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
                 state.set_viewer_message(reference_limit_message(max_references).into());
                 return;
             }
-            let source_path = match persist_slint_reference(&state.get_viewer_image()) {
+            let source_path = match current_viewer_source_path(&state) {
                 Ok(path) => path.display().to_string(),
                 Err(_) => {
                     state.set_viewer_message("无法保存当前图片作为参考图".into());
@@ -441,25 +489,33 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
                 references_for_category_mut(&mut store_mut.references, &category).push(
                     ReferenceData {
                         id: Uuid::new_v4().to_string(),
-                        image: state.get_viewer_image(),
                         source_path,
                     },
                 );
             }
             push_references(&app, &store.borrow());
             state.set_viewer_open(false);
-            navigate_to(&app, "generation");
+            state.set_viewer_image(Image::default());
+            state.set_viewer_source_path("".into());
+            navigate_to_with_store(&app, &store.borrow(), "generation");
         });
     }
 
     {
         let app_weak = app.as_weak();
+        let store = store.clone();
         state.on_request_delete_asset(move |id| {
             if let Some(app) = app_weak.upgrade() {
                 let state = app.global::<AppState>();
+                let source = state.get_viewer_source().to_string();
+                let can_remove_file = viewer_item(&store.borrow(), id.as_str(), &source)
+                    .and_then(|item| managed_output_path(&item.source_path))
+                    .is_some()
+                    && matches!(source.as_str(), "asset" | "generation");
                 state.set_pending_delete_kind("asset".into());
                 state.set_pending_delete_id(id);
-                state.set_pending_delete_source(state.get_viewer_source());
+                state.set_pending_delete_source(source.into());
+                state.set_pending_delete_can_remove_file(can_remove_file);
                 state.set_delete_confirm_open(true);
             }
         });
@@ -467,12 +523,18 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
+        let store = store.clone();
         state.on_request_delete_thumbnail(move |id, source| {
             if let Some(app) = app_weak.upgrade() {
                 let state = app.global::<AppState>();
+                let can_remove_file = viewer_item(&store.borrow(), id.as_str(), source.as_str())
+                    .and_then(|item| managed_output_path(&item.source_path))
+                    .is_some()
+                    && matches!(source.as_str(), "asset" | "generation");
                 state.set_pending_delete_kind("asset".into());
                 state.set_pending_delete_id(id);
                 state.set_pending_delete_source(source);
+                state.set_pending_delete_can_remove_file(can_remove_file);
                 state.set_delete_confirm_open(true);
             }
         });
@@ -485,30 +547,341 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let state = app.global::<AppState>();
-            let id = state.get_pending_delete_id().to_string();
-            let source = state.get_pending_delete_source().to_string();
-            {
-                let mut store_mut = store.borrow_mut();
-                match source.as_str() {
-                    "asset" => store_mut.assets.retain(|a| a.id != id),
-                    "inspiration" => store_mut.inspiration.retain(|a| a.id != id),
-                    "reference" => {
-                        let category = resolve_category(&state.get_asset_type().to_string(), "");
-                        references_for_category_mut(&mut store_mut.references, &category)
-                            .retain(|item| item.id != id);
-                    }
-                    _ => store_mut.generations.retain(|a| a.id != id),
-                }
-                save_local_store(&app, &store_mut);
-            }
-            state.set_pending_delete_id("".into());
-            state.set_pending_delete_source("".into());
-            state.set_delete_confirm_open(false);
-            state.set_viewer_open(false);
-            push_all(&app, &store.borrow());
+            confirm_pending_asset_delete(&app, &store, false);
         });
     }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        state.on_confirm_delete_local_file(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            confirm_pending_asset_delete(&app, &store, true);
+        });
+    }
+}
+
+enum RemovedStoreRecord {
+    Asset {
+        source: String,
+        index: usize,
+        item: AssetData,
+    },
+    Reference {
+        category: String,
+        index: usize,
+        item: ReferenceData,
+    },
+}
+
+impl RemovedStoreRecord {
+    fn source_path(&self) -> &str {
+        match self {
+            Self::Asset { item, .. } => &item.source_path,
+            Self::Reference { item, .. } => &item.source_path,
+        }
+    }
+
+    fn restore(self, store: &mut Store) {
+        match self {
+            Self::Asset {
+                source,
+                index,
+                item,
+            } => {
+                let items = asset_collection_mut(store, &source);
+                items.insert(index.min(items.len()), item);
+            }
+            Self::Reference {
+                category,
+                index,
+                item,
+            } => {
+                let items = references_for_category_mut(&mut store.references, &category);
+                items.insert(index.min(items.len()), item);
+            }
+        }
+    }
+}
+
+fn asset_collection_mut<'a>(store: &'a mut Store, source: &str) -> &'a mut Vec<AssetData> {
+    match source {
+        "asset" => &mut store.assets,
+        "inspiration" => &mut store.inspiration,
+        _ => &mut store.generations,
+    }
+}
+
+fn take_pending_store_record(
+    store: &mut Store,
+    state: &AppState,
+    id: &str,
+    source: &str,
+) -> Option<RemovedStoreRecord> {
+    if source == "reference" {
+        let category = resolve_category(&state.get_asset_type().to_string(), "");
+        let items = references_for_category_mut(&mut store.references, &category);
+        let index = items.iter().position(|item| item.id == id)?;
+        return Some(RemovedStoreRecord::Reference {
+            category,
+            index,
+            item: items.remove(index),
+        });
+    }
+    let items = asset_collection_mut(store, source);
+    let index = items.iter().position(|item| item.id == id)?;
+    Some(RemovedStoreRecord::Asset {
+        source: source.to_string(),
+        index,
+        item: items.remove(index),
+    })
+}
+
+fn confirm_pending_asset_delete(
+    app: &AppWindow,
+    store: &Rc<RefCell<Store>>,
+    delete_local_file: bool,
+) {
+    let state = app.global::<AppState>();
+    let id = state.get_pending_delete_id().to_string();
+    let source = state.get_pending_delete_source().to_string();
+    let (removed, shared_in_store) = {
+        let mut store_mut = store.borrow_mut();
+        let Some(removed) = take_pending_store_record(&mut store_mut, &state, &id, &source) else {
+            return;
+        };
+        if let Err(error) = save_local_store_checked(app, &store_mut) {
+            removed.restore(&mut store_mut);
+            state.set_viewer_message(format!("删除记录失败：{error}").into());
+            return;
+        }
+        rebuild_storage_references(&store_mut);
+        let shared = store_references_path(&store_mut, Path::new(removed.source_path()));
+        (removed, shared)
+    };
+
+    let mut removed = Some(removed);
+    if delete_local_file {
+        let path_text = removed
+            .as_ref()
+            .map(|record| record.source_path().to_string())
+            .unwrap_or_default();
+        if let Some(path) = managed_output_path(&path_text) {
+            let protected = shared_in_store
+                || path_has_live_ui_reference(&state, &path)
+                || path_is_referenced_by_pending_recovery(&path)
+                || indexed_reference_count(&path) > 0;
+            if !protected {
+                invalidate_previews_for_source(&path);
+                match fs::remove_file(&path) {
+                    Ok(()) => remove_indexed_file(&path),
+                    Err(error) => {
+                        let mut store_mut = store.borrow_mut();
+                        if let Some(record) = removed.take() {
+                            record.restore(&mut store_mut);
+                        }
+                        let restore_result = save_local_store_checked(app, &store_mut);
+                        rebuild_storage_references(&store_mut);
+                        drop(store_mut);
+                        state.set_viewer_message(
+                            match restore_result {
+                                Ok(()) => format!("本地文件删除失败，记录已保留：{error}"),
+                                Err(save_error) => format!(
+                                    "本地文件删除失败，且恢复记录写入失败：{error}；{save_error}"
+                                ),
+                            }
+                            .into(),
+                        );
+                        state.set_delete_confirm_open(false);
+                        push_all(app, &store.borrow());
+                        return;
+                    }
+                }
+            } else {
+                state.set_viewer_message("图片仍被其他记录或未完成任务使用，本地文件已保留".into());
+            }
+        }
+    }
+    // Drop the removed record only after all path information has been consumed.
+    drop(removed);
+    state.set_pending_delete_id("".into());
+    state.set_pending_delete_source("".into());
+    state.set_pending_delete_can_remove_file(false);
+    state.set_delete_confirm_open(false);
+    state.set_viewer_open(false);
+    state.set_viewer_image(Image::default());
+    state.set_viewer_source_path("".into());
+    push_all(app, &store.borrow());
+}
+
+fn configure_image_editor_model(state: &AppState) {
+    let preferred = state.get_image_model().to_string();
+    let selected = state
+        .get_catalog_models()
+        .iter()
+        .filter(|model| model.purpose == "image_generation" && model.supports_image_edit)
+        .find(|model| model.code.as_str() == preferred)
+        .or_else(|| {
+            state
+                .get_catalog_models()
+                .iter()
+                .find(|model| model.purpose == "image_generation" && model.supports_image_edit)
+        });
+    let Some(model) = selected else {
+        state.set_image_editor_model("".into());
+        state.set_image_editor_model_name("".into());
+        state.set_image_editor_price_1k(0);
+        state.set_image_editor_price_2k(0);
+        state.set_image_editor_price_4k(0);
+        return;
+    };
+    let mut quality = match state.get_viewer_quality().to_ascii_uppercase().as_str() {
+        "4K" => "4K",
+        "2K" => "2K",
+        "1K" => "1K",
+        _ if state
+            .get_image_editor_source_width()
+            .max(state.get_image_editor_source_height())
+            > 2048 =>
+        {
+            "4K"
+        }
+        _ if state
+            .get_image_editor_source_width()
+            .max(state.get_image_editor_source_height())
+            > 1024 =>
+        {
+            "2K"
+        }
+        _ => "1K",
+    };
+    let quality_price = |value: &str| match value {
+        "4K" => model.price_4k,
+        "2K" => model.price_2k,
+        _ => model.price_1k,
+    };
+    if quality_price(quality) <= 0 {
+        quality = ["1K", "2K", "4K"]
+            .into_iter()
+            .find(|candidate| quality_price(candidate) > 0)
+            .unwrap_or(quality);
+    }
+    state.set_image_editor_model(model.code);
+    state.set_image_editor_model_name(model.name);
+    state.set_image_editor_quality(quality.into());
+    state.set_image_editor_price_1k(model.price_1k);
+    state.set_image_editor_price_2k(model.price_2k);
+    state.set_image_editor_price_4k(model.price_4k);
+}
+
+fn current_viewer_source_path(state: &AppState) -> Result<PathBuf> {
+    let source_path = PathBuf::from(state.get_viewer_source_path().to_string());
+    if source_path.is_file() {
+        return Ok(source_path);
+    }
+    persist_slint_reference(&state.get_viewer_image())
+}
+
+fn prepare_image_edit_inputs(app: &AppWindow, points: &[BrushPoint]) -> Result<(PathBuf, PathBuf)> {
+    const MAX_UPLOAD_BYTES: usize = 7_500_000;
+    const MAX_EDGE: u32 = 4096;
+    let state = app.global::<AppState>();
+    let original_path = PathBuf::from(state.get_image_editor_source_path().to_string());
+    let mut source = if original_path.is_file() {
+        decode_image_file(&original_path)?.0.to_rgba8()
+    } else {
+        let buffer = state
+            .get_image_editor_image()
+            .to_rgba8()
+            .ok_or_else(|| anyhow!("无法读取原图像素"))?;
+        image::RgbaImage::from_raw(
+            buffer.width(),
+            buffer.height(),
+            buffer.as_bytes().to_vec(),
+        )
+        .ok_or_else(|| anyhow!("原图像素格式无效"))?
+    };
+    if source.width() == 0 || source.height() == 0 {
+        return Err(anyhow!("原图尺寸无效"));
+    }
+    if source.width().max(source.height()) > MAX_EDGE {
+        source = image::DynamicImage::ImageRgba8(source)
+            .resize(MAX_EDGE, MAX_EDGE, image::imageops::FilterType::Lanczos3)
+            .to_rgba8();
+    }
+
+    let mut source_bytes = encode_png_rgba(&source, source.width(), source.height())?;
+    while source_bytes.len() > MAX_UPLOAD_BYTES && source.width().max(source.height()) > 1024 {
+        let width = ((source.width() as f32 * 0.82).round() as u32).max(1);
+        let height = ((source.height() as f32 * 0.82).round() as u32).max(1);
+        source = image::imageops::resize(
+            &source,
+            width,
+            height,
+            image::imageops::FilterType::Lanczos3,
+        );
+        source_bytes = encode_png_rgba(&source, source.width(), source.height())?;
+    }
+    if source_bytes.len() > MAX_UPLOAD_BYTES {
+        return Err(anyhow!("原图文件过大，无法在不破坏遮罩尺寸的情况下上传"));
+    }
+
+    let mask = rasterize_image_edit_mask(points, source.width(), source.height())?;
+    let mask_bytes = encode_png_rgba(&mask, mask.width(), mask.height())?;
+    let directory = app_data_dir().join("out").join("image-edit-inputs");
+    if !ensure_managed_subdirectory(&directory) {
+        return Err(anyhow!("无法创建安全的图片编辑暂存目录"));
+    }
+    let stem = Local::now().format("%Y%m%d%H%M%S%3f");
+    let source_path = unique_path(directory.join(format!("{stem}-source.png")));
+    let mask_path = unique_path(directory.join(format!("{stem}-mask.png")));
+    atomic_write_file(&source_path, &source_bytes)?;
+    if let Err(error) = atomic_write_file(&mask_path, &mask_bytes) {
+        let _ = fs::remove_file(&source_path);
+        return Err(error);
+    }
+    Ok((source_path, mask_path))
+}
+
+fn rasterize_image_edit_mask(
+    points: &[BrushPoint],
+    width: u32,
+    height: u32,
+) -> Result<image::RgbaImage> {
+    if width == 0 || height == 0 {
+        return Err(anyhow!("遮罩尺寸无效"));
+    }
+    let mut mask = image::RgbaImage::from_pixel(width, height, image::Rgba([255, 255, 255, 255]));
+    for point in points {
+        let center_x = point.x.clamp(0.0, 1.0) * width.saturating_sub(1) as f32;
+        let center_y = point.y.clamp(0.0, 1.0) * height.saturating_sub(1) as f32;
+        let radius = (point.size.clamp(0.002, 0.5) * width as f32 / 2.0).max(0.5);
+        let left = (center_x - radius).floor().max(0.0) as u32;
+        let right = (center_x + radius)
+            .ceil()
+            .min(width.saturating_sub(1) as f32) as u32;
+        let top = (center_y - radius).floor().max(0.0) as u32;
+        let bottom = (center_y + radius)
+            .ceil()
+            .min(height.saturating_sub(1) as f32) as u32;
+        for y in top..=bottom {
+            for x in left..=right {
+                let inside = if point.shape.as_str() == "square" {
+                    true
+                } else {
+                    let dx = x as f32 - center_x;
+                    let dy = y as f32 - center_y;
+                    dx * dx + dy * dy <= radius * radius
+                };
+                if inside {
+                    mask.put_pixel(x, y, image::Rgba([255, 255, 255, 0]));
+                }
+            }
+        }
+    }
+    Ok(mask)
 }
 
 fn append_brush_segment(
@@ -633,6 +1006,39 @@ mod image_editor_tests {
         assert_eq!(points.len(), 1);
         assert_eq!(points[0].shape, "circle");
         assert_eq!(points[0].color, color);
+    }
+
+    #[test]
+    fn image_edit_mask_makes_only_painted_pixels_transparent() {
+        let point = BrushPoint {
+            x: 0.5,
+            y: 0.5,
+            size: 0.4,
+            shape: "circle".into(),
+            color: slint::Color::from_rgb_u8(255, 0, 0),
+        };
+        let mask = rasterize_image_edit_mask(&[point], 20, 10).expect("mask");
+
+        assert_eq!(mask.dimensions(), (20, 10));
+        assert_eq!(mask.get_pixel(10, 5).0[3], 0);
+        assert_eq!(mask.get_pixel(0, 0).0[3], 255);
+        assert_eq!(mask.get_pixel(19, 9).0[3], 255);
+    }
+
+    #[test]
+    fn square_image_edit_mask_preserves_source_dimensions() {
+        let point = BrushPoint {
+            x: 0.0,
+            y: 0.0,
+            size: 0.2,
+            shape: "square".into(),
+            color: slint::Color::from_rgb_u8(0, 0, 0),
+        };
+        let mask = rasterize_image_edit_mask(&[point], 40, 30).expect("mask");
+
+        assert_eq!(mask.dimensions(), (40, 30));
+        assert_eq!(mask.get_pixel(0, 0).0[3], 0);
+        assert_eq!(mask.get_pixel(39, 29).0[3], 255);
     }
 }
 
@@ -803,16 +1209,6 @@ pub(super) fn add_reference_from_path(
         }
     }
 
-    let Ok(image) = load_image(path) else {
-        state.set_generation_status(
-            format!(
-                "无法读取参考图，支持：{}",
-                crate::image_formats::supported_image_formats_label()
-            )
-            .into(),
-        );
-        return false;
-    };
     let source_path = match persist_reference_source(path) {
         Ok(path) => path.display().to_string(),
         Err(_) => {
@@ -828,7 +1224,6 @@ pub(super) fn add_reference_from_path(
     }
     references.push(ReferenceData {
         id: Uuid::new_v4().to_string(),
-        image,
         source_path,
     });
     push_references(app, &store_mut);

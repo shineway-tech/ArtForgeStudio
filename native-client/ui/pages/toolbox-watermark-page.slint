@@ -12,7 +12,7 @@ component PreviewPanel {
     in property <bool> result-panel: false;
     in property <bool> drop-enabled: false;
     callback choose-image();
-    callback dropped(string, string);
+    callback dropped(data-transfer) -> bool;
 
     Rectangle {
         background: transparent;
@@ -50,12 +50,12 @@ component PreviewPanel {
             y: 62px;
             width: parent.width;
             height: parent.height - 62px;
-            background: source-drop.contains-drag
+            background: source-drop.has-drag
                 ? AppTheme.accent.with-alpha(0.08)
                 : AppTheme.panel;
             border-radius: 12px;
-            border-width: source-drop.contains-drag ? 2px : 1px;
-            border-color: source-drop.contains-drag || root.processing
+            border-width: source-drop.has-drag ? 2px : 1px;
+            border-color: source-drop.has-drag || root.processing
                 ? AppTheme.accent
                 : AppTheme.border;
             clip: true;
@@ -97,12 +97,12 @@ component PreviewPanel {
                     y: (parent.height - 108px) / 2 + 72px;
                     width: parent.width - 48px;
                     height: 24px;
-                    text: source-drop.contains-drag
+                    text: source-drop.has-drag
                         ? (AppState.en ? "Release to upload image" : "松开即可上传图片")
                         : root.result-panel
                         ? (AppState.en ? "The processed image will appear here" : "处理后的图片将显示在这里")
                         : (AppState.en ? "Drag an image here, or click to upload" : "拖放图片到这里，或点击上传");
-                    color: source-drop.contains-drag ? AppTheme.accent : AppTheme.muted;
+                    color: source-drop.has-drag ? AppTheme.accent : AppTheme.muted;
                     font-size: 13px;
                     font-weight: 400;
                     horizontal-alignment: center;
@@ -126,7 +126,7 @@ component PreviewPanel {
                 background: AppTheme.accent;
             }
 
-            if source-drop.contains-drag && root.has-image: Rectangle {
+            if source-drop.has-drag && root.has-image: Rectangle {
                 background: AppTheme.accent.with-alpha(0.12);
 
                 Rectangle {
@@ -156,14 +156,10 @@ component PreviewPanel {
                 width: parent.width;
                 height: parent.height;
                 can-drop(event) => {
-                    return root.drop-enabled
-                        && (event.mime-type == "text/uri-list"
-                            || event.mime-type == "text/plain"
-                            || event.mime-type == "text/html"
-                            || event.mime-type == "application/x-artforge-image-path");
+                    return root.drop-enabled ? DragAction.copy : DragAction.none;
                 }
                 dropped(event) => {
-                    root.dropped(event.mime-type, event.data);
+                    return root.dropped(event.data) ? DragAction.copy : DragAction.none;
                 }
             }
         }
@@ -208,8 +204,8 @@ export component ToolboxWatermarkPage {
             has-image: AppState.watermark-source-path != "";
             drop-enabled: !AppState.watermark-processing;
             choose-image => { AppState.choose-watermark-source(); }
-            dropped(mime-type, data) => {
-                AppState.add-watermark-source-from-drag(mime-type, data);
+            dropped(data) => {
+                return AppState.add-watermark-source-from-drag(data);
             }
         }
 

@@ -571,8 +571,8 @@ component CanvasConnectionCurve {
     in property <bool> dark-background: true;
     in property <float> flow-phase: 0;
     property <bool> selected: !root.preview && AppState.canvas-selected-link-id == root.link.id;
-    property <int> dash-count: max(8, min(220, Math.ceil(root.estimated-curve-length() / 12px)));
-    property <int> hit-count: max(12, min(180, Math.ceil(root.estimated-curve-length() / 16px)));
+    property <int> dash-count: max(8, min(40, Math.ceil(root.estimated-curve-length() / 22px)));
+    property <int> hit-count: max(12, min(48, Math.ceil(root.estimated-curve-length() / 24px)));
     callback link-selected(string);
 
     function control-offset() -> length {
@@ -617,7 +617,7 @@ component CanvasConnectionCurve {
 
     for dash-index in root.dash-count: Rectangle {
         property <float> t: (dash-index + 0.5) / root.dash-count;
-        property <bool> in-sweep: !root.preview && root.flow-distance(self.t) < 0.075;
+        property <bool> in-sweep: !root.preview && root.selected && root.flow-distance(self.t) < 0.075;
         x: root.curve-x(self.t) - (root.selected ? 4px : 3px);
         y: root.curve-y(self.t) - (root.selected ? 2px : 1.5px);
         width: root.preview ? 5px : (self.in-sweep || root.selected ? 8px : 6px);
@@ -1956,8 +1956,8 @@ export component InfiniteCanvasPage {
     in-out property <int> link-flow-step: 0;
 
     Timer {
-        interval: 32ms;
-        running: AppState.canvas-links.length > 0;
+        interval: 80ms;
+        running: !AppState.reduced-motion && AppState.canvas-selected-link-id != "";
         triggered => { root.link-flow-step = Math.mod(root.link-flow-step + 1, 100); }
     }
 
@@ -2370,7 +2370,9 @@ export component InfiniteCanvasPage {
                 end-x: root.pan-x + (link.end-x + (link.target-selected ? AppState.canvas-drag-delta-x : 0)) * 1px * root.zoom-percent / 100;
                 end-y: root.pan-y + (link.end-y + (link.target-selected ? AppState.canvas-drag-delta-y : 0)) * 1px * root.zoom-percent / 100;
                 dark-background: AppState.canvas-dark-background;
-                flow-phase: root.link-flow-step / 100;
+                flow-phase: AppState.canvas-selected-link-id == link.id
+                    ? root.link-flow-step / 100
+                    : 0;
                 link-selected(link-id) => {
                     AppState.canvas-selected-id = "";
                     AppState.canvas-selected-link-id = link-id;
@@ -2390,27 +2392,6 @@ export component InfiniteCanvasPage {
             }
 
             for note in AppState.canvas-notes: CanvasNodeCard {
-                visible: note.kind == "group";
-                note: note;
-                zoom-percent: root.zoom-percent;
-                pan-x: root.pan-x;
-                pan-y: root.pan-y;
-                show-image-info: AppState.canvas-show-image-info;
-                dark-background: AppState.canvas-dark-background;
-                viewport-width: canvas.width;
-                viewport-height: canvas.height;
-                connection-source-id: root.connection-source-id;
-                connection-target-id: root.connection-target-id;
-                connection-started(source-id, start-x, start-y) => { root.begin-connection(source-id, start-x, start-y); }
-                connection-moved(end-x, end-y) => { root.move-connection(end-x, end-y); }
-                connection-finished(source-id, end-x, end-y) => { root.finish-connection(source-id, end-x, end-y); }
-                reconnect-started(target-id, start-x, start-y) => { root.begin-reconnect(target-id, start-x, start-y); }
-                reconnect-finished(target-id, end-x, end-y) => { root.finish-reconnect(target-id, end-x, end-y); }
-                selection-focused => { canvas-keyboard.focus(); }
-            }
-
-            for note in AppState.canvas-notes: CanvasNodeCard {
-                visible: note.kind != "group";
                 note: note;
                 zoom-percent: root.zoom-percent;
                 pan-x: root.pan-x;

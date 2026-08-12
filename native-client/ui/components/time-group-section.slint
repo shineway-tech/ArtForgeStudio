@@ -3,6 +3,7 @@ import { GenerationLoadingCard } from "generation-loading-card.slint";
 import { GalleryWaterfall } from "gallery-waterfall.slint";
 import { GenerationWaterfall } from "generation-waterfall.slint";
 import { AppTheme } from "../theme.slint";
+import { AppState } from "../app-state.slint";
 import { AssetGroup } from "../types.slint";
 
 export component TimeGroupSection {
@@ -14,7 +15,7 @@ export component TimeGroupSection {
     in-out property <int> loading-bounce-step: 0;
     height: root.content-height();
     Timer {
-        interval: 50ms;
+        interval: AppState.reduced-motion ? 200ms : 50ms;
         running: root.loading-count > 0;
         triggered => {
             root.loading-bounce-step = Math.mod(root.loading-bounce-step + 1, 40);
@@ -68,14 +69,18 @@ export component TimeGroupSection {
             sequence-index: 3;
             bounce-step: root.loading-bounce-step;
         }
-        for item[index] in root.group.items: ThumbnailCard {
-            active: root.layout-mode == "grid";
-            x: root.item-x(index + root.loading-count);
-            y: root.item-y(index + root.loading-count);
-            item: item;
-            card-width: root.item-width();
-            card-gap: 0px;
-            source: root.source;
+        if root.layout-mode == "grid": Rectangle {
+            width: parent.width;
+            height: parent.height;
+            background: transparent;
+            for item[index] in root.group.items: ThumbnailCard {
+                x: root.item-x(index + root.loading-count);
+                y: root.item-y(index + root.loading-count);
+                item: item;
+                card-width: root.item-width();
+                card-gap: 0px;
+                source: root.source;
+            }
         }
     }
     generation-waterfall := GenerationWaterfall {
@@ -83,7 +88,7 @@ export component TimeGroupSection {
         x: 0px;
         y: root.grid-y();
         width: root.width;
-        items: root.group.items;
+        items: root.layout-mode == "waterfall" && root.source == "generation" ? root.group.items : [];
         card-width: root.card-width;
         loading-count: root.loading-count;
         bounce-step: root.loading-bounce-step;
@@ -93,7 +98,7 @@ export component TimeGroupSection {
         x: 0px;
         y: root.grid-y();
         width: root.width;
-        items: root.group.items;
+        items: root.layout-mode == "waterfall" && root.source != "generation" ? root.group.items : [];
         card-width: root.item-width();
         source: root.source;
     }

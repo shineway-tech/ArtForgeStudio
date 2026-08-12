@@ -10,15 +10,34 @@ pub(super) fn viewer_item<'a>(store: &'a Store, id: &str, source: &str) -> Optio
 
 pub(super) fn copy_viewer_image(app: &AppWindow) {
     let state = app.global::<AppState>();
-    let image = state.get_viewer_image();
-    let Some(buffer) = image.to_rgba8() else {
-        state.set_viewer_message("图片数据不可复制".into());
-        return;
+    let source_path = PathBuf::from(state.get_viewer_source_path().to_string());
+    let rgba = if source_path.is_file() {
+        match decode_image_file(&source_path) {
+            Ok((image, _)) => image.to_rgba8(),
+            Err(_) => {
+                state.set_viewer_message("图片数据不可复制".into());
+                return;
+            }
+        }
+    } else {
+        let Some(buffer) = state.get_viewer_image().to_rgba8() else {
+            state.set_viewer_message("图片数据不可复制".into());
+            return;
+        };
+        let Some(rgba) = image::RgbaImage::from_raw(
+            buffer.width(),
+            buffer.height(),
+            buffer.as_bytes().to_vec(),
+        ) else {
+            state.set_viewer_message("图片数据不可复制".into());
+            return;
+        };
+        rgba
     };
     let data = arboard::ImageData {
-        width: buffer.width() as usize,
-        height: buffer.height() as usize,
-        bytes: Cow::Owned(buffer.as_bytes().to_vec()),
+        width: rgba.width() as usize,
+        height: rgba.height() as usize,
+        bytes: Cow::Owned(rgba.into_raw()),
     };
     match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_image(data)) {
         Ok(_) => state.set_viewer_message("已复制图片".into()),
@@ -225,7 +244,9 @@ pub(super) fn start_viewer_image_processing(
                 state.set_viewer_processing(false);
                 state.set_upscale_open(false);
                 state.set_viewer_open(false);
-                navigate_to(&app, "generation");
+                state.set_viewer_image(Image::default());
+                state.set_viewer_source_path("".into());
+                navigate_to_with_store(&app, &store.borrow(), "generation");
             });
         } else {
             let state = app.global::<AppState>();
@@ -311,17 +332,33 @@ pub(super) fn process_viewer_image(
     mode: ProcessImageMode,
 ) -> bool {
     let state = app.global::<AppState>();
-    let Some(buffer) = state.get_viewer_image().to_rgba8() else {
+    let source_path = PathBuf::from(state.get_viewer_source_path().to_string());
+    let source = if source_path.is_file() {
+        decode_image_file(&source_path).map(|(image, _)| image.to_rgba8())
+    } else {
+        state
+            .get_viewer_image()
+            .to_rgba8()
+            .and_then(|buffer| {
+                image::RgbaImage::from_raw(
+                    buffer.width(),
+                    buffer.height(),
+                    buffer.as_bytes().to_vec(),
+                )
+            })
+            .ok_or_else(|| anyhow!("图片数据不可处理"))
+    };
+    let Ok(source) = source else {
         state.set_viewer_message("图片数据不可处理".into());
         return false;
     };
-    let mut width = buffer.width();
-    let mut height = buffer.height();
+    let mut width = source.width();
+    let mut height = source.height();
     if width == 0 || height == 0 {
         state.set_viewer_message("图片数据不可处理".into());
         return false;
     }
-    let mut rgba = buffer.as_bytes().to_vec();
+    let mut rgba = source.into_raw();
     match mode {
         ProcessImageMode::RemoveBlack => remove_black_pixels(&mut rgba),
         ProcessImageMode::Upscale {
@@ -444,9 +481,6 @@ pub(super) fn save_processed_viewer_image(
     )));
     fs::write(&path, bytes)?;
 
-    let buffer =
-        slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&rgba, width, height);
-    let image = Image::from_rgba8(buffer);
     let source = state.get_viewer_source().to_string();
     let id = state.get_viewer_id().to_string();
     let original = {
@@ -522,7 +556,6 @@ pub(super) fn save_processed_viewer_image(
             .unwrap_or_else(|| "local_processing".to_string()),
         width: width as i32,
         height: height as i32,
-        image,
         source_path: path.display().to_string(),
         reference_paths: original
             .as_ref()

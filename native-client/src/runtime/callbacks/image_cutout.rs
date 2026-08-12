@@ -165,7 +165,6 @@ fn validate_cutout_dimensions(
 
 fn validate_cutout_source(
     path: &Path,
-    image: &Image,
     subject_type: &str,
 ) -> std::result::Result<(), CutoutSourceError> {
     let extension = path
@@ -176,8 +175,9 @@ fn validate_cutout_source(
     if !matches!(extension.as_str(), "jpg" | "jpeg" | "png" | "webp") {
         return Err(CutoutSourceError::Unsupported);
     }
-    let buffer = image.to_rgba8().ok_or(CutoutSourceError::Unsupported)?;
-    validate_cutout_dimensions(buffer.width(), buffer.height(), subject_type)
+    let (width, height) =
+        inspect_image_dimensions(path).map_err(|_| CutoutSourceError::Unsupported)?;
+    validate_cutout_dimensions(width, height, subject_type)
 }
 
 fn set_cutout_source_error(app: &AppWindow, error: CutoutSourceError) {
@@ -226,8 +226,7 @@ fn prepare_current_cutout_source(
         .map(|path| persist_reference_source(&path))
         .unwrap_or_else(|| persist_slint_reference(&state.get_viewer_image()))
         .map_err(|_| CutoutSourceError::Unsupported)?;
-    let image = load_image(&persisted).map_err(|_| CutoutSourceError::Unsupported)?;
-    validate_cutout_source(&persisted, &image, subject_type)?;
+    validate_cutout_source(&persisted, subject_type)?;
     Ok(persisted)
 }
 
@@ -248,6 +247,10 @@ fn start_image_cutout(app: &AppWindow, context: AppContext, subject_type: &str) 
     if context.backend.is_none() || state.get_cutout_processing() {
         return;
     }
+    let Some(session_scope) = current_generation_session_scope(&context) else {
+        state.set_cutout_message("登录状态已变化，请重新发起抠图".into());
+        return;
+    };
     let Some(subject_type) = normalized_cutout_type(subject_type) else {
         state.set_cutout_message("请选择有效的抠图类型".into());
         return;
@@ -269,10 +272,20 @@ fn start_image_cutout(app: &AppWindow, context: AppContext, subject_type: &str) 
         }
     };
     let client_request_id = Uuid::new_v4().simple().to_string();
+    let (reference_sha256, reference_size_bytes) =
+        match reference_fingerprints(std::slice::from_ref(&source_path)) {
+            Ok(fingerprints) => fingerprints,
+            Err(error) => {
+                state.set_cutout_message(format!("原图校验失败：{error}").into());
+                return;
+            }
+        };
     let record = PendingGenerationRecord {
         schema_version: 1,
         created_at_epoch_ms: Local::now().timestamp_millis(),
         client_request_id,
+        owner_user_id: session_scope.owner_user_id.clone(),
+        auth_epoch: session_scope.auth_epoch,
         local_task_id: Uuid::new_v4().to_string(),
         server_task_id: String::new(),
         raw_prompt: source_title,
@@ -289,12 +302,21 @@ fn start_image_cutout(app: &AppWindow, context: AppContext, subject_type: &str) 
         target_height: 0,
         create_conversation: false,
         reference_paths: vec![source_path.display().to_string()],
+        reference_sha256,
+        reference_size_bytes,
+        lineage_reference_paths: vec![source_path.display().to_string()],
         uploaded_file_ids: vec![],
         deliveries: vec![],
         terminal: false,
         expected_success_count: 0,
     };
-    if upsert_pending_generation(record.clone()).is_err() {
+    if upsert_pending_generation_scoped(
+        record.clone(),
+        &session_scope.owner_user_id,
+        session_scope.auth_epoch,
+    )
+    .is_err()
+    {
         state.set_cutout_message(
             if state.get_language().as_str() == "en" {
                 "The task could not be saved locally"
@@ -313,6 +335,13 @@ pub(super) fn resume_pending_image_cutout(
     context: AppContext,
     record: PendingGenerationRecord,
 ) {
+    let session_scope = SessionScope {
+        owner_user_id: record.owner_user_id.clone(),
+        auth_epoch: record.auth_epoch,
+    };
+    if !generation_scope_matches_context(&context, &session_scope) {
+        return;
+    }
     if app.global::<AppState>().get_cutout_processing() {
         return;
     }
@@ -328,7 +357,8 @@ pub(super) fn resume_pending_image_cutout(
     if let Some(source_path) = record.reference_paths.first() {
         let path = PathBuf::from(source_path);
         if path.is_file() {
-            if let Ok(image) = load_image(&path) {
+            state.set_viewer_source_path(path.display().to_string().into());
+            if let Ok(image) = load_preview_image(&path, PreviewPurpose::Canvas) {
                 state.set_viewer_image(image);
             }
         }
@@ -345,6 +375,13 @@ fn launch_image_cutout(
     let Some(backend) = context.backend.clone() else {
         return;
     };
+    let session_scope = SessionScope {
+        owner_user_id: record.owner_user_id.clone(),
+        auth_epoch: record.auth_epoch,
+    };
+    if !generation_scope_matches_context(&context, &session_scope) {
+        return;
+    }
     let state = app.global::<AppState>();
     state.set_cutout_processing(true);
     state.set_cutout_progress(if recovering { 5 } else { 1 });
@@ -378,10 +415,12 @@ fn launch_image_cutout(
         .unwrap_or("general")
         .to_string();
     let (sender, receiver) = mpsc::channel::<ImageCutoutOutcome>();
-    std::thread::spawn(move || run_image_cutout_worker(backend, record, sender));
+    let worker_scope = session_scope.clone();
+    std::thread::spawn(move || run_image_cutout_worker(backend, worker_scope, record, sender));
     poll_image_cutout_outcomes(
         app.as_weak(),
         context,
+        session_scope,
         Rc::new(RefCell::new(Some(receiver))),
         source_path,
         source_title,
@@ -391,14 +430,33 @@ fn launch_image_cutout(
 
 fn run_image_cutout_worker(
     backend: Arc<BackendRuntime>,
+    session_scope: SessionScope,
     mut record: PendingGenerationRecord,
     sender: mpsc::Sender<ImageCutoutOutcome>,
 ) {
+    if record.owner_user_id != session_scope.owner_user_id
+        || record.auth_epoch != session_scope.auth_epoch
+        || !backend_generation_scope_active(&backend, &session_scope)
+    {
+        return;
+    }
     let api = GenerationApi::new(backend.api.clone());
+    let verified_delivery_file_ids = match sanitize_recovered_delivery_paths(&mut record) {
+        Ok(file_ids) => file_ids,
+        Err(_) => {
+            let _ = sender.send(ImageCutoutOutcome::Failure {
+                reason: "本地抠图恢复记录无法安全更新，已暂停交付，请重启后重试"
+                    .to_string(),
+            });
+            return;
+        }
+    };
     if record.terminal {
-        if let Some(saved) = record.deliveries.iter().find(|delivery| {
-            !delivery.local_path.is_empty() && Path::new(&delivery.local_path).is_file()
-        }) {
+        if let Some(saved) = record
+            .deliveries
+            .iter()
+            .find(|delivery| verified_delivery_file_ids.contains(&delivery.file_id))
+        {
             let delivery = (!saved.acknowledged).then(|| DeliveryConfirmation {
                 client_request_id: record.client_request_id.clone(),
                 item_index: saved.item_index,
@@ -417,24 +475,47 @@ fn run_image_cutout_worker(
 
     let mut uploaded = record.uploaded_file_ids.clone();
     if uploaded.is_empty() && record.server_task_id.is_empty() {
+        if !generation_references_match(&record) {
+            let _ = sender.send(ImageCutoutOutcome::Failure {
+                reason: "原图内容已变化，恢复任务已暂停，请重新发起".to_string(),
+            });
+            return;
+        }
         let Some(path) = record.reference_paths.first() else {
-            let _ = remove_pending_generation(&record.client_request_id);
             let _ = sender.send(ImageCutoutOutcome::Failure {
                 reason: "找不到待处理的原图，请重新选择".to_string(),
             });
             return;
         };
-        match api.upload_reference(Path::new(path)) {
+        match api.upload_reference_scoped(Path::new(path), &session_scope) {
             Ok(file_id) => {
                 uploaded.push(file_id);
                 let snapshot = uploaded.clone();
-                let _ = update_pending_generation(&record.client_request_id, |item| {
-                    item.uploaded_file_ids = snapshot;
-                });
+                if !matches!(
+                    update_pending_generation_scoped(
+                        &session_scope.owner_user_id,
+                        session_scope.auth_epoch,
+                        &record.client_request_id,
+                        |item| item.uploaded_file_ids = snapshot,
+                    ),
+                    Ok(true)
+                ) {
+                    if let Some(file_id) = uploaded.last() {
+                        let _ = api.delete_reference_scoped(file_id, &session_scope);
+                    }
+                    return;
+                }
             }
             Err(error) => {
+                if !backend_generation_scope_active(&backend, &session_scope) {
+                    return;
+                }
                 if !error.should_preserve_generation_recovery() {
-                    let _ = remove_pending_generation(&record.client_request_id);
+                    let _ = remove_pending_generation_scoped(
+                        &session_scope.owner_user_id,
+                        session_scope.auth_epoch,
+                        &record.client_request_id,
+                    );
                 }
                 let _ = sender.send(ImageCutoutOutcome::Failure {
                     reason: error.generation_message(),
@@ -452,24 +533,38 @@ fn run_image_cutout_worker(
                 .unwrap_or("general")
                 .to_string(),
         };
-        match api.create_image_cutout(&request) {
+        match api.create_image_cutout_scoped(&request, &session_scope) {
             Ok(detail) => detail,
             Err(error) => {
+                if !backend_generation_scope_active(&backend, &session_scope) {
+                    return;
+                }
                 if error.is_insufficient_credits() {
                     for file_id in &uploaded {
-                        api.delete_reference(file_id);
+                        let _ = api.delete_reference_scoped(file_id, &session_scope);
                     }
-                    let _ = remove_pending_generation(&record.client_request_id);
+                    let _ = remove_pending_generation_scoped(
+                        &session_scope.owner_user_id,
+                        session_scope.auth_epoch,
+                        &record.client_request_id,
+                    );
                     let _ = sender.send(ImageCutoutOutcome::CreditInsufficient {
                         message: "本次智能抠图需要 20 积分，请先充值".to_string(),
                     });
                     return;
                 }
+                if !backend_generation_scope_active(&backend, &session_scope) {
+                    return;
+                }
                 if !error.should_preserve_generation_recovery() {
                     for file_id in &uploaded {
-                        api.delete_reference(file_id);
+                        let _ = api.delete_reference_scoped(file_id, &session_scope);
                     }
-                    let _ = remove_pending_generation(&record.client_request_id);
+                    let _ = remove_pending_generation_scoped(
+                        &session_scope.owner_user_id,
+                        session_scope.auth_epoch,
+                        &record.client_request_id,
+                    );
                 }
                 let _ = sender.send(ImageCutoutOutcome::Failure {
                     reason: error.generation_message(),
@@ -478,7 +573,7 @@ fn run_image_cutout_worker(
             }
         }
     } else {
-        match fetch_image_cutout_task(&api, &record.server_task_id) {
+        match fetch_image_cutout_task(&api, &record.server_task_id, &session_scope) {
             Ok(detail) => detail,
             Err(error) => {
                 let _ = sender.send(ImageCutoutOutcome::Failure {
@@ -493,26 +588,49 @@ fn run_image_cutout_worker(
     let server_task_id = detail.id.clone();
     let server_id_snapshot = server_task_id.clone();
     let uploaded_snapshot = uploaded.clone();
-    let _ = update_pending_generation(&record.client_request_id, |item| {
-        item.server_task_id = server_id_snapshot;
-        item.uploaded_file_ids = uploaded_snapshot;
-    });
+    if !matches!(
+        update_pending_generation_scoped(
+            &session_scope.owner_user_id,
+            session_scope.auth_epoch,
+            &record.client_request_id,
+            |item| {
+                item.server_task_id = server_id_snapshot;
+                item.uploaded_file_ids = uploaded_snapshot;
+            },
+        ),
+        Ok(true)
+    ) {
+        return;
+    }
     let _ = sender.send(ImageCutoutOutcome::Accepted {
         task_id: server_task_id.clone(),
     });
 
     loop {
+        if !backend_generation_scope_active(&backend, &session_scope) {
+            return;
+        }
         let _ = sender.send(ImageCutoutOutcome::Progress {
             percent: detail.progress_percent,
         });
         if let Some(item) = detail.items.iter().find(|item| item.status == "succeeded") {
             if let Some(file) = item.file.as_ref() {
-                match api.download_verified(file) {
+                match api.download_verified_scoped(file, &session_scope) {
                     Ok(bytes) => {
-                        let _ = update_pending_generation(&record.client_request_id, |pending| {
-                            pending.terminal = true;
-                            pending.expected_success_count = 1;
-                        });
+                        if !matches!(
+                            update_pending_generation_scoped(
+                                &session_scope.owner_user_id,
+                                session_scope.auth_epoch,
+                                &record.client_request_id,
+                                |pending| {
+                                    pending.terminal = true;
+                                    pending.expected_success_count = 1;
+                                },
+                            ),
+                            Ok(true)
+                        ) {
+                            return;
+                        }
                         let _ = sender.send(ImageCutoutOutcome::Success {
                             bytes,
                             delivery: DeliveryConfirmation {
@@ -547,15 +665,25 @@ fn run_image_cutout_worker(
                     })
                 })
                 .unwrap_or_else(|| "服务端未能完成智能抠图".to_string());
-            let _ = update_pending_generation(&record.client_request_id, |pending| {
-                pending.terminal = true;
-                pending.expected_success_count = 0;
-            });
+            if !matches!(
+                update_pending_generation_scoped(
+                    &session_scope.owner_user_id,
+                    session_scope.auth_epoch,
+                    &record.client_request_id,
+                    |pending| {
+                        pending.terminal = true;
+                        pending.expected_success_count = 0;
+                    },
+                ),
+                Ok(true)
+            ) {
+                return;
+            }
             let _ = sender.send(ImageCutoutOutcome::Failure { reason });
             return;
         }
         std::thread::sleep(Duration::from_millis(IMAGE_POLL_INTERVAL_MS));
-        detail = match fetch_image_cutout_task(&api, &record.server_task_id) {
+        detail = match fetch_image_cutout_task(&api, &record.server_task_id, &session_scope) {
             Ok(detail) => detail,
             Err(error) => {
                 let _ = sender.send(ImageCutoutOutcome::Failure {
@@ -570,10 +698,11 @@ fn run_image_cutout_worker(
 fn fetch_image_cutout_task(
     api: &GenerationApi,
     task_id: &str,
+    session_scope: &SessionScope,
 ) -> std::result::Result<GenerationTaskDetail, ApiError> {
     let mut retries = 0;
     loop {
-        match api.task(task_id) {
+        match api.task_scoped(task_id, session_scope) {
             Ok(detail) => return Ok(detail),
             Err(error)
                 if error.should_preserve_generation_recovery()
@@ -590,12 +719,17 @@ fn fetch_image_cutout_task(
 fn poll_image_cutout_outcomes(
     app_weak: Weak<AppWindow>,
     context: AppContext,
+    session_scope: SessionScope,
     receiver: Rc<RefCell<Option<mpsc::Receiver<ImageCutoutOutcome>>>>,
     source_path: String,
     source_title: String,
     subject_type: String,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
+        if !generation_scope_allows_polling(&app_weak, &context, &session_scope) {
+            receiver.borrow_mut().take();
+            return;
+        }
         let outcome = {
             let mut slot = receiver.borrow_mut();
             let Some(rx) = slot.as_ref() else {
@@ -616,6 +750,7 @@ fn poll_image_cutout_outcomes(
             poll_image_cutout_outcomes(
                 app_weak,
                 context,
+                session_scope,
                 receiver,
                 source_path,
                 source_title,
@@ -623,6 +758,10 @@ fn poll_image_cutout_outcomes(
             );
             return;
         };
+        if !generation_scope_allows_polling(&app_weak, &context, &session_scope) {
+            receiver.borrow_mut().take();
+            return;
+        }
         let Some(app) = app_weak.upgrade() else {
             return;
         };
@@ -681,13 +820,20 @@ fn poll_image_cutout_outcomes(
                             }
                             .into(),
                         );
-                        let _ = pending_delivery_saved(
+                        let saved = pending_delivery_saved(
+                            &session_scope.owner_user_id,
+                            session_scope.auth_epoch,
                             &delivery.client_request_id,
                             &delivery,
                             &result_path,
                         );
-                        if let Some(backend) = context.backend.clone() {
-                            acknowledge_delivery_after_local_save(backend, delivery);
+                        if matches!(saved, Ok(true)) {
+                            acknowledge_delivery_after_local_save(
+                                app.as_weak(),
+                                context.clone(),
+                                session_scope.clone(),
+                                delivery,
+                            );
                         }
                     }
                     Err(error) => {
@@ -706,21 +852,62 @@ fn poll_image_cutout_outcomes(
                 keep_polling = false;
                 receiver.borrow_mut().take();
                 let path = PathBuf::from(&local_path);
-                if let Ok(image) = load_image(&path) {
-                    state.set_cutout_result_path(local_path.clone().into());
-                    state.set_cutout_result_name(
-                        path.file_name()
-                            .and_then(|value| value.to_str())
-                            .unwrap_or("抠图结果.png")
-                            .into(),
-                    );
-                    state.set_cutout_result_image(image);
-                    state.set_cutout_progress(100);
-                    state.set_cutout_message("已恢复上次完成的智能抠图结果".into());
-                }
-                state.set_cutout_processing(false);
-                if let (Some(backend), Some(delivery)) = (context.backend.clone(), delivery) {
-                    acknowledge_delivery_after_local_save(backend, delivery);
+                let locally_verified = delivery.as_ref().map_or(true, |delivery| {
+                    recovered_delivery_path_matches(
+                        &local_path,
+                        &delivery.sha256,
+                        delivery.size_bytes,
+                    )
+                });
+                match (
+                    locally_verified,
+                    load_preview_image(&path, PreviewPurpose::Canvas),
+                ) {
+                    (true, Ok(image)) => {
+                        state.set_cutout_result_path(local_path.clone().into());
+                        state.set_cutout_result_name(
+                            path.file_name()
+                                .and_then(|value| value.to_str())
+                                .unwrap_or("抠图结果.png")
+                                .into(),
+                        );
+                        state.set_cutout_result_image(image);
+                        state.set_cutout_progress(100);
+                        state.set_cutout_processing(false);
+                        state.set_cutout_message("已恢复上次完成的智能抠图结果".into());
+                        if let Some(delivery) = delivery {
+                            acknowledge_delivery_after_local_save(
+                                app.as_weak(),
+                                context.clone(),
+                                session_scope.clone(),
+                                delivery,
+                            );
+                        }
+                    }
+                    _ => {
+                        let retrying = delivery.as_ref().is_some_and(|delivery| {
+                            matches!(
+                                clear_recovered_delivery_local_path(
+                                    &session_scope,
+                                    &delivery.client_request_id,
+                                    &delivery.file_id,
+                                ),
+                                Ok(true)
+                            )
+                        });
+                        if retrying {
+                            state.set_cutout_processing(false);
+                            state.set_cutout_message(
+                                "本地抠图结果校验失败，正在从服务端重新下载...".into(),
+                            );
+                            recover_pending_generations(&app, context.clone());
+                        } else {
+                            state.set_cutout_processing(false);
+                            state.set_cutout_message(
+                                "本地抠图结果已损坏，且暂时无法恢复，请重启后重试".into(),
+                            );
+                        }
+                    }
                 }
             }
             ImageCutoutOutcome::CreditInsufficient { message } => {
@@ -750,6 +937,7 @@ fn poll_image_cutout_outcomes(
             poll_image_cutout_outcomes(
                 app_weak,
                 context,
+                session_scope,
                 receiver,
                 source_path,
                 source_title,
@@ -763,7 +951,7 @@ fn decode_cutout_result(
     source_path: &Path,
     subject_type: &str,
     bytes: &[u8],
-) -> Result<(Vec<u8>, Image, i32, i32)> {
+) -> Result<(Vec<u8>, i32, i32)> {
     if image::guess_format(bytes)? != image::ImageFormat::Png {
         return Err(anyhow!("服务端抠图结果不是 PNG 图片"));
     }
@@ -784,12 +972,7 @@ fn decode_cutout_result(
     } else {
         encode_png_rgba(&result, width, height)?
     };
-    Ok((
-        result_bytes,
-        slint_image_from_rgba(&result, width, height),
-        width as i32,
-        height as i32,
-    ))
+    Ok((result_bytes, width as i32, height as i32))
 }
 
 fn apply_cutout_mask(source_path: &Path, mask: &image::DynamicImage) -> Result<image::RgbaImage> {
@@ -825,7 +1008,7 @@ fn save_image_cutout_asset(
     subject_type: &str,
     bytes: &[u8],
 ) -> Result<(String, Image)> {
-    let (result_bytes, image, width, height) =
+    let (result_bytes, width, height) =
         decode_cutout_result(Path::new(source_path), subject_type, bytes)?;
     let source_title = if source_title.trim().is_empty() {
         Path::new(source_path)
@@ -838,6 +1021,7 @@ fn save_image_cutout_asset(
     };
     let title = format!("{} 抠图", short_text(source_title, 18));
     let result_path = save_generated_bytes(app, &result_bytes, &title)?;
+    let image = load_preview_image(Path::new(&result_path), PreviewPurpose::Canvas)?;
     let now = Local::now().format("%Y-%m-%d %H:%M").to_string();
     let prompt = format!("智能抠图（{}）", cutout_type_label(subject_type));
     let item = AssetData {
@@ -854,7 +1038,6 @@ fn save_image_cutout_asset(
         origin: "image_cutout".to_string(),
         width,
         height,
-        image: image.clone(),
         source_path: result_path.clone(),
         reference_paths: (!source_path.is_empty())
             .then(|| source_path.to_string())
@@ -865,21 +1048,33 @@ fn save_image_cutout_asset(
         upscale_done: false,
         is_new: false,
     };
+    let notification = NotificationData {
+        id: Uuid::new_v4().to_string(),
+        title: format!("智能抠图完成：{title}"),
+        model: "智能抠图".to_string(),
+        time: now,
+        reason: String::new(),
+        success: true,
+        read: false,
+    };
+    let item_id = item.id.clone();
+    let notification_id = notification.id.clone();
     let mut store = store.borrow_mut();
     store.assets.insert(0, item);
-    store.notifications.insert(
-        0,
-        NotificationData {
-            id: Uuid::new_v4().to_string(),
-            title: format!("智能抠图完成：{title}"),
-            model: "智能抠图".to_string(),
-            time: now,
-            reason: String::new(),
-            success: true,
-            read: false,
-        },
-    );
-    save_local_store(app, &store);
+    store.notifications.insert(0, notification);
+    if let Err(error) = save_local_store_checked(app, &store) {
+        if store.assets.first().is_some_and(|item| item.id == item_id) {
+            store.assets.remove(0);
+        }
+        if store
+            .notifications
+            .first()
+            .is_some_and(|item| item.id == notification_id)
+        {
+            store.notifications.remove(0);
+        }
+        return Err(error);
+    }
     push_all(app, &store);
     Ok((result_path, image))
 }
@@ -912,7 +1107,7 @@ mod tests {
     fn alpha_cutout_result_is_kept_as_a_png() {
         let rgba = image::RgbaImage::from_pixel(2, 2, image::Rgba([1, 2, 3, 0]));
         let bytes = encode_png_rgba(&rgba, 2, 2).expect("encode png");
-        let (result, _, width, height) =
+        let (result, width, height) =
             decode_cutout_result(Path::new("unused"), "general", &bytes).expect("decode result");
         assert_eq!(result, bytes);
         assert_eq!((width, height), (2, 2));
@@ -948,7 +1143,7 @@ mod tests {
         .expect("encode mask");
 
         for subject_type in ["skin", "sky"] {
-            let (result_bytes, _, width, height) =
+            let (result_bytes, width, height) =
                 decode_cutout_result(&source_path, subject_type, &mask_bytes)
                     .expect("compose mask");
             let result =

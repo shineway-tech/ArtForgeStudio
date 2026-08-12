@@ -2,8 +2,18 @@ use super::*;
 use crate::platform;
 
 pub(super) fn run() -> Result<()> {
-    configure_renderer_backend();
+    // The local Store, SQLite index and preview cache are shared process resources. Keeping a
+    // second process out avoids cross-process reference rebuilds and cache/write races.
+    let instance_name = native_client_instance_name();
+    let instance = single_instance::SingleInstance::new(&instance_name)
+        .context("无法创建客户端单实例锁")?;
+    if !instance.is_single() {
+        anyhow::bail!("客户端已在运行");
+    }
+    let _instance_guard = instance;
     let app = AppWindow::new()?;
+    configure_rendering_profile(&app);
+    register_external_image_drop_wakeup(&app);
     platform::schedule_application_icon_install();
     schedule_external_image_drop_install(app.as_weak(), 20);
     app.window().set_size(slint::PhysicalSize::new(1440, 900));
@@ -11,6 +21,11 @@ pub(super) fn run() -> Result<()> {
     cleanup_stale_update_dirs();
     apply_theme(&app, "light");
     init_portable_dirs(&app)?;
+    initialize_client_state_repository().context("无法初始化本地元数据库")?;
+    initialize_storage_index();
+    initialize_preview_cache();
+    cleanup_stale_reference_imports();
+    cleanup_stale_toolbox_files();
     load_user_profile(&app);
     load_showcase_images(&app);
 
@@ -19,9 +34,13 @@ pub(super) fn run() -> Result<()> {
         ..AppContext::default()
     };
     let store = context.store.clone();
-    load_local_store(&app, &store);
+    let local_store_loaded = load_local_store(&app, &store);
     seed_inspiration(&app, &store)?;
-    push_all(&app, &store.borrow());
+    let reference_index_healthy = rebuild_storage_references(&store.borrow());
+    if local_store_loaded && reference_index_healthy {
+        cleanup_orphaned_durable_copies_at_startup();
+    }
+    push_startup_state(&app, &store.borrow());
 
     wire_callbacks(&app, context.clone());
     begin_update_check(&app, false);
@@ -32,9 +51,32 @@ pub(super) fn run() -> Result<()> {
         &store,
         &resolve_category(&app.global::<AppState>().get_asset_type().to_string(), ""),
     );
-    save_user_profile(&app);
-    save_local_store(&app, &store.borrow());
+    let _ = save_user_profile_checked(&app);
+    if local_store_loaded && save_local_store_checked(&app, &store.borrow()).is_ok() {
+        rebuild_storage_references(&store.borrow());
+        cleanup_orphaned_durable_copies_at_shutdown();
+    } else {
+        // Still persist a recovered/new store when possible, but keep durable reference and
+        // canvas copies for the whole session if startup could not prove the JSON was healthy.
+        let _ = save_local_store_checked(&app, &store.borrow());
+    }
     Ok(())
+}
+
+fn native_client_instance_name() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        // single-instance uses the supplied string as a lock-file path on macOS. The per-user
+        // temporary directory is writable for Finder launches and isolates different users.
+        return std::env::temp_dir()
+            .join("elunvi-canvas-native-client.lock")
+            .display()
+            .to_string();
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "elunvi-canvas-native-client".to_string()
+    }
 }
 
 fn schedule_external_image_drop_install(app_weak: Weak<AppWindow>, attempts_left: u8) {
@@ -58,14 +100,28 @@ fn schedule_external_image_drop_install(app_weak: Weak<AppWindow>, attempts_left
     });
 }
 
-fn configure_renderer_backend() {
-    if std::env::var_os("SLINT_BACKEND").is_some() {
-        return;
-    }
-    #[cfg(windows)]
-    std::env::set_var("SLINT_BACKEND", "winit-femtovg");
-    #[cfg(not(windows))]
-    std::env::set_var("SLINT_BACKEND", "winit-software");
+fn configure_rendering_profile(app: &AppWindow) {
+    // Installing a rendering notifier makes GPU backends draw on every display-link tick.
+    // Keep normal rendering demand-driven and enable reduced motion when software rendering
+    // is explicitly requested for GPU-less or compatibility-mode machines.
+    let using_software_renderer = std::env::var("SLINT_BACKEND")
+        .map(|backend| {
+            let backend = backend.to_ascii_lowercase();
+            backend.contains("software") || backend == "sw" || backend.ends_with("-sw")
+        })
+        .unwrap_or(false);
+    app.global::<AppState>()
+        .set_reduced_motion(using_software_renderer);
+}
+
+fn register_external_image_drop_wakeup(app: &AppWindow) {
+    let app_weak = app.as_weak();
+    platform::set_external_image_drop_wakeup(move || {
+        let _ = app_weak.upgrade_in_event_loop(|app| {
+            app.global::<AppState>()
+                .invoke_process_external_image_drops();
+        });
+    });
 }
 
 pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
@@ -91,13 +147,14 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
         let app_weak = app.as_weak();
         let auth_context = context.clone();
         let auth_backend = context.backend.clone();
+        let store = store.clone();
         state.on_use_now(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             let state = app.global::<AppState>();
             if state.get_logged_in() {
-                navigate_to(&app, "generation");
+                navigate_to_with_store(&app, &store.borrow(), "generation");
             } else {
                 state.set_auth_open(true);
                 if state.get_auth_method().as_str() == "wechat"
@@ -142,28 +199,33 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
                 {
                     refresh_server_notifications(&app, context.clone());
                 }
+                if page.as_str() == "settings" {
+                    refresh_storage_usage_async(&app);
+                }
             }
         });
     }
 
     {
         let app_weak = app.as_weak();
+        let context = context.clone();
+        let store = store.clone();
         state.on_back(move || {
             if let Some(app) = app_weak.upgrade() {
                 let state = app.global::<AppState>();
                 let page = state.get_page().to_string();
                 if page == "custom-prompt-editor" {
-                    close_custom_prompt_editor(&app);
+                    close_custom_prompt_editor(&app, &context);
                     return;
                 }
                 if page.starts_with("toolbox-") {
-                    state.set_page("toolbox".into());
+                    navigate_to_with_store(&app, &store.borrow(), "toolbox");
                     return;
                 }
                 if page == "generation" {
                     return;
                 }
-                state.set_page("generation".into());
+                navigate_to_with_store(&app, &store.borrow(), "generation");
             }
         });
     }
@@ -260,6 +322,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
             push_references(&app, &store.borrow());
             save_local_store(&app, &store.borrow());
             save_user_profile(&app);
+            reset_generation_gallery_page(&app);
             push_generations(&app, &store.borrow());
             sync_generation_state_for_current_category(&context, &app);
         });
@@ -328,9 +391,11 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
     }
 
     wire_model_catalog_callbacks(app, store.clone());
+    wire_storage_callbacks(app);
     wire_reference_callbacks(app, store.clone());
     wire_prompt_preview_callbacks(app);
     wire_generation_callbacks(app, context.clone());
+    wire_prompt_task_recovery_callbacks(app, context.clone());
     wire_viewer_callbacks(app, context.clone());
     wire_notification_callbacks(app, context);
 }

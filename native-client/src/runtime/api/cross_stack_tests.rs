@@ -12,6 +12,11 @@ const MOCK_PNG: [u8; 68] = [
     0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 100, 248, 15, 0, 1, 5, 1, 1,
     39, 24, 227, 102, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
 ];
+const TRANSPARENT_MASK_PNG: [u8; 68] = [
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 4, 0,
+    0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 96, 96, 0, 0, 0, 3, 0, 1, 43,
+    9, 77, 132, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
 const VALID_UPLOAD_SHA256: &str =
     "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460";
 
@@ -91,7 +96,10 @@ fn login_new_user() -> (ApiClient, LoginResponse) {
         .login(&email, &mock_code(), &agreement_acceptances(&auth))
         .expect("login through backend");
     assert!(login.is_new_user);
-    assert_eq!(login.registration_credit_granted, "500");
+    assert!(login
+        .registration_credit_granted
+        .parse::<u64>()
+        .is_ok_and(|credits| credits > 0));
     (client, login)
 }
 
@@ -200,7 +208,7 @@ fn cross_stack_happy_path_and_dto_contract() {
             .credits
             .as_ref()
             .map(|value| value.available.as_str()),
-        Some("500")
+        Some(login.registration_credit_granted.as_str())
     );
     assert!(snapshot.plans.iter().any(|plan| plan.code == "basic"));
     assert!(snapshot.packs.iter().any(|pack| pack.code == "pack_1000"));
@@ -214,6 +222,134 @@ fn cross_stack_happy_path_and_dto_contract() {
     assert!(!auth.refresh().expect("refresh frontend session").is_empty());
     auth.logout(false).expect("logout frontend session");
     assert!(client.session().access_token().is_none());
+}
+
+#[test]
+#[ignore = "requires the dev Mock API server"]
+fn cross_stack_p0_referral_image_edit_and_style_analysis_contracts() {
+    let (inviter_client, _) = login_new_user();
+    let inviter_account = AccountApi::new(inviter_client.clone());
+    let inviter_dashboard = inviter_account
+        .invitation_dashboard()
+        .expect("load inviter dashboard");
+    assert!(inviter_dashboard.overview.enabled);
+    assert_eq!(inviter_dashboard.overview.reward_type, "credits");
+    assert_eq!(inviter_dashboard.overview.reward_rate_bps, 1_000);
+    let invitation_code = inviter_dashboard
+        .overview
+        .invitation_code
+        .expect("server invitation code");
+
+    let (invitee_client, _) = login_new_user();
+    let invitee_account = AccountApi::new(invitee_client.clone());
+    assert_eq!(
+        invitee_account
+            .submit_invitation_code(&invitation_code)
+            .expect("bind invitation code")
+            .as_deref(),
+        Some("邀请码填写成功")
+    );
+    assert!(invitee_account
+        .snapshot()
+        .expect("reload invitee account")
+        .account
+        .user
+        .invitation_code_submitted);
+    let inviter_after = inviter_account
+        .invitation_dashboard()
+        .expect("reload inviter dashboard");
+    assert_eq!(inviter_after.overview.invitation_count, 1);
+    assert_eq!(inviter_after.users.len(), 1);
+    assert!(!inviter_after.users[0].email_masked.contains("client-stack-"));
+
+    let path = std::env::temp_dir().join(format!(
+        "artforge-p0-contract-{}.png",
+        Uuid::new_v4()
+    ));
+    std::fs::write(&path, MOCK_PNG).expect("write P0 reference fixture");
+    let mask_path = std::env::temp_dir().join(format!(
+        "artforge-p0-contract-mask-{}.png",
+        Uuid::new_v4()
+    ));
+    std::fs::write(&mask_path, TRANSPARENT_MASK_PNG).expect("write transparent mask fixture");
+    let generation = GenerationApi::new(invitee_client.clone());
+    let source_file_id = generation
+        .upload_prepared_reference(&path)
+        .expect("upload edit source");
+    let mask_file_id = generation
+        .upload_prepared_reference(&mask_path)
+        .expect("upload edit mask");
+    let edit_task = generation
+        .create_image_edit_task(&CreateImageEditTask {
+            client_request_id: format!("edit_{}", Uuid::new_v4().simple()),
+            task_type: "image_edit".to_string(),
+            model_code: "openai_image".to_string(),
+            prompt: "replace the marked pixel".to_string(),
+            quality: "1K".to_string(),
+            aspect_ratio: "1:1".to_string(),
+            source_file_id: source_file_id.clone(),
+            mask_file_id: mask_file_id.clone(),
+        })
+        .expect("create image edit task");
+    assert_eq!(edit_task.task_type, "image_edit");
+    assert_eq!(edit_task.requested_count, 1);
+    assert_eq!(edit_task.request["source_file_id"], source_file_id);
+    assert_eq!(edit_task.request["mask_file_id"], mask_file_id);
+    generation
+        .cancel(&edit_task.id)
+        .expect("cancel image edit fixture");
+
+    let style_file_id = generation
+        .upload_reference(&path)
+        .expect("upload style reference");
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&mask_path);
+    let style_request = CreateGenerationTask {
+        client_request_id: format!("style_{}", Uuid::new_v4().simple()),
+        task_type: "image_style_analysis".to_string(),
+        model_code: "openai_prompt".to_string(),
+        prompt: "describe this visual style".to_string(),
+        quality: None,
+        count: None,
+        aspect_ratio: None,
+        reference_file_ids: Some(vec![style_file_id.clone()]),
+        target_language: None,
+    };
+    let style_task = generation
+        .create_task(&style_request)
+        .expect("create image style analysis task");
+    assert_eq!(style_task.task_type, "image_style_analysis");
+    assert_eq!(style_task.requested_count, 1);
+    assert_eq!(style_task.request["reference_file_ids"], json!([style_file_id]));
+    let reserved_after_create = invitee_account
+        .snapshot()
+        .expect("load credits after style task create")
+        .account
+        .credits
+        .expect("style task credit account")
+        .reserved;
+    let replayed_style_task = generation
+        .create_task(&style_request)
+        .expect("replay image style analysis task");
+    let reserved_after_replay = invitee_account
+        .snapshot()
+        .expect("load credits after style task replay")
+        .account
+        .credits
+        .expect("style replay credit account")
+        .reserved;
+    assert_eq!(replayed_style_task.id, style_task.id);
+    assert_eq!(reserved_after_replay, reserved_after_create);
+    generation
+        .cancel(&style_task.id)
+        .expect("cancel style analysis fixture");
+
+    AuthApi::new(invitee_client)
+        .logout(false)
+        .expect("logout invitee P0 fixture");
+    AuthApi::new(inviter_client)
+        .logout(false)
+        .expect("logout inviter P0 fixture");
 }
 
 #[test]
@@ -319,7 +455,7 @@ fn cross_stack_session_device_binding_and_refresh_replay() {
 #[test]
 #[ignore = "requires the dev Mock API server"]
 fn cross_stack_account_catalog_and_pagination_parameters() {
-    let (client, _) = login_new_user();
+    let (client, login) = login_new_user();
     let snapshot = AccountApi::new(client.clone())
         .snapshot()
         .expect("load full account snapshot");
@@ -329,7 +465,7 @@ fn cross_stack_account_catalog_and_pagination_parameters() {
     assert!(snapshot
         .ledger
         .iter()
-        .any(|entry| entry.available_delta == "500"));
+        .any(|entry| entry.available_delta == login.registration_credit_granted));
 
     for path in [
         "/v1/credits/ledger?limit=0",
@@ -633,7 +769,7 @@ fn cross_stack_reference_upload_and_notification_parameters() {
             Some(json!({
                 "filename": "large.png",
                 "mime_type": "image/png",
-                "size_bytes": 10_485_761,
+                "size_bytes": 20_971_521,
                 "sha256": VALID_UPLOAD_SHA256,
             })),
             None,
@@ -947,11 +1083,12 @@ fn cross_stack_image_task_fields_report_exact_validation_details() {
     assert_http_error(generation.create_task(&request), 400, "validation_failed");
     let mut request = image_request();
     request.quality = Some("2K".to_string());
-    assert_http_error(
-        generation.create_task(&request),
-        403,
-        "membership_quality_forbidden",
-    );
+    let universal_quality_task = generation
+        .create_task(&request)
+        .expect("all memberships can use 2K quality");
+    generation
+        .cancel(&universal_quality_task.id)
+        .expect("cancel universal quality fixture");
     AuthApi::new(client)
         .logout(false)
         .expect("logout image field test");
@@ -960,7 +1097,7 @@ fn cross_stack_image_task_fields_report_exact_validation_details() {
 #[test]
 #[ignore = "requires the dev Mock API server"]
 fn cross_stack_generation_success_variants_and_credit_reservation_limit() {
-    let (client, _) = login_new_user();
+    let (client, login) = login_new_user();
     let generation = GenerationApi::new(client.clone());
     let translate = CreateGenerationTask {
         client_request_id: format!("translate_{}", Uuid::new_v4().simple()),
@@ -1047,7 +1184,7 @@ fn cross_stack_generation_success_variants_and_credit_reservation_limit() {
         .authenticated_json::<CreditAccount>(Method::GET, "/v1/credits/account", None, None)
         .expect("load credits after cancellation")
         .data;
-    assert_eq!(credits.available, "500");
+    assert_eq!(credits.available, login.registration_credit_granted);
     assert_eq!(credits.reserved, "0");
     AuthApi::new(client)
         .logout(false)
@@ -1194,10 +1331,6 @@ fn cross_stack_upload_filename_and_size_boundaries_report_exact_fields() {
             json!({ "filename": "test.png", "mime_type": "image/png", "size_bytes": 68, "sha256": "invalid" }),
             "sha256",
         ),
-        (
-            json!({ "filename": "test.png", "mime_type": "image/png", "size_bytes": 68 }),
-            "sha256",
-        ),
     ];
     for (body, field) in cases {
         assert_http_error_field(
@@ -1212,6 +1345,23 @@ fn cross_stack_upload_filename_and_size_boundaries_report_exact_fields() {
             Some(field),
         );
     }
+    let legacy_upload = client
+        .authenticated_json::<Value>(
+            Method::POST,
+            "/v1/uploads/references",
+            Some(json!({
+                "filename": "legacy.png",
+                "mime_type": "image/png",
+                "size_bytes": 68,
+            })),
+            None,
+        )
+        .expect("legacy upload may omit sha256")
+        .data;
+    let legacy_file_id = legacy_upload["file"]["id"]
+        .as_str()
+        .expect("legacy pending file id");
+    GenerationApi::new(client.clone()).delete_reference(legacy_file_id);
     assert_http_error(
         client.authenticated_json::<Value>(
             Method::POST,
@@ -1219,7 +1369,7 @@ fn cross_stack_upload_filename_and_size_boundaries_report_exact_fields() {
             Some(json!({
                 "filename": "large.png",
                 "mime_type": "image/png",
-                "size_bytes": 10_485_761,
+                "size_bytes": 20_971_521,
                 "sha256": VALID_UPLOAD_SHA256,
             })),
             None,

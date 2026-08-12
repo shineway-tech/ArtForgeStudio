@@ -9,6 +9,12 @@ export component DeleteConfirm {
         AppState.pending-delete-kind = "";
         AppState.pending-delete-id = "";
         AppState.pending-delete-source = "";
+        AppState.pending-delete-can-remove-file = false;
+    }
+
+    function confirm-pending-delete-local-file() {
+        AppState.confirm-delete-local-file();
+        root.close-dialog();
     }
 
     function confirm-pending-delete() {
@@ -37,7 +43,7 @@ export component DeleteConfirm {
         TouchArea { width: parent.width; height: parent.height; }
         dialog := Rectangle {
             width: min(330px, root.width - 32px);
-            height: min(180px, root.height - 40px);
+            height: min(AppState.pending-delete-can-remove-file ? 232px : 180px, root.height - 40px);
             x: (root.width - self.width) / 2;
             y: (root.height - self.height) / 2;
             background: AppTheme.panel;
@@ -75,7 +81,9 @@ export component DeleteConfirm {
                             ? (AppState.en ? "You can restore it with Undo." : "可通过画布撤销恢复。")
                             : (AppState.pending-delete-kind == "custom-prompt" || AppState.pending-delete-kind == "notification" || AppState.pending-delete-kind == "canvas-note" || AppState.pending-delete-kind == "canvas-selection" || AppState.pending-delete-kind == "canvas-link"
                             ? (AppState.en ? "This action cannot be undone." : "删除后无法恢复。")
-                            : (AppState.en ? "It will be removed from My Assets." : "删除后将从我的资产中移除。")));
+                            : (AppState.pending-delete-can-remove-file
+                                ? (AppState.en ? "The local file is kept by default. Shared or in-use files are always protected." : "默认只移除记录并保留本地文件；共享或使用中的文件始终会被保护。")
+                                : (AppState.en ? "It will be removed from My Assets." : "删除后将从我的资产中移除。"))));
                     color: AppTheme.muted;
                     font-size: 13px;
                     font-weight: 400;
@@ -83,7 +91,12 @@ export component DeleteConfirm {
                 HorizontalLayout {
                     spacing: 10px;
                     PillButton { horizontal-stretch: 1; text: AppState.en ? "Cancel" : "取消"; clicked => { root.close-dialog(); } }
-                    PillButton { horizontal-stretch: 1; text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { root.confirm-pending-delete(); } }
+                    PillButton { horizontal-stretch: 1; text: AppState.pending-delete-can-remove-file ? (AppState.en ? "Remove Record" : "仅移除记录") : (AppState.en ? "Delete" : "删除"); danger: !AppState.pending-delete-can-remove-file; clicked => { root.confirm-pending-delete(); } }
+                }
+                if AppState.pending-delete-can-remove-file: PillButton {
+                    text: AppState.en ? "Remove Record and Local File" : "移除记录并删除本地文件";
+                    danger: true;
+                    clicked => { root.confirm-pending-delete-local-file(); }
                 }
             }
         }

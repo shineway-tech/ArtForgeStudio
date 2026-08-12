@@ -3,22 +3,22 @@ use super::*;
 pub(super) fn load_showcase_images(app: &AppWindow) {
     let state = app.global::<AppState>();
     if let Some(path) = asset_path("showcase/character.png") {
-        if let Ok(image) = load_image(&path) {
+        if let Ok(image) = load_preview_image(&path, PreviewPurpose::Showcase) {
             state.set_showcase_character(image);
         }
     }
     if let Some(path) = asset_path("showcase/scene.png") {
-        if let Ok(image) = load_image(&path) {
+        if let Ok(image) = load_preview_image(&path, PreviewPurpose::Showcase) {
             state.set_showcase_scene(image);
         }
     }
     if let Some(path) = asset_path("showcase/ui.png") {
-        if let Ok(image) = load_image(&path) {
+        if let Ok(image) = load_preview_image(&path, PreviewPurpose::Showcase) {
             state.set_showcase_ui(image);
         }
     }
     if let Some(path) = asset_path("showcase/vfx.png") {
-        if let Ok(image) = load_image(&path) {
+        if let Ok(image) = load_preview_image(&path, PreviewPurpose::Showcase) {
             state.set_showcase_vfx(image);
         }
     }
@@ -31,7 +31,7 @@ pub(super) fn asset_path(relative: &str) -> Option<PathBuf> {
         .find(|path| path.exists())
 }
 
-pub(super) fn seed_inspiration(app: &AppWindow, store: &Rc<RefCell<Store>>) -> Result<()> {
+pub(super) fn seed_inspiration(_app: &AppWindow, store: &Rc<RefCell<Store>>) -> Result<()> {
     let dirs = inspiration_dirs();
     let mut items = Vec::new();
     let mut seen_files = BTreeSet::new();
@@ -65,12 +65,10 @@ pub(super) fn seed_inspiration(app: &AppWindow, store: &Rc<RefCell<Store>>) -> R
             if !seen_files.insert(file_key) {
                 continue;
             }
-            if let Ok(image) = load_image(&path) {
+            if let Ok((width, height)) = image::image_dimensions(&path) {
                 let index = items.len() + 1;
                 let (title, category, kind) = inspiration_meta(index);
-                let (width, height) = image::image_dimensions(&path)
-                    .map(|(w, h)| (w as i32, h as i32))
-                    .unwrap_or((1254, 1254));
+                let (width, height) = (width as i32, height as i32);
                 let ratio = ratio_from_actual_dimensions(width, height);
                 let quality = quality_from_actual_dimensions(width, height);
                 items.push(AssetData {
@@ -87,7 +85,6 @@ pub(super) fn seed_inspiration(app: &AppWindow, store: &Rc<RefCell<Store>>) -> R
                     origin: "inspiration".to_string(),
                     width,
                     height,
-                    image,
                     source_path: path.display().to_string(),
                     reference_paths: vec![],
                     cutout_done: false,
@@ -99,7 +96,6 @@ pub(super) fn seed_inspiration(app: &AppWindow, store: &Rc<RefCell<Store>>) -> R
         }
     }
     store.borrow_mut().inspiration = items;
-    push_all(app, &store.borrow());
     Ok(())
 }
 

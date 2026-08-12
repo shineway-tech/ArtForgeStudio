@@ -1,0 +1,99 @@
+import { AppState } from "../app-state.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component RecoveredPromptResultDialog {
+    if AppState.recovered-prompt-result-open: Rectangle {
+        background: #00000066;
+        TouchArea { width: parent.width; height: parent.height; }
+
+        dialog := Rectangle {
+            width: min(560px, root.width - 32px);
+            height: min(430px, root.height - 40px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            background: AppTheme.panel;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+
+            VerticalLayout {
+                padding: 24px;
+                spacing: 14px;
+
+                Text {
+                    height: 30px;
+                    text: AppState.en ? "Recovered prompt result" : "已恢复提示词结果";
+                    color: AppTheme.text;
+                    font-size: 19px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    height: 42px;
+                    text: AppState.en
+                        ? (AppState.recovered-prompt-error != ""
+                            ? "The paid task completed without a usable result. Keep this recovery record and contact support."
+                            : "The original editor changed or was closed, so the result was not written over your current content.")
+                        : (AppState.recovered-prompt-error != ""
+                            ? "付费任务已结束但没有可用结果。请保留这条恢复记录并联系客服。"
+                            : "原编辑内容已变化或页面已关闭，因此没有覆盖当前内容。你可以检查后手动使用。");
+                    color: AppTheme.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: AppTheme.panel-soft;
+                    border-radius: 10px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    clip: true;
+
+                    TextInput {
+                        x: 14px;
+                        y: 12px;
+                        width: parent.width - 28px;
+                        height: parent.height - 24px;
+                        text: AppState.recovered-prompt-error != ""
+                            ? AppState.recovered-prompt-error
+                            : AppState.recovered-prompt-result;
+                        color: AppTheme.text;
+                        font-size: 13px;
+                        single-line: false;
+                        wrap: word-wrap;
+                        read-only: true;
+                    }
+                }
+
+                HorizontalLayout {
+                    height: 42px;
+                    spacing: 10px;
+                    PillButton {
+                        horizontal-stretch: 1;
+                        text: AppState.en ? "Discard" : "丢弃";
+                        danger: true;
+                        clicked => { AppState.dismiss-recovered-prompt-result(); }
+                    }
+                    PillButton {
+                        horizontal-stretch: 1;
+                        text: AppState.en ? "Copy" : "复制结果";
+                        clicked => { AppState.copy-recovered-prompt-result(); }
+                    }
+                    PillButton {
+                        horizontal-stretch: 1;
+                        text: AppState.en ? "Use result" : "使用结果";
+                        primary: true;
+                        disabled: AppState.recovered-prompt-error != "";
+                        clicked => { AppState.apply-recovered-prompt-result(); }
+                    }
+                }
+            }
+        }
+    }
+}

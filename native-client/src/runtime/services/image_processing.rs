@@ -169,6 +169,11 @@ pub(super) fn generated_image_from_bytes(bytes: &[u8]) -> Result<(Vec<u8>, Image
     Ok((bytes.to_vec(), image, width as i32, height as i32))
 }
 
+pub(super) fn generated_image_dimensions(bytes: &[u8]) -> Result<(i32, i32)> {
+    let decoded = image::load_from_memory(bytes)?;
+    Ok((decoded.width() as i32, decoded.height() as i32))
+}
+
 pub(super) fn encode_png_rgba(rgba: &image::RgbaImage, width: u32, height: u32) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     let encoder = image::codecs::png::PngEncoder::new(Cursor::new(&mut bytes));
@@ -705,7 +710,9 @@ fn persist_reference_image(image: &image::DynamicImage) -> Result<PathBuf> {
     let (bytes, extension) = encode_reference_upload(image, preserve_alpha)?;
     let digest = format!("{:x}", Sha256::digest(&bytes));
     let directory = app_data_dir().join("references").join("library");
-    fs::create_dir_all(&directory)?;
+    if !ensure_managed_subdirectory(&directory) {
+        return Err(anyhow!("无法创建安全的参考图目录"));
+    }
     let destination = directory.join(format!("{digest}.{extension}"));
     if !destination.is_file() {
         atomic_write_file(&destination, &bytes)?;
@@ -720,7 +727,9 @@ pub(super) fn load_image(path: &Path) -> Result<Image> {
     Ok(slint_image_from_rgba(&rgba, width, height))
 }
 
-fn decode_image_file(path: &Path) -> Result<(image::DynamicImage, Option<image::ImageFormat>)> {
+pub(super) fn decode_image_file(
+    path: &Path,
+) -> Result<(image::DynamicImage, Option<image::ImageFormat>)> {
     let decoded = (|| -> image::ImageResult<_> {
         let reader = image::ImageReader::open(path)?.with_guessed_format()?;
         let format = reader.format();

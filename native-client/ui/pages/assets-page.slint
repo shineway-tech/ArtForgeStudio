@@ -42,9 +42,15 @@ export component AssetsPage {
                 height: parent.height - 116px;
                 items: AppState.assets;
                 groups: AppState.asset-groups;
+                placements: AppState.asset-layout-items;
+                headers: AppState.asset-layout-headers;
+                content-height: AppState.asset-layout-height;
                 source: "asset";
                 card-width: root.card-width();
                 layout-mode: AppState.asset-gallery-layout;
+                has-more: AppState.asset-has-more;
+                pagination-key: AppState.asset-category-filter;
+                request-more => { AppState.load-more-assets(); }
             }
         }
     }

@@ -44,14 +44,14 @@ export component CompressionDropArea {
     in property <bool> compact: false;
     in property <bool> disabled: false;
     callback choose-images();
-    callback dropped(string, string);
+    callback dropped(data-transfer) -> bool;
 
     Rectangle {
         opacity: root.disabled ? 0.55 : 1.0;
-        background: drop-area.contains-drag ? AppTheme.accent.with-alpha(0.08) : AppTheme.panel;
+        background: drop-area.has-drag ? AppTheme.accent.with-alpha(0.08) : AppTheme.panel;
         border-radius: 12px;
-        border-width: drop-area.contains-drag ? 2px : 1px;
-        border-color: drop-area.contains-drag ? AppTheme.accent : AppTheme.border;
+        border-width: drop-area.has-drag ? 2px : 1px;
+        border-color: drop-area.has-drag ? AppTheme.accent : AppTheme.border;
 
         Image {
             x: (parent.width - (root.compact ? 28px : 40px)) / 2;
@@ -59,7 +59,7 @@ export component CompressionDropArea {
             width: root.compact ? 28px : 40px;
             height: root.compact ? 28px : 40px;
             source: @image-url("../../assets/icons/upload.svg");
-            colorize: drop-area.contains-drag ? AppTheme.accent : AppTheme.weak;
+            colorize: drop-area.has-drag ? AppTheme.accent : AppTheme.weak;
             image-fit: contain;
         }
 
@@ -68,10 +68,10 @@ export component CompressionDropArea {
             y: root.compact ? 56px : 92px;
             width: parent.width - 48px;
             height: 24px;
-            text: drop-area.contains-drag
+            text: drop-area.has-drag
                 ? (AppState.en ? "Release to add images" : "松开即可添加图片")
                 : (AppState.en ? "Drag images here, or click to choose files" : "拖放图片到这里，或点击选择文件");
-            color: drop-area.contains-drag ? AppTheme.accent : AppTheme.text;
+            color: drop-area.has-drag ? AppTheme.accent : AppTheme.text;
             font-size: root.compact ? 12px : 14px;
             font-weight: 400;
             horizontal-alignment: center;
@@ -109,12 +109,11 @@ export component CompressionDropArea {
             width: parent.width;
             height: parent.height;
             can-drop(event) => {
-                return !root.disabled
-                    && (event.mime-type == "text/uri-list"
-                        || event.mime-type == "text/plain"
-                        || event.mime-type == "application/x-artforge-image-path");
+                return !root.disabled ? DragAction.copy : DragAction.none;
             }
-            dropped(event) => { root.dropped(event.mime-type, event.data); }
+            dropped(event) => {
+                return root.dropped(event.data) ? DragAction.copy : DragAction.none;
+            }
         }
     }
 }
@@ -279,10 +278,12 @@ export component ToolboxCompressionPage {
         return max(480px, (root.content-width() - 20px) * 0.58);
     }
 
-    function accept-drop(mime-type: string, data: string) {
-        if !root.busy && AppState.add-compression-images-from-drag(mime-type, data) {
+    function accept-drop(data: data-transfer) -> bool {
+        if !root.busy && AppState.add-compression-images-from-drag(data) {
             compression-keys.focus();
+            return true;
         }
+        return false;
     }
 
     Rectangle {
@@ -321,7 +322,7 @@ export component ToolboxCompressionPage {
             height: 178px;
             disabled: root.busy;
             choose-images => { AppState.choose-compression-images(); }
-            dropped(mime-type, data) => { root.accept-drop(mime-type, data); }
+            dropped(data) => { return root.accept-drop(data); }
         }
 
         if AppState.compression-images.length > 0: Rectangle {
@@ -394,15 +395,14 @@ export component ToolboxCompressionPage {
                 width: parent.width;
                 height: parent.height;
                 can-drop(event) => {
-                    return !root.busy
-                        && (event.mime-type == "text/uri-list"
-                            || event.mime-type == "text/plain"
-                            || event.mime-type == "application/x-artforge-image-path");
+                    return !root.busy ? DragAction.copy : DragAction.none;
                 }
-                dropped(event) => { root.accept-drop(event.mime-type, event.data); }
+                dropped(event) => {
+                    return root.accept-drop(event.data) ? DragAction.copy : DragAction.none;
+                }
             }
 
-            if list-drop.contains-drag: Rectangle {
+            if list-drop.has-drag: Rectangle {
                 x: 8px;
                 y: 56px;
                 width: parent.width - 16px;

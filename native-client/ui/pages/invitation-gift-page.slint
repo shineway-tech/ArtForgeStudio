@@ -33,7 +33,7 @@ component RewardSummaryCard inherits Rectangle {
         y: 43px;
         width: parent.width - 40px;
         height: 36px;
-        text: root.value + root.suffix;
+        text: root.value == "" ? "-" : root.value + root.suffix;
         color: root.highlighted ? AppTheme.accent-dark : AppTheme.text;
         font-size: 24px;
         font-weight: 600;
@@ -161,8 +161,15 @@ component InvitedUserRow inherits Rectangle {
 }
 
 export component InvitationGiftPage {
-    function invited-list-height() -> length {
+    function invited-rows-height() -> length {
         return max(1, AppState.invitation-users.length) * 52px;
+    }
+    function invited-footer-height() -> length {
+        return (AppState.invitation-users-loading || AppState.invitation-users-has-more ? 54px : 0px)
+            + (AppState.invitation-users-message != "" ? 36px : 0px);
+    }
+    function invited-list-height() -> length {
+        return root.invited-rows-height() + root.invited-footer-height();
     }
     function content-height() -> length {
         return max(root.height, 720px + root.invited-list-height());
@@ -223,7 +230,7 @@ export component InvitationGiftPage {
                             title: AppState.en ? "My reward rate" : "我的返利比例";
                             value: AppState.invitation-reward-rate;
                             suffix: "%";
-                            note: AppState.en ? "Current promotional rate" : "当前暂定返利比例";
+                            note: AppState.en ? "Current server rate" : "服务端当前规则";
                             highlighted: true;
                         }
                         RewardSummaryCard {
@@ -239,7 +246,7 @@ export component InvitationGiftPage {
                             height: parent.height;
                             title: AppState.en ? "Historical rewards" : "历史返利额度";
                             value: AppState.invitation-history-reward;
-                            suffix: "";
+                            suffix: AppState.en ? " credits" : " 积分";
                             note: "";
                         }
                     }
@@ -270,7 +277,7 @@ export component InvitationGiftPage {
                         y: 48px;
                         width: parent.width - 48px;
                         height: 22px;
-                        text: AppState.en ? "Share your invitation code with new users" : "将邀请码分享给新用户";
+                        text: AppState.en ? "Share your invitation code with friends" : "将邀请码分享给好友";
                         color: AppTheme.muted;
                         font-size: 12px;
                         font-weight: 400;
@@ -315,8 +322,12 @@ export component InvitationGiftPage {
                             width: parent.width - 32px;
                             height: 44px;
                             text: AppState.en
-                                ? "1. Share your invitation code with a new user.\n2. The current reward rate is 10%; settlement rules are subject to the server."
-                                : "1. 将邀请码分享给新用户。\n2. 当前返利比例暂定为 10%，结算规则以服务端实际规则为准。";
+                                ? (AppState.invitation-reward-rate == ""
+                                    ? "Invitation rules are provided by the server."
+                                    : "Share your code with a friend. The current server reward rate is " + AppState.invitation-reward-rate + "%.")
+                                : (AppState.invitation-rule-description == ""
+                                    ? "邀请返利规则由服务端提供。"
+                                    : AppState.invitation-rule-description);
                             color: AppTheme.muted;
                             font-size: 12px;
                             font-weight: 400;
@@ -377,11 +388,41 @@ export component InvitationGiftPage {
                         x: 24px;
                         y: 90px;
                         width: parent.width - 48px;
-                        height: root.invited-list-height();
+                        height: root.invited-rows-height();
                         spacing: 0px;
                         for user in AppState.invitation-users: InvitedUserRow {
                             item: user;
                         }
+                    }
+                    if AppState.invitation-users-loading || AppState.invitation-users-has-more: Rectangle {
+                        x: 24px;
+                        y: 94px + root.invited-rows-height();
+                        width: parent.width - 48px;
+                        height: 46px;
+                        background: transparent;
+                        PillButton {
+                            x: (parent.width - 150px) / 2;
+                            width: 150px;
+                            height: 38px;
+                            text: AppState.invitation-users-loading
+                                ? (AppState.en ? "Loading…" : "正在加载…")
+                                : (AppState.en ? "Load more" : "加载更多");
+                            disabled: AppState.invitation-users-loading;
+                            clicked => { AppState.load-more-invitation-users(); }
+                        }
+                    }
+                    if AppState.invitation-users-message != "": Text {
+                        x: 24px;
+                        y: 94px + root.invited-rows-height()
+                            + (AppState.invitation-users-loading || AppState.invitation-users-has-more ? 50px : 0px);
+                        width: parent.width - 48px;
+                        height: 32px;
+                        text: AppState.invitation-users-message;
+                        color: AppTheme.danger;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        overflow: elide;
                     }
                 }
             }

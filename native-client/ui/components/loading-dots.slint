@@ -1,3 +1,4 @@
+import { AppState } from "../app-state.slint";
 import { AppTheme } from "../theme.slint";
 
 export component LoadingDots {
@@ -6,7 +7,7 @@ export component LoadingDots {
     height: 42px;
 
     Timer {
-        interval: 120ms;
+        interval: AppState.reduced-motion ? 360ms : 120ms;
         running: true;
         triggered => { root.step = Math.mod(root.step + 1, 6); }
     }
@@ -19,7 +20,7 @@ export component LoadingDots {
         border-radius: self.width / 2;
         background: AppTheme.accent;
         opacity: root.step == 0 || root.step == 1 ? 1 : 0.72;
-        animate y, width, height, opacity { duration: 110ms; easing: ease-in-out; }
+        animate y, width, height, opacity { duration: AppState.reduced-motion ? 0ms : 110ms; easing: ease-in-out; }
     }
 
     dot-two := Rectangle {
@@ -30,7 +31,7 @@ export component LoadingDots {
         border-radius: self.width / 2;
         background: AppTheme.accent;
         opacity: root.step == 2 || root.step == 3 ? 1 : 0.72;
-        animate y, width, height, opacity { duration: 110ms; easing: ease-in-out; }
+        animate y, width, height, opacity { duration: AppState.reduced-motion ? 0ms : 110ms; easing: ease-in-out; }
     }
 
     dot-three := Rectangle {
@@ -41,6 +42,6 @@ export component LoadingDots {
         border-radius: self.width / 2;
         background: AppTheme.accent;
         opacity: root.step == 4 || root.step == 5 ? 1 : 0.72;
-        animate y, width, height, opacity { duration: 110ms; easing: ease-in-out; }
+        animate y, width, height, opacity { duration: AppState.reduced-motion ? 0ms : 110ms; easing: ease-in-out; }
     }
 }

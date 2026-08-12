@@ -2,11 +2,19 @@ import { AppState } from "../app-state.slint";
 import { CategoryTabs } from "../components/category-tabs.slint";
 import { EmptyState } from "../components/empty-state.slint";
 import { GalleryLayoutToggle } from "../components/gallery-layout-toggle.slint";
-import { GalleryWaterfall } from "../components/gallery-waterfall.slint";
-import { SquareGalleryGrid } from "../components/square-gallery-grid.slint";
+import { VirtualizedGallery } from "../components/virtualized-gallery.slint";
 import { AppTheme } from "../theme.slint";
 
 export component InspirationPage {
+    property <string> pagination-key: AppState.inspiration-category-filter;
+    property <bool> load-more-armed: true;
+    property <length> last-load-bottom: -10000px;
+    property <string> viewport-key: root.pagination-key + ":" + AppState.inspiration-gallery-layout;
+    changed pagination-key => { root.reset-pagination-latch(); }
+    init => { root.update-viewport(); }
+    changed viewport-key => { root.update-viewport(); }
+    changed width => { root.update-viewport(); }
+    changed height => { root.update-viewport(); }
     function content-width() -> length {
         return root.width - 40px;
     }
@@ -30,12 +38,14 @@ export component InspirationPage {
             height: max(0px, parent.height - root.gallery-y());
             clip: true;
             background: transparent;
-            Flickable {
+            inspiration-scroll := Flickable {
                 width: parent.width;
                 height: parent.height;
                 viewport-width: parent.width;
                 viewport-height: max(self.height, gallery-content.preferred-height);
                 interactive: true;
+                changed viewport-y => { root.maybe-load-more(); root.update-viewport(); }
+                changed viewport-height => { root.maybe-load-more(); root.update-viewport(); }
                 gallery-content := VerticalLayout {
                     x: root.content-x();
                     width: root.content-width();
@@ -46,16 +56,12 @@ export component InspirationPage {
                         width: root.content-width();
                         height: max(360px, root.height - 106px);
                     }
-                    if !root.is-empty() && AppState.inspiration-gallery-layout == "grid": SquareGalleryGrid {
+                    if !root.is-empty(): VirtualizedGallery {
                         width: root.content-width();
                         items: AppState.inspiration;
-                        card-width: root.card-width();
-                        source: "inspiration";
-                    }
-                    if !root.is-empty() && AppState.inspiration-gallery-layout == "waterfall": GalleryWaterfall {
-                        width: root.content-width();
-                        items: AppState.inspiration;
-                        card-width: root.card-width();
+                        placements: AppState.inspiration-layout-items;
+                        headers: AppState.inspiration-layout-headers;
+                        content-height: AppState.inspiration-layout-height;
                         source: "inspiration";
                     }
                     Rectangle { height: 32px; background: transparent; }
@@ -95,5 +101,36 @@ export component InspirationPage {
     }
     function row-count() -> int {
         return (AppState.inspiration.length + root.column-count() - 1) / root.column-count();
+    }
+    function maybe-load-more() {
+        let visible-bottom = -inspiration-scroll.viewport-y + inspiration-scroll.height;
+        let near-end = visible-bottom + 640px >= inspiration-scroll.viewport-height;
+        if !AppState.inspiration-has-more || !near-end {
+            root.load-more-armed = true;
+            return;
+        }
+        if !root.load-more-armed && visible-bottom >= root.last-load-bottom + 240px {
+            root.load-more-armed = true;
+        }
+        if root.load-more-armed {
+            root.load-more-armed = false;
+            root.last-load-bottom = visible-bottom;
+            AppState.load-more-inspiration();
+        }
+    }
+    function reset-pagination-latch() {
+        root.load-more-armed = true;
+        root.last-load-bottom = -10000px;
+    }
+    function update-viewport() {
+        AppState.update-gallery-viewport(
+            "inspiration",
+            max(0, -inspiration-scroll.viewport-y / 1px),
+            max(1, inspiration-scroll.height / 1px),
+            max(1, root.content-width() / 1px),
+            AppState.inspiration-gallery-layout,
+            max(1, root.card-width() / 1px),
+            0
+        );
     }
 }

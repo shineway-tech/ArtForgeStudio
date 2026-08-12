@@ -98,6 +98,9 @@ export component SettingsPage {
         if AppState.settings-section == "models" {
             return max(960px, 126px + root.models-height());
         }
+        if AppState.settings-section == "basic" {
+            return 1160px;
+        }
         return 960px;
     }
 
@@ -277,6 +280,67 @@ export component SettingsPage {
                 if AppState.settings-section == "basic": DirRow { x: content-x; y: 714px; width: content-w; label: AppState.en ? "Input folder" : "输入素材目录"; value: AppState.input-dir; kind: "input"; }
                 if AppState.settings-section == "basic": DirRow { x: content-x; y: 792px; width: content-w; label: AppState.en ? "Output folder" : "输出目录"; value: AppState.output-dir; kind: "output"; }
                 if AppState.settings-section == "basic": DirRow { x: content-x; y: 870px; width: content-w; label: AppState.en ? "Prompt folder" : "提示词模板目录"; value: AppState.prompt-dir; kind: "prompt"; }
+                if AppState.settings-section == "basic": Rectangle {
+                    x: content-x;
+                    y: 968px;
+                    width: content-w;
+                    height: 154px;
+                    background: AppTheme.panel;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    Text { x: 18px; y: 16px; text: AppState.en ? "Local storage" : "本地存储"; color: AppTheme.text; font-size: 14px; font-weight: 500; }
+                    Text {
+                        x: 18px;
+                        y: 44px;
+                        width: parent.width - 220px;
+                        text: (AppState.en ? "Total " : "总计 ") + AppState.storage-total-size
+                            + (AppState.en ? "  ·  Works " : "  ·  作品 ") + AppState.storage-output-size
+                            + (AppState.en ? "  ·  References " : "  ·  引用 ") + AppState.storage-reference-size;
+                        color: AppTheme.muted;
+                        font-size: 12px;
+                        overflow: elide;
+                    }
+                    Text {
+                        x: 18px;
+                        y: 68px;
+                        width: parent.width - 220px;
+                        text: (AppState.en ? "Thumbnails " : "缩略图 ") + AppState.storage-cache-size
+                            + (AppState.en ? "  ·  Temporary " : "  ·  临时文件 ") + AppState.storage-transient-size;
+                        color: AppTheme.muted;
+                        font-size: 12px;
+                        overflow: elide;
+                    }
+                    Text {
+                        x: 18px;
+                        y: 104px;
+                        width: parent.width - 220px;
+                        text: AppState.storage-message != ""
+                            ? AppState.storage-message
+                            : (AppState.en ? "Generated works are never removed automatically." : "生成作品不会被自动清理。");
+                        color: AppTheme.weak;
+                        font-size: 12px;
+                        overflow: elide;
+                    }
+                    PillButton {
+                        x: parent.width - 194px;
+                        y: 20px;
+                        width: 78px;
+                        height: 34px;
+                        text: AppState.storage-busy ? (AppState.en ? "Loading" : "统计中") : (AppState.en ? "Refresh" : "刷新");
+                        disabled: AppState.storage-busy;
+                        clicked => { AppState.refresh-storage-usage(); }
+                    }
+                    PillButton {
+                        x: parent.width - 108px;
+                        y: 20px;
+                        width: 90px;
+                        height: 34px;
+                        text: AppState.en ? "Clear Cache" : "清理缓存";
+                        disabled: AppState.storage-busy;
+                        clicked => { AppState.clear-preview-cache(); }
+                    }
+                }
                 if AppState.settings-section == "prompts": CustomPromptSettings {
                     x: content-x;
                     y: 96px;

@@ -15,9 +15,8 @@ export component WaterfallColumn {
         width: root.width;
         spacing: 0px;
         alignment: start;
-        for item[index] in root.items: ThumbnailCard {
-            active: Math.mod(index, root.column-count) == root.column-index;
-            item: item;
+        for _[index] in root.column-length(): ThumbnailCard {
+            item: root.items[root.source-index(index)];
             card-width: root.card-width;
             card-gap: 18px;
             source: root.source;
@@ -26,5 +25,14 @@ export component WaterfallColumn {
     }
     function column-width() -> length {
         return root.card-width;
+    }
+    function column-length() -> int {
+        if root.items.length <= root.column-index {
+            return 0;
+        }
+        return floor((root.items.length - 1 - root.column-index) / root.column-count) + 1;
+    }
+    function source-index(index: int) -> int {
+        return index * root.column-count + root.column-index;
     }
 }

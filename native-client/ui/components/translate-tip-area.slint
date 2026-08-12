@@ -6,19 +6,15 @@ export component TranslateTipArea {
     property <bool> open: false;
     height: 22px;
 
-    Timer {
-        interval: 80ms;
-        running: true;
-        triggered => {
-            if hover.has-hover && !root.open {
+    function sync-popup(hovered: bool) {
+            if hovered && !root.open {
                 root.open = true;
                 popup.show();
             }
-            if !hover.has-hover && root.open {
+            if !hovered && root.open {
                 root.open = false;
                 popup.close();
             }
-        }
     }
 
     Text {
@@ -49,6 +45,7 @@ export component TranslateTipArea {
         width: root.width;
         height: root.height;
         mouse-cursor: help;
+        changed has-hover => { root.sync-popup(self.has-hover); }
     }
 
     popup := PopupWindow {

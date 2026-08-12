@@ -55,7 +55,22 @@ export component PromptComposer {
     property <length> custom-prompt-scroll-x: 0px;
     property <string> pending-custom-prompt-content: "";
     property <bool> custom-prompt-selection-pending: false;
+    property <bool> geometry-sidebar-collapsed: AppState.sidebar-collapsed;
+    property <bool> geometry-logged-in: AppState.logged-in;
     height: AppState.references.length > 0 || AppState.quote-title != "" ? 650px : 600px;
+
+    function sync-reference-drop-bounds() {
+        AppState.reference-drop-x = reference-drop.absolute-position.x / 1px;
+        AppState.reference-drop-y = reference-drop.absolute-position.y / 1px;
+        AppState.reference-drop-width = reference-drop.width / 1px;
+        AppState.reference-drop-height = reference-drop.height / 1px;
+    }
+
+    init => { root.sync-reference-drop-bounds(); }
+    changed width => { root.sync-reference-drop-bounds(); }
+    changed height => { root.sync-reference-drop-bounds(); }
+    changed geometry-sidebar-collapsed => { root.sync-reference-drop-bounds(); }
+    changed geometry-logged-in => { root.sync-reference-drop-bounds(); }
 
     function queue-custom-prompt-selection(value: string) {
         root.pending-custom-prompt-content = value;
@@ -110,17 +125,6 @@ export component PromptComposer {
         }
     }
 
-    Timer {
-        interval: 50ms;
-        running: true;
-        triggered => {
-            AppState.reference-drop-x = reference-drop.absolute-position.x / 1px;
-            AppState.reference-drop-y = reference-drop.absolute-position.y / 1px;
-            AppState.reference-drop-width = reference-drop.width / 1px;
-            AppState.reference-drop-height = reference-drop.height / 1px;
-        }
-    }
-
     Rectangle {
         background: AppTheme.panel-soft;
         border-radius: 16px;
@@ -134,13 +138,12 @@ export component PromptComposer {
             width: parent.width;
             height: parent.height;
             can-drop(event) => {
-                return event.mime-type == "text/uri-list"
-                    || event.mime-type == "text/plain"
-                    || event.mime-type == "text/html"
-                    || event.mime-type == "application/x-artforge-image-path";
+                return DragAction.copy;
             }
             dropped(event) => {
-                AppState.add-reference-from-drag(event.mime-type, event.data);
+                return AppState.add-reference-from-transfer(event.data)
+                    ? DragAction.copy
+                    : DragAction.none;
             }
         }
 
@@ -182,14 +185,18 @@ export component PromptComposer {
         PromptOptimizationAction {
             x: 94px;
             y: 14px;
-            width: 72px;
+            width: 112px;
             height: 24px;
-            text: AppState.en ? "Image+Text" : "图文优化";
-            disabled: AppState.reasoning-model == "" || AppState.optimizing-prompt || AppState.references.length == 0;
+            text: !AppState.style-analysis-available
+                ? (AppState.en ? "Image analysis unavailable" : "图文优化不可用")
+                : (AppState.en
+                    ? "Image+Text · " + AppState.style-analysis-credit-cost + " cr"
+                    : "图文优化 · " + AppState.style-analysis-credit-cost + " 积分");
+            disabled: !AppState.style-analysis-available || AppState.optimizing-prompt || AppState.references.length == 0;
             clicked => { AppState.visual-optimize-current-prompt(); }
         }
         PromptOptimizationAction {
-            x: 172px;
+            x: 212px;
             y: 14px;
             width: AppState.deep-optimization-active ? 104px : 72px;
             height: 24px;
@@ -210,14 +217,14 @@ export component PromptComposer {
             clicked => { root.clear-current-prompt(); }
         }
         if AppState.optimizing-prompt: LoadingDots {
-            x: AppState.deep-optimization-active ? 282px : 250px;
+            x: AppState.deep-optimization-active ? 322px : 290px;
             y: 7px;
             width: 30px;
             height: 30px;
         }
         Text {
             visible: AppState.optimizing-prompt || AppState.translating-prompt;
-            x: root.action-status-wraps() ? 24px : (AppState.deep-optimization-active ? 318px : 286px);
+            x: root.action-status-wraps() ? 24px : (AppState.deep-optimization-active ? 358px : 326px);
             y: root.action-status-wraps() ? 48px : 20px;
             width: root.action-status-wraps() ? parent.width - 48px : parent.width - self.x - 88px;
             height: 18px;
@@ -485,7 +492,7 @@ export component PromptComposer {
             vertical-alignment: center;
             overflow: elide;
         }
-        if reference-drop.contains-drag: Rectangle {
+        if reference-drop.has-drag: Rectangle {
             x: reference-drop.x;
             y: reference-drop.y;
             width: reference-drop.width;

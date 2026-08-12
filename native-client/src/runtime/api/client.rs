@@ -1,5 +1,6 @@
 use super::{
-    ApiEnvelope, ApiError, ApiResponse, DeviceIdentity, RefreshRequest, SessionManager, TokenSet,
+    ApiEnvelope, ApiError, ApiResponse, DeviceIdentity, RefreshRequest, SessionManager,
+    SessionScope, TokenSet,
 };
 use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::{Method, Url};
@@ -109,35 +110,221 @@ impl ApiClient {
         body: Option<Value>,
         idempotency_key: Option<&str>,
     ) -> Result<ApiResponse<T>, ApiError> {
-        let access_token = self
-            .session
-            .access_token()
-            .ok_or(ApiError::AuthenticationRequired)?;
-        let first = self.send_once(
+        let auth_epoch = self.session.auth_epoch();
+        let access_token = self.access_or_refresh_epoch(auth_epoch)?;
+        let first = self.send_once_epoch(
             method.clone(),
             path,
             body.clone(),
             Some((&access_token, idempotency_key)),
+            auth_epoch,
         );
         match first {
             Ok(response) => Ok(response),
-            Err(error) if error.is_terminal_session_error() => {
-                let _ = self.session.clear();
-                Err(error)
-            }
             Err(error) if error.is_access_token_rejected() => {
-                let refreshed = self.session.refresh(Some(&access_token), |refresh_token| {
-                    self.request_refresh(refresh_token)
-                })?;
-                self.send_once(method, path, body, Some((&refreshed, idempotency_key)))
+                let refreshed = self
+                    .session
+                    .refresh_epoch(auth_epoch, Some(&access_token), |refresh_token| {
+                        self.request_refresh(refresh_token)
+                    })
+                    .map_err(|error| self.clear_epoch_on_terminal_error(auth_epoch, error))?;
+                self.send_once(
+                    method,
+                    path,
+                    body,
+                    Some((&refreshed, idempotency_key)),
+                )
+                .map_err(|error| self.clear_epoch_on_exhausted_auth_error(auth_epoch, error))
             }
             Err(error) => Err(error),
         }
     }
 
+    pub(crate) fn authenticated_json_scoped<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        idempotency_key: Option<&str>,
+        scope: &SessionScope,
+    ) -> Result<ApiResponse<T>, ApiError> {
+        // Scope validation and token cloning happen under the same session lock. If another
+        // account is installed immediately afterwards, this request still carries the old
+        // account's cloned token and can never borrow the new account's credentials.
+        let access_token = self.access_or_refresh_scope(scope)?;
+        let first = self.send_once_scope(
+            method.clone(),
+            path,
+            body.clone(),
+            Some((&access_token, idempotency_key)),
+            scope,
+        );
+        match first {
+            Ok(response) => Ok(response),
+            Err(error) if error.is_access_token_rejected() => {
+                let refreshed = self
+                    .session
+                    .refresh_scope(scope, Some(&access_token), |refresh_token| {
+                        self.request_refresh(refresh_token)
+                    })
+                    .map_err(|error| self.clear_scope_on_terminal_error(scope, error))?;
+                self.send_once(
+                    method,
+                    path,
+                    body,
+                    Some((&refreshed, idempotency_key)),
+                )
+                .map_err(|error| self.clear_scope_on_exhausted_auth_error(scope, error))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub(crate) fn authenticated_json_epoch<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        idempotency_key: Option<&str>,
+        auth_epoch: u64,
+    ) -> Result<ApiResponse<T>, ApiError> {
+        let access_token = self.access_or_refresh_epoch(auth_epoch)?;
+        let first = self.send_once_epoch(
+            method.clone(),
+            path,
+            body.clone(),
+            Some((&access_token, idempotency_key)),
+            auth_epoch,
+        );
+        match first {
+            Ok(response) => Ok(response),
+            Err(error) if error.is_access_token_rejected() => {
+                let refreshed = self
+                    .session
+                    .refresh_epoch(auth_epoch, Some(&access_token), |refresh_token| {
+                        self.request_refresh(refresh_token)
+                    })
+                    .map_err(|error| self.clear_epoch_on_terminal_error(auth_epoch, error))?;
+                self.send_once(
+                    method,
+                    path,
+                    body,
+                    Some((&refreshed, idempotency_key)),
+                )
+                .map_err(|error| self.clear_epoch_on_exhausted_auth_error(auth_epoch, error))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub(crate) fn authenticated_json_with_fixed_token<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        access_token: &str,
+    ) -> Result<ApiResponse<T>, ApiError> {
+        self.send_once(method, path, body, Some((access_token, None)))
+    }
+
     pub(crate) fn refresh_session(&self) -> Result<String, ApiError> {
+        let auth_epoch = self.session.auth_epoch();
         self.session
-            .refresh(None, |refresh_token| self.request_refresh(refresh_token))
+            .refresh_epoch(auth_epoch, None, |refresh_token| {
+                self.request_refresh(refresh_token)
+            })
+            .map_err(|error| self.clear_epoch_on_terminal_error(auth_epoch, error))
+    }
+
+    pub(crate) fn refresh_session_epoch(&self, auth_epoch: u64) -> Result<String, ApiError> {
+        self.session
+            .refresh_epoch(auth_epoch, None, |refresh_token| {
+                self.request_refresh(refresh_token)
+            })
+            .map_err(|error| self.clear_epoch_on_terminal_error(auth_epoch, error))
+    }
+
+    fn access_or_refresh_epoch(&self, auth_epoch: u64) -> Result<String, ApiError> {
+        match self.session.access_token_for_epoch(auth_epoch) {
+            Ok(access_token) => Ok(access_token),
+            Err(ApiError::AuthenticationRequired) if self.session.auth_epoch() == auth_epoch => {
+                self.session
+                    .refresh_epoch(auth_epoch, None, |refresh_token| {
+                        self.request_refresh(refresh_token)
+                    })
+                    .map_err(|error| self.clear_epoch_on_terminal_error(auth_epoch, error))
+            }
+            Err(error) => Err(self.clear_epoch_on_terminal_error(auth_epoch, error)),
+        }
+    }
+
+    fn access_or_refresh_scope(&self, scope: &SessionScope) -> Result<String, ApiError> {
+        match self.session.access_token_for_scope(scope) {
+            Ok(access_token) => Ok(access_token),
+            Err(ApiError::AuthenticationRequired) if self.session.is_scope_current(scope) => self
+                .session
+                .refresh_scope(scope, None, |refresh_token| {
+                    self.request_refresh(refresh_token)
+                })
+                .map_err(|error| self.clear_scope_on_terminal_error(scope, error)),
+            Err(error) => Err(self.clear_scope_on_terminal_error(scope, error)),
+        }
+    }
+
+    fn send_once_epoch<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        authentication: Option<(&str, Option<&str>)>,
+        auth_epoch: u64,
+    ) -> Result<ApiResponse<T>, ApiError> {
+        self.send_once(method, path, body, authentication)
+            .map_err(|error| self.clear_epoch_on_terminal_error(auth_epoch, error))
+    }
+
+    fn send_once_scope<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        authentication: Option<(&str, Option<&str>)>,
+        scope: &SessionScope,
+    ) -> Result<ApiResponse<T>, ApiError> {
+        self.send_once(method, path, body, authentication)
+            .map_err(|error| self.clear_scope_on_terminal_error(scope, error))
+    }
+
+    fn clear_epoch_on_terminal_error(&self, auth_epoch: u64, error: ApiError) -> ApiError {
+        if error.is_terminal_session_error() {
+            let _ = self.session.clear_epoch(auth_epoch);
+        }
+        error
+    }
+
+    fn clear_scope_on_terminal_error(&self, scope: &SessionScope, error: ApiError) -> ApiError {
+        if error.is_terminal_session_error() {
+            let _ = self.session.clear_scope(scope);
+        }
+        error
+    }
+
+    fn clear_epoch_on_exhausted_auth_error(&self, auth_epoch: u64, error: ApiError) -> ApiError {
+        if error.is_access_token_rejected() || error.is_terminal_session_error() {
+            let _ = self.session.clear_epoch(auth_epoch);
+        }
+        error
+    }
+
+    fn clear_scope_on_exhausted_auth_error(
+        &self,
+        scope: &SessionScope,
+        error: ApiError,
+    ) -> ApiError {
+        if error.is_access_token_rejected() || error.is_terminal_session_error() {
+            let _ = self.session.clear_scope(scope);
+        }
+        error
     }
 
     fn request_refresh(&self, refresh_token: &str) -> Result<TokenSet, ApiError> {
@@ -282,6 +469,34 @@ mod tests {
         format!("http://{address}/")
     }
 
+    fn sequential_responses(responses: Vec<(&'static str, &'static str)>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 4096];
+                let _ = stream.read(&mut request);
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len(),
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        format!("http://{address}/")
+    }
+
+    fn tokens(access: &str, refresh: &str) -> TokenSet {
+        TokenSet {
+            access_token: access.to_string(),
+            access_expires_in_seconds: 1800,
+            refresh_token: refresh.to_string(),
+            refresh_expires_at: "2099-01-01T00:00:00Z".to_string(),
+            token_type: "X-Token".to_string(),
+        }
+    }
+
     #[test]
     fn request_timeout_is_a_network_timeout() {
         let url = one_response(
@@ -332,5 +547,135 @@ mod tests {
             .public_json::<Value>(Method::GET, "/broken", None)
             .unwrap_err();
         assert!(matches!(error, ApiError::Protocol { .. }));
+    }
+
+    #[test]
+    fn rejected_second_response_after_refresh_clears_the_captured_lease() {
+        let url = sequential_responses(vec![
+            (
+                "401 Unauthorized",
+                r#"{"request_id":"first","data":null,"error":{"code":"access_token_invalid","message":"expired","details":null},"meta":null}"#,
+            ),
+            (
+                "200 OK",
+                r#"{"request_id":"refresh","data":{"access_token":"access-new","access_expires_in_seconds":1800,"refresh_token":"refresh-new","refresh_expires_at":"2099-01-01T00:00:00Z","token_type":"X-Token"},"error":null,"meta":null}"#,
+            ),
+            (
+                "401 Unauthorized",
+                r#"{"request_id":"second","data":null,"error":{"code":"access_token_invalid","message":"still invalid","details":null},"meta":null}"#,
+            ),
+        ]);
+        let client = client_for(url, Duration::from_secs(1));
+        client
+            .session()
+            .install_tokens_for_user(&tokens("access-old", "refresh-old"), "user-a")
+            .unwrap();
+
+        let error = client
+            .authenticated_json::<Value>(Method::GET, "/resource", None, None)
+            .unwrap_err();
+
+        assert!(error.is_access_token_rejected());
+        assert!(client.session().access().is_none());
+        assert!(!client.session().has_refresh_token().unwrap());
+    }
+
+    #[test]
+    fn authentication_required_after_refresh_is_an_exhausted_auth_error() {
+        let client = client_for("http://127.0.0.1:1/".to_string(), Duration::from_secs(1));
+        let scope = client
+            .session()
+            .install_tokens_for_user(&tokens("access-a", "refresh-a"), "user-a")
+            .unwrap();
+        let rejected = ApiError::Http {
+            status: 401,
+            code: "authentication_required".to_string(),
+            message: "still rejected".to_string(),
+            request_id: None,
+            details: None,
+        };
+
+        let returned = client.clear_scope_on_exhausted_auth_error(&scope, rejected);
+
+        assert!(returned.is_access_token_rejected());
+        assert!(client.session().access().is_none());
+        assert!(!client.session().has_refresh_token().unwrap());
+    }
+
+    #[test]
+    fn stale_exhausted_auth_error_from_account_a_cannot_clear_account_b() {
+        let client = client_for("http://127.0.0.1:1/".to_string(), Duration::from_secs(1));
+        let scope_a = client
+            .session()
+            .install_tokens_for_user(&tokens("access-a", "refresh-a"), "user-a")
+            .unwrap();
+        let scope_b = client
+            .session()
+            .install_tokens_for_user(&tokens("access-b", "refresh-b"), "user-b")
+            .unwrap();
+        let rejected = ApiError::Http {
+            status: 401,
+            code: "access_token_invalid".to_string(),
+            message: "stale rejection".to_string(),
+            request_id: None,
+            details: None,
+        };
+
+        let returned = client.clear_scope_on_exhausted_auth_error(&scope_a, rejected);
+
+        assert!(returned.is_access_token_rejected());
+        assert_eq!(
+            client.session().access_token_for_scope(&scope_b).unwrap(),
+            "access-b"
+        );
+        assert_eq!(
+            client.session().has_refresh_token().unwrap(),
+            true,
+            "the current account's refresh token must survive a stale rejection"
+        );
+    }
+
+    #[test]
+    fn authenticated_call_retries_refresh_after_a_transient_refresh_failure() {
+        let url = sequential_responses(vec![
+            (
+                "200 OK",
+                r#"{"request_id":"refresh","data":{"access_token":"access-new","access_expires_in_seconds":1800,"refresh_token":"refresh-new","refresh_expires_at":"2099-01-01T00:00:00Z","token_type":"X-Token"},"error":null,"meta":null}"#,
+            ),
+            (
+                "200 OK",
+                r#"{"request_id":"resource","data":{"ok":true},"error":null,"meta":null}"#,
+            ),
+        ]);
+        let client = client_for(url, Duration::from_secs(1));
+        let scope = client
+            .session()
+            .install_tokens_for_user(&tokens("access-old", "refresh-old"), "user-a")
+            .unwrap();
+
+        let first_refresh = client.session().refresh_scope(
+            &scope,
+            Some("access-old"),
+            |_| {
+                Err(ApiError::Network {
+                    message: "temporarily offline".to_string(),
+                    timeout: false,
+                })
+            },
+        );
+        assert!(matches!(first_refresh, Err(ApiError::Network { .. })));
+        assert!(client.session().is_scope_current(&scope));
+        assert!(client.session().access().is_none());
+        assert!(client.session().has_refresh_token().unwrap());
+
+        let response = client
+            .authenticated_json_scoped::<Value>(Method::GET, "/resource", None, None, &scope)
+            .unwrap();
+
+        assert_eq!(response.data.get("ok").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            client.session().access_token_for_scope(&scope).unwrap(),
+            "access-new"
+        );
     }
 }

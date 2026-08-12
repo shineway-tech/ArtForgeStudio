@@ -1,5 +1,12 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum GenerationScopeDisposition {
+    Current,
+    CapturedTerminal,
+    Stale,
+}
+
 pub(super) fn current_workspace_category(app: &AppWindow) -> String {
     resolve_category(&app.global::<AppState>().get_asset_type().to_string(), "")
 }
@@ -19,6 +26,142 @@ pub(super) fn active_generation_matches(
         .borrow()
         .get(category)
         .is_some_and(|task| task.task_id == task_id)
+}
+
+pub(super) fn active_generation_matches_scope(
+    context: &AppContext,
+    category: &str,
+    task_id: &str,
+    session_scope: &SessionScope,
+) -> bool {
+    context
+        .generations
+        .active
+        .borrow()
+        .get(category)
+        .is_some_and(|task| task.task_id == task_id && task.session_scope == *session_scope)
+}
+
+pub(super) fn current_generation_session_scope(context: &AppContext) -> Option<SessionScope> {
+    let owner_user_id = context
+        .current_user_id
+        .lock()
+        .unwrap_or_else(|value| value.into_inner())
+        .clone()
+        .filter(|value| !value.trim().is_empty())?;
+    context
+        .backend
+        .as_ref()?
+        .api
+        .session()
+        .scope_for_user(&owner_user_id)
+}
+
+pub(super) fn generation_scope_matches_context(
+    context: &AppContext,
+    session_scope: &SessionScope,
+) -> bool {
+    let current_owner = context
+        .current_user_id
+        .lock()
+        .unwrap_or_else(|value| value.into_inner())
+        .clone();
+    current_owner.as_deref() == Some(session_scope.owner_user_id.as_str())
+        && context
+            .backend
+            .as_ref()
+            .is_some_and(|backend| backend.api.session().is_scope_current(session_scope))
+}
+
+pub(super) fn generation_scope_disposition(
+    context: &AppContext,
+    session_scope: &SessionScope,
+) -> GenerationScopeDisposition {
+    if generation_scope_matches_context(context, session_scope) {
+        GenerationScopeDisposition::Current
+    } else if terminal_auth_scope_matches_context(context, session_scope) {
+        GenerationScopeDisposition::CapturedTerminal
+    } else {
+        GenerationScopeDisposition::Stale
+    }
+}
+
+pub(super) fn generation_scope_allows_polling(
+    app_weak: &Weak<AppWindow>,
+    context: &AppContext,
+    session_scope: &SessionScope,
+) -> bool {
+    match generation_scope_disposition(context, session_scope) {
+        GenerationScopeDisposition::Current => true,
+        GenerationScopeDisposition::CapturedTerminal => {
+            if terminal_auth_scope_matches_context(context, session_scope) {
+                if let Some(app) = app_weak.upgrade() {
+                    sign_out_locally(&app, context, true, Some(session_scope.auth_epoch));
+                }
+            }
+            false
+        }
+        GenerationScopeDisposition::Stale => false,
+    }
+}
+
+pub(super) fn observe_detached_generation_scope(
+    app_weak: Weak<AppWindow>,
+    context: AppContext,
+    session_scope: SessionScope,
+    receiver: Rc<RefCell<Option<mpsc::Receiver<()>>>>,
+) {
+    slint::Timer::single_shot(Duration::from_millis(80), move || {
+        if !generation_scope_allows_polling(&app_weak, &context, &session_scope) {
+            receiver.borrow_mut().take();
+            return;
+        }
+        let finished = {
+            let mut slot = receiver.borrow_mut();
+            let Some(rx) = slot.as_ref() else {
+                return;
+            };
+            match rx.try_recv() {
+                Ok(()) | Err(TryRecvError::Disconnected) => {
+                    slot.take();
+                    true
+                }
+                Err(TryRecvError::Empty) => false,
+            }
+        };
+        if !finished {
+            observe_detached_generation_scope(app_weak, context, session_scope, receiver);
+        }
+    });
+}
+
+pub(super) fn clear_generation_account_state(app: &AppWindow, context: &AppContext) {
+    context.generations.active.borrow_mut().clear();
+    context.generations.statuses.borrow_mut().clear();
+    if let Ok(mut cancellations) = context.cancelled_generation_requests.lock() {
+        cancellations.clear();
+    }
+    let state = app.global::<AppState>();
+    state.set_generating(false);
+    state.set_generation_loading_count(0);
+    state.set_generation_progress(0);
+    state.set_generation_eta(0);
+    state.set_generation_task_id("".into());
+    state.set_generation_active_category("".into());
+    state.set_generation_active_prompt("".into());
+    state.set_current_conversation_id("".into());
+    push_conversations(app, &context.store.borrow());
+    state.set_image_editor_generating(false);
+    state.set_viewer_processing(false);
+    state.set_viewer_processing_progress(0);
+    state.set_cutout_processing(false);
+    state.set_cutout_progress(0);
+    state.set_enhance_processing(false);
+    state.set_enhance_progress(0);
+    state.set_watermark_processing(false);
+    state.set_watermark_progress(0);
+    state.set_colorize_processing(false);
+    state.set_colorize_progress(0);
 }
 
 pub(super) fn insert_active_generation(context: &AppContext, task: ActiveGeneration) {
@@ -193,5 +336,104 @@ pub(super) fn remove_conversation_placeholder(state: &AppState, conversation_id:
     state.set_conversations(ModelRc::new(VecModel::from(conversations)));
     if was_current {
         state.set_current_conversation_id(next_current.into());
+    }
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+
+    struct ScopeFixture {
+        context: AppContext,
+        session: Arc<SessionManager>,
+        data_dir: PathBuf,
+    }
+
+    impl Drop for ScopeFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.data_dir);
+        }
+    }
+
+    fn token_set(access_token: &str, refresh_token: &str) -> TokenSet {
+        TokenSet {
+            access_token: access_token.to_string(),
+            access_expires_in_seconds: 1800,
+            refresh_token: refresh_token.to_string(),
+            refresh_expires_at: "2099-01-01T00:00:00Z".to_string(),
+            token_type: "X-Token".to_string(),
+        }
+    }
+
+    fn scope_fixture(owner_user_id: &str) -> (ScopeFixture, SessionScope) {
+        let data_dir = std::env::temp_dir().join(format!(
+            "artforge-generation-scope-test-{}",
+            Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&data_dir).unwrap();
+        let session = Arc::new(SessionManager::with_file_store(&data_dir));
+        let scope = session
+            .install_tokens_for_user(&token_set("access-a", "refresh-a"), owner_user_id)
+            .unwrap();
+        let api = ApiClient::new(
+            ApiClientConfig {
+                base_url: reqwest::Url::parse("http://127.0.0.1/").unwrap(),
+                app_version: "test".to_string(),
+                timeout: Duration::from_secs(1),
+            },
+            DeviceIdentity {
+                id: "generation-scope-test-device".to_string(),
+                name: "Generation scope test".to_string(),
+                platform: "test".to_string(),
+            },
+            session.clone(),
+        )
+        .unwrap();
+        let context = AppContext {
+            backend: Some(Arc::new(BackendRuntime { api })),
+            current_user_id: Arc::new(Mutex::new(Some(owner_user_id.to_string()))),
+            ..AppContext::default()
+        };
+        (
+            ScopeFixture {
+                context,
+                session,
+                data_dir,
+            },
+            scope,
+        )
+    }
+
+    #[test]
+    fn terminal_auth_loss_is_distinct_from_a_stale_new_account() {
+        let (fixture, scope_a) = scope_fixture("user-a");
+        assert_eq!(
+            generation_scope_disposition(&fixture.context, &scope_a),
+            GenerationScopeDisposition::Current
+        );
+
+        fixture.session.clear_scope(&scope_a).unwrap();
+        assert_eq!(
+            generation_scope_disposition(&fixture.context, &scope_a),
+            GenerationScopeDisposition::CapturedTerminal
+        );
+
+        let scope_b = fixture
+            .session
+            .install_tokens_for_user(&token_set("access-b", "refresh-b"), "user-b")
+            .unwrap();
+        *fixture
+            .context
+            .current_user_id
+            .lock()
+            .unwrap_or_else(|value| value.into_inner()) = Some("user-b".to_string());
+        assert_eq!(
+            generation_scope_disposition(&fixture.context, &scope_a),
+            GenerationScopeDisposition::Stale
+        );
+        assert_eq!(
+            generation_scope_disposition(&fixture.context, &scope_b),
+            GenerationScopeDisposition::Current
+        );
     }
 }

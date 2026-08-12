@@ -135,7 +135,6 @@ struct AssetData {
     origin: String,
     width: i32,
     height: i32,
-    image: Image,
     source_path: String,
     reference_paths: Vec<String>,
     cutout_done: bool,
@@ -158,7 +157,6 @@ struct NotificationData {
 #[derive(Clone)]
 struct ReferenceData {
     id: String,
-    image: Image,
     source_path: String,
 }
 
@@ -205,7 +203,7 @@ enum GenerationOutcome {
         percent: i32,
     },
     ImageSuccess {
-        bytes: Vec<u8>,
+        local_path: String,
         display_prompt: String,
         time: String,
         upscale_done: bool,
@@ -304,7 +302,7 @@ struct DeliveryConfirmation {
     size_bytes: u64,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct ActiveGeneration {
     task_id: String,
     client_request_id: Option<String>,
@@ -321,6 +319,33 @@ struct ActiveGeneration {
     progress: i32,
     eta: i32,
     latest_success_id: Option<String>,
+    session_scope: SessionScope,
+}
+
+impl Default for ActiveGeneration {
+    fn default() -> Self {
+        Self {
+            task_id: String::new(),
+            client_request_id: None,
+            server_task_id: None,
+            category: String::new(),
+            conversation_id: String::new(),
+            prompt: String::new(),
+            credit_cost: 0,
+            total_count: 0,
+            loading_count: 0,
+            completed_count: 0,
+            success_count: 0,
+            failed_count: 0,
+            progress: 0,
+            eta: 0,
+            latest_success_id: None,
+            session_scope: SessionScope {
+                owner_user_id: String::new(),
+                auth_epoch: 0,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -336,6 +361,7 @@ struct Store {
     assets: Vec<AssetData>,
     inspiration: Vec<AssetData>,
     notifications: Vec<NotificationData>,
+    notification_page_epoch: u64,
     references: ReferenceGroups,
     prompt_drafts: PromptDrafts,
     dismissed_prompt_history: BTreeSet<String>,
@@ -346,7 +372,15 @@ struct Store {
     canvas_notes: Vec<CanvasNoteData>,
     canvas_links: Vec<CanvasLinkData>,
     credit_ledger_pagination: CreditLedgerPagination,
-    deep_prompt_job_id: String,
+    /// Server task ids are account-bound. Keep them partitioned by backend user id so a
+    /// different account can neither overwrite nor resume another account's task.
+    deep_prompt_jobs_by_owner: BTreeMap<String, String>,
+    /// A billable create request is persisted before it is sent. If the response is lost, the
+    /// same account replays this exact request id and body instead of creating a second job.
+    deep_prompt_pending_requests_by_owner: BTreeMap<String, CreatePromptOptimization>,
+    /// Pre-partition local stores only persisted a bare task id. It remains quarantined until
+    /// an account-scoped server lookup proves which signed-in account owns it.
+    legacy_deep_prompt_job_id: String,
     deep_prompt_bindings: BTreeMap<String, DeepPromptBinding>,
     contact_popup_dismissed: bool,
 }
@@ -361,6 +395,7 @@ struct GenerationRegistry {
 struct ActivePaymentSession {
     client_request_id: String,
     checkout_url: Option<String>,
+    session_scope: SessionScope,
 }
 
 #[derive(Clone, Default)]
@@ -370,11 +405,47 @@ struct AppContext {
     recovering_orders: Rc<RefCell<BTreeSet<String>>>,
     active_payment: Rc<RefCell<Option<ActivePaymentSession>>>,
     cancelled_generation_requests: Arc<Mutex<BTreeSet<String>>>,
+    active_prompt_task_requests: Arc<Mutex<BTreeSet<String>>>,
+    auth_operation_epoch: Arc<AtomicU64>,
+    current_user_id: Arc<Mutex<Option<String>>>,
+    account_snapshot_scope: Arc<Mutex<Option<SessionScope>>>,
     prompt_optimization_polling: Rc<RefCell<Option<String>>>,
     backend: Option<Arc<BackendRuntime>>,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+impl AppContext {
+    fn current_account_session_scope(&self) -> Option<SessionScope> {
+        let owner_user_id = self
+            .current_user_id
+            .lock()
+            .unwrap_or_else(|value| value.into_inner())
+            .clone()
+            .filter(|value| !value.trim().is_empty())?;
+        self.backend
+            .as_ref()?
+            .api
+            .session()
+            .scope_for_user(&owner_user_id)
+    }
+
+    fn account_scope_disposition(&self, scope: &SessionScope) -> AccountScopeDisposition {
+        let current_owner_user_id = self
+            .current_user_id
+            .lock()
+            .unwrap_or_else(|value| value.into_inner())
+            .clone();
+        let Some(backend) = self.backend.as_ref() else {
+            return AccountScopeDisposition::Stale;
+        };
+        account_scope_disposition(
+            current_owner_user_id.as_deref(),
+            backend.api.session(),
+            scope,
+        )
+    }
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct LocalStoreData {
     #[serde(default)]
     generations: Vec<StoredAssetData>,
@@ -404,6 +475,10 @@ struct LocalStoreData {
     canvas_links: Vec<CanvasLinkData>,
     #[serde(default)]
     deep_prompt_job_id: String,
+    #[serde(default)]
+    deep_prompt_jobs_by_owner: BTreeMap<String, String>,
+    #[serde(default)]
+    deep_prompt_pending_requests_by_owner: BTreeMap<String, CreatePromptOptimization>,
     #[serde(default)]
     deep_prompt_bindings: BTreeMap<String, DeepPromptBinding>,
     #[serde(default)]
@@ -466,7 +541,9 @@ struct StoredAssetData {
     model: String,
     #[serde(default)]
     origin: String,
+    #[serde(default)]
     width: i32,
+    #[serde(default)]
     height: i32,
     source_path: String,
     #[serde(default)]
@@ -479,7 +556,7 @@ struct StoredAssetData {
     upscale_done: bool,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct UserProfileData {
     #[serde(default)]
     logged_in: bool,

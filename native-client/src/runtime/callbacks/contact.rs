@@ -68,7 +68,8 @@ pub(super) fn wire_contact_callbacks(app: &AppWindow, store: Rc<RefCell<Store>>)
             dismiss_contact_popup(&app, &store);
             let state = app.global::<AppState>();
             state.set_settings_section("contact".into());
-            state.set_page("settings".into());
+            navigate_to_with_store(&app, &store.borrow(), "settings");
+            refresh_storage_usage_async(&app);
         });
     }
 }

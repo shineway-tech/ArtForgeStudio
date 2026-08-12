@@ -1,24 +1,41 @@
 import { EmptyState } from "empty-state.slint";
-import { TimeGroupedGallery } from "time-grouped-gallery.slint";
-import { AssetGroup, AssetItem } from "../types.slint";
+import { VirtualizedGallery } from "virtualized-gallery.slint";
+import { AppState } from "../app-state.slint";
+import { AssetGroup, AssetItem, GalleryHeader, GalleryPlacement } from "../types.slint";
 
 export component AssetGallery {
     in property <[AssetItem]> items;
     in property <[AssetGroup]> groups;
+    in property <[GalleryPlacement]> placements;
+    in property <[GalleryHeader]> headers;
+    in property <float> content-height: 1;
     in property <string> source;
     in property <length> card-width: 220px;
     in property <string> layout-mode: "grid";
+    in property <bool> has-more: false;
+    in property <string> pagination-key: "";
+    property <bool> load-more-armed: true;
+    property <length> last-load-bottom: -10000px;
+    callback request-more();
+    changed pagination-key => { root.reset-pagination-latch(); }
+    property <string> viewport-key: root.pagination-key + ":" + root.layout-mode + ":" + AppState.language;
+    init => { root.update-viewport(); }
+    changed viewport-key => { root.update-viewport(); }
+    changed width => { root.update-viewport(); }
+    changed height => { root.update-viewport(); }
     Rectangle {
         width: root.width;
         height: root.height;
         clip: true;
         background: transparent;
-        Flickable {
+        gallery-scroll := Flickable {
             width: parent.width;
             height: parent.height;
             viewport-width: parent.width;
-            viewport-height: max(self.height, asset-gallery-content.preferred-height);
+            viewport-height: max(self.height, asset-gallery-content.height);
             interactive: true;
+            changed viewport-y => { root.maybe-request-more(); root.update-viewport(); }
+            changed viewport-height => { root.maybe-request-more(); root.update-viewport(); }
             Rectangle {
                 width: parent.viewport-width;
                 height: parent.viewport-height;
@@ -27,19 +44,50 @@ export component AssetGallery {
                     width: parent.width;
                     height: max(360px, root.height);
                 }
-                asset-gallery-content := TimeGroupedGallery {
+                asset-gallery-content := VirtualizedGallery {
                     visible: !root.is-empty();
                     width: parent.width;
-                    height: self.preferred-height;
-                    groups: root.groups;
-                    card-width: root.card-width;
+                    items: root.items;
+                    placements: root.placements;
+                    headers: root.headers;
+                    content-height: root.content-height;
                     source: root.source;
-                    layout-mode: root.layout-mode;
                 }
             }
         }
     }
     function is-empty() -> bool {
         return root.items.length == 0;
+    }
+    function maybe-request-more() {
+        let visible-bottom = -gallery-scroll.viewport-y + gallery-scroll.height;
+        let near-end = visible-bottom + 640px >= gallery-scroll.viewport-height;
+        if !root.has-more || !near-end {
+            root.load-more-armed = true;
+            return;
+        }
+        if !root.load-more-armed && visible-bottom >= root.last-load-bottom + 240px {
+            root.load-more-armed = true;
+        }
+        if root.load-more-armed {
+            root.load-more-armed = false;
+            root.last-load-bottom = visible-bottom;
+            root.request-more();
+        }
+    }
+    function reset-pagination-latch() {
+        root.load-more-armed = true;
+        root.last-load-bottom = -10000px;
+    }
+    function update-viewport() {
+        AppState.update-gallery-viewport(
+            root.source,
+            max(0, -gallery-scroll.viewport-y / 1px),
+            max(1, gallery-scroll.height / 1px),
+            max(1, gallery-scroll.width / 1px),
+            root.layout-mode,
+            max(1, root.card-width / 1px),
+            0
+        );
     }
 }

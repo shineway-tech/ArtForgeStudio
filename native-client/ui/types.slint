@@ -37,6 +37,30 @@ export struct AssetGroup {
     items: [AssetItem],
 }
 
+// Geometry-only rows keep the large gallery layout in Rust while Slint only
+// instantiates the cards that intersect the viewport and its overscan area.
+export struct GalleryPlacement {
+    item-index: int,
+    x: float,
+    y: float,
+    width: float,
+    gap: float,
+    masonry: bool,
+}
+
+export struct GalleryHeader {
+    title: string,
+    y: float,
+}
+
+export struct GalleryLoadingPlacement {
+    sequence-index: int,
+    x: float,
+    y: float,
+    width: float,
+    gap: float,
+}
+
 export struct BrushPoint {
     x: float,
     y: float,
@@ -108,6 +132,9 @@ export struct CatalogModelView {
     price-1k: int,
     price-2k: int,
     price-4k: int,
+    price-standard: string,
+    supports-image-edit: bool,
+    supports-style-analysis: bool,
 }
 
 export struct AccountSession {
@@ -120,6 +147,7 @@ export struct AccountSession {
 }
 
 export struct InvitedUserView {
+    id: string,
     email: string,
     username: string,
     reward-detail: string,

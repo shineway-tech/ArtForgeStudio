@@ -1,10 +1,19 @@
 import { AppState } from "../app-state.slint";
 import { EmptyState } from "empty-state.slint";
 import { GalleryLayoutToggle } from "gallery-layout-toggle.slint";
-import { TimeGroupedGallery } from "time-grouped-gallery.slint";
+import { VirtualizedGallery } from "virtualized-gallery.slint";
 import { AppTheme } from "../theme.slint";
 
 export component GenerationResultPanel {
+    property <string> pagination-key: AppState.asset-type;
+    property <bool> load-more-armed: true;
+    property <length> last-load-bottom: -10000px;
+    property <string> viewport-key: root.pagination-key + ":" + AppState.generation-gallery-layout + ":" + AppState.language + ":" + root.loading-count();
+    changed pagination-key => { root.reset-pagination-latch(); }
+    init => { root.update-viewport(); }
+    changed viewport-key => { root.update-viewport(); }
+    changed width => { root.update-viewport(); }
+    changed height => { root.update-viewport(); }
     Rectangle {
         background: AppTheme.panel;
         border-width: 1px;
@@ -32,12 +41,14 @@ export component GenerationResultPanel {
             height: parent.height - 90px;
             clip: true;
             background: transparent;
-            Flickable {
+            result-scroll := Flickable {
                 width: parent.width;
                 height: parent.height;
                 viewport-width: parent.width;
-                viewport-height: max(self.height, result-gallery.preferred-height);
+                viewport-height: max(self.height, result-gallery.height);
                 interactive: true;
+                changed viewport-y => { root.maybe-load-more(); root.update-viewport(); }
+                changed viewport-height => { root.maybe-load-more(); root.update-viewport(); }
                 Rectangle {
                     width: parent.viewport-width;
                     height: parent.viewport-height;
@@ -46,17 +57,16 @@ export component GenerationResultPanel {
                         width: parent.width;
                         height: max(360px, parent.height);
                     }
-                    result-gallery := TimeGroupedGallery {
+                    result-gallery := VirtualizedGallery {
                         visible: AppState.generations.length > 0 || root.active-generating();
                         y: 0px;
                         width: parent.width;
-                        height: self.preferred-height;
-                        groups: AppState.generation-groups;
-                        card-width: AppState.generation-gallery-layout == "waterfall" ? root.base-thumb-width() : root.item-width();
+                        items: AppState.generations;
+                        placements: AppState.generation-layout-items;
+                        headers: AppState.generation-layout-headers;
+                        loaders: AppState.generation-layout-loaders;
+                        content-height: AppState.generation-layout-height;
                         source: "generation";
-                        loading-count: root.loading-count();
-                        loading-group-title: AppState.en ? "Today" : "今天";
-                        layout-mode: AppState.generation-gallery-layout;
                     }
                 }
             }
@@ -88,5 +98,36 @@ export component GenerationResultPanel {
     }
     function active-generating() -> bool {
         return AppState.generating && AppState.generation-active-category == AppState.asset-type;
+    }
+    function maybe-load-more() {
+        let visible-bottom = -result-scroll.viewport-y + result-scroll.height;
+        let near-end = visible-bottom + 640px >= result-scroll.viewport-height;
+        if !AppState.generation-has-more || !near-end {
+            root.load-more-armed = true;
+            return;
+        }
+        if !root.load-more-armed && visible-bottom >= root.last-load-bottom + 240px {
+            root.load-more-armed = true;
+        }
+        if root.load-more-armed {
+            root.load-more-armed = false;
+            root.last-load-bottom = visible-bottom;
+            AppState.load-more-generations();
+        }
+    }
+    function reset-pagination-latch() {
+        root.load-more-armed = true;
+        root.last-load-bottom = -10000px;
+    }
+    function update-viewport() {
+        AppState.update-gallery-viewport(
+            "generation",
+            max(0, -result-scroll.viewport-y / 1px),
+            max(1, result-scroll.height / 1px),
+            max(1, result-scroll.width / 1px),
+            AppState.generation-gallery-layout,
+            max(1, (AppState.generation-gallery-layout == "waterfall" ? root.base-thumb-width() : root.item-width()) / 1px),
+            root.loading-count()
+        );
     }
 }

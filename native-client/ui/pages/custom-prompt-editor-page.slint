@@ -373,8 +373,14 @@ export component CustomPromptEditorPage {
                             height: 36px;
                             text: AppState.custom-prompt-analyzing
                                 ? (AppState.en ? "Analyzing..." : "分析中...")
-                                : (AppState.en ? "AI style analysis" : "AI 分析风格");
-                            disabled: AppState.custom-prompt-reference-items.length == 0 || AppState.custom-prompt-analyzing;
+                                : (!AppState.style-analysis-available
+                                    ? (AppState.en ? "Style analysis unavailable" : "风格分析不可用")
+                                    : (AppState.en
+                                        ? "AI style analysis · " + AppState.style-analysis-credit-cost + " credits"
+                                        : "AI 分析风格 · " + AppState.style-analysis-credit-cost + " 积分"));
+                            disabled: !AppState.style-analysis-available
+                                || AppState.custom-prompt-reference-items.length == 0
+                                || AppState.custom-prompt-analyzing;
                             clicked => { AppState.analyze-custom-prompt-reference(); }
                         }
                     }

@@ -19,11 +19,21 @@ pub(super) fn restore_json_backup_if_needed(path: &Path) {
 }
 
 pub(super) fn replace_json_file(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let temporary = path.with_extension("json.tmp");
-    fs::write(&temporary, text)?;
+    let (mut temporary_file, temporary) = create_atomic_temporary_file(path)?;
+    if let Err(error) = temporary_file
+        .write_all(text.as_bytes())
+        .and_then(|_| temporary_file.sync_all())
+    {
+        drop(temporary_file);
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    drop(temporary_file);
 
     #[cfg(windows)]
     {
@@ -46,6 +56,7 @@ pub(super) fn replace_json_file(path: &Path, text: &str) -> std::io::Result<()> 
                 let _ = fs::remove_file(&temporary);
                 return Err(error);
             }
+            sync_parent_directory(path)?;
             let _ = fs::remove_file(backup);
             return Ok(());
         }
@@ -55,6 +66,7 @@ pub(super) fn replace_json_file(path: &Path, text: &str) -> std::io::Result<()> 
         let _ = fs::remove_file(&temporary);
         return Err(error);
     }
+    sync_parent_directory(path)?;
     Ok(())
 }
 
@@ -63,14 +75,31 @@ pub(super) fn user_profile_path() -> PathBuf {
 }
 
 pub(super) fn load_user_profile(app: &AppWindow) {
-    let path = user_profile_path();
-    restore_json_backup_if_needed(&path);
-    let Ok(text) = fs::read_to_string(path) else {
-        return;
+    let profile = match load_client_user_profile() {
+        Ok(Some(profile)) => profile,
+        Ok(None) => {
+            let path = user_profile_path();
+            restore_json_backup_if_needed(&path);
+            let Ok(text) = fs::read_to_string(&path) else {
+                return;
+            };
+            let Ok(profile) = serde_json::from_str::<UserProfileData>(&text) else {
+                return;
+            };
+            if persist_client_user_profile_checked(profile.clone()).is_ok() {
+                archive_migrated_json(&path);
+            }
+            profile
+        }
+        Err(error) => {
+            eprintln!("failed to load local user profile: {error}");
+            return;
+        }
     };
-    let Ok(profile) = serde_json::from_str::<UserProfileData>(&text) else {
-        return;
-    };
+    apply_user_profile(app, profile);
+}
+
+fn apply_user_profile(app: &AppWindow, profile: UserProfileData) {
     let state = app.global::<AppState>();
     // Legacy local login and credit values are deliberately not trusted. A backend
     // refresh or an explicit offline choice establishes the runtime session.
@@ -113,6 +142,14 @@ pub(super) fn load_user_profile(app: &AppWindow) {
 }
 
 pub(super) fn save_user_profile(app: &AppWindow) {
+    let _ = persist_client_user_profile_async(user_profile_data(app));
+}
+
+pub(super) fn save_user_profile_checked(app: &AppWindow) -> Result<()> {
+    persist_client_user_profile_checked(user_profile_data(app))
+}
+
+fn user_profile_data(app: &AppWindow) -> UserProfileData {
     let state = app.global::<AppState>();
     let nickname = state.get_nickname().to_string();
     let profile = UserProfileData {
@@ -146,10 +183,7 @@ pub(super) fn save_user_profile(app: &AppWindow) {
             .to_string(),
         },
     };
-    if let Ok(text) = serde_json::to_string_pretty(&profile) {
-        let path = user_profile_path();
-        let _ = replace_json_file(&path, &text);
-    }
+    profile
 }
 
 pub(super) fn normalize_gallery_layout(value: &str) -> &'static str {
@@ -164,19 +198,54 @@ pub(super) fn local_store_path() -> PathBuf {
     app_data_dir().join("local-store.json")
 }
 
-pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
-    let path = local_store_path();
-    restore_json_backup_if_needed(&path);
-    let Ok(text) = fs::read_to_string(path) else {
-        recover_output_assets(app, store);
-        save_local_store(app, &store.borrow());
+fn archive_migrated_json(path: &Path) {
+    if !path.is_file() {
         return;
+    }
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("json");
+    let archived = path.with_extension(format!("migrated.{extension}"));
+    if !archived.exists() {
+        let _ = fs::rename(path, archived);
+    }
+}
+
+pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) -> bool {
+    let data = match load_client_state() {
+        Ok(Some(data)) => data,
+        Ok(None) => {
+            let path = local_store_path();
+            restore_json_backup_if_needed(&path);
+            let Ok(text) = fs::read_to_string(&path) else {
+                recover_output_assets(app, store);
+                let _ = save_local_store_checked(app, &store.borrow());
+                return false;
+            };
+            let Ok(data) = serde_json::from_str::<LocalStoreData>(&text) else {
+                recover_output_assets(app, store);
+                let _ = save_local_store_checked(app, &store.borrow());
+                return false;
+            };
+            if persist_client_state_checked(data.clone()).is_ok() {
+                archive_migrated_json(&path);
+            }
+            data
+        }
+        Err(error) => {
+            eprintln!("failed to load local client state: {error}");
+            return false;
+        }
     };
-    let Ok(data) = serde_json::from_str::<LocalStoreData>(&text) else {
-        recover_output_assets(app, store);
-        save_local_store(app, &store.borrow());
-        return;
-    };
+    apply_local_store_data(app, store, data)
+}
+
+fn apply_local_store_data(
+    app: &AppWindow,
+    store: &Rc<RefCell<Store>>,
+    data: LocalStoreData,
+) -> bool {
     let saved_image_model = data.image_model.clone();
     let saved_reasoning_model = data.reasoning_model.clone();
     let migrated_local_store = {
@@ -205,7 +274,28 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
         normalize_canvas_groups(&mut store_mut.canvas_notes);
         let fitted_canvas_groups = fit_groups_to_children(&mut store_mut.canvas_notes);
         store_mut.canvas_links = data.canvas_links;
-        store_mut.deep_prompt_job_id = data.deep_prompt_job_id;
+        store_mut.deep_prompt_jobs_by_owner = data
+            .deep_prompt_jobs_by_owner
+            .into_iter()
+            .filter_map(|(owner_user_id, job_id)| {
+                let owner_user_id = owner_user_id.trim().to_string();
+                let job_id = job_id.trim().to_string();
+                (!owner_user_id.is_empty() && !job_id.is_empty())
+                    .then_some((owner_user_id, job_id))
+            })
+            .collect();
+        store_mut.deep_prompt_pending_requests_by_owner = data
+            .deep_prompt_pending_requests_by_owner
+            .into_iter()
+            .filter_map(|(owner_user_id, request)| {
+                let owner_user_id = owner_user_id.trim().to_string();
+                let valid = !owner_user_id.is_empty()
+                    && !request.client_request_id.trim().is_empty()
+                    && !request.prompt.trim().is_empty();
+                valid.then_some((owner_user_id, request))
+            })
+            .collect();
+        store_mut.legacy_deep_prompt_job_id = data.deep_prompt_job_id.trim().to_string();
         store_mut.deep_prompt_bindings = data.deep_prompt_bindings;
         store_mut.contact_popup_dismissed = data.contact_popup_dismissed;
         let original_prompt_times = store_mut.custom_prompt_times.clone();
@@ -246,6 +336,7 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) {
     if migrated_local_store {
         save_local_store(app, &store.borrow());
     }
+    true
 }
 
 pub(super) fn normalize_reserved_prompt_drafts(drafts: &mut PromptDrafts) -> bool {
@@ -596,9 +687,6 @@ pub(super) fn recover_output_assets(app: &AppWindow, store: &Rc<RefCell<Store>>)
 
     let mut recovered = Vec::new();
     for path in paths {
-        let Ok(image) = load_image(&path) else {
-            continue;
-        };
         let (width, height) = image::image_dimensions(&path)
             .map(|(w, h)| (w as i32, h as i32))
             .unwrap_or((0, 0));
@@ -618,7 +706,6 @@ pub(super) fn recover_output_assets(app: &AppWindow, store: &Rc<RefCell<Store>>)
             origin: "local_recovery".to_string(),
             width,
             height,
-            image,
             source_path: path.display().to_string(),
             reference_paths: vec![],
             cutout_done: false,
@@ -653,8 +740,17 @@ pub(super) fn recovered_asset_title(path: &Path) -> String {
 }
 
 pub(super) fn save_local_store(app: &AppWindow, store: &Store) {
+    let data = local_store_data(app, store);
+    let _ = persist_client_state_async(data);
+}
+
+pub(super) fn save_local_store_checked(app: &AppWindow, store: &Store) -> Result<()> {
+    persist_client_state_checked(local_store_data(app, store))
+}
+
+fn local_store_data(app: &AppWindow, store: &Store) -> LocalStoreData {
     let state = app.global::<AppState>();
-    let data = LocalStoreData {
+    LocalStoreData {
         generations: store.generations.iter().map(stored_asset_from).collect(),
         assets: store.assets.iter().map(stored_asset_from).collect(),
         notifications: store.notifications.clone(),
@@ -668,13 +764,256 @@ pub(super) fn save_local_store(app: &AppWindow, store: &Store) {
         custom_prompt_profiles: store.custom_prompt_profiles.clone(),
         canvas_notes: store.canvas_notes.clone(),
         canvas_links: store.canvas_links.clone(),
-        deep_prompt_job_id: store.deep_prompt_job_id.clone(),
+        deep_prompt_job_id: store.legacy_deep_prompt_job_id.clone(),
+        deep_prompt_jobs_by_owner: store.deep_prompt_jobs_by_owner.clone(),
+        deep_prompt_pending_requests_by_owner: store
+            .deep_prompt_pending_requests_by_owner
+            .clone(),
         deep_prompt_bindings: store.deep_prompt_bindings.clone(),
         contact_popup_dismissed: store.contact_popup_dismissed,
-    };
-    if let Ok(text) = serde_json::to_string_pretty(&data) {
-        let path = local_store_path();
-        let _ = replace_json_file(&path, &text);
+    }
+}
+
+pub(super) fn persist_generated_asset_checked(
+    app: &AppWindow,
+    store: &mut Store,
+    item: AssetData,
+    notification: NotificationData,
+    include_in_generations: bool,
+    reveal_prompt: Option<&str>,
+) -> Result<()> {
+    persist_generated_asset_with(
+        store,
+        item,
+        notification,
+        include_in_generations,
+        reveal_prompt,
+        |store| save_local_store_checked(app, store),
+    )
+}
+
+fn persist_generated_asset_with<F>(
+    store: &mut Store,
+    item: AssetData,
+    notification: NotificationData,
+    include_in_generations: bool,
+    reveal_prompt: Option<&str>,
+    persist: F,
+) -> Result<()>
+where
+    F: FnOnce(&Store) -> Result<()>,
+{
+    let item_id = item.id.clone();
+    let notification_id = notification.id.clone();
+    let revealed_prompt = reveal_prompt
+        .map(str::trim)
+        .filter(|prompt| !prompt.is_empty())
+        .map(str::to_string);
+    let restore_dismissed_prompt = revealed_prompt
+        .as_ref()
+        .is_some_and(|prompt| store.dismissed_prompt_history.contains(prompt));
+
+    if let Some(prompt) = revealed_prompt.as_deref() {
+        reveal_prompt_history_entry(store, prompt);
+    }
+    store.assets.insert(0, item.clone());
+    if include_in_generations {
+        store.generations.insert(0, item);
+    }
+    store.notifications.insert(0, notification);
+
+    if let Err(error) = persist(store) {
+        remove_front_asset_if_matches(&mut store.assets, &item_id);
+        if include_in_generations {
+            remove_front_asset_if_matches(&mut store.generations, &item_id);
+        }
+        if store
+            .notifications
+            .first()
+            .is_some_and(|item| item.id == notification_id)
+        {
+            store.notifications.remove(0);
+        }
+        if restore_dismissed_prompt {
+            if let Some(prompt) = revealed_prompt {
+                store.dismissed_prompt_history.insert(prompt);
+            }
+        }
+        return Err(error);
+    }
+
+    Ok(())
+}
+
+fn remove_front_asset_if_matches(items: &mut Vec<AssetData>, expected_id: &str) {
+    if items
+        .first()
+        .is_some_and(|item| item.id == expected_id)
+    {
+        items.remove(0);
+    }
+}
+
+#[cfg(test)]
+mod generated_asset_persistence_tests {
+    use super::*;
+
+    fn asset(id: &str, prompt: &str) -> AssetData {
+        AssetData {
+            id: id.to_string(),
+            conversation_id: "conversation".to_string(),
+            title: "generated".to_string(),
+            category: "other".to_string(),
+            kind: "game".to_string(),
+            time: "now".to_string(),
+            prompt: prompt.to_string(),
+            ratio: "1:1".to_string(),
+            quality: "1K".to_string(),
+            model: "test".to_string(),
+            origin: "test".to_string(),
+            width: 1,
+            height: 1,
+            source_path: "/tmp/generated.png".to_string(),
+            reference_paths: vec![],
+            cutout_done: false,
+            remove_black_done: false,
+            upscale_done: false,
+            is_new: false,
+        }
+    }
+
+    fn notification(id: &str) -> NotificationData {
+        NotificationData {
+            id: id.to_string(),
+            title: "complete".to_string(),
+            model: "test".to_string(),
+            time: "now".to_string(),
+            reason: String::new(),
+            success: true,
+            read: false,
+        }
+    }
+
+    #[test]
+    fn failed_checked_save_rolls_back_asset_notification_generation_and_prompt_reveal() {
+        let mut store = Store::default();
+        store.dismissed_prompt_history.insert("paid prompt".to_string());
+
+        let result = persist_generated_asset_with(
+            &mut store,
+            asset("asset-1", "paid prompt"),
+            notification("notification-1"),
+            true,
+            Some("paid prompt"),
+            |pending| {
+                assert_eq!(pending.assets.len(), 1);
+                assert_eq!(pending.generations.len(), 1);
+                assert_eq!(pending.notifications.len(), 1);
+                assert!(!pending.dismissed_prompt_history.contains("paid prompt"));
+                Err(anyhow::anyhow!("disk full"))
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(store.assets.is_empty());
+        assert!(store.generations.is_empty());
+        assert!(store.notifications.is_empty());
+        assert!(store.dismissed_prompt_history.contains("paid prompt"));
+    }
+
+    #[test]
+    fn successful_checked_save_keeps_an_asset_only_delivery_once() {
+        let mut store = Store::default();
+
+        persist_generated_asset_with(
+            &mut store,
+            asset("asset-1", "tool result"),
+            notification("notification-1"),
+            false,
+            None,
+            |_| Ok(()),
+        )
+        .unwrap();
+
+        assert_eq!(store.assets.len(), 1);
+        assert!(store.generations.is_empty());
+        assert_eq!(store.notifications.len(), 1);
+    }
+
+    #[test]
+    fn every_remote_generation_result_uses_checked_asset_persistence_before_ack() {
+        let controller = include_str!("../generation/controller.rs");
+        let generation_poll = include_str!("../generation/poll.rs");
+        let cutout = include_str!("../callbacks/image_cutout.rs");
+        let enhancement = include_str!("../callbacks/image_enhancement.rs");
+        let toolbox = include_str!("../callbacks/toolbox.rs");
+
+        let ordinary = controller
+            .split("pub(super) fn add_stream_success_item")
+            .nth(1)
+            .and_then(|value| value.split("pub(super) fn add_stream_failure_item").next())
+            .unwrap();
+        let cutout_save = cutout
+            .split("fn save_image_cutout_asset")
+            .nth(1)
+            .and_then(|value| value.split("#[cfg(test)]").next())
+            .unwrap();
+        let enhancement_save = enhancement
+            .split("fn save_image_enhancement_asset")
+            .nth(1)
+            .unwrap();
+        let watermark_save = toolbox
+            .split("fn save_watermark_asset")
+            .nth(1)
+            .and_then(|value| value.split("fn start_image_colorization").next())
+            .unwrap();
+        let colorization_save = toolbox
+            .split("fn save_image_colorization_asset")
+            .nth(1)
+            .and_then(|value| value.split("#[cfg(test)]").next())
+            .unwrap();
+
+        for save in [ordinary, enhancement_save, watermark_save, colorization_save] {
+            assert!(save.contains("persist_generated_asset_checked("));
+            assert!(!save.contains("save_local_store(app"));
+        }
+        assert!(cutout_save.contains("save_local_store_checked(app, &store)"));
+        assert!(!cutout_save.contains("save_local_store(app"));
+        assert!(cutout_save.contains("store.assets.remove(0)"));
+        assert!(cutout_save.contains("store.notifications.remove(0)"));
+
+        for callback in [cutout, enhancement, toolbox] {
+            assert!(callback.contains("pending_delivery_saved("));
+            assert!(callback.contains("acknowledge_delivery_after_local_save("));
+        }
+
+        for (flow, save_call) in [
+            (generation_poll, "add_stream_success_item("),
+            (cutout, "save_image_cutout_asset("),
+            (enhancement, "save_image_enhancement_asset("),
+        ] {
+            assert!(flow.find(save_call).unwrap() < flow.find("pending_delivery_saved(").unwrap());
+        }
+        let watermark_flow = toolbox
+            .split("fn poll_watermark_outcomes")
+            .nth(1)
+            .and_then(|value| value.split("fn save_watermark_asset").next())
+            .unwrap();
+        let colorization_flow = toolbox
+            .split("fn poll_image_colorization_outcomes")
+            .nth(1)
+            .and_then(|value| value.split("fn save_image_colorization_asset").next())
+            .unwrap();
+        assert!(
+            watermark_flow.find("save_watermark_asset(").unwrap()
+                < watermark_flow.find("pending_delivery_saved(").unwrap(),
+        );
+        assert!(
+            colorization_flow
+                .find("save_image_colorization_asset(")
+                .unwrap()
+                < colorization_flow.find("pending_delivery_saved(").unwrap(),
+        );
     }
 }
 
@@ -702,11 +1041,11 @@ pub(super) fn stored_asset_from(asset: &AssetData) -> StoredAssetData {
 }
 
 pub(super) fn asset_from_stored(asset: StoredAssetData) -> Option<AssetData> {
-    let image = if asset.source_path == "failed" || asset.source_path.trim().is_empty() {
-        Image::default()
-    } else {
-        load_image(&PathBuf::from(&asset.source_path)).ok()?
-    };
+    if asset.source_path != "failed"
+        && (asset.source_path.trim().is_empty() || !Path::new(&asset.source_path).is_file())
+    {
+        return None;
+    }
     Some(AssetData {
         id: asset.id,
         conversation_id: asset.conversation_id,
@@ -721,7 +1060,6 @@ pub(super) fn asset_from_stored(asset: StoredAssetData) -> Option<AssetData> {
         origin: asset.origin,
         width: asset.width,
         height: asset.height,
-        image,
         source_path: asset.source_path,
         reference_paths: asset.reference_paths,
         cutout_done: asset.cutout_done,

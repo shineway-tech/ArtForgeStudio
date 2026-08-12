@@ -71,7 +71,9 @@ fn persist_canvas_clipboard_image(
     let rgba = image::RgbaImage::from_raw(width, height, bytes)?;
     let encoded = encode_png_rgba(&rgba, width, height).ok()?;
     let upload_dir = app_data_dir().join("canvas").join("uploads");
-    fs::create_dir_all(&upload_dir).ok()?;
+    if !ensure_managed_subdirectory(&upload_dir) {
+        return None;
+    }
     let destination = upload_dir.join(format!("pasted-{}.png", Uuid::new_v4()));
     atomic_write_file(&destination, &encoded).ok()?;
     Some(PreparedCanvasImage {
@@ -85,8 +87,8 @@ fn pick_canvas_image(app: &AppWindow, node_id: &str) -> Option<PreparedCanvasIma
     let source_path = rfd::FileDialog::new()
         .add_filter("Images", crate::image_formats::picker_image_extensions())
         .pick_file()?;
-    let source_image = match load_image(&source_path) {
-        Ok(image) => image,
+    let (source_width, source_height) = match inspect_image_dimensions(&source_path) {
+        Ok(size) => size,
         Err(_) => {
             let state = app.global::<AppState>();
             state.set_generation_status(
@@ -100,7 +102,6 @@ fn pick_canvas_image(app: &AppWindow, node_id: &str) -> Option<PreparedCanvasIma
             return None;
         }
     };
-    let source_size = source_image.size();
     let bytes = match fs::read(&source_path) {
         Ok(bytes) => bytes,
         Err(_) => {
@@ -117,7 +118,7 @@ fn pick_canvas_image(app: &AppWindow, node_id: &str) -> Option<PreparedCanvasIma
         }
     };
     let upload_dir = app_data_dir().join("canvas").join("uploads");
-    if fs::create_dir_all(&upload_dir).is_err() {
+    if !ensure_managed_subdirectory(&upload_dir) {
         return None;
     }
     let destination = upload_dir.join(format!(
@@ -131,8 +132,8 @@ fn pick_canvas_image(app: &AppWindow, node_id: &str) -> Option<PreparedCanvasIma
     }
     Some(PreparedCanvasImage {
         path: destination.display().to_string(),
-        width: source_size.width as f32,
-        height: source_size.height as f32,
+        width: source_width as f32,
+        height: source_height as f32,
     })
 }
 
@@ -231,8 +232,7 @@ fn sync_canvas_selection_metrics(app: &AppWindow, store: &Store) {
 }
 
 fn sync_canvas_selection(app: &AppWindow, store: &Store) {
-    sync_canvas_selection_metrics(app, store);
-    push_canvas_notes(app, store);
+    sync_canvas_selection_rows(app, store);
 }
 
 fn sync_canvas_selection_rows(app: &AppWindow, store: &Store) {
@@ -497,7 +497,6 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<
             history.borrow_mut().record(canvas_snapshot(&store_mut));
             store_mut.canvas_notes[index].font_size = next_font_size;
             persist_canvas(&app, &store_mut);
-            push_canvas_notes(&app, &store_mut);
             sync_history_state(&app, &history.borrow());
         });
     }

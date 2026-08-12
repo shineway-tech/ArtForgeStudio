@@ -1,0 +1,59 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { AssetItem, GalleryHeader, GalleryLoadingPlacement, GalleryPlacement } from "../types.slint";
+import { GenerationLoadingCard } from "generation-loading-card.slint";
+import { ThumbnailCard } from "thumbnail-card.slint";
+
+// The parent Flickable owns the full scroll extent. This component receives
+// only the viewport window, so its repeated card count stays bounded even when
+// the local library contains thousands of images.
+export component VirtualizedGallery {
+    in property <[AssetItem]> items;
+    in property <[GalleryPlacement]> placements;
+    in property <[GalleryHeader]> headers;
+    in property <[GalleryLoadingPlacement]> loaders: [];
+    in property <float> content-height: 1;
+    in property <string> source: "asset";
+    in-out property <int> loading-bounce-step: 0;
+    height: max(1px, root.content-height * 1px);
+
+    Timer {
+        interval: AppState.reduced-motion ? 200ms : 50ms;
+        running: root.loaders.length > 0;
+        triggered => {
+            root.loading-bounce-step = Math.mod(root.loading-bounce-step + 1, 40);
+        }
+    }
+
+    for header in root.headers: Text {
+        x: 0px;
+        y: header.y * 1px;
+        width: parent.width;
+        height: 32px;
+        text: header.title;
+        color: AppTheme.text;
+        font-size: 20px;
+        font-weight: 600;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    for loader in root.loaders: GenerationLoadingCard {
+        x: loader.x * 1px;
+        y: loader.y * 1px;
+        card-width: loader.width * 1px;
+        card-gap: loader.gap * 1px;
+        sequence-index: loader.sequence-index;
+        bounce-step: root.loading-bounce-step;
+    }
+
+    for placement in root.placements: ThumbnailCard {
+        x: placement.x * 1px;
+        y: placement.y * 1px;
+        item: root.items[placement.item-index];
+        card-width: placement.width * 1px;
+        card-gap: placement.gap * 1px;
+        source: root.source;
+        masonry: placement.masonry;
+    }
+}

@@ -3,6 +3,7 @@ import { PillButton } from "../components/pill-button.slint";
 import { AppTheme } from "../theme.slint";
 
 export component ImageEditorPage inherits Rectangle {
+    property <[string]> edit-qualities: ["1K", "2K", "4K"];
     property <[color]> brush-palette: [
         #ff4d4f,
         #ff9f43,
@@ -351,11 +352,54 @@ export component ImageEditorPage inherits Rectangle {
                 vertical-alignment: center;
             }
 
+            Text {
+                x: 20px;
+                y: 54px;
+                width: 48px;
+                height: 28px;
+                text: AppState.en ? "Output" : "输出";
+                color: AppTheme.muted;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+
+            for quality[index] in root.edit-qualities: Rectangle {
+                property <bool> available: quality == "4K"
+                    ? AppState.image-editor-price-4k > 0
+                    : (quality == "2K" ? AppState.image-editor-price-2k > 0 : AppState.image-editor-price-1k > 0);
+                x: 72px + index * 70px;
+                y: 54px;
+                width: 62px;
+                height: 28px;
+                background: AppState.image-editor-quality == quality ? AppTheme.accent.with-alpha(0.14) : AppTheme.panel;
+                border-radius: 7px;
+                border-width: 1px;
+                border-color: AppState.image-editor-quality == quality ? AppTheme.accent : AppTheme.border;
+                opacity: self.available ? 1 : 0.42;
+
+                Text {
+                    width: parent.width;
+                    height: parent.height;
+                    text: quality;
+                    color: AppState.image-editor-quality == quality ? AppTheme.accent : AppTheme.text;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    enabled: parent.available;
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => { AppState.image-editor-quality = quality; }
+                }
+            }
+
             prompt-frame := Rectangle {
                 x: 20px;
-                y: 56px;
+                y: 94px;
                 width: parent.width - 40px;
-                height: parent.height - 190px;
+                height: parent.height - 228px;
                 background: AppTheme.panel;
                 border-radius: 10px;
                 border-width: 1px;
@@ -403,6 +447,23 @@ export component ImageEditorPage inherits Rectangle {
                 vertical-alignment: center;
             }
 
+            Text {
+                x: 20px;
+                y: parent.height - 154px;
+                width: parent.width - 40px;
+                height: 24px;
+                text: AppState.image-editor-model-name == ""
+                    ? (AppState.en ? "No image-edit model available" : "暂无可用的图片编辑模型")
+                    : (AppState.en
+                        ? AppState.image-editor-model-name + " · " + AppState.image-editor-quality + " · Estimated " + AppState.image-editor-estimated-credit-cost + " credits"
+                        : AppState.image-editor-model-name + " · " + AppState.image-editor-quality + " · 预计 " + AppState.image-editor-estimated-credit-cost + " 积分");
+                color: AppTheme.weak;
+                font-size: 11px;
+                font-weight: 400;
+                wrap: word-wrap;
+                vertical-alignment: center;
+            }
+
             submit-button := Rectangle {
                 x: 20px;
                 y: parent.height - 72px;
@@ -424,7 +485,7 @@ export component ImageEditorPage inherits Rectangle {
                     vertical-alignment: center;
                 }
                 submit-touch := TouchArea {
-                    enabled: !AppState.image-editor-generating;
+                    enabled: !AppState.image-editor-generating && AppState.image-editor-model != "";
                     width: parent.width;
                     height: parent.height;
                     mouse-cursor: pointer;

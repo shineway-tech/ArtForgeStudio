@@ -1,3 +1,5 @@
+import { AppState } from "../app-state.slint";
+
 export component ProgressSpinner {
     in property <string> label: "";
     in property <int> progress: 0;
@@ -5,7 +7,7 @@ export component ProgressSpinner {
     width: 220px;
     height: 118px;
     Timer {
-        interval: 95ms;
+        interval: AppState.reduced-motion ? 240ms : 95ms;
         running: true;
         triggered => { root.step = Math.mod(root.step + 1, 8); }
     }

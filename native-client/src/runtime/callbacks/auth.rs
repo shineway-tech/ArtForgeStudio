@@ -1,28 +1,45 @@
 use super::*;
 
 struct StartupAuthResult {
+    auth_epoch: u64,
     agreements: std::result::Result<Vec<AgreementItem>, ApiError>,
     refresh: Option<std::result::Result<String, ApiError>>,
     snapshot: Option<std::result::Result<BackendSnapshot, ApiError>>,
 }
 
-type LoginResult = std::result::Result<
-    (
-        LoginResponse,
-        std::result::Result<BackendSnapshot, ApiError>,
-    ),
-    ApiError,
->;
+type LoginResult = std::result::Result<LoginResponse, ApiError>;
 
 enum WechatPollOutcome {
     Pending,
     Scanned(String),
     AgreementRequired(String),
     Failed(String),
-    Completed(
-        LoginResponse,
-        std::result::Result<BackendSnapshot, ApiError>,
-    ),
+    Completed(LoginResponse),
+}
+
+fn begin_auth_operation(context: &AppContext) -> u64 {
+    context
+        .auth_operation_epoch
+        .fetch_add(1, Ordering::SeqCst)
+        .wrapping_add(1)
+}
+
+fn auth_operation_is_current(context: &AppContext, operation_epoch: u64) -> bool {
+    context.auth_operation_epoch.load(Ordering::SeqCst) == operation_epoch
+}
+
+fn invalidate_auth_operations(context: &AppContext) {
+    context.auth_operation_epoch.fetch_add(1, Ordering::SeqCst);
+}
+
+fn install_login_if_current(
+    current: bool,
+    install: impl FnOnce() -> std::result::Result<SessionScope, ApiError>,
+) -> std::result::Result<Option<SessionScope>, ApiError> {
+    if !current {
+        return Ok(None);
+    }
+    install().map(Some)
 }
 
 fn expire_wechat_login(state: &AppState) {
@@ -101,6 +118,7 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         let backend = backend.clone();
+        let context = context.clone();
         state.on_revoke_session(move |session_id| {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -109,27 +127,37 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
             if session_id.trim().is_empty() {
                 return;
             }
+            let Some(session_scope) = current_auth_session_scope(&context) else {
+                app.global::<AppState>()
+                    .set_generation_status("登录状态已变化，请重新登录后操作".into());
+                return;
+            };
             let state = app.global::<AppState>();
+            let previous_sessions = state.get_account_sessions().iter().collect::<Vec<_>>();
+            let revoked_current = previous_sessions
+                .iter()
+                .any(|session| session.id.as_str() == session_id && session.is_current);
             state.set_account_sessions(ModelRc::new(VecModel::from(
-                state
-                    .get_account_sessions()
+                previous_sessions
                     .iter()
+                    .cloned()
                     .filter(|session| session.id.as_str() != session_id)
                     .collect::<Vec<_>>(),
             )));
             let api = AccountApi::new(backend.api.clone());
-            let weak = app.as_weak();
+            let (sender, receiver) = mpsc::channel();
+            let worker_scope = session_scope.clone();
             std::thread::spawn(move || {
-                let result = api.revoke_session(&session_id);
-                let _ = weak.upgrade_in_event_loop(move |app| match result {
-                    Ok(()) => app
-                        .global::<AppState>()
-                        .set_generation_status("设备会话已撤销".into()),
-                    Err(error) => app.global::<AppState>().set_generation_status(
-                        format!("撤销设备失败：{}", error.user_message()).into(),
-                    ),
-                });
+                let _ = sender.send(api.revoke_session_scoped(&session_id, &worker_scope));
             });
+            poll_revoke_session_result(
+                app.as_weak(),
+                context.clone(),
+                session_scope,
+                Rc::new(RefCell::new(Some(receiver))),
+                previous_sessions,
+                revoked_current,
+            );
         });
     }
 
@@ -176,23 +204,21 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
                     version: state.get_auth_privacy_version().to_string(),
                 });
             }
+            let auth_operation_epoch = begin_auth_operation(&context);
             state.set_auth_busy(true);
             state.set_session_state("authenticating".into());
             state.set_auth_error("".into());
             let api = AuthApi::new(backend.api.clone());
-            let account_api = AccountApi::new(backend.api.clone());
             let context = context.clone();
             let (sender, receiver) = mpsc::channel();
             std::thread::spawn(move || {
-                let result = api.login(&email, &code, &acceptances).map(|login| {
-                    let snapshot = account_api.snapshot();
-                    (login, snapshot)
-                });
+                let result = api.login_response(&email, &code, &acceptances);
                 let _ = sender.send(result);
             });
             poll_login_result(
                 app.as_weak(),
                 context,
+                auth_operation_epoch,
                 Rc::new(RefCell::new(Some(receiver))),
             );
         });
@@ -200,6 +226,7 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
+        let context = context.clone();
         state.on_enter_offline(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -208,12 +235,15 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
             if !state.get_offline_available() {
                 return;
             }
+            invalidate_auth_operations(&context);
+            state.set_auth_busy(false);
+            state.set_auth_wechat_busy(false);
             state.set_logged_in(true);
             state.set_offline_mode(true);
             state.set_session_state("offline".into());
             state.set_auth_open(false);
             state.set_auth_error("".into());
-            navigate_to(&app, "assets");
+            navigate_to_with_store(&app, &context.store.borrow(), "assets");
         });
     }
 
@@ -256,6 +286,7 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         let backend = backend.clone();
+        let context = context.clone();
         state.on_accept_current_agreements(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -264,6 +295,10 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
             if state.get_agreement_update_busy() {
                 return;
             }
+            let Some(session_scope) = current_auth_session_scope(&context) else {
+                state.set_agreement_update_message("登录状态已变化，请重新登录后操作".into());
+                return;
+            };
             if state.get_auth_user_terms_required() && !state.get_auth_user_terms_accepted() {
                 state.set_agreement_update_message("请同意用户协议".into());
                 return;
@@ -285,67 +320,304 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
                     version: state.get_auth_privacy_version().to_string(),
                 });
             }
+            let accepted_user_terms_version = state.get_auth_user_terms_version().to_string();
+            let accepted_privacy_version = state.get_auth_privacy_version().to_string();
             state.set_agreement_update_busy(true);
             state.set_agreement_update_message("".into());
             let api = AuthApi::new(backend.api.clone());
-            let weak = app.as_weak();
+            let (sender, receiver) = mpsc::channel();
+            let worker_scope = session_scope.clone();
             std::thread::spawn(move || {
-                let result = api.accept_agreements(&acceptances);
-                let _ = weak.upgrade_in_event_loop(move |app| {
-                    let state = app.global::<AppState>();
-                    state.set_agreement_update_busy(false);
-                    match result {
-                        Ok(()) => {
-                            state.set_accepted_user_terms_version(
-                                state.get_auth_user_terms_version(),
-                            );
-                            state.set_accepted_privacy_version(state.get_auth_privacy_version());
-                            state.set_agreement_update_open(false);
-                            state.set_agreement_update_message("".into());
-                            save_user_profile(&app);
-                        }
-                        Err(error) => {
-                            state.set_agreement_update_message(auth_error_message(&error).into())
-                        }
-                    }
-                });
+                let _ = sender.send(api.accept_agreements_scoped(&acceptances, &worker_scope));
             });
+            poll_agreement_acceptance_result(
+                app.as_weak(),
+                context.clone(),
+                session_scope,
+                Rc::new(RefCell::new(Some(receiver))),
+                accepted_user_terms_version,
+                accepted_privacy_version,
+            );
         });
     }
 
     {
         let app_weak = app.as_weak();
         let backend = backend.clone();
+        let context = context.clone();
         state.on_logout(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            sign_out_locally(&app, false);
-            let api = AuthApi::new(backend.api.clone());
-            let backend = backend.clone();
-            std::thread::spawn(move || {
-                let _ = api.logout(false);
-                let _ = backend.api.session().clear();
+            let logout_scope = current_auth_session_scope(&context);
+            let logout_token = logout_scope.as_ref().and_then(|scope| {
+                backend
+                    .api
+                    .session()
+                    .access()
+                    .filter(|access| access.auth_epoch == scope.auth_epoch)
+                    .map(|access| access.access_token)
             });
+            if let Some(scope) = logout_scope.as_ref() {
+                let _ = backend.api.session().clear_scope(scope);
+            }
+            sign_out_locally(&app, &context, false, None);
+            if let Some(logout_token) = logout_token {
+                let api = AuthApi::new(backend.api.clone());
+                std::thread::spawn(move || {
+                    let _ = api.logout_with_fixed_token(false, &logout_token);
+                });
+            }
         });
     }
 
     {
         let app_weak = app.as_weak();
         let backend = backend.clone();
+        let context = context.clone();
         state.on_logout_all(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            sign_out_locally(&app, false);
-            let api = AuthApi::new(backend.api.clone());
-            let backend = backend.clone();
-            std::thread::spawn(move || {
-                let _ = api.logout(true);
-                let _ = backend.api.session().clear();
+            let logout_scope = current_auth_session_scope(&context);
+            let logout_token = logout_scope.as_ref().and_then(|scope| {
+                backend
+                    .api
+                    .session()
+                    .access()
+                    .filter(|access| access.auth_epoch == scope.auth_epoch)
+                    .map(|access| access.access_token)
             });
+            if let Some(scope) = logout_scope.as_ref() {
+                let _ = backend.api.session().clear_scope(scope);
+            }
+            sign_out_locally(&app, &context, false, None);
+            if let Some(logout_token) = logout_token {
+                let api = AuthApi::new(backend.api.clone());
+                std::thread::spawn(move || {
+                    let _ = api.logout_with_fixed_token(true, &logout_token);
+                });
+            }
         });
     }
+}
+
+fn current_auth_session_scope(context: &AppContext) -> Option<SessionScope> {
+    let owner_user_id = context
+        .current_user_id
+        .lock()
+        .unwrap_or_else(|value| value.into_inner())
+        .clone()
+        .filter(|value| !value.trim().is_empty())?;
+    let session = context.backend.as_ref()?.api.session();
+    let scope = SessionScope {
+        owner_user_id,
+        auth_epoch: session.auth_epoch(),
+    };
+    session.is_scope_current(&scope).then_some(scope)
+}
+
+fn auth_scope_matches_context(context: &AppContext, scope: &SessionScope) -> bool {
+    let current_user_id = context
+        .current_user_id
+        .lock()
+        .unwrap_or_else(|value| value.into_inner())
+        .clone();
+    current_user_id.as_deref() == Some(scope.owner_user_id.as_str())
+        && context
+            .backend
+            .as_ref()
+            .is_some_and(|backend| backend.api.session().is_scope_current(scope))
+}
+
+pub(super) fn terminal_auth_scope_matches_context(
+    context: &AppContext,
+    scope: &SessionScope,
+) -> bool {
+    let current_user_id = context
+        .current_user_id
+        .lock()
+        .unwrap_or_else(|value| value.into_inner())
+        .clone();
+    let Some(backend) = context.backend.as_ref() else {
+        return false;
+    };
+    let session = backend.api.session();
+    let current_epoch = session.auth_epoch();
+    current_user_id.as_deref() == Some(scope.owner_user_id.as_str())
+        && session.access().is_none()
+        && (current_epoch == scope.auth_epoch || current_epoch == scope.auth_epoch.wrapping_add(1))
+}
+
+fn terminal_auth_epoch_matches_context(context: &AppContext, auth_epoch: u64) -> bool {
+    let Some(backend) = context.backend.as_ref() else {
+        return false;
+    };
+    let session = backend.api.session();
+    let current_epoch = session.auth_epoch();
+    session.access().is_none()
+        && (current_epoch == auth_epoch || current_epoch == auth_epoch.wrapping_add(1))
+}
+
+fn captured_session_error(error: &ApiError) -> bool {
+    matches!(error, ApiError::AuthenticationRequired) || error.is_terminal_session_error()
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScopedAuthOutcome {
+    Current,
+    CapturedTerminal,
+    Stale,
+}
+
+#[cfg(test)]
+fn classify_scoped_auth_guards(
+    captured_session_error: bool,
+    exact_scope_matches: bool,
+    terminal_scope_matches: bool,
+) -> ScopedAuthOutcome {
+    if captured_session_error && terminal_scope_matches {
+        ScopedAuthOutcome::CapturedTerminal
+    } else if exact_scope_matches {
+        ScopedAuthOutcome::Current
+    } else {
+        ScopedAuthOutcome::Stale
+    }
+}
+
+fn scoped_auth_poll_is_current<T>(
+    app_weak: &Weak<AppWindow>,
+    context: &AppContext,
+    scope: &SessionScope,
+    receiver: &Rc<RefCell<Option<mpsc::Receiver<T>>>>,
+) -> bool {
+    if auth_scope_matches_context(context, scope) {
+        return true;
+    }
+    receiver.borrow_mut().take();
+    if terminal_auth_scope_matches_context(context, scope) {
+        if let Some(app) = app_weak.upgrade() {
+            sign_out_locally(&app, context, true, Some(scope.auth_epoch));
+        }
+    }
+    false
+}
+
+fn poll_scoped_auth_receiver<T>(
+    receiver: &Rc<RefCell<Option<mpsc::Receiver<std::result::Result<T, ApiError>>>>>,
+    disconnected_message: &str,
+) -> Option<std::result::Result<T, ApiError>> {
+    let mut slot = receiver.borrow_mut();
+    let rx = slot.as_ref()?;
+    match rx.try_recv() {
+        Ok(result) => {
+            slot.take();
+            Some(result)
+        }
+        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Disconnected) => {
+            slot.take();
+            Some(Err(ApiError::LocalState {
+                message: disconnected_message.to_string(),
+            }))
+        }
+    }
+}
+
+fn poll_revoke_session_result(
+    app_weak: Weak<AppWindow>,
+    context: AppContext,
+    session_scope: SessionScope,
+    receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<(), ApiError>>>>>,
+    previous_sessions: Vec<AccountSession>,
+    revoked_current: bool,
+) {
+    slint::Timer::single_shot(Duration::from_millis(80), move || {
+        if !scoped_auth_poll_is_current(&app_weak, &context, &session_scope, &receiver) {
+            return;
+        }
+        let result = poll_scoped_auth_receiver(&receiver, "设备会话撤销请求已中断");
+        let Some(result) = result else {
+            poll_revoke_session_result(
+                app_weak,
+                context,
+                session_scope,
+                receiver,
+                previous_sessions,
+                revoked_current,
+            );
+            return;
+        };
+        if !scoped_auth_poll_is_current(&app_weak, &context, &session_scope, &receiver) {
+            return;
+        }
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
+        match result {
+            Ok(()) if revoked_current => {
+                sign_out_locally(&app, &context, true, Some(session_scope.auth_epoch));
+            }
+            Ok(()) => app
+                .global::<AppState>()
+                .set_generation_status("设备会话已撤销".into()),
+            Err(error) => {
+                let state = app.global::<AppState>();
+                state.set_account_sessions(ModelRc::new(VecModel::from(previous_sessions)));
+                state.set_generation_status(
+                    format!("撤销设备失败：{}", error.user_message()).into(),
+                );
+            }
+        }
+    });
+}
+
+fn poll_agreement_acceptance_result(
+    app_weak: Weak<AppWindow>,
+    context: AppContext,
+    session_scope: SessionScope,
+    receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<(), ApiError>>>>>,
+    accepted_user_terms_version: String,
+    accepted_privacy_version: String,
+) {
+    slint::Timer::single_shot(Duration::from_millis(80), move || {
+        if !scoped_auth_poll_is_current(&app_weak, &context, &session_scope, &receiver) {
+            return;
+        }
+        let result = poll_scoped_auth_receiver(&receiver, "协议确认请求已中断");
+        let Some(result) = result else {
+            poll_agreement_acceptance_result(
+                app_weak,
+                context,
+                session_scope,
+                receiver,
+                accepted_user_terms_version,
+                accepted_privacy_version,
+            );
+            return;
+        };
+        if !scoped_auth_poll_is_current(&app_weak, &context, &session_scope, &receiver) {
+            return;
+        }
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
+        let state = app.global::<AppState>();
+        state.set_agreement_update_busy(false);
+        match result {
+            Ok(()) => {
+                state.set_accepted_user_terms_version(accepted_user_terms_version.into());
+                state.set_accepted_privacy_version(accepted_privacy_version.into());
+                state.set_agreement_update_open(false);
+                state.set_agreement_update_message("".into());
+                save_user_profile(&app);
+            }
+            Err(error) => {
+                state.set_agreement_update_message(auth_error_message(&error).into());
+            }
+        }
+    });
 }
 
 pub(super) fn initialize_auth(app: &AppWindow, context: AppContext) {
@@ -361,20 +633,22 @@ pub(super) fn initialize_auth(app: &AppWindow, context: AppContext) {
     state.set_auth_error("正在连接服务端...".into());
     let api = AuthApi::new(backend.api.clone());
     let account_api = AccountApi::new(backend.api.clone());
+    let auth_epoch = backend.api.session().auth_epoch();
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let agreements = api.list_agreements();
         let refresh = match backend.api.session().has_refresh_token() {
-            Ok(true) => Some(api.refresh()),
+            Ok(true) => Some(api.refresh_epoch(auth_epoch)),
             Ok(false) => None,
             Err(error) => Some(Err(error)),
         };
         let snapshot = if matches!(refresh, Some(Ok(_))) {
-            Some(account_api.snapshot())
+            Some(account_api.snapshot_epoch(auth_epoch))
         } else {
             None
         };
         let result = StartupAuthResult {
+            auth_epoch,
             agreements,
             refresh,
             snapshot,
@@ -384,6 +658,7 @@ pub(super) fn initialize_auth(app: &AppWindow, context: AppContext) {
     poll_startup_auth_result(
         app.as_weak(),
         context.clone(),
+        auth_epoch,
         Rc::new(RefCell::new(Some(receiver))),
     );
     schedule_network_recovery(app.as_weak(), context);
@@ -413,20 +688,22 @@ fn try_network_recovery(app: &AppWindow, context: AppContext) {
     let Ok(true) = backend.api.session().has_refresh_token() else {
         return;
     };
+    let auth_epoch = backend.api.session().auth_epoch();
     state.set_auth_busy(true);
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let auth = AuthApi::new(backend.api.clone());
-        let result = auth.refresh().and_then(|_| {
-            let snapshot = AccountApi::new(backend.api.clone()).snapshot()?;
+        let result = auth.refresh_epoch(auth_epoch).and_then(|_| {
+            let snapshot = AccountApi::new(backend.api.clone()).snapshot_epoch(auth_epoch)?;
             let agreements = auth.list_agreements()?;
             Ok((snapshot, agreements))
         });
-        let _ = sender.send(result);
+        let _ = sender.send((auth_epoch, result));
     });
     poll_network_recovery(
         app.as_weak(),
         context,
+        auth_epoch,
         Rc::new(RefCell::new(Some(receiver))),
     );
 }
@@ -434,25 +711,60 @@ fn try_network_recovery(app: &AppWindow, context: AppContext) {
 fn poll_network_recovery(
     app_weak: Weak<AppWindow>,
     context: AppContext,
+    expected_auth_epoch: u64,
     receiver: Rc<
         RefCell<
             Option<
-                mpsc::Receiver<
+                mpsc::Receiver<(
+                    u64,
                     std::result::Result<(BackendSnapshot, Vec<AgreementItem>), ApiError>,
-                >,
+                )>,
             >,
         >,
     >,
 ) {
     slint::Timer::single_shot(Duration::from_millis(100), move || {
-        let result = poll_receiver(&receiver);
-        let Some(result) = result else {
-            poll_network_recovery(app_weak, context, receiver);
-            return;
+        let (auth_epoch, result) = match poll_receiver(&receiver) {
+            ReceiverPoll::Pending => {
+                poll_network_recovery(app_weak, context, expected_auth_epoch, receiver);
+                return;
+            }
+            ReceiverPoll::Ready(result) => result,
+            ReceiverPoll::Disconnected => {
+                if let Some(app) = app_weak.upgrade() {
+                    let state = app.global::<AppState>();
+                    let epoch_matches = context.backend.as_ref().is_some_and(|backend| {
+                        backend.api.session().auth_epoch() == expected_auth_epoch
+                    });
+                    if epoch_matches
+                        && matches!(state.get_session_state().as_str(), "offline" | "signed_out")
+                    {
+                        state.set_auth_busy(false);
+                        state.set_session_state("offline".into());
+                        state
+                            .set_generation_status("网络恢复任务意外中断，将稍后自动重试".into());
+                    }
+                }
+                return;
+            }
         };
         let Some(app) = app_weak.upgrade() else {
             return;
         };
+        let captured_session_ended = result.as_ref().is_err_and(captured_session_error);
+        let terminal_context_matches =
+            terminal_auth_epoch_matches_context(&context, auth_epoch);
+        let outcome_is_current = if captured_session_ended {
+            terminal_context_matches
+        } else {
+            context
+                .backend
+                .as_ref()
+                .is_some_and(|backend| backend.api.session().auth_epoch() == auth_epoch)
+        };
+        if !outcome_is_current {
+            return;
+        }
         let state = app.global::<AppState>();
         state.set_auth_busy(false);
         match result {
@@ -467,11 +779,14 @@ fn poll_network_recovery(
                 state.set_generation_status("网络已恢复，账号数据已同步".into());
                 require_updated_agreements(&app);
                 recover_pending_generations(&app, context.clone());
+                recover_pending_prompt_tasks(&app, context.clone());
                 recover_prompt_optimization(&app, context.clone());
                 recover_pending_orders(&app, context.clone());
                 refresh_server_notifications(&app, context);
             }
-            Err(error) if error.is_terminal_session_error() => sign_out_locally(&app, true),
+            Err(error) if captured_session_error(&error) && terminal_context_matches => {
+                sign_out_locally(&app, &context, true, Some(auth_epoch))
+            }
             Err(error) if error.is_client_update_required() => {
                 state.set_session_state("update_required".into());
                 state.set_auth_open(true);
@@ -509,6 +824,7 @@ pub(super) fn begin_wechat_login(
     if state.get_auth_wechat_busy() || state.get_auth_busy() {
         return;
     }
+    let auth_operation_epoch = begin_auth_operation(&context);
     let acceptances = selected_login_agreement_acceptances(&state);
     state.set_auth_wechat_busy(true);
     state.set_auth_wechat_qr_ready(false);
@@ -525,6 +841,7 @@ pub(super) fn begin_wechat_login(
     poll_wechat_start_result(
         app.as_weak(),
         context,
+        auth_operation_epoch,
         Rc::new(RefCell::new(Some(receiver))),
     );
 }
@@ -532,24 +849,46 @@ pub(super) fn begin_wechat_login(
 fn poll_wechat_start_result(
     app_weak: Weak<AppWindow>,
     context: AppContext,
+    auth_operation_epoch: u64,
     receiver: Rc<
         RefCell<Option<mpsc::Receiver<std::result::Result<WechatLoginStartResponse, ApiError>>>>,
     >,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
-        let result = poll_receiver(&receiver);
-        let Some(result) = result else {
-            poll_wechat_start_result(app_weak, context, receiver);
-            return;
+        let result = match poll_receiver(&receiver) {
+            ReceiverPoll::Pending => {
+                poll_wechat_start_result(app_weak, context, auth_operation_epoch, receiver);
+                return;
+            }
+            ReceiverPoll::Ready(result) => result,
+            ReceiverPoll::Disconnected => {
+                if let Some(app) = app_weak.upgrade() {
+                    let state = app.global::<AppState>();
+                    if auth_operation_is_current(&context, auth_operation_epoch)
+                        && state.get_auth_open()
+                        && state.get_auth_method().as_str() == "wechat"
+                    {
+                        state.set_auth_wechat_busy(false);
+                        state.set_auth_wechat_qr_ready(false);
+                        state
+                            .set_auth_wechat_status("微信登录任务已中断，请刷新二维码重试".into());
+                        state.set_auth_error("微信登录任务已中断，请刷新二维码重试".into());
+                    }
+                }
+                return;
+            }
         };
         let Some(app) = app_weak.upgrade() else {
             return;
         };
         let state = app.global::<AppState>();
-        state.set_auth_wechat_busy(false);
-        if !state.get_auth_open() || state.get_auth_method().as_str() != "wechat" {
+        if !auth_operation_is_current(&context, auth_operation_epoch)
+            || !state.get_auth_open()
+            || state.get_auth_method().as_str() != "wechat"
+        {
             return;
         }
+        state.set_auth_wechat_busy(false);
         match result {
             Ok(response) => match if response.qr_image_base64.trim().is_empty() {
                 qr_image(&response.authorization_url)
@@ -575,6 +914,7 @@ fn poll_wechat_start_result(
                     schedule_wechat_status_poll(
                         app.as_weak(),
                         context,
+                        auth_operation_epoch,
                         response.login_id,
                         poll_after_ms as u64,
                     );
@@ -598,6 +938,7 @@ fn poll_wechat_start_result(
 fn schedule_wechat_status_poll(
     app_weak: Weak<AppWindow>,
     context: AppContext,
+    auth_operation_epoch: u64,
     login_id: String,
     delay_milliseconds: u64,
 ) {
@@ -608,7 +949,8 @@ fn schedule_wechat_status_poll(
                 return;
             };
             let state = app.global::<AppState>();
-            if !state.get_auth_open()
+            if !auth_operation_is_current(&context, auth_operation_epoch)
+                || !state.get_auth_open()
                 || state.get_auth_method().as_str() != "wechat"
                 || state.get_auth_wechat_login_id().as_str() != login_id
             {
@@ -618,7 +960,6 @@ fn schedule_wechat_status_poll(
                 return;
             };
             let api = AuthApi::new(backend.api.clone());
-            let account_api = AccountApi::new(backend.api.clone());
             let request_login_id = login_id.clone();
             let acceptances = selected_login_agreement_acceptances(&state);
             let (sender, receiver) = mpsc::channel();
@@ -648,7 +989,7 @@ fn schedule_wechat_status_poll(
                                     message: "微信登录响应缺少登录信息".to_string(),
                                     request_id: None,
                                 })?;
-                                Ok(WechatPollOutcome::Completed(login, account_api.snapshot()))
+                                Ok(WechatPollOutcome::Completed(login))
                             }
                             _ => Err(ApiError::Protocol {
                                 message: "微信登录响应状态无效".to_string(),
@@ -661,6 +1002,7 @@ fn schedule_wechat_status_poll(
             poll_wechat_status_result(
                 app.as_weak(),
                 context,
+                auth_operation_epoch,
                 login_id,
                 Rc::new(RefCell::new(Some(receiver))),
             );
@@ -671,20 +1013,52 @@ fn schedule_wechat_status_poll(
 fn poll_wechat_status_result(
     app_weak: Weak<AppWindow>,
     context: AppContext,
+    auth_operation_epoch: u64,
     login_id: String,
     receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<WechatPollOutcome, ApiError>>>>>,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
-        let result = poll_receiver(&receiver);
-        let Some(result) = result else {
-            poll_wechat_status_result(app_weak, context, login_id, receiver);
-            return;
+        let result = match poll_receiver(&receiver) {
+            ReceiverPoll::Pending => {
+                poll_wechat_status_result(
+                    app_weak,
+                    context,
+                    auth_operation_epoch,
+                    login_id,
+                    receiver,
+                );
+                return;
+            }
+            ReceiverPoll::Ready(result) => result,
+            ReceiverPoll::Disconnected => {
+                if let Some(app) = app_weak.upgrade() {
+                    let state = app.global::<AppState>();
+                    if auth_operation_is_current(&context, auth_operation_epoch)
+                        && state.get_auth_open()
+                        && state.get_auth_method().as_str() == "wechat"
+                        && state.get_auth_wechat_login_id().as_str() == login_id
+                    {
+                        state.set_auth_wechat_login_id("".into());
+                        state.set_auth_wechat_qr_ready(false);
+                        state.set_auth_wechat_scanned(false);
+                        state.set_auth_wechat_status(
+                            "微信登录状态检查已中断，请刷新二维码重试".into(),
+                        );
+                        state.set_auth_error("微信登录状态检查已中断，请刷新二维码重试".into());
+                    }
+                }
+                return;
+            }
         };
         let Some(app) = app_weak.upgrade() else {
             return;
         };
         let state = app.global::<AppState>();
-        if state.get_auth_wechat_login_id().as_str() != login_id {
+        if !auth_operation_is_current(&context, auth_operation_epoch)
+            || !state.get_auth_open()
+            || state.get_auth_method().as_str() != "wechat"
+            || state.get_auth_wechat_login_id().as_str() != login_id
+        {
             return;
         }
         match result {
@@ -704,7 +1078,13 @@ fn poll_wechat_status_result(
                 state.set_auth_wechat_status(
                     format!("等待扫码，二维码 {remaining} 秒后失效").into(),
                 );
-                schedule_wechat_status_poll(app.as_weak(), context, login_id, poll_after_ms as u64);
+                schedule_wechat_status_poll(
+                    app.as_weak(),
+                    context,
+                    auth_operation_epoch,
+                    login_id,
+                    poll_after_ms as u64,
+                );
             }
             Ok(WechatPollOutcome::Scanned(message)) => {
                 let poll_after_ms = state.get_auth_wechat_poll_after_ms().max(250);
@@ -722,7 +1102,13 @@ fn poll_wechat_status_result(
                 state.set_auth_wechat_scanned(true);
                 state.set_auth_wechat_status(message.into());
                 state.set_auth_error("".into());
-                schedule_wechat_status_poll(app.as_weak(), context, login_id, poll_after_ms as u64);
+                schedule_wechat_status_poll(
+                    app.as_weak(),
+                    context,
+                    auth_operation_epoch,
+                    login_id,
+                    poll_after_ms as u64,
+                );
             }
             Ok(WechatPollOutcome::AgreementRequired(message)) => {
                 let poll_after_ms = state.get_auth_wechat_poll_after_ms().max(250);
@@ -740,7 +1126,13 @@ fn poll_wechat_status_result(
                 state.set_auth_wechat_scanned(true);
                 state.set_auth_wechat_status(message.clone().into());
                 state.set_auth_error(message.into());
-                schedule_wechat_status_poll(app.as_weak(), context, login_id, poll_after_ms as u64);
+                schedule_wechat_status_poll(
+                    app.as_weak(),
+                    context,
+                    auth_operation_epoch,
+                    login_id,
+                    poll_after_ms as u64,
+                );
             }
             Ok(WechatPollOutcome::Failed(message)) => {
                 state.set_auth_wechat_login_id("".into());
@@ -749,12 +1141,36 @@ fn poll_wechat_status_result(
                 state.set_auth_wechat_status(message.clone().into());
                 state.set_auth_error(message.into());
             }
-            Ok(WechatPollOutcome::Completed(response, snapshot)) => {
+            Ok(WechatPollOutcome::Completed(response)) => {
+                let Some(backend) = context.backend.as_ref() else {
+                    return;
+                };
+                let current = auth_operation_is_current(&context, auth_operation_epoch)
+                    && state.get_auth_open()
+                    && state.get_auth_method().as_str() == "wechat"
+                    && state.get_auth_wechat_login_id().as_str() == login_id;
+                let installed = install_login_if_current(current, || {
+                    backend
+                        .api
+                        .session()
+                        .install_tokens_for_user(&response.tokens, &response.user.id)
+                });
+                match installed {
+                    Ok(Some(_)) => {}
+                    Ok(None) => return,
+                    Err(error) => {
+                        let message = auth_error_message(&error);
+                        state.set_auth_wechat_status(message.clone().into());
+                        state.set_auth_error(message.into());
+                        return;
+                    }
+                }
                 state.set_auth_wechat_login_id("".into());
                 state.set_auth_wechat_qr_ready(false);
                 state.set_auth_wechat_scanned(false);
                 state.set_auth_wechat_status("登录成功".into());
-                finish_login(&app, &context, response, snapshot);
+                finish_login(&app, &context, response, None);
+                refresh_backend_snapshot(&app, context);
             }
             Err(error) => {
                 let message = auth_error_message(&error);
@@ -771,21 +1187,69 @@ fn poll_wechat_status_result(
 fn poll_login_result(
     app_weak: Weak<AppWindow>,
     context: AppContext,
+    auth_operation_epoch: u64,
     receiver: Rc<RefCell<Option<mpsc::Receiver<LoginResult>>>>,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
-        let result = poll_receiver(&receiver);
-        let Some(result) = result else {
-            poll_login_result(app_weak, context, receiver);
-            return;
+        let result = match poll_receiver(&receiver) {
+            ReceiverPoll::Pending => {
+                poll_login_result(app_weak, context, auth_operation_epoch, receiver);
+                return;
+            }
+            ReceiverPoll::Ready(result) => result,
+            ReceiverPoll::Disconnected => {
+                if let Some(app) = app_weak.upgrade() {
+                    let state = app.global::<AppState>();
+                    if auth_operation_is_current(&context, auth_operation_epoch)
+                        && state.get_auth_open()
+                        && state.get_auth_method().as_str() == "email"
+                        && state.get_session_state().as_str() == "authenticating"
+                    {
+                        state.set_auth_busy(false);
+                        state.set_session_state("signed_out".into());
+                        state.set_auth_error("登录任务已中断，请重试".into());
+                    }
+                }
+                return;
+            }
         };
         let Some(app) = app_weak.upgrade() else {
             return;
         };
         let state = app.global::<AppState>();
+        if !auth_operation_is_current(&context, auth_operation_epoch)
+            || !state.get_auth_open()
+            || state.get_auth_method().as_str() != "email"
+            || state.get_session_state().as_str() != "authenticating"
+        {
+            return;
+        }
         state.set_auth_busy(false);
         match result {
-            Ok((response, snapshot)) => finish_login(&app, &context, response, snapshot),
+            Ok(response) => {
+                let Some(backend) = context.backend.as_ref() else {
+                    return;
+                };
+                let current = auth_operation_is_current(&context, auth_operation_epoch)
+                    && state.get_auth_open()
+                    && state.get_auth_method().as_str() == "email";
+                match install_login_if_current(current, || {
+                    backend
+                        .api
+                        .session()
+                        .install_tokens_for_user(&response.tokens, &response.user.id)
+                }) {
+                    Ok(Some(_)) => {
+                        finish_login(&app, &context, response, None);
+                        refresh_backend_snapshot(&app, context);
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        state.set_session_state("signed_out".into());
+                        apply_auth_error(&app, error);
+                    }
+                }
+            }
             Err(error) => {
                 state.set_session_state("signed_out".into());
                 apply_auth_error(&app, error);
@@ -798,8 +1262,16 @@ fn finish_login(
     app: &AppWindow,
     context: &AppContext,
     response: LoginResponse,
-    snapshot: std::result::Result<BackendSnapshot, ApiError>,
+    snapshot: Option<std::result::Result<BackendSnapshot, ApiError>>,
 ) {
+    // Never expose the previous account's membership, credits, catalog, or purchase state while
+    // the new account snapshot is still in flight.
+    clear_account_snapshot_state(app, context);
+    clear_payment_account_state(app, context);
+    *context
+        .current_user_id
+        .lock()
+        .unwrap_or_else(|value| value.into_inner()) = Some(response.user.id.clone());
     let state = app.global::<AppState>();
     state.set_logged_in(true);
     state.set_offline_mode(false);
@@ -811,6 +1283,7 @@ fn finish_login(
     state.set_auth_code("".into());
     state.set_auth_error("".into());
     state.set_auth_open(false);
+    state.set_agreement_update_busy(false);
     if state.get_auth_user_terms_accepted() {
         state.set_accepted_user_terms_version(state.get_auth_user_terms_version());
     }
@@ -818,28 +1291,49 @@ fn finish_login(
         state.set_accepted_privacy_version(state.get_auth_privacy_version());
     }
     save_user_profile(app);
-    match snapshot {
-        Ok(snapshot) => apply_backend_snapshot(app, context, snapshot),
-        Err(error) => state.set_generation_status(
-            format!("账号数据同步失败：{}", auth_error_message(&error)).into(),
-        ),
+    if let Some(snapshot) = snapshot {
+        match snapshot {
+            Ok(snapshot) => apply_backend_snapshot(app, context, snapshot),
+            Err(error) => state.set_generation_status(
+                format!("账号数据同步失败：{}", auth_error_message(&error)).into(),
+            ),
+        }
     }
     recover_pending_generations(app, context.clone());
+    recover_pending_prompt_tasks(app, context.clone());
     recover_prompt_optimization(app, context.clone());
     recover_pending_orders(app, context.clone());
-    navigate_to(app, "generation");
+    navigate_to_with_store(app, &context.store.borrow(), "generation");
 }
 
 fn poll_startup_auth_result(
     app_weak: Weak<AppWindow>,
     context: AppContext,
+    startup_auth_epoch: u64,
     receiver: Rc<RefCell<Option<mpsc::Receiver<StartupAuthResult>>>>,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
-        let result = poll_receiver(&receiver);
-        let Some(result) = result else {
-            poll_startup_auth_result(app_weak, context, receiver);
-            return;
+        let result = match poll_receiver(&receiver) {
+            ReceiverPoll::Pending => {
+                poll_startup_auth_result(app_weak, context, startup_auth_epoch, receiver);
+                return;
+            }
+            ReceiverPoll::Ready(result) => result,
+            ReceiverPoll::Disconnected => {
+                if let Some(app) = app_weak.upgrade() {
+                    let state = app.global::<AppState>();
+                    let epoch_matches = context.backend.as_ref().is_some_and(|backend| {
+                        backend.api.session().auth_epoch() == startup_auth_epoch
+                    });
+                    if epoch_matches && state.get_session_state().as_str() == "refreshing" {
+                        state.set_auth_busy(false);
+                        state.set_session_state("signed_out".into());
+                        state.set_auth_open(true);
+                        state.set_auth_error("登录状态恢复任务已中断，请重试".into());
+                    }
+                }
+                return;
+            }
         };
         if let Some(app) = app_weak.upgrade() {
             apply_startup_auth(&app, &context, result);
@@ -847,23 +1341,56 @@ fn poll_startup_auth_result(
     });
 }
 
-fn poll_receiver<T>(receiver: &Rc<RefCell<Option<mpsc::Receiver<T>>>>) -> Option<T> {
+#[derive(Debug, Eq, PartialEq)]
+enum ReceiverPoll<T> {
+    Pending,
+    Ready(T),
+    Disconnected,
+}
+
+fn poll_receiver<T>(receiver: &Rc<RefCell<Option<mpsc::Receiver<T>>>>) -> ReceiverPoll<T> {
     let mut slot = receiver.borrow_mut();
-    let receiver = slot.as_ref()?;
+    let Some(receiver) = slot.as_ref() else {
+        return ReceiverPoll::Disconnected;
+    };
     match receiver.try_recv() {
         Ok(result) => {
             slot.take();
-            Some(result)
+            ReceiverPoll::Ready(result)
         }
-        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Empty) => ReceiverPoll::Pending,
         Err(TryRecvError::Disconnected) => {
             slot.take();
-            None
+            ReceiverPoll::Disconnected
         }
     }
 }
 
 fn apply_startup_auth(app: &AppWindow, context: &AppContext, result: StartupAuthResult) {
+    let startup_auth_epoch = result.auth_epoch;
+    let Some(session) = context.backend.as_ref().map(|backend| backend.api.session()) else {
+        return;
+    };
+    let terminal_context_matches =
+        terminal_auth_epoch_matches_context(context, result.auth_epoch);
+    let captured_session_ended = startup_result_ended_captured_session(&result);
+    let outcome_is_current = if captured_session_ended {
+        terminal_context_matches
+    } else {
+        match result.refresh.as_ref() {
+            Some(Ok(_)) => {
+                session.auth_epoch() == result.auth_epoch && session.access().is_some()
+            }
+            Some(Err(_)) | None => session.auth_epoch() == result.auth_epoch,
+        }
+    };
+    if !outcome_is_current {
+        return;
+    }
+    if captured_session_ended {
+        sign_out_locally(app, context, true, Some(startup_auth_epoch));
+        return;
+    }
     let state = app.global::<AppState>();
     state.set_auth_busy(false);
     let agreement_error = match result.agreements {
@@ -875,6 +1402,8 @@ fn apply_startup_auth(app: &AppWindow, context: &AppContext, result: StartupAuth
     };
     match result.refresh {
         Some(Ok(_)) => {
+            clear_account_snapshot_state(app, context);
+            clear_payment_account_state(app, context);
             state.set_logged_in(true);
             state.set_offline_mode(false);
             state.set_session_state("online".into());
@@ -892,13 +1421,19 @@ fn apply_startup_auth(app: &AppWindow, context: &AppContext, result: StartupAuth
                 }
             }
             recover_pending_generations(app, context.clone());
+            recover_pending_prompt_tasks(app, context.clone());
             recover_prompt_optimization(app, context.clone());
             recover_pending_orders(app, context.clone());
             require_updated_agreements(app);
-            navigate_to(app, "generation");
+            navigate_to_with_store(app, &context.store.borrow(), "generation");
         }
         Some(Err(error)) => {
-            match startup_error_disposition(&error, state.get_offline_available()) {
+            let disposition = if captured_session_error(&error) && terminal_context_matches {
+                StartupErrorDisposition::TerminalSession
+            } else {
+                startup_error_disposition(&error, state.get_offline_available())
+            };
+            match disposition {
                 StartupErrorDisposition::UpdateRequired => {
                     state.set_session_state("update_required".into());
                     state.set_auth_open(true);
@@ -917,7 +1452,7 @@ fn apply_startup_auth(app: &AppWindow, context: &AppContext, result: StartupAuth
                 }
                 StartupErrorDisposition::TerminalSession => {
                     let _ = state;
-                    sign_out_locally(app, true);
+                    sign_out_locally(app, context, true, Some(startup_auth_epoch));
                 }
                 StartupErrorDisposition::Recoverable => {
                     state.set_session_state("signed_out".into());
@@ -944,6 +1479,17 @@ fn apply_startup_auth(app: &AppWindow, context: &AppContext, result: StartupAuth
     }
 }
 
+fn startup_result_ended_captured_session(result: &StartupAuthResult) -> bool {
+    result
+        .refresh
+        .as_ref()
+        .is_some_and(|refresh| refresh.as_ref().is_err_and(captured_session_error))
+        || result
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.as_ref().is_err_and(captured_session_error))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum StartupErrorDisposition {
     UpdateRequired,
@@ -964,17 +1510,139 @@ fn startup_error_disposition(error: &ApiError, offline_available: bool) -> Start
     }
 }
 
+pub(super) fn clear_account_snapshot_state(app: &AppWindow, context: &AppContext) {
+    *context
+        .account_snapshot_scope
+        .lock()
+        .unwrap_or_else(|value| value.into_inner()) = None;
+
+    let state = app.global::<AppState>();
+    state.set_email_mask("".into());
+    state.set_nickname("".into());
+    state.set_profile_name("".into());
+    state.set_membership_plan_code("free".into());
+    state.set_membership_plan_name("免费版".into());
+    state.set_membership_ends_at("".into());
+    state.set_membership_expiry_message("".into());
+    state.set_membership_tier_rank(0);
+    state.set_membership_plans(ModelRc::new(VecModel::from(
+        Vec::<MembershipPlanView>::new(),
+    )));
+    state.set_membership_open(false);
+    state.set_membership_payment_busy(false);
+    state.set_membership_payment_message("".into());
+    state.set_account_sessions(ModelRc::new(VecModel::from(
+        Vec::<AccountSession>::new(),
+    )));
+
+    state.set_credit_balance("0".into());
+    state.set_credit_reserved("0".into());
+    reset_credit_ledger(app, &context.store, &[], None);
+    state.set_credit_packs(ModelRc::new(VecModel::from(Vec::<CreditPackView>::new())));
+    state.set_selected_credit_pack_code("".into());
+    state.set_selected_credit_amount("".into());
+    state.set_selected_credit_price("".into());
+    state.set_credit_payment_busy(false);
+    state.set_credit_payment_message("".into());
+    state.set_credit_insufficient_open(false);
+    state.set_credit_insufficient_message("积分不足以支持本次生图，请前往充值".into());
+
+    state.set_email_bound(false);
+    state.set_email_bind_open(false);
+    state.set_email_bind_email("".into());
+    state.set_email_bind_code("".into());
+    state.set_email_bind_code_busy(false);
+    state.set_email_bind_busy(false);
+    state.set_email_bind_countdown(0);
+    state.set_email_bind_status("".into());
+    state.set_wechat_bound(false);
+    state.set_wechat_can_unbind(false);
+    state.set_wechat_bound_name("".into());
+    state.set_wechat_bind_open(false);
+    state.set_wechat_bind_busy(false);
+    state.set_wechat_bind_login_id("".into());
+    state.set_wechat_bind_qr_ready(false);
+    state.set_wechat_bind_scanned(false);
+    state.set_wechat_bind_status("".into());
+    state.set_wechat_bind_expires_in(0);
+    state.set_wechat_bind_poll_elapsed_ms(0);
+    state.set_wechat_unbind_confirm_open(false);
+
+    state.set_invitation_code("".into());
+    state.set_invitation_code_busy(false);
+    state.set_invitation_code_success(false);
+    state.set_invitation_code_submitted(false);
+    state.set_invitation_code_status("".into());
+    state.set_invitation_reward_rate("".into());
+    state.set_invitation_count("".into());
+    state.set_invitation_history_reward("".into());
+    state.set_invitation_own_code("".into());
+    state.set_invitation_rule_description("".into());
+    state.set_invitation_rewards_status("".into());
+    state.set_invitation_users(ModelRc::new(VecModel::from(
+        Vec::<InvitedUserView>::new(),
+    )));
+    state.set_invitation_users_loading(false);
+    state.set_invitation_users_has_more(false);
+    state.set_invitation_users_next_cursor("".into());
+    state.set_invitation_users_message("".into());
+
+    state.set_catalog_models(ModelRc::new(VecModel::from(
+        Vec::<CatalogModelView>::new(),
+    )));
+    state.set_image_model("".into());
+    state.set_image_model_name("".into());
+    state.set_reasoning_model("".into());
+    state.set_reasoning_model_name("".into());
+    state.set_image_price_1k(0);
+    state.set_image_price_2k(0);
+    state.set_image_price_4k(0);
+    state.set_image_editor_model("".into());
+    state.set_image_editor_model_name("".into());
+    state.set_image_editor_price_1k(0);
+    state.set_image_editor_price_2k(0);
+    state.set_image_editor_price_4k(0);
+    state.set_style_analysis_available(false);
+    state.set_style_analysis_model_code("".into());
+    state.set_style_analysis_display_name("".into());
+    state.set_style_analysis_credit_cost("".into());
+    state.set_model_catalog_message("".into());
+    {
+        let mut store = context.store.borrow_mut();
+        store.model_groups.clear();
+        push_model_groups(app, &store);
+    }
+}
+
+pub(super) fn account_snapshot_scope_is_current(
+    context: &AppContext,
+    session_scope: &SessionScope,
+) -> bool {
+    context
+        .account_snapshot_scope
+        .lock()
+        .unwrap_or_else(|value| value.into_inner())
+        .as_ref()
+        == Some(session_scope)
+}
+
 pub(super) fn refresh_backend_snapshot(app: &AppWindow, context: AppContext) {
     let Some(backend) = context.backend.clone() else {
         return;
     };
+    let Some(session_scope) = current_auth_session_scope(&context) else {
+        return;
+    };
     let (sender, receiver) = mpsc::channel();
+    let worker_scope = session_scope.clone();
     std::thread::spawn(move || {
-        let _ = sender.send(AccountApi::new(backend.api.clone()).snapshot());
+        let _ = sender
+            .send(AccountApi::new(backend.api.clone()).snapshot_epoch(worker_scope.auth_epoch));
     });
     poll_backend_snapshot(
         app.as_weak(),
         context,
+        session_scope,
         Rc::new(RefCell::new(Some(receiver))),
     );
 }
@@ -982,20 +1650,54 @@ pub(super) fn refresh_backend_snapshot(app: &AppWindow, context: AppContext) {
 fn poll_backend_snapshot(
     app_weak: Weak<AppWindow>,
     context: AppContext,
+    session_scope: SessionScope,
     receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<BackendSnapshot, ApiError>>>>>,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
-        let result = poll_receiver(&receiver);
-        let Some(result) = result else {
-            poll_backend_snapshot(app_weak, context, receiver);
-            return;
+        let result = match poll_receiver(&receiver) {
+            ReceiverPoll::Pending => {
+                poll_backend_snapshot(app_weak, context, session_scope, receiver);
+                return;
+            }
+            ReceiverPoll::Ready(result) => result,
+            ReceiverPoll::Disconnected => {
+                if let Some(app) = app_weak.upgrade() {
+                    if auth_scope_matches_context(&context, &session_scope) {
+                        app.global::<AppState>().set_generation_status(
+                            "账号数据刷新任务已中断，请稍后重试；支付功能暂不可用".into(),
+                        );
+                    }
+                }
+                return;
+            }
         };
         let Some(app) = app_weak.upgrade() else {
             return;
         };
+        let captured_session_ended = result.as_ref().is_err_and(captured_session_error);
+        let terminal_context_matches =
+            terminal_auth_scope_matches_context(&context, &session_scope);
+        let outcome_is_current = if captured_session_ended {
+            terminal_context_matches
+        } else {
+            auth_scope_matches_context(&context, &session_scope)
+        };
+        if !outcome_is_current {
+            return;
+        }
         match result {
-            Ok(snapshot) => apply_backend_snapshot(&app, &context, snapshot),
-            Err(error) if error.is_terminal_session_error() => sign_out_locally(&app, true),
+            Ok(snapshot) => {
+                apply_backend_snapshot(&app, &context, snapshot);
+                recover_pending_orders(&app, context.clone());
+            }
+            Err(error) if captured_session_error(&error) && terminal_context_matches => {
+                sign_out_locally(
+                    &app,
+                    &context,
+                    true,
+                    Some(session_scope.auth_epoch),
+                )
+            }
             Err(error) => app.global::<AppState>().set_generation_status(
                 format!("账号数据刷新失败：{}", auth_error_message(&error)).into(),
             ),
@@ -1008,6 +1710,20 @@ pub(super) fn apply_backend_snapshot(
     context: &AppContext,
     snapshot: BackendSnapshot,
 ) {
+    let Some(backend) = context.backend.as_ref() else {
+        return;
+    };
+    let session = backend.api.session();
+    if session.bind_user(&snapshot.account.user.id).is_err() {
+        return;
+    }
+    let Some(snapshot_scope) = session.scope_for_user(&snapshot.account.user.id) else {
+        return;
+    };
+    *context
+        .current_user_id
+        .lock()
+        .unwrap_or_else(|value| value.into_inner()) = Some(snapshot.account.user.id.clone());
     let state = app.global::<AppState>();
     state.set_email_mask(snapshot.account.user.email_masked.clone().into());
     state.set_invitation_code_submitted(snapshot.account.user.invitation_code_submitted);
@@ -1018,6 +1734,23 @@ pub(super) fn apply_backend_snapshot(
     } else {
         state.set_invitation_code_success(false);
         state.set_invitation_code_status("".into());
+    }
+    if let Some(invitation) = snapshot.invitation.as_ref() {
+        apply_invitation_dashboard(app, invitation);
+    } else {
+        state.set_invitation_reward_rate("".into());
+        state.set_invitation_count("".into());
+        state.set_invitation_history_reward("".into());
+        state.set_invitation_own_code("".into());
+        state.set_invitation_rule_description("".into());
+        state.set_invitation_rewards_status("".into());
+        state.set_invitation_users(ModelRc::new(VecModel::from(
+            Vec::<InvitedUserView>::new(),
+        )));
+        state.set_invitation_users_loading(false);
+        state.set_invitation_users_has_more(false);
+        state.set_invitation_users_next_cursor("".into());
+        state.set_invitation_users_message("".into());
     }
     state.set_nickname(
         snapshot
@@ -1045,6 +1778,10 @@ pub(super) fn apply_backend_snapshot(
         state.set_membership_plan_code(plan.code.clone().into());
         state.set_membership_plan_name(plan.name.clone().into());
         state.set_membership_tier_rank(plan.tier_rank);
+    } else {
+        state.set_membership_plan_code("free".into());
+        state.set_membership_plan_name("免费版".into());
+        state.set_membership_tier_rank(0);
     }
     let membership_ends_at = snapshot
         .account
@@ -1057,6 +1794,9 @@ pub(super) fn apply_backend_snapshot(
     if let Some(credits) = snapshot.account.credits.as_ref() {
         state.set_credit_balance(credits.available.clone().into());
         state.set_credit_reserved(credits.reserved.clone().into());
+    } else {
+        state.set_credit_balance("0".into());
+        state.set_credit_reserved("0".into());
     }
     let packs = snapshot
         .packs
@@ -1125,6 +1865,12 @@ pub(super) fn apply_backend_snapshot(
             price_1k: model_price(model, "1K"),
             price_2k: model_price(model, "2K"),
             price_4k: model_price(model, "4K"),
+            price_standard: model_credit_cost(model, "standard").into(),
+            supports_image_edit: model_supports_task_type(model, "image_edit")
+                && model_capability_enabled(model, "supports_masks"),
+            supports_style_analysis: model_supports_task_type(model, "image_style_analysis")
+                && model_capability_enabled(model, "supports_references")
+                && model_supports_operation(model, "analyze_style"),
         })
         .collect::<Vec<_>>();
     state.set_catalog_models(ModelRc::new(VecModel::from(catalog_models)));
@@ -1228,6 +1974,11 @@ pub(super) fn apply_backend_snapshot(
         state.set_reasoning_model(model.code.clone().into());
         state.set_reasoning_model_name(model.name.clone().into());
     }
+    sync_style_analysis_selection(&state);
+    *context
+        .account_snapshot_scope
+        .lock()
+        .unwrap_or_else(|value| value.into_inner()) = Some(snapshot_scope);
     save_user_profile(app);
 }
 
@@ -1263,6 +2014,47 @@ fn model_price(model: &ModelCatalogItem, quality: &str) -> i32 {
         .find(|price| price.quality == quality)
         .map(|price| decimal_to_i32(&price.credit_cost))
         .unwrap_or(0)
+}
+
+fn model_credit_cost(model: &ModelCatalogItem, quality: &str) -> String {
+    model
+        .prices
+        .iter()
+        .find(|price| price.quality == quality)
+        .map(|price| price.credit_cost.clone())
+        .unwrap_or_default()
+}
+
+fn model_supports_task_type(model: &ModelCatalogItem, task_type: &str) -> bool {
+    model
+        .capabilities
+        .get("task_types")
+        .and_then(Value::as_array)
+        .is_some_and(|task_types| {
+            task_types
+                .iter()
+                .any(|value| value.as_str() == Some(task_type))
+        })
+}
+
+fn model_capability_enabled(model: &ModelCatalogItem, capability: &str) -> bool {
+    model
+        .capabilities
+        .get(capability)
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn model_supports_operation(model: &ModelCatalogItem, operation: &str) -> bool {
+    model
+        .capabilities
+        .get("operations")
+        .and_then(Value::as_array)
+        .is_some_and(|operations| {
+            operations
+                .iter()
+                .any(|value| value.as_str() == Some(operation))
+        })
 }
 
 fn apply_image_model(state: &AppState, model: &ModelCatalogItem) {
@@ -1490,9 +2282,44 @@ fn auth_error_message(error: &ApiError) -> String {
     error.user_message()
 }
 
-fn sign_out_locally(app: &AppWindow, revoked: bool) {
+pub(super) fn sign_out_locally(
+    app: &AppWindow,
+    context: &AppContext,
+    revoked: bool,
+    expected_auth_epoch: Option<u64>,
+) {
+    if revoked {
+        if let (Some(backend), Some(auth_epoch)) =
+            (context.backend.as_ref(), expected_auth_epoch)
+        {
+            // Compare-and-clear the captured lease. If a new login won the race, clear_epoch
+            // rejects the stale epoch and preserves that newer account.
+            let _ = backend.api.session().clear_epoch(auth_epoch);
+        }
+    }
+    invalidate_auth_operations(context);
+    *context
+        .current_user_id
+        .lock()
+        .unwrap_or_else(|value| value.into_inner()) = None;
+    clear_account_snapshot_state(app, context);
+    clear_payment_account_state(app, context);
+    clear_notification_account_state(app, context);
+    clear_prompt_task_account_state(app);
+    clear_prompt_optimization_account_state(app, context);
+    clear_generation_account_state(app, context);
     close_agreement_window();
     let state = app.global::<AppState>();
+    state.set_auth_busy(false);
+    state.set_auth_code_busy(false);
+    state.set_auth_wechat_busy(false);
+    state.set_auth_countdown(0);
+    state.set_auth_wechat_expires_in(0);
+    state.set_auth_wechat_poll_elapsed_ms(0);
+    state.set_agreement_update_busy(false);
+    state.set_agreement_update_open(false);
+    state.set_agreement_update_message("".into());
+    state.set_credit_ledger_loading(false);
     state.set_logged_in(false);
     state.set_offline_mode(false);
     state.set_session_state("signed_out".into());
@@ -1509,9 +2336,13 @@ fn sign_out_locally(app: &AppWindow, revoked: bool) {
     state.set_wechat_can_unbind(false);
     state.set_wechat_bound_name("".into());
     state.set_wechat_bind_open(false);
+    state.set_wechat_bind_busy(false);
     state.set_wechat_bind_login_id("".into());
     state.set_wechat_bind_qr_ready(false);
     state.set_wechat_bind_scanned(false);
+    state.set_wechat_bind_status("".into());
+    state.set_wechat_bind_expires_in(0);
+    state.set_wechat_bind_poll_elapsed_ms(0);
     state.set_wechat_unbind_confirm_open(false);
     state.set_email_bound(false);
     state.set_email_bind_open(false);
@@ -1526,12 +2357,23 @@ fn sign_out_locally(app: &AppWindow, revoked: bool) {
     state.set_invitation_code_success(false);
     state.set_invitation_code_submitted(false);
     state.set_invitation_code_status("".into());
+    state.set_invitation_reward_rate("".into());
+    state.set_invitation_count("".into());
+    state.set_invitation_history_reward("".into());
+    state.set_invitation_own_code("".into());
+    state.set_invitation_rule_description("".into());
+    state.set_invitation_rewards_status("".into());
+    state.set_invitation_users(ModelRc::new(VecModel::from(Vec::<InvitedUserView>::new())));
+    state.set_invitation_users_loading(false);
+    state.set_invitation_users_has_more(false);
+    state.set_invitation_users_next_cursor("".into());
+    state.set_invitation_users_message("".into());
     state.set_auth_error(if revoked {
         "登录状态已失效，请重新登录".into()
     } else {
         "".into()
     });
-    state.set_page("welcome".into());
+    navigate_to(app, "welcome");
     state.set_profile_open(false);
     state.set_agreement_viewer_open(false);
     save_user_profile(app);
@@ -1570,6 +2412,126 @@ fn valid_email(email: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disconnected_worker_is_not_mistaken_for_a_pending_result() {
+        let (sender, receiver) = mpsc::channel::<u8>();
+        drop(sender);
+        let receiver = Rc::new(RefCell::new(Some(receiver)));
+
+        assert_eq!(poll_receiver(&receiver), ReceiverPoll::Disconnected);
+        assert_eq!(poll_receiver(&receiver), ReceiverPoll::Disconnected);
+    }
+
+    #[test]
+    fn paid_actions_require_a_snapshot_for_the_exact_session_scope() {
+        let context = AppContext::default();
+        let scope_a = SessionScope {
+            owner_user_id: "user-a".to_string(),
+            auth_epoch: 7,
+        };
+        let scope_b = SessionScope {
+            owner_user_id: "user-b".to_string(),
+            auth_epoch: 8,
+        };
+
+        assert!(!account_snapshot_scope_is_current(&context, &scope_a));
+        *context
+            .account_snapshot_scope
+            .lock()
+            .unwrap_or_else(|value| value.into_inner()) = Some(scope_a.clone());
+        assert!(account_snapshot_scope_is_current(&context, &scope_a));
+        assert!(!account_snapshot_scope_is_current(&context, &scope_b));
+    }
+
+    #[test]
+    fn refreshed_qr_completion_cannot_install_the_old_attempt() {
+        let context = AppContext::default();
+        let old_attempt = begin_auth_operation(&context);
+        let _new_attempt = begin_auth_operation(&context);
+        let install_called = std::cell::Cell::new(false);
+
+        let installed = install_login_if_current(
+            auth_operation_is_current(&context, old_attempt),
+            || {
+                install_called.set(true);
+                Ok(SessionScope {
+                    owner_user_id: "old-wechat-user".to_string(),
+                    auth_epoch: 1,
+                })
+            },
+        )
+        .unwrap();
+
+        assert!(installed.is_none());
+        assert!(!install_called.get());
+    }
+
+    #[test]
+    fn cancelled_email_attempt_cannot_install_after_the_dialog_closes() {
+        let context = AppContext::default();
+        let email_attempt = begin_auth_operation(&context);
+        invalidate_auth_operations(&context);
+        let install_called = std::cell::Cell::new(false);
+
+        let installed = install_login_if_current(
+            auth_operation_is_current(&context, email_attempt),
+            || {
+                install_called.set(true);
+                Ok(SessionScope {
+                    owner_user_id: "cancelled-email-user".to_string(),
+                    auth_epoch: 1,
+                })
+            },
+        )
+        .unwrap();
+
+        assert!(installed.is_none());
+        assert!(!install_called.get());
+    }
+
+    #[test]
+    fn authentication_required_is_a_terminal_captured_session_outcome() {
+        assert!(captured_session_error(&ApiError::AuthenticationRequired));
+        assert!(!captured_session_error(&ApiError::Network {
+            message: "offline".to_string(),
+            timeout: false,
+        }));
+    }
+
+    #[test]
+    fn scoped_auth_outcomes_distinguish_current_terminal_and_stale_results() {
+        assert_eq!(
+            classify_scoped_auth_guards(false, true, false),
+            ScopedAuthOutcome::Current
+        );
+        assert_eq!(
+            classify_scoped_auth_guards(true, false, true),
+            ScopedAuthOutcome::CapturedTerminal
+        );
+        assert_eq!(
+            classify_scoped_auth_guards(true, false, false),
+            ScopedAuthOutcome::Stale
+        );
+    }
+
+    #[test]
+    fn startup_refresh_success_followed_by_terminal_snapshot_ends_the_session() {
+        let result = StartupAuthResult {
+            auth_epoch: 7,
+            agreements: Ok(Vec::new()),
+            refresh: Some(Ok("rotated-access".to_string())),
+            snapshot: Some(Err(ApiError::Http {
+                status: 401,
+                code: "session_invalid".to_string(),
+                message: "revoked during snapshot".to_string(),
+                request_id: None,
+                details: None,
+            })),
+        };
+
+        assert!(startup_result_ended_captured_session(&result));
+    }
 
     #[test]
     fn email_validation_rejects_incomplete_addresses() {

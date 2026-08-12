@@ -1,4 +1,4 @@
-use super::{ApiClient, ApiError, ApiResponse, TokenSet};
+use super::{ApiClient, ApiError, ApiResponse, SessionScope, TokenSet};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
@@ -153,6 +153,19 @@ impl AuthApi {
         code: &str,
         acceptances: &[AgreementAcceptance],
     ) -> Result<LoginResponse, ApiError> {
+        let response = self.login_response(email, code, acceptances)?;
+        self.client
+            .session()
+            .install_tokens_for_user(&response.tokens, &response.user.id)?;
+        Ok(response)
+    }
+
+    pub(crate) fn login_response(
+        &self,
+        email: &str,
+        code: &str,
+        acceptances: &[AgreementAcceptance],
+    ) -> Result<LoginResponse, ApiError> {
         let device = self.client.device();
         let body = serde_json::to_value(LoginRequest {
             email,
@@ -171,9 +184,6 @@ impl AuthApi {
             .client
             .public_json(Method::POST, "/v1/auth/email/login", Some(body))?;
         let response: ApiResponse<LoginResponse> = response;
-        self.client
-            .session()
-            .install_tokens(&response.data.tokens)?;
         Ok(response.data)
     }
 
@@ -211,17 +221,17 @@ impl AuthApi {
             message: error.to_string(),
             request_id: None,
         })?;
-        let response: ApiResponse<WechatLoginStatusResponse> =
-            self.client
-                .public_json(Method::POST, "/v1/auth/wechat/session/status", Some(body))?;
-        if let Some(login) = response.data.login.as_ref() {
-            self.client.session().install_tokens(&login.tokens)?;
-        }
-        Ok(response.data)
+        self.client
+            .public_json(Method::POST, "/v1/auth/wechat/session/status", Some(body))
+            .map(|response: ApiResponse<WechatLoginStatusResponse>| response.data)
     }
 
     pub(crate) fn refresh(&self) -> Result<String, ApiError> {
         self.client.refresh_session()
+    }
+
+    pub(crate) fn refresh_epoch(&self, auth_epoch: u64) -> Result<String, ApiError> {
+        self.client.refresh_session_epoch(auth_epoch)
     }
 
     pub(crate) fn accept_agreements(
@@ -247,6 +257,31 @@ impl AuthApi {
         Ok(())
     }
 
+    pub(crate) fn accept_agreements_scoped(
+        &self,
+        agreements: &[AgreementAcceptance],
+        scope: &SessionScope,
+    ) -> Result<(), ApiError> {
+        if agreements.is_empty() {
+            return Ok(());
+        }
+        let body =
+            serde_json::to_value(AcceptAgreementsRequest { agreements }).map_err(|error| {
+                ApiError::Protocol {
+                    message: error.to_string(),
+                    request_id: None,
+                }
+            })?;
+        self.client.authenticated_json_scoped::<serde_json::Value>(
+            Method::POST,
+            "/v1/agreements/accept",
+            Some(body),
+            None,
+            scope,
+        )?;
+        Ok(())
+    }
+
     pub(crate) fn logout(&self, all_devices: bool) -> Result<(), ApiError> {
         let path = if all_devices {
             "/v1/auth/logout_all"
@@ -267,5 +302,55 @@ impl AuthApi {
             }
             Err(error) => Err(error),
         }
+    }
+
+    pub(crate) fn logout_scoped(
+        &self,
+        all_devices: bool,
+        scope: &SessionScope,
+    ) -> Result<(), ApiError> {
+        let path = if all_devices {
+            "/v1/auth/logout_all"
+        } else {
+            "/v1/auth/logout"
+        };
+        let response = self.client.authenticated_json_scoped::<LogoutResponse>(
+            Method::POST,
+            path,
+            None,
+            None,
+            scope,
+        );
+        match response {
+            Ok(value) => {
+                let _ = value.data.logged_out || value.data.logged_out_all;
+                self.client.session().clear_scope(scope)
+            }
+            Err(error) if error.is_terminal_session_error() => {
+                let _ = self.client.session().clear_scope(scope);
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub(crate) fn logout_with_fixed_token(
+        &self,
+        all_devices: bool,
+        access_token: &str,
+    ) -> Result<(), ApiError> {
+        let path = if all_devices {
+            "/v1/auth/logout_all"
+        } else {
+            "/v1/auth/logout"
+        };
+        self.client
+            .authenticated_json_with_fixed_token::<LogoutResponse>(
+                Method::POST,
+                path,
+                None,
+                access_token,
+            )?;
+        Ok(())
     }
 }

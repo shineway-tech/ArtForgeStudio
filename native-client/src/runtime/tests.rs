@@ -352,7 +352,10 @@ mod tests {
         );
 
         assert!(generated.contains("UI component atlas rule (mandatory)"));
-        assert_eq!(display_generation_prompt(&generated), "fantasy inventory icons");
+        assert_eq!(
+            display_generation_prompt(&generated),
+            "fantasy inventory icons"
+        );
     }
 
     #[test]
@@ -368,11 +371,8 @@ mod tests {
 
     #[test]
     fn empty_negative_prompt_does_not_add_an_exclusion_section() {
-        let prompt = append_negative_prompt_instruction(
-            "a quiet forest",
-            "   ",
-            PromptLanguage::English,
-        );
+        let prompt =
+            append_negative_prompt_instruction("a quiet forest", "   ", PromptLanguage::English);
         assert_eq!(prompt, "a quiet forest");
     }
 
@@ -384,11 +384,7 @@ mod tests {
             "character",
             "extra fingers".to_string(),
         );
-        set_negative_prompt_draft_for_category(
-            &mut drafts,
-            "scene",
-            "people".to_string(),
-        );
+        set_negative_prompt_draft_for_category(&mut drafts, "scene", "people".to_string());
 
         assert_eq!(
             negative_prompt_draft_for_category(&drafts, "character"),
@@ -722,7 +718,7 @@ mod tests {
         assert!(local_store.contains("normalize_custom_prompts(data.custom_prompts)"));
         assert!(callbacks.contains("save_local_store(&app, &store.borrow())"));
         assert!(callbacks.contains("state.on_save_custom_prompt"));
-        assert!(callbacks.contains("state.set_page(\"custom-prompt-editor\".into())"));
+        assert!(callbacks.contains("navigate_to(app, \"custom-prompt-editor\")"));
         assert!(callbacks.contains("state.set_custom_prompt_editor_open(false)"));
         assert!(callbacks.contains("state.on_begin_new_custom_prompt"));
         assert!(callbacks.contains("state.on_begin_edit_custom_prompt"));
@@ -958,6 +954,7 @@ mod tests {
         let app = include_str!("../../ui/app.slint");
         let state = include_str!("../../ui/app-state.slint");
         let callbacks = include_str!("callbacks/custom_prompt.rs");
+        let prompt_tasks = include_str!("callbacks/prompt_tasks.rs");
 
         for field in [
             "custom-prompt-name",
@@ -992,7 +989,8 @@ mod tests {
         assert!(state.contains("callback analyze-custom-prompt-reference();"));
         assert!(state.contains("callback close-custom-prompt-editor();"));
         assert!(page.contains("AppState.analyze-custom-prompt-reference();"));
-        assert!(page.contains("disabled: AppState.custom-prompt-reference-items.length == 0"));
+        assert!(page.contains("disabled: !AppState.style-analysis-available"));
+        assert!(page.contains("AppState.custom-prompt-reference-items.length == 0"));
         assert!(!page.contains("等待服务端开放图片风格分析"));
         assert!(callbacks.contains("state.on_analyze_custom_prompt_reference"));
         assert!(callbacks.contains("state.on_remove_custom_prompt_reference"));
@@ -1002,31 +1000,69 @@ mod tests {
         assert!(!page.contains("Analyzed locally; the image is not uploaded"));
         assert!(!page.contains("由本地客户端分析，不会上传参考图"));
         assert!(state.contains("custom-prompt-analyzing"));
-        assert!(callbacks.contains("state.get_reasoning_model()"));
-        assert!(callbacks.contains("GenerationApi::new(backend.api.clone())"));
-        assert!(callbacks.contains(".upload_reference(&reference_path)"));
-        assert!(callbacks.contains("reference_file_ids: Some(vec![file_id.clone()])"));
-        assert!(callbacks.contains("result_prompt"));
+        assert!(callbacks.contains("sync_style_analysis_selection(&state)"));
+        assert!(callbacks.contains("start_backend_prompt_task("));
+        assert!(prompt_tasks.contains("GenerationApi::new(backend.api.clone())"));
+        assert!(prompt_tasks.contains("api.upload_reference_scoped(&path, &session_scope)"));
+        assert!(prompt_tasks.contains("reference_file_ids: (!record.uploaded_file_ids.is_empty())"));
+        assert!(prompt_tasks.contains("result_prompt"));
         assert!(!callbacks.contains("analyze_reference_style("));
     }
 
     #[test]
     fn custom_prompt_reference_analysis_uses_the_selected_server_model() {
         let callbacks = include_str!("callbacks/custom_prompt.rs");
+        let prompt_tasks = include_str!("callbacks/prompt_tasks.rs");
 
-        assert!(callbacks.contains("task_type: \"prompt_optimize\".to_string()"));
+        assert!(callbacks.contains("task_type: \"image_style_analysis\""));
         assert!(callbacks.contains("model_code"));
-        assert!(callbacks.contains("reference_file_ids: Some(vec![file_id.clone()])"));
-        assert!(callbacks.contains("api.delete_reference(&file_id)"));
-        assert!(callbacks.contains("IMAGE_POLL_INTERVAL_MS"));
+        assert!(prompt_tasks.contains("task_type: record.task_type.clone()"));
+        assert!(prompt_tasks.contains("model_code: record.model_code.clone()"));
+        assert!(prompt_tasks.contains("reference_file_ids: (!record.uploaded_file_ids.is_empty())"));
+        assert!(prompt_tasks.contains("api.create_task_scoped(&request, &session_scope)"));
+        assert!(prompt_tasks.contains("IMAGE_POLL_INTERVAL_MS"));
+    }
+
+    #[test]
+    fn style_analysis_actions_use_server_catalog_capability_and_standard_price() {
+        let state = include_str!("../../ui/app-state.slint");
+        let types = include_str!("../../ui/types.slint");
+        let auth = include_str!("callbacks/auth.rs");
+        let selector = include_str!("callbacks/model_catalog.rs");
+        let generation = include_str!("callbacks/generation.rs");
+        let custom_prompt = include_str!("callbacks/custom_prompt.rs");
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let custom_prompt_page = include_str!("../../ui/pages/custom-prompt-editor-page.slint");
+
+        for property in [
+            "style-analysis-available",
+            "style-analysis-model-code",
+            "style-analysis-display-name",
+            "style-analysis-credit-cost",
+        ] {
+            assert!(
+                state.contains(property),
+                "missing style selector state {property}"
+            );
+        }
+        assert!(types.contains("price-standard: string"));
+        assert!(auth.contains("model_credit_cost(model, \"standard\")"));
+        assert!(selector.contains("model.supports_style_analysis"));
+        assert!(selector.contains("!model.price_standard.trim().is_empty()"));
+        assert!(generation.contains("sync_style_analysis_selection(&state)"));
+        assert!(custom_prompt.contains("sync_style_analysis_selection(&state)"));
+        for page in [composer, custom_prompt_page] {
+            assert!(page.contains("AppState.style-analysis-available"));
+            assert!(page.contains("AppState.style-analysis-credit-cost"));
+        }
+        assert!(!state.contains("style-analysis-credit-cost: \"5\""));
+        assert!(!composer.contains("style-analysis-credit-cost + \"5\""));
+        assert!(!custom_prompt_page.contains("style-analysis-credit-cost + \"5\""));
     }
 
     #[test]
     fn prompt_task_results_decode_json_and_unicode_wrappers() {
-        assert_eq!(
-            normalize_prompt_task_result(r#"("\u5730\u7262")"#),
-            "地牢"
-        );
+        assert_eq!(normalize_prompt_task_result(r#"("\u5730\u7262")"#), "地牢");
         assert_eq!(
             normalize_prompt_task_result(r#"{"result_prompt":"\u6e38\u620f UI"}"#),
             "游戏 UI"
@@ -1058,9 +1094,9 @@ mod tests {
             .find("if AppState.quote-title")
             .expect("first interactive layer");
         assert!(drop_layer_position < interactive_layer_position);
-        assert!(composer.contains("event.mime-type == \"text/uri-list\""));
-        assert!(composer.contains("event.mime-type == \"text/plain\""));
-        assert!(composer.contains("AppState.add-reference-from-drag(event.mime-type, event.data)"));
+        assert!(composer.contains("return DragAction.copy;"));
+        assert!(composer.contains("AppState.add-reference-from-transfer(event.data)"));
+        assert!(composer.contains("reference-drop.has-drag"));
         let drop_layer = composer
             .split("reference-drop := DropArea")
             .nth(1)
@@ -1070,11 +1106,17 @@ mod tests {
         assert!(drop_layer.contains("y: 0px;"));
         assert!(drop_layer.contains("width: parent.width;"));
         assert!(drop_layer.contains("height: parent.height;"));
-        assert!(composer.contains("AppState.reference-drop-x = reference-drop.absolute-position.x / 1px"));
+        assert!(composer
+            .contains("AppState.reference-drop-x = reference-drop.absolute-position.x / 1px"));
+        assert!(composer.contains("changed width => { root.sync-reference-drop-bounds(); }"));
+        assert!(!composer.contains("interval: 50ms;\n        running: true;"));
+        assert!(callbacks.contains("transfer.plain_text()"));
         assert!(callbacks.contains("external_image_url(data.as_str())"));
         assert!(callbacks.contains("start_external_reference_import"));
         assert!(callbacks.contains("download_external_reference"));
         assert!(callbacks.contains("take_external_image_drops"));
+        assert!(callbacks.contains("on_process_external_image_drops"));
+        assert!(!callbacks.contains("poll_external_image_drops"));
         assert!(callbacks.contains("ExternalImageDrop::Paths"));
         assert!(callbacks.contains("ExternalImageDrop::Text"));
         assert!(callbacks.contains("external_drop_inside_reference_input"));
@@ -1119,7 +1161,7 @@ mod tests {
         assert!(controller.contains("reference_paths: reference_paths.to_vec()"));
         assert!(controller.contains("restore_asset_regeneration_inputs"));
         assert!(controller.contains("references_for_category_mut"));
-        assert!(controller.contains("load_image(&path)"));
+        assert!(controller.contains("load_preview_image(&path, PreviewPurpose::Reference)"));
         assert!(generation_callbacks.contains("start_asset_regeneration"));
         assert!(viewer_callbacks.contains("start_asset_regeneration"));
         assert!(viewer_callbacks.contains("persist_slint_reference"));
@@ -1138,7 +1180,7 @@ mod tests {
         assert!(backend.contains("ExistingGenerationPolicy::KeepExisting"));
         assert!(backend.contains("已保留正在进行中的任务"));
         assert!(backend.contains("sync_generation_state_for_current_category(&context, app)"));
-        assert!(backend.contains("navigate_to(app, \"generation\")"));
+        assert!(backend.contains("navigate_to_with_store(app"));
     }
 
     #[test]
@@ -1294,9 +1336,11 @@ mod tests {
         let card = include_str!("../../ui/components/generation-loading-card.slint");
 
         assert!(card.contains("property <bool> pulse-bright: false;"));
-        assert!(card.contains("interval: 900ms;"));
+        assert!(card.contains("interval: AppState.reduced-motion ? 1400ms : 900ms;"));
         assert!(card.contains("breathing-border := Rectangle"));
-        assert!(card.contains("animate opacity { duration: 900ms; easing: ease-in-out; }"));
+        assert!(card.contains(
+            "animate opacity { duration: AppState.reduced-motion ? 0ms : 900ms; easing: ease-in-out; }"
+        ));
     }
 
     #[test]
@@ -1311,8 +1355,10 @@ mod tests {
         assert!(card.contains("root.bounce-step - root.sequence-index * 4 + 40"));
         assert!(card.contains("phase == 5 ? 0px - 7px"));
         assert!(card.contains("phase == 11 ? 1px"));
-        assert!(card.contains("animate y { duration: 65ms; easing: ease-in-out; }"));
-        assert!(section.contains("interval: 50ms;"));
+        assert!(card.contains(
+            "animate y { duration: AppState.reduced-motion ? 0ms : 65ms; easing: ease-in-out; }"
+        ));
+        assert!(section.contains("interval: AppState.reduced-motion ? 200ms : 50ms;"));
         assert!(section.contains("running: root.loading-count > 0;"));
         assert!(section.contains("Math.mod(root.loading-bounce-step + 1, 40)"));
         for index in 0..4 {
@@ -1325,34 +1371,31 @@ mod tests {
     }
 
     #[test]
-    fn generation_loading_and_completed_items_share_the_time_grouped_template() {
+    fn generation_loading_and_completed_items_share_the_virtualized_template() {
         let panel = include_str!("../../ui/components/generation-result-panel.slint");
-        let gallery = include_str!("../../ui/components/time-grouped-gallery.slint");
-        let section = include_str!("../../ui/components/time-group-section.slint");
+        let gallery = include_str!("../../ui/components/virtualized-gallery.slint");
 
         assert!(!panel.contains("GenerationWaterfall"));
-        assert!(panel.contains("result-gallery := TimeGroupedGallery"));
+        assert!(panel.contains("result-gallery := VirtualizedGallery"));
         assert!(
             panel.contains("visible: AppState.generations.length > 0 || root.active-generating();")
         );
-        assert!(panel.contains("loading-group-title: AppState.en ? \"Today\" : \"今天\";"));
-        assert!(gallery.contains("loading-count: root.loading-count;"));
-        assert!(gallery.contains("group.title == root.loading-group-title"));
-        assert!(section.contains("GenerationLoadingCard"));
-        assert!(section.contains("index + root.loading-count"));
+        assert!(panel.contains("loaders: AppState.generation-layout-loaders;"));
+        assert!(panel.contains("AppState.update-gallery-viewport("));
+        assert!(gallery.contains("for loader in root.loaders: GenerationLoadingCard"));
+        assert!(gallery.contains("for placement in root.placements: ThumbnailCard"));
     }
 
     #[test]
     fn generation_results_scroll_to_the_gallerys_measured_height() {
         let panel = include_str!("../../ui/components/generation-result-panel.slint");
-        let gallery = include_str!("../../ui/components/time-grouped-gallery.slint");
+        let gallery = include_str!("../../ui/components/virtualized-gallery.slint");
 
-        assert!(
-            panel.contains("viewport-height: max(self.height, result-gallery.preferred-height);")
-        );
+        assert!(panel.contains("viewport-height: max(self.height, result-gallery.height);"));
+        assert!(!panel.contains("result-gallery.preferred-height"));
         assert!(panel.contains("y: 0px;"));
-        assert!(panel.contains("height: self.preferred-height;"));
-        assert!(gallery.contains("alignment: start;"));
+        assert!(panel.contains("content-height: AppState.generation-layout-height;"));
+        assert!(gallery.contains("height: max(1px, root.content-height * 1px);"));
         assert!(!panel.contains("AppState.generation-groups.length * 66px"));
     }
 
@@ -1360,11 +1403,13 @@ mod tests {
     fn asset_gallery_scrolls_to_its_measured_grid_or_waterfall_height() {
         let assets = include_str!("../../ui/components/asset-gallery.slint");
 
-        assert!(assets.contains(
-            "viewport-height: max(self.height, asset-gallery-content.preferred-height);"
-        ));
-        assert!(assets.contains("asset-gallery-content := TimeGroupedGallery"));
-        assert!(assets.contains("height: self.preferred-height;"));
+        assert!(
+            assets.contains("viewport-height: max(self.height, asset-gallery-content.height);")
+        );
+        assert!(!assets.contains("asset-gallery-content.preferred-height"));
+        assert!(assets.contains("asset-gallery-content := VirtualizedGallery"));
+        assert!(assets.contains("content-height: root.content-height;"));
+        assert!(assets.contains("placements: root.placements;"));
         assert!(!assets.contains("root.groups.length * 66px"));
         assert!(!assets.contains("root.row-count() * root.row-height()"));
     }
@@ -1435,16 +1480,20 @@ mod tests {
         let groups = include_str!("../../ui/components/time-grouped-gallery.slint");
         let thumbnail = include_str!("../../ui/components/thumbnail-card.slint");
         let waterfall_column = include_str!("../../ui/components/waterfall-column.slint");
+        let generation_column =
+            include_str!("../../ui/components/generation-masonry-column.slint");
         let waterfall = include_str!("../../ui/components/gallery-waterfall.slint");
-        let generation_waterfall =
-            include_str!("../../ui/components/generation-waterfall.slint");
+        let generation_waterfall = include_str!("../../ui/components/generation-waterfall.slint");
 
         for property in [
             "generation-gallery-layout",
             "asset-gallery-layout",
             "inspiration-gallery-layout",
         ] {
-            assert!(state.contains(property), "missing gallery layout state {property}");
+            assert!(
+                state.contains(property),
+                "missing gallery layout state {property}"
+            );
         }
         assert!(toggle.contains("root.mode = root.mode == \"grid\" ? \"waterfall\" : \"grid\";"));
         assert!(toggle.contains("AppState.save-gallery-layout(root.preference-key, root.mode);"));
@@ -1465,6 +1514,14 @@ mod tests {
         assert!(thumbnail.contains("in property <bool> masonry: false;"));
         assert!(thumbnail.contains("root.item.height / root.item.width"));
         assert!(waterfall_column.contains("masonry: true;"));
+        for column in [waterfall_column, generation_column] {
+            assert!(column.contains("in root.column-length(): ThumbnailCard"));
+            assert!(column.contains("root.items[root.source-index(index)]"));
+            assert!(!column.contains("for item[index] in root.items"));
+            assert!(!column.contains("active: Math.mod"));
+        }
+        assert!(generation_column.contains("function first-source-index() -> int"));
+        assert!(generation_column.contains("Math.mod(root.loading-count, root.column-count)"));
         assert!(waterfall
             .contains("floor((root.grid-width() + root.grid-gap()) / root.item-slot-width())"));
         assert!(!waterfall.contains("min(root.items.length"));
@@ -1476,6 +1533,71 @@ mod tests {
         assert!(panel.contains(
             "AppState.generation-gallery-layout == \"waterfall\" ? root.base-thumb-width() : root.item-width()"
         ));
+    }
+
+    #[test]
+    fn waterfall_column_mapping_instantiates_every_item_exactly_once() {
+        for item_count in [0_usize, 1, 2, 7, 24, 49] {
+            for column_count in 1_usize..=8 {
+                let mut ordinary = Vec::new();
+                for column in 0..column_count {
+                    let length = if item_count <= column {
+                        0
+                    } else {
+                        (item_count - 1 - column) / column_count + 1
+                    };
+                    ordinary.extend((0..length).map(|row| row * column_count + column));
+                }
+                ordinary.sort_unstable();
+                assert_eq!(ordinary, (0..item_count).collect::<Vec<_>>());
+
+                for loading_count in 0_usize..=4 {
+                    let mut generation = Vec::new();
+                    for column in 0..column_count {
+                        let first = (column + column_count - loading_count % column_count)
+                            % column_count;
+                        let length = if item_count <= first {
+                            0
+                        } else {
+                            (item_count - 1 - first) / column_count + 1
+                        };
+                        for row in 0..length {
+                            let index = first + row * column_count;
+                            assert_eq!((index + loading_count) % column_count, column);
+                            generation.push(index);
+                        }
+                    }
+                    generation.sort_unstable();
+                    assert_eq!(generation, (0..item_count).collect::<Vec<_>>());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn gallery_pagination_is_edge_triggered_during_continuous_scrolling() {
+        let assets = include_str!("../../ui/components/asset-gallery.slint");
+        let generations = include_str!("../../ui/components/generation-result-panel.slint");
+        let inspiration = include_str!("../../ui/pages/inspiration-page.slint");
+
+        for source in [assets, generations, inspiration] {
+            assert!(source.contains("property <bool> load-more-armed: true;"));
+            assert!(source.contains("property <length> last-load-bottom: -10000px;"));
+            assert!(source.contains("pagination-key"));
+            assert!(source.contains("changed pagination-key =>"));
+            assert!(source.contains("function reset-pagination-latch()"));
+            assert!(source.contains("visible-bottom >= root.last-load-bottom + 240px"));
+            assert!(source.contains("root.load-more-armed = false;"));
+            assert!(source.contains("root.last-load-bottom = visible-bottom;"));
+            assert!(source.contains("changed viewport-height =>"));
+        }
+        assert!(assets.contains("in property <string> pagination-key: \"\";"));
+        assert!(generations.contains("property <string> pagination-key: AppState.asset-type;"));
+        assert!(inspiration.contains(
+            "property <string> pagination-key: AppState.inspiration-category-filter;"
+        ));
+        let assets_page = include_str!("../../ui/pages/assets-page.slint");
+        assert!(assets_page.contains("pagination-key: AppState.asset-category-filter;"));
     }
 
     #[test]
@@ -1497,7 +1619,10 @@ mod tests {
         let serialized = serde_json::to_string(&saved).expect("serialize user profile");
         let restored: UserProfileData =
             serde_json::from_str(&serialized).expect("restore user profile");
-        assert_eq!(restored.ui_preferences.generation_gallery_layout, "waterfall");
+        assert_eq!(
+            restored.ui_preferences.generation_gallery_layout,
+            "waterfall"
+        );
         assert_eq!(normalize_gallery_layout(" WATERFALL "), "waterfall");
         assert_eq!(normalize_gallery_layout("unsupported"), "grid");
     }
@@ -1536,7 +1661,7 @@ mod tests {
         assert!(dots.contains("dot-one := Rectangle"));
         assert!(dots.contains("dot-two := Rectangle"));
         assert!(dots.contains("dot-three := Rectangle"));
-        assert!(dots.contains("interval: 120ms"));
+        assert!(dots.contains("interval: AppState.reduced-motion ? 360ms : 120ms"));
         assert!(dots.matches("animate y").count() >= 3);
     }
 
@@ -1678,7 +1803,7 @@ mod tests {
         assert!(callbacks.contains("run_local_conversion_worker"));
         assert!(callbacks.contains("convert_image_file"));
         assert!(callbacks.contains("rfd::AsyncFileDialog::new()"));
-        assert!(callbacks.contains("fs::copy(&result_path, &destination)"));
+        assert!(callbacks.contains("copy_and_release_managed_toolbox_result("));
         assert!(callbacks.contains("conversion_source_format"));
         assert!(reference.contains("page.as_str() == \"toolbox-convert\""));
         assert!(reference.contains("toolbox_callbacks::add_conversion_paths"));
@@ -1701,13 +1826,13 @@ mod tests {
         assert!(app_ui.contains("ToolboxColorizePage"));
         assert_eq!(page.matches("ColorizePreviewPanel {").count(), 3);
         assert!(page.contains("AppState.choose-colorize-source()"));
-        assert!(page.contains("AppState.add-colorize-source-from-drag(mime-type, data)"));
+        assert!(page.contains("AppState.add-colorize-source-from-drag(data)"));
         assert!(page.contains("AppState.start-colorize()"));
         assert!(page.contains("AppState.reveal-colorize-result()"));
         assert!(page.contains("title: AppState.en ? \"Original\" : \"原图\""));
         assert!(page.contains("result-panel: true"));
         assert!(state.contains("colorize-estimated-credits: \"20\""));
-        assert!(state.contains("callback add-colorize-source-from-drag(string, string) -> bool;"));
+        assert!(state.contains("callback add-colorize-source-from-drag(data-transfer) -> bool;"));
         assert!(callbacks.contains("state.on_choose_colorize_source"));
         assert!(callbacks.contains("state.on_add_colorize_source_from_drag"));
         assert!(callbacks.contains("add_colorization_from_drag_data"));
@@ -1838,7 +1963,7 @@ mod tests {
         assert!(callbacks.contains("start_compression_result_save"));
         assert!(callbacks.contains("normalize_compression_destination"));
         assert!(callbacks.contains("rfd::AsyncFileDialog::new()"));
-        assert!(callbacks.contains("fs::copy(&result_path, &destination)"));
+        assert!(callbacks.contains("copy_and_release_managed_toolbox_result("));
         assert!(!callbacks.contains("state.on_reveal_compression_result"));
         assert!(!callbacks.contains("set_compression_estimated_credits"));
         assert!(!callbacks.contains("图片压缩能力等待后端配置"));
@@ -1849,7 +1974,8 @@ mod tests {
             .and_then(|block| block.split("fn paste_compression_image").next())
             .expect("compression import implementation");
         assert!(compression_import.contains("compression_source_extension(&canonical)"));
-        assert!(compression_import.contains("load_image(&canonical)"));
+        assert!(compression_import
+            .contains("load_preview_image(&canonical, PreviewPurpose::Toolbox)"));
         assert!(!compression_import.contains("is_compression_image_path"));
         assert!(!compression_import.contains("image::open(&canonical)"));
         assert!(image_processing.contains("ImageCompressionMode::Quality"));
@@ -1893,7 +2019,7 @@ mod tests {
         assert!(page.contains("AppState.choose-enhance-source()"));
         assert_eq!(page.matches("AppState.choose-enhance-source()").count(), 2);
         assert!(page.contains("source-drop := DropArea"));
-        assert!(page.contains("AppState.add-enhance-source-from-drag(mime-type, data)"));
+        assert!(page.contains("AppState.add-enhance-source-from-drag(data)"));
         assert!(page.contains("drop-enabled: !AppState.enhance-processing"));
         assert!(page.contains("text: AppState.en ? \"Change image\" : \"更换图片\""));
         assert_eq!(page.matches("EnhanceQualityButton {").count(), 3);
@@ -1909,7 +2035,7 @@ mod tests {
         assert!(state.contains("enhance-result-path"));
         assert!(state.contains("enhance-result-image"));
         assert!(state.contains("callback choose-enhance-source()"));
-        assert!(state.contains("callback add-enhance-source-from-drag(string, string) -> bool"));
+        assert!(state.contains("callback add-enhance-source-from-drag(data-transfer) -> bool"));
         assert!(state.contains("callback start-enhance(string)"));
         assert!(state.contains("callback reveal-enhance-result()"));
         assert!(callbacks.contains("state.on_choose_enhance_source"));
@@ -1960,10 +2086,8 @@ mod tests {
         assert!(page.contains("text: AppState.en ? \"Change image\" : \"更换图片\""));
         assert!(page.contains("disabled: AppState.watermark-processing"));
         assert!(page.contains("source-drop := DropArea"));
-        assert!(page.contains("event.mime-type == \"text/uri-list\""));
-        assert!(page.contains("event.mime-type == \"text/plain\""));
-        assert!(page.contains("event.mime-type == \"text/html\""));
-        assert!(page.contains("AppState.add-watermark-source-from-drag(mime-type, data)"));
+        assert!(page.contains("return root.drop-enabled ? DragAction.copy : DragAction.none;"));
+        assert!(page.contains("AppState.add-watermark-source-from-drag(data)"));
         assert!(page.contains("松开即可上传图片"));
         assert!(page.contains("x: 32px + root.panel-width() - 166px;"));
         assert!(!page.contains("Upload an image. The processed file stays local"));
@@ -1973,7 +2097,7 @@ mod tests {
         assert!(page.contains("去水印中("));
         assert!(state.contains("watermark-result-path"));
         assert!(state.contains("watermark-estimated-credits: \"20\""));
-        assert!(state.contains("callback add-watermark-source-from-drag(string, string) -> bool"));
+        assert!(state.contains("callback add-watermark-source-from-drag(data-transfer) -> bool"));
         assert!(
             page.contains("\"本次预计扣除 \" + AppState.watermark-estimated-credits + \" 积分\"")
         );
@@ -1998,7 +2122,7 @@ mod tests {
         assert!(include_str!("../../ui/dialogs/viewer-overlay.slint")
             .contains("AppState.viewer-repeat-enabled"));
         assert!(app.contains("if page.starts_with(\"toolbox-\")"));
-        assert!(app.contains("state.set_page(\"toolbox\".into())"));
+        assert!(app.contains("navigate_to_with_store(&app, &store.borrow(), \"toolbox\")"));
     }
 
     #[test]
@@ -2159,7 +2283,10 @@ mod tests {
         let prompt = include_str!("../../ui/components/prompt-composer.slint");
         let negative = include_str!("../../ui/components/negative-prompt-editor.slint");
 
-        assert_eq!(chooser.matches("settings-popup := PopupWindow {").count(), 1);
+        assert_eq!(
+            chooser.matches("settings-popup := PopupWindow {").count(),
+            1
+        );
         assert!(chooser.contains("text: root.settings-summary();"));
         assert!(chooser.contains("Image settings · "));
         assert!(chooser.contains("图片设置 · "));
@@ -2177,7 +2304,9 @@ mod tests {
         assert!(chooser.contains("width: 378px;"));
         assert!(chooser.contains("x: root.width - self.width;"));
         assert!(!chooser.contains("min(378px, root.width)"));
-        assert!(chooser.contains("border-color: root.selected ? AppTheme.accent : AppTheme.border;"));
+        assert!(
+            chooser.contains("border-color: root.selected ? AppTheme.accent : AppTheme.border;")
+        );
         assert_eq!(chooser.matches("ImageRatioOption { value:").count(), 11);
         assert_eq!(chooser.matches("ImageSettingPill { text:").count(), 7);
         assert!(panel.contains("settings-row := HorizontalLayout"));
@@ -2199,12 +2328,13 @@ mod tests {
         assert!(negative.contains("填写不希望画面中出现的内容"));
         assert!(negative.contains("x: parent.width - 42px"));
         assert!(negative.contains("negative-prompt-dropdown.svg"));
-        assert!(negative.contains("transform-rotation: AppState.negative-prompt-expanded ? 180deg : 0deg"));
+        assert!(negative
+            .contains("transform-rotation: AppState.negative-prompt-expanded ? 180deg : 0deg"));
         assert!(prompt.contains("? 650px : 600px"));
         assert!(prompt.contains("border-radius: 12px;"));
         assert!(prompt.contains("width: 64px;"));
         assert!(prompt.contains("x: 94px;"));
-        assert!(prompt.contains("x: 172px;"));
+        assert!(prompt.contains("x: 212px;"));
 
         for chip in [
             include_str!("../../ui/components/creation-mode-chip.slint"),
@@ -2227,7 +2357,9 @@ mod tests {
         assert!(composer.contains("? AppTheme.accent : AppTheme.muted;"));
         assert!(composer.contains("font-size: 12px;"));
         assert!(composer.contains("font-weight: 400;"));
-        assert!(!composer.contains("primary: true;\n            disabled: AppState.reasoning-model"));
+        assert!(
+            !composer.contains("primary: true;\n            disabled: AppState.reasoning-model")
+        );
     }
 
     #[test]
@@ -2497,9 +2629,8 @@ mod tests {
         assert!(page.contains(
             "grid-column-count: max(1, Math.ceil(self.width / root.grid-spacing()) + 1)"
         ));
-        assert!(page.contains(
-            "grid-row-count: max(1, Math.ceil(self.height / root.grid-spacing()) + 1)"
-        ));
+        assert!(page
+            .contains("grid-row-count: max(1, Math.ceil(self.height / root.grid-spacing()) + 1)"));
         assert!(page.contains("for column in canvas.grid-column-count"));
         assert!(page.contains("for row in canvas.grid-row-count"));
         assert!(!page.contains("for column in 70"));
@@ -2901,7 +3032,12 @@ mod tests {
         assert!(callbacks.contains("atomic_write_file(&destination, &bytes)"));
         assert!(callbacks.contains("path: destination.display().to_string()"));
         assert!(callbacks.contains("image_path = image.path"));
-        assert!(sync.contains("load_image(Path::new(&note.image_path))"));
+        assert!(sync.contains("prepare_preview_image_if("));
+        assert!(sync.contains("PreviewPurpose::Canvas"));
+        assert!(sync.contains("CANVAS_PREVIEW_EPOCH.load(Ordering::Acquire) == preview_epoch"));
+        assert!(!sync.contains(
+            "load_preview_image(Path::new(&note.image_path), PreviewPurpose::Canvas)"
+        ));
         assert!(page.contains("root.note.kind == \"image\" || root.is-board-image()"));
         assert!(page.contains("root.note.image-path != \"\""));
         assert!(page.contains("source: root.note.preview-image"));
@@ -2927,7 +3063,7 @@ mod tests {
         assert!(page.contains("root.resize-preview-height = self.start-height * scale"));
         assert!(callbacks.contains("state.on_resize_canvas_image_node"));
         assert!(callbacks.contains("fit_image_node_to_intrinsic_aspect"));
-        assert!(callbacks.contains("source_image.size()"));
+        assert!(callbacks.contains("inspect_image_dimensions(&source_path)"));
         assert!(ops.contains("fn resize_image_node_proportionally"));
         assert!(ops.contains("fn fit_image_node_to_intrinsic_aspect"));
     }
@@ -3024,9 +3160,13 @@ mod tests {
         assert!(page.contains("root.request-selected-delete()"));
         assert!(page.contains("AppState.canvas-selected-link-id = link-id"));
         assert!(page.contains("canvas-keyboard.focus()"));
-        assert!(page.contains("interval: 32ms;"));
+        assert!(page.contains("interval: 80ms;"));
+        assert!(page.contains(
+            "running: !AppState.reduced-motion && AppState.canvas-selected-link-id != \"\";"
+        ));
+        assert!(!page.contains("interval: 32ms;"));
         assert!(page.contains("root.link-flow-step = Math.mod(root.link-flow-step + 1, 100)"));
-        assert!(page.contains("flow-phase: root.link-flow-step / 100;"));
+        assert!(page.contains("flow-phase: AppState.canvas-selected-link-id == link.id"));
     }
 
     #[test]
@@ -3387,7 +3527,9 @@ mod tests {
         assert!(credit_page.contains("PurchaseAgreements"));
         assert!(purchase_agreements.contains("purchase-membership-accepted"));
         assert!(purchase_agreements.contains("purchase-credit-rules-accepted"));
-        assert!(callbacks.contains("agreements_api.accept_agreements(&acceptances)?;"));
+        assert!(callbacks.contains(
+            "agreements_api.accept_agreements_scoped(&acceptances, &worker_scope)?;"
+        ));
         assert!(callbacks.contains("apply_agreements_from_payment_error"));
         assert!(callbacks.contains("agreement_acceptance_required"));
         assert!(!callbacks.contains("cancel_active_payment"));
@@ -3429,60 +3571,23 @@ mod tests {
     }
 
     #[test]
-    fn invoice_application_ui_is_required_and_reachable() {
+    fn invoice_application_ui_is_hidden_until_the_server_workflow_exists() {
         let credits = include_str!("../../ui/pages/credits-page.slint");
         let app = include_str!("../../ui/app.slint");
         let state = include_str!("../../ui/app-state.slint");
-        let order_dialog_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("ui/dialogs/invoice-order-dialog.slint");
-        let order_dialog = std::fs::read_to_string(order_dialog_path).unwrap_or_default();
-        let dialog_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("ui/dialogs/invoice-dialog.slint");
-        let dialog = std::fs::read_to_string(dialog_path).unwrap_or_default();
 
-        assert!(credits.contains("申请开票"));
-        assert!(credits.contains("callback open-invoice-orders()"));
-        assert!(credits.contains("root.open-invoice-orders()"));
-        assert!(app.contains("InvoiceOrderDialog"));
-        assert!(app.contains("property <bool> invoice-orders-open"));
-        assert!(app.contains("root.invoice-orders-open = true"));
-        assert!(app.contains("InvoiceDialog"));
-        assert!(app.contains("property <bool> invoice-open"));
-        assert!(app.contains("root.invoice-orders-open = false"));
-        assert!(app.contains("root.invoice-open = true"));
+        assert!(!credits.contains("申请开票"));
+        assert!(!credits.contains("Apply for invoice"));
+        assert!(!credits.contains("open-invoice-orders"));
+        assert!(!app.contains("InvoiceOrderDialog"));
+        assert!(!app.contains("InvoiceDialog"));
+        assert!(!app.contains("invoice-orders-open"));
+        assert!(!app.contains("invoice-open"));
         assert!(!state.contains("invoice-open"));
         assert!(!state.contains("submit-invoice-request"));
+        // Keep the derived recharge-order model for backward-compatible local data while no
+        // unfinished invoice dialog is reachable from the production application shell.
         assert!(state.contains("in-out property <[InvoiceOrderView]> invoice-orders: []"));
-        assert!(order_dialog.contains("for order in AppState.invoice-orders"));
-        assert!(order_dialog.contains("disabled: !root.item.eligible"));
-        assert!(order_dialog.contains("select-order("));
-        assert!(order_dialog.contains("单次充值满 ¥100.00 可申请开票"));
-        assert!(dialog.contains("in-out property <bool> open"));
-        assert!(dialog.contains("in property <string> selected-order-id"));
-        assert!(dialog.contains("所选订单"));
-        assert!(!dialog.contains("AppState.invoice-"));
-
-        for label in ["发票类型", "抬头类型", "发票抬头", "税号", "接收邮箱"] {
-            assert!(dialog.contains(label), "missing required field: {label}");
-        }
-        assert!(dialog.contains("电子增值税普通发票"));
-        assert!(dialog.contains("个人"));
-        assert!(!dialog.contains("事业单位"));
-        assert!(!dialog.contains("\"institution\""));
-        assert!(dialog.contains("企业"));
-        assert_eq!(dialog.matches("RequiredLabel { text:").count(), 2);
-        assert_eq!(dialog.matches("required: true;").count(), 3);
-        assert!(dialog.contains("function requires-tax-id() -> bool"));
-        assert!(dialog.contains("!root.requires-tax-id() || root.invoice-tax-id != \"\""));
-        assert!(dialog.contains("if root.requires-tax-id(): Field"));
-        assert!(dialog.contains("root.invoice-tax-id = \"\""));
-        assert!(dialog.contains("viewport-width: self.width"));
-        assert!(dialog.contains("clip: true"));
-        assert!(dialog.contains("disabled: !root.form-valid()"));
-        assert!(dialog.contains("将在12小时内自动推送至您的电子邮箱内"));
-        assert!(dialog.contains("超过6个月未申请开票的订单暂不支持线上开具"));
-        assert!(dialog.contains("具有同等法律效力"));
-        assert!(dialog.contains("仅为实际支付金额"));
     }
 
     #[test]
@@ -3627,9 +3732,7 @@ mod tests {
         assert!(viewer.contains(
             "if AppState.viewer-source != \"reference\" && AppState.viewer-source != \"inspiration\" && !root.image-fullscreen: Rectangle"
         ));
-        assert!(viewer.contains(
-            "AppState.viewer-source == \"inspiration\" ? parent.height - 96px"
-        ));
+        assert!(viewer.contains("AppState.viewer-source == \"inspiration\" ? parent.height - 96px"));
         assert_eq!(viewer.matches("ViewerFooterActionButton {").count(), 4);
         assert!(viewer.contains("AppState.viewer-download-image();"));
         assert!(viewer.contains("AppState.viewer-use-reference();"));
@@ -3681,6 +3784,10 @@ mod tests {
         assert!(callbacks.contains("interpolated_brush_points"));
         assert!(callbacks.contains("state.on_submit_image_edit"));
         assert!(callbacks.contains("请先用笔刷标记需要修改的区域"));
+        assert!(callbacks.contains("rasterize_image_edit_mask"));
+        assert!(callbacks.contains("start_backend_image_edit"));
+        assert!(editor.contains("AppState.image-editor-estimated-credit-cost"));
+        assert!(!callbacks.contains("局部重绘服务接口待接入"));
     }
 
     #[test]
@@ -3692,7 +3799,9 @@ mod tests {
         assert!(viewer.contains("root.image-fullscreen = !root.image-fullscreen;"));
         assert!(viewer.contains("fullscreen-button := Rectangle"));
         assert!(!viewer.contains("if image-touch.has-hover: fullscreen-button"));
-        assert!(viewer.contains("image-touch.has-hover || fullscreen-touch.has-hover || root.image-fullscreen"));
+        assert!(viewer.contains(
+            "image-touch.has-hover || fullscreen-touch.has-hover || root.image-fullscreen"
+        ));
         assert!(viewer.contains("@image-url(\"../../assets/icons/fit.svg\")"));
         assert!(viewer.contains("@image-url(\"../../assets/icons/restore.svg\")"));
         assert!(viewer.contains("root.detail-collapsed = true;"));
@@ -4010,15 +4119,20 @@ mod tests {
         assert!(card.contains("visible: failed-hover.has-hover || failed-delete-touch.has-hover"));
         assert!(card.contains("AppState.request-delete-thumbnail(root.item.id, \"generation\")"));
         assert!(card.contains("visible: root.item.source-path != \"failed\";"));
-        assert!(callbacks.contains("store_mut.generations.retain(|a| a.id != id)"));
+        assert!(callbacks.contains("take_pending_store_record"));
+        assert!(callbacks.contains("asset_collection_mut"));
     }
 
     #[test]
-    fn windows_uses_gpu_renderer_without_removing_software_override() {
+    fn renderer_prefers_gpu_and_keeps_software_fallback() {
         let app = include_str!("app.rs");
         let manifest = include_str!("../../Cargo.toml");
-        assert!(app.contains("winit-femtovg"));
-        assert!(app.contains("std::env::var_os(\"SLINT_BACKEND\")"));
+        let app_state = include_str!("../../ui/app-state.slint");
+        assert!(!app.contains("set_var(\"SLINT_BACKEND\""));
+        assert!(!app.contains("set_rendering_notifier"));
+        assert!(app.contains("backend.contains(\"software\")"));
+        assert!(app.contains("set_reduced_motion(using_software_renderer)"));
+        assert!(app_state.contains("in-out property <bool> reduced-motion: false"));
         assert!(manifest.contains("\"renderer-femtovg\""));
         assert!(manifest.contains("\"renderer-software\""));
     }
@@ -4066,7 +4180,7 @@ mod tests {
         assert!(model.contains("CreditInsufficient"));
         assert!(backend.contains("error.is_insufficient_credits()"));
         assert!(backend.contains("GenerationOutcome::CreditInsufficient"));
-        assert!(backend.contains("remove_pending_generation(&request.client_request_id)"));
+        assert!(backend.contains("remove_pending_generation_scoped("));
         assert!(poll.contains("GenerationOutcome::CreditInsufficient"));
         let credit_branch = poll
             .split("GenerationOutcome::CreditInsufficient")
@@ -4080,6 +4194,77 @@ mod tests {
         assert!(dialog.contains("积分不足"));
         assert!(dialog.contains("前往充值"));
         assert!(dialog.contains("AppState.navigate(\"credits\")"));
+    }
+
+    #[test]
+    fn generation_terminal_scope_guard_clears_every_busy_surface() {
+        let generation_state = include_str!("generation/state.rs");
+        let generation_poll = include_str!("generation/poll.rs");
+        let cutout = include_str!("callbacks/image_cutout.rs");
+        let enhancement = include_str!("callbacks/image_enhancement.rs");
+        let toolbox = include_str!("callbacks/toolbox.rs");
+
+        assert!(generation_state.contains("GenerationScopeDisposition::CapturedTerminal"));
+        assert!(generation_state
+            .contains("sign_out_locally(&app, context, true, Some(session_scope.auth_epoch))"));
+        for setter in [
+            "state.set_generating(false)",
+            "state.set_generation_loading_count(0)",
+            "state.set_image_editor_generating(false)",
+            "state.set_viewer_processing(false)",
+            "state.set_cutout_processing(false)",
+            "state.set_cutout_progress(0)",
+            "state.set_enhance_processing(false)",
+            "state.set_enhance_progress(0)",
+            "state.set_watermark_processing(false)",
+            "state.set_watermark_progress(0)",
+            "state.set_colorize_processing(false)",
+            "state.set_colorize_progress(0)",
+        ] {
+            assert!(generation_state.contains(setter), "missing reset {setter}");
+        }
+        assert!(generation_poll.contains("generation_scope_allows_polling"));
+        assert!(cutout.contains("generation_scope_allows_polling"));
+        assert!(enhancement.contains("generation_scope_allows_polling"));
+        assert_eq!(
+            toolbox.matches("generation_scope_allows_polling").count(),
+            4,
+            "watermark and colorization must guard both before and after reading outcomes",
+        );
+    }
+
+    #[test]
+    fn detached_generation_ack_and_cancel_observe_terminal_scope() {
+        let generation_state = include_str!("generation/state.rs");
+        let generation_poll = include_str!("generation/poll.rs");
+        let generation_controller = include_str!("generation/controller.rs");
+
+        assert!(generation_state.contains("fn observe_detached_generation_scope"));
+        assert!(generation_state.contains("generation_scope_allows_polling"));
+        let ack = generation_poll
+            .split("pub(super) fn acknowledge_delivery_after_local_save")
+            .nth(1)
+            .expect("delivery ack helper");
+        assert!(ack.contains("observe_detached_generation_scope("));
+        assert!(ack.contains("pending_delivery_acknowledged("));
+        assert!(generation_controller.contains("cancel_scoped(&server_task_id, &worker_scope)"));
+        assert!(generation_controller.contains("observe_detached_generation_scope("));
+    }
+
+    #[test]
+    fn generation_recovery_discovery_observes_terminal_scope() {
+        let backend = include_str!("generation/backend.rs");
+        let discovery = backend
+            .split("fn recover_server_generation_tasks")
+            .nth(1)
+            .and_then(|value| value.split("fn resume_pending_generation").next())
+            .expect("server recovery discovery");
+
+        assert!(discovery.contains("list_tasks_scoped(status, &worker_scope)"));
+        assert!(discovery.contains("task_scoped(&summary.id, &worker_scope)"));
+        assert!(discovery.contains("backend_generation_scope_active(&backend, &worker_scope)"));
+        assert!(discovery.contains("sender.send(Err(()))"));
+        assert!(discovery.contains("generation_scope_allows_polling"));
     }
 
     #[test]
@@ -4211,13 +4396,16 @@ mod tests {
             "disabled: AppState.invitation-code-busy || AppState.invitation-code-submitted"
         ));
         assert!(top_bar.contains("AppState.navigate(\"invitation-gift\")"));
-        assert!(top_bar.contains("interval: 5s"));
+        assert!(top_bar.contains("changed has-hover"));
+        assert!(top_bar.contains("self.has-hover && !AppState.reduced-motion"));
+        assert!(!top_bar.contains("interval: 5s"));
         assert!(top_bar.contains("width: 44px"));
         assert!(top_bar.contains("running: root.wobbling"));
         assert!(top_bar.contains("function wobble-angle() -> angle"));
         assert!(app.contains("AppState.page == \"invitation-gift\""));
         assert!(account_api.contains("/v1/account/invitation-code"));
-        assert!(callback.contains("api.submit_invitation_code(&code)"));
+        assert!(callback.contains("api.submit_invitation_code_scoped(&code, &worker_scope)"));
+        assert!(callback.contains("api.invitation_dashboard_scoped(&worker_scope)"));
         assert!(callback.contains("state.set_invitation_code_submitted(true)"));
         assert!(callback.contains("error.is_invitation_code_already_submitted()"));
         assert!(account_api.contains("invitation_code_submitted: bool"));
@@ -4225,21 +4413,31 @@ mod tests {
     }
 
     #[test]
-    fn invitation_rewards_page_shows_the_ten_percent_rate_and_invited_users() {
+    fn invitation_rewards_page_uses_server_authoritative_rules_and_invited_users() {
         let state = include_str!("../../ui/app-state.slint");
         let page = include_str!("../../ui/pages/invitation-gift-page.slint");
         let types = include_str!("../../ui/types.slint");
+        let api = include_str!("api/account.rs");
+        let callbacks = include_str!("callbacks/invitation_code.rs");
 
-        assert!(state.contains("invitation-reward-rate: \"10\""));
+        assert!(state.contains("invitation-reward-rate: \"\""));
+        assert!(!state.contains("invitation-reward-rate: \"10\""));
         assert!(state.contains("invitation-count"));
         assert!(state.contains("invitation-history-reward"));
         assert!(state.contains("invitation-own-code"));
+        assert!(state.contains("invitation-rule-description"));
         assert!(state.contains("property <[InvitedUserView]> invitation-users: []"));
+        assert!(state.contains("callback load-more-invitation-users()"));
+        assert!(state.contains("invitation-users-has-more"));
+        assert!(state.contains("invitation-users-loading"));
         assert!(types.contains("export struct InvitedUserView"));
+        assert!(types.contains("id: string"));
         assert!(types.contains("reward-detail: string"));
         assert!(types.contains("registered-at: string"));
         assert!(page.contains("我的返利比例"));
-        assert!(page.contains("当前暂定返利比例"));
+        assert!(page.contains("服务端当前规则"));
+        assert!(!page.contains("当前暂定返利比例"));
+        assert!(!page.contains("返利比例暂定为 10%"));
         assert!(page.contains("邀请人数"));
         assert!(page.contains("历史返利额度"));
         let summary = page
@@ -4256,11 +4454,33 @@ mod tests {
         assert!(page.contains("返利明细"));
         assert!(page.contains("注册时间"));
         assert!(page.contains("for user in AppState.invitation-users"));
+        assert!(page.contains("AppState.load-more-invitation-users()"));
+        assert!(api.contains("/v1/account/invitations?limit=50&cursor={cursor}"));
+        assert!(callbacks.contains("api.invitation_users_scoped(&cursor, &worker_scope)"));
+        assert!(page.contains("AppState.invitation-rule-description"));
+        assert!(!page.contains("当前返利比例暂定为 10%"));
         assert!(!page.contains("邀请链接"));
         assert!(!page.contains("复制链接"));
         assert!(!state.contains("invitation-share-link"));
         assert!(page.contains("AppState.copy-contact-detail(root.value)"));
         assert!(!page.contains("可转返利"));
+    }
+
+    #[test]
+    fn notifications_keep_the_server_cursor_and_append_more_rows() {
+        let state = include_str!("../../ui/app-state.slint");
+        let page = include_str!("../../ui/pages/notifications-page.slint");
+        let api = include_str!("api/notifications.rs");
+        let callbacks = include_str!("callbacks/notification.rs");
+
+        assert!(state.contains("callback load-more-notifications()"));
+        assert!(state.contains("notification-page-has-more"));
+        assert!(state.contains("notification-page-loading"));
+        assert!(page.contains("AppState.load-more-notifications()"));
+        assert!(api.contains("next_cursor: Option<String>"));
+        assert!(api.contains("/v1/notifications?limit=50&cursor={cursor}"));
+        assert!(callbacks.contains("if append"));
+        assert!(callbacks.contains("notification_page_epoch != request_epoch"));
     }
 
     #[test]

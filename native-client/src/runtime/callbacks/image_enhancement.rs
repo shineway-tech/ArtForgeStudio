@@ -4,6 +4,7 @@ const ENHANCEMENT_MAX_INPUT_BYTES: u64 = 20 * 1024 * 1024;
 const ENHANCEMENT_MIN_EDGE: u32 = 64;
 const ENHANCEMENT_MAX_LONG_EDGE: u32 = 5000;
 const ENHANCEMENT_MAX_ASPECT_RATIO: u32 = 2;
+const ENHANCEMENT_POLL_RETRY_LIMIT: usize = 4;
 
 #[derive(Clone, Copy)]
 enum EnhancementSourceError {
@@ -36,11 +37,14 @@ pub(super) fn wire_image_enhancement_callbacks(app: &AppWindow, context: AppCont
 
     {
         let app_weak = app.as_weak();
-        state.on_add_enhance_source_from_drag(move |mime_type, data| {
+        state.on_add_enhance_source_from_drag(move |transfer| {
             let Some(app) = app_weak.upgrade() else {
                 return false;
             };
-            add_enhancement_from_drag_data(&app, mime_type.as_str(), data.as_str())
+            let Ok(data) = transfer.plain_text() else {
+                return false;
+            };
+            add_enhancement_from_drag_data(&app, TEXT_PLAIN_MIME, data.as_str())
         });
     }
 
@@ -112,11 +116,6 @@ pub(super) fn wire_image_enhancement_callbacks(app: &AppWindow, context: AppCont
     }
 }
 
-fn enhancement_source_dimensions(image: &Image) -> Option<(u32, u32)> {
-    let buffer = image.to_rgba8()?;
-    Some((buffer.width(), buffer.height()))
-}
-
 fn normalized_enhancement_quality(value: &str) -> Option<&'static str> {
     match value {
         "2K" => Some("2K"),
@@ -127,7 +126,6 @@ fn normalized_enhancement_quality(value: &str) -> Option<&'static str> {
 
 fn validate_enhancement_source(
     path: &Path,
-    image: &Image,
 ) -> std::result::Result<(), EnhancementSourceError> {
     let size = fs::metadata(path)
         .map_err(|_| EnhancementSourceError::Unsupported)?
@@ -135,9 +133,8 @@ fn validate_enhancement_source(
     if size > ENHANCEMENT_MAX_INPUT_BYTES {
         return Err(EnhancementSourceError::TooLarge);
     }
-    let Some((width, height)) = enhancement_source_dimensions(image) else {
-        return Err(EnhancementSourceError::Unsupported);
-    };
+    let (width, height) =
+        inspect_image_dimensions(path).map_err(|_| EnhancementSourceError::Unsupported)?;
     let long_edge = width.max(height);
     let short_edge = width.min(height);
     if short_edge < ENHANCEMENT_MIN_EDGE || long_edge > ENHANCEMENT_MAX_LONG_EDGE {
@@ -157,8 +154,7 @@ fn set_enhancement_source_from_path(
     if !canonical.is_file() {
         return Err(EnhancementSourceError::Unsupported);
     }
-    let image = load_image(&canonical).map_err(|_| EnhancementSourceError::Unsupported)?;
-    validate_enhancement_source(&canonical, &image)?;
+    validate_enhancement_source(&canonical)?;
     let name = canonical
         .file_name()
         .and_then(|value| value.to_str())
@@ -167,7 +163,10 @@ fn set_enhancement_source_from_path(
     let state = app.global::<AppState>();
     state.set_enhance_source_path(canonical.display().to_string().into());
     state.set_enhance_source_name(name.into());
-    state.set_enhance_source_image(image);
+    state.set_enhance_source_image(
+        load_preview_image(&canonical, PreviewPurpose::Canvas)
+            .map_err(|_| EnhancementSourceError::Unsupported)?,
+    );
     state.set_enhance_result_path("".into());
     state.set_enhance_result_name("".into());
     state.set_enhance_result_image(Image::default());
@@ -344,6 +343,10 @@ fn start_image_enhancement(app: &AppWindow, context: AppContext, target_quality:
     if context.backend.is_none() || state.get_enhance_processing() {
         return;
     }
+    let Some(session_scope) = current_generation_session_scope(&context) else {
+        state.set_enhance_message("登录状态已变化，请重新发起图片清晰增强".into());
+        return;
+    };
 
     let source = PathBuf::from(state.get_enhance_source_path().to_string());
     let persisted_source = match persist_reference_source(&source) {
@@ -360,14 +363,14 @@ fn start_image_enhancement(app: &AppWindow, context: AppContext, target_quality:
             return;
         }
     };
-    let preview = match load_image(&persisted_source) {
+    let preview = match load_preview_image(&persisted_source, PreviewPurpose::Canvas) {
         Ok(image) => image,
         Err(_) => {
             set_enhancement_source_error(app, EnhancementSourceError::Unsupported);
             return;
         }
     };
-    if let Err(error) = validate_enhancement_source(&persisted_source, &preview) {
+    if let Err(error) = validate_enhancement_source(&persisted_source) {
         set_enhancement_source_error(app, error);
         return;
     }
@@ -375,10 +378,20 @@ fn start_image_enhancement(app: &AppWindow, context: AppContext, target_quality:
     state.set_enhance_source_image(preview);
 
     let client_request_id = Uuid::new_v4().simple().to_string();
+    let (reference_sha256, reference_size_bytes) =
+        match reference_fingerprints(std::slice::from_ref(&persisted_source)) {
+            Ok(fingerprints) => fingerprints,
+            Err(error) => {
+                state.set_enhance_message(format!("原图校验失败：{error}").into());
+                return;
+            }
+        };
     let record = PendingGenerationRecord {
         schema_version: 1,
         created_at_epoch_ms: Local::now().timestamp_millis(),
         client_request_id,
+        owner_user_id: session_scope.owner_user_id.clone(),
+        auth_epoch: session_scope.auth_epoch,
         local_task_id: Uuid::new_v4().to_string(),
         server_task_id: String::new(),
         raw_prompt: "图片清晰增强".to_string(),
@@ -395,12 +408,21 @@ fn start_image_enhancement(app: &AppWindow, context: AppContext, target_quality:
         target_height: 0,
         create_conversation: false,
         reference_paths: vec![persisted_source.display().to_string()],
+        reference_sha256,
+        reference_size_bytes,
+        lineage_reference_paths: vec![persisted_source.display().to_string()],
         uploaded_file_ids: vec![],
         deliveries: vec![],
         terminal: false,
         expected_success_count: 0,
     };
-    if upsert_pending_generation(record.clone()).is_err() {
+    if upsert_pending_generation_scoped(
+        record.clone(),
+        &session_scope.owner_user_id,
+        session_scope.auth_epoch,
+    )
+    .is_err()
+    {
         state.set_enhance_message(
             if state.get_language().as_str() == "en" {
                 "The task could not be saved locally"
@@ -419,6 +441,13 @@ pub(super) fn resume_pending_image_enhancement(
     context: AppContext,
     record: PendingGenerationRecord,
 ) {
+    let session_scope = SessionScope {
+        owner_user_id: record.owner_user_id.clone(),
+        auth_epoch: record.auth_epoch,
+    };
+    if !generation_scope_matches_context(&context, &session_scope) {
+        return;
+    }
     if app.global::<AppState>().get_enhance_processing() {
         return;
     }
@@ -433,7 +462,7 @@ pub(super) fn resume_pending_image_enhancement(
                     .unwrap_or_default()
                     .into(),
             );
-            if let Ok(image) = load_image(&path) {
+            if let Ok(image) = load_preview_image(&path, PreviewPurpose::Canvas) {
                 state.set_enhance_source_image(image);
             }
         }
@@ -450,6 +479,13 @@ fn launch_image_enhancement(
     let Some(backend) = context.backend.clone() else {
         return;
     };
+    let session_scope = SessionScope {
+        owner_user_id: record.owner_user_id.clone(),
+        auth_epoch: record.auth_epoch,
+    };
+    if !generation_scope_matches_context(&context, &session_scope) {
+        return;
+    }
     let state = app.global::<AppState>();
     state.set_enhance_processing(true);
     state.set_enhance_progress(if recovering { 5 } else { 1 });
@@ -476,10 +512,12 @@ fn launch_image_enhancement(
 
     let source_path = record.reference_paths.first().cloned().unwrap_or_default();
     let (sender, receiver) = mpsc::channel::<ImageEnhancementOutcome>();
-    std::thread::spawn(move || run_image_enhancement_worker(backend, record, sender));
+    let worker_scope = session_scope.clone();
+    std::thread::spawn(move || run_image_enhancement_worker(backend, worker_scope, record, sender));
     poll_image_enhancement_outcomes(
         app.as_weak(),
         context,
+        session_scope,
         Rc::new(RefCell::new(Some(receiver))),
         source_path,
     );
@@ -487,14 +525,33 @@ fn launch_image_enhancement(
 
 fn run_image_enhancement_worker(
     backend: Arc<BackendRuntime>,
+    session_scope: SessionScope,
     mut record: PendingGenerationRecord,
     sender: mpsc::Sender<ImageEnhancementOutcome>,
 ) {
+    if record.owner_user_id != session_scope.owner_user_id
+        || record.auth_epoch != session_scope.auth_epoch
+        || !backend_generation_scope_active(&backend, &session_scope)
+    {
+        return;
+    }
     let api = GenerationApi::new(backend.api.clone());
+    let verified_delivery_file_ids = match sanitize_recovered_delivery_paths(&mut record) {
+        Ok(file_ids) => file_ids,
+        Err(_) => {
+            let _ = sender.send(ImageEnhancementOutcome::Failure {
+                reason: "本地增强恢复记录无法安全更新，已暂停交付，请重启后重试"
+                    .to_string(),
+            });
+            return;
+        }
+    };
     if record.terminal {
-        if let Some(saved) = record.deliveries.iter().find(|delivery| {
-            !delivery.local_path.is_empty() && Path::new(&delivery.local_path).is_file()
-        }) {
+        if let Some(saved) = record
+            .deliveries
+            .iter()
+            .find(|delivery| verified_delivery_file_ids.contains(&delivery.file_id))
+        {
             let delivery = (!saved.acknowledged).then(|| DeliveryConfirmation {
                 client_request_id: record.client_request_id.clone(),
                 item_index: saved.item_index,
@@ -513,24 +570,47 @@ fn run_image_enhancement_worker(
 
     let mut uploaded = record.uploaded_file_ids.clone();
     if uploaded.is_empty() && record.server_task_id.is_empty() {
+        if !generation_references_match(&record) {
+            let _ = sender.send(ImageEnhancementOutcome::Failure {
+                reason: "原图内容已变化，恢复任务已暂停，请重新发起".to_string(),
+            });
+            return;
+        }
         let Some(path) = record.reference_paths.first() else {
-            let _ = remove_pending_generation(&record.client_request_id);
             let _ = sender.send(ImageEnhancementOutcome::Failure {
                 reason: "找不到待处理的原图，请重新上传".to_string(),
             });
             return;
         };
-        match api.upload_reference(Path::new(path)) {
+        match api.upload_reference_scoped(Path::new(path), &session_scope) {
             Ok(file_id) => {
                 uploaded.push(file_id);
                 let snapshot = uploaded.clone();
-                let _ = update_pending_generation(&record.client_request_id, |item| {
-                    item.uploaded_file_ids = snapshot;
-                });
+                if !matches!(
+                    update_pending_generation_scoped(
+                        &session_scope.owner_user_id,
+                        session_scope.auth_epoch,
+                        &record.client_request_id,
+                        |item| item.uploaded_file_ids = snapshot,
+                    ),
+                    Ok(true)
+                ) {
+                    if let Some(file_id) = uploaded.last() {
+                        let _ = api.delete_reference_scoped(file_id, &session_scope);
+                    }
+                    return;
+                }
             }
             Err(error) => {
+                if !backend_generation_scope_active(&backend, &session_scope) {
+                    return;
+                }
                 if !error.should_preserve_generation_recovery() {
-                    let _ = remove_pending_generation(&record.client_request_id);
+                    let _ = remove_pending_generation_scoped(
+                        &session_scope.owner_user_id,
+                        session_scope.auth_epoch,
+                        &record.client_request_id,
+                    );
                 }
                 let _ = sender.send(ImageEnhancementOutcome::Failure {
                     reason: error.generation_message(),
@@ -548,14 +628,21 @@ fn run_image_enhancement_worker(
                 .unwrap_or("2K")
                 .to_string(),
         };
-        match api.create_image_enhancement(&request) {
+        match api.create_image_enhancement_scoped(&request, &session_scope) {
             Ok(detail) => detail,
             Err(error) => {
+                if !backend_generation_scope_active(&backend, &session_scope) {
+                    return;
+                }
                 if error.is_insufficient_credits() {
                     for file_id in &uploaded {
-                        api.delete_reference(file_id);
+                        let _ = api.delete_reference_scoped(file_id, &session_scope);
                     }
-                    let _ = remove_pending_generation(&record.client_request_id);
+                    let _ = remove_pending_generation_scoped(
+                        &session_scope.owner_user_id,
+                        session_scope.auth_epoch,
+                        &record.client_request_id,
+                    );
                     let _ = sender.send(ImageEnhancementOutcome::CreditInsufficient {
                         message: "本次图片清晰增强需要 20 积分，请先充值".to_string(),
                     });
@@ -563,9 +650,13 @@ fn run_image_enhancement_worker(
                 }
                 if !error.should_preserve_generation_recovery() {
                     for file_id in &uploaded {
-                        api.delete_reference(file_id);
+                        let _ = api.delete_reference_scoped(file_id, &session_scope);
                     }
-                    let _ = remove_pending_generation(&record.client_request_id);
+                    let _ = remove_pending_generation_scoped(
+                        &session_scope.owner_user_id,
+                        session_scope.auth_epoch,
+                        &record.client_request_id,
+                    );
                 }
                 let _ = sender.send(ImageEnhancementOutcome::Failure {
                     reason: error.generation_message(),
@@ -574,7 +665,7 @@ fn run_image_enhancement_worker(
             }
         }
     } else {
-        match api.task(&record.server_task_id) {
+        match fetch_image_enhancement_task(&api, &record.server_task_id, &session_scope) {
             Ok(detail) => detail,
             Err(error) => {
                 let _ = sender.send(ImageEnhancementOutcome::Failure {
@@ -589,26 +680,49 @@ fn run_image_enhancement_worker(
     let server_task_id = detail.id.clone();
     let server_id_snapshot = server_task_id.clone();
     let uploaded_snapshot = uploaded.clone();
-    let _ = update_pending_generation(&record.client_request_id, |item| {
-        item.server_task_id = server_id_snapshot;
-        item.uploaded_file_ids = uploaded_snapshot;
-    });
+    if !matches!(
+        update_pending_generation_scoped(
+            &session_scope.owner_user_id,
+            session_scope.auth_epoch,
+            &record.client_request_id,
+            |item| {
+                item.server_task_id = server_id_snapshot;
+                item.uploaded_file_ids = uploaded_snapshot;
+            },
+        ),
+        Ok(true)
+    ) {
+        return;
+    }
     let _ = sender.send(ImageEnhancementOutcome::Accepted {
         task_id: server_task_id.clone(),
     });
 
     loop {
+        if !backend_generation_scope_active(&backend, &session_scope) {
+            return;
+        }
         let _ = sender.send(ImageEnhancementOutcome::Progress {
             percent: detail.progress_percent,
         });
         if let Some(item) = detail.items.iter().find(|item| item.status == "succeeded") {
             if let Some(file) = item.file.as_ref() {
-                match api.download_verified(file) {
+                match api.download_verified_scoped(file, &session_scope) {
                     Ok(bytes) => {
-                        let _ = update_pending_generation(&record.client_request_id, |pending| {
-                            pending.terminal = true;
-                            pending.expected_success_count = 1;
-                        });
+                        if !matches!(
+                            update_pending_generation_scoped(
+                                &session_scope.owner_user_id,
+                                session_scope.auth_epoch,
+                                &record.client_request_id,
+                                |pending| {
+                                    pending.terminal = true;
+                                    pending.expected_success_count = 1;
+                                },
+                            ),
+                            Ok(true)
+                        ) {
+                            return;
+                        }
                         let _ = sender.send(ImageEnhancementOutcome::Success {
                             bytes,
                             delivery: DeliveryConfirmation {
@@ -643,15 +757,25 @@ fn run_image_enhancement_worker(
                     })
                 })
                 .unwrap_or_else(|| "服务端未能完成图片清晰增强".to_string());
-            let _ = update_pending_generation(&record.client_request_id, |pending| {
-                pending.terminal = true;
-                pending.expected_success_count = 0;
-            });
+            if !matches!(
+                update_pending_generation_scoped(
+                    &session_scope.owner_user_id,
+                    session_scope.auth_epoch,
+                    &record.client_request_id,
+                    |pending| {
+                        pending.terminal = true;
+                        pending.expected_success_count = 0;
+                    },
+                ),
+                Ok(true)
+            ) {
+                return;
+            }
             let _ = sender.send(ImageEnhancementOutcome::Failure { reason });
             return;
         }
         std::thread::sleep(Duration::from_millis(IMAGE_POLL_INTERVAL_MS));
-        detail = match api.task(&record.server_task_id) {
+        detail = match fetch_image_enhancement_task(&api, &record.server_task_id, &session_scope) {
             Ok(detail) => detail,
             Err(error) => {
                 let _ = sender.send(ImageEnhancementOutcome::Failure {
@@ -663,13 +787,39 @@ fn run_image_enhancement_worker(
     }
 }
 
+fn fetch_image_enhancement_task(
+    api: &GenerationApi,
+    task_id: &str,
+    session_scope: &SessionScope,
+) -> std::result::Result<GenerationTaskDetail, ApiError> {
+    let mut retries = 0;
+    loop {
+        match api.task_scoped(task_id, session_scope) {
+            Ok(detail) => return Ok(detail),
+            Err(error)
+                if error.should_preserve_generation_recovery()
+                    && retries < ENHANCEMENT_POLL_RETRY_LIMIT =>
+            {
+                retries += 1;
+                std::thread::sleep(Duration::from_millis(IMAGE_POLL_INTERVAL_MS));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 fn poll_image_enhancement_outcomes(
     app_weak: Weak<AppWindow>,
     context: AppContext,
+    session_scope: SessionScope,
     receiver: Rc<RefCell<Option<mpsc::Receiver<ImageEnhancementOutcome>>>>,
     source_path: String,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
+        if !generation_scope_allows_polling(&app_weak, &context, &session_scope) {
+            receiver.borrow_mut().take();
+            return;
+        }
         let outcome = {
             let mut slot = receiver.borrow_mut();
             let Some(rx) = slot.as_ref() else {
@@ -687,9 +837,19 @@ fn poll_image_enhancement_outcomes(
             }
         };
         let Some(outcome) = outcome else {
-            poll_image_enhancement_outcomes(app_weak, context, receiver, source_path);
+            poll_image_enhancement_outcomes(
+                app_weak,
+                context,
+                session_scope,
+                receiver,
+                source_path,
+            );
             return;
         };
+        if !generation_scope_allows_polling(&app_weak, &context, &session_scope) {
+            receiver.borrow_mut().take();
+            return;
+        }
         let Some(app) = app_weak.upgrade() else {
             return;
         };
@@ -741,13 +901,20 @@ fn poll_image_enhancement_outcomes(
                             }
                             .into(),
                         );
-                        let _ = pending_delivery_saved(
+                        let saved = pending_delivery_saved(
+                            &session_scope.owner_user_id,
+                            session_scope.auth_epoch,
                             &delivery.client_request_id,
                             &delivery,
                             &result_path,
                         );
-                        if let Some(backend) = context.backend.clone() {
-                            acknowledge_delivery_after_local_save(backend, delivery);
+                        if matches!(saved, Ok(true)) {
+                            acknowledge_delivery_after_local_save(
+                                app.as_weak(),
+                                context.clone(),
+                                session_scope.clone(),
+                                delivery,
+                            );
                         }
                     }
                     Err(error) => {
@@ -768,21 +935,62 @@ fn poll_image_enhancement_outcomes(
                 keep_polling = false;
                 receiver.borrow_mut().take();
                 let path = PathBuf::from(&local_path);
-                if let Ok(image) = load_image(&path) {
-                    state.set_enhance_result_path(local_path.clone().into());
-                    state.set_enhance_result_name(
-                        path.file_name()
-                            .and_then(|value| value.to_str())
-                            .unwrap_or("清晰增强结果")
-                            .into(),
-                    );
-                    state.set_enhance_result_image(image);
-                    state.set_enhance_progress(100);
-                    state.set_enhance_message("已恢复上次完成的图片清晰增强结果".into());
-                }
-                state.set_enhance_processing(false);
-                if let (Some(backend), Some(delivery)) = (context.backend.clone(), delivery) {
-                    acknowledge_delivery_after_local_save(backend, delivery);
+                let locally_verified = delivery.as_ref().map_or(true, |delivery| {
+                    recovered_delivery_path_matches(
+                        &local_path,
+                        &delivery.sha256,
+                        delivery.size_bytes,
+                    )
+                });
+                match (
+                    locally_verified,
+                    load_preview_image(&path, PreviewPurpose::Canvas),
+                ) {
+                    (true, Ok(image)) => {
+                        state.set_enhance_result_path(local_path.clone().into());
+                        state.set_enhance_result_name(
+                            path.file_name()
+                                .and_then(|value| value.to_str())
+                                .unwrap_or("清晰增强结果")
+                                .into(),
+                        );
+                        state.set_enhance_result_image(image);
+                        state.set_enhance_progress(100);
+                        state.set_enhance_processing(false);
+                        state.set_enhance_message("已恢复上次完成的图片清晰增强结果".into());
+                        if let Some(delivery) = delivery {
+                            acknowledge_delivery_after_local_save(
+                                app.as_weak(),
+                                context.clone(),
+                                session_scope.clone(),
+                                delivery,
+                            );
+                        }
+                    }
+                    _ => {
+                        let retrying = delivery.as_ref().is_some_and(|delivery| {
+                            matches!(
+                                clear_recovered_delivery_local_path(
+                                    &session_scope,
+                                    &delivery.client_request_id,
+                                    &delivery.file_id,
+                                ),
+                                Ok(true)
+                            )
+                        });
+                        if retrying {
+                            state.set_enhance_processing(false);
+                            state.set_enhance_message(
+                                "本地增强结果校验失败，正在从服务端重新下载...".into(),
+                            );
+                            recover_pending_generations(&app, context.clone());
+                        } else {
+                            state.set_enhance_processing(false);
+                            state.set_enhance_message(
+                                "本地增强结果已损坏，且暂时无法恢复，请重启后重试".into(),
+                            );
+                        }
+                    }
                 }
             }
             ImageEnhancementOutcome::CreditInsufficient { message } => {
@@ -809,7 +1017,13 @@ fn poll_image_enhancement_outcomes(
             }
         }
         if keep_polling {
-            poll_image_enhancement_outcomes(app_weak, context, receiver, source_path);
+            poll_image_enhancement_outcomes(
+                app_weak,
+                context,
+                session_scope,
+                receiver,
+                source_path,
+            );
         }
     });
 }
@@ -828,7 +1042,7 @@ fn save_image_enhancement_asset(
     source_path: &str,
     bytes: &[u8],
 ) -> Result<(String, Image)> {
-    let (bytes, image, width, height) = generated_image_from_bytes(bytes)?;
+    let (width, height) = generated_image_dimensions(bytes)?;
     let source = Path::new(source_path);
     let source_title = source
         .file_stem()
@@ -836,7 +1050,8 @@ fn save_image_enhancement_asset(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("图片");
     let title = format!("{} 清晰增强", short_text(source_title, 18));
-    let result_path = save_generated_bytes(app, &bytes, &title)?;
+    let result_path = save_generated_bytes(app, bytes, &title)?;
+    let image = load_preview_image(Path::new(&result_path), PreviewPurpose::Canvas)?;
     let now = Local::now().format("%Y-%m-%d %H:%M").to_string();
     let item = AssetData {
         id: Uuid::new_v4().to_string(),
@@ -852,7 +1067,6 @@ fn save_image_enhancement_asset(
         origin: "image_enhancement".to_string(),
         width,
         height,
-        image: image.clone(),
         source_path: result_path.clone(),
         reference_paths: (!source_path.is_empty())
             .then(|| source_path.to_string())
@@ -863,21 +1077,17 @@ fn save_image_enhancement_asset(
         upscale_done: true,
         is_new: false,
     };
+    let notification = NotificationData {
+        id: Uuid::new_v4().to_string(),
+        title: format!("图片清晰增强完成：{title}"),
+        model: "图片清晰".to_string(),
+        time: now,
+        reason: String::new(),
+        success: true,
+        read: false,
+    };
     let mut store = store.borrow_mut();
-    store.assets.insert(0, item);
-    store.notifications.insert(
-        0,
-        NotificationData {
-            id: Uuid::new_v4().to_string(),
-            title: format!("图片清晰增强完成：{title}"),
-            model: "图片清晰".to_string(),
-            time: now,
-            reason: String::new(),
-            success: true,
-            read: false,
-        },
-    );
-    save_local_store(app, &store);
+    persist_generated_asset_checked(app, &mut store, item, notification, false, None)?;
     push_all(app, &store);
     Ok((result_path, image))
 }

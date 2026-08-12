@@ -5,13 +5,24 @@ pub(super) struct CreditLedgerPagination {
     page_cursors: Vec<Option<String>>,
     page_index: usize,
     next_cursor: Option<String>,
+    request_epoch: u64,
 }
 
 impl CreditLedgerPagination {
     fn reset(&mut self, next_cursor: Option<String>) {
+        self.request_epoch = self.request_epoch.wrapping_add(1);
         self.page_cursors = vec![None];
         self.page_index = 0;
         self.next_cursor = next_cursor;
+    }
+
+    fn begin_request(&mut self) -> u64 {
+        self.request_epoch = self.request_epoch.wrapping_add(1);
+        self.request_epoch
+    }
+
+    fn request_is_current(&self, request_epoch: u64) -> bool {
+        self.request_epoch == request_epoch
     }
 
     fn page_number(&self) -> usize {
@@ -56,15 +67,15 @@ impl CreditLedgerPagination {
 }
 
 pub(super) fn wire_credit_callbacks(app: &AppWindow, context: AppContext) {
-    let Some(backend) = context.backend.clone() else {
+    if context.backend.is_none() {
         return;
-    };
+    }
     let state = app.global::<AppState>();
 
     {
         let app_weak = app.as_weak();
         let store = context.store.clone();
-        let backend = backend.clone();
+        let context = context.clone();
         state.on_credit_ledger_previous_page(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -78,7 +89,7 @@ pub(super) fn wire_credit_callbacks(app: &AppWindow, context: AppContext) {
                 request_credit_ledger_page(
                     &app,
                     store.clone(),
-                    backend.clone(),
+                    context.clone(),
                     target_index,
                     cursor,
                 );
@@ -89,6 +100,7 @@ pub(super) fn wire_credit_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         let store = context.store.clone();
+        let context = context.clone();
         state.on_credit_ledger_next_page(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -102,7 +114,7 @@ pub(super) fn wire_credit_callbacks(app: &AppWindow, context: AppContext) {
                 request_credit_ledger_page(
                     &app,
                     store.clone(),
-                    backend.clone(),
+                    context.clone(),
                     target_index,
                     cursor,
                 );
@@ -130,24 +142,43 @@ pub(super) fn reset_credit_ledger(
 fn request_credit_ledger_page(
     app: &AppWindow,
     store: Rc<RefCell<Store>>,
-    backend: Arc<BackendRuntime>,
+    context: AppContext,
     target_index: usize,
     cursor: Option<String>,
 ) {
     let state = app.global::<AppState>();
+    let Some(session_scope) = context.current_account_session_scope() else {
+        state.set_credit_ledger_message("登录状态已失效，请重新登录".into());
+        return;
+    };
+    let Some(backend) = context.backend.clone() else {
+        return;
+    };
+    let request_epoch = store
+        .borrow_mut()
+        .credit_ledger_pagination
+        .begin_request();
     state.set_credit_ledger_loading(true);
     state.set_credit_ledger_message("".into());
 
     let request_cursor = cursor.clone();
+    let worker_scope = session_scope.clone();
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let result = AccountApi::new(backend.api.clone())
-            .ledger_page(request_cursor.as_deref(), CREDIT_LEDGER_PAGE_SIZE);
+            .ledger_page_scoped(
+                request_cursor.as_deref(),
+                CREDIT_LEDGER_PAGE_SIZE,
+                &worker_scope,
+            );
         let _ = sender.send(result);
     });
     poll_credit_ledger_page(
         app.as_weak(),
+        context,
         store,
+        session_scope,
+        request_epoch,
         target_index,
         cursor,
         Rc::new(RefCell::new(Some(receiver))),
@@ -156,12 +187,26 @@ fn request_credit_ledger_page(
 
 fn poll_credit_ledger_page(
     app_weak: Weak<AppWindow>,
+    context: AppContext,
     store: Rc<RefCell<Store>>,
+    session_scope: SessionScope,
+    request_epoch: u64,
     target_index: usize,
     start_cursor: Option<String>,
     receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<CreditLedgerPage, ApiError>>>>>,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
+        if !credit_poll_is_current(&app_weak, &context, &session_scope, &receiver) {
+            return;
+        }
+        if !store
+            .borrow()
+            .credit_ledger_pagination
+            .request_is_current(request_epoch)
+        {
+            receiver.borrow_mut().take();
+            return;
+        }
         let result = {
             let mut slot = receiver.borrow_mut();
             let Some(rx) = slot.as_ref() else {
@@ -182,9 +227,21 @@ fn poll_credit_ledger_page(
             }
         };
         let Some(result) = result else {
-            poll_credit_ledger_page(app_weak, store, target_index, start_cursor, receiver);
+            poll_credit_ledger_page(
+                app_weak,
+                context,
+                store,
+                session_scope,
+                request_epoch,
+                target_index,
+                start_cursor,
+                receiver,
+            );
             return;
         };
+        if !credit_poll_is_current(&app_weak, &context, &session_scope, &receiver) {
+            return;
+        }
         let Some(app) = app_weak.upgrade() else {
             return;
         };
@@ -217,6 +274,33 @@ fn poll_credit_ledger_page(
             ),
         }
     });
+}
+
+fn credit_poll_is_current<T>(
+    app_weak: &Weak<AppWindow>,
+    context: &AppContext,
+    session_scope: &SessionScope,
+    receiver: &Rc<RefCell<Option<mpsc::Receiver<T>>>>,
+) -> bool {
+    match context.account_scope_disposition(session_scope) {
+        AccountScopeDisposition::Current => true,
+        AccountScopeDisposition::CapturedTerminal => {
+            receiver.borrow_mut().take();
+            if let Some(app) = app_weak.upgrade() {
+                sign_out_locally(
+                    &app,
+                    context,
+                    true,
+                    Some(session_scope.auth_epoch),
+                );
+            }
+            false
+        }
+        AccountScopeDisposition::Stale => {
+            receiver.borrow_mut().take();
+            false
+        }
+    }
 }
 
 fn pagination_view(pagination: &CreditLedgerPagination) -> (i32, bool, bool) {
@@ -574,6 +658,18 @@ mod tests {
         assert_eq!(pagination.page_number(), 2);
         assert_eq!(pagination.previous_target(), Some((0, None)));
         assert_eq!(pagination.next_target(), Some((2, Some("72".to_string()))));
+    }
+
+    #[test]
+    fn ledger_reset_invalidates_an_in_flight_page_request() {
+        let mut pagination = CreditLedgerPagination::default();
+        pagination.reset(Some("80".to_string()));
+        let request_epoch = pagination.begin_request();
+        assert!(pagination.request_is_current(request_epoch));
+
+        pagination.reset(Some("40".to_string()));
+
+        assert!(!pagination.request_is_current(request_epoch));
     }
 
     #[test]

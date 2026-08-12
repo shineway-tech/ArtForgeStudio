@@ -2,12 +2,13 @@ import { AppState } from "../app-state.slint";
 import { AppTheme } from "../theme.slint";
 
 export component UsageTipCarousel {
+    in property <bool> active: true;
     property <int> active-tip: 0;
     height: 18px;
 
     Timer {
         interval: 4200ms;
-        running: true;
+        running: root.active && !AppState.reduced-motion;
         triggered => {
             root.active-tip = Math.mod(root.active-tip + 1, 2);
         }
@@ -32,7 +33,7 @@ export component UsageTipCarousel {
             horizontal-alignment: center;
             vertical-alignment: center;
             overflow: elide;
-            animate y { duration: 260ms; easing: ease-in-out; }
+            animate y { duration: AppState.reduced-motion ? 0ms : 260ms; easing: ease-in-out; }
         }
 
         second-tip := Text {
@@ -48,7 +49,7 @@ export component UsageTipCarousel {
             horizontal-alignment: center;
             vertical-alignment: center;
             overflow: elide;
-            animate y { duration: 260ms; easing: ease-in-out; }
+            animate y { duration: AppState.reduced-motion ? 0ms : 260ms; easing: ease-in-out; }
         }
     }
 }

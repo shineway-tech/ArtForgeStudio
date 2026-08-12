@@ -13,8 +13,8 @@ publish = false
 
 [workspace.dependencies]
 # UI
-slint = { version = "=1.16.1", default-features = false, features = ["compat-1-2", "std", "backend-winit", "renderer-femtovg", "unstable-winit-030"] }
-slint-build = "=1.16.1"
+slint = { version = "=1.17.1", default-features = false, features = ["compat-1-2", "std", "backend-winit", "renderer-femtovg", "unstable-winit-030"] }
+slint-build = "=1.17.1"
 
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs", "time", "io-util"] }
@@ -69,7 +69,10 @@ panic = "abort"
 incremental = false
 
 [profile.dev]
-opt-level = 0
+# Slint generates a large amount of property and vector-path code in this crate.
+# Leaving the application itself at O0 makes scrolling several times more CPU
+# intensive than the release build, even though dependencies are optimized.
+opt-level = 1
 debug = 1
 
 [profile.dev.package."*"]

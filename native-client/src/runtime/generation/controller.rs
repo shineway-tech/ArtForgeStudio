@@ -99,15 +99,14 @@ fn restore_asset_regeneration_inputs(
             state.set_generation_status(message.into());
             return false;
         }
-        let Ok(image) = load_image(&path) else {
+        if load_preview_image(&path, PreviewPurpose::Reference).is_err() {
             let message = format!("原参考图无法读取，无法再次生成：{}", path.display());
             state.set_viewer_message(message.clone().into());
             state.set_generation_status(message.into());
             return false;
-        };
+        }
         references.push(ReferenceData {
             id: Uuid::new_v4().to_string(),
-            image,
             source_path: path.display().to_string(),
         });
     }
@@ -258,10 +257,25 @@ pub(super) fn stop_generation(app: &AppWindow, context: &AppContext) {
             cancellations.insert(client_request_id.clone());
         }
     }
-    if let (Some(backend), Some(server_task_id)) = (context.backend.clone(), task.server_task_id) {
-        std::thread::spawn(move || {
-            let _ = GenerationApi::new(backend.api.clone()).cancel(&server_task_id);
-        });
+    if generation_scope_allows_polling(&app.as_weak(), context, &task.session_scope) {
+        if let (Some(backend), Some(server_task_id)) =
+            (context.backend.clone(), task.server_task_id)
+        {
+            let session_scope = task.session_scope;
+            let worker_scope = session_scope.clone();
+            let (sender, receiver) = mpsc::channel::<()>();
+            std::thread::spawn(move || {
+                let _ = GenerationApi::new(backend.api.clone())
+                    .cancel_scoped(&server_task_id, &worker_scope);
+                let _ = sender.send(());
+            });
+            observe_detached_generation_scope(
+                app.as_weak(),
+                context.clone(),
+                session_scope,
+                Rc::new(RefCell::new(Some(receiver))),
+            );
+        }
     }
 }
 
@@ -273,15 +287,17 @@ pub(super) fn add_stream_success_item(
     mode: &str,
     quality: &str,
     image_model: &str,
+    origin: &str,
     conversation_id: &str,
     display_prompt: &str,
     time: &str,
-    bytes: &[u8],
+    staged_path: &Path,
     reference_paths: &[String],
     upscale_done: bool,
 ) -> Result<(Image, String, String)> {
-    let (bytes, image, width, height) = generated_image_from_bytes(bytes)?;
-    let source_path = save_generated_bytes(app, &bytes, raw_prompt)?;
+    let source_path = save_generated_file(app, staged_path, raw_prompt)?;
+    let (width, height) = inspect_image_dimensions(Path::new(&source_path))?;
+    let (width, height) = (width as i32, height as i32);
     let item = AssetData {
         id: Uuid::new_v4().to_string(),
         conversation_id: conversation_id.to_string(),
@@ -293,10 +309,9 @@ pub(super) fn add_stream_success_item(
         ratio: ratio_from_actual_dimensions(width, height),
         quality: quality.to_string(),
         model: image_model.to_string(),
-        origin: "generation".to_string(),
+        origin: origin.to_string(),
         width,
         height,
-        image,
         source_path: source_path.clone(),
         reference_paths: reference_paths.to_vec(),
         cutout_done: false,
@@ -304,26 +319,28 @@ pub(super) fn add_stream_success_item(
         upscale_done,
         is_new: true,
     };
-    let conversation_image = item.image.clone();
+    let conversation_image =
+        load_preview_image(Path::new(&source_path), PreviewPurpose::Reference)?;
     let generated_id = item.id.clone();
     let history_prompt = item.prompt.clone();
+    let notification = NotificationData {
+        id: Uuid::new_v4().to_string(),
+        title: format!("Generation succeeded: {}", short_text(raw_prompt, 24)),
+        model: image_model.to_string(),
+        time: time.to_string(),
+        reason: String::new(),
+        success: true,
+        read: false,
+    };
     let mut store_mut = store.borrow_mut();
-    reveal_prompt_history_entry(&mut store_mut, &history_prompt);
-    store_mut.assets.insert(0, item.clone());
-    store_mut.generations.insert(0, item);
-    store_mut.notifications.insert(
-        0,
-        NotificationData {
-            id: Uuid::new_v4().to_string(),
-            title: format!("Generation succeeded: {}", short_text(raw_prompt, 24)),
-            model: image_model.to_string(),
-            time: time.to_string(),
-            reason: String::new(),
-            success: true,
-            read: false,
-        },
-    );
-    save_local_store(app, &store_mut);
+    persist_generated_asset_checked(
+        app,
+        &mut store_mut,
+        item,
+        notification,
+        true,
+        Some(&history_prompt),
+    )?;
     push_all(app, &store_mut);
     Ok((conversation_image, source_path, generated_id))
 }
@@ -337,6 +354,7 @@ pub(super) fn add_stream_failure_item(
     ratio: &str,
     quality: &str,
     image_model: &str,
+    origin: &str,
     conversation_id: &str,
     reason: &str,
     time: &str,
@@ -357,10 +375,9 @@ pub(super) fn add_stream_failure_item(
             ratio: ratio.to_string(),
             quality: quality.to_string(),
             model: image_model.to_string(),
-            origin: "generation".to_string(),
+            origin: origin.to_string(),
             width: 0,
             height: 0,
-            image: Image::default(),
             source_path: "failed".to_string(),
             reference_paths: reference_paths.to_vec(),
             cutout_done: false,

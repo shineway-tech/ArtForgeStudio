@@ -1,4 +1,5 @@
 use super::*;
+use std::cell::Cell;
 
 enum BindingPollOutcome {
     Pending,
@@ -7,29 +8,45 @@ enum BindingPollOutcome {
     Completed(WechatBindingStatusResponse),
 }
 
+enum BindingReceiverPoll<T> {
+    Pending,
+    Ready(T),
+    Disconnected,
+}
+
 pub(super) fn wire_wechat_binding_callbacks(app: &AppWindow, context: AppContext) {
     let Some(backend) = context.backend.clone() else {
         return;
     };
     let state = app.global::<AppState>();
+    let operation_epoch = Rc::new(Cell::new(0_u64));
 
     {
         let app_weak = app.as_weak();
         let backend = backend.clone();
+        let context = context.clone();
+        let operation_epoch = operation_epoch.clone();
         state.on_start_wechat_binding(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            start_wechat_binding(&app, backend.clone());
+            start_wechat_binding(
+                &app,
+                context.clone(),
+                backend.clone(),
+                operation_epoch.clone(),
+            );
         });
     }
 
     {
         let app_weak = app.as_weak();
+        let operation_epoch = operation_epoch.clone();
         state.on_close_wechat_binding(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            advance_wechat_operation(&operation_epoch);
             let state = app.global::<AppState>();
             state.set_wechat_bind_open(false);
             state.set_wechat_bind_login_id("".into());
@@ -42,6 +59,9 @@ pub(super) fn wire_wechat_binding_callbacks(app: &AppWindow, context: AppContext
 
     {
         let app_weak = app.as_weak();
+        let backend = backend.clone();
+        let context = context.clone();
+        let operation_epoch = operation_epoch.clone();
         state.on_unbind_wechat(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -50,19 +70,40 @@ pub(super) fn wire_wechat_binding_callbacks(app: &AppWindow, context: AppContext
             if state.get_wechat_bind_busy() || !state.get_wechat_can_unbind() {
                 return;
             }
+            let Some(session_scope) = context.current_account_session_scope() else {
+                state.set_generation_status("登录状态已失效，请重新登录".into());
+                return;
+            };
+            let request_epoch = advance_wechat_operation(&operation_epoch);
             state.set_wechat_bind_busy(true);
             state.set_wechat_unbind_confirm_open(false);
+            state.set_wechat_bind_login_id("".into());
+            state.set_wechat_bind_qr_ready(false);
+            state.set_wechat_bind_scanned(false);
             let api = AccountApi::new(backend.api.clone());
+            let worker_scope = session_scope.clone();
             let (sender, receiver) = mpsc::channel();
             std::thread::spawn(move || {
-                let _ = sender.send(api.unbind_wechat());
+                let _ = sender.send(api.unbind_wechat_scoped(&worker_scope));
             });
-            poll_unbind_result(app.as_weak(), Rc::new(RefCell::new(Some(receiver))));
+            poll_unbind_result(
+                app.as_weak(),
+                context.clone(),
+                operation_epoch.clone(),
+                request_epoch,
+                session_scope,
+                Rc::new(RefCell::new(Some(receiver))),
+            );
         });
     }
 }
 
-fn start_wechat_binding(app: &AppWindow, backend: Arc<BackendRuntime>) {
+fn start_wechat_binding(
+    app: &AppWindow,
+    context: AppContext,
+    backend: Arc<BackendRuntime>,
+    operation_epoch: Rc<Cell<u64>>,
+) {
     let state = app.global::<AppState>();
     if state.get_wechat_bind_busy() || state.get_wechat_bound() {
         return;
@@ -71,6 +112,11 @@ fn start_wechat_binding(app: &AppWindow, backend: Arc<BackendRuntime>) {
         state.set_generation_status("请先联网并登录后再绑定微信".into());
         return;
     }
+    let Some(session_scope) = context.current_account_session_scope() else {
+        state.set_generation_status("登录状态已失效，请重新登录".into());
+        return;
+    };
+    let request_epoch = advance_wechat_operation(&operation_epoch);
     state.set_wechat_bind_open(true);
     state.set_wechat_bind_busy(true);
     state.set_wechat_bind_qr_ready(false);
@@ -79,28 +125,72 @@ fn start_wechat_binding(app: &AppWindow, backend: Arc<BackendRuntime>) {
     state.set_wechat_bind_login_id("".into());
     state.set_wechat_bind_status("正在获取绑定二维码...".into());
     let api = AccountApi::new(backend.api.clone());
+    let worker_scope = session_scope.clone();
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
-        let _ = sender.send(api.start_wechat_binding());
+        let _ = sender.send(api.start_wechat_binding_scoped(&worker_scope));
     });
     poll_binding_start_result(
         app.as_weak(),
+        context,
         backend,
+        operation_epoch,
+        request_epoch,
+        session_scope,
         Rc::new(RefCell::new(Some(receiver))),
     );
 }
 
 fn poll_binding_start_result(
     app_weak: Weak<AppWindow>,
+    context: AppContext,
     backend: Arc<BackendRuntime>,
+    operation_epoch: Rc<Cell<u64>>,
+    request_epoch: u64,
+    session_scope: SessionScope,
     receiver: Rc<RefCell<Option<mpsc::Receiver<Result<WechatBindingStartResponse, ApiError>>>>>,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
-        let result = poll_binding_receiver(&receiver);
-        let Some(result) = result else {
-            poll_binding_start_result(app_weak, backend, receiver);
+        if !wechat_poll_is_current(
+            &app_weak,
+            &context,
+            &session_scope,
+            &operation_epoch,
+            request_epoch,
+            None,
+            &receiver,
+        ) {
             return;
+        }
+        let result = match poll_binding_receiver(&receiver) {
+            BindingReceiverPoll::Pending => {
+                poll_binding_start_result(
+                    app_weak,
+                    context,
+                    backend,
+                    operation_epoch,
+                    request_epoch,
+                    session_scope,
+                    receiver,
+                );
+                return;
+            }
+            BindingReceiverPoll::Ready(result) => result,
+            BindingReceiverPoll::Disconnected => Err(ApiError::LocalState {
+                message: "微信绑定二维码任务意外中断".to_string(),
+            }),
         };
+        if !wechat_poll_is_current(
+            &app_weak,
+            &context,
+            &session_scope,
+            &operation_epoch,
+            request_epoch,
+            None,
+            &receiver,
+        ) {
+            return;
+        }
         let Some(app) = app_weak.upgrade() else {
             return;
         };
@@ -132,7 +222,11 @@ fn poll_binding_start_result(
                     );
                     schedule_binding_status_poll(
                         app.as_weak(),
+                        context,
                         backend,
+                        operation_epoch,
+                        request_epoch,
+                        session_scope,
                         response.login_id,
                         poll_after_ms as u64,
                     );
@@ -152,51 +246,78 @@ fn poll_binding_start_result(
 
 fn schedule_binding_status_poll(
     app_weak: Weak<AppWindow>,
+    context: AppContext,
     backend: Arc<BackendRuntime>,
+    operation_epoch: Rc<Cell<u64>>,
+    request_epoch: u64,
+    session_scope: SessionScope,
     login_id: String,
     delay_milliseconds: u64,
 ) {
     slint::Timer::single_shot(
         Duration::from_millis(delay_milliseconds.max(250)),
         move || {
+            match context.account_scope_disposition(&session_scope) {
+                AccountScopeDisposition::Current => {}
+                AccountScopeDisposition::CapturedTerminal => {
+                    if let Some(app) = app_weak.upgrade() {
+                        sign_out_locally(
+                            &app,
+                            &context,
+                            true,
+                            Some(session_scope.auth_epoch),
+                        );
+                    }
+                    return;
+                }
+                AccountScopeDisposition::Stale => return,
+            }
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             let state = app.global::<AppState>();
-            if !state.get_wechat_bind_open()
-                || state.get_wechat_bind_login_id().as_str() != login_id
+            if !wechat_operation_matches(
+                operation_epoch.get(),
+                request_epoch,
+                state.get_wechat_bind_login_id().as_str(),
+                &login_id,
+            ) || !state.get_wechat_bind_open()
             {
                 return;
             }
             let api = AccountApi::new(backend.api.clone());
             let request_login_id = login_id.clone();
+            let worker_scope = session_scope.clone();
             let (sender, receiver) = mpsc::channel();
             std::thread::spawn(move || {
-                let result =
-                    api.wechat_binding_status(&request_login_id).map(|status| {
-                        match (status.status.as_str(), status.qr_status.as_deref()) {
-                            ("pending", Some("scanned")) | ("scanned", _) => {
-                                BindingPollOutcome::Scanned(status.message.unwrap_or_else(|| {
-                                    "已扫码，请在手机微信中确认绑定".to_string()
-                                }))
-                            }
-                            ("pending", _) => BindingPollOutcome::Pending,
-                            ("failed", _) => {
-                                BindingPollOutcome::Failed(status.message.unwrap_or_else(|| {
-                                    "微信绑定未完成，请刷新二维码重试".to_string()
-                                }))
-                            }
-                            ("completed", _) => BindingPollOutcome::Completed(status),
-                            _ => BindingPollOutcome::Failed(
-                                "微信绑定状态异常，请刷新二维码重试".to_string(),
-                            ),
+                let result = api
+                    .wechat_binding_status_scoped(&request_login_id, &worker_scope)
+                    .map(|status| match (status.status.as_str(), status.qr_status.as_deref()) {
+                        ("pending", Some("scanned")) | ("scanned", _) => {
+                            BindingPollOutcome::Scanned(status.message.unwrap_or_else(|| {
+                                "已扫码，请在手机微信中确认绑定".to_string()
+                            }))
                         }
+                        ("pending", _) => BindingPollOutcome::Pending,
+                        ("failed", _) => {
+                            BindingPollOutcome::Failed(status.message.unwrap_or_else(|| {
+                                "微信绑定未完成，请刷新二维码重试".to_string()
+                            }))
+                        }
+                        ("completed", _) => BindingPollOutcome::Completed(status),
+                        _ => BindingPollOutcome::Failed(
+                            "微信绑定状态异常，请刷新二维码重试".to_string(),
+                        ),
                     });
                 let _ = sender.send(result);
             });
             poll_binding_status_result(
                 app.as_weak(),
+                context,
                 backend,
+                operation_epoch,
+                request_epoch,
+                session_scope,
                 login_id,
                 Rc::new(RefCell::new(Some(receiver))),
             );
@@ -206,23 +327,60 @@ fn schedule_binding_status_poll(
 
 fn poll_binding_status_result(
     app_weak: Weak<AppWindow>,
+    context: AppContext,
     backend: Arc<BackendRuntime>,
+    operation_epoch: Rc<Cell<u64>>,
+    request_epoch: u64,
+    session_scope: SessionScope,
     login_id: String,
     receiver: Rc<RefCell<Option<mpsc::Receiver<Result<BindingPollOutcome, ApiError>>>>>,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
-        let result = poll_binding_receiver(&receiver);
-        let Some(result) = result else {
-            poll_binding_status_result(app_weak, backend, login_id, receiver);
+        if !wechat_poll_is_current(
+            &app_weak,
+            &context,
+            &session_scope,
+            &operation_epoch,
+            request_epoch,
+            Some(&login_id),
+            &receiver,
+        ) {
             return;
+        }
+        let result = match poll_binding_receiver(&receiver) {
+            BindingReceiverPoll::Pending => {
+                poll_binding_status_result(
+                    app_weak,
+                    context,
+                    backend,
+                    operation_epoch,
+                    request_epoch,
+                    session_scope,
+                    login_id,
+                    receiver,
+                );
+                return;
+            }
+            BindingReceiverPoll::Ready(result) => result,
+            BindingReceiverPoll::Disconnected => Err(ApiError::LocalState {
+                message: "微信绑定状态任务意外中断".to_string(),
+            }),
         };
+        if !wechat_poll_is_current(
+            &app_weak,
+            &context,
+            &session_scope,
+            &operation_epoch,
+            request_epoch,
+            Some(&login_id),
+            &receiver,
+        ) {
+            return;
+        }
         let Some(app) = app_weak.upgrade() else {
             return;
         };
         let state = app.global::<AppState>();
-        if state.get_wechat_bind_login_id().as_str() != login_id {
-            return;
-        }
         match result {
             Ok(BindingPollOutcome::Pending) => {
                 let poll_after_ms = state.get_wechat_bind_poll_after_ms().max(250);
@@ -245,7 +403,11 @@ fn poll_binding_status_result(
                 );
                 schedule_binding_status_poll(
                     app.as_weak(),
+                    context,
                     backend,
+                    operation_epoch,
+                    request_epoch,
+                    session_scope,
                     login_id,
                     poll_after_ms as u64,
                 );
@@ -270,7 +432,11 @@ fn poll_binding_status_result(
                 state.set_wechat_bind_status(message.into());
                 schedule_binding_status_poll(
                     app.as_weak(),
+                    context,
                     backend,
+                    operation_epoch,
+                    request_epoch,
+                    session_scope,
                     login_id,
                     poll_after_ms as u64,
                 );
@@ -309,14 +475,52 @@ fn poll_binding_status_result(
 
 fn poll_unbind_result(
     app_weak: Weak<AppWindow>,
+    context: AppContext,
+    operation_epoch: Rc<Cell<u64>>,
+    request_epoch: u64,
+    session_scope: SessionScope,
     receiver: Rc<RefCell<Option<mpsc::Receiver<Result<WechatAuthMethod, ApiError>>>>>,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
-        let result = poll_binding_receiver(&receiver);
-        let Some(result) = result else {
-            poll_unbind_result(app_weak, receiver);
+        if !wechat_poll_is_current(
+            &app_weak,
+            &context,
+            &session_scope,
+            &operation_epoch,
+            request_epoch,
+            Some(""),
+            &receiver,
+        ) {
             return;
+        }
+        let result = match poll_binding_receiver(&receiver) {
+            BindingReceiverPoll::Pending => {
+                poll_unbind_result(
+                    app_weak,
+                    context,
+                    operation_epoch,
+                    request_epoch,
+                    session_scope,
+                    receiver,
+                );
+                return;
+            }
+            BindingReceiverPoll::Ready(result) => result,
+            BindingReceiverPoll::Disconnected => Err(ApiError::LocalState {
+                message: "微信解绑任务意外中断".to_string(),
+            }),
         };
+        if !wechat_poll_is_current(
+            &app_weak,
+            &context,
+            &session_scope,
+            &operation_epoch,
+            request_epoch,
+            Some(""),
+            &receiver,
+        ) {
+            return;
+        }
         let Some(app) = app_weak.upgrade() else {
             return;
         };
@@ -338,18 +542,99 @@ fn poll_unbind_result(
     });
 }
 
-fn poll_binding_receiver<T>(receiver: &Rc<RefCell<Option<mpsc::Receiver<T>>>>) -> Option<T> {
+fn wechat_poll_is_current<T>(
+    app_weak: &Weak<AppWindow>,
+    context: &AppContext,
+    session_scope: &SessionScope,
+    operation_epoch: &Cell<u64>,
+    request_epoch: u64,
+    login_id: Option<&str>,
+    receiver: &Rc<RefCell<Option<mpsc::Receiver<T>>>>,
+) -> bool {
+    match context.account_scope_disposition(session_scope) {
+        AccountScopeDisposition::Current => {}
+        AccountScopeDisposition::CapturedTerminal => {
+            receiver.borrow_mut().take();
+            if let Some(app) = app_weak.upgrade() {
+                sign_out_locally(
+                    &app,
+                    context,
+                    true,
+                    Some(session_scope.auth_epoch),
+                );
+            }
+            return false;
+        }
+        AccountScopeDisposition::Stale => {
+            receiver.borrow_mut().take();
+            return false;
+        }
+    }
+    if operation_epoch.get() != request_epoch {
+        receiver.borrow_mut().take();
+        return false;
+    }
+    if let Some(login_id) = login_id {
+        let Some(app) = app_weak.upgrade() else {
+            receiver.borrow_mut().take();
+            return false;
+        };
+        if app
+            .global::<AppState>()
+            .get_wechat_bind_login_id()
+            .as_str()
+            != login_id
+        {
+            receiver.borrow_mut().take();
+            return false;
+        }
+    }
+    true
+}
+
+fn poll_binding_receiver<T>(
+    receiver: &Rc<RefCell<Option<mpsc::Receiver<T>>>>,
+) -> BindingReceiverPoll<T> {
     let mut slot = receiver.borrow_mut();
-    let receiver = slot.as_ref()?;
+    let Some(receiver) = slot.as_ref() else {
+        return BindingReceiverPoll::Disconnected;
+    };
     match receiver.try_recv() {
         Ok(value) => {
             slot.take();
-            Some(value)
+            BindingReceiverPoll::Ready(value)
         }
-        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Empty) => BindingReceiverPoll::Pending,
         Err(TryRecvError::Disconnected) => {
             slot.take();
-            None
+            BindingReceiverPoll::Disconnected
         }
+    }
+}
+
+fn advance_wechat_operation(operation_epoch: &Cell<u64>) -> u64 {
+    let next = operation_epoch.get().wrapping_add(1);
+    operation_epoch.set(next);
+    next
+}
+
+fn wechat_operation_matches(
+    current_operation_epoch: u64,
+    request_epoch: u64,
+    current_login_id: &str,
+    request_login_id: &str,
+) -> bool {
+    current_operation_epoch == request_epoch && current_login_id == request_login_id
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wechat_response_requires_matching_operation_and_login_id() {
+        assert!(wechat_operation_matches(7, 7, "login-a", "login-a"));
+        assert!(!wechat_operation_matches(8, 7, "login-a", "login-a"));
+        assert!(!wechat_operation_matches(7, 7, "login-b", "login-a"));
     }
 }

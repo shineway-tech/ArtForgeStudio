@@ -1,9 +1,17 @@
 use super::*;
 
+fn persist_custom_prompt_before_ack(
+    persist: impl FnOnce() -> Result<()>,
+    acknowledge: impl FnOnce(),
+) -> Result<()> {
+    persist()?;
+    acknowledge();
+    Ok(())
+}
+
 pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
     let store = context.store.clone();
-    let analysis_backend = context.backend.clone();
 
     {
         let app_weak = app.as_weak();
@@ -36,10 +44,12 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
 
     {
         let app_weak = app.as_weak();
+        let context = context.clone();
         state.on_begin_new_custom_prompt(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            release_custom_prompt_recovered_result(&app, &context);
             reset_custom_prompt_editor(&app);
             open_custom_prompt_editor(&app);
         });
@@ -77,6 +87,7 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                 .into(),
             );
             state.set_custom_prompt_input(prompt.clone().into());
+            state.set_custom_prompt_editor_session_id(Uuid::new_v4().to_string().into());
             state.set_custom_prompt_editing_original(prompt.into());
             state.set_custom_prompt_category(
                 normalized_custom_prompt_category(&profile.category).into(),
@@ -88,7 +99,7 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                 reference_paths
                     .into_iter()
                     .filter_map(|path| {
-                        load_image(Path::new(&path))
+                        load_preview_image(Path::new(&path), PreviewPurpose::Reference)
                             .ok()
                             .map(|image| ReferenceItem {
                                 id: path.clone().into(),
@@ -105,11 +116,12 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
 
     {
         let app_weak = app.as_weak();
+        let context = context.clone();
         state.on_close_custom_prompt_editor(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            close_custom_prompt_editor(&app);
+            close_custom_prompt_editor(&app, &context);
         });
     }
 
@@ -142,7 +154,7 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                 {
                     continue;
                 }
-                match load_image(&path) {
+                match load_preview_image(&path, PreviewPurpose::Reference) {
                     Ok(image) => items.push(ReferenceItem {
                         id: path_text.clone().into(),
                         image,
@@ -207,6 +219,7 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
             };
             state.set_viewer_id(item.id);
             state.set_viewer_source("reference".into());
+            state.set_viewer_source_path(item.source_path.clone());
             state.set_viewer_image(item.image);
             state.set_viewer_title(if state.get_language().as_str() == "en" {
                 "Reference image".into()
@@ -230,7 +243,7 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
 
     {
         let app_weak = app.as_weak();
-        let backend = analysis_backend.clone();
+        let analysis_context = context.clone();
         state.on_analyze_custom_prompt_reference(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -240,9 +253,21 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                 return;
             }
             if !require_online_operation(&app, "分析参考图风格") {
+                state.set_custom_prompt_message(
+                    if state.get_language().as_str() == "en" {
+                        "Image style analysis requires an internet connection"
+                    } else {
+                        "图片风格分析需要联网，请检查网络后重试"
+                    }
+                    .into(),
+                );
                 return;
             }
-            if state.get_custom_prompt_reference_path().is_empty() {
+            let reference_paths = custom_prompt_reference_paths(&app)
+                .into_iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+            if reference_paths.is_empty() {
                 state.set_custom_prompt_message(
                     if state.get_language().as_str() == "en" {
                         "Upload a style reference image first"
@@ -253,7 +278,7 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                 );
                 return;
             }
-            let Some(backend) = backend.clone() else {
+            if analysis_context.backend.is_none() {
                 state.set_custom_prompt_message(
                     if state.get_language().as_str() == "en" {
                         "The model service is unavailable"
@@ -263,10 +288,8 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                     .into(),
                 );
                 return;
-            };
-            let reference_path =
-                PathBuf::from(state.get_custom_prompt_reference_path().to_string());
-            if !reference_path.is_file() {
+            }
+            if reference_paths.iter().any(|path| !path.is_file()) {
                 state.set_custom_prompt_message(
                     if state.get_language().as_str() == "en" {
                         "The reference image file no longer exists"
@@ -277,19 +300,22 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                 );
                 return;
             }
-            let model_code = state.get_reasoning_model().to_string();
-            if model_code.trim().is_empty() {
+            let selection = sync_style_analysis_selection(&state);
+            if !selection.available {
                 state.set_custom_prompt_message(
                     if state.get_language().as_str() == "en" {
-                        "Select a reasoning model first"
+                        "No image style analysis model is available"
                     } else {
-                        "请先选择推理模型"
+                        "服务端没有可用的图片风格分析模型"
                     }
                     .into(),
                 );
                 return;
             }
+            let model_code = selection.model_code;
             let english = state.get_language().as_str() == "en";
+            let target_id = state.get_custom_prompt_editor_session_id().to_string();
+            let target_input = state.get_custom_prompt_input().to_string();
             state.set_custom_prompt_analyzing(true);
             state.set_custom_prompt_message(
                 if english {
@@ -299,12 +325,33 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                 }
                 .into(),
             );
-            start_custom_prompt_reference_analysis(
+            start_backend_prompt_task(
                 &app,
-                backend,
-                model_code,
-                reference_path,
-                english,
+                analysis_context.clone(),
+                PromptTaskRequest {
+                    model_code,
+                    task_type: "image_style_analysis",
+                    prompt: if english {
+                        "Analyze the uploaded image's visual style. Return only one concise, \
+                         reusable English image-generation style description covering \
+                         composition, palette, lighting, rendering medium, texture, detail, and \
+                         atmosphere. Do not describe file metadata and do not add headings."
+                            .to_string()
+                    } else {
+                        "分析上传参考图的视觉风格。只输出一段可直接复用的中文生图风格描述，\
+                         覆盖构图、配色、光影、绘制媒介、纹理、细节与氛围；不要描述文件元数据，\
+                         不要添加标题。"
+                            .to_string()
+                    },
+                    target_language: None,
+                    optimize: true,
+                    target: PromptResultTarget::CustomPrompt {
+                        session_id: target_id,
+                        input: target_input,
+                        append_result: true,
+                    },
+                    reference_paths,
+                },
             );
         });
     }
@@ -312,6 +359,7 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
     {
         let app_weak = app.as_weak();
         let store = store.clone();
+        let context = context.clone();
         state.on_save_custom_prompt(move |original, prompt| {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -346,6 +394,15 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                 reference_path: reference_paths.first().cloned().unwrap_or_default(),
                 reference_paths,
             };
+            let previous_custom_state = {
+                let store = store.borrow();
+                (
+                    store.custom_prompts.clone(),
+                    store.selected_custom_prompts.clone(),
+                    store.custom_prompt_times.clone(),
+                    store.custom_prompt_profiles.clone(),
+                )
+            };
             let result = {
                 let mut store = store.borrow_mut();
                 let original_prompt = original.trim().to_string();
@@ -361,10 +418,31 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
             };
             match result {
                 SaveCustomPromptResult::Saved => {
-                    reset_custom_prompt_editor(&app);
                     push_custom_prompts(&app, &store.borrow());
-                    save_local_store(&app, &store.borrow());
-                    close_custom_prompt_editor(&app);
+                    let persisted = persist_custom_prompt_before_ack(
+                        || save_local_store_checked(&app, &store.borrow()),
+                        || acknowledge_custom_prompt_recovered_result(&app, &context),
+                    );
+                    if persisted.is_ok() {
+                        reset_custom_prompt_editor(&app);
+                        close_custom_prompt_editor(&app, &context);
+                    } else {
+                        let mut store_mut = store.borrow_mut();
+                        store_mut.custom_prompts = previous_custom_state.0;
+                        store_mut.selected_custom_prompts = previous_custom_state.1;
+                        store_mut.custom_prompt_times = previous_custom_state.2;
+                        store_mut.custom_prompt_profiles = previous_custom_state.3;
+                        drop(store_mut);
+                        push_custom_prompts(&app, &store.borrow());
+                        state.set_custom_prompt_message(
+                            if state.get_language().as_str() == "en" {
+                                "Unable to save locally. The recovered result is still available; please retry."
+                            } else {
+                                "本地保存失败，恢复结果仍已保留，请重试"
+                            }
+                            .into(),
+                        );
+                    }
                 }
                 SaveCustomPromptResult::Empty => {
                     state.set_custom_prompt_message(
@@ -416,139 +494,6 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
     }
 }
 
-fn start_custom_prompt_reference_analysis(
-    app: &AppWindow,
-    backend: Arc<BackendRuntime>,
-    model_code: String,
-    reference_path: PathBuf,
-    english: bool,
-) {
-    let (sender, receiver) = mpsc::channel::<std::result::Result<String, String>>();
-    std::thread::spawn(move || {
-        let api = GenerationApi::new(backend.api.clone());
-        let result = (|| {
-            let file_id = api
-                .upload_reference(&reference_path)
-                .map_err(|error| error.user_message())?;
-            let request = CreateGenerationTask {
-                client_request_id: Uuid::new_v4().simple().to_string(),
-                task_type: "prompt_optimize".to_string(),
-                model_code,
-                prompt: if english {
-                    "Analyze the uploaded image's visual style. Return only one concise, reusable \
-                     English image-generation style description covering composition, palette, \
-                     lighting, rendering medium, texture, detail, and atmosphere. Do not describe \
-                     file metadata and do not add headings."
-                        .to_string()
-                } else {
-                    "分析上传参考图的视觉风格。只输出一段可直接复用的中文生图风格描述，覆盖构图、\
-                     配色、光影、绘制媒介、纹理、细节与氛围；不要描述文件元数据，不要添加标题。"
-                        .to_string()
-                },
-                quality: None,
-                count: None,
-                aspect_ratio: None,
-                reference_file_ids: Some(vec![file_id.clone()]),
-                target_language: None,
-            };
-            let task_result = (|| {
-                let mut detail = api
-                    .create_task(&request)
-                    .map_err(|error| error.user_message())?;
-                loop {
-                    if detail.terminal() {
-                        if matches!(detail.status.as_str(), "completed" | "partially_completed") {
-                            return detail
-                                .result_prompt
-                                .filter(|value| !value.trim().is_empty())
-                                .ok_or_else(|| {
-                                    if english {
-                                        "The model did not return a style description".to_string()
-                                    } else {
-                                        "模型未返回风格描述".to_string()
-                                    }
-                                });
-                        }
-                        return Err(detail
-                            .failure
-                            .map(|failure| failure.message)
-                            .unwrap_or_else(|| {
-                                if english {
-                                    "Image style analysis failed".to_string()
-                                } else {
-                                    "图片风格分析失败".to_string()
-                                }
-                            }));
-                    }
-                    std::thread::sleep(Duration::from_millis(IMAGE_POLL_INTERVAL_MS));
-                    detail = api.task(&detail.id).map_err(|error| error.user_message())?;
-                }
-            })();
-            api.delete_reference(&file_id);
-            task_result
-        })();
-        let _ = sender.send(result);
-    });
-    poll_custom_prompt_reference_analysis(app.as_weak(), Rc::new(RefCell::new(Some(receiver))));
-}
-
-fn poll_custom_prompt_reference_analysis(
-    app_weak: Weak<AppWindow>,
-    receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<String, String>>>>>,
-) {
-    slint::Timer::single_shot(Duration::from_millis(100), move || {
-        let result = {
-            let mut slot = receiver.borrow_mut();
-            let Some(rx) = slot.as_ref() else {
-                return;
-            };
-            match rx.try_recv() {
-                Ok(result) => {
-                    slot.take();
-                    Some(result)
-                }
-                Err(TryRecvError::Empty) => None,
-                Err(TryRecvError::Disconnected) => {
-                    slot.take();
-                    Some(Err("图片风格分析任务已中断，请重试".to_string()))
-                }
-            }
-        };
-        let Some(result) = result else {
-            poll_custom_prompt_reference_analysis(app_weak, receiver);
-            return;
-        };
-        let Some(app) = app_weak.upgrade() else {
-            return;
-        };
-        let state = app.global::<AppState>();
-        state.set_custom_prompt_analyzing(false);
-        match result {
-            Ok(analysis) => {
-                let analysis = normalize_prompt_task_result(&analysis);
-                let current = state.get_custom_prompt_input().trim().to_string();
-                state.set_custom_prompt_input(
-                    if current.is_empty() {
-                        analysis
-                    } else {
-                        format!("{current}\n\n{analysis}")
-                    }
-                    .into(),
-                );
-                state.set_custom_prompt_message(
-                    if state.get_language().as_str() == "en" {
-                        "Image style analysis completed"
-                    } else {
-                        "图片风格分析完成"
-                    }
-                    .into(),
-                );
-            }
-            Err(error) => state.set_custom_prompt_message(error.into()),
-        }
-    });
-}
-
 const MAX_CUSTOM_PROMPT_REFERENCES: usize = 8;
 
 fn custom_prompt_profile_reference_paths(profile: &CustomPromptProfile) -> Vec<String> {
@@ -590,6 +535,7 @@ fn reset_custom_prompt_editor(app: &AppWindow) {
     let state = app.global::<AppState>();
     state.set_custom_prompt_name("".into());
     state.set_custom_prompt_input("".into());
+    state.set_custom_prompt_editor_session_id(Uuid::new_v4().to_string().into());
     state.set_custom_prompt_category("default".into());
     state.set_custom_prompt_format("json".into());
     state.set_custom_prompt_negative("".into());
@@ -610,18 +556,21 @@ fn open_custom_prompt_editor(app: &AppWindow) {
         state.set_custom_prompt_editor_return_page(return_page.into());
     }
     state.set_custom_prompt_editor_open(true);
-    state.set_page("custom-prompt-editor".into());
+    navigate_to(app, "custom-prompt-editor");
 }
 
-pub(super) fn close_custom_prompt_editor(app: &AppWindow) {
+pub(super) fn close_custom_prompt_editor(app: &AppWindow, context: &AppContext) {
+    release_custom_prompt_recovered_result(app, context);
     let state = app.global::<AppState>();
     let return_page = match state.get_custom_prompt_editor_return_page().as_str() {
         "generation" => "generation",
         _ => "settings",
     };
     state.set_custom_prompt_editor_open(false);
+    state.set_custom_prompt_editor_session_id("".into());
+    state.set_custom_prompt_analyzing(false);
     state.set_custom_prompt_message("".into());
-    state.set_page(return_page.into());
+    navigate_to_with_store(app, &context.store.borrow(), return_page);
 }
 
 pub(super) fn normalized_custom_prompt_category(value: &str) -> String {
@@ -800,4 +749,38 @@ fn legacy_reference_style(rgba: &[u8], width: u32, height: u32, english: bool) -
              {tonal_contrast}，{detail}。"
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_prompt_save_failure_never_acknowledges_recovered_result() {
+        let acknowledged = std::cell::Cell::new(false);
+
+        let result = persist_custom_prompt_before_ack(
+            || Err(anyhow!("disk full")),
+            || acknowledged.set(true),
+        );
+
+        assert!(result.is_err());
+        assert!(!acknowledged.get());
+    }
+
+    #[test]
+    fn custom_prompt_recovery_is_acknowledged_after_durable_save() {
+        let events = RefCell::new(Vec::new());
+
+        persist_custom_prompt_before_ack(
+            || {
+                events.borrow_mut().push("durable_save");
+                Ok(())
+            },
+            || events.borrow_mut().push("acknowledge"),
+        )
+        .unwrap();
+
+        assert_eq!(*events.borrow(), vec!["durable_save", "acknowledge"]);
+    }
 }

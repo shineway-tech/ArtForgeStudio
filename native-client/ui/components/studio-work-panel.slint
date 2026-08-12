@@ -110,10 +110,11 @@ export component StudioWorkPanel {
                     background: transparent;
 
                     UsageTipCarousel {
-                        visible: !AppState.optimizing-prompt
+                        active: !AppState.optimizing-prompt
                             && !AppState.translating-prompt
                             && !AppState.generating
                             && AppState.generation-status == "";
+                        visible: self.active;
                         width: parent.width;
                     }
                     Text {

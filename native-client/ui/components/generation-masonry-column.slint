@@ -41,9 +41,8 @@ export component GenerationMasonryColumn {
             sequence-index: 3;
             bounce-step: root.bounce-step;
         }
-        for item[index] in root.items: ThumbnailCard {
-            active: Math.mod(index + root.loading-count, root.column-count) == root.column-index;
-            item: item;
+        for _[index] in root.column-length(): ThumbnailCard {
+            item: root.items[root.source-index(index)];
             card-width: root.card-width;
             card-gap: 10px;
             source: "generation";
@@ -52,5 +51,18 @@ export component GenerationMasonryColumn {
     }
     function column-width() -> length {
         return root.card-width;
+    }
+    function first-source-index() -> int {
+        return Math.mod(root.column-index - Math.mod(root.loading-count, root.column-count) + root.column-count, root.column-count);
+    }
+    function column-length() -> int {
+        let first = root.first-source-index();
+        if root.items.length <= first {
+            return 0;
+        }
+        return floor((root.items.length - 1 - first) / root.column-count) + 1;
+    }
+    function source-index(index: int) -> int {
+        return root.first-source-index() + index * root.column-count;
     }
 }
