@@ -3,12 +3,32 @@ use std::hash::{Hash, Hasher};
 
 pub(super) const MAX_CANVAS_NODES: usize = 200;
 pub(super) const MAX_CANVAS_LINKS: usize = 400;
+const MAX_CANVAS_SPLIT_AXIS: u32 = 64;
 
 struct PreparedCanvasImage {
     path: String,
     width: f32,
     height: f32,
 }
+
+#[derive(Clone, Debug)]
+struct CanvasSplitSource {
+    id: String,
+    image_path: String,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+#[derive(Clone, Debug)]
+struct CanvasSplitTile {
+    path: String,
+    row: u32,
+    column: u32,
+}
+
+type CanvasSplitOutcome = std::result::Result<Vec<CanvasSplitTile>, String>;
 
 enum CanvasSystemClipboard {
     Image {
@@ -81,6 +101,211 @@ fn persist_canvas_clipboard_image(
         width: width as f32,
         height: height as f32,
     })
+}
+
+fn terminal_remainder_span(total: u32, parts: u32, index: u32) -> (u32, u32) {
+    let base = total / parts;
+    let remainder = total % parts;
+    let extras_start = parts - remainder;
+    let extra_before = index.saturating_sub(extras_start);
+    let start = base * index + extra_before;
+    let size = base + u32::from(remainder > 0 && index >= extras_start);
+    (start, size)
+}
+
+fn split_canvas_image_to_directory(
+    source_path: &Path,
+    output_dir: &Path,
+    rows: u32,
+    columns: u32,
+) -> Result<Vec<CanvasSplitTile>> {
+    let (decoded, _) = decode_image_file(source_path)?;
+    let rgba = decoded.to_rgba8();
+    let (image_width, image_height) = rgba.dimensions();
+    if rows == 0 || columns == 0 || rows > image_height || columns > image_width {
+        return Err(anyhow!("split grid exceeds image dimensions"));
+    }
+    ensure_managed_subdirectory(output_dir)
+        .then_some(())
+        .ok_or_else(|| anyhow!("unable to prepare the canvas split output directory"))?;
+
+    let mut tiles = Vec::with_capacity((rows * columns) as usize);
+    let result = (|| -> Result<()> {
+        for row in 0..rows {
+            let (top, tile_height) = terminal_remainder_span(image_height, rows, row);
+            for column in 0..columns {
+                let (left, tile_width) = terminal_remainder_span(image_width, columns, column);
+                let tile =
+                    image::imageops::crop_imm(&rgba, left, top, tile_width, tile_height).to_image();
+                let bytes = encode_png_rgba(&tile, tile_width, tile_height)?;
+                let path = output_dir.join(format!("tile-r{:02}-c{:02}.png", row + 1, column + 1));
+                atomic_write_file(&path, &bytes)?;
+                tiles.push(CanvasSplitTile {
+                    path: path.display().to_string(),
+                    row,
+                    column,
+                });
+            }
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_dir_all(output_dir);
+        return Err(error);
+    }
+    Ok(tiles)
+}
+
+fn remove_canvas_split_tiles(tiles: &[CanvasSplitTile]) {
+    let parent = tiles
+        .first()
+        .and_then(|tile| Path::new(&tile.path).parent())
+        .map(Path::to_path_buf);
+    for tile in tiles {
+        let _ = fs::remove_file(&tile.path);
+    }
+    if let Some(parent) = parent {
+        let _ = fs::remove_dir(&parent);
+    }
+}
+
+fn poll_canvas_image_split(
+    app_weak: Weak<AppWindow>,
+    store: Rc<RefCell<Store>>,
+    history: Rc<RefCell<CanvasController>>,
+    source: CanvasSplitSource,
+    rows: u32,
+    columns: u32,
+    receiver: Rc<RefCell<Option<mpsc::Receiver<CanvasSplitOutcome>>>>,
+) {
+    slint::Timer::single_shot(Duration::from_millis(80), move || {
+        let outcome = {
+            let mut slot = receiver.borrow_mut();
+            let Some(rx) = slot.as_ref() else {
+                return;
+            };
+            match rx.try_recv() {
+                Ok(outcome) => {
+                    slot.take();
+                    Some(outcome)
+                }
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => {
+                    slot.take();
+                    Some(Err("image split worker stopped unexpectedly".to_string()))
+                }
+            }
+        };
+        let Some(outcome) = outcome else {
+            poll_canvas_image_split(app_weak, store, history, source, rows, columns, receiver);
+            return;
+        };
+        let Some(app) = app_weak.upgrade() else {
+            if let Ok(tiles) = outcome {
+                remove_canvas_split_tiles(&tiles);
+            }
+            return;
+        };
+        let state = app.global::<AppState>();
+        let tiles = match outcome {
+            Ok(tiles) => tiles,
+            Err(error) => {
+                state.set_generation_status(
+                    if state.get_language().as_str() == "en" {
+                        format!("Unable to split image: {error}")
+                    } else {
+                        format!("图片分割失败：{error}")
+                    }
+                    .into(),
+                );
+                return;
+            }
+        };
+
+        let mut store_mut = store.borrow_mut();
+        let source_is_current = store_mut.canvas_notes.iter().any(|note| {
+            note.id == source.id
+                && note.image_path == source.image_path
+                && matches!(note.kind.as_str(), "image" | "board-image")
+        });
+        if !source_is_current || store_mut.canvas_notes.len() + tiles.len() > MAX_CANVAS_NODES {
+            remove_canvas_split_tiles(&tiles);
+            if !source_is_current {
+                state.set_generation_status(
+                    if state.get_language().as_str() == "en" {
+                        "The source image changed before splitting finished"
+                    } else {
+                        "分割完成前原图已被更换，请重新操作"
+                    }
+                    .into(),
+                );
+            } else {
+                show_canvas_capacity_status(&app);
+            }
+            return;
+        }
+
+        history.borrow_mut().record(canvas_snapshot(&store_mut));
+        clear_selection(&mut store_mut.canvas_notes);
+        let next_z = store_mut
+            .canvas_notes
+            .iter()
+            .map(|note| note.z_index)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let raw_tile_width = source.width / columns as f32;
+        let raw_tile_height = source.height / rows as f32;
+        let display_scale = (80.0 / raw_tile_width).max(80.0 / raw_tile_height).max(1.0);
+        let tile_width = raw_tile_width * display_scale;
+        let tile_height = raw_tile_height * display_scale;
+        let gap = 16.0;
+        let origin_x = source.x + source.width + 64.0;
+        let origin_y = source.y;
+        let first_id = tiles.first().map(|_| Uuid::new_v4().to_string());
+
+        for (index, tile) in tiles.into_iter().enumerate() {
+            let id = if index == 0 {
+                first_id
+                    .clone()
+                    .unwrap_or_else(|| Uuid::new_v4().to_string())
+            } else {
+                Uuid::new_v4().to_string()
+            };
+            store_mut.canvas_notes.push(CanvasNoteData {
+                id,
+                kind: "board-image".to_string(),
+                content: String::new(),
+                x: origin_x + tile.column as f32 * (tile_width + gap),
+                y: origin_y + tile.row as f32 * (tile_height + gap),
+                width: tile_width,
+                height: tile_height,
+                parent_group_id: String::new(),
+                z_index: next_z + index as i32,
+                image_path: tile.path,
+                selected: index == 0,
+                ..CanvasNoteData::default()
+            });
+        }
+        persist_canvas(&app, &store_mut);
+        sync_canvas_selection(&app, &store_mut);
+        if let Some(first_id) = first_id {
+            state.set_canvas_selected_id(first_id.into());
+        }
+        state.set_canvas_selected_link_id("".into());
+        state.set_generation_status(
+            if state.get_language().as_str() == "en" {
+                format!("Split evenly into {rows} rows × {columns} columns")
+            } else {
+                format!(
+                    "已平均分割为 {rows} 行 × {columns} 列，共 {} 张",
+                    rows * columns
+                )
+            }
+            .into(),
+        );
+        sync_history_state(&app, &history.borrow());
+    });
 }
 
 fn pick_canvas_image(app: &AppWindow, node_id: &str) -> Option<PreparedCanvasImage> {
@@ -307,6 +532,137 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                 return;
             };
             start_canvas_ui_extraction(&app, context.clone(), source_node_id.to_string());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        let history = history.clone();
+        state.on_split_canvas_image(move |source_node_id, rows, columns| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            let rows = rows.trim().parse::<u32>();
+            let columns = columns.trim().parse::<u32>();
+            let (Ok(rows), Ok(columns)) = (rows, columns) else {
+                state.set_generation_status(
+                    if state.get_language().as_str() == "en" {
+                        "Enter positive whole numbers for rows and columns"
+                    } else {
+                        "行数和列数请输入正整数"
+                    }
+                    .into(),
+                );
+                return;
+            };
+            if rows == 0
+                || columns == 0
+                || rows > MAX_CANVAS_SPLIT_AXIS
+                || columns > MAX_CANVAS_SPLIT_AXIS
+            {
+                state.set_generation_status(
+                    if state.get_language().as_str() == "en" {
+                        "Rows and columns must each be between 1 and 64"
+                    } else {
+                        "行数和列数均需在 1 到 64 之间"
+                    }
+                    .into(),
+                );
+                return;
+            }
+            let tile_count = match rows.checked_mul(columns) {
+                Some(count) => count as usize,
+                None => {
+                    show_canvas_capacity_status(&app);
+                    return;
+                }
+            };
+            let source = {
+                let store_ref = store.borrow();
+                if store_ref.canvas_notes.len() + tile_count > MAX_CANVAS_NODES {
+                    show_canvas_capacity_status(&app);
+                    return;
+                }
+                let Some(note) = store_ref.canvas_notes.iter().find(|note| {
+                    note.id == source_node_id.as_str()
+                        && matches!(note.kind.as_str(), "image" | "board-image")
+                        && !note.image_path.trim().is_empty()
+                }) else {
+                    state.set_generation_status(
+                        if state.get_language().as_str() == "en" {
+                            "Select an uploaded image before splitting"
+                        } else {
+                            "请先选择已上传图片的节点"
+                        }
+                        .into(),
+                    );
+                    return;
+                };
+                CanvasSplitSource {
+                    id: note.id.clone(),
+                    image_path: note.image_path.clone(),
+                    x: note.x,
+                    y: note.y,
+                    width: note.width,
+                    height: note.height,
+                }
+            };
+            let Ok((image_width, image_height)) =
+                inspect_image_dimensions(Path::new(&source.image_path))
+            else {
+                state.set_generation_status(
+                    if state.get_language().as_str() == "en" {
+                        "Unable to read the source image"
+                    } else {
+                        "无法读取原图"
+                    }
+                    .into(),
+                );
+                return;
+            };
+            if rows > image_height || columns > image_width {
+                state.set_generation_status(
+                    if state.get_language().as_str() == "en" {
+                        "Rows or columns exceed the source image pixel size"
+                    } else {
+                        "分割行列不能超过原图像素尺寸"
+                    }
+                    .into(),
+                );
+                return;
+            }
+
+            state.set_generation_status(
+                if state.get_language().as_str() == "en" {
+                    "Splitting image locally..."
+                } else {
+                    "正在本地平均分割图片..."
+                }
+                .into(),
+            );
+            let output_dir = app_data_dir()
+                .join("canvas")
+                .join("splits")
+                .join(Uuid::new_v4().to_string());
+            let source_path = PathBuf::from(&source.image_path);
+            let (sender, receiver) = mpsc::channel::<CanvasSplitOutcome>();
+            std::thread::spawn(move || {
+                let outcome =
+                    split_canvas_image_to_directory(&source_path, &output_dir, rows, columns)
+                        .map_err(|error| error.to_string());
+                let _ = sender.send(outcome);
+            });
+            poll_canvas_image_split(
+                app.as_weak(),
+                store.clone(),
+                history.clone(),
+                source,
+                rows,
+                columns,
+                Rc::new(RefCell::new(Some(receiver))),
+            );
         });
     }
 
@@ -1555,5 +1911,44 @@ mod tests {
         }];
         assert!(link_reaches(&links, "source", "target"));
         assert!(!link_reaches(&links, "target", "source"));
+    }
+
+    #[test]
+    fn split_spans_assign_pixel_remainders_to_terminal_tiles() {
+        assert_eq!(terminal_remainder_span(10, 3, 0), (0, 3));
+        assert_eq!(terminal_remainder_span(10, 3, 1), (3, 3));
+        assert_eq!(terminal_remainder_span(10, 3, 2), (6, 4));
+    }
+
+    #[test]
+    fn canvas_image_split_is_lossless_and_covers_every_pixel() {
+        let temp = tempfile::tempdir().expect("temporary split directory");
+        let source_path = temp.path().join("source.png");
+        let output_dir = app_data_dir()
+            .join("canvas")
+            .join("splits")
+            .join(format!("test-{}", Uuid::new_v4()));
+        fs::create_dir_all(app_data_dir()).expect("prepare managed app data directory");
+        let mut source = image::RgbaImage::new(5, 3);
+        for y in 0..3 {
+            for x in 0..5 {
+                source.put_pixel(x, y, image::Rgba([x as u8, y as u8, 42, 255]));
+            }
+        }
+        let bytes = encode_png_rgba(&source, 5, 3).expect("encode split source");
+        atomic_write_file(&source_path, &bytes).expect("write split source");
+
+        let tiles =
+            split_canvas_image_to_directory(&source_path, &output_dir, 2, 2).expect("split source");
+        assert_eq!(tiles.len(), 4);
+        let mut rebuilt = image::RgbaImage::new(5, 3);
+        for tile in &tiles {
+            let (left, _) = terminal_remainder_span(5, 2, tile.column);
+            let (top, _) = terminal_remainder_span(3, 2, tile.row);
+            let decoded = image::open(&tile.path).expect("read tile").to_rgba8();
+            image::imageops::replace(&mut rebuilt, &decoded, left as i64, top as i64);
+        }
+        assert_eq!(rebuilt, source);
+        remove_canvas_split_tiles(&tiles);
     }
 }

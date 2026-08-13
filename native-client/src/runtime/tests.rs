@@ -3216,7 +3216,7 @@ mod tests {
         assert!(node.contains("media-action-bar := Rectangle"));
         assert!(node.contains("media-editor-panel := Rectangle"));
         assert!(node.contains(
-            "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-action-bar"
+            "if (root.is-visual-media() || root.is-board-image()) && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-action-bar"
         ));
         assert!(node.contains(
             "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-editor-panel"
@@ -3363,16 +3363,16 @@ mod tests {
             .and_then(|value| value.split("media-editor-panel := Rectangle").next())
             .expect("media action bar");
         let video_actions = media_bar
-            .split("if root.note.kind == \"video\": HorizontalLayout")
+            .split("if root.note.kind == \"video\" && !root.split-mode: HorizontalLayout")
             .nth(1)
             .and_then(|value| {
                 value
-                    .split("if root.note.kind != \"video\": HorizontalLayout")
+                    .split("if root.note.kind != \"video\" && !root.split-mode: HorizontalLayout")
                     .next()
             })
             .expect("video action layout");
         let other_actions = media_bar
-            .split("if root.note.kind != \"video\": HorizontalLayout")
+            .split("if root.note.kind != \"video\" && !root.split-mode: HorizontalLayout")
             .nth(1)
             .expect("image and audio action layout");
 
@@ -3401,7 +3401,7 @@ mod tests {
             other_actions
                 .matches("CanvasMediaAction { horizontal-stretch: 1;")
                 .count(),
-            3
+            5
         );
         assert!(!text_bar.contains("CanvasMediaAction { scale-factor: root.node-scale(); width:"));
         assert!(!media_bar.contains("CanvasMediaAction { scale-factor: root.node-scale(); width:"));
@@ -3417,7 +3417,7 @@ mod tests {
             .expect("canvas node component");
 
         assert!(node.contains(
-            "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-action-bar"
+            "if (root.is-visual-media() || root.is-board-image()) && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-action-bar"
         ));
         assert!(node.contains(
             "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-editor-panel"
