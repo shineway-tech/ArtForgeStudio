@@ -41,6 +41,27 @@ fn note_rect(note: &CanvasNoteData) -> CanvasRect {
     }
 }
 
+pub(super) fn generated_canvas_result_position(
+    source: Option<&CanvasNoteData>,
+    result_width: f32,
+    result_height: f32,
+    result_index: i32,
+    total_count: i32,
+) -> (f32, f32) {
+    let gap_x = 96.0;
+    let gap_y = 36.0;
+    let index = result_index.max(0) as f32;
+    let count = total_count.max(1) as f32;
+    let stack_height = count * result_height + (count - 1.0) * gap_y;
+    match source {
+        Some(source) => (
+            source.x + source.width + gap_x,
+            source.y + source.height / 2.0 - stack_height / 2.0 + index * (result_height + gap_y),
+        ),
+        None => (index * (result_width + gap_x), 0.0),
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct CanvasSnapshot {
     pub notes: Vec<CanvasNoteData>,
@@ -1214,6 +1235,31 @@ mod tests {
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].source_id, "source");
         assert_eq!(links[0].target_id, "new-node");
+    }
+
+    #[test]
+    fn generated_canvas_results_are_stacked_to_the_right_of_the_source() {
+        let source = CanvasNoteData {
+            x: 100.0,
+            y: 200.0,
+            width: 320.0,
+            height: 240.0,
+            ..note("source", "text", 100.0, 200.0)
+        };
+
+        let first = generated_canvas_result_position(Some(&source), 340.0, 250.0, 0, 3);
+        let second = generated_canvas_result_position(Some(&source), 340.0, 250.0, 1, 3);
+        let third = generated_canvas_result_position(Some(&source), 340.0, 250.0, 2, 3);
+
+        assert_eq!(first.0, source.x + source.width + 96.0);
+        assert_eq!(first.0, second.0);
+        assert_eq!(second.0, third.0);
+        assert_eq!(second.1 - first.1, 286.0);
+        assert_eq!(third.1 - second.1, 286.0);
+        assert_eq!(
+            (first.1 + third.1 + 250.0) / 2.0,
+            source.y + source.height / 2.0
+        );
     }
 
     #[test]

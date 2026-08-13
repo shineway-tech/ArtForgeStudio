@@ -3116,7 +3116,9 @@ mod tests {
         assert!(page.contains("AppState.finish-canvas-link(source-id"));
         assert!(page.contains("for link in AppState.canvas-links"));
         assert!(page.contains("function effective-prompt()"));
-        assert!(page.contains("AppState.prompt = root.effective-prompt()"));
+        assert!(page.contains(
+            "AppState.generate-canvas-node(root.note.id, root.effective-prompt())"
+        ));
         assert!(page.contains("已连接输入："));
         assert!(page.contains(
             "node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover"
@@ -3246,7 +3248,10 @@ mod tests {
         assert!(node.contains("function settings-popup-x"));
         assert!(node.contains("audio-settings-scroll := Flickable"));
         assert!(page.contains("viewport-width: canvas.width"));
-        assert!(node.contains("AppState.generate()"));
+        assert!(node.contains(
+            "AppState.generate-canvas-node(root.note.id, root.effective-prompt())"
+        ));
+        assert!(!node.contains("AppState.generate()"));
     }
 
     #[test]

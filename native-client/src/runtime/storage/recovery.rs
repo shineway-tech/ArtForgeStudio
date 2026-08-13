@@ -60,6 +60,8 @@ pub(super) struct PendingGenerationRecord {
     pub(super) terminal: bool,
     #[serde(default)]
     pub(super) expected_success_count: usize,
+    #[serde(default)]
+    pub(super) canvas_source_node_id: String,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -1102,6 +1104,7 @@ mod tests {
             }],
             terminal: true,
             expected_success_count: 1,
+            canvas_source_node_id: String::new(),
         }
     }
 

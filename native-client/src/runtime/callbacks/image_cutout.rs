@@ -309,6 +309,7 @@ fn start_image_cutout(app: &AppWindow, context: AppContext, subject_type: &str) 
         deliveries: vec![],
         terminal: false,
         expected_success_count: 0,
+        canvas_source_node_id: String::new(),
     };
     if upsert_pending_generation_scoped(
         record.clone(),

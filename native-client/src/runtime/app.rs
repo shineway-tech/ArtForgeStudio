@@ -136,7 +136,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
     wire_credit_callbacks(app, context.clone());
     wire_custom_prompt_callbacks(app, context.clone());
     wire_prompt_optimization_callbacks(app, context.clone());
-    wire_infinite_canvas_callbacks(app, store.clone());
+    wire_infinite_canvas_callbacks(app, context.clone());
     wire_toolbox_callbacks(app, context.clone());
     wire_image_enhancement_callbacks(app, context.clone());
     wire_image_cutout_callbacks(app, context.clone());

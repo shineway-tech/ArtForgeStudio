@@ -98,6 +98,13 @@ pub(super) fn poll_generation_stream(
         }
         let state = app.global::<AppState>();
         let mut keep_polling = true;
+        let destination = context
+            .generations
+            .active
+            .borrow()
+            .get(&category)
+            .map(|task| task.destination.clone())
+            .unwrap_or_default();
 
         match outcome {
             GenerationOutcome::Accepted {
@@ -131,22 +138,43 @@ pub(super) fn poll_generation_stream(
                 time,
                 upscale_done,
                 delivery,
-            } => match add_stream_success_item(
-                &app,
-                &store,
-                &raw_prompt,
-                &category,
-                &mode,
-                &quality,
-                &image_model,
-                &result_origin,
-                &conversation_id,
-                &display_prompt,
-                &time,
-                Path::new(&local_path),
-                &generation_reference_paths,
-                upscale_done,
-            ) {
+            } => {
+                let active = context.generations.active.borrow().get(&category).cloned();
+                let saved_result = match (&destination, active.as_ref()) {
+                    (GenerationDestination::Canvas { source_node_id }, Some(active)) => {
+                        std::fs::read(&local_path)
+                            .map_err(anyhow::Error::from)
+                            .and_then(|bytes| {
+                                add_canvas_stream_success_item(
+                                    &app,
+                                    &context,
+                                    source_node_id,
+                                    &raw_prompt,
+                                    &bytes,
+                                    active.success_count,
+                                    active.total_count,
+                                )
+                            })
+                            .map(|source_path| (Image::default(), source_path, String::new()))
+                    }
+                    _ => add_stream_success_item(
+                        &app,
+                        &store,
+                        &raw_prompt,
+                        &category,
+                        &mode,
+                        &quality,
+                        &image_model,
+                        &result_origin,
+                        &conversation_id,
+                        &display_prompt,
+                        &time,
+                        Path::new(&local_path),
+                        &generation_reference_paths,
+                        upscale_done,
+                    ),
+                };
+                match saved_result {
                 Ok((conversation_image, source_path, generated_id)) => {
                     if let Some(delivery) = delivery {
                         let saved = pending_delivery_saved(
@@ -165,7 +193,9 @@ pub(super) fn poll_generation_stream(
                             );
                         }
                     }
-                    state.set_asset_category_filter("all".into());
+                    if destination == GenerationDestination::Gallery {
+                        state.set_asset_category_filter("all".into());
+                    }
                     if create_conversation {
                         finish_conversation_placeholder(
                             &state,
@@ -179,7 +209,7 @@ pub(super) fn poll_generation_stream(
                         &category,
                         &task_id,
                         true,
-                        Some(generated_id),
+                        (!generated_id.is_empty()).then_some(generated_id),
                     ) {
                         if active.loading_count > 0 {
                             set_generation_status_for_category(
@@ -197,7 +227,34 @@ pub(super) fn poll_generation_stream(
                     // accumulate full-size downloads indefinitely.
                     cleanup_failed_delivery_staging(Path::new(&local_path));
                     let reason = zh_error(&error.to_string());
-                    let time = Local::now().format("%Y-%m-%d %H:%M").to_string();
+                    if destination == GenerationDestination::Gallery {
+                        let time = Local::now().format("%Y-%m-%d %H:%M").to_string();
+                        add_stream_failure_item(
+                            &app,
+                            &store,
+                            &raw_prompt,
+                            &category,
+                            &mode,
+                            &ratio,
+                            &quality,
+                            &image_model,
+                            &result_origin,
+                            &conversation_id,
+                            &reason,
+                            &time,
+                            &generation_reference_paths,
+                        );
+                    } else {
+                        set_generation_status_for_category(&context, &app, &category, &reason);
+                    }
+                    mark_active_generation_image_completed(
+                        &context, &app, &category, &task_id, false, None,
+                    );
+                }
+                }
+            }
+            GenerationOutcome::ImageFailure { reason, time } => {
+                if destination == GenerationDestination::Gallery {
                     add_stream_failure_item(
                         &app,
                         &store,
@@ -213,27 +270,7 @@ pub(super) fn poll_generation_stream(
                         &time,
                         &generation_reference_paths,
                     );
-                    mark_active_generation_image_completed(
-                        &context, &app, &category, &task_id, false, None,
-                    );
                 }
-            },
-            GenerationOutcome::ImageFailure { reason, time } => {
-                add_stream_failure_item(
-                    &app,
-                    &store,
-                    &raw_prompt,
-                    &category,
-                    &mode,
-                    &ratio,
-                    &quality,
-                    &image_model,
-                    &result_origin,
-                    &conversation_id,
-                    &reason,
-                    &time,
-                    &generation_reference_paths,
-                );
                 if let Some(active) = mark_active_generation_image_completed(
                     &context, &app, &category, &task_id, false, None,
                 ) {
@@ -274,8 +311,10 @@ pub(super) fn poll_generation_stream(
                 );
                 sync_generation_state_for_current_category(&context, &app);
                 // open-viewer-after-finish
-                if let Some(viewer_id) = task.latest_success_id.clone() {
+                if destination == GenerationDestination::Gallery {
+                    if let Some(viewer_id) = task.latest_success_id.clone() {
                     open_viewer(&app, &store.borrow(), &viewer_id, "generation");
+                    }
                 }
                 if context.backend.is_some() {
                     refresh_backend_snapshot(&app, context.clone());
@@ -314,22 +353,24 @@ pub(super) fn poll_generation_stream(
                     return;
                 };
                 let remaining = (task.total_count - task.completed_count).max(1);
-                for _ in 0..remaining {
-                    add_stream_failure_item(
-                        &app,
-                        &store,
-                        &raw_prompt,
-                        &category,
-                        &mode,
-                        &ratio,
-                        &quality,
-                        &image_model,
-                        &result_origin,
-                        &conversation_id,
-                        &reason,
-                        &time,
-                        &generation_reference_paths,
-                    );
+                if destination == GenerationDestination::Gallery {
+                    for _ in 0..remaining {
+                        add_stream_failure_item(
+                            &app,
+                            &store,
+                            &raw_prompt,
+                            &category,
+                            &mode,
+                            &ratio,
+                            &quality,
+                            &image_model,
+                            &result_origin,
+                            &conversation_id,
+                            &reason,
+                            &time,
+                            &generation_reference_paths,
+                        );
+                    }
                 }
                 if create_conversation && task.success_count == 0 {
                     finish_conversation_placeholder(&state, &conversation_id, None);
@@ -351,8 +392,9 @@ pub(super) fn poll_generation_stream(
                     task.failed_count + remaining,
                 );
                 sync_generation_state_for_current_category(&context, &app);
-                if let Some(viewer_id) = task.latest_success_id.clone() {
-                    open_viewer(&app, &store.borrow(), &viewer_id, "generation");
+                    if let Some(viewer_id) = task.latest_success_id.clone() {
+                        open_viewer(&app, &store.borrow(), &viewer_id, "generation");
+                    }
                 }
                 if context.backend.is_some() {
                     refresh_backend_snapshot(&app, context.clone());

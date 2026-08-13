@@ -278,9 +278,26 @@ fn sync_canvas_selection_rows(app: &AppWindow, store: &Store) {
     }
 }
 
-pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, store: Rc<RefCell<Store>>) {
+pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
-    let history = Rc::new(RefCell::new(CanvasController::default()));
+    let store = context.store.clone();
+    let history = context.canvas_history.clone();
+
+    {
+        let app_weak = app.as_weak();
+        let context = context.clone();
+        state.on_generate_canvas_node(move |source_node_id, prompt| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            start_canvas_generation(
+                &app,
+                context.clone(),
+                source_node_id.to_string(),
+                prompt.to_string(),
+            );
+        });
+    }
 
     {
         let app_weak = app.as_weak();

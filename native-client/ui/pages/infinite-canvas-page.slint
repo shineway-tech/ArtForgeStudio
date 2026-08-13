@@ -789,8 +789,7 @@ component CanvasNodeCard {
         }
         if !AppState.generating {
             root.save-content();
-            AppState.prompt = root.effective-prompt();
-            AppState.generate();
+            AppState.generate-canvas-node(root.note.id, root.effective-prompt());
         }
     }
 
@@ -1489,8 +1488,7 @@ component CanvasNodeCard {
                     clicked => {
                         if root.note.kind == "image" && root.effective-prompt() != "" && AppState.image-model != "" && !AppState.generating {
                             root.save-content();
-                            AppState.prompt = root.effective-prompt();
-                            AppState.generate();
+                            AppState.generate-canvas-node(root.note.id, root.effective-prompt());
                         }
                     }
                 }

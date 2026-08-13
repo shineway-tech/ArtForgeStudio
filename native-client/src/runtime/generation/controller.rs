@@ -9,6 +9,46 @@ pub(super) fn start_generation(
     forced_count: Option<i32>,
     existing_generation_policy: ExistingGenerationPolicy,
 ) {
+    start_generation_for_destination(
+        app,
+        context,
+        override_prompt,
+        create_conversation,
+        retry_failed_id,
+        forced_count,
+        existing_generation_policy,
+        GenerationDestination::Gallery,
+    );
+}
+
+pub(super) fn start_canvas_generation(
+    app: &AppWindow,
+    context: AppContext,
+    source_node_id: String,
+    prompt: String,
+) {
+    start_generation_for_destination(
+        app,
+        context,
+        Some(prompt),
+        false,
+        None,
+        None,
+        ExistingGenerationPolicy::StopExisting,
+        GenerationDestination::Canvas { source_node_id },
+    );
+}
+
+fn start_generation_for_destination(
+    app: &AppWindow,
+    context: AppContext,
+    override_prompt: Option<String>,
+    create_conversation: bool,
+    retry_failed_id: Option<String>,
+    forced_count: Option<i32>,
+    existing_generation_policy: ExistingGenerationPolicy,
+    destination: GenerationDestination,
+) {
     let state = app.global::<AppState>();
     let visible_prompt = state.get_prompt().trim().to_string();
     let applied_chinese = state
@@ -49,6 +89,7 @@ pub(super) fn start_generation(
         retry_failed_id,
         forced_count,
         existing_generation_policy,
+        destination,
     );
 }
 
@@ -247,10 +288,12 @@ pub(super) fn stop_generation(app: &AppWindow, context: &AppContext) {
     };
     set_generation_status_for_category(context, app, &category, "已停止生成");
     sync_generation_state_for_current_category(context, app);
-    if !task.prompt.trim().is_empty() {
-        state.set_prompt(task.prompt.clone().into());
+    if task.destination == GenerationDestination::Gallery {
+        if !task.prompt.trim().is_empty() {
+            state.set_prompt(task.prompt.clone().into());
+        }
+        finish_conversation_placeholder(&state, &task.conversation_id, None);
     }
-    finish_conversation_placeholder(&state, &task.conversation_id, None);
     push_references(app, &store.borrow());
     if let Some(client_request_id) = task.client_request_id.as_ref() {
         if let Ok(mut cancellations) = context.cancelled_generation_requests.lock() {
@@ -343,6 +386,80 @@ pub(super) fn add_stream_success_item(
     )?;
     push_all(app, &store_mut);
     Ok((conversation_image, source_path, generated_id))
+}
+
+pub(super) fn add_canvas_stream_success_item(
+    app: &AppWindow,
+    context: &AppContext,
+    source_node_id: &str,
+    raw_prompt: &str,
+    bytes: &[u8],
+    result_index: i32,
+    total_count: i32,
+) -> Result<String> {
+    let (bytes, _, width, height) = generated_image_from_bytes(bytes)?;
+    {
+        let store = context.store.borrow();
+        let source_exists = store
+            .canvas_notes
+            .iter()
+            .any(|note| note.id == source_node_id);
+        if store.canvas_notes.len() >= 200 || (source_exists && store.canvas_links.len() >= 400) {
+            return Err(anyhow!("画布已达到容量上限"));
+        }
+    }
+    let source_path = save_generated_bytes(app, &bytes, raw_prompt)?;
+    let mut store = context.store.borrow_mut();
+
+    let source = store
+        .canvas_notes
+        .iter()
+        .find(|note| note.id == source_node_id)
+        .cloned();
+    let mut result = CanvasNoteData {
+        id: Uuid::new_v4().to_string(),
+        kind: "image".to_string(),
+        content: String::new(),
+        image_path: source_path.clone(),
+        width: 340.0,
+        height: 250.0,
+        parent_group_id: String::new(),
+        z_index: store
+            .canvas_notes
+            .iter()
+            .map(|note| note.z_index)
+            .max()
+            .unwrap_or(0)
+            + 1,
+        selected: false,
+        ..CanvasNoteData::default()
+    };
+    fit_image_node_to_intrinsic_aspect(&mut result, width as f32, height as f32);
+    let (x, y) = generated_canvas_result_position(
+        source.as_ref(),
+        result.width,
+        result.height,
+        result_index,
+        total_count,
+    );
+    result.x = x;
+    result.y = y;
+    let result_id = result.id.clone();
+
+    context
+        .canvas_history
+        .borrow_mut()
+        .record(canvas_snapshot(&store));
+    store.canvas_notes.push(result);
+    if source.is_some() {
+        let _ = connect_nodes(&mut store.canvas_links, source_node_id, &result_id);
+    }
+    save_local_store(app, &store);
+    push_canvas_notes(app, &store);
+    let state = app.global::<AppState>();
+    state.set_canvas_can_undo(context.canvas_history.borrow().can_undo());
+    state.set_canvas_can_redo(context.canvas_history.borrow().can_redo());
+    Ok(source_path)
 }
 
 pub(super) fn add_stream_failure_item(

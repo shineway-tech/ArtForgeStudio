@@ -320,6 +320,7 @@ struct ActiveGeneration {
     eta: i32,
     latest_success_id: Option<String>,
     session_scope: SessionScope,
+    destination: GenerationDestination,
 }
 
 impl Default for ActiveGeneration {
@@ -344,8 +345,16 @@ impl Default for ActiveGeneration {
                 owner_user_id: String::new(),
                 auth_epoch: 0,
             },
+            destination: GenerationDestination::Gallery,
         }
     }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum GenerationDestination {
+    #[default]
+    Gallery,
+    Canvas { source_node_id: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -401,6 +410,7 @@ struct ActivePaymentSession {
 #[derive(Clone, Default)]
 struct AppContext {
     store: Rc<RefCell<Store>>,
+    canvas_history: Rc<RefCell<CanvasController>>,
     generations: Rc<GenerationRegistry>,
     recovering_orders: Rc<RefCell<BTreeSet<String>>>,
     active_payment: Rc<RefCell<Option<ActivePaymentSession>>>,

@@ -194,6 +194,7 @@ pub(super) fn start_backend_generation(
     retry_failed_id: Option<String>,
     forced_count: Option<i32>,
     existing_generation_policy: ExistingGenerationPolicy,
+    destination: GenerationDestination,
 ) {
     let Some(backend) = context.backend.clone() else {
         return;
@@ -223,7 +224,9 @@ pub(super) fn start_backend_generation(
                 );
                 sync_generation_state_for_current_category(&context, app);
                 push_generations(app, &store.borrow());
-                navigate_to_with_store(app, &store.borrow(), "generation");
+                if destination == GenerationDestination::Gallery {
+                    navigate_to_with_store(app, &store.borrow(), "generation");
+                }
             }
         }
         return;
@@ -363,6 +366,10 @@ pub(super) fn start_backend_generation(
         deliveries: vec![],
         terminal: false,
         expected_success_count: 0,
+        canvas_source_node_id: match &destination {
+            GenerationDestination::Canvas { source_node_id } => source_node_id.clone(),
+            GenerationDestination::Gallery => String::new(),
+        },
     };
     if upsert_pending_generation_scoped(
         recovery_record.clone(),
@@ -393,16 +400,21 @@ pub(super) fn start_backend_generation(
             eta: 0,
             latest_success_id: None,
             session_scope: session_scope.clone(),
+            destination: destination.clone(),
         },
     );
     set_generation_status_for_category(&context, app, &category, "正在优化并上传参考图...");
     sync_generation_state_for_current_category(&context, app);
-    navigate_to_with_store(app, &context.store.borrow(), "generation");
+    if destination == GenerationDestination::Gallery {
+        navigate_to_with_store(app, &context.store.borrow(), "generation");
+    }
 
-    state.set_quote_title("".into());
-    state.set_quote_prompt("".into());
-    state.set_quote_ratio("".into());
-    state.set_quote_quality("".into());
+    if destination == GenerationDestination::Gallery {
+        state.set_quote_title("".into());
+        state.set_quote_prompt("".into());
+        state.set_quote_ratio("".into());
+        state.set_quote_quality("".into());
+    }
     if create_conversation {
         let mut conversations = state.get_conversations().iter().collect::<Vec<_>>();
         conversations.insert(
@@ -714,7 +726,7 @@ pub(super) fn start_backend_generation(
         generation_reference_paths,
         original_references,
         quote,
-        true,
+        destination == GenerationDestination::Gallery,
         local_task_id,
         Instant::now(),
     );
@@ -835,6 +847,7 @@ pub(super) fn start_backend_image_edit(
         deliveries: Vec::new(),
         terminal: false,
         expected_success_count: 0,
+        canvas_source_node_id: String::new(),
     };
     if upsert_pending_generation_scoped(
         record.clone(),
@@ -1061,6 +1074,7 @@ pub(super) fn start_backend_upscale(
         deliveries: vec![],
         terminal: false,
         expected_success_count: 0,
+        canvas_source_node_id: String::new(),
     };
     if upsert_pending_generation_scoped(
         recovery_record.clone(),
@@ -1093,6 +1107,7 @@ pub(super) fn start_backend_upscale(
             eta: 0,
             latest_success_id: None,
             session_scope: session_scope.clone(),
+            destination: GenerationDestination::Gallery,
         },
     );
     state.set_viewer_processing(true);
@@ -2122,6 +2137,7 @@ fn recover_server_generation_tasks(
                     deliveries: vec![],
                     terminal: detail.terminal(),
                     expected_success_count: detail.success_count.max(0) as usize,
+                    canvas_source_node_id: String::new(),
                 });
             }
         }
@@ -2230,6 +2246,7 @@ fn resume_pending_generation(
         .iter()
         .filter(|item| !item.local_path.is_empty() && Path::new(&item.local_path).is_file())
         .count() as i32;
+    let is_canvas_generation = !record.canvas_source_node_id.is_empty();
     insert_active_generation(
         &context,
         ActiveGeneration {
@@ -2250,6 +2267,13 @@ fn resume_pending_generation(
             eta: 0,
             latest_success_id: None,
             session_scope: session_scope.clone(),
+            destination: if record.canvas_source_node_id.is_empty() {
+                GenerationDestination::Gallery
+            } else {
+                GenerationDestination::Canvas {
+                    source_node_id: record.canvas_source_node_id.clone(),
+                }
+            },
         },
     );
     let state = app.global::<AppState>();
@@ -2318,7 +2342,7 @@ fn resume_pending_generation(
             width: 0,
             height: 0,
         },
-        true,
+        !is_canvas_generation,
         record.local_task_id,
         Instant::now(),
     );
@@ -2816,6 +2840,7 @@ mod image_edit_recovery_tests {
             deliveries,
             terminal: true,
             expected_success_count: 1,
+            canvas_source_node_id: String::new(),
         }
     }
 
