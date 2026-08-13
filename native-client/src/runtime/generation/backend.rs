@@ -211,6 +211,10 @@ pub(super) fn start_backend_generation(
         state.set_generation_status("服务端没有可用的图像模型".into());
         return;
     }
+    let is_ui_extraction = matches!(
+        destination,
+        GenerationDestination::CanvasUiExtraction { .. }
+    );
     let category = resolve_category(&state.get_asset_type().to_string(), &raw_prompt);
     if category_is_generating(&context, &category) {
         match existing_generation_policy {
@@ -231,20 +235,46 @@ pub(super) fn start_backend_generation(
         }
         return;
     }
-    let ratio = resolve_ratio_for_category(
-        &category,
-        &state.get_ratio().to_string(),
-        &raw_prompt,
-        &state.get_quote_ratio().to_string(),
-    );
+    let ratio = if is_ui_extraction {
+        "1:1".to_string()
+    } else {
+        resolve_ratio_for_category(
+            &category,
+            &state.get_ratio().to_string(),
+            &raw_prompt,
+            &state.get_quote_ratio().to_string(),
+        )
+    };
     let quality = state.get_quality().to_string();
     let count = forced_count.unwrap_or_else(|| state.get_count().clamp(1, 4));
     let mode = state.get_mode().to_string();
-    let original_references = references_for_category(&store.borrow().references, &category)
-        .iter()
-        .take(max_reference_images_for_category(&category))
-        .cloned()
-        .collect::<Vec<_>>();
+    let original_references = match &destination {
+        GenerationDestination::CanvasUiExtraction { source_node_id } => {
+            let source_path = store
+                .borrow()
+                .canvas_notes
+                .iter()
+                .find(|note| note.id == *source_node_id)
+                .map(|note| note.image_path.clone())
+                .unwrap_or_default();
+            let path = PathBuf::from(&source_path);
+            match load_preview_image(&path, PreviewPurpose::Reference) {
+                Ok(_) if path.is_file() => vec![ReferenceData {
+                    id: Uuid::new_v4().to_string(),
+                    source_path,
+                }],
+                _ => {
+                    state.set_generation_status("画布原图无法读取，请重新上传后重试".into());
+                    return;
+                }
+            }
+        }
+        _ => references_for_category(&store.borrow().references, &category)
+            .iter()
+            .take(max_reference_images_for_category(&category))
+            .cloned()
+            .collect::<Vec<_>>(),
+    };
     let reference_paths = original_references
         .iter()
         .map(|item| PathBuf::from(&item.source_path))
@@ -307,16 +337,20 @@ pub(super) fn start_backend_generation(
     } else {
         PromptLanguage::Chinese
     };
-    let generation_prompt = build_generation_prompt(
-        &raw_prompt,
-        &state.get_negative_prompt().to_string(),
-        &controls,
-        &quote,
-        &category,
-        &ratio,
-        &quality,
-        language,
-    );
+    let generation_prompt = if is_ui_extraction {
+        raw_prompt.clone()
+    } else {
+        build_generation_prompt(
+            &raw_prompt,
+            &state.get_negative_prompt().to_string(),
+            &controls,
+            &quote,
+            &category,
+            &ratio,
+            &quality,
+            language,
+        )
+    };
 
     if let Some(retry_failed_id) = retry_failed_id.as_deref() {
         let mut store = store.borrow_mut();
@@ -367,9 +401,13 @@ pub(super) fn start_backend_generation(
         terminal: false,
         expected_success_count: 0,
         canvas_source_node_id: match &destination {
-            GenerationDestination::Canvas { source_node_id } => source_node_id.clone(),
+            GenerationDestination::Canvas { source_node_id }
+            | GenerationDestination::CanvasUiExtraction { source_node_id } => {
+                source_node_id.clone()
+            }
             GenerationDestination::Gallery => String::new(),
         },
+        canvas_ui_extraction: is_ui_extraction,
     };
     if upsert_pending_generation_scoped(
         recovery_record.clone(),
@@ -848,6 +886,7 @@ pub(super) fn start_backend_image_edit(
         terminal: false,
         expected_success_count: 0,
         canvas_source_node_id: String::new(),
+        canvas_ui_extraction: false,
     };
     if upsert_pending_generation_scoped(
         record.clone(),
@@ -880,6 +919,7 @@ pub(super) fn start_backend_image_edit(
             eta: 0,
             latest_success_id: None,
             session_scope: session_scope.clone(),
+            destination: GenerationDestination::Gallery,
         },
     );
     set_generation_status_for_category(&context, app, &category, "正在上传原图和遮罩...");
@@ -1075,6 +1115,7 @@ pub(super) fn start_backend_upscale(
         terminal: false,
         expected_success_count: 0,
         canvas_source_node_id: String::new(),
+        canvas_ui_extraction: false,
     };
     if upsert_pending_generation_scoped(
         recovery_record.clone(),
@@ -2138,6 +2179,7 @@ fn recover_server_generation_tasks(
                     terminal: detail.terminal(),
                     expected_success_count: detail.success_count.max(0) as usize,
                     canvas_source_node_id: String::new(),
+                    canvas_ui_extraction: false,
                 });
             }
         }
@@ -2269,6 +2311,10 @@ fn resume_pending_generation(
             session_scope: session_scope.clone(),
             destination: if record.canvas_source_node_id.is_empty() {
                 GenerationDestination::Gallery
+            } else if record.canvas_ui_extraction {
+                GenerationDestination::CanvasUiExtraction {
+                    source_node_id: record.canvas_source_node_id.clone(),
+                }
             } else {
                 GenerationDestination::Canvas {
                     source_node_id: record.canvas_source_node_id.clone(),
@@ -2841,6 +2887,7 @@ mod image_edit_recovery_tests {
             terminal: true,
             expected_success_count: 1,
             canvas_source_node_id: String::new(),
+            canvas_ui_extraction: false,
         }
     }
 

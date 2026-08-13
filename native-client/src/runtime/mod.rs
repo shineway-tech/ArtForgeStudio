@@ -154,6 +154,9 @@ use image_processing::*;
 #[path = "services/preview.rs"]
 mod preview;
 use preview::*;
+#[path = "services/ui_component_extraction.rs"]
+mod ui_component_extraction;
+use ui_component_extraction::*;
 #[path = "storage/local_store.rs"]
 mod local_store;
 use local_store::*;

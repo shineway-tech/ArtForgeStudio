@@ -2991,6 +2991,7 @@ fn start_watermark_removal(app: &AppWindow, context: AppContext) {
         terminal: false,
         expected_success_count: 0,
         canvas_source_node_id: String::new(),
+        canvas_ui_extraction: false,
     };
     if upsert_pending_generation_scoped(
         record.clone(),
@@ -3703,6 +3704,7 @@ fn start_image_colorization(app: &AppWindow, context: AppContext) {
         terminal: false,
         expected_success_count: 0,
         canvas_source_node_id: String::new(),
+        canvas_ui_extraction: false,
     };
     if upsert_pending_generation_scoped(
         record.clone(),

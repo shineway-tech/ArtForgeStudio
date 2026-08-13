@@ -1,8 +1,8 @@
 use super::*;
 use std::hash::{Hash, Hasher};
 
-const MAX_CANVAS_NODES: usize = 200;
-const MAX_CANVAS_LINKS: usize = 400;
+pub(super) const MAX_CANVAS_NODES: usize = 200;
+pub(super) const MAX_CANVAS_LINKS: usize = 400;
 
 struct PreparedCanvasImage {
     path: String,
@@ -296,6 +296,17 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                 source_node_id.to_string(),
                 prompt.to_string(),
             );
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let context = context.clone();
+        state.on_extract_canvas_ui_elements(move |source_node_id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            start_canvas_ui_extraction(&app, context.clone(), source_node_id.to_string());
         });
     }
 

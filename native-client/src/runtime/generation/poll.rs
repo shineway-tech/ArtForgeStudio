@@ -157,6 +157,20 @@ pub(super) fn poll_generation_stream(
                             })
                             .map(|source_path| (Image::default(), source_path, String::new()))
                     }
+                    (GenerationDestination::CanvasUiExtraction { source_node_id }, Some(_)) => {
+                        std::fs::read(&local_path)
+                            .map_err(anyhow::Error::from)
+                            .and_then(|bytes| {
+                                add_canvas_ui_extraction_success_item(
+                                    &app,
+                                    &context,
+                                    source_node_id,
+                                    &raw_prompt,
+                                    &bytes,
+                                )
+                            })
+                            .map(|source_path| (Image::default(), source_path, String::new()))
+                    }
                     _ => add_stream_success_item(
                         &app,
                         &store,
@@ -175,7 +189,7 @@ pub(super) fn poll_generation_stream(
                     ),
                 };
                 match saved_result {
-                Ok((conversation_image, source_path, generated_id)) => {
+                    Ok((conversation_image, source_path, generated_id)) => {
                     if let Some(delivery) = delivery {
                         let saved = pending_delivery_saved(
                             &session_scope.owner_user_id,
@@ -192,6 +206,9 @@ pub(super) fn poll_generation_stream(
                                 delivery,
                             );
                         }
+                    }
+                    if destination != GenerationDestination::Gallery {
+                        cleanup_failed_delivery_staging(Path::new(&local_path));
                     }
                     if destination == GenerationDestination::Gallery {
                         state.set_asset_category_filter("all".into());
@@ -220,8 +237,8 @@ pub(super) fn poll_generation_stream(
                             );
                         }
                     }
-                }
-                Err(error) => {
+                    }
+                    Err(error) => {
                     // The recovery record still has the server item and can download it again.
                     // Remove only this app-managed staging file so a local save failure does not
                     // accumulate full-size downloads indefinitely.
@@ -250,7 +267,7 @@ pub(super) fn poll_generation_stream(
                     mark_active_generation_image_completed(
                         &context, &app, &category, &task_id, false, None,
                     );
-                }
+                    }
                 }
             }
             GenerationOutcome::ImageFailure { reason, time } => {
@@ -313,7 +330,7 @@ pub(super) fn poll_generation_stream(
                 // open-viewer-after-finish
                 if destination == GenerationDestination::Gallery {
                     if let Some(viewer_id) = task.latest_success_id.clone() {
-                    open_viewer(&app, &store.borrow(), &viewer_id, "generation");
+                        open_viewer(&app, &store.borrow(), &viewer_id, "generation");
                     }
                 }
                 if context.backend.is_some() {
@@ -392,6 +409,7 @@ pub(super) fn poll_generation_stream(
                     task.failed_count + remaining,
                 );
                 sync_generation_state_for_current_category(&context, &app);
+                if destination == GenerationDestination::Gallery {
                     if let Some(viewer_id) = task.latest_success_id.clone() {
                         open_viewer(&app, &store.borrow(), &viewer_id, "generation");
                     }
