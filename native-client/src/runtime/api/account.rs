@@ -53,6 +53,32 @@ pub(crate) struct CreditAccount {
     pub(crate) reserved: String,
     pub(crate) lifetime_granted: String,
     pub(crate) lifetime_spent: String,
+    #[serde(default)]
+    pub(crate) version: String,
+}
+
+#[derive(Serialize)]
+struct CreditRedemptionRequest<'a> {
+    code: &'a str,
+    client_request_id: &'a str,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct CreditRedemptionAccount {
+    pub(crate) available: String,
+    pub(crate) reserved: String,
+    pub(crate) lifetime_granted: String,
+    pub(crate) lifetime_spent: String,
+    pub(crate) version: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct CreditRedemptionResult {
+    pub(crate) redemption_id: String,
+    pub(crate) credits_granted: String,
+    pub(crate) redeemed_at: String,
+    pub(crate) credit_expires_at: Option<String>,
+    pub(crate) account: CreditRedemptionAccount,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -369,8 +395,7 @@ impl AccountApi {
                     .map(|response| response.data)
             });
             let pack_client = self.client.clone();
-            let packs =
-                scope.spawn(move || PaymentApi::new(pack_client).packs_epoch(auth_epoch));
+            let packs = scope.spawn(move || PaymentApi::new(pack_client).packs_epoch(auth_epoch));
             let model_client = self.client.clone();
             let models = scope.spawn(move || {
                 model_client
@@ -486,13 +511,15 @@ impl AccountApi {
             path.push_str("&cursor=");
             path.push_str(cursor);
         }
-        let response = self.client.authenticated_json_epoch::<Vec<CreditLedgerItem>>(
-            Method::GET,
-            &path,
-            None,
-            None,
-            auth_epoch,
-        )?;
+        let response = self
+            .client
+            .authenticated_json_epoch::<Vec<CreditLedgerItem>>(
+                Method::GET,
+                &path,
+                None,
+                None,
+                auth_epoch,
+            )?;
         Ok(credit_ledger_page(response))
     }
 
@@ -517,6 +544,46 @@ impl AccountApi {
                 scope,
             )?;
         Ok(credit_ledger_page(response))
+    }
+
+    pub(crate) fn credit_account_scoped(
+        &self,
+        scope: &SessionScope,
+    ) -> Result<CreditAccount, ApiError> {
+        self.client
+            .authenticated_json_scoped::<CreditAccount>(
+                Method::GET,
+                "/v1/credits/account",
+                None,
+                None,
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
+    pub(crate) fn redeem_credit_code_scoped(
+        &self,
+        code: &str,
+        client_request_id: &str,
+        scope: &SessionScope,
+    ) -> Result<CreditRedemptionResult, ApiError> {
+        let body = serde_json::to_value(CreditRedemptionRequest {
+            code,
+            client_request_id,
+        })
+        .map_err(|error| ApiError::Protocol {
+            message: error.to_string(),
+            request_id: None,
+        })?;
+        self.client
+            .authenticated_json_scoped::<CreditRedemptionResult>(
+                Method::POST,
+                "/v1/credits/redemptions",
+                Some(body),
+                Some(client_request_id),
+                scope,
+            )
+            .map(|response| response.data)
     }
 
     pub(crate) fn revoke_session(&self, session_id: &str) -> Result<(), ApiError> {
@@ -872,13 +939,7 @@ impl AccountApi {
     ) -> Result<InvitationUserPage, ApiError> {
         let path = format!("/v1/account/invitations?limit=50&cursor={cursor}");
         self.client
-            .authenticated_json_scoped::<InvitationUserList>(
-                Method::GET,
-                &path,
-                None,
-                None,
-                scope,
-            )
+            .authenticated_json_scoped::<InvitationUserList>(Method::GET, &path, None, None, scope)
             .map(|response| InvitationUserPage {
                 items: response.data.items,
                 next_cursor: response.data.next_cursor,
@@ -976,11 +1037,9 @@ mod tests {
             details: None,
         };
 
-        let selected = preferred_session_snapshot_error([
-            Some(&authentication_required),
-            Some(&terminal),
-        ])
-        .expect("terminal sibling must win");
+        let selected =
+            preferred_session_snapshot_error([Some(&authentication_required), Some(&terminal)])
+                .expect("terminal sibling must win");
 
         assert!(selected.is_terminal_session_error());
         assert_eq!(selected.code(), Some("refresh_token_reused"));
@@ -1024,6 +1083,51 @@ mod tests {
         .expect("invitation-code request should serialize");
 
         assert_eq!(body, serde_json::json!({ "code": "ELUNVI-2026" }));
+    }
+
+    #[test]
+    fn credit_redemption_request_serializes_code_and_idempotency_id() {
+        let body = serde_json::to_value(CreditRedemptionRequest {
+            code: "SUMMER-2026",
+            client_request_id: "73b25c73-f694-4c26-8f89-46a12a48a471",
+        })
+        .expect("credit-redemption request should serialize");
+
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "code": "SUMMER-2026",
+                "client_request_id": "73b25c73-f694-4c26-8f89-46a12a48a471"
+            })
+        );
+    }
+
+    #[test]
+    fn credit_redemption_response_preserves_decimal_strings() {
+        let result: CreditRedemptionResult = serde_json::from_value(serde_json::json!({
+            "redemption_id": "redemption-1",
+            "credits_granted": "500",
+            "redeemed_at": "2026-08-13T08:00:00.000Z",
+            "credit_expires_at": null,
+            "account": {
+                "available": "9007199254740993",
+                "reserved": "20",
+                "lifetime_granted": "9007199254741493",
+                "lifetime_spent": "480",
+                "version": "42"
+            }
+        }))
+        .expect("credit-redemption response should deserialize");
+
+        assert_eq!(result.redemption_id, "redemption-1");
+        assert_eq!(result.credits_granted, "500");
+        assert_eq!(result.redeemed_at, "2026-08-13T08:00:00.000Z");
+        assert_eq!(result.credit_expires_at, None);
+        assert_eq!(result.account.available, "9007199254740993");
+        assert_eq!(result.account.reserved, "20");
+        assert_eq!(result.account.lifetime_granted, "9007199254741493");
+        assert_eq!(result.account.lifetime_spent, "480");
+        assert_eq!(result.account.version, "42");
     }
 
     #[test]

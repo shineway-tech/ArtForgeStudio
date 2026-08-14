@@ -3550,18 +3550,61 @@ mod tests {
     }
 
     #[test]
-    fn credits_page_contains_recharge_and_subscription_tabs() {
+    fn credits_page_contains_recharge_redemption_and_subscription_tabs() {
         let credits = include_str!("../../ui/pages/credits-page.slint");
         let profile = include_str!("../../ui/dialogs/profile-dialog.slint");
         let app = include_str!("../../ui/app.slint");
         let state = include_str!("../../ui/app-state.slint");
         let membership = include_str!("../../ui/components/membership-plans.slint");
+        let callbacks = include_str!("callbacks/credits.rs");
+        let auth_callbacks = include_str!("callbacks/auth.rs");
+        let account_api = include_str!("api/account.rs");
 
         assert!(state.contains("in-out property <string> credits-tab: \"recharge\";"));
+        assert!(state.contains("credit-redemption-code"));
+        assert!(state.contains("credit-redemption-message"));
+        assert!(state.contains("callback redeem-credits(string);"));
         assert!(credits.contains("text: AppState.en ? \"Recharge\" : \"充值\";"));
+        assert!(credits.contains("text: AppState.en ? \"Redeem\" : \"兑换码\";"));
         assert!(credits.contains("text: AppState.en ? \"Subscription\" : \"订阅\";"));
         assert!(credits.contains("active: AppState.credits-tab == \"recharge\";"));
+        assert!(credits.contains("active: AppState.credits-tab == \"redeem\";"));
         assert!(credits.contains("active: AppState.credits-tab == \"membership\";"));
+        assert!(credits.contains("输入兑换码"));
+        assert!(credits.contains("立即兑换"));
+        assert!(credits.contains("到账账号"));
+        assert_eq!(
+            credits
+                .matches("AppState.redeem-credits(redemption-input.text)")
+                .count(),
+            2
+        );
+        assert!(!credits.contains("preview-redeem"));
+        assert!(!credits.contains("INVALID"));
+        assert!(!credits.contains("USED"));
+        assert!(!credits.contains("成功状态预览"));
+        assert!(callbacks.contains("state.on_redeem_credits"));
+        assert!(callbacks.contains("redeem_credit_code_scoped"));
+        assert!(callbacks.contains("ledger_page_scoped"));
+        assert!(callbacks.contains("reset_credit_ledger"));
+        assert!(account_api.contains("/v1/credits/redemptions"));
+        assert!(account_api.contains("Some(client_request_id)"));
+        assert!(auth_callbacks.contains("clear_credit_redemption_state"));
+        assert!(credits.contains("CreditLedgerSection"));
+        assert!(credits.contains("兑换成功后，积分将自动到账当前账号"));
+        assert!(credits.contains("if AppState.credits-tab == \"recharge\": CreditLedgerSection"));
+        let redeem_section = credits
+            .split("if AppState.credits-tab == \"redeem\": VerticalLayout {")
+            .nth(1)
+            .expect("redeem section")
+            .split("if AppState.credits-tab == \"recharge\": VerticalLayout {")
+            .next()
+            .expect("redeem section end");
+        assert!(redeem_section.contains("CreditRedemptionPanel"));
+        assert!(redeem_section.contains("兑换说明"));
+        assert!(!redeem_section.contains("CreditBalanceCard"));
+        assert!(!redeem_section.contains("SectionTitle"));
+        assert!(!redeem_section.contains("CreditLedgerSection"));
         assert!(credits.contains("MembershipPlans { horizontal-stretch: 1; }"));
         assert!(membership.contains("AppState.purchase-membership(plan.code)"));
         assert!(membership.contains("PurchaseAgreements"));
@@ -4449,7 +4492,10 @@ mod tests {
         assert_eq!(summary.matches("RewardSummaryCard").count(), 3);
         assert_eq!(summary.matches("horizontal-stretch: 1").count(), 3);
         assert!(page.contains("我的邀请码"));
-        assert!(page.contains("复制邀请码"));
+        assert!(page.contains("复制邀请信息"));
+        assert!(page.contains("强烈安利一个 AI 美术生产工具——Elunvi Canvas！"));
+        assert!(page.contains("符合活动规则的新用户可获得 200 积分体验额度"));
+        assert!(page.contains("https://www.shineway.tech/product/elunvi-canvas/"));
         assert!(page.contains("已邀请用户"));
         assert!(page.contains("返利明细"));
         assert!(page.contains("注册时间"));
@@ -4462,7 +4508,7 @@ mod tests {
         assert!(!page.contains("邀请链接"));
         assert!(!page.contains("复制链接"));
         assert!(!state.contains("invitation-share-link"));
-        assert!(page.contains("AppState.copy-contact-detail(root.value)"));
+        assert!(page.contains("AppState.copy-contact-detail(root.copy-value)"));
         assert!(!page.contains("可转返利"));
     }
 

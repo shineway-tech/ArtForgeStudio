@@ -2,6 +2,7 @@ use super::*;
 
 struct StartupAuthResult {
     auth_epoch: u64,
+    credit_sync_epoch: u64,
     agreements: std::result::Result<Vec<AgreementItem>, ApiError>,
     refresh: Option<std::result::Result<String, ApiError>>,
     snapshot: Option<std::result::Result<BackendSnapshot, ApiError>>,
@@ -634,6 +635,8 @@ pub(super) fn initialize_auth(app: &AppWindow, context: AppContext) {
     let api = AuthApi::new(backend.api.clone());
     let account_api = AccountApi::new(backend.api.clone());
     let auth_epoch = backend.api.session().auth_epoch();
+    let credit_sync_epoch = begin_credit_sync_epoch(&mut context.store.borrow_mut());
+    state.set_credit_ledger_loading(false);
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let agreements = api.list_agreements();
@@ -649,6 +652,7 @@ pub(super) fn initialize_auth(app: &AppWindow, context: AppContext) {
         };
         let result = StartupAuthResult {
             auth_epoch,
+            credit_sync_epoch,
             agreements,
             refresh,
             snapshot,
@@ -689,6 +693,8 @@ fn try_network_recovery(app: &AppWindow, context: AppContext) {
         return;
     };
     let auth_epoch = backend.api.session().auth_epoch();
+    let credit_sync_epoch = begin_credit_sync_epoch(&mut context.store.borrow_mut());
+    state.set_credit_ledger_loading(false);
     state.set_auth_busy(true);
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
@@ -704,6 +710,7 @@ fn try_network_recovery(app: &AppWindow, context: AppContext) {
         app.as_weak(),
         context,
         auth_epoch,
+        credit_sync_epoch,
         Rc::new(RefCell::new(Some(receiver))),
     );
 }
@@ -712,6 +719,7 @@ fn poll_network_recovery(
     app_weak: Weak<AppWindow>,
     context: AppContext,
     expected_auth_epoch: u64,
+    credit_sync_epoch: u64,
     receiver: Rc<
         RefCell<
             Option<
@@ -726,7 +734,13 @@ fn poll_network_recovery(
     slint::Timer::single_shot(Duration::from_millis(100), move || {
         let (auth_epoch, result) = match poll_receiver(&receiver) {
             ReceiverPoll::Pending => {
-                poll_network_recovery(app_weak, context, expected_auth_epoch, receiver);
+                poll_network_recovery(
+                    app_weak,
+                    context,
+                    expected_auth_epoch,
+                    credit_sync_epoch,
+                    receiver,
+                );
                 return;
             }
             ReceiverPoll::Ready(result) => result,
@@ -741,8 +755,7 @@ fn poll_network_recovery(
                     {
                         state.set_auth_busy(false);
                         state.set_session_state("offline".into());
-                        state
-                            .set_generation_status("网络恢复任务意外中断，将稍后自动重试".into());
+                        state.set_generation_status("网络恢复任务意外中断，将稍后自动重试".into());
                     }
                 }
                 return;
@@ -752,8 +765,7 @@ fn poll_network_recovery(
             return;
         };
         let captured_session_ended = result.as_ref().is_err_and(captured_session_error);
-        let terminal_context_matches =
-            terminal_auth_epoch_matches_context(&context, auth_epoch);
+        let terminal_context_matches = terminal_auth_epoch_matches_context(&context, auth_epoch);
         let outcome_is_current = if captured_session_ended {
             terminal_context_matches
         } else {
@@ -770,7 +782,7 @@ fn poll_network_recovery(
         match result {
             Ok((snapshot, agreements)) => {
                 apply_agreements(&app, &agreements);
-                apply_backend_snapshot(&app, &context, snapshot);
+                apply_backend_snapshot(&app, &context, snapshot, credit_sync_epoch);
                 state.set_logged_in(true);
                 state.set_offline_mode(false);
                 state.set_session_state("online".into());
@@ -870,8 +882,7 @@ fn poll_wechat_start_result(
                     {
                         state.set_auth_wechat_busy(false);
                         state.set_auth_wechat_qr_ready(false);
-                        state
-                            .set_auth_wechat_status("微信登录任务已中断，请刷新二维码重试".into());
+                        state.set_auth_wechat_status("微信登录任务已中断，请刷新二维码重试".into());
                         state.set_auth_error("微信登录任务已中断，请刷新二维码重试".into());
                     }
                 }
@@ -1262,10 +1273,13 @@ fn finish_login(
     app: &AppWindow,
     context: &AppContext,
     response: LoginResponse,
-    snapshot: Option<std::result::Result<BackendSnapshot, ApiError>>,
+    snapshot: Option<(u64, std::result::Result<BackendSnapshot, ApiError>)>,
 ) {
     // Never expose the previous account's membership, credits, catalog, or purchase state while
     // the new account snapshot is still in flight.
+    if snapshot.is_none() {
+        invalidate_credit_sync_epoch(&mut context.store.borrow_mut());
+    }
     clear_account_snapshot_state(app, context);
     clear_payment_account_state(app, context);
     *context
@@ -1291,9 +1305,9 @@ fn finish_login(
         state.set_accepted_privacy_version(state.get_auth_privacy_version());
     }
     save_user_profile(app);
-    if let Some(snapshot) = snapshot {
+    if let Some((credit_sync_epoch, snapshot)) = snapshot {
         match snapshot {
-            Ok(snapshot) => apply_backend_snapshot(app, context, snapshot),
+            Ok(snapshot) => apply_backend_snapshot(app, context, snapshot, credit_sync_epoch),
             Err(error) => state.set_generation_status(
                 format!("账号数据同步失败：{}", auth_error_message(&error)).into(),
             ),
@@ -1368,19 +1382,21 @@ fn poll_receiver<T>(receiver: &Rc<RefCell<Option<mpsc::Receiver<T>>>>) -> Receiv
 
 fn apply_startup_auth(app: &AppWindow, context: &AppContext, result: StartupAuthResult) {
     let startup_auth_epoch = result.auth_epoch;
-    let Some(session) = context.backend.as_ref().map(|backend| backend.api.session()) else {
+    let credit_sync_epoch = result.credit_sync_epoch;
+    let Some(session) = context
+        .backend
+        .as_ref()
+        .map(|backend| backend.api.session())
+    else {
         return;
     };
-    let terminal_context_matches =
-        terminal_auth_epoch_matches_context(context, result.auth_epoch);
+    let terminal_context_matches = terminal_auth_epoch_matches_context(context, result.auth_epoch);
     let captured_session_ended = startup_result_ended_captured_session(&result);
     let outcome_is_current = if captured_session_ended {
         terminal_context_matches
     } else {
         match result.refresh.as_ref() {
-            Some(Ok(_)) => {
-                session.auth_epoch() == result.auth_epoch && session.access().is_some()
-            }
+            Some(Ok(_)) => session.auth_epoch() == result.auth_epoch && session.access().is_some(),
             Some(Err(_)) | None => session.auth_epoch() == result.auth_epoch,
         }
     };
@@ -1414,7 +1430,9 @@ fn apply_startup_auth(app: &AppWindow, context: &AppContext, result: StartupAuth
             save_user_profile(app);
             if let Some(snapshot) = result.snapshot {
                 match snapshot {
-                    Ok(snapshot) => apply_backend_snapshot(app, context, snapshot),
+                    Ok(snapshot) => {
+                        apply_backend_snapshot(app, context, snapshot, credit_sync_epoch)
+                    }
                     Err(error) => state.set_generation_status(
                         format!("账号数据同步失败：{}", auth_error_message(&error)).into(),
                     ),
@@ -1510,6 +1528,14 @@ fn startup_error_disposition(error: &ApiError, offline_available: bool) -> Start
     }
 }
 
+fn clear_credit_redemption_state(app: &AppWindow) {
+    let state = app.global::<AppState>();
+    state.set_credit_redemption_code("".into());
+    state.set_credit_redemption_busy(false);
+    state.set_credit_redemption_success(false);
+    state.set_credit_redemption_message("".into());
+}
+
 pub(super) fn clear_account_snapshot_state(app: &AppWindow, context: &AppContext) {
     *context
         .account_snapshot_scope
@@ -1531,12 +1557,11 @@ pub(super) fn clear_account_snapshot_state(app: &AppWindow, context: &AppContext
     state.set_membership_open(false);
     state.set_membership_payment_busy(false);
     state.set_membership_payment_message("".into());
-    state.set_account_sessions(ModelRc::new(VecModel::from(
-        Vec::<AccountSession>::new(),
-    )));
+    state.set_account_sessions(ModelRc::new(VecModel::from(Vec::<AccountSession>::new())));
 
     state.set_credit_balance("0".into());
     state.set_credit_reserved("0".into());
+    invalidate_credit_account_view(&context.store);
     reset_credit_ledger(app, &context.store, &[], None);
     state.set_credit_packs(ModelRc::new(VecModel::from(Vec::<CreditPackView>::new())));
     state.set_selected_credit_pack_code("".into());
@@ -1544,6 +1569,12 @@ pub(super) fn clear_account_snapshot_state(app: &AppWindow, context: &AppContext
     state.set_selected_credit_price("".into());
     state.set_credit_payment_busy(false);
     state.set_credit_payment_message("".into());
+    clear_credit_redemption_state(app);
+    context
+        .store
+        .borrow_mut()
+        .pending_credit_redemptions_by_owner
+        .clear();
     state.set_credit_insufficient_open(false);
     state.set_credit_insufficient_message("积分不足以支持本次生图，请前往充值".into());
 
@@ -1579,17 +1610,13 @@ pub(super) fn clear_account_snapshot_state(app: &AppWindow, context: &AppContext
     state.set_invitation_own_code("".into());
     state.set_invitation_rule_description("".into());
     state.set_invitation_rewards_status("".into());
-    state.set_invitation_users(ModelRc::new(VecModel::from(
-        Vec::<InvitedUserView>::new(),
-    )));
+    state.set_invitation_users(ModelRc::new(VecModel::from(Vec::<InvitedUserView>::new())));
     state.set_invitation_users_loading(false);
     state.set_invitation_users_has_more(false);
     state.set_invitation_users_next_cursor("".into());
     state.set_invitation_users_message("".into());
 
-    state.set_catalog_models(ModelRc::new(VecModel::from(
-        Vec::<CatalogModelView>::new(),
-    )));
+    state.set_catalog_models(ModelRc::new(VecModel::from(Vec::<CatalogModelView>::new())));
     state.set_image_model("".into());
     state.set_image_model_name("".into());
     state.set_reasoning_model("".into());
@@ -1633,6 +1660,8 @@ pub(super) fn refresh_backend_snapshot(app: &AppWindow, context: AppContext) {
     let Some(session_scope) = current_auth_session_scope(&context) else {
         return;
     };
+    let credit_sync_epoch = begin_credit_sync_epoch(&mut context.store.borrow_mut());
+    app.global::<AppState>().set_credit_ledger_loading(true);
     let (sender, receiver) = mpsc::channel();
     let worker_scope = session_scope.clone();
     std::thread::spawn(move || {
@@ -1643,6 +1672,7 @@ pub(super) fn refresh_backend_snapshot(app: &AppWindow, context: AppContext) {
         app.as_weak(),
         context,
         session_scope,
+        credit_sync_epoch,
         Rc::new(RefCell::new(Some(receiver))),
     );
 }
@@ -1651,19 +1681,30 @@ fn poll_backend_snapshot(
     app_weak: Weak<AppWindow>,
     context: AppContext,
     session_scope: SessionScope,
+    credit_sync_epoch: u64,
     receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<BackendSnapshot, ApiError>>>>>,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
         let result = match poll_receiver(&receiver) {
             ReceiverPoll::Pending => {
-                poll_backend_snapshot(app_weak, context, session_scope, receiver);
+                poll_backend_snapshot(
+                    app_weak,
+                    context,
+                    session_scope,
+                    credit_sync_epoch,
+                    receiver,
+                );
                 return;
             }
             ReceiverPoll::Ready(result) => result,
             ReceiverPoll::Disconnected => {
                 if let Some(app) = app_weak.upgrade() {
-                    if auth_scope_matches_context(&context, &session_scope) {
-                        app.global::<AppState>().set_generation_status(
+                    if auth_scope_matches_context(&context, &session_scope)
+                        && credit_sync_epoch_is_current(&context.store.borrow(), credit_sync_epoch)
+                    {
+                        let state = app.global::<AppState>();
+                        state.set_credit_ledger_loading(false);
+                        state.set_generation_status(
                             "账号数据刷新任务已中断，请稍后重试；支付功能暂不可用".into(),
                         );
                     }
@@ -1687,20 +1728,21 @@ fn poll_backend_snapshot(
         }
         match result {
             Ok(snapshot) => {
-                apply_backend_snapshot(&app, &context, snapshot);
+                apply_backend_snapshot(&app, &context, snapshot, credit_sync_epoch);
                 recover_pending_orders(&app, context.clone());
             }
             Err(error) if captured_session_error(&error) && terminal_context_matches => {
-                sign_out_locally(
-                    &app,
-                    &context,
-                    true,
-                    Some(session_scope.auth_epoch),
-                )
+                sign_out_locally(&app, &context, true, Some(session_scope.auth_epoch))
             }
-            Err(error) => app.global::<AppState>().set_generation_status(
-                format!("账号数据刷新失败：{}", auth_error_message(&error)).into(),
-            ),
+            Err(error) => {
+                if credit_sync_epoch_is_current(&context.store.borrow(), credit_sync_epoch) {
+                    let state = app.global::<AppState>();
+                    state.set_credit_ledger_loading(false);
+                    state.set_generation_status(
+                        format!("账号数据刷新失败：{}", auth_error_message(&error)).into(),
+                    );
+                }
+            }
         }
     });
 }
@@ -1709,7 +1751,14 @@ pub(super) fn apply_backend_snapshot(
     app: &AppWindow,
     context: &AppContext,
     snapshot: BackendSnapshot,
+    credit_sync_epoch: u64,
 ) {
+    if !credit_sync_epoch_is_current(&context.store.borrow(), credit_sync_epoch) {
+        return;
+    }
+    // This request now owns the credit view. Clear any loading state left by the older request it
+    // invalidated, including paths where the snapshot is rejected before its ledger is applied.
+    app.global::<AppState>().set_credit_ledger_loading(false);
     let Some(backend) = context.backend.as_ref() else {
         return;
     };
@@ -1720,11 +1769,25 @@ pub(super) fn apply_backend_snapshot(
     let Some(snapshot_scope) = session.scope_for_user(&snapshot.account.user.id) else {
         return;
     };
-    *context
-        .current_user_id
-        .lock()
-        .unwrap_or_else(|value| value.into_inner()) = Some(snapshot.account.user.id.clone());
+    let account_changed = {
+        let mut current_user_id = context
+            .current_user_id
+            .lock()
+            .unwrap_or_else(|value| value.into_inner());
+        let changed = current_user_id.as_deref() != Some(snapshot.account.user.id.as_str());
+        *current_user_id = Some(snapshot.account.user.id.clone());
+        changed
+    };
     let state = app.global::<AppState>();
+    if account_changed {
+        clear_credit_redemption_state(app);
+        invalidate_credit_account_view(&context.store);
+        context
+            .store
+            .borrow_mut()
+            .pending_credit_redemptions_by_owner
+            .clear();
+    }
     state.set_email_mask(snapshot.account.user.email_masked.clone().into());
     state.set_invitation_code_submitted(snapshot.account.user.invitation_code_submitted);
     if snapshot.account.user.invitation_code_submitted {
@@ -1744,9 +1807,7 @@ pub(super) fn apply_backend_snapshot(
         state.set_invitation_own_code("".into());
         state.set_invitation_rule_description("".into());
         state.set_invitation_rewards_status("".into());
-        state.set_invitation_users(ModelRc::new(VecModel::from(
-            Vec::<InvitedUserView>::new(),
-        )));
+        state.set_invitation_users(ModelRc::new(VecModel::from(Vec::<InvitedUserView>::new())));
         state.set_invitation_users_loading(false);
         state.set_invitation_users_has_more(false);
         state.set_invitation_users_next_cursor("".into());
@@ -1791,13 +1852,21 @@ pub(super) fn apply_backend_snapshot(
         .unwrap_or_default();
     state.set_membership_ends_at(format_membership_ends_at(&membership_ends_at).into());
     state.set_membership_expiry_message(membership_expiry_message(&membership_ends_at).into());
-    if let Some(credits) = snapshot.account.credits.as_ref() {
-        state.set_credit_balance(credits.available.clone().into());
-        state.set_credit_reserved(credits.reserved.clone().into());
+    let credit_snapshot_applied = if let Some(credits) = snapshot.account.credits.as_ref() {
+        apply_credit_account_balance_if_fresh(
+            app,
+            &context.store,
+            &credits.available,
+            &credits.reserved,
+            &credits.version,
+            credit_sync_epoch,
+        )
     } else {
+        invalidate_credit_account_view(&context.store);
         state.set_credit_balance("0".into());
         state.set_credit_reserved("0".into());
-    }
+        true
+    };
     let packs = snapshot
         .packs
         .iter()
@@ -1874,12 +1943,16 @@ pub(super) fn apply_backend_snapshot(
         })
         .collect::<Vec<_>>();
     state.set_catalog_models(ModelRc::new(VecModel::from(catalog_models)));
-    reset_credit_ledger(
-        app,
-        &context.store,
-        &snapshot.ledger,
-        snapshot.ledger_next_cursor.clone(),
-    );
+    let credit_snapshot_is_current =
+        credit_sync_epoch_is_current(&context.store.borrow(), credit_sync_epoch);
+    if credit_snapshot_applied && credit_snapshot_is_current {
+        reset_credit_ledger(
+            app,
+            &context.store,
+            &snapshot.ledger,
+            snapshot.ledger_next_cursor.clone(),
+        );
+    }
     state.set_account_sessions(ModelRc::new(VecModel::from(
         snapshot
             .sessions
@@ -2289,15 +2362,14 @@ pub(super) fn sign_out_locally(
     expected_auth_epoch: Option<u64>,
 ) {
     if revoked {
-        if let (Some(backend), Some(auth_epoch)) =
-            (context.backend.as_ref(), expected_auth_epoch)
-        {
+        if let (Some(backend), Some(auth_epoch)) = (context.backend.as_ref(), expected_auth_epoch) {
             // Compare-and-clear the captured lease. If a new login won the race, clear_epoch
             // rejects the stale epoch and preserves that newer account.
             let _ = backend.api.session().clear_epoch(auth_epoch);
         }
     }
     invalidate_auth_operations(context);
+    invalidate_credit_sync_epoch(&mut context.store.borrow_mut());
     *context
         .current_user_id
         .lock()
@@ -2451,17 +2523,15 @@ mod tests {
         let _new_attempt = begin_auth_operation(&context);
         let install_called = std::cell::Cell::new(false);
 
-        let installed = install_login_if_current(
-            auth_operation_is_current(&context, old_attempt),
-            || {
+        let installed =
+            install_login_if_current(auth_operation_is_current(&context, old_attempt), || {
                 install_called.set(true);
                 Ok(SessionScope {
                     owner_user_id: "old-wechat-user".to_string(),
                     auth_epoch: 1,
                 })
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
 
         assert!(installed.is_none());
         assert!(!install_called.get());
@@ -2474,17 +2544,15 @@ mod tests {
         invalidate_auth_operations(&context);
         let install_called = std::cell::Cell::new(false);
 
-        let installed = install_login_if_current(
-            auth_operation_is_current(&context, email_attempt),
-            || {
+        let installed =
+            install_login_if_current(auth_operation_is_current(&context, email_attempt), || {
                 install_called.set(true);
                 Ok(SessionScope {
                     owner_user_id: "cancelled-email-user".to_string(),
                     auth_epoch: 1,
                 })
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
 
         assert!(installed.is_none());
         assert!(!install_called.get());
@@ -2519,6 +2587,7 @@ mod tests {
     fn startup_refresh_success_followed_by_terminal_snapshot_ends_the_session() {
         let result = StartupAuthResult {
             auth_epoch: 7,
+            credit_sync_epoch: 11,
             agreements: Ok(Vec::new()),
             refresh: Some(Ok("rotated-access".to_string())),
             snapshot: Some(Err(ApiError::Http {

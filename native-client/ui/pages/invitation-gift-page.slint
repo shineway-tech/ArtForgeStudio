@@ -57,6 +57,7 @@ component RewardSummaryCard inherits Rectangle {
 component InvitationCopyField {
     in property <string> label;
     in property <string> value;
+    in property <string> copy-value: root.value;
     in property <string> empty-value;
     in property <string> button-text;
 
@@ -97,7 +98,7 @@ component InvitationCopyField {
             label-font-size: 12px;
             disabled: root.value == "";
             text: root.button-text;
-            clicked => { AppState.copy-contact-detail(root.value); }
+            clicked => { AppState.copy-contact-detail(root.copy-value); }
         }
     }
 }
@@ -291,8 +292,15 @@ export component InvitationGiftPage {
                         height: 76px;
                         label: AppState.en ? "My invitation code" : "我的邀请码";
                         value: AppState.invitation-own-code;
+                        copy-value: AppState.en
+                            ? "🎨 I highly recommend Elunvi Canvas, an AI art production tool!\nBring prompts, reference images, image generation, editing, and local asset management together in one desktop app—perfect for creating characters, scenes, UI, and VFX assets more efficiently.\n\nEligible new users can receive 200 trial credits after registration! After signing in, go to Profile → Invitation Code and enter my invitation code: "
+                                + AppState.invitation-own-code
+                                + "\n\n👇 Download Elunvi Canvas:\nhttps://www.shineway.tech/product/elunvi-canvas/"
+                            : "🎨 强烈安利一个 AI 美术生产工具——Elunvi Canvas！\n提示词、参考图、图片生成、编辑和本地素材管理，一个客户端就能搞定，做角色、场景、UI、特效素材效率直接拉满～\n\n现在注册，符合活动规则的新用户可获得 200 积分体验额度！登录后进入「个人中心 → 填写邀请码」，输入我的邀请码【"
+                                + AppState.invitation-own-code
+                                + "】即可绑定邀请关系。\n\n👇 客户端下载：\nhttps://www.shineway.tech/product/elunvi-canvas/";
                         empty-value: AppState.en ? "Not available yet" : "待服务端开放";
-                        button-text: AppState.en ? "Copy code" : "复制邀请码";
+                        button-text: AppState.en ? "Copy invite" : "复制邀请信息";
                     }
 
                     Rectangle {

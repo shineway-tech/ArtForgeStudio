@@ -97,6 +97,18 @@ impl ApiError {
         }
     }
 
+    pub(crate) fn should_preserve_redemption_retry(&self) -> bool {
+        match self {
+            Self::Network { .. } | Self::Protocol { .. } | Self::LocalState { .. } => true,
+            Self::Http { status, code, .. } => {
+                *status >= 500
+                    || matches!(*status, 408 | 425 | 429)
+                    || code == "request_in_progress"
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn user_message(&self) -> String {
         match self.code() {
             Some("email_code_invalid" | "verification_code_invalid") => {
@@ -238,6 +250,91 @@ impl ApiError {
                 Self::Credential { .. } => "安全凭据处理失败，请重新登录".to_string(),
                 Self::Configuration { .. } => "客户端配置异常，请联系管理员".to_string(),
                 Self::LocalState { .. } => "本地数据保存失败，请重试".to_string(),
+            },
+        }
+    }
+
+    pub(crate) fn redemption_message(&self, english: bool) -> String {
+        if matches!(self, Self::Http { status: 404, .. }) {
+            return if english {
+                "This server version does not support redemption codes yet.".to_string()
+            } else {
+                "当前服务端版本暂不支持兑换码，请稍后再试".to_string()
+            };
+        }
+        let chinese = match self.code() {
+            Some("redemption_code_unavailable") => {
+                "兑换码无效、已使用或当前不可用，请检查后重试".to_string()
+            }
+            Some("redemption_rate_limited") => "操作过于频繁，请稍后再试".to_string(),
+            Some("redemption_service_disabled") => "兑换码服务暂未开放，请稍后再试".to_string(),
+            Some("redemption_rate_limit_unavailable") => {
+                "兑换服务暂时不可用，请稍后再试".to_string()
+            }
+            Some("idempotency_key_mismatch") => "兑换请求标识不一致，请重试".to_string(),
+            Some("idempotency_key_required" | "idempotency_key_conflict") => {
+                "兑换请求校验失败，请重新提交".to_string()
+            }
+            Some("request_in_progress") => "兑换请求正在处理中，请稍后再试".to_string(),
+            Some("validation_failed" | "validation_error") => {
+                "兑换码格式不正确，请检查后重试".to_string()
+            }
+            _ => match self {
+                Self::LocalState { .. } => "兑换任务意外中断，请重试".to_string(),
+                _ => self.user_message(),
+            },
+        };
+        if !english {
+            return chinese;
+        }
+        match self.code() {
+            Some("redemption_code_unavailable") => {
+                "The code is invalid, already used, or currently unavailable.".to_string()
+            }
+            Some("redemption_rate_limited") => {
+                "Too many attempts. Please try again later.".to_string()
+            }
+            Some("redemption_service_disabled") => {
+                "Redemption codes are not available yet. Please try again later.".to_string()
+            }
+            Some("redemption_rate_limit_unavailable") => {
+                "The redemption service is temporarily unavailable.".to_string()
+            }
+            Some("idempotency_key_mismatch") => {
+                "The redemption request identifiers do not match. Please try again.".to_string()
+            }
+            Some("idempotency_key_required" | "idempotency_key_conflict") => {
+                "The redemption request could not be verified. Please submit it again.".to_string()
+            }
+            Some("request_in_progress") => {
+                "This redemption is still being processed. Please try again shortly.".to_string()
+            }
+            Some("validation_failed" | "validation_error") => {
+                "The redemption code format is invalid.".to_string()
+            }
+            _ => match self {
+                Self::Network { timeout: true, .. } => {
+                    "The request timed out. Please try again.".to_string()
+                }
+                Self::Network { .. } => {
+                    "Unable to reach the server. Check your network and try again.".to_string()
+                }
+                Self::Protocol { .. } => {
+                    "The server returned an invalid response. Please try again.".to_string()
+                }
+                Self::AuthenticationRequired => {
+                    "Please sign in before redeeming a code.".to_string()
+                }
+                Self::Credential { .. } => {
+                    "Your secure session could not be used. Please sign in again.".to_string()
+                }
+                Self::Configuration { .. } => {
+                    "The client configuration is invalid. Please contact support.".to_string()
+                }
+                Self::LocalState { .. } => {
+                    "The redemption task was interrupted. Please try again.".to_string()
+                }
+                Self::Http { .. } => "The service is temporarily unavailable.".to_string(),
             },
         }
     }
@@ -398,6 +495,96 @@ mod tests {
             );
         }
         assert!(!http_error("invitation_code_invalid").is_invitation_code_already_submitted());
+    }
+
+    #[test]
+    fn redemption_errors_have_stable_actionable_messages() {
+        let cases = [
+            (
+                "redemption_code_unavailable",
+                "兑换码无效、已使用或当前不可用，请检查后重试",
+            ),
+            ("redemption_rate_limited", "操作过于频繁，请稍后再试"),
+            (
+                "redemption_service_disabled",
+                "兑换码服务暂未开放，请稍后再试",
+            ),
+            (
+                "redemption_rate_limit_unavailable",
+                "兑换服务暂时不可用，请稍后再试",
+            ),
+            ("idempotency_key_required", "兑换请求校验失败，请重新提交"),
+            ("idempotency_key_conflict", "兑换请求校验失败，请重新提交"),
+            ("idempotency_key_mismatch", "兑换请求标识不一致，请重试"),
+            ("request_in_progress", "兑换请求正在处理中，请稍后再试"),
+            ("validation_failed", "兑换码格式不正确，请检查后重试"),
+        ];
+
+        for (code, expected) in cases {
+            assert_eq!(
+                http_error(code).redemption_message(false),
+                expected,
+                "{code}"
+            );
+        }
+    }
+
+    #[test]
+    fn redemption_404_identifies_an_old_server_without_exposing_internals() {
+        let error = ApiError::Http {
+            status: 404,
+            code: "route_not_found".to_string(),
+            message: "POST /v1/credits/redemptions was not found".to_string(),
+            request_id: Some("request-1".to_string()),
+            details: None,
+        };
+
+        let message = error.redemption_message(false);
+        assert_eq!(message, "当前服务端版本暂不支持兑换码，请稍后再试");
+        assert!(!message.contains("route_not_found"));
+        assert!(!message.contains("request-1"));
+    }
+
+    #[test]
+    fn redemption_errors_have_english_messages_when_the_ui_is_english() {
+        assert_eq!(
+            http_error("redemption_code_unavailable").redemption_message(true),
+            "The code is invalid, already used, or currently unavailable."
+        );
+        assert_eq!(
+            http_error("idempotency_key_mismatch").redemption_message(true),
+            "The redemption request identifiers do not match. Please try again."
+        );
+        assert_eq!(
+            ApiError::Network {
+                message: "offline".to_string(),
+                timeout: true,
+            }
+            .redemption_message(true),
+            "The request timed out. Please try again."
+        );
+    }
+
+    #[test]
+    fn interrupted_redemption_uses_a_redemption_specific_chinese_message() {
+        assert_eq!(
+            ApiError::LocalState {
+                message: "worker disconnected".to_string(),
+            }
+            .redemption_message(false),
+            "兑换任务意外中断，请重试"
+        );
+    }
+
+    #[test]
+    fn only_ambiguous_redemption_failures_keep_the_same_retry_identity() {
+        assert!(ApiError::Network {
+            message: "timeout".to_string(),
+            timeout: true,
+        }
+        .should_preserve_redemption_retry());
+        assert!(http_error("request_in_progress").should_preserve_redemption_retry());
+        assert!(!http_error("redemption_code_unavailable").should_preserve_redemption_retry());
     }
 
     #[test]
