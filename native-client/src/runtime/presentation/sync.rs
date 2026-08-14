@@ -858,9 +858,8 @@ fn schedule_canvas_previews(
                 if CANVAS_PREVIEW_EPOCH.load(Ordering::Acquire) != preview_epoch {
                     return;
                 }
-                let Ok(Some(prepared)) = prepare_preview_image_if(
+                let Ok(Some(prepared)) = prepare_original_image_if(
                     Path::new(&source_path),
-                    PreviewPurpose::Canvas,
                     || CANVAS_PREVIEW_EPOCH.load(Ordering::Acquire) == preview_epoch,
                 )
                 else {

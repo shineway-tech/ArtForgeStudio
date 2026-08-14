@@ -589,6 +589,41 @@ pub(super) fn prepare_preview_image_if(
     Ok(Some(PreparedPreview { key, pixels }))
 }
 
+pub(super) fn prepare_original_image_if(
+    path: &Path,
+    should_continue: impl Fn() -> bool,
+) -> Result<Option<PreparedPreview>> {
+    if !should_continue() {
+        return Ok(None);
+    }
+    let key = preview_key(path, u32::MAX)?;
+    let decode_lock = SOURCE_DECODE_LOCK.get_or_init(|| Mutex::new(()));
+    let _decode_guard = decode_lock
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if !should_continue() {
+        return Ok(None);
+    }
+
+    let (decoded, _) = decode_image_file(path)?;
+    let decoded_pixels = u64::from(decoded.width()).saturating_mul(u64::from(decoded.height()));
+    if decoded_pixels == 0 || decoded_pixels > MAX_SOURCE_PIXELS {
+        anyhow::bail!("图片尺寸过大，无法安全加载到画布");
+    }
+    let rgba = decoded.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    let pixels = Arc::new(PreviewPixels {
+        rgba: Arc::new(rgba.as_raw().clone()),
+        width,
+        height,
+    });
+    if should_continue() {
+        Ok(Some(PreparedPreview { key, pixels }))
+    } else {
+        Ok(None)
+    }
+}
+
 pub(super) fn materialize_prepared_preview(prepared: PreparedPreview) -> Image {
     PREVIEW_MEMORY_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
@@ -1073,6 +1108,22 @@ mod tests {
         assert_eq!(PreviewPurpose::Gallery.longest_edge(), 384);
         assert_eq!(PreviewPurpose::Canvas.longest_edge(), 1024);
         assert_eq!(PreviewPurpose::Viewer.longest_edge(), 2048);
+    }
+
+    #[test]
+    fn original_image_preparation_preserves_source_dimensions() {
+        let directory = tempfile::tempdir().expect("temporary original image directory");
+        let path = directory.path().join("source.png");
+        image::RgbaImage::from_pixel(73, 211, image::Rgba([12, 34, 56, 255]))
+            .save(&path)
+            .expect("save original image");
+
+        let prepared = prepare_original_image_if(&path, || true)
+            .expect("prepare original image")
+            .expect("original image should be available");
+
+        assert_eq!(prepared.pixels.width, 73);
+        assert_eq!(prepared.pixels.height, 211);
     }
 
     #[test]

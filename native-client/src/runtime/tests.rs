@@ -3041,8 +3041,7 @@ mod tests {
         assert!(callbacks.contains("atomic_write_file(&destination, &bytes)"));
         assert!(callbacks.contains("path: destination.display().to_string()"));
         assert!(callbacks.contains("image_path = image.path"));
-        assert!(sync.contains("prepare_preview_image_if("));
-        assert!(sync.contains("PreviewPurpose::Canvas"));
+        assert!(sync.contains("prepare_original_image_if("));
         assert!(sync.contains("CANVAS_PREVIEW_EPOCH.load(Ordering::Acquire) == preview_epoch"));
         assert!(!sync.contains(
             "load_preview_image(Path::new(&note.image_path), PreviewPurpose::Canvas)"
