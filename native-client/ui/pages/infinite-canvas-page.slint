@@ -253,6 +253,50 @@ component CanvasMediaAction {
     }
 }
 
+component CanvasSplitConfirmButton {
+    in property <float> scale-factor: 1;
+    callback clicked();
+    width: 124px * root.scale-factor;
+    height: 38px * root.scale-factor;
+
+    Rectangle {
+        background: confirm-touch.pressed
+            ? AppTheme.accent.with-alpha(0.82)
+            : (confirm-touch.has-hover ? AppTheme.accent.with-alpha(0.92) : AppTheme.accent);
+        border-radius: 9px * root.scale-factor;
+
+        HorizontalLayout {
+            padding-left: 14px * root.scale-factor;
+            padding-right: 14px * root.scale-factor;
+            spacing: 7px * root.scale-factor;
+            alignment: center;
+
+            Image {
+                width: 16px * root.scale-factor;
+                height: self.width;
+                source: @image-url("../../assets/icons/split.svg");
+                colorize: #ffffff;
+                image-fit: contain;
+            }
+            Text {
+                text: AppState.en ? "Confirm" : "确定分割";
+                color: #ffffff;
+                font-size: 13px * root.scale-factor;
+                font-weight: 600;
+                vertical-alignment: center;
+                wrap: no-wrap;
+            }
+        }
+
+        confirm-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
 component CanvasSplitNumberField {
     in property <string> suffix;
     in property <float> scale-factor: 1;
@@ -794,6 +838,10 @@ component CanvasNodeCard {
             || AppState.canvas-extraction-loading-node-id == root.note.id;
     }
 
+    function node-selected() -> bool {
+        return root.note.selected || AppState.canvas-selected-id == root.note.id;
+    }
+
     function node-title() -> string {
         if root.note.kind == "image" { return AppState.en ? "Image" : "图片"; }
         if root.note.kind == "video" { return AppState.en ? "Video" : "视频"; }
@@ -981,19 +1029,19 @@ component CanvasNodeCard {
     Rectangle {
         clip: false;
         background: root.note.kind == "group"
-            ? AppTheme.accent.with-alpha(root.note.selected ? 0.10 : 0.045)
+            ? AppTheme.accent.with-alpha(root.node-selected() ? 0.10 : 0.045)
             : (root.is-board-image() ? transparent : (root.dark-background ? #292522 : AppTheme.panel));
         border-radius: (root.note.kind == "group" || root.is-board-image() ? 4px : 20px) * root.node-scale();
         border-width: root.image-processing()
             ? 3px
             : (root.is-board-image()
-                ? (root.note.selected || node-drag-touch.has-hover ? max(2px, 2px * root.node-scale()) : 0px)
-                : (root.note.selected || node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover
+                ? (root.node-selected() || node-drag-touch.has-hover ? max(2px, 2px * root.node-scale()) : 0px)
+                : (root.node-selected() || node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover
                     ? max(2px, 2px * root.node-scale())
                     : max(1px, 1px * root.node-scale())));
         border-color: root.image-processing()
             ? (AppState.reduced-motion || root.processing-border-bright ? AppTheme.accent : AppTheme.accent.with-alpha(0.42))
-            : (root.note.selected
+            : (root.node-selected()
                 ? AppTheme.accent
                 : (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover
                     ? AppTheme.accent.with-alpha(0.78)
@@ -1380,6 +1428,18 @@ component CanvasNodeCard {
             }
         }
 
+        if root.node-selected(): selection-outline := Rectangle {
+            x: -3px;
+            y: -3px;
+            width: parent.width + 6px;
+            height: parent.height + 6px;
+            background: transparent;
+            border-radius: max(4px, (root.note.kind == "group" || root.is-board-image() ? 4px : 20px) * root.node-scale() + 3px);
+            border-width: 3px;
+            border-color: AppTheme.accent;
+            z: 50;
+        }
+
         if root.is-visual-media() && (root.note.kind != "image" || root.note.image-path == "") && root.zoom-percent >= 30: Rectangle {
             x: (parent.width - 64px * root.node-scale()) / 2;
             y: (parent.height - 104px * root.node-scale()) / 2;
@@ -1460,15 +1520,6 @@ component CanvasNodeCard {
                     text: AppState.en ? "Cancel" : "取消";
                     clicked => { root.split-mode = false; }
                 }
-                Text {
-                    width: 72px * root.node-scale();
-                    height: 38px * root.node-scale();
-                    text: AppState.en ? "Split into" : "平均分割";
-                    color: #302c29;
-                    font-size: 13px * root.node-scale();
-                    font-weight: 500;
-                    vertical-alignment: center;
-                }
                 CanvasSplitNumberField {
                     scale-factor: root.node-scale();
                     suffix: AppState.en ? "R" : "行";
@@ -1488,11 +1539,12 @@ component CanvasNodeCard {
                     suffix: AppState.en ? "C" : "列";
                     value <=> root.split-columns;
                 }
-                CanvasMediaAction {
+                Rectangle {
                     horizontal-stretch: 1;
+                    background: transparent;
+                }
+                CanvasSplitConfirmButton {
                     scale-factor: root.node-scale();
-                    icon: @image-url("../../assets/icons/split.svg");
-                    text: AppState.en ? "Confirm" : "确定分割";
                     clicked => {
                         AppState.split-canvas-image(root.note.id, root.split-rows, root.split-columns);
                         root.split-mode = false;
@@ -2398,13 +2450,13 @@ export component InfiniteCanvasPage {
                 in-out property <length> start-pointer-y: 0px;
                 width: parent.width;
                 height: parent.height;
-                mouse-cursor: AppState.canvas-tool == "pan" || root.space-pan-active ? move : crosshair;
+                mouse-cursor: root.space-pan-active ? move : crosshair;
                 pointer-event(event) => {
                     if event.kind == PointerEventKind.down && (event.button == PointerEventButton.left || event.button == PointerEventButton.middle) {
                         root.appearance-open = false;
                         root.image-insert-open = false;
                         canvas-keyboard.focus();
-                        if event.button == PointerEventButton.middle || AppState.canvas-tool == "pan" || root.space-pan-active {
+                        if event.button == PointerEventButton.middle || root.space-pan-active {
                             root.temporary-pan-active = true;
                             self.start-pan-x = root.pan-x;
                             self.start-pan-y = root.pan-y;

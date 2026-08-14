@@ -2714,6 +2714,11 @@ mod tests {
     #[test]
     fn infinite_canvas_selection_and_pan_modes_use_desktop_shortcuts() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let canvas_pointer = page
+            .split("canvas-touch := TouchArea")
+            .nth(1)
+            .and_then(|value| value.split("scroll-event(event)").next())
+            .expect("canvas pointer handler");
 
         for interaction in [
             "marquee-active",
@@ -2738,6 +2743,10 @@ mod tests {
         assert!(!page.contains("label: AppState.en ? \"Select\" : \"选择\""));
         assert!(page.contains("AppState.select-canvas-node(root.note.id, event.modifiers.shift);"));
         assert!(page.contains("root.marquee-additive = event.modifiers.shift;"));
+        assert!(canvas_pointer.contains(
+            "if event.button == PointerEventButton.middle || root.space-pan-active"
+        ));
+        assert!(!canvas_pointer.contains("AppState.canvas-tool == \"pan\""));
         assert!(
             !page.contains("AppState.select-canvas-node(root.note.id, event.modifiers.control);")
         );
@@ -3216,7 +3225,7 @@ mod tests {
         assert!(node.contains("media-action-bar := Rectangle"));
         assert!(node.contains("media-editor-panel := Rectangle"));
         assert!(node.contains(
-            "if (root.is-visual-media() || root.is-board-image()) && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-action-bar"
+            "if (root.is-visual-media() || root.is-board-image()) && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-action-bar"
         ));
         assert!(node.contains(
             "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-editor-panel"
@@ -3429,7 +3438,10 @@ mod tests {
         assert!(node.contains("root.image-processing()"));
         assert!(node.contains("LoadingDots"));
         assert!(node.contains("正在提取透明 PNG 元素"));
-        assert!(node.contains("确定分割"));
+        assert!(page.contains("确定分割"));
+        assert!(page.contains("component CanvasSplitConfirmButton"));
+        assert!(node.contains("CanvasSplitConfirmButton"));
+        assert!(!node.contains("平均分割"));
         assert!(state.contains("canvas-split-loading-node-id"));
         assert!(state.contains("canvas-extraction-loading-node-id"));
         assert!(state.contains("callback save-canvas-image(string)"));
@@ -3469,6 +3481,30 @@ mod tests {
     }
 
     #[test]
+    fn infinite_canvas_selection_outline_stays_above_image_content_at_any_zoom() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .and_then(|value| value.split("export component InfiniteCanvasPage").next())
+            .expect("canvas node component");
+        let outline = node
+            .split("selection-outline := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("if root.is-visual-media()").next())
+            .expect("selection outline");
+
+        assert!(node.contains(
+            "return root.note.selected || AppState.canvas-selected-id == root.note.id;"
+        ));
+        assert!(node.contains("if root.node-selected(): selection-outline := Rectangle"));
+        assert!(outline.contains("border-width: 3px"));
+        assert!(outline.contains("border-color: AppTheme.accent"));
+        assert!(outline.contains("z: 50"));
+        assert!(!outline.contains("border-width: 3px * root.node-scale()"));
+    }
+
+    #[test]
     fn infinite_canvas_hides_subpixel_node_details_at_minimum_zoom() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
         let node = page
@@ -3478,7 +3514,7 @@ mod tests {
             .expect("canvas node component");
 
         assert!(node.contains(
-            "if (root.is-visual-media() || root.is-board-image()) && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-action-bar"
+            "if (root.is-visual-media() || root.is-board-image()) && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-action-bar"
         ));
         assert!(node.contains(
             "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-editor-panel"
