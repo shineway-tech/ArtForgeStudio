@@ -9,6 +9,254 @@ import { PurchaseAgreements } from "../components/purchase-agreements.slint";
 import { SectionTitle } from "../components/section-title.slint";
 import { AppTheme } from "../theme.slint";
 
+component CreditBalanceCard inherits Rectangle {
+    height: 132px;
+    background: AppTheme.panel;
+    border-radius: 14px;
+    border-width: 1px;
+    border-color: AppTheme.border;
+
+    Text {
+        x: 22px;
+        y: 20px;
+        text: AppState.en ? "Remaining Credits" : "剩余积分";
+        color: AppTheme.muted;
+        font-size: 14px;
+        font-weight: 400;
+    }
+    Text {
+        x: 22px;
+        y: 48px;
+        width: parent.width - 44px;
+        height: 48px;
+        text: AppState.credit-balance;
+        color: AppTheme.text;
+        font-size: 40px;
+        font-weight: 600;
+    }
+    Text {
+        x: 22px;
+        y: 98px;
+        width: parent.width - 44px;
+        height: 20px;
+        text: AppState.en
+            ? "Credits are used for image generation and prompt services."
+            : "积分用于图片生成、提示词优化等服务。";
+        color: AppTheme.muted;
+        font-size: 13px;
+        font-weight: 400;
+        overflow: elide;
+    }
+}
+
+component CreditLedgerSection {
+    height: 46px
+        + (AppState.credit-records.length == 0 ? 220px : AppState.credit-records.length * 86px)
+        + (AppState.credit-ledger-message == "" ? 0px : 42px)
+        + (AppState.credit-records.length > 0 || AppState.credit-ledger-page > 1 ? 58px : 0px);
+
+    VerticalLayout {
+        width: root.width;
+        spacing: 10px;
+
+        SectionTitle { text: AppState.en ? "Credit Details" : "积分明细"; }
+        if AppState.credit-records.length == 0: EmptyState {}
+        if AppState.credit-records.length > 0: VerticalLayout {
+            spacing: 10px;
+            for record in AppState.credit-records: CreditRecordRow { item: record; }
+        }
+        if AppState.credit-ledger-message != "": Rectangle {
+            height: 32px;
+            background: transparent;
+            Text {
+                width: parent.width;
+                height: parent.height;
+                text: AppState.credit-ledger-message;
+                color: AppTheme.danger;
+                font-size: 12px;
+                font-weight: 400;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+        if AppState.credit-records.length > 0 || AppState.credit-ledger-page > 1: Rectangle {
+            height: 48px;
+            background: transparent;
+            PillButton {
+                x: parent.width / 2 - 174px;
+                y: 6px;
+                width: 108px;
+                text: AppState.en ? "Previous" : "上一页";
+                disabled: !AppState.credit-ledger-has-previous || AppState.credit-ledger-loading;
+                clicked => { AppState.credit-ledger-previous-page(); }
+            }
+            Text {
+                x: parent.width / 2 - 54px;
+                width: 108px;
+                height: parent.height;
+                text: AppState.credit-ledger-loading
+                    ? (AppState.en ? "Loading..." : "加载中…")
+                    : (AppState.en ? ("Page " + AppState.credit-ledger-page) : ("第 " + AppState.credit-ledger-page + " 页"));
+                color: AppTheme.muted;
+                font-size: 13px;
+                font-weight: 400;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            PillButton {
+                x: parent.width / 2 + 66px;
+                y: 6px;
+                width: 108px;
+                text: AppState.en ? "Next" : "下一页";
+                disabled: !AppState.credit-ledger-has-next || AppState.credit-ledger-loading;
+                clicked => { AppState.credit-ledger-next-page(); }
+            }
+        }
+    }
+}
+
+component CreditRedemptionPanel inherits Rectangle {
+    height: 296px;
+    background: AppTheme.panel;
+    border-radius: 14px;
+    border-width: 1px;
+    border-color: AppTheme.border;
+
+    Text {
+        x: 22px;
+        y: 18px;
+        width: parent.width - 44px;
+        height: 28px;
+        text: AppState.en ? "Enter a redemption code" : "输入兑换码";
+        color: AppTheme.text;
+        font-size: 18px;
+        font-weight: 600;
+        vertical-alignment: center;
+    }
+    Text {
+        x: 22px;
+        y: 50px;
+        width: parent.width - 44px;
+        height: 22px;
+        text: AppState.en
+            ? "Enter an official redemption code. Credits will be added directly to the current account."
+            : "输入官方发放的兑换码，积分将直接到账当前账号。";
+        color: AppTheme.muted;
+        font-size: 13px;
+        font-weight: 400;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Text {
+        x: 22px;
+        y: 82px;
+        width: parent.width - 44px;
+        height: 20px;
+        text: (AppState.en ? "Receiving account · " : "到账账号 · ")
+            + (AppState.nickname == ""
+                ? (AppState.email-mask == "" ? "--" : AppState.email-mask)
+                : AppState.nickname + (AppState.email-mask == "" ? "" : " · " + AppState.email-mask));
+        color: AppTheme.accent-dark;
+        font-size: 12px;
+        font-weight: 500;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Text {
+        x: 22px;
+        y: 116px;
+        width: parent.width - 44px;
+        height: 20px;
+        text: AppState.en ? "Redemption code" : "兑换码";
+        color: AppTheme.text;
+        font-size: 12px;
+        font-weight: 500;
+        vertical-alignment: center;
+    }
+    Rectangle {
+        x: 22px;
+        y: 142px;
+        width: parent.width - 190px;
+        height: 48px;
+        background: AppTheme.panel-soft;
+        border-radius: 9px;
+        border-width: 1px;
+        border-color: redemption-input.has-focus ? AppTheme.accent : AppTheme.border;
+
+        redemption-input := TextInput {
+            x: 16px;
+            width: parent.width - 32px;
+            height: parent.height;
+            text <=> AppState.credit-redemption-code;
+            enabled: !AppState.credit-redemption-busy;
+            single-line: true;
+            color: AppTheme.text;
+            font-size: 14px;
+            vertical-alignment: center;
+            edited => {
+                AppState.credit-redemption-success = false;
+                AppState.credit-redemption-message = "";
+            }
+            accepted => { AppState.redeem-credits(redemption-input.text); }
+        }
+        if redemption-input.text == "" && !redemption-input.has-focus: Text {
+            x: 16px;
+            width: parent.width - 32px;
+            height: parent.height;
+            text: AppState.en ? "Enter or paste a redemption code" : "请输入或粘贴兑换码";
+            color: AppTheme.weak;
+            font-size: 14px;
+            vertical-alignment: center;
+        }
+    }
+    PillButton {
+        x: parent.width - 146px;
+        y: 146px;
+        width: 124px;
+        height: 40px;
+        primary: true;
+        disabled: redemption-input.text == "" || AppState.credit-redemption-busy;
+        text: AppState.credit-redemption-busy
+            ? (AppState.en ? "Redeeming..." : "兑换中...")
+            : (AppState.en ? "Redeem now" : "立即兑换");
+        clicked => { AppState.redeem-credits(redemption-input.text); }
+    }
+    if AppState.credit-redemption-message != "": Text {
+        x: 22px;
+        y: 202px;
+        width: parent.width - 44px;
+        height: 40px;
+        text: AppState.credit-redemption-message;
+        color: AppState.credit-redemption-success ? AppTheme.accent-dark : AppTheme.danger;
+        font-size: 12px;
+        font-weight: 400;
+        vertical-alignment: top;
+        wrap: word-wrap;
+    }
+    Rectangle {
+        x: 22px;
+        y: 246px;
+        width: parent.width - 44px;
+        height: 1px;
+        background: AppTheme.border;
+    }
+    Text {
+        x: 22px;
+        y: 258px;
+        width: parent.width - 44px;
+        height: 32px;
+        text: AppState.en
+            ? "After redemption, credits are added automatically to the current account."
+            : "兑换成功后，积分将自动到账当前账号。";
+        color: AppTheme.muted;
+        font-size: 12px;
+        font-weight: 400;
+        wrap: word-wrap;
+        vertical-alignment: center;
+    }
+}
+
 export component CreditsPage {
     function content-width() -> length {
         return root.width - 48px;
@@ -16,7 +264,9 @@ export component CreditsPage {
     function content-height() -> length {
         return AppState.credits-tab == "membership"
             ? max(root.height + 80px, 860px)
-            : max(root.height + 80px, 860px + max(1, AppState.credit-records.length) * 96px);
+            : (AppState.credits-tab == "redeem"
+                ? max(root.height - 48px, 520px)
+                : max(root.height + 80px, 860px + max(1, AppState.credit-records.length) * 96px));
     }
     Rectangle {
         background: AppTheme.bg;
@@ -76,6 +326,12 @@ export component CreditsPage {
                         }
                         PillButton {
                             width: 96px;
+                            text: AppState.en ? "Redeem" : "兑换码";
+                            active: AppState.credits-tab == "redeem";
+                            clicked => { AppState.credits-tab = "redeem"; }
+                        }
+                        PillButton {
+                            width: 96px;
                             text: AppState.en ? "Subscription" : "订阅";
                             active: AppState.credits-tab == "membership";
                             clicked => { AppState.credits-tab = "membership"; }
@@ -83,18 +339,46 @@ export component CreditsPage {
                         Rectangle { horizontal-stretch: 1; background: transparent; }
                     }
                     if AppState.credits-tab == "membership": MembershipPlans { horizontal-stretch: 1; }
+                    if AppState.credits-tab == "redeem": VerticalLayout {
+                        spacing: 16px;
+                        CreditRedemptionPanel { horizontal-stretch: 1; }
+                        Rectangle {
+                            height: 86px;
+                            background: AppTheme.panel-soft;
+                            border-radius: 10px;
+                            border-width: 1px;
+                            border-color: AppTheme.border;
+
+                            Text {
+                                x: 16px;
+                                y: 12px;
+                                width: parent.width - 32px;
+                                height: 20px;
+                                text: AppState.en ? "Redemption notes" : "兑换说明";
+                                color: AppTheme.text;
+                                font-size: 13px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                x: 16px;
+                                y: 38px;
+                                width: parent.width - 32px;
+                                height: 34px;
+                                text: AppState.en
+                                    ? "Codes are issued through official campaigns. Credit amounts and usage limits are determined by each campaign."
+                                    : "兑换码由官方活动发放；可兑换积分、使用次数及适用范围以对应活动规则为准。";
+                                color: AppTheme.muted;
+                                font-size: 12px;
+                                font-weight: 400;
+                                wrap: word-wrap;
+                                vertical-alignment: top;
+                            }
+                        }
+                    }
                     if AppState.credits-tab == "recharge": VerticalLayout {
                         spacing: 16px;
-                    Rectangle {
-                        height: 132px;
-                        background: AppTheme.panel;
-                        border-radius: 14px;
-                        border-width: 1px;
-                        border-color: AppTheme.border;
-                        Text { x: 22px; y: 20px; text: AppState.en ? "Remaining Credits" : "剩余积分"; color: AppTheme.muted; font-size: 14px; font-weight: 400; }
-                        Text { x: 22px; y: 48px; width: parent.width - 44px; height: 48px; text: AppState.credit-balance; color: AppTheme.text; font-size: 40px; font-weight: 600; }
-                        Text { x: 22px; y: 98px; width: parent.width - 44px; height: 20px; text: AppState.en ? "Credits are used for image generation and prompt services." : "积分用于图片生成、提示词优化等服务。"; color: AppTheme.muted; font-size: 13px; font-weight: 400; overflow: elide; }
-                    }
+                    CreditBalanceCard { horizontal-stretch: 1; }
                     SectionTitle { text: AppState.en ? "Recharge" : "充值积分"; }
                     HorizontalLayout {
                         height: 128px;
@@ -163,64 +447,8 @@ export component CreditsPage {
                             wrap: word-wrap;
                         }
                     }
-                    HorizontalLayout {
-                        spacing: 12px;
-                        SectionTitle { horizontal-stretch: 1; text: AppState.en ? "Credit Details" : "积分明细"; }
                     }
-                    if AppState.credit-records.length == 0: EmptyState {}
-                    if AppState.credit-records.length > 0: VerticalLayout {
-                        spacing: 10px;
-                        for record in AppState.credit-records: CreditRecordRow { item: record; }
-                    }
-                    if AppState.credit-ledger-message != "": Rectangle {
-                        height: 32px;
-                        background: transparent;
-                        Text {
-                            width: parent.width;
-                            height: parent.height;
-                            text: AppState.credit-ledger-message;
-                            color: AppTheme.danger;
-                            font-size: 12px;
-                            font-weight: 400;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
-                    }
-                    if AppState.credit-records.length > 0 || AppState.credit-ledger-page > 1: Rectangle {
-                        height: 48px;
-                        background: transparent;
-                        PillButton {
-                            x: parent.width / 2 - 174px;
-                            y: 6px;
-                            width: 108px;
-                            text: AppState.en ? "Previous" : "上一页";
-                            disabled: !AppState.credit-ledger-has-previous || AppState.credit-ledger-loading;
-                            clicked => { AppState.credit-ledger-previous-page(); }
-                        }
-                        Text {
-                            x: parent.width / 2 - 54px;
-                            width: 108px;
-                            height: parent.height;
-                            text: AppState.credit-ledger-loading
-                                ? (AppState.en ? "Loading..." : "加载中…")
-                                : (AppState.en ? ("Page " + AppState.credit-ledger-page) : ("第 " + AppState.credit-ledger-page + " 页"));
-                            color: AppTheme.muted;
-                            font-size: 13px;
-                            font-weight: 400;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                        PillButton {
-                            x: parent.width / 2 + 66px;
-                            y: 6px;
-                            width: 108px;
-                            text: AppState.en ? "Next" : "下一页";
-                            disabled: !AppState.credit-ledger-has-next || AppState.credit-ledger-loading;
-                            clicked => { AppState.credit-ledger-next-page(); }
-                        }
-                    }
-                    }
+                    if AppState.credits-tab == "recharge": CreditLedgerSection { horizontal-stretch: 1; }
                 }
             }
         }

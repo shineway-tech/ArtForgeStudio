@@ -32,6 +32,21 @@ fn mock_code() -> String {
     std::env::var("ARTFORGE_MOCK_EMAIL_CODE").unwrap_or_else(|_| "654321".to_string())
 }
 
+fn mock_redemption_code() -> String {
+    if let Ok(path) = std::env::var("ARTFORGE_MOCK_REDEMPTION_CODE_FILE") {
+        let csv = std::fs::read_to_string(path).expect("read one-time redemption fixture CSV");
+        return csv
+            .lines()
+            .nth(1)
+            .and_then(|line| line.split(',').nth(1))
+            .map(|value| value.trim_matches('"').to_string())
+            .filter(|value| !value.is_empty())
+            .expect("fixture CSV contains one redemption code");
+    }
+    std::env::var("ARTFORGE_MOCK_REDEMPTION_CODE")
+        .expect("a redemption code or fixture CSV is required for the cross-stack test")
+}
+
 fn new_client_with(device_id: String, app_version: &str) -> ApiClient {
     new_client_identity(
         device_id,
@@ -249,28 +264,27 @@ fn cross_stack_p0_referral_image_edit_and_style_analysis_contracts() {
             .as_deref(),
         Some("邀请码填写成功")
     );
-    assert!(invitee_account
-        .snapshot()
-        .expect("reload invitee account")
-        .account
-        .user
-        .invitation_code_submitted);
+    assert!(
+        invitee_account
+            .snapshot()
+            .expect("reload invitee account")
+            .account
+            .user
+            .invitation_code_submitted
+    );
     let inviter_after = inviter_account
         .invitation_dashboard()
         .expect("reload inviter dashboard");
     assert_eq!(inviter_after.overview.invitation_count, 1);
     assert_eq!(inviter_after.users.len(), 1);
-    assert!(!inviter_after.users[0].email_masked.contains("client-stack-"));
+    assert!(!inviter_after.users[0]
+        .email_masked
+        .contains("client-stack-"));
 
-    let path = std::env::temp_dir().join(format!(
-        "artforge-p0-contract-{}.png",
-        Uuid::new_v4()
-    ));
+    let path = std::env::temp_dir().join(format!("artforge-p0-contract-{}.png", Uuid::new_v4()));
     std::fs::write(&path, MOCK_PNG).expect("write P0 reference fixture");
-    let mask_path = std::env::temp_dir().join(format!(
-        "artforge-p0-contract-mask-{}.png",
-        Uuid::new_v4()
-    ));
+    let mask_path =
+        std::env::temp_dir().join(format!("artforge-p0-contract-mask-{}.png", Uuid::new_v4()));
     std::fs::write(&mask_path, TRANSPARENT_MASK_PNG).expect("write transparent mask fixture");
     let generation = GenerationApi::new(invitee_client.clone());
     let source_file_id = generation
@@ -320,7 +334,10 @@ fn cross_stack_p0_referral_image_edit_and_style_analysis_contracts() {
         .expect("create image style analysis task");
     assert_eq!(style_task.task_type, "image_style_analysis");
     assert_eq!(style_task.requested_count, 1);
-    assert_eq!(style_task.request["reference_file_ids"], json!([style_file_id]));
+    assert_eq!(
+        style_task.request["reference_file_ids"],
+        json!([style_file_id])
+    );
     let reserved_after_create = invitee_account
         .snapshot()
         .expect("load credits after style task create")
@@ -496,6 +513,93 @@ fn cross_stack_account_catalog_and_pagination_parameters() {
     AuthApi::new(client)
         .logout(false)
         .expect("logout account test");
+}
+
+#[test]
+#[ignore = "requires the dev Mock API server and an active one-time redemption fixture"]
+fn cross_stack_credit_redemption_contract_and_idempotency() {
+    let (client, login) = login_new_user();
+    let account = AccountApi::new(client.clone());
+    let scope = client
+        .session()
+        .scope_for_user(&login.user.id)
+        .expect("bound redemption session scope");
+    let before = client
+        .authenticated_json::<CreditAccount>(Method::GET, "/v1/credits/account", None, None)
+        .expect("load pre-redemption account")
+        .data;
+    let client_request_id = format!("redemption_{}", Uuid::new_v4().simple());
+    let code = mock_redemption_code();
+
+    let first = account
+        .redeem_credit_code_scoped(&code, &client_request_id, &scope)
+        .expect("redeem through the production endpoint");
+    let replay = account
+        .redeem_credit_code_scoped(&code, &client_request_id, &scope)
+        .expect("replay the same HTTP idempotency key");
+    assert_eq!(replay.redemption_id, first.redemption_id);
+    assert_eq!(replay.credits_granted, first.credits_granted);
+    assert_eq!(replay.account.available, first.account.available);
+
+    let before_available = before
+        .available
+        .parse::<u128>()
+        .expect("pre-redemption available credits");
+    let granted = first
+        .credits_granted
+        .parse::<u128>()
+        .expect("redemption grant credits");
+    let after_available = first
+        .account
+        .available
+        .parse::<u128>()
+        .expect("post-redemption available credits");
+    assert_eq!(after_available, before_available + granted);
+    assert_eq!(first.account.reserved, before.reserved);
+
+    let business_replay = account
+        .redeem_credit_code_scoped(
+            &code,
+            &format!("redemption_{}", Uuid::new_v4().simple()),
+            &scope,
+        )
+        .expect("same-account business replay");
+    assert_eq!(business_replay.redemption_id, first.redemption_id);
+    assert_eq!(business_replay.account.available, first.account.available);
+
+    let ledger = client
+        .authenticated_json::<Vec<CreditLedgerItem>>(
+            Method::GET,
+            "/v1/credits/ledger?limit=8",
+            None,
+            None,
+        )
+        .expect("load redemption ledger")
+        .data;
+    assert!(ledger.iter().any(|item| {
+        item.business_type == "redemption_code" && item.available_delta == first.credits_granted
+    }));
+
+    let (other_client, other_login) = login_new_user();
+    let other_scope = other_client
+        .session()
+        .scope_for_user(&other_login.user.id)
+        .expect("other bound session scope");
+    assert_http_error(
+        AccountApi::new(other_client.clone()).redeem_credit_code_scoped(
+            &code,
+            &format!("redemption_{}", Uuid::new_v4().simple()),
+            &other_scope,
+        ),
+        409,
+        "redemption_code_unavailable",
+    );
+    AuthApi::new(other_client)
+        .logout(false)
+        .expect("logout other redemption user");
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout redemption user");
 }
 
 #[test]

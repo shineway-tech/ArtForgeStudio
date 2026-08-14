@@ -46,6 +46,8 @@ cargo build --release -p artforge-studio-native --bin ElunviCanvas
 | `ARTFORGE_API_BASE_URL` | Debug client only | 覆盖客户端平台 API 根地址 |
 | `ARTFORGE_CROSS_STACK_BASE_URL` | Ignored cross-stack tests | 指定已启动的后端 Mock API |
 | `ARTFORGE_MOCK_EMAIL_CODE` | Ignored cross-stack tests | 指定 Mock API 验证码，未设置时测试使用 `654321` |
+| `ARTFORGE_MOCK_REDEMPTION_CODE` | Redemption cross-stack test | 指定由后端临时运营批次发放的一次性测试兑换码 |
+| `ARTFORGE_MOCK_REDEMPTION_CODE_FILE` | Redemption cross-stack test | 指向后端运营命令生成的临时 CSV；优先于直接传码，避免原码进入命令行 |
 | `SLINT_BACKEND` | Client startup | 显式覆盖 Slint 渲染后端 |
 
 `ARTFORGE_API_BASE_URL` 只在 debug 构建读取；release 构建使用编译时确定的生产 HTTPS 地址，普通用户不能通过环境变量改写。开发地址可以带路径，客户端会规范化尾部 `/`。

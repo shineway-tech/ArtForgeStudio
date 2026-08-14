@@ -53,6 +53,10 @@ export global AppState {
     in-out property <bool> credit-payment-busy: false;
     in-out property <string> credit-payment-message: "";
     in-out property <string> credits-tab: "recharge";
+    in-out property <string> credit-redemption-code: "";
+    in-out property <bool> credit-redemption-busy: false;
+    in-out property <bool> credit-redemption-success: false;
+    in-out property <string> credit-redemption-message: "";
     in-out property <bool> payment-active: false;
     in-out property <bool> payment-dialog-open: false;
     in-out property <string> payment-dialog-mode: "waiting";
@@ -609,6 +613,7 @@ export global AppState {
     callback accept-current-agreements();
     callback save-profile();
     callback recharge-credits(string);
+    callback redeem-credits(string);
     callback credit-ledger-previous-page();
     callback credit-ledger-next-page();
     callback navigate(string);

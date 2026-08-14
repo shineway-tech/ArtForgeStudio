@@ -381,6 +381,18 @@ struct Store {
     canvas_notes: Vec<CanvasNoteData>,
     canvas_links: Vec<CanvasLinkData>,
     credit_ledger_pagination: CreditLedgerPagination,
+    /// Last applied server credit-account version. This prevents an idempotency replay or a
+    /// slower account refresh from moving the visible balance backwards.
+    credit_account_version: Option<String>,
+    /// Orders every request that can replace the combined credit balance and ledger view.
+    /// Full backend snapshots, redemption reconciliation, and ledger pagination all share this
+    /// epoch so an older response can never overwrite a newer credit-state operation.
+    credit_sync_epoch: u64,
+    /// Only the newest lightweight credit-account refresh may update the current account view.
+    credit_account_refresh_epoch: u64,
+    /// Keep the same request id while an outcome is ambiguous (for example a timeout after the
+    /// server committed). Entries are account-scoped so one user can never replay another's code.
+    pending_credit_redemptions_by_owner: BTreeMap<String, PendingCreditRedemption>,
     /// Server task ids are account-bound. Keep them partitioned by backend user id so a
     /// different account can neither overwrite nor resume another account's task.
     deep_prompt_jobs_by_owner: BTreeMap<String, String>,
@@ -392,6 +404,25 @@ struct Store {
     legacy_deep_prompt_job_id: String,
     deep_prompt_bindings: BTreeMap<String, DeepPromptBinding>,
     contact_popup_dismissed: bool,
+}
+
+#[derive(Clone)]
+struct PendingCreditRedemption {
+    code: String,
+    client_request_id: String,
+}
+
+fn begin_credit_sync_epoch(store: &mut Store) -> u64 {
+    store.credit_sync_epoch = store.credit_sync_epoch.wrapping_add(1);
+    store.credit_sync_epoch
+}
+
+fn invalidate_credit_sync_epoch(store: &mut Store) {
+    let _ = begin_credit_sync_epoch(store);
+}
+
+fn credit_sync_epoch_is_current(store: &Store, request_epoch: u64) -> bool {
+    store.credit_sync_epoch == request_epoch
 }
 
 #[derive(Default)]
