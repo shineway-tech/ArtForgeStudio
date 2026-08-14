@@ -58,14 +58,7 @@ pub(super) fn extract_ui_components(
             && height >= 10
             && !(width > analysis_width * 94 / 100 && height > analysis_height * 94 / 100)
     });
-    bounds.sort_by(|left, right| {
-        let row_tolerance = (left.bottom - left.top).min(right.bottom - right.top) / 2;
-        if left.top.abs_diff(right.top) <= row_tolerance.max(1) {
-            left.left.cmp(&right.left)
-        } else {
-            left.top.cmp(&right.top)
-        }
-    });
+    sort_component_bounds_reading_order(&mut bounds);
     bounds.truncate(MAX_EXTRACTED_COMPONENTS);
     if bounds.len() < 2 {
         return Err(anyhow!("未识别到可拆分的独立 UI 元素"));
@@ -95,6 +88,32 @@ pub(super) fn extract_ui_components(
             Ok(ExtractedUiComponent { image: crop })
         })
         .collect()
+}
+
+fn sort_component_bounds_reading_order(bounds: &mut Vec<ComponentBounds>) {
+    bounds.sort_by_key(|item| (item.top, item.left, item.bottom, item.right));
+
+    let mut rows = Vec::<Vec<ComponentBounds>>::new();
+    for item in bounds.drain(..) {
+        let belongs_to_last_row = rows.last().is_some_and(|row| {
+            let anchor = row[0];
+            let anchor_height = anchor.bottom.saturating_sub(anchor.top) + 1;
+            let item_height = item.bottom.saturating_sub(item.top) + 1;
+            let row_tolerance = anchor_height.min(item_height) / 2;
+            item.top.abs_diff(anchor.top) <= row_tolerance.max(1)
+        });
+
+        if belongs_to_last_row {
+            rows.last_mut().expect("row exists").push(item);
+        } else {
+            rows.push(vec![item]);
+        }
+    }
+
+    for mut row in rows {
+        row.sort_by_key(|item| (item.left, item.top, item.bottom, item.right));
+        bounds.extend(row);
+    }
 }
 
 fn estimated_border_color(image: &image::RgbaImage) -> image::Rgba<u8> {
@@ -282,5 +301,42 @@ mod tests {
         assert!(components
             .iter()
             .all(|component| { component.image.pixels().any(|pixel| pixel[3] == 0) }));
+    }
+
+    #[test]
+    fn reading_order_sort_handles_overlapping_row_tolerances() {
+        let mut bounds = vec![
+            ComponentBounds {
+                left: 0,
+                top: 10,
+                right: 9,
+                bottom: 19,
+                pixels: 100,
+            },
+            ComponentBounds {
+                left: 10,
+                top: 5,
+                right: 19,
+                bottom: 14,
+                pixels: 100,
+            },
+            ComponentBounds {
+                left: 20,
+                top: 0,
+                right: 29,
+                bottom: 9,
+                pixels: 100,
+            },
+        ];
+
+        sort_component_bounds_reading_order(&mut bounds);
+
+        assert_eq!(
+            bounds
+                .iter()
+                .map(|item| (item.top, item.left))
+                .collect::<Vec<_>>(),
+            vec![(5, 10), (0, 20), (10, 0)]
+        );
     }
 }
