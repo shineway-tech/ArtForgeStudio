@@ -774,12 +774,17 @@ component CanvasNodeCard {
         return max(0.75, root.node-scale());
     }
 
-    function split-row-count() -> int {
+    function split-row-line-count() -> int {
         return max(1, min(64, Math.round(root.split-rows.to-float())));
     }
 
-    function split-column-count() -> int {
+    function split-column-line-count() -> int {
         return max(1, min(64, Math.round(root.split-columns.to-float())));
+    }
+
+    function image-processing() -> bool {
+        return AppState.canvas-split-loading-node-id == root.note.id
+            || AppState.canvas-extraction-loading-node-id == root.note.id;
     }
 
     function node-title() -> string {
@@ -1009,8 +1014,9 @@ component CanvasNodeCard {
             property <length> start-pointer-y: 0px;
             width: parent.width;
             height: parent.height;
-            mouse-cursor: root.editing ? default : move;
+            mouse-cursor: root.image-processing() ? wait : (root.editing ? default : move);
             pointer-event(event) => {
+                if root.image-processing() { return; }
                 if event.button == PointerEventButton.left
                     && event.kind == PointerEventKind.down
                     && AppState.canvas-selected-id != root.note.id {
@@ -1028,7 +1034,7 @@ component CanvasNodeCard {
                 }
             }
             moved => {
-                if self.pressed && !root.editing {
+                if self.pressed && !root.editing && !root.image-processing() {
                     root.drag-offset-x = self.absolute-position.x + self.mouse-x - self.start-pointer-x;
                     root.drag-offset-y = self.absolute-position.y + self.mouse-y - self.start-pointer-y;
                     AppState.canvas-drag-preview-id = root.note.id;
@@ -1305,20 +1311,20 @@ component CanvasNodeCard {
                 height: parent.height;
                 background: #07111f99;
 
-                for column in root.split-column-count() - 1: Rectangle {
-                    x: (column + 1) * parent.width / root.split-column-count() - 1px * root.node-scale();
+                for column in root.split-column-line-count(): Rectangle {
+                    x: (column + 1) * parent.width / (root.split-column-line-count() + 1) - 1px * root.node-scale();
                     width: max(1px, 2px * root.node-scale());
                     height: parent.height;
                     background: #ffffffdd;
                 }
-                for row in root.split-row-count() - 1: Rectangle {
-                    y: (row + 1) * parent.height / root.split-row-count() - 1px * root.node-scale();
+                for row in root.split-row-line-count(): Rectangle {
+                    y: (row + 1) * parent.height / (root.split-row-line-count() + 1) - 1px * root.node-scale();
                     width: parent.width;
                     height: max(1px, 2px * root.node-scale());
                     background: #ffffffdd;
                 }
             }
-            if AppState.canvas-split-loading-node-id == root.note.id: Rectangle {
+            if root.image-processing(): Rectangle {
                 width: parent.width;
                 height: parent.height;
                 background: #07111fba;
@@ -1327,11 +1333,25 @@ component CanvasNodeCard {
                     y: (parent.height - self.height) / 2 - 18px * root.node-scale();
                 }
                 Text {
+                    visible: AppState.canvas-split-loading-node-id == root.note.id;
                     x: 12px * root.node-scale();
                     y: parent.height / 2 + 18px * root.node-scale();
                     width: parent.width - 24px * root.node-scale();
                     height: 28px * root.node-scale();
                     text: AppState.en ? "Splitting..." : "分割中…";
+                    color: #ffffff;
+                    font-size: 13px * root.node-scale();
+                    font-weight: 500;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                Text {
+                    visible: AppState.canvas-extraction-loading-node-id == root.note.id;
+                    x: 12px * root.node-scale();
+                    y: parent.height / 2 + 18px * root.node-scale();
+                    width: parent.width - 24px * root.node-scale();
+                    height: 28px * root.node-scale();
+                    text: AppState.en ? "Extracting transparent PNG elements..." : "正在提取透明 PNG 元素...";
                     color: #ffffff;
                     font-size: 13px * root.node-scale();
                     font-weight: 500;
@@ -1404,7 +1424,7 @@ component CanvasNodeCard {
             }
         }
 
-        if (root.is-visual-media() || root.is-board-image()) && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-action-bar := Rectangle {
+        if (root.is-visual-media() || root.is-board-image()) && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-action-bar := Rectangle {
             width: (root.split-mode ? 568px : (root.note.kind == "video" ? 380px : ((root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "" ? 612px : 312px))) * root.node-scale();
             height: 46px * root.node-scale();
             x: (parent.width - self.width) / 2;
@@ -1646,7 +1666,7 @@ component CanvasNodeCard {
         }
 
         input-connector-touch := TouchArea {
-            visible: root.note.kind != "group" && !root.is-board-image() && root.zoom-percent >= 30;
+            visible: root.note.kind != "group" && !root.is-board-image() && root.zoom-percent >= 30 && !root.image-processing();
             width: max(18px, 26px * root.node-scale());
             height: self.width;
             x: -self.width / 2;
@@ -1669,7 +1689,7 @@ component CanvasNodeCard {
         }
 
         output-connector-touch := TouchArea {
-            visible: root.note.kind != "group" && !root.is-board-image() && root.zoom-percent >= 30;
+            visible: root.note.kind != "group" && !root.is-board-image() && root.zoom-percent >= 30 && !root.image-processing();
             width: max(18px, 26px * root.node-scale());
             height: self.width;
             x: parent.width - self.width / 2;
@@ -1725,7 +1745,7 @@ component CanvasNodeCard {
             }
         }
 
-        if (root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "" && root.note.selected && root.zoom-percent >= 30: image-resize-handle := Rectangle {
+        if (root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "" && root.note.selected && root.zoom-percent >= 30 && !root.image-processing(): image-resize-handle := Rectangle {
             width: max(18px, 24px * root.node-scale());
             height: self.width;
             x: parent.width - self.width / 2;

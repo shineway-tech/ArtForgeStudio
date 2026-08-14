@@ -355,7 +355,6 @@ enum GenerationDestination {
     #[default]
     Gallery,
     Canvas { source_node_id: String },
-    CanvasUiExtraction { source_node_id: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

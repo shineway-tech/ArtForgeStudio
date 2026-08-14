@@ -157,20 +157,6 @@ pub(super) fn poll_generation_stream(
                             })
                             .map(|source_path| (Image::default(), source_path, String::new()))
                     }
-                    (GenerationDestination::CanvasUiExtraction { source_node_id }, Some(_)) => {
-                        std::fs::read(&local_path)
-                            .map_err(anyhow::Error::from)
-                            .and_then(|bytes| {
-                                add_canvas_ui_extraction_success_item(
-                                    &app,
-                                    &context,
-                                    source_node_id,
-                                    &raw_prompt,
-                                    &bytes,
-                                )
-                            })
-                            .map(|source_path| (Image::default(), source_path, String::new()))
-                    }
                     _ => add_stream_success_item(
                         &app,
                         &store,

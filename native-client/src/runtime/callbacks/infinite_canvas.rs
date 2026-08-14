@@ -30,6 +30,15 @@ struct CanvasSplitTile {
 
 type CanvasSplitOutcome = std::result::Result<Vec<CanvasSplitTile>, String>;
 
+#[derive(Clone, Debug)]
+struct CanvasExtractedElement {
+    path: String,
+    width: u32,
+    height: u32,
+}
+
+type CanvasExtractionOutcome = std::result::Result<Vec<CanvasExtractedElement>, String>;
+
 enum CanvasSystemClipboard {
     Image {
         fingerprint: u64,
@@ -113,6 +122,10 @@ fn terminal_remainder_span(total: u32, parts: u32, index: u32) -> (u32, u32) {
     (start, size)
 }
 
+fn split_parts_from_lines(lines: u32) -> Option<u32> {
+    lines.checked_add(1)
+}
+
 fn split_canvas_image_to_directory(
     source_path: &Path,
     output_dir: &Path,
@@ -167,6 +180,209 @@ fn remove_canvas_split_tiles(tiles: &[CanvasSplitTile]) {
     if let Some(parent) = parent {
         let _ = fs::remove_dir(&parent);
     }
+}
+
+fn extract_canvas_elements_to_directory(
+    source_path: &Path,
+    output_dir: &Path,
+) -> Result<Vec<CanvasExtractedElement>> {
+    let (decoded, _) = decode_image_file(source_path)?;
+    let source = decoded.to_rgba8();
+    let components = extract_ui_components(&source)?;
+    ensure_managed_subdirectory(output_dir)
+        .then_some(())
+        .ok_or_else(|| anyhow!("unable to prepare the canvas extraction output directory"))?;
+
+    let mut elements = Vec::with_capacity(components.len());
+    let result = (|| -> Result<()> {
+        for (index, component) in components.into_iter().enumerate() {
+            let width = component.image.width();
+            let height = component.image.height();
+            let bytes = encode_png_rgba(&component.image, width, height)?;
+            let path = output_dir.join(format!("element-{:02}.png", index + 1));
+            atomic_write_file(&path, &bytes)?;
+            elements.push(CanvasExtractedElement {
+                path: path.display().to_string(),
+                width,
+                height,
+            });
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_dir_all(output_dir);
+        return Err(error);
+    }
+    Ok(elements)
+}
+
+fn remove_canvas_extracted_elements(elements: &[CanvasExtractedElement]) {
+    let parent = elements
+        .first()
+        .and_then(|element| Path::new(&element.path).parent())
+        .map(Path::to_path_buf);
+    for element in elements {
+        let _ = fs::remove_file(&element.path);
+    }
+    if let Some(parent) = parent {
+        let _ = fs::remove_dir(&parent);
+    }
+}
+
+fn clear_canvas_extraction_loading(state: &AppState, source_id: &str) {
+    if state.get_canvas_extraction_loading_node_id().as_str() == source_id {
+        state.set_canvas_extraction_loading_node_id("".into());
+    }
+}
+
+fn poll_canvas_element_extraction(
+    app_weak: Weak<AppWindow>,
+    store: Rc<RefCell<Store>>,
+    history: Rc<RefCell<CanvasController>>,
+    source: CanvasSplitSource,
+    receiver: Rc<RefCell<Option<mpsc::Receiver<CanvasExtractionOutcome>>>>,
+) {
+    slint::Timer::single_shot(Duration::from_millis(80), move || {
+        let outcome = {
+            let mut slot = receiver.borrow_mut();
+            let Some(rx) = slot.as_ref() else {
+                return;
+            };
+            match rx.try_recv() {
+                Ok(outcome) => {
+                    slot.take();
+                    Some(outcome)
+                }
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => {
+                    slot.take();
+                    Some(Err("element extraction worker stopped unexpectedly".to_string()))
+                }
+            }
+        };
+        let Some(outcome) = outcome else {
+            poll_canvas_element_extraction(app_weak, store, history, source, receiver);
+            return;
+        };
+        let Some(app) = app_weak.upgrade() else {
+            if let Ok(elements) = outcome {
+                remove_canvas_extracted_elements(&elements);
+            }
+            return;
+        };
+        let state = app.global::<AppState>();
+        let elements = match outcome {
+            Ok(elements) => elements,
+            Err(error) => {
+                clear_canvas_extraction_loading(&state, &source.id);
+                state.set_generation_status(
+                    if state.get_language().as_str() == "en" {
+                        format!("Unable to extract elements: {error}")
+                    } else {
+                        format!("提取元素失败：{error}")
+                    }
+                    .into(),
+                );
+                return;
+            }
+        };
+
+        let mut store_mut = store.borrow_mut();
+        let source_is_current = store_mut.canvas_notes.iter().any(|note| {
+            note.id == source.id
+                && note.image_path == source.image_path
+                && matches!(note.kind.as_str(), "image" | "board-image")
+        });
+        if !source_is_current
+            || store_mut.canvas_notes.len() + elements.len() > MAX_CANVAS_NODES
+            || store_mut.canvas_links.len() + elements.len() > MAX_CANVAS_LINKS
+        {
+            remove_canvas_extracted_elements(&elements);
+            clear_canvas_extraction_loading(&state, &source.id);
+            if !source_is_current {
+                state.set_generation_status(
+                    if state.get_language().as_str() == "en" {
+                        "The source image changed before extraction finished"
+                    } else {
+                        "提取完成前原图已被更换，请重新操作"
+                    }
+                    .into(),
+                );
+            } else {
+                show_canvas_capacity_status(&app);
+            }
+            return;
+        }
+
+        history.borrow_mut().record(canvas_snapshot(&store_mut));
+        clear_selection(&mut store_mut.canvas_notes);
+        let next_z = store_mut
+            .canvas_notes
+            .iter()
+            .map(|note| note.z_index)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let origin_x = source.x + source.width + 64.0;
+        let origin_y = source.y;
+        let cell_width = 220.0;
+        let cell_height = 200.0;
+        let gap = 16.0;
+        let first_id = elements.first().map(|_| Uuid::new_v4().to_string());
+        let mut created_ids = Vec::with_capacity(elements.len());
+
+        for (index, element) in elements.into_iter().enumerate() {
+            let id = if index == 0 {
+                first_id
+                    .clone()
+                    .unwrap_or_else(|| Uuid::new_v4().to_string())
+            } else {
+                Uuid::new_v4().to_string()
+            };
+            let column = index % 4;
+            let row = index / 4;
+            let mut note = CanvasNoteData {
+                id: id.clone(),
+                kind: "board-image".to_string(),
+                content: String::new(),
+                width: 180.0,
+                height: 180.0,
+                parent_group_id: String::new(),
+                z_index: next_z + index as i32,
+                image_path: element.path,
+                selected: index == 0,
+                ..CanvasNoteData::default()
+            };
+            fit_image_node_to_intrinsic_aspect(
+                &mut note,
+                element.width as f32,
+                element.height as f32,
+            );
+            note.x = origin_x + column as f32 * (cell_width + gap) + (cell_width - note.width) / 2.0;
+            note.y = origin_y + row as f32 * (cell_height + gap) + (cell_height - note.height) / 2.0;
+            store_mut.canvas_notes.push(note);
+            created_ids.push(id);
+        }
+        for id in &created_ids {
+            let _ = connect_nodes(&mut store_mut.canvas_links, &source.id, id);
+        }
+        persist_canvas(&app, &store_mut);
+        sync_canvas_selection(&app, &store_mut);
+        if let Some(first_id) = first_id {
+            state.set_canvas_selected_id(first_id.into());
+        }
+        state.set_canvas_selected_link_id("".into());
+        clear_canvas_extraction_loading(&state, &source.id);
+        state.set_generation_status(
+            if state.get_language().as_str() == "en" {
+                format!("Extracted {} transparent PNG elements from the current image", created_ids.len())
+            } else {
+                format!("已从当前图片提取 {} 个透明 PNG 元素", created_ids.len())
+            }
+            .into(),
+        );
+        sync_history_state(&app, &history.borrow());
+    });
 }
 
 fn clear_canvas_split_loading(state: &AppState, source_id: &str) {
@@ -543,12 +759,87 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
 
     {
         let app_weak = app.as_weak();
-        let context = context.clone();
+        let store = store.clone();
+        let history = history.clone();
         state.on_extract_canvas_ui_elements(move |source_node_id| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            start_canvas_ui_extraction(&app, context.clone(), source_node_id.to_string());
+            let state = app.global::<AppState>();
+            if !state.get_canvas_extraction_loading_node_id().is_empty()
+                || !state.get_canvas_split_loading_node_id().is_empty()
+            {
+                state.set_generation_status(
+                    if state.get_language().as_str() == "en" {
+                        "Wait for the current canvas image operation to finish"
+                    } else {
+                        "请等待当前画布图片操作完成"
+                    }
+                    .into(),
+                );
+                return;
+            }
+            let source = {
+                let store_ref = store.borrow();
+                if store_ref.canvas_notes.len() + MAX_EXTRACTED_COMPONENTS > MAX_CANVAS_NODES
+                    || store_ref.canvas_links.len() + MAX_EXTRACTED_COMPONENTS > MAX_CANVAS_LINKS
+                {
+                    show_canvas_capacity_status(&app);
+                    return;
+                }
+                let Some(note) = store_ref.canvas_notes.iter().find(|note| {
+                    note.id == source_node_id.as_str()
+                        && matches!(note.kind.as_str(), "image" | "board-image")
+                        && !note.image_path.trim().is_empty()
+                        && Path::new(&note.image_path).is_file()
+                }) else {
+                    state.set_generation_status(
+                        if state.get_language().as_str() == "en" {
+                            "Select an uploaded canvas image before extracting elements"
+                        } else {
+                            "请先选择已上传的画布图片"
+                        }
+                        .into(),
+                    );
+                    return;
+                };
+                CanvasSplitSource {
+                    id: note.id.clone(),
+                    image_path: note.image_path.clone(),
+                    x: note.x,
+                    y: note.y,
+                    width: note.width,
+                    height: note.height,
+                }
+            };
+
+            state.set_generation_status(
+                if state.get_language().as_str() == "en" {
+                    "Extracting transparent PNG elements from the current image..."
+                } else {
+                    "正在从当前图片提取透明 PNG 元素..."
+                }
+                .into(),
+            );
+            state.set_canvas_extraction_loading_node_id(source.id.clone().into());
+            let output_dir = app_data_dir()
+                .join("canvas")
+                .join("ui-extractions")
+                .join(Uuid::new_v4().to_string());
+            let source_path = PathBuf::from(&source.image_path);
+            let (sender, receiver) = mpsc::channel::<CanvasExtractionOutcome>();
+            std::thread::spawn(move || {
+                let outcome = extract_canvas_elements_to_directory(&source_path, &output_dir)
+                    .map_err(|error| error.to_string());
+                let _ = sender.send(outcome);
+            });
+            poll_canvas_element_extraction(
+                app.as_weak(),
+                store.clone(),
+                history.clone(),
+                source,
+                Rc::new(RefCell::new(Some(receiver))),
+            );
         });
     }
 
@@ -561,7 +852,9 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                 return;
             };
             let state = app.global::<AppState>();
-            if !state.get_canvas_split_loading_node_id().is_empty() {
+            if !state.get_canvas_split_loading_node_id().is_empty()
+                || !state.get_canvas_extraction_loading_node_id().is_empty()
+            {
                 state.set_generation_status(
                     if state.get_language().as_str() == "en" {
                         "Wait for the current image split to finish"
@@ -572,34 +865,44 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                 );
                 return;
             }
-            let rows = rows.trim().parse::<u32>();
-            let columns = columns.trim().parse::<u32>();
-            let (Ok(rows), Ok(columns)) = (rows, columns) else {
+            let horizontal_lines = rows.trim().parse::<u32>();
+            let vertical_lines = columns.trim().parse::<u32>();
+            let (Ok(horizontal_lines), Ok(vertical_lines)) =
+                (horizontal_lines, vertical_lines)
+            else {
                 state.set_generation_status(
                     if state.get_language().as_str() == "en" {
-                        "Enter positive whole numbers for rows and columns"
+                        "Enter positive whole numbers for horizontal and vertical split lines"
                     } else {
-                        "行数和列数请输入正整数"
+                        "横向和纵向分割线数量请输入正整数"
                     }
                     .into(),
                 );
                 return;
             };
-            if rows == 0
-                || columns == 0
-                || rows > MAX_CANVAS_SPLIT_AXIS
-                || columns > MAX_CANVAS_SPLIT_AXIS
+            if horizontal_lines == 0
+                || vertical_lines == 0
+                || horizontal_lines > MAX_CANVAS_SPLIT_AXIS
+                || vertical_lines > MAX_CANVAS_SPLIT_AXIS
             {
                 state.set_generation_status(
                     if state.get_language().as_str() == "en" {
-                        "Rows and columns must each be between 1 and 64"
+                        "Horizontal and vertical split lines must each be between 1 and 64"
                     } else {
-                        "行数和列数均需在 1 到 64 之间"
+                        "横向和纵向分割线数量均需在 1 到 64 之间"
                     }
                     .into(),
                 );
                 return;
             }
+            let Some(rows) = split_parts_from_lines(horizontal_lines) else {
+                show_canvas_capacity_status(&app);
+                return;
+            };
+            let Some(columns) = split_parts_from_lines(vertical_lines) else {
+                show_canvas_capacity_status(&app);
+                return;
+            };
             let tile_count = match rows.checked_mul(columns) {
                 Some(count) => count as usize,
                 None => {
@@ -655,9 +958,9 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
             if rows > image_height || columns > image_width {
                 state.set_generation_status(
                     if state.get_language().as_str() == "en" {
-                        "Rows or columns exceed the source image pixel size"
+                        "The requested split lines exceed the source image pixel size"
                     } else {
-                        "分割行列不能超过原图像素尺寸"
+                        "分割线数量不能超过原图像素尺寸"
                     }
                     .into(),
                 );
@@ -2021,6 +2324,13 @@ mod tests {
     }
 
     #[test]
+    fn split_line_counts_create_one_more_tile_part_per_axis() {
+        assert_eq!(split_parts_from_lines(1), Some(2));
+        assert_eq!(split_parts_from_lines(2), Some(3));
+        assert_eq!(split_parts_from_lines(64), Some(65));
+    }
+
+    #[test]
     fn canvas_image_split_is_lossless_and_covers_every_pixel() {
         let temp = tempfile::tempdir().expect("temporary split directory");
         let source_path = temp.path().join("source.png");
@@ -2050,5 +2360,45 @@ mod tests {
         }
         assert_eq!(rebuilt, source);
         remove_canvas_split_tiles(&tiles);
+    }
+
+    #[test]
+    fn canvas_element_extraction_saves_transparent_png_board_images() {
+        let temp = tempfile::tempdir().expect("temporary extraction source directory");
+        let source_path = temp.path().join("source.png");
+        let output_dir = app_data_dir()
+            .join("canvas")
+            .join("ui-extractions")
+            .join(format!("test-{}", Uuid::new_v4()));
+        fs::create_dir_all(app_data_dir()).expect("prepare managed app data directory");
+        let mut source = image::RgbaImage::from_pixel(480, 360, image::Rgba([250, 249, 246, 255]));
+        for (left, top, right, bottom, color) in [
+            (30, 35, 155, 130, [32, 74, 180, 255]),
+            (280, 30, 430, 120, [204, 62, 72, 255]),
+            (45, 225, 175, 325, [56, 164, 92, 255]),
+            (290, 210, 440, 330, [128, 68, 184, 255]),
+        ] {
+            for y in top..bottom {
+                for x in left..right {
+                    source.put_pixel(x, y, image::Rgba(color));
+                }
+            }
+        }
+        let bytes = encode_png_rgba(&source, source.width(), source.height())
+            .expect("encode extraction source");
+        atomic_write_file(&source_path, &bytes).expect("write extraction source");
+
+        let elements = extract_canvas_elements_to_directory(&source_path, &output_dir)
+            .expect("extract current canvas image");
+
+        assert_eq!(elements.len(), 4);
+        for element in &elements {
+            assert!(element.path.ends_with(".png"));
+            let decoded = image::open(&element.path)
+                .expect("read extracted PNG")
+                .to_rgba8();
+            assert!(decoded.pixels().any(|pixel| pixel[3] == 0));
+        }
+        remove_canvas_extracted_elements(&elements);
     }
 }

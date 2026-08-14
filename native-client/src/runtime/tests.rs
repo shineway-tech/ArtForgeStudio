@@ -3420,14 +3420,24 @@ mod tests {
             .expect("canvas node component");
 
         assert!(node.contains("if root.split-mode: Rectangle"));
-        assert!(node.contains("for column in root.split-column-count() - 1"));
-        assert!(node.contains("for row in root.split-row-count() - 1"));
+        assert!(node.contains("for column in root.split-column-line-count()"));
+        assert!(node.contains("root.split-column-line-count() + 1"));
+        assert!(node.contains("for row in root.split-row-line-count()"));
+        assert!(node.contains("root.split-row-line-count() + 1"));
         assert!(node.contains("AppState.canvas-split-loading-node-id == root.note.id"));
+        assert!(node.contains("AppState.canvas-extraction-loading-node-id == root.note.id"));
+        assert!(node.contains("root.image-processing()"));
         assert!(node.contains("LoadingDots"));
+        assert!(node.contains("正在提取透明 PNG 元素"));
         assert!(node.contains("确定分割"));
         assert!(state.contains("canvas-split-loading-node-id"));
+        assert!(state.contains("canvas-extraction-loading-node-id"));
         assert!(state.contains("callback save-canvas-image(string)"));
         assert!(callbacks.contains("state.set_canvas_split_loading_node_id(source.id.clone().into())"));
+        assert!(callbacks.contains("extract_canvas_elements_to_directory(&source_path, &output_dir)"));
+        assert!(callbacks.contains("kind: \"board-image\".to_string()"));
+        assert!(callbacks.contains("正在从当前图片提取透明 PNG 元素"));
+        assert!(!callbacks.contains("start_canvas_ui_extraction"));
         assert!(callbacks.contains("connect_nodes(&mut store_mut.canvas_links, &source.id, id)"));
         assert!(callbacks.contains("state.on_save_canvas_image"));
     }

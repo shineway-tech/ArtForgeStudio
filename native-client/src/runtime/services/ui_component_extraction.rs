@@ -1,11 +1,7 @@
 use super::*;
 
 const MAX_ANALYSIS_EDGE: u32 = 1_024;
-const MAX_EXTRACTED_COMPONENTS: usize = 24;
-
-pub(super) fn canvas_ui_extraction_prompt() -> String {
-    "严格以参考图为唯一内容来源，提取其中全部可复用的游戏 UI 组件。先生成一张组件汇总图：保持原图的视觉风格、颜色、材质、描边和细节，不重新设计，不生成完整游戏场景。把头像框、血条、按钮、图标、摇杆、物品格、技能、货币、设置、小地图、宝箱、面板等独立元素完整分离，正面展示，互不重叠，按从左到右、从上到下排列在纯白或透明背景上。元素之间保留宽阔且一致的空白间距；不要文字说明、序号、水印、装饰性背景、阴影连接或裁切元素。".to_string()
-}
+pub(super) const MAX_EXTRACTED_COMPONENTS: usize = 24;
 
 #[derive(Debug)]
 pub(super) struct ExtractedUiComponent {
@@ -60,7 +56,7 @@ pub(super) fn extract_ui_components(
     });
     sort_component_bounds_reading_order(&mut bounds);
     bounds.truncate(MAX_EXTRACTED_COMPONENTS);
-    if bounds.len() < 2 {
+    if bounds.is_empty() {
         return Err(anyhow!("未识别到可拆分的独立 UI 元素"));
     }
 
