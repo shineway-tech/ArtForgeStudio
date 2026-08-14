@@ -3401,10 +3401,35 @@ mod tests {
             other_actions
                 .matches("CanvasMediaAction { horizontal-stretch: 1;")
                 .count(),
-            5
+            6
         );
+        assert!(other_actions.contains("AppState.save-canvas-image(root.note.id)"));
         assert!(!text_bar.contains("CanvasMediaAction { scale-factor: root.node-scale(); width:"));
         assert!(!media_bar.contains("CanvasMediaAction { scale-factor: root.node-scale(); width:"));
+    }
+
+    #[test]
+    fn infinite_canvas_split_previews_grid_and_reports_local_progress() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+        let node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .and_then(|value| value.split("export component InfiniteCanvasPage").next())
+            .expect("canvas node component");
+
+        assert!(node.contains("if root.split-mode: Rectangle"));
+        assert!(node.contains("for column in root.split-column-count() - 1"));
+        assert!(node.contains("for row in root.split-row-count() - 1"));
+        assert!(node.contains("AppState.canvas-split-loading-node-id == root.note.id"));
+        assert!(node.contains("LoadingDots"));
+        assert!(node.contains("确定分割"));
+        assert!(state.contains("canvas-split-loading-node-id"));
+        assert!(state.contains("callback save-canvas-image(string)"));
+        assert!(callbacks.contains("state.set_canvas_split_loading_node_id(source.id.clone().into())"));
+        assert!(callbacks.contains("connect_nodes(&mut store_mut.canvas_links, &source.id, id)"));
+        assert!(callbacks.contains("state.on_save_canvas_image"));
     }
 
     #[test]

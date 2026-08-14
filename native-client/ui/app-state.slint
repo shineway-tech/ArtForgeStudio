@@ -197,6 +197,8 @@ export global AppState {
     in-out property <[CanvasNote]> canvas-notes: [];
     in-out property <[CanvasLink]> canvas-links: [];
     in-out property <string> canvas-selected-id: "";
+    // Transient UI-only state used while a local image split worker is running.
+    in-out property <string> canvas-split-loading-node-id: "";
     in-out property <string> canvas-selected-link-id: "";
     in-out property <int> canvas-selected-count: 0;
     in-out property <float> canvas-focus-x: 0;
@@ -703,6 +705,7 @@ export global AppState {
     callback choose-canvas-node-image(string);
     callback extract-canvas-ui-elements(string);
     callback split-canvas-image(string, string, string);
+    callback save-canvas-image(string);
     callback add-canvas-uploaded-image(float, float);
     callback undo-canvas();
     callback redo-canvas();

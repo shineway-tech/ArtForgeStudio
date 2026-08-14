@@ -169,6 +169,12 @@ fn remove_canvas_split_tiles(tiles: &[CanvasSplitTile]) {
     }
 }
 
+fn clear_canvas_split_loading(state: &AppState, source_id: &str) {
+    if state.get_canvas_split_loading_node_id().as_str() == source_id {
+        state.set_canvas_split_loading_node_id("".into());
+    }
+}
+
 fn poll_canvas_image_split(
     app_weak: Weak<AppWindow>,
     store: Rc<RefCell<Store>>,
@@ -210,6 +216,7 @@ fn poll_canvas_image_split(
         let tiles = match outcome {
             Ok(tiles) => tiles,
             Err(error) => {
+                clear_canvas_split_loading(&state, &source.id);
                 state.set_generation_status(
                     if state.get_language().as_str() == "en" {
                         format!("Unable to split image: {error}")
@@ -228,8 +235,12 @@ fn poll_canvas_image_split(
                 && note.image_path == source.image_path
                 && matches!(note.kind.as_str(), "image" | "board-image")
         });
-        if !source_is_current || store_mut.canvas_notes.len() + tiles.len() > MAX_CANVAS_NODES {
+        if !source_is_current
+            || store_mut.canvas_notes.len() + tiles.len() > MAX_CANVAS_NODES
+            || store_mut.canvas_links.len() + tiles.len() > MAX_CANVAS_LINKS
+        {
             remove_canvas_split_tiles(&tiles);
+            clear_canvas_split_loading(&state, &source.id);
             if !source_is_current {
                 state.set_generation_status(
                     if state.get_language().as_str() == "en" {
@@ -263,6 +274,7 @@ fn poll_canvas_image_split(
         let origin_x = source.x + source.width + 64.0;
         let origin_y = source.y;
         let first_id = tiles.first().map(|_| Uuid::new_v4().to_string());
+        let mut created_ids = Vec::with_capacity(tiles.len());
 
         for (index, tile) in tiles.into_iter().enumerate() {
             let id = if index == 0 {
@@ -273,7 +285,7 @@ fn poll_canvas_image_split(
                 Uuid::new_v4().to_string()
             };
             store_mut.canvas_notes.push(CanvasNoteData {
-                id,
+                id: id.clone(),
                 kind: "board-image".to_string(),
                 content: String::new(),
                 x: origin_x + tile.column as f32 * (tile_width + gap),
@@ -286,6 +298,10 @@ fn poll_canvas_image_split(
                 selected: index == 0,
                 ..CanvasNoteData::default()
             });
+            created_ids.push(id);
+        }
+        for id in &created_ids {
+            let _ = connect_nodes(&mut store_mut.canvas_links, &source.id, id);
         }
         persist_canvas(&app, &store_mut);
         sync_canvas_selection(&app, &store_mut);
@@ -293,6 +309,7 @@ fn poll_canvas_image_split(
             state.set_canvas_selected_id(first_id.into());
         }
         state.set_canvas_selected_link_id("".into());
+        clear_canvas_split_loading(&state, &source.id);
         state.set_generation_status(
             if state.get_language().as_str() == "en" {
                 format!("Split evenly into {rows} rows × {columns} columns")
@@ -544,6 +561,17 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                 return;
             };
             let state = app.global::<AppState>();
+            if !state.get_canvas_split_loading_node_id().is_empty() {
+                state.set_generation_status(
+                    if state.get_language().as_str() == "en" {
+                        "Wait for the current image split to finish"
+                    } else {
+                        "请等待当前图片分割完成"
+                    }
+                    .into(),
+                );
+                return;
+            }
             let rows = rows.trim().parse::<u32>();
             let columns = columns.trim().parse::<u32>();
             let (Ok(rows), Ok(columns)) = (rows, columns) else {
@@ -581,7 +609,9 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
             };
             let source = {
                 let store_ref = store.borrow();
-                if store_ref.canvas_notes.len() + tile_count > MAX_CANVAS_NODES {
+                if store_ref.canvas_notes.len() + tile_count > MAX_CANVAS_NODES
+                    || store_ref.canvas_links.len() + tile_count > MAX_CANVAS_LINKS
+                {
                     show_canvas_capacity_status(&app);
                     return;
                 }
@@ -642,6 +672,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                 }
                 .into(),
             );
+            state.set_canvas_split_loading_node_id(source.id.clone().into());
             let output_dir = app_data_dir()
                 .join("canvas")
                 .join("splits")
@@ -662,6 +693,75 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                 rows,
                 columns,
                 Rc::new(RefCell::new(Some(receiver))),
+            );
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        state.on_save_canvas_image(move |node_id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            let source = {
+                let store_ref = store.borrow();
+                store_ref
+                    .canvas_notes
+                    .iter()
+                    .find(|note| {
+                        note.id == node_id.as_str()
+                            && matches!(note.kind.as_str(), "image" | "board-image")
+                            && !note.image_path.trim().is_empty()
+                    })
+                    .map(|note| PathBuf::from(&note.image_path))
+            };
+            let Some(source) = source.filter(|path| path.is_file()) else {
+                state.set_generation_status(
+                    if state.get_language().as_str() == "en" {
+                        "The canvas image is no longer available"
+                    } else {
+                        "画布图片文件已不存在"
+                    }
+                    .into(),
+                );
+                return;
+            };
+            let default_name = source
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("canvas-image.png");
+            let Some(destination) = rfd::FileDialog::new()
+                .add_filter(
+                    "Images",
+                    crate::image_formats::picker_image_extensions(),
+                )
+                .set_file_name(default_name)
+                .save_file()
+            else {
+                return;
+            };
+            let result = if destination == source {
+                Ok(())
+            } else {
+                fs::read(&source).and_then(|bytes| {
+                    atomic_write_file(&destination, &bytes)
+                        .map_err(|error| std::io::Error::other(error.to_string()))
+                })
+            };
+            state.set_generation_status(
+                match result {
+                    Ok(()) if state.get_language().as_str() == "en" => {
+                        "Canvas image saved".to_string()
+                    }
+                    Ok(()) => "画布图片已保存到本地".to_string(),
+                    Err(error) if state.get_language().as_str() == "en" => {
+                        format!("Unable to save the canvas image: {error}")
+                    }
+                    Err(error) => format!("保存画布图片失败：{error}"),
+                }
+                .into(),
             );
         });
     }
