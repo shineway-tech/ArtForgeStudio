@@ -114,7 +114,7 @@ export component ViewerOverlay {
     property <length> context-menu-x: 0px;
     property <length> context-menu-y: 0px;
     property <length> context-menu-width: 148px;
-    property <length> context-menu-height: 170px;
+    property <length> context-menu-height: 214px;
     property <bool> image-drag-armed: false;
     property <bool> image-system-drag-started: false;
     property <length> image-pressed-x: 0px;
@@ -333,6 +333,12 @@ export component ViewerOverlay {
                 }
                 ViewerFooterActionButton {
                     horizontal-stretch: 1;
+                    icon: @image-url("../../assets/icons/canvas.svg");
+                    label: AppState.en ? "Import to Canvas" : "导入无限画布";
+                    clicked => { AppState.viewer-import-to-canvas(); }
+                }
+                ViewerFooterActionButton {
+                    horizontal-stretch: 1;
                     icon: @image-url("../../assets/icons/trash.svg");
                     label: AppState.en ? "Delete" : "删除";
                     foreground: AppTheme.danger;
@@ -520,6 +526,13 @@ export component ViewerOverlay {
                     clicked => {
                         root.context-menu-open = false;
                         AppState.viewer-use-reference();
+                    }
+                }
+                ViewerContextMenuItem {
+                    text: AppState.en ? "Import to Canvas" : "导入无限画布";
+                    clicked => {
+                        root.context-menu-open = false;
+                        AppState.viewer-import-to-canvas();
                     }
                 }
                 ViewerContextMenuItem {

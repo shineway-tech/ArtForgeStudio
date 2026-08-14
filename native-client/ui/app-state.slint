@@ -207,6 +207,7 @@ export global AppState {
     in-out property <float> canvas-focus-y: 0;
     in-out property <float> canvas-focus-width: 0;
     in-out property <float> canvas-focus-height: 0;
+    in-out property <int> canvas-focus-request: 0;
     in-out property <string> canvas-link-hover-target-id: "";
     in-out property <bool> canvas-link-hover-valid: false;
     in-out property <[string]> canvas-node-search-results: [];
@@ -770,6 +771,7 @@ export global AppState {
     callback submit-image-edit();
     callback viewer-use-same();
     callback viewer-use-reference();
+    callback viewer-import-to-canvas();
     callback viewer-copy-image();
     callback viewer-download-image();
     callback viewer-open-image();

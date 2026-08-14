@@ -2190,6 +2190,15 @@ export component InfiniteCanvasPage {
     in-out property <int> link-flow-step: 0;
 
     Timer {
+        interval: 1ms;
+        running: AppState.canvas-focus-request > 0;
+        triggered => {
+            root.focus-selection();
+            AppState.canvas-focus-request = 0;
+        }
+    }
+
+    Timer {
         interval: 80ms;
         running: !AppState.reduced-motion && AppState.canvas-selected-link-id != "";
         triggered => { root.link-flow-step = Math.mod(root.link-flow-step + 1, 100); }

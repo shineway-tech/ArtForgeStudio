@@ -595,6 +595,68 @@ fn pick_canvas_image(app: &AppWindow, node_id: &str) -> Option<PreparedCanvasIma
     })
 }
 
+pub(super) fn import_viewer_image_to_canvas(
+    app: &AppWindow,
+    store: &mut Store,
+    source_path: &Path,
+) -> Result<String> {
+    if store.canvas_notes.len() >= MAX_CANVAS_NODES {
+        return Err(anyhow!("canvas node limit reached"));
+    }
+
+    let (source_width, source_height) = inspect_image_dimensions(source_path)?;
+    let bytes = fs::read(source_path)
+        .with_context(|| format!("unable to read {}", source_path.display()))?;
+    let upload_dir = app_data_dir().join("canvas").join("uploads");
+    if !ensure_managed_subdirectory(&upload_dir) {
+        return Err(anyhow!("unable to create the canvas upload directory"));
+    }
+
+    let id = Uuid::new_v4().to_string();
+    let destination = upload_dir.join(format!(
+        "imported-{}-{}.{}",
+        id,
+        Uuid::new_v4(),
+        image_extension(&bytes)
+    ));
+    atomic_write_file(&destination, &bytes)?;
+
+    let (_, width, height) = canvas_node_defaults("image", false);
+    let mut note = CanvasNoteData {
+        id: id.clone(),
+        kind: "board-image".into(),
+        width,
+        height,
+        image_path: destination.display().to_string(),
+        selected: true,
+        ..CanvasNoteData::default()
+    };
+    fit_image_node_to_intrinsic_aspect(
+        &mut note,
+        source_width as f32,
+        source_height as f32,
+    );
+
+    let mut anchor_ids = selected_ids(&store.canvas_notes);
+    if anchor_ids.is_empty() {
+        anchor_ids.extend(store.canvas_notes.iter().map(|item| item.id.clone()));
+    }
+    if let Some(bounds) = selection_bounds(&store.canvas_notes, &anchor_ids) {
+        note.x = bounds.x + bounds.width + 64.0;
+        note.y = bounds.y;
+    }
+
+    clear_selection(&mut store.canvas_notes);
+    store.canvas_notes.push(note);
+    persist_canvas(app, store);
+    sync_canvas_selection(app, store);
+
+    let state = app.global::<AppState>();
+    state.set_canvas_selected_id(id.clone().into());
+    state.set_canvas_focus_request(state.get_canvas_focus_request().saturating_add(1));
+    Ok(id)
+}
+
 fn target_at_input(
     store: &Store,
     source_id: &str,

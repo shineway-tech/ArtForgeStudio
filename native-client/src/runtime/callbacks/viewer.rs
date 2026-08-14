@@ -504,6 +504,61 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         let store = store.clone();
+        state.on_viewer_import_to_canvas(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            let source_path = match current_viewer_source_path(&state) {
+                Ok(path) => path,
+                Err(_) => {
+                    state.set_viewer_message(
+                        if state.get_language().as_str() == "en" {
+                            "Unable to read the current image"
+                        } else {
+                            "无法读取当前图片"
+                        }
+                        .into(),
+                    );
+                    return;
+                }
+            };
+
+            let import_result = {
+                let mut store_mut = store.borrow_mut();
+                import_viewer_image_to_canvas(&app, &mut store_mut, &source_path)
+            };
+            if let Err(error) = import_result {
+                state.set_viewer_message(
+                    if state.get_language().as_str() == "en" {
+                        format!("Unable to import the image: {error}")
+                    } else {
+                        format!("导入无限画布失败：{error}")
+                    }
+                    .into(),
+                );
+                return;
+            }
+
+            state.set_viewer_message("".into());
+            state.set_viewer_open(false);
+            state.set_viewer_image(Image::default());
+            state.set_viewer_source_path("".into());
+            state.set_generation_status(
+                if state.get_language().as_str() == "en" {
+                    "Image imported to the infinite canvas"
+                } else {
+                    "图片已导入无限画布"
+                }
+                .into(),
+            );
+            navigate_to_with_store(&app, &store.borrow(), "canvas");
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
         state.on_request_delete_asset(move |id| {
             if let Some(app) = app_weak.upgrade() {
                 let state = app.global::<AppState>();

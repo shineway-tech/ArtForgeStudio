@@ -3835,22 +3835,43 @@ mod tests {
             "if AppState.viewer-source != \"reference\" && AppState.viewer-source != \"inspiration\" && !root.image-fullscreen: Rectangle"
         ));
         assert!(viewer.contains("AppState.viewer-source == \"inspiration\" ? parent.height - 96px"));
-        assert_eq!(viewer.matches("ViewerFooterActionButton {").count(), 4);
+        assert_eq!(viewer.matches("ViewerFooterActionButton {").count(), 5);
         assert!(viewer.contains("AppState.viewer-download-image();"));
         assert!(viewer.contains("AppState.viewer-use-reference();"));
+        assert!(viewer.contains("AppState.viewer-import-to-canvas();"));
         assert!(viewer.contains("AppState.viewer-open-image-editor();"));
         assert!(viewer.contains("AppState.viewer-edit();"));
         assert!(viewer.contains("AppState.request-delete-asset(AppState.viewer-id);"));
         assert!(viewer.contains("@image-url(\"../../assets/icons/download.svg\")"));
         assert!(viewer.contains("@image-url(\"../../assets/icons/edit.svg\")"));
         assert!(viewer.contains("@image-url(\"../../assets/icons/upload.svg\")"));
+        assert!(viewer.contains("@image-url(\"../../assets/icons/canvas.svg\")"));
         assert!(viewer.contains("@image-url(\"../../assets/icons/trash.svg\")"));
 
         assert!(state.contains("callback viewer-open-image();"));
+        assert!(state.contains("callback viewer-import-to-canvas();"));
         assert!(callbacks.contains("state.on_viewer_open_image"));
+        assert!(callbacks.contains("state.on_viewer_import_to_canvas"));
+        assert!(callbacks.contains("import_viewer_image_to_canvas"));
         assert!(callbacks.contains("open_viewer_image(&app, &store.borrow())"));
         assert!(feature.contains("pub(super) fn open_viewer_image"));
         assert!(feature.contains("open_path_with_default_app(&source)"));
+    }
+
+    #[test]
+    fn viewer_can_import_the_current_image_to_canvas_from_footer_or_context_menu() {
+        let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+        let canvas = include_str!("callbacks/infinite_canvas.rs");
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+
+        assert_eq!(viewer.matches("AppState.viewer-import-to-canvas();").count(), 2);
+        assert_eq!(viewer.matches("Import to Canvas").count(), 2);
+        assert_eq!(viewer.matches("导入无限画布").count(), 2);
+        assert!(canvas.contains("pub(super) fn import_viewer_image_to_canvas"));
+        assert!(canvas.contains("kind: \"board-image\".into()"));
+        assert!(canvas.contains("app_data_dir().join(\"canvas\").join(\"uploads\")"));
+        assert!(page.contains("running: AppState.canvas-focus-request > 0;"));
+        assert!(page.contains("root.focus-selection();"));
     }
 
     #[test]
