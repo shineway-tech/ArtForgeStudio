@@ -3443,6 +3443,32 @@ mod tests {
     }
 
     #[test]
+    fn infinite_canvas_image_processing_feedback_stays_visible_when_zoomed_out() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .and_then(|value| value.split("export component InfiniteCanvasPage").next())
+            .expect("canvas node component");
+        let feedback = page
+            .split("processing-feedback := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("if root.marquee-active").next())
+            .expect("canvas processing feedback");
+
+        assert!(node.contains("processing-border-bright"));
+        assert!(node.contains("root.image-processing()\n            ? 3px"));
+        assert!(node.contains("max(2px, 2px * root.node-scale())"));
+        assert!(node.contains("animate border-color"));
+        assert!(feedback.contains("AppState.canvas-extraction-loading-node-id != \"\""));
+        assert!(feedback.contains("AppState.canvas-split-loading-node-id != \"\""));
+        assert!(feedback.contains("正在提取元素"));
+        assert!(feedback.contains("正在分析当前图片并生成透明 PNG，请稍候"));
+        assert!(feedback.contains("width: min(440px, parent.width - 32px)"));
+        assert!(!feedback.contains("root.node-scale()"));
+    }
+
+    #[test]
     fn infinite_canvas_hides_subpixel_node_details_at_minimum_zoom() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
         let node = page

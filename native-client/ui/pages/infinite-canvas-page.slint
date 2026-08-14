@@ -760,6 +760,13 @@ component CanvasNodeCard {
     in-out property <string> audio-format: "MP3";
     in-out property <string> audio-speed: "1x";
     in-out property <string> audio-instruction: "";
+    in-out property <bool> processing-border-bright: true;
+
+    Timer {
+        interval: 650ms;
+        running: root.image-processing() && !AppState.reduced-motion;
+        triggered => { root.processing-border-bright = !root.processing-border-bright; }
+    }
 
     x: root.pan-x + (root.note.x + (root.note.selected ? AppState.canvas-drag-delta-x : 0)) * 1px * root.zoom-percent / 100;
     y: root.pan-y + (root.note.y + (root.note.selected ? AppState.canvas-drag-delta-y : 0)) * 1px * root.zoom-percent / 100;
@@ -977,14 +984,21 @@ component CanvasNodeCard {
             ? AppTheme.accent.with-alpha(root.note.selected ? 0.10 : 0.045)
             : (root.is-board-image() ? transparent : (root.dark-background ? #292522 : AppTheme.panel));
         border-radius: (root.note.kind == "group" || root.is-board-image() ? 4px : 20px) * root.node-scale();
-        border-width: (root.is-board-image()
-            ? (root.note.selected || node-drag-touch.has-hover ? 2px : 0px)
-            : (root.note.selected || node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover ? 2px : 1px)) * root.node-scale();
-        border-color: root.note.selected
-            ? AppTheme.accent
-            : (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover
-                ? AppTheme.accent.with-alpha(0.78)
-                : (root.note.kind == "group" ? AppTheme.accent.with-alpha(0.55) : #514c48));
+        border-width: root.image-processing()
+            ? 3px
+            : (root.is-board-image()
+                ? (root.note.selected || node-drag-touch.has-hover ? max(2px, 2px * root.node-scale()) : 0px)
+                : (root.note.selected || node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover
+                    ? max(2px, 2px * root.node-scale())
+                    : max(1px, 1px * root.node-scale())));
+        border-color: root.image-processing()
+            ? (AppState.reduced-motion || root.processing-border-bright ? AppTheme.accent : AppTheme.accent.with-alpha(0.42))
+            : (root.note.selected
+                ? AppTheme.accent
+                : (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover
+                    ? AppTheme.accent.with-alpha(0.78)
+                    : (root.note.kind == "group" ? AppTheme.accent.with-alpha(0.55) : #514c48)));
+        animate border-color { duration: AppState.reduced-motion ? 0ms : 600ms; easing: ease-in-out; }
 
         if root.note.kind != "group" && !root.is-board-image() && (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover || AppState.canvas-selected-id == root.note.id || root.connection-source-id != ""): Rectangle {
             x: -5px * root.node-scale();
@@ -2576,6 +2590,58 @@ export component InfiniteCanvasPage {
                 reconnect-started(target-id, start-x, start-y) => { root.begin-reconnect(target-id, start-x, start-y); }
                 reconnect-finished(target-id, end-x, end-y) => { root.finish-reconnect(target-id, end-x, end-y); }
                 selection-focused => { canvas-keyboard.focus(); }
+            }
+
+            processing-feedback := Rectangle {
+                visible: AppState.canvas-extraction-loading-node-id != ""
+                    || AppState.canvas-split-loading-node-id != "";
+                x: max(16px, (parent.width - self.width) / 2);
+                y: 16px;
+                width: min(440px, parent.width - 32px);
+                height: 76px;
+                background: AppTheme.panel.with-alpha(0.98);
+                border-radius: 12px;
+                border-width: 2px;
+                border-color: AppTheme.accent;
+
+                LoadingDots {
+                    x: 14px;
+                    y: (parent.height - self.height) / 2;
+                }
+                Text {
+                    x: 64px;
+                    y: 12px;
+                    width: parent.width - 80px;
+                    height: 24px;
+                    text: AppState.canvas-extraction-loading-node-id != ""
+                        ? (AppState.en ? "Extracting elements" : "正在提取元素")
+                        : (AppState.en ? "Splitting image" : "正在分割图片");
+                    color: AppTheme.text;
+                    font-size: 14px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    wrap: no-wrap;
+                    overflow: elide;
+                }
+                Text {
+                    x: 64px;
+                    y: 38px;
+                    width: parent.width - 80px;
+                    height: 24px;
+                    text: AppState.canvas-extraction-loading-node-id != ""
+                        ? (AppState.en
+                            ? "Analyzing this image and creating transparent PNGs. Please wait."
+                            : "正在分析当前图片并生成透明 PNG，请稍候")
+                        : (AppState.en
+                            ? "Splitting this image evenly. Please wait."
+                            : "正在平均分割当前图片，请稍候");
+                    color: AppTheme.muted;
+                    font-size: 12px;
+                    font-weight: 400;
+                    vertical-alignment: center;
+                    wrap: no-wrap;
+                    overflow: elide;
+                }
             }
 
             if root.marquee-active: Rectangle {
