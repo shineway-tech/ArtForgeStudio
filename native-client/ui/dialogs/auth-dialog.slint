@@ -66,7 +66,11 @@ component AuthTab {
 
 export component AuthDialog {
     function confirm-auth() {
-        if AppState.auth-code == "" {
+        if AppState.auth-email-mode == "password" {
+            if AppState.auth-password != "" && !AppState.auth-busy {
+                AppState.login-or-register();
+            }
+        } else if AppState.auth-code == "" {
             if !AppState.auth-code-busy && !AppState.auth-busy && AppState.auth-countdown <= 0 {
                 AppState.request-code();
             }
@@ -96,6 +100,7 @@ export component AuthDialog {
                         AppState.auth-wechat-login-id = "";
                         AppState.auth-wechat-qr-ready = false;
                         AppState.auth-wechat-scanned = false;
+                        AppState.auth-password = "";
                     }
                 }
             }
@@ -132,6 +137,7 @@ export component AuthDialog {
                             if !AppState.auth-busy && !AppState.auth-wechat-busy {
                                 AppState.auth-method = "wechat";
                                 AppState.auth-error = "";
+                                AppState.auth-password = "";
                                 if !AppState.auth-wechat-qr-ready {
                                     AppState.start-wechat-login();
                                 }
@@ -140,7 +146,7 @@ export component AuthDialog {
                     }
                     AuthTab {
                         horizontal-stretch: 1;
-                        text: AppState.en ? "Email Code Login" : "邮箱验证码登录";
+                        text: AppState.en ? "Email Login" : "邮箱登录";
                         active: AppState.auth-method == "email";
                         clicked => {
                             if !AppState.auth-busy && !AppState.auth-wechat-busy {
@@ -329,9 +335,38 @@ export component AuthDialog {
 
                 if AppState.auth-method == "email": VerticalLayout {
                     spacing: 12px;
+                    HorizontalLayout {
+                        height: 36px;
+                        spacing: 10px;
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        PillButton {
+                            width: 150px;
+                            active: AppState.auth-email-mode == "code";
+                            disabled: AppState.auth-busy || AppState.auth-code-busy;
+                            text: AppState.en ? "Verification Code" : "验证码登录";
+                            clicked => {
+                                AppState.auth-email-mode = "code";
+                                AppState.auth-password = "";
+                                AppState.auth-error = "";
+                            }
+                        }
+                        PillButton {
+                            width: 150px;
+                            active: AppState.auth-email-mode == "password";
+                            disabled: AppState.auth-busy || AppState.auth-code-busy;
+                            text: AppState.en ? "Password" : "密码登录";
+                            clicked => {
+                                AppState.auth-email-mode = "password";
+                                AppState.auth-error = "";
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                    }
                     Text {
                         height: 32px;
-                        text: AppState.en ? "Use your email to continue" : "使用邮箱验证码登录，首次登录将自动注册";
+                        text: AppState.auth-email-mode == "password"
+                            ? (AppState.en ? "Sign in to an existing account with your password" : "使用邮箱和密码登录已有账号")
+                            : (AppState.en ? "Use an email code to continue; first sign-in creates an account" : "使用邮箱验证码登录，首次登录将自动注册");
                         color: AppTheme.muted;
                         font-size: 13px;
                         vertical-alignment: center;
@@ -343,7 +378,7 @@ export component AuthDialog {
                         required: true;
                         accepted => { root.confirm-auth(); }
                     }
-                    Rectangle {
+                    if AppState.auth-email-mode == "code": Rectangle {
                         height: 78px;
                         background: transparent;
                         Text { x: 0px; y: 0px; text: AppState.en ? "Code" : "验证码"; color: AppTheme.text; font-size: AppState.settings-font-size * 1px; }
@@ -388,6 +423,14 @@ export component AuthDialog {
                             clicked => { AppState.request-code(); }
                         }
                     }
+                    if AppState.auth-email-mode == "password": Field {
+                        label: AppState.en ? "Password" : "密码";
+                        placeholder: AppState.en ? "Enter password" : "请输入密码";
+                        value <=> AppState.auth-password;
+                        secret: true;
+                        required: true;
+                        accepted => { root.confirm-auth(); }
+                    }
                     AgreementChoice {
                         required: AppState.auth-user-terms-required;
                         title: AppState.auth-user-terms-title;
@@ -421,7 +464,11 @@ export component AuthDialog {
                         PillButton {
                             horizontal-stretch: 1;
                             disabled: AppState.auth-busy;
-                            text: AppState.auth-busy ? (AppState.en ? "Signing in..." : "登录中...") : (AppState.en ? "Login / Sign Up" : "登录/注册");
+                            text: AppState.auth-busy
+                                ? (AppState.en ? "Signing in..." : "登录中...")
+                                : (AppState.auth-email-mode == "password"
+                                    ? (AppState.en ? "Sign In" : "登录")
+                                    : (AppState.en ? "Login / Sign Up" : "登录/注册"));
                             primary: true;
                             clicked => { AppState.login-or-register(); }
                         }

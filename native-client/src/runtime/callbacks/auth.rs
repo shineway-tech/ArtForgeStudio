@@ -66,6 +66,7 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
             };
             let state = app.global::<AppState>();
             if state.get_auth_busy() || state.get_auth_code_busy() || state.get_auth_countdown() > 0
+                || state.get_auth_email_mode().as_str() != "code"
             {
                 return;
             }
@@ -174,12 +175,28 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
                 return;
             }
             let email = state.get_auth_email().trim().to_ascii_lowercase();
-            let code = state.get_auth_code().trim().to_string();
+            let login_mode = state.get_auth_email_mode().to_string();
+            let credential = if login_mode == "password" {
+                state.get_auth_password().to_string()
+            } else {
+                state.get_auth_code().trim().to_string()
+            };
             if !valid_email(&email) {
                 state.set_auth_error("请输入正确的邮箱地址".into());
                 return;
             }
-            if code.len() != 6 || !code.chars().all(|value| value.is_ascii_digit()) {
+            if login_mode == "password" {
+                if credential.trim().is_empty() {
+                    state.set_auth_error("请输入密码".into());
+                    return;
+                }
+                if credential.chars().count() > 256 {
+                    state.set_auth_error("密码长度不能超过 256 个字符".into());
+                    return;
+                }
+            } else if credential.len() != 6
+                || !credential.chars().all(|value| value.is_ascii_digit())
+            {
                 state.set_auth_error("请输入 6 位数字验证码".into());
                 return;
             }
@@ -211,14 +228,20 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
             let api = AuthApi::new(backend.api.clone());
             let context = context.clone();
             let (sender, receiver) = mpsc::channel();
+            let worker_login_mode = login_mode.clone();
             std::thread::spawn(move || {
-                let result = api.login_response(&email, &code, &acceptances);
+                let result = if worker_login_mode == "password" {
+                    api.password_login_response(&email, &credential, &acceptances)
+                } else {
+                    api.login_response(&email, &credential, &acceptances)
+                };
                 let _ = sender.send(result);
             });
             poll_login_result(
                 app.as_weak(),
                 context,
                 auth_operation_epoch,
+                login_mode,
                 Rc::new(RefCell::new(Some(receiver))),
             );
         });
@@ -242,6 +265,7 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
             state.set_offline_mode(true);
             state.set_session_state("offline".into());
             state.set_auth_open(false);
+            state.set_auth_password("".into());
             state.set_auth_error("".into());
             navigate_to_with_store(&app, &context.store.borrow(), "assets");
         });
@@ -1188,12 +1212,19 @@ fn poll_login_result(
     app_weak: Weak<AppWindow>,
     context: AppContext,
     auth_operation_epoch: u64,
+    login_mode: String,
     receiver: Rc<RefCell<Option<mpsc::Receiver<LoginResult>>>>,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
         let result = match poll_receiver(&receiver) {
             ReceiverPoll::Pending => {
-                poll_login_result(app_weak, context, auth_operation_epoch, receiver);
+                poll_login_result(
+                    app_weak,
+                    context,
+                    auth_operation_epoch,
+                    login_mode,
+                    receiver,
+                );
                 return;
             }
             ReceiverPoll::Ready(result) => result,
@@ -1203,6 +1234,7 @@ fn poll_login_result(
                     if auth_operation_is_current(&context, auth_operation_epoch)
                         && state.get_auth_open()
                         && state.get_auth_method().as_str() == "email"
+                        && state.get_auth_email_mode().as_str() == login_mode.as_str()
                         && state.get_session_state().as_str() == "authenticating"
                     {
                         state.set_auth_busy(false);
@@ -1220,6 +1252,7 @@ fn poll_login_result(
         if !auth_operation_is_current(&context, auth_operation_epoch)
             || !state.get_auth_open()
             || state.get_auth_method().as_str() != "email"
+            || state.get_auth_email_mode().as_str() != login_mode.as_str()
             || state.get_session_state().as_str() != "authenticating"
         {
             return;
@@ -1232,7 +1265,8 @@ fn poll_login_result(
                 };
                 let current = auth_operation_is_current(&context, auth_operation_epoch)
                     && state.get_auth_open()
-                    && state.get_auth_method().as_str() == "email";
+                    && state.get_auth_method().as_str() == "email"
+                    && state.get_auth_email_mode().as_str() == login_mode.as_str();
                 match install_login_if_current(current, || {
                     backend
                         .api
@@ -1252,7 +1286,7 @@ fn poll_login_result(
             }
             Err(error) => {
                 state.set_session_state("signed_out".into());
-                apply_auth_error(&app, error);
+                apply_email_login_error(&app, &login_mode, error);
             }
         }
     });
@@ -1281,6 +1315,7 @@ fn finish_login(
     state.set_email_mask(response.user.email_masked.into());
     state.set_nickname(response.user.nickname.unwrap_or_default().into());
     state.set_auth_code("".into());
+    state.set_auth_password("".into());
     state.set_auth_error("".into());
     state.set_auth_open(false);
     state.set_agreement_update_busy(false);
@@ -2258,6 +2293,23 @@ fn apply_auth_error(app: &AppWindow, error: ApiError) {
     state.set_auth_error(message.into());
 }
 
+fn apply_email_login_error(app: &AppWindow, login_mode: &str, error: ApiError) {
+    if login_mode == "password"
+        && matches!(
+            &error,
+            ApiError::Http {
+                status: 404 | 405 | 501,
+                ..
+            }
+        )
+    {
+        app.global::<AppState>()
+            .set_auth_error("密码登录服务暂未开放，请使用验证码登录".into());
+        return;
+    }
+    apply_auth_error(app, error);
+}
+
 fn update_required_message(error: &ApiError) -> String {
     format!(
         "当前客户端版本过旧，在线功能要求至少升级到 {}",
@@ -2327,6 +2379,7 @@ pub(super) fn sign_out_locally(
     state.set_offline_available(false);
     state.set_auth_open(true);
     state.set_auth_code("".into());
+    state.set_auth_password("".into());
     state.set_auth_wechat_login_id("".into());
     state.set_auth_wechat_qr_ready(false);
     state.set_auth_wechat_scanned(false);

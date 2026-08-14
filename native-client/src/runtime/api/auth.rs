@@ -98,6 +98,19 @@ struct LoginRequest<'a> {
 }
 
 #[derive(Serialize)]
+struct PasswordLoginRequest<'a> {
+    email: &'a str,
+    password: &'a str,
+    device_id: &'a str,
+    device_name: &'a str,
+    platform: &'a str,
+    app_version: &'a str,
+    agreement_acceptances: &'a [AgreementAcceptance],
+}
+
+const PASSWORD_LOGIN_PATH: &str = "/v1/auth/password/login";
+
+#[derive(Serialize)]
 struct WechatLoginStartRequest<'a> {
     device_id: &'a str,
     device_name: &'a str,
@@ -183,6 +196,33 @@ impl AuthApi {
         let response = self
             .client
             .public_json(Method::POST, "/v1/auth/email/login", Some(body))?;
+        let response: ApiResponse<LoginResponse> = response;
+        Ok(response.data)
+    }
+
+    pub(crate) fn password_login_response(
+        &self,
+        email: &str,
+        password: &str,
+        acceptances: &[AgreementAcceptance],
+    ) -> Result<LoginResponse, ApiError> {
+        let device = self.client.device();
+        let body = serde_json::to_value(PasswordLoginRequest {
+            email,
+            password,
+            device_id: &device.id,
+            device_name: &device.name,
+            platform: &device.platform,
+            app_version: self.client.app_version(),
+            agreement_acceptances: acceptances,
+        })
+        .map_err(|error| ApiError::Protocol {
+            message: error.to_string(),
+            request_id: None,
+        })?;
+        let response = self
+            .client
+            .public_json(Method::POST, PASSWORD_LOGIN_PATH, Some(body))?;
         let response: ApiResponse<LoginResponse> = response;
         Ok(response.data)
     }
@@ -352,5 +392,29 @@ impl AuthApi {
                 access_token,
             )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn password_login_request_never_serializes_a_verification_code() {
+        let body = serde_json::to_value(PasswordLoginRequest {
+            email: "artist@example.com",
+            password: "correct horse battery staple",
+            device_id: "device-1",
+            device_name: "test-device",
+            platform: "windows",
+            app_version: "1.0.18",
+            agreement_acceptances: &[],
+        })
+        .expect("password login request should serialize");
+
+        assert_eq!(body["email"], "artist@example.com");
+        assert_eq!(body["password"], "correct horse battery staple");
+        assert!(body.get("code").is_none());
+        assert_eq!(PASSWORD_LOGIN_PATH, "/v1/auth/password/login");
     }
 }

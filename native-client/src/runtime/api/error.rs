@@ -102,6 +102,12 @@ impl ApiError {
             Some("email_code_invalid" | "verification_code_invalid") => {
                 "验证码不正确或已失效".to_string()
             }
+            Some("password_invalid" | "email_password_invalid" | "invalid_credentials") => {
+                "邮箱或密码不正确".to_string()
+            }
+            Some("password_login_unavailable") => {
+                "密码登录服务暂未开放，请使用验证码登录".to_string()
+            }
             Some("email_code_rate_limited" | "rate_limited") => {
                 "操作过于频繁，请稍后再试".to_string()
             }
@@ -398,6 +404,18 @@ mod tests {
             );
         }
         assert!(!http_error("invitation_code_invalid").is_invitation_code_already_submitted());
+    }
+
+    #[test]
+    fn password_login_errors_have_actionable_messages() {
+        assert_eq!(
+            http_error("invalid_credentials").user_message(),
+            "邮箱或密码不正确"
+        );
+        assert_eq!(
+            http_error("password_login_unavailable").user_message(),
+            "密码登录服务暂未开放，请使用验证码登录"
+        );
     }
 
     #[test]
