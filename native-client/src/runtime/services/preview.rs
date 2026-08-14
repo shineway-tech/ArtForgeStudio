@@ -59,7 +59,10 @@ impl PreviewPurpose {
         match self {
             Self::Reference | Self::Toolbox => 256,
             Self::Gallery => 384,
-            Self::Canvas => 512,
+            // Canvas images can be resized and zoomed well beyond thumbnail size.
+            // Keep enough source pixels to avoid magnifying a small cached preview,
+            // while still bounding memory usage when many images share the canvas.
+            Self::Canvas => 1024,
             Self::Showcase => 1024,
             Self::Viewer => 2048,
         }
@@ -1068,7 +1071,7 @@ mod tests {
     fn preview_purposes_keep_ui_images_bounded() {
         assert_eq!(PreviewPurpose::Reference.longest_edge(), 256);
         assert_eq!(PreviewPurpose::Gallery.longest_edge(), 384);
-        assert_eq!(PreviewPurpose::Canvas.longest_edge(), 512);
+        assert_eq!(PreviewPurpose::Canvas.longest_edge(), 1024);
         assert_eq!(PreviewPurpose::Viewer.longest_edge(), 2048);
     }
 
