@@ -121,18 +121,34 @@ function Build-Client {
 function Package-Windows {
     $outDir = Join-Path $DistRoot "$AppName-windows-x64"
     $zipPath = Join-Path $DistRoot "${AppName}_${ClientVersion}_windows_x64_portable.zip"
+    $existingData = Join-Path $outDir "data"
+    $dataBackupRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("${AppName}-package-data-" + [guid]::NewGuid().ToString("N"))
+    $dataBackup = Join-Path $dataBackupRoot "data"
+    $hasExistingData = Test-Path -LiteralPath $existingData
 
-    Build-Client
+    if ($hasExistingData) {
+        Copy-DirectoryContents -Source $existingData -Destination $dataBackup
+    }
 
-    Remove-DirectorySafe -Path $outDir -AllowedRoot $DistRoot
-    New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+    try {
+        Build-Client
 
-    Copy-Item -LiteralPath (Join-Path $Root "target/release/$AppName.exe") -Destination (Join-Path $outDir "$AppName.exe") -Force
-    Copy-ClientAssets -Destination (Join-Path $outDir "assets")
-    New-DataDirs -PackageRoot $outDir
-    New-ZipFromDirectory -Source $outDir -ZipPath $zipPath
+        Remove-DirectorySafe -Path $outDir -AllowedRoot $DistRoot
+        New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
-    Write-Host "Windows package: $zipPath"
+        Copy-Item -LiteralPath (Join-Path $Root "target/release/$AppName.exe") -Destination (Join-Path $outDir "$AppName.exe") -Force
+        Copy-ClientAssets -Destination (Join-Path $outDir "assets")
+        New-DataDirs -PackageRoot $outDir
+        New-ZipFromDirectory -Source $outDir -ZipPath $zipPath
+
+        Write-Host "Windows package: $zipPath"
+    }
+    finally {
+        if ($hasExistingData) {
+            Copy-DirectoryContents -Source $dataBackup -Destination (Join-Path $outDir "data")
+            Remove-DirectorySafe -Path $dataBackupRoot -AllowedRoot ([System.IO.Path]::GetTempPath())
+        }
+    }
 }
 
 function Package-Macos {
