@@ -21,6 +21,36 @@ fn generation_download_staging_path(
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
+fn report_unhandled_terminal_failures(
+    sender: &mpsc::Sender<GenerationOutcome>,
+    detail: &GenerationTaskDetail,
+    expected_count: usize,
+    handled_success: &BTreeSet<usize>,
+    handled_failure: &mut BTreeSet<usize>,
+    fallback: &str,
+) {
+    if !detail.terminal()
+        || (detail.failure.is_none() && !detail.status.eq_ignore_ascii_case("failed"))
+    {
+        return;
+    }
+    let reason = detail
+        .failure
+        .as_ref()
+        .map(TaskFailure::generation_message)
+        .unwrap_or_else(|| fallback.to_string());
+    let reported = handled_success.len() + handled_failure.len();
+    let missing = expected_count.saturating_sub(reported);
+    let time = Local::now().format("%Y-%m-%d %H:%M").to_string();
+    for synthetic_index in 0..missing {
+        handled_failure.insert(usize::MAX.saturating_sub(synthetic_index));
+        let _ = sender.send(GenerationOutcome::ImageFailure {
+            reason: reason.clone(),
+            time: time.clone(),
+        });
+    }
+}
+
 pub(super) fn reference_fingerprints(paths: &[PathBuf]) -> Result<(Vec<String>, Vec<u64>)> {
     let mut sha256 = Vec::with_capacity(paths.len());
     let mut sizes = Vec::with_capacity(paths.len());
@@ -397,6 +427,7 @@ pub(super) fn start_backend_generation(
             completed_count: 0,
             success_count: 0,
             failed_count: 0,
+            last_failure_reason: None,
             progress: 1,
             eta: 0,
             latest_success_id: None,
@@ -667,7 +698,7 @@ pub(super) fn start_backend_generation(
                     let reason = item
                         .failure
                         .as_ref()
-                        .map(|failure| failure.message.clone())
+                        .map(TaskFailure::generation_message)
                         .unwrap_or_else(|| "服务端未能生成该图片".to_string());
                     let _ = sender.send(GenerationOutcome::ImageFailure {
                         reason,
@@ -676,6 +707,14 @@ pub(super) fn start_backend_generation(
                 }
             }
             if detail.terminal() {
+                report_unhandled_terminal_failures(
+                    &sender,
+                    &detail,
+                    count.max(1) as usize,
+                    &handled_success,
+                    &mut handled_failure,
+                    "服务端未能生成该图片",
+                );
                 let expected_success_count = detail.success_count.max(0) as usize;
                 if !matches!(
                     update_pending_generation_scoped(
@@ -878,6 +917,7 @@ pub(super) fn start_backend_image_edit(
             completed_count: 0,
             success_count: 0,
             failed_count: 0,
+            last_failure_reason: None,
             progress: 1,
             eta: 0,
             latest_success_id: None,
@@ -1107,6 +1147,7 @@ pub(super) fn start_backend_upscale(
             completed_count: 0,
             success_count: 0,
             failed_count: 0,
+            last_failure_reason: None,
             progress: 1,
             eta: 0,
             latest_success_id: None,
@@ -1353,7 +1394,7 @@ pub(super) fn start_backend_upscale(
                     let reason = item
                         .failure
                         .as_ref()
-                        .map(|failure| failure.message.clone())
+                        .map(TaskFailure::generation_message)
                         .unwrap_or_else(|| "服务端未能放大该图片".to_string());
                     let _ = sender.send(GenerationOutcome::ImageFailure {
                         reason,
@@ -1362,6 +1403,14 @@ pub(super) fn start_backend_upscale(
                 }
             }
             if detail.terminal() {
+                report_unhandled_terminal_failures(
+                    &sender,
+                    &detail,
+                    1,
+                    &handled_success,
+                    &mut handled_failure,
+                    "服务端未能放大该图片",
+                );
                 let expected_success_count = detail.success_count.max(0) as usize;
                 if !matches!(
                     update_pending_generation_scoped(
@@ -1912,9 +1961,7 @@ fn cleanup_orphaned_input_directory(
     let Ok(directory_metadata) = fs::symlink_metadata(directory) else {
         return;
     };
-    if !directory_metadata.file_type().is_dir()
-        || directory_metadata.file_type().is_symlink()
-    {
+    if !directory_metadata.file_type().is_dir() || directory_metadata.file_type().is_symlink() {
         return;
     }
     let Ok(entries) = fs::read_dir(directory) else {
@@ -1927,9 +1974,7 @@ fn cleanup_orphaned_input_directory(
         }
         let stale = fs::symlink_metadata(&path)
             .ok()
-            .filter(|metadata| {
-                metadata.file_type().is_file() && !metadata.file_type().is_symlink()
-            })
+            .filter(|metadata| metadata.file_type().is_file() && !metadata.file_type().is_symlink())
             .and_then(|metadata| metadata.modified().ok())
             .and_then(|modified| now.duration_since(modified).ok())
             .is_some_and(|age| age >= ORPHANED_GENERATION_INPUT_GRACE);
@@ -2276,6 +2321,7 @@ fn resume_pending_generation(
             completed_count: saved_count,
             success_count: saved_count,
             failed_count: 0,
+            last_failure_reason: None,
             progress: if saved_count > 0 { 50 } else { 1 },
             eta: 0,
             latest_success_id: None,
@@ -2757,13 +2803,21 @@ fn run_recovered_generation_worker(
                     reason: item
                         .failure
                         .as_ref()
-                        .map(|value| value.message.clone())
+                        .map(TaskFailure::generation_message)
                         .unwrap_or_else(|| "服务端未能生成该图片".to_string()),
                     time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
                 });
             }
         }
         if detail.terminal() {
+            report_unhandled_terminal_failures(
+                &sender,
+                &detail,
+                record.count.max(1) as usize,
+                &handled_success,
+                &mut handled_failure,
+                "服务端未能生成该图片",
+            );
             let expected = detail.success_count.max(0) as usize;
             if !matches!(
                 update_pending_generation_scoped(
@@ -2802,6 +2856,57 @@ fn run_recovered_generation_worker(
 #[cfg(test)]
 mod image_edit_recovery_tests {
     use super::*;
+
+    fn failed_generation_task(code: &str, message: &str) -> GenerationTaskDetail {
+        GenerationTaskDetail {
+            id: "failed-task".to_string(),
+            status: "failed".to_string(),
+            progress_percent: 100,
+            success_count: 0,
+            failure_count: 2,
+            failure: Some(TaskFailure {
+                code: code.to_string(),
+                message: message.to_string(),
+            }),
+            prompt: None,
+            result_prompt: None,
+            request: serde_json::Value::Null,
+            model: None,
+            quality: "1K".to_string(),
+            requested_count: 2,
+            task_type: "image_generation".to_string(),
+            items: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn task_level_policy_block_reports_every_missing_image() {
+        let (sender, receiver) = mpsc::channel();
+        let detail = failed_generation_task(
+            "content_policy_violation",
+            "生成内容违反了关于裸露内容的防护规则",
+        );
+        let mut handled_failure = BTreeSet::new();
+
+        report_unhandled_terminal_failures(
+            &sender,
+            &detail,
+            2,
+            &BTreeSet::new(),
+            &mut handled_failure,
+            "服务端未能生成该图片",
+        );
+
+        let outcomes = receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(outcomes.len(), 2);
+        for outcome in outcomes {
+            let GenerationOutcome::ImageFailure { reason, .. } = outcome else {
+                panic!("expected an image failure");
+            };
+            assert!(reason.contains("上游安全系统拦截"));
+            assert!(reason.contains("不返还积分"));
+        }
+    }
 
     fn test_png_bytes() -> Vec<u8> {
         let image = image::RgbaImage::from_pixel(2, 2, image::Rgba([12, 34, 56, 255]));

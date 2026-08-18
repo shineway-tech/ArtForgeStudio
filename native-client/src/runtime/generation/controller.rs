@@ -547,12 +547,24 @@ pub(super) fn set_stream_final_status(
     category: &str,
     success_count: i32,
     failed_count: i32,
+    failure_reason: Option<&str>,
 ) {
     if failed_count <= 0 {
         set_generation_status_for_category(context, app, category, "生成成功");
     } else if success_count > 0 {
-        set_generation_status_for_category(context, app, category, "部分生成失败");
+        let status = failure_reason
+            .filter(|reason| !reason.trim().is_empty())
+            .map(|reason| format!("部分生成失败：{reason}"))
+            .unwrap_or_else(|| "部分生成失败".to_string());
+        set_generation_status_for_category(context, app, category, &status);
     } else {
-        set_generation_status_for_category(context, app, category, "生成失败");
+        set_generation_status_for_category(
+            context,
+            app,
+            category,
+            failure_reason
+                .filter(|reason| !reason.trim().is_empty())
+                .unwrap_or("生成失败"),
+        );
     }
 }

@@ -176,83 +176,90 @@ pub(super) fn poll_generation_stream(
                 };
                 match saved_result {
                     Ok((conversation_image, source_path, generated_id)) => {
-                    if let Some(delivery) = delivery {
-                        let saved = pending_delivery_saved(
-                            &session_scope.owner_user_id,
-                            session_scope.auth_epoch,
-                            &delivery.client_request_id,
-                            &delivery,
-                            &source_path,
-                        );
-                        if matches!(saved, Ok(true)) {
-                            acknowledge_delivery_after_local_save(
-                                app.as_weak(),
-                                context.clone(),
-                                session_scope.clone(),
-                                delivery,
+                        if let Some(delivery) = delivery {
+                            let saved = pending_delivery_saved(
+                                &session_scope.owner_user_id,
+                                session_scope.auth_epoch,
+                                &delivery.client_request_id,
+                                &delivery,
+                                &source_path,
+                            );
+                            if matches!(saved, Ok(true)) {
+                                acknowledge_delivery_after_local_save(
+                                    app.as_weak(),
+                                    context.clone(),
+                                    session_scope.clone(),
+                                    delivery,
+                                );
+                            }
+                        }
+                        if destination != GenerationDestination::Gallery {
+                            cleanup_failed_delivery_staging(Path::new(&local_path));
+                        }
+                        if destination == GenerationDestination::Gallery {
+                            state.set_asset_category_filter("all".into());
+                        }
+                        if create_conversation {
+                            finish_conversation_placeholder(
+                                &state,
+                                &conversation_id,
+                                Some(conversation_image),
                             );
                         }
-                    }
-                    if destination != GenerationDestination::Gallery {
-                        cleanup_failed_delivery_staging(Path::new(&local_path));
-                    }
-                    if destination == GenerationDestination::Gallery {
-                        state.set_asset_category_filter("all".into());
-                    }
-                    if create_conversation {
-                        finish_conversation_placeholder(
-                            &state,
-                            &conversation_id,
-                            Some(conversation_image),
-                        );
-                    }
-                    if let Some(active) = mark_active_generation_image_completed(
-                        &context,
-                        &app,
-                        &category,
-                        &task_id,
-                        true,
-                        (!generated_id.is_empty()).then_some(generated_id),
-                    ) {
-                        if active.loading_count > 0 {
-                            set_generation_status_for_category(
-                                &context,
-                                &app,
-                                &category,
-                                "正在生成...",
-                            );
+                        if let Some(active) = mark_active_generation_image_completed(
+                            &context,
+                            &app,
+                            &category,
+                            &task_id,
+                            true,
+                            (!generated_id.is_empty()).then_some(generated_id),
+                            None,
+                        ) {
+                            if active.loading_count > 0 {
+                                set_generation_status_for_category(
+                                    &context,
+                                    &app,
+                                    &category,
+                                    "正在生成...",
+                                );
+                            }
                         }
-                    }
                     }
                     Err(error) => {
-                    // The recovery record still has the server item and can download it again.
-                    // Remove only this app-managed staging file so a local save failure does not
-                    // accumulate full-size downloads indefinitely.
-                    cleanup_failed_delivery_staging(Path::new(&local_path));
-                    let reason = zh_error(&error.to_string());
-                    if destination == GenerationDestination::Gallery {
-                        let time = Local::now().format("%Y-%m-%d %H:%M").to_string();
-                        add_stream_failure_item(
+                        // The recovery record still has the server item and can download it again.
+                        // Remove only this app-managed staging file so a local save failure does not
+                        // accumulate full-size downloads indefinitely.
+                        cleanup_failed_delivery_staging(Path::new(&local_path));
+                        let reason = zh_error(&error.to_string());
+                        if destination == GenerationDestination::Gallery {
+                            let time = Local::now().format("%Y-%m-%d %H:%M").to_string();
+                            add_stream_failure_item(
+                                &app,
+                                &store,
+                                &raw_prompt,
+                                &category,
+                                &mode,
+                                &ratio,
+                                &quality,
+                                &image_model,
+                                &result_origin,
+                                &conversation_id,
+                                &reason,
+                                &time,
+                                &generation_reference_paths,
+                            );
+                        } else {
+                            set_generation_status_for_category(&context, &app, &category, &reason);
+                        }
+                        mark_active_generation_image_completed(
+                            &context,
                             &app,
-                            &store,
-                            &raw_prompt,
                             &category,
-                            &mode,
-                            &ratio,
-                            &quality,
-                            &image_model,
-                            &result_origin,
-                            &conversation_id,
-                            &reason,
-                            &time,
-                            &generation_reference_paths,
+                            &task_id,
+                            false,
+                            None,
+                            Some(&reason),
                         );
-                    } else {
-                        set_generation_status_for_category(&context, &app, &category, &reason);
-                    }
-                    mark_active_generation_image_completed(
-                        &context, &app, &category, &task_id, false, None,
-                    );
                     }
                 }
             }
@@ -275,7 +282,13 @@ pub(super) fn poll_generation_stream(
                     );
                 }
                 if let Some(active) = mark_active_generation_image_completed(
-                    &context, &app, &category, &task_id, false, None,
+                    &context,
+                    &app,
+                    &category,
+                    &task_id,
+                    false,
+                    None,
+                    Some(&reason),
                 ) {
                     if active.loading_count > 0 {
                         set_generation_status_for_category(
@@ -311,6 +324,7 @@ pub(super) fn poll_generation_stream(
                     &category,
                     task.success_count,
                     task.failed_count,
+                    task.last_failure_reason.as_deref(),
                 );
                 sync_generation_state_for_current_category(&context, &app);
                 // open-viewer-after-finish
@@ -393,6 +407,7 @@ pub(super) fn poll_generation_stream(
                     &category,
                     task.success_count,
                     task.failed_count + remaining,
+                    Some(&reason),
                 );
                 sync_generation_state_for_current_category(&context, &app);
                 if destination == GenerationDestination::Gallery {

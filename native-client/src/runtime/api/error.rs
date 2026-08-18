@@ -1,5 +1,91 @@
 use serde_json::Value;
 
+pub(crate) fn is_generation_content_policy_blocked(code: &str, message: &str) -> bool {
+    let code = code.trim().to_ascii_lowercase();
+    let message = message.trim().to_lowercase();
+    let blocked_code = [
+        "content_policy_violation",
+        "content_policy_blocked",
+        "content_filter",
+        "content_filtered",
+        "safety_blocked",
+        "moderation_blocked",
+        "prompt_blocked",
+        "image_safety",
+        "sensitive_content",
+        "policy_violation",
+        "prohibited_content",
+        "responsible_ai_policy_violation",
+    ]
+    .iter()
+    .any(|marker| code == *marker)
+        || (["content", "safety", "moderation", "policy"]
+            .iter()
+            .any(|marker| code.contains(marker))
+            && ["blocked", "filtered", "violation", "rejected"]
+                .iter()
+                .any(|marker| code.contains(marker)));
+    let blocked_message = [
+        "violated the content policy",
+        "violates the content policy",
+        "blocked by the safety",
+        "blocked by safety",
+        "content was filtered",
+        "content has been filtered",
+        "rejected by the safety system",
+        "blocked due to the safety policy",
+        "violates the safety policy",
+        "内容安全规则",
+        "内容政策",
+        "安全审核未通过",
+        "内容审核未通过",
+        "违反规则",
+        "违反了关于",
+        "触发了安全",
+        "触发安全",
+    ]
+    .iter()
+    .any(|marker| message.contains(marker));
+
+    blocked_code || blocked_message
+}
+
+pub(crate) fn generation_content_policy_message(message: &str) -> String {
+    let message = message.to_lowercase();
+    let policy = if [
+        "裸露",
+        "色情",
+        "情色",
+        "性内容",
+        "nudity",
+        "sexual",
+        "porn",
+        "adult content",
+        "nsfw",
+    ]
+    .iter()
+    .any(|marker| message.contains(marker))
+    {
+        "裸露、色情或情色内容"
+    } else if ["未成年人", "儿童色情", "minor", "child sexual"]
+        .iter()
+        .any(|marker| message.contains(marker))
+    {
+        "未成年人安全内容"
+    } else if ["暴力", "血腥", "violence", "gore"]
+        .iter()
+        .any(|marker| message.contains(marker))
+    {
+        "暴力或血腥内容"
+    } else {
+        "内容安全规则"
+    };
+
+    format!(
+        "生成失败：提示词或参考图可能涉及{policy}，已被上游安全系统拦截。请调整内容后重试；此类违规拦截不返还积分。"
+    )
+}
+
 #[derive(Clone, Debug, thiserror::Error)]
 pub(crate) enum ApiError {
     #[error("网络请求失败：{message}")]
@@ -346,6 +432,12 @@ impl ApiError {
     }
 
     pub(crate) fn generation_message(&self) -> String {
+        if let Self::Http { code, message, .. } = self {
+            if is_generation_content_policy_blocked(code, message) {
+                return generation_content_policy_message(message);
+            }
+        }
+
         match self.code() {
             Some("insufficient_credits") => "积分不足，请充值后重试".to_string(),
             Some("membership_quality_forbidden") => {
@@ -626,6 +718,48 @@ mod tests {
         assert!(http_error("image_cutout_dimensions_too_large")
             .generation_message()
             .contains("调整图片尺寸"));
+    }
+
+    #[test]
+    fn generation_http_content_policy_failure_has_no_refund_message() {
+        let error = ApiError::Http {
+            status: 400,
+            code: "provider_rejected".to_string(),
+            message: "生成的图片可能违反了关于裸露、色情或情色内容的防护规则".to_string(),
+            request_id: Some("request-1".to_string()),
+            details: None,
+        };
+
+        let message = error.generation_message();
+        assert!(message.contains("上游安全系统拦截"));
+        assert!(message.contains("裸露、色情或情色内容"));
+        assert!(message.contains("不返还积分"));
+    }
+
+    #[test]
+    fn generation_http_content_filter_outage_is_not_a_policy_block() {
+        let error = ApiError::Http {
+            status: 503,
+            code: "content_filter_service_error".to_string(),
+            message: "内容审核服务暂时不可用，请稍后重试".to_string(),
+            request_id: Some("request-1".to_string()),
+            details: None,
+        };
+
+        assert_eq!(error.generation_message(), "服务暂时异常，请稍后重试");
+    }
+
+    #[test]
+    fn generation_http_safety_service_outage_is_not_a_policy_block() {
+        let error = ApiError::Http {
+            status: 503,
+            code: "provider_service_error".to_string(),
+            message: "Safety system temporarily unavailable".to_string(),
+            request_id: Some("request-1".to_string()),
+            details: None,
+        };
+
+        assert_eq!(error.generation_message(), "服务暂时异常，请稍后重试");
     }
 
     #[test]

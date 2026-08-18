@@ -316,6 +316,7 @@ struct ActiveGeneration {
     completed_count: i32,
     success_count: i32,
     failed_count: i32,
+    last_failure_reason: Option<String>,
     progress: i32,
     eta: i32,
     latest_success_id: Option<String>,
@@ -338,6 +339,7 @@ impl Default for ActiveGeneration {
             completed_count: 0,
             success_count: 0,
             failed_count: 0,
+            last_failure_reason: None,
             progress: 0,
             eta: 0,
             latest_success_id: None,
@@ -354,7 +356,9 @@ impl Default for ActiveGeneration {
 enum GenerationDestination {
     #[default]
     Gallery,
-    Canvas { source_node_id: String },
+    Canvas {
+        source_node_id: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

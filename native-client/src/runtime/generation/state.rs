@@ -233,6 +233,7 @@ pub(super) fn mark_active_generation_image_completed(
     task_id: &str,
     success: bool,
     success_id: Option<String>,
+    failure_reason: Option<&str>,
 ) -> Option<ActiveGeneration> {
     let active = {
         let mut tasks = context.generations.active.borrow_mut();
@@ -247,6 +248,9 @@ pub(super) fn mark_active_generation_image_completed(
             task.latest_success_id = success_id;
         } else {
             task.failed_count += 1;
+            if let Some(reason) = failure_reason.filter(|value| !value.trim().is_empty()) {
+                task.last_failure_reason = Some(reason.to_string());
+            }
         }
         let total = task.total_count.max(1);
         task.progress = (8 + task.completed_count * 88 / total).clamp(1, 96);

@@ -1,6 +1,9 @@
-use super::{ApiClient, ApiError, SessionScope};
 use super::super::{
     create_atomic_temporary_file, ensure_managed_subdirectory, sync_parent_directory,
+};
+use super::{
+    generation_content_policy_message, is_generation_content_policy_blocked, ApiClient, ApiError,
+    SessionScope,
 };
 use reqwest::blocking::multipart::{Form, Part};
 use reqwest::Method;
@@ -20,6 +23,24 @@ const REFERENCE_TRANSFER_TIMEOUT: Duration = Duration::from_secs(120);
 pub(crate) struct TaskFailure {
     pub(crate) code: String,
     pub(crate) message: String,
+}
+
+impl TaskFailure {
+    pub(crate) fn is_content_policy_blocked(&self) -> bool {
+        is_generation_content_policy_blocked(&self.code, &self.message)
+    }
+
+    pub(crate) fn generation_message(&self) -> String {
+        if !self.is_content_policy_blocked() {
+            return if self.message.trim().is_empty() {
+                "服务端未能生成该图片".to_string()
+            } else {
+                self.message.trim().to_string()
+            };
+        }
+
+        generation_content_policy_message(&self.message)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -967,5 +988,55 @@ mod tests {
         assert_eq!(body["quality"], "2K");
         assert!(body.get("count").is_none());
         assert!(body.get("reference_file_ids").is_none());
+    }
+
+    #[test]
+    fn content_policy_failure_is_classified_from_provider_code() {
+        let failure = TaskFailure {
+            code: "content_policy_violation".to_string(),
+            message: "The generated image may violate safeguards about nudity or sexual content"
+                .to_string(),
+        };
+
+        assert!(failure.is_content_policy_blocked());
+        let message = failure.generation_message();
+        assert!(message.contains("裸露、色情或情色内容"));
+        assert!(message.contains("不返还积分"));
+    }
+
+    #[test]
+    fn content_policy_failure_is_classified_from_clear_upstream_message() {
+        let failure = TaskFailure {
+            code: "provider_rejected".to_string(),
+            message: "生成的图片可能违反了关于裸露、色情或情色内容的防护规则".to_string(),
+        };
+
+        assert!(failure.is_content_policy_blocked());
+        assert!(failure.generation_message().contains("上游安全系统拦截"));
+    }
+
+    #[test]
+    fn ordinary_provider_failure_keeps_its_original_message() {
+        let failure = TaskFailure {
+            code: "provider_timeout".to_string(),
+            message: "上游模型响应超时，请重试".to_string(),
+        };
+
+        assert!(!failure.is_content_policy_blocked());
+        assert_eq!(failure.generation_message(), "上游模型响应超时，请重试");
+    }
+
+    #[test]
+    fn content_filter_service_error_is_not_treated_as_a_policy_block() {
+        let failure = TaskFailure {
+            code: "content_filter_service_error".to_string(),
+            message: "内容审核服务暂时不可用，请稍后重试".to_string(),
+        };
+
+        assert!(!failure.is_content_policy_blocked());
+        assert_eq!(
+            failure.generation_message(),
+            "内容审核服务暂时不可用，请稍后重试"
+        );
     }
 }
