@@ -357,6 +357,7 @@ export component AuthDialog {
                             text: AppState.en ? "Password" : "密码登录";
                             clicked => {
                                 AppState.auth-email-mode = "password";
+                                AppState.auth-code = "";
                                 AppState.auth-error = "";
                             }
                         }

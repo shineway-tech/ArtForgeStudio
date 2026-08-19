@@ -504,4 +504,20 @@ mod tests {
         assert!(body.get("code").is_none());
         assert_eq!(PASSWORD_LOGIN_PATH, "/v1/auth/password/login");
     }
+
+    #[test]
+    fn password_login_request_preserves_the_exact_password_value() {
+        let body = serde_json::to_value(PasswordLoginRequest {
+            email: "artist@example.com",
+            password: "  legacy password  ",
+            device_id: "device-1",
+            device_name: "test-device",
+            platform: "macos",
+            app_version: "1.0.19",
+            agreement_acceptances: &[],
+        })
+        .expect("password login request should serialize");
+
+        assert_eq!(body["password"], "  legacy password  ");
+    }
 }

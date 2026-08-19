@@ -17,6 +17,22 @@ enum PasswordInputError {
     ConfirmationMismatch,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum PasswordLoginInputError {
+    Empty,
+    TooManyBytes,
+}
+
+pub(super) fn validate_login_password(password: &str) -> Result<(), PasswordLoginInputError> {
+    if password.chars().all(char::is_whitespace) {
+        return Err(PasswordLoginInputError::Empty);
+    }
+    if password.len() > 512 {
+        return Err(PasswordLoginInputError::TooManyBytes);
+    }
+    Ok(())
+}
+
 fn validate_new_password(password: &str, confirmation: &str) -> Result<(), PasswordInputError> {
     if password.len() > 512 {
         return Err(PasswordInputError::TooManyBytes);
@@ -187,6 +203,7 @@ pub(super) fn wire_password_callbacks(app: &AppWindow, context: AppContext) {
             let state = app.global::<AppState>();
             let email = normalized_password_email(state.get_auth_email().as_str());
             clear_password_reset_state(&state);
+            state.set_auth_password("".into());
             state.set_password_reset_email(email.into());
             state.set_password_reset_open(true);
         });
@@ -992,5 +1009,19 @@ mod tests {
         ] {
             assert!(!current);
         }
+    }
+
+    #[test]
+    fn password_login_uses_transport_bounds_without_new_password_policy() {
+        assert!(validate_login_password("short").is_ok());
+        assert!(validate_login_password(&"🦀".repeat(128)).is_ok());
+        assert_eq!(
+            validate_login_password("        "),
+            Err(PasswordLoginInputError::Empty)
+        );
+        assert_eq!(
+            validate_login_password(&"🦀".repeat(129)),
+            Err(PasswordLoginInputError::TooManyBytes)
+        );
     }
 }

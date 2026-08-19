@@ -187,12 +187,16 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
                 return;
             }
             if login_mode == "password" {
-                if credential.trim().is_empty() {
-                    state.set_auth_error("请输入密码".into());
-                    return;
-                }
-                if credential.chars().count() > 256 {
-                    state.set_auth_error("密码长度不能超过 256 个字符".into());
+                if let Err(error) = validate_login_password(&credential) {
+                    state.set_auth_error(
+                        match error {
+                            PasswordLoginInputError::Empty => "请输入密码",
+                            PasswordLoginInputError::TooManyBytes => {
+                                "密码不能超过 512 个 UTF-8 字节"
+                            }
+                        }
+                        .into(),
+                    );
                     return;
                 }
             } else if credential.len() != 6
