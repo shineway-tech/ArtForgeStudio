@@ -1,6 +1,11 @@
 use super::*;
 use std::cell::Cell;
 
+const PASSWORD_RESET_RESEND_SECONDS: i32 = 60;
+
+type PasswordResetCodeResult = std::result::Result<PasswordResetCodeResponse, ApiError>;
+type PasswordResetResult = std::result::Result<LoginResponse, ApiError>;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PasswordInputError {
     TooShort,
@@ -53,6 +58,40 @@ fn reset_operation_matches(
         && current_code.trim() == request_code
 }
 
+fn reset_email_operation_matches(
+    dialog_open: bool,
+    current_epoch: u64,
+    request_epoch: u64,
+    current_email: &str,
+    request_email: &str,
+) -> bool {
+    dialog_open
+        && current_epoch == request_epoch
+        && normalized_password_email(current_email) == request_email
+}
+
+fn reset_submission_is_current(
+    dialog_open: bool,
+    current_epoch: u64,
+    request_epoch: u64,
+    auth_operation_current: bool,
+    current_email: &str,
+    request_email: &str,
+    current_code: &str,
+    request_code: &str,
+) -> bool {
+    auth_operation_current
+        && reset_operation_matches(
+            dialog_open,
+            current_epoch,
+            request_epoch,
+            current_email,
+            request_email,
+            current_code,
+            request_code,
+        )
+}
+
 fn management_operation_matches(
     dialog_open: bool,
     current_epoch: u64,
@@ -67,6 +106,21 @@ fn advance_password_epoch(operation_epoch: &Cell<u64>) -> u64 {
     let next = operation_epoch.get().wrapping_add(1);
     operation_epoch.set(next);
     next
+}
+
+fn valid_password_email(email: &str) -> bool {
+    let mut parts = email.split('@');
+    matches!((parts.next(), parts.next(), parts.next()), (Some(local), Some(domain), None) if !local.is_empty() && domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.'))
+}
+
+fn password_input_error_message(error: PasswordInputError) -> &'static str {
+    match error {
+        PasswordInputError::TooShort => "新密码至少需要 12 个字符",
+        PasswordInputError::TooLong => "新密码不能超过 128 个字符",
+        PasswordInputError::TooManyBytes => "新密码不能超过 512 字节",
+        PasswordInputError::AllWhitespace => "新密码不能全为空白",
+        PasswordInputError::ConfirmationMismatch => "两次输入的新密码不一致",
+    }
 }
 
 pub(super) fn clear_password_reset_state(state: &AppState) {
@@ -94,7 +148,10 @@ pub(super) fn clear_password_management_state(state: &AppState) {
     state.set_password_change_status("".into());
 }
 
-pub(super) fn wire_password_callbacks(app: &AppWindow, _context: AppContext) {
+pub(super) fn wire_password_callbacks(app: &AppWindow, context: AppContext) {
+    let Some(backend) = context.backend.clone() else {
+        return;
+    };
     let state = app.global::<AppState>();
     let reset_epoch = Rc::new(Cell::new(0_u64));
     let management_epoch = Rc::new(Cell::new(0_u64));
@@ -112,6 +169,118 @@ pub(super) fn wire_password_callbacks(app: &AppWindow, _context: AppContext) {
             clear_password_reset_state(&state);
             state.set_password_reset_email(email.into());
             state.set_password_reset_open(true);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let backend = backend.clone();
+        let reset_epoch = reset_epoch.clone();
+        state.on_request_password_reset_code(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            if !state.get_password_reset_open()
+                || state.get_password_reset_code_busy()
+                || state.get_password_reset_busy()
+                || state.get_password_reset_countdown() > 0
+            {
+                return;
+            }
+            let email = normalized_password_email(state.get_password_reset_email().as_str());
+            if !valid_password_email(&email) {
+                state.set_password_reset_status("请输入正确的邮箱地址".into());
+                return;
+            }
+            let request_epoch = advance_password_epoch(&reset_epoch);
+            state.set_password_reset_code_busy(true);
+            state.set_password_reset_status("正在发送验证码...".into());
+            let api = AuthApi::new(backend.api.clone());
+            let worker_email = email.clone();
+            let (sender, receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = sender.send(api.request_password_reset_code(&worker_email));
+            });
+            poll_password_reset_code_result(
+                app.as_weak(),
+                reset_epoch.clone(),
+                request_epoch,
+                email,
+                Rc::new(RefCell::new(Some(receiver))),
+            );
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let backend = backend.clone();
+        let context = context.clone();
+        let reset_epoch = reset_epoch.clone();
+        state.on_reset_password(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            if !state.get_password_reset_open()
+                || state.get_password_reset_busy()
+                || state.get_password_reset_code_busy()
+                || state.get_auth_busy()
+            {
+                return;
+            }
+            let email = normalized_password_email(state.get_password_reset_email().as_str());
+            let code = state.get_password_reset_code().trim().to_string();
+            let new_password = state.get_password_reset_new_password().to_string();
+            let confirmation = state.get_password_reset_confirm_password().to_string();
+            if !valid_password_email(&email) {
+                state.set_password_reset_status("请输入正确的邮箱地址".into());
+                return;
+            }
+            if !valid_password_code(&code) {
+                state.set_password_reset_status("请输入 6 位数字验证码".into());
+                return;
+            }
+            if let Err(error) = validate_new_password(&new_password, &confirmation) {
+                state.set_password_reset_status(password_input_error_message(error).into());
+                return;
+            }
+            if state.get_auth_user_terms_required() && !state.get_auth_user_terms_accepted() {
+                state.set_password_reset_status("请先阅读并同意用户协议".into());
+                return;
+            }
+            if state.get_auth_privacy_required() && !state.get_auth_privacy_accepted() {
+                state.set_password_reset_status("请先阅读并同意隐私政策".into());
+                return;
+            }
+            let acceptances = selected_login_agreement_acceptances(&state);
+            let request_epoch = advance_password_epoch(&reset_epoch);
+            let auth_epoch = begin_auth_operation(&context);
+            state.set_password_reset_busy(true);
+            state.set_session_state("authenticating".into());
+            state.set_password_reset_status("正在重置密码...".into());
+            let api = AuthApi::new(backend.api.clone());
+            let worker_email = email.clone();
+            let worker_code = code.clone();
+            let (sender, receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = sender.send(api.reset_password_response(
+                    &worker_email,
+                    &worker_code,
+                    &new_password,
+                    &acceptances,
+                ));
+            });
+            poll_password_reset_result(
+                app.as_weak(),
+                context.clone(),
+                reset_epoch.clone(),
+                request_epoch,
+                auth_epoch,
+                email,
+                code,
+                Rc::new(RefCell::new(Some(receiver))),
+            );
         });
     }
 
@@ -162,6 +331,186 @@ pub(super) fn wire_password_callbacks(app: &AppWindow, _context: AppContext) {
             clear_password_management_state(&app.global::<AppState>());
         });
     }
+}
+
+fn poll_password_reset_code_result(
+    app_weak: Weak<AppWindow>,
+    reset_epoch: Rc<Cell<u64>>,
+    request_epoch: u64,
+    email: String,
+    receiver: Rc<RefCell<Option<mpsc::Receiver<PasswordResetCodeResult>>>>,
+) {
+    slint::Timer::single_shot(Duration::from_millis(80), move || {
+        let result = match poll_password_receiver(&receiver, "密码重置验证码任务意外中断")
+        {
+            Some(result) => result,
+            None => {
+                poll_password_reset_code_result(
+                    app_weak,
+                    reset_epoch,
+                    request_epoch,
+                    email,
+                    receiver,
+                );
+                return;
+            }
+        };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
+        let state = app.global::<AppState>();
+        if !reset_email_operation_matches(
+            state.get_password_reset_open(),
+            reset_epoch.get(),
+            request_epoch,
+            state.get_password_reset_email().as_str(),
+            &email,
+        ) {
+            if reset_epoch.get() == request_epoch && state.get_password_reset_open() {
+                state.set_password_reset_code_busy(false);
+                state.set_password_reset_countdown(0);
+                state.set_password_reset_status("邮箱已修改，请重新获取验证码".into());
+            }
+            return;
+        }
+        state.set_password_reset_code_busy(false);
+        match result {
+            Ok(response) => {
+                let _ = response.accepted;
+                state.set_password_reset_countdown(PASSWORD_RESET_RESEND_SECONDS);
+                state.set_password_reset_status(response.message.into());
+                start_password_reset_countdown(app.as_weak(), reset_epoch, request_epoch, email);
+            }
+            Err(error) => state.set_password_reset_status(error.user_message().into()),
+        }
+    });
+}
+
+fn poll_password_reset_result(
+    app_weak: Weak<AppWindow>,
+    context: AppContext,
+    reset_epoch: Rc<Cell<u64>>,
+    request_epoch: u64,
+    auth_epoch: u64,
+    email: String,
+    code: String,
+    receiver: Rc<RefCell<Option<mpsc::Receiver<PasswordResetResult>>>>,
+) {
+    slint::Timer::single_shot(Duration::from_millis(80), move || {
+        let result = match poll_password_receiver(&receiver, "密码重置任务意外中断") {
+            Some(result) => result,
+            None => {
+                poll_password_reset_result(
+                    app_weak,
+                    context,
+                    reset_epoch,
+                    request_epoch,
+                    auth_epoch,
+                    email,
+                    code,
+                    receiver,
+                );
+                return;
+            }
+        };
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
+        let state = app.global::<AppState>();
+        let current = reset_submission_is_current(
+            state.get_password_reset_open(),
+            reset_epoch.get(),
+            request_epoch,
+            auth_operation_is_current(&context, auth_epoch),
+            state.get_password_reset_email().as_str(),
+            &email,
+            state.get_password_reset_code().as_str(),
+            &code,
+        );
+        if !current {
+            return;
+        }
+        state.set_password_reset_busy(false);
+        match result {
+            Ok(response) => {
+                let Some(backend) = context.backend.as_ref() else {
+                    state.set_session_state("signed_out".into());
+                    state.set_password_reset_status("客户端服务尚未就绪，请重试".into());
+                    return;
+                };
+                match backend
+                    .api
+                    .session()
+                    .install_tokens_for_user(&response.tokens, &response.user.id)
+                {
+                    Ok(_) => {
+                        clear_password_reset_state(&state);
+                        state.set_auth_password("".into());
+                        finish_login(&app, &context, response, None);
+                        refresh_backend_snapshot(&app, context);
+                    }
+                    Err(error) => {
+                        state.set_session_state("signed_out".into());
+                        state.set_password_reset_status(error.user_message().into());
+                    }
+                }
+            }
+            Err(error) => {
+                state.set_session_state("signed_out".into());
+                state.set_password_reset_status(error.user_message().into());
+            }
+        }
+    });
+}
+
+fn poll_password_receiver<T>(
+    receiver: &Rc<RefCell<Option<mpsc::Receiver<std::result::Result<T, ApiError>>>>>,
+    disconnected_message: &str,
+) -> Option<std::result::Result<T, ApiError>> {
+    let mut slot = receiver.borrow_mut();
+    let receiver = slot.as_ref()?;
+    match receiver.try_recv() {
+        Ok(value) => {
+            slot.take();
+            Some(value)
+        }
+        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Disconnected) => {
+            slot.take();
+            Some(Err(ApiError::LocalState {
+                message: disconnected_message.to_string(),
+            }))
+        }
+    }
+}
+
+fn start_password_reset_countdown(
+    app_weak: Weak<AppWindow>,
+    reset_epoch: Rc<Cell<u64>>,
+    request_epoch: u64,
+    email: String,
+) {
+    slint::Timer::single_shot(Duration::from_secs(1), move || {
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
+        let state = app.global::<AppState>();
+        if !reset_email_operation_matches(
+            state.get_password_reset_open(),
+            reset_epoch.get(),
+            request_epoch,
+            state.get_password_reset_email().as_str(),
+            &email,
+        ) {
+            state.set_password_reset_countdown(0);
+            return;
+        }
+        let remaining = (state.get_password_reset_countdown() - 1).max(0);
+        state.set_password_reset_countdown(remaining);
+        if remaining > 0 {
+            start_password_reset_countdown(app.as_weak(), reset_epoch, request_epoch, email);
+        }
+    });
 }
 
 #[cfg(test)]
@@ -236,6 +585,40 @@ mod tests {
             9,
             "email_code",
             "current_password",
+        ));
+    }
+
+    #[test]
+    fn password_reset_installs_a_session_only_for_the_current_auth_operation() {
+        assert!(reset_submission_is_current(
+            true,
+            12,
+            12,
+            true,
+            " Artist@Example.com ",
+            "artist@example.com",
+            " 123456 ",
+            "123456",
+        ));
+        assert!(!reset_submission_is_current(
+            true,
+            12,
+            12,
+            false,
+            "artist@example.com",
+            "artist@example.com",
+            "123456",
+            "123456",
+        ));
+        assert!(!reset_submission_is_current(
+            true,
+            13,
+            12,
+            true,
+            "artist@example.com",
+            "artist@example.com",
+            "654321",
+            "123456",
         ));
     }
 }

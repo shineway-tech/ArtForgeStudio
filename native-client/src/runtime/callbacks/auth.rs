@@ -1330,6 +1330,7 @@ pub(super) fn finish_login(
     state.set_nickname(response.user.nickname.unwrap_or_default().into());
     state.set_auth_code("".into());
     state.set_auth_password("".into());
+    clear_password_reset_state(&state);
     state.set_auth_error("".into());
     state.set_auth_open(false);
     state.set_agreement_update_busy(false);
@@ -2452,6 +2453,7 @@ pub(super) fn sign_out_locally(
     state.set_auth_open(true);
     state.set_auth_code("".into());
     state.set_auth_password("".into());
+    clear_password_reset_state(&state);
     state.set_auth_wechat_login_id("".into());
     state.set_auth_wechat_qr_ready(false);
     state.set_auth_wechat_scanned(false);
