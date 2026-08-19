@@ -117,6 +117,16 @@ impl ApiError {
             Some("password_invalid" | "email_password_invalid" | "invalid_credentials") => {
                 "邮箱或密码不正确".to_string()
             }
+            Some("invalid_email_or_password") => "邮箱或密码错误".to_string(),
+            Some("password_login_rate_limited") => "尝试次数过多，请稍后再试".to_string(),
+            Some("password_email_required") => "请先绑定并验证邮箱".to_string(),
+            Some("password_verification_required") => "请选择一种密码验证方式".to_string(),
+            Some("password_verification_invalid" | "password_reset_invalid") => {
+                "验证信息不正确或已失效".to_string()
+            }
+            Some("password_policy_failed") => "新密码不符合安全要求".to_string(),
+            Some("password_unchanged") => "新密码不能与当前密码相同".to_string(),
+            Some("password_state_changed") => "密码状态已变化，请重新验证后再试".to_string(),
             Some("password_login_unavailable") => {
                 "密码登录服务暂未开放，请使用验证码登录".to_string()
             }
@@ -505,14 +515,25 @@ mod tests {
 
     #[test]
     fn password_login_errors_have_actionable_messages() {
-        assert_eq!(
-            http_error("invalid_credentials").user_message(),
-            "邮箱或密码不正确"
-        );
-        assert_eq!(
-            http_error("password_login_unavailable").user_message(),
-            "密码登录服务暂未开放，请使用验证码登录"
-        );
+        let cases = [
+            ("invalid_email_or_password", "邮箱或密码错误"),
+            ("password_login_rate_limited", "尝试次数过多，请稍后再试"),
+            ("password_email_required", "请先绑定并验证邮箱"),
+            ("password_verification_required", "请选择一种密码验证方式"),
+            ("password_verification_invalid", "验证信息不正确或已失效"),
+            ("password_reset_invalid", "验证信息不正确或已失效"),
+            ("password_policy_failed", "新密码不符合安全要求"),
+            ("password_unchanged", "新密码不能与当前密码相同"),
+            ("password_state_changed", "密码状态已变化，请重新验证后再试"),
+            (
+                "password_login_unavailable",
+                "密码登录服务暂未开放，请使用验证码登录",
+            ),
+        ];
+
+        for (code, expected) in cases {
+            assert_eq!(http_error(code).user_message(), expected, "{code}");
+        }
     }
 
     #[test]

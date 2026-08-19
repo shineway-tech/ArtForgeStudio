@@ -35,6 +35,12 @@ pub(crate) struct EmailCodeResponse {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub(crate) struct PasswordResetCodeResponse {
+    pub(crate) accepted: bool,
+    pub(crate) message: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub(crate) struct LoginUser {
     pub(crate) id: String,
     pub(crate) email_masked: String,
@@ -101,6 +107,24 @@ struct LoginRequest<'a> {
 struct PasswordLoginRequest<'a> {
     email: &'a str,
     password: &'a str,
+    device_id: &'a str,
+    device_name: &'a str,
+    platform: &'a str,
+    app_version: &'a str,
+    agreement_acceptances: &'a [AgreementAcceptance],
+}
+
+#[derive(Serialize)]
+struct PasswordResetCodeRequest<'a> {
+    email: &'a str,
+    app_version: &'a str,
+}
+
+#[derive(Serialize)]
+struct PasswordResetRequest<'a> {
+    email: &'a str,
+    code: &'a str,
+    new_password: &'a str,
     device_id: &'a str,
     device_name: &'a str,
     platform: &'a str,
@@ -225,6 +249,50 @@ impl AuthApi {
             .public_json(Method::POST, PASSWORD_LOGIN_PATH, Some(body))?;
         let response: ApiResponse<LoginResponse> = response;
         Ok(response.data)
+    }
+
+    pub(crate) fn request_password_reset_code(
+        &self,
+        email: &str,
+    ) -> Result<PasswordResetCodeResponse, ApiError> {
+        let body = serde_json::to_value(PasswordResetCodeRequest {
+            email,
+            app_version: self.client.app_version(),
+        })
+        .map_err(|error| ApiError::Protocol {
+            message: error.to_string(),
+            request_id: None,
+        })?;
+        self.client
+            .public_json(Method::POST, "/v1/auth/password/reset/code", Some(body))
+            .map(|response: ApiResponse<PasswordResetCodeResponse>| response.data)
+    }
+
+    pub(crate) fn reset_password_response(
+        &self,
+        email: &str,
+        code: &str,
+        new_password: &str,
+        acceptances: &[AgreementAcceptance],
+    ) -> Result<LoginResponse, ApiError> {
+        let device = self.client.device();
+        let body = serde_json::to_value(PasswordResetRequest {
+            email,
+            code,
+            new_password,
+            device_id: &device.id,
+            device_name: &device.name,
+            platform: &device.platform,
+            app_version: self.client.app_version(),
+            agreement_acceptances: acceptances,
+        })
+        .map_err(|error| ApiError::Protocol {
+            message: error.to_string(),
+            request_id: None,
+        })?;
+        self.client
+            .public_json(Method::POST, "/v1/auth/password/reset", Some(body))
+            .map(|response: ApiResponse<LoginResponse>| response.data)
     }
 
     pub(crate) fn start_wechat_login(
@@ -398,6 +466,25 @@ impl AuthApi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn password_reset_request_contains_public_login_context_only() {
+        let body = serde_json::to_value(PasswordResetRequest {
+            email: "artist@example.com",
+            code: "123456",
+            new_password: "a sufficiently long passphrase",
+            device_id: "device-1",
+            device_name: "test-device",
+            platform: "macos",
+            app_version: "1.0.18",
+            agreement_acceptances: &[],
+        })
+        .expect("serialize password reset");
+
+        assert_eq!(body["new_password"], "a sufficiently long passphrase");
+        assert!(body.get("access_token").is_none());
+        assert!(body.get("refresh_token").is_none());
+    }
 
     #[test]
     fn password_login_request_never_serializes_a_verification_code() {
