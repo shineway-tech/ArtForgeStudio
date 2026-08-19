@@ -18,14 +18,14 @@ enum WechatPollOutcome {
     Completed(LoginResponse),
 }
 
-fn begin_auth_operation(context: &AppContext) -> u64 {
+pub(super) fn begin_auth_operation(context: &AppContext) -> u64 {
     context
         .auth_operation_epoch
         .fetch_add(1, Ordering::SeqCst)
         .wrapping_add(1)
 }
 
-fn auth_operation_is_current(context: &AppContext, operation_epoch: u64) -> bool {
+pub(super) fn auth_operation_is_current(context: &AppContext, operation_epoch: u64) -> bool {
     context.auth_operation_epoch.load(Ordering::SeqCst) == operation_epoch
 }
 
@@ -834,7 +834,7 @@ fn poll_network_recovery(
     });
 }
 
-fn selected_login_agreement_acceptances(state: &AppState) -> Vec<AgreementAcceptance> {
+pub(super) fn selected_login_agreement_acceptances(state: &AppState) -> Vec<AgreementAcceptance> {
     let mut acceptances = Vec::new();
     if state.get_auth_user_terms_accepted() {
         acceptances.push(AgreementAcceptance {
@@ -1303,7 +1303,7 @@ fn poll_login_result(
     });
 }
 
-fn finish_login(
+pub(super) fn finish_login(
     app: &AppWindow,
     context: &AppContext,
     response: LoginResponse,

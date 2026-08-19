@@ -6,6 +6,7 @@ export component Field {
     in property <string> placeholder;
     in-out property <string> value;
     in property <bool> secret: false;
+    in-out property <bool> revealed: false;
     in property <bool> required: false;
     callback accepted();
     height: 78px;
@@ -27,10 +28,10 @@ export component Field {
             border-color: input.has-focus ? AppTheme.accent : AppTheme.border;
             input := TextInput {
                 x: 14px;
-                width: parent.width - 28px;
+                width: parent.width - 28px - (root.secret ? 52px : 0px);
                 height: parent.height;
                 text <=> root.value;
-                input-type: root.secret ? password : text;
+                input-type: root.secret && !root.revealed ? password : text;
                 single-line: true;
                 color: AppTheme.text;
                 font-size: AppState.settings-font-size * 1px;
@@ -40,7 +41,7 @@ export component Field {
             }
             if root.value == "" && !input.has-focus: Text {
                 x: 14px;
-                width: parent.width - 28px;
+                width: parent.width - 28px - (root.secret ? 52px : 0px);
                 height: parent.height;
                 text: root.placeholder;
                 color: AppTheme.weak;
@@ -48,6 +49,22 @@ export component Field {
                 font-weight: 400;
                 vertical-alignment: center;
                 overflow: elide;
+            }
+            if root.secret: Text {
+                x: parent.width - 58px;
+                width: 48px;
+                height: parent.height;
+                text: root.revealed ? (AppState.en ? "Hide" : "隐藏") : (AppState.en ? "Show" : "显示");
+                color: AppTheme.accent;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => { root.revealed = !root.revealed; }
+                }
             }
         }
     }
