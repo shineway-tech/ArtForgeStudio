@@ -1615,6 +1615,8 @@ pub(super) fn clear_account_snapshot_state(app: &AppWindow, context: &AppContext
     state.set_credit_insufficient_message("积分不足以支持本次生图，请前往充值".into());
 
     state.set_email_bound(false);
+    state.set_password_set(false);
+    clear_password_management_state(&state);
     state.set_email_bind_open(false);
     state.set_email_bind_email("".into());
     state.set_email_bind_code("".into());
@@ -1816,6 +1818,7 @@ pub(super) fn apply_backend_snapshot(
     };
     let state = app.global::<AppState>();
     if account_changed {
+        clear_password_management_state(&state);
         clear_credit_redemption_state(app);
         invalidate_credit_account_view(&context.store);
         context
@@ -1859,6 +1862,7 @@ pub(super) fn apply_backend_snapshot(
             .into(),
     );
     state.set_email_bound(snapshot.account.auth_methods.email.bound);
+    state.set_password_set(snapshot.account.auth_methods.password.set);
     state.set_wechat_bound(snapshot.account.auth_methods.wechat.bound);
     state.set_wechat_can_unbind(snapshot.account.auth_methods.wechat.can_unbind);
     state.set_wechat_bound_name(

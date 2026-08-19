@@ -8,6 +8,7 @@ export component Field {
     in property <bool> secret: false;
     in-out property <bool> revealed: false;
     in property <bool> required: false;
+    in property <bool> enabled: true;
     callback accepted();
     height: 78px;
     VerticalLayout {
@@ -31,6 +32,7 @@ export component Field {
                 width: parent.width - 28px - (root.secret ? 52px : 0px);
                 height: parent.height;
                 text <=> root.value;
+                enabled: root.enabled;
                 input-type: root.secret && !root.revealed ? password : text;
                 single-line: true;
                 color: AppTheme.text;
@@ -62,7 +64,8 @@ export component Field {
                 TouchArea {
                     width: parent.width;
                     height: parent.height;
-                    mouse-cursor: pointer;
+                    enabled: root.enabled;
+                    mouse-cursor: root.enabled ? pointer : default;
                     clicked => { root.revealed = !root.revealed; }
                 }
             }
