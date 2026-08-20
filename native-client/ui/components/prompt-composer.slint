@@ -50,6 +50,8 @@ export component PromptComposer {
     in property <bool> generation: false;
     in property <bool> show-generate-button: true;
     property <int> prompt-history-selected-index: 0;
+    property <int> prompt-history-hovered-index: -1;
+    property <bool> history-preview-close-pending: false;
     property <int> custom-prompt-selected-index: -1;
     property <length> prompt-history-scroll-y: 0px;
     property <length> custom-prompt-scroll-x: 0px;
@@ -80,6 +82,7 @@ export component PromptComposer {
     function apply-selected-prompt(value: string) {
         AppState.prompt-history-open = false;
         AppState.custom-prompt-open = false;
+        root.close-history-preview();
         history-popup.close();
         custom-prompt-popup.close();
         prompt-input.focus();
@@ -94,6 +97,7 @@ export component PromptComposer {
     function clear-current-prompt() {
         AppState.prompt-history-open = false;
         AppState.custom-prompt-open = false;
+        root.close-history-preview();
         history-popup.close();
         custom-prompt-popup.close();
         if AppState.selected-custom-prompt-items.length > 0 {
@@ -108,6 +112,32 @@ export component PromptComposer {
         AppState.invalidate-deep-prompt-binding();
         prompt-input.focus();
         prompt-input.set-selection-offsets(0, 0);
+    }
+
+    function close-history-preview() {
+        root.history-preview-close-pending = false;
+        root.prompt-history-hovered-index = -1;
+        history-preview-popup.close();
+    }
+
+    function sync-history-preview(index: int, hovered: bool) {
+        if hovered {
+            root.history-preview-close-pending = false;
+            root.prompt-history-hovered-index = index;
+            history-preview-popup.show();
+        } else if root.prompt-history-hovered-index == index {
+            root.history-preview-close-pending = true;
+        }
+    }
+
+    Timer {
+        interval: 160ms;
+        running: root.history-preview-close-pending;
+        triggered => {
+            if root.history-preview-close-pending {
+                root.close-history-preview();
+            }
+        }
     }
 
     Timer {
@@ -288,6 +318,7 @@ export component PromptComposer {
                         }
                         if AppState.prompt-history-open && self.text != "/" {
                             AppState.prompt-history-open = false;
+                            root.close-history-preview();
                             history-popup.close();
                         }
                         if AppState.custom-prompt-open && self.text != "//" {
@@ -300,6 +331,7 @@ export component PromptComposer {
                         AppState.prompt = "//";
                         prompt-input.set-selection-offsets(2, 2);
                         AppState.prompt-history-open = false;
+                        root.close-history-preview();
                         history-popup.close();
                         root.custom-prompt-selected-index = -1;
                         root.custom-prompt-scroll-x = 0px;
@@ -330,6 +362,7 @@ export component PromptComposer {
                         }
                         if event.text == Key.Escape {
                             AppState.prompt-history-open = false;
+                            root.close-history-preview();
                             history-popup.close();
                             return accept;
                         }
@@ -385,6 +418,7 @@ export component PromptComposer {
                     }
                     if event.text == "/" && AppState.prompt == "" && AppState.prompt-history.length > 0 {
                         root.prompt-history-selected-index = 0;
+                        root.prompt-history-hovered-index = -1;
                         root.prompt-history-scroll-y = 0px;
                         AppState.prompt-history-open = true;
                         history-popup.show();
@@ -515,6 +549,9 @@ export component PromptComposer {
                             width: parent.width - 36px;
                             height: parent.height;
                             mouse-cursor: pointer;
+                            changed has-hover => {
+                                root.sync-history-preview(index, self.has-hover);
+                            }
                             clicked => {
                                 root.apply-selected-prompt(AppState.prompt-history[index]);
                             }
@@ -542,6 +579,7 @@ export component PromptComposer {
                                     AppState.remove-prompt-history(AppState.prompt-history[index]);
                                     if AppState.prompt-history.length == 0 {
                                         AppState.prompt-history-open = false;
+                                        root.close-history-preview();
                                         history-popup.close();
                                     } else {
                                         root.prompt-history-selected-index = min(
@@ -568,8 +606,71 @@ export component PromptComposer {
                 clicked => {
                     AppState.clear-prompt-history();
                     AppState.prompt-history-open = false;
+                    root.close-history-preview();
                     history-popup.close();
                 }
+            }
+        }
+    }
+
+    history-preview-popup := PopupWindow {
+        x: root.width + 12px;
+        y: root.prompt-input-y() + (AppState.selected-custom-prompt-items.length > 0 ? 66px : 32px);
+        width: 420px;
+        height: 300px;
+
+        Rectangle {
+            visible: root.prompt-history-hovered-index >= 0
+                && root.prompt-history-hovered-index < AppState.prompt-history.length;
+            background: AppTheme.panel;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+
+            Text {
+                x: 16px;
+                y: 14px;
+                width: parent.width - 32px;
+                height: 22px;
+                text: AppState.en ? "Full prompt" : "完整提示词";
+                color: AppTheme.text;
+                font-size: AppState.settings-font-size * 1px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+
+            history-preview-scroll := ScrollView {
+                x: 16px;
+                y: 46px;
+                width: parent.width - 32px;
+                height: parent.height - 62px;
+                viewport-width: self.visible-width;
+                viewport-height: max(self.visible-height, history-preview-text.preferred-height);
+                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                mouse-drag-pan-enabled: true;
+
+                history-preview-text := Text {
+                    width: history-preview-scroll.visible-width - 10px;
+                    height: max(history-preview-scroll.visible-height, self.preferred-height);
+                    text: root.prompt-history-hovered-index >= 0
+                        && root.prompt-history-hovered-index < AppState.prompt-history.length
+                        ? AppState.prompt-history[root.prompt-history-hovered-index]
+                        : "";
+                    color: AppTheme.text;
+                    font-size: AppState.settings-font-size * 1px;
+                    font-weight: 400;
+                    vertical-alignment: top;
+                    wrap: word-wrap;
+                }
+            }
+
+            preview-hover := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                changed has-hover => {
+                    root.history-preview-close-pending = !self.has-hover;
+                }
+                scroll-event(event) => { return reject; }
             }
         }
     }

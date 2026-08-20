@@ -497,6 +497,32 @@ mod tests {
     }
 
     #[test]
+    fn prompt_history_hover_opens_full_prompt_preview_on_the_right() {
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+
+        assert!(composer.contains("property <int> prompt-history-hovered-index: -1"));
+        assert!(composer.contains("history-preview-popup := PopupWindow"));
+        assert!(composer.contains("x: root.width + 12px;"));
+        assert!(composer.contains("AppState.prompt-history[root.prompt-history-hovered-index]"));
+        assert!(composer.contains("text: AppState.en ? \"Full prompt\" : \"完整提示词\""));
+        assert!(composer.contains("changed has-hover =>"));
+        assert!(composer.contains("history-preview-popup.show()"));
+        assert!(composer.contains("history-preview-popup.close()"));
+        assert!(composer.contains("wrap: word-wrap;"));
+    }
+
+    #[test]
+    fn prompt_history_preview_stays_open_during_pointer_handoff() {
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+
+        assert!(composer.contains("property <bool> history-preview-close-pending: false"));
+        assert!(composer.contains("interval: 160ms;"));
+        assert!(composer.contains("running: root.history-preview-close-pending;"));
+        assert!(composer.contains("preview-hover := TouchArea"));
+        assert!(composer.contains("root.history-preview-close-pending = !self.has-hover;"));
+    }
+
+    #[test]
     fn prompt_popups_close_when_their_slash_trigger_is_removed() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         let edited_handler = composer
@@ -3458,6 +3484,32 @@ mod tests {
         assert!(!callbacks.contains("start_canvas_ui_extraction"));
         assert!(callbacks.contains("connect_nodes(&mut store_mut.canvas_links, &source.id, id)"));
         assert!(callbacks.contains("state.on_save_canvas_image"));
+    }
+
+    #[test]
+    fn infinite_canvas_split_fields_have_steppers_and_confirm_is_text_only() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let confirm = page
+            .split("component CanvasSplitConfirmButton")
+            .nth(1)
+            .and_then(|value| value.split("component CanvasSplitNumberField").next())
+            .expect("split confirm button");
+        let number = page
+            .split("component CanvasSplitNumberField")
+            .nth(1)
+            .and_then(|value| value.split("component CanvasMediaChip").next())
+            .expect("split number field");
+
+        assert!(number.contains("function step-value(delta: int)"));
+        assert!(number.contains("max(1, min(64"));
+        assert!(number.contains("step-up := TouchArea"));
+        assert!(number.contains("step-down := TouchArea"));
+        assert_eq!(number.matches("../../assets/icons/arrow-up.svg").count(), 2);
+        assert!(number.contains("transform-rotation: 180deg;"));
+        assert!(!confirm.contains("Image {"));
+        assert!(!confirm.contains("../../assets/icons/split.svg"));
+        assert!(confirm.contains("horizontal-alignment: center;"));
+        assert!(confirm.contains("font-weight: 500;"));
     }
 
     #[test]

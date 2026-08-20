@@ -265,27 +265,16 @@ component CanvasSplitConfirmButton {
             : (confirm-touch.has-hover ? AppTheme.accent.with-alpha(0.92) : AppTheme.accent);
         border-radius: 9px * root.scale-factor;
 
-        HorizontalLayout {
-            padding-left: 14px * root.scale-factor;
-            padding-right: 14px * root.scale-factor;
-            spacing: 7px * root.scale-factor;
-            alignment: center;
-
-            Image {
-                width: 16px * root.scale-factor;
-                height: self.width;
-                source: @image-url("../../assets/icons/split.svg");
-                colorize: #ffffff;
-                image-fit: contain;
-            }
-            Text {
-                text: AppState.en ? "Confirm" : "确定分割";
-                color: #ffffff;
-                font-size: 13px * root.scale-factor;
-                font-weight: 600;
-                vertical-alignment: center;
-                wrap: no-wrap;
-            }
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: AppState.en ? "Confirm" : "确定分割";
+            color: #ffffff;
+            font-size: 13px * root.scale-factor;
+            font-weight: 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: no-wrap;
         }
 
         confirm-touch := TouchArea {
@@ -301,8 +290,12 @@ component CanvasSplitNumberField {
     in property <string> suffix;
     in property <float> scale-factor: 1;
     in-out property <string> value: "1";
-    width: 84px * root.scale-factor;
+    width: 104px * root.scale-factor;
     height: 38px * root.scale-factor;
+
+    function step-value(delta: int) {
+        root.value = "" + max(1, min(64, Math.round(root.value.to-float()) + delta));
+    }
 
     Rectangle {
         background: #ffffff;
@@ -311,8 +304,8 @@ component CanvasSplitNumberField {
         border-color: split-input.has-focus ? #5a4df2 : #d8d4d0;
 
         split-input := TextInput {
-            x: 10px * root.scale-factor;
-            width: parent.width - 34px * root.scale-factor;
+            x: 8px * root.scale-factor;
+            width: parent.width - 52px * root.scale-factor;
             height: parent.height;
             text <=> root.value;
             single-line: true;
@@ -325,13 +318,76 @@ component CanvasSplitNumberField {
         }
 
         Text {
-            x: parent.width - 25px * root.scale-factor;
+            x: parent.width - 43px * root.scale-factor;
             width: 18px * root.scale-factor;
             height: parent.height;
             text: root.suffix;
             color: #716a65;
             font-size: 12px * root.scale-factor;
             vertical-alignment: center;
+        }
+
+        Rectangle {
+            x: parent.width - 24px * root.scale-factor;
+            width: 1px * root.scale-factor;
+            height: parent.height;
+            background: #e4e0dc;
+        }
+
+        Rectangle {
+            x: parent.width - 23px * root.scale-factor;
+            width: 23px * root.scale-factor;
+            height: parent.height / 2;
+            background: step-up.has-hover ? #f0eeec : transparent;
+            border-radius: 5px * root.scale-factor;
+            Image {
+                x: (parent.width - 9px * root.scale-factor) / 2;
+                y: (parent.height - 9px * root.scale-factor) / 2;
+                width: 9px * root.scale-factor;
+                height: self.width;
+                source: @image-url("../../assets/icons/arrow-up.svg");
+                colorize: #716a65;
+                image-fit: contain;
+            }
+            step-up := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: pointer;
+                clicked => { root.step-value(1); }
+            }
+        }
+
+        Rectangle {
+            x: parent.width - 23px * root.scale-factor;
+            y: parent.height / 2;
+            width: 23px * root.scale-factor;
+            height: parent.height / 2;
+            background: step-down.has-hover ? #f0eeec : transparent;
+            border-radius: 5px * root.scale-factor;
+            Image {
+                x: (parent.width - 9px * root.scale-factor) / 2;
+                y: (parent.height - 9px * root.scale-factor) / 2;
+                width: 9px * root.scale-factor;
+                height: self.width;
+                source: @image-url("../../assets/icons/arrow-up.svg");
+                colorize: #716a65;
+                image-fit: contain;
+                transform-rotation: 180deg;
+            }
+            step-down := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: pointer;
+                clicked => { root.step-value(-1); }
+            }
+        }
+
+        Rectangle {
+            x: parent.width - 23px * root.scale-factor;
+            y: parent.height / 2;
+            width: 23px * root.scale-factor;
+            height: 1px * root.scale-factor;
+            background: #e4e0dc;
         }
     }
 }
