@@ -1,0 +1,309 @@
+import { AppState } from "../app-state.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+component VideoChoiceButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    callback clicked();
+
+    height: 42px;
+    background: root.selected ? AppTheme.accent.with-alpha(0.13) : (choice-touch.has-hover ? AppTheme.panel-soft : AppTheme.panel);
+    border-radius: 9px;
+    border-width: 1px;
+    border-color: root.selected ? AppTheme.accent : AppTheme.border;
+
+    Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.label;
+        color: root.selected ? AppTheme.accent-dark : AppTheme.text;
+        font-size: 13px;
+        font-weight: root.selected ? 600 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    choice-touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component StepButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> disabled: false;
+    callback clicked();
+
+    width: 40px;
+    height: 40px;
+    opacity: root.disabled ? 0.38 : 1;
+    background: step-touch.has-hover && !root.disabled ? AppTheme.panel-soft : AppTheme.panel;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: AppTheme.border;
+    Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.label;
+        color: AppTheme.text;
+        font-size: 21px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    step-touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: root.disabled ? default : pointer;
+        clicked => { if !root.disabled { root.clicked(); } }
+    }
+}
+
+export component VideoGenerationPage inherits Rectangle {
+    Timer {
+        interval: 100ms;
+        running: AppState.video-result-path != "";
+        triggered => {
+            AppState.sync-video-player(
+                preview-card.absolute-position.x / 1px,
+                preview-card.absolute-position.y / 1px,
+                preview-card.width / 1px,
+                (preview-card.height - 56px) / 1px
+            );
+        }
+    }
+
+    function update-duration(value: int) {
+        AppState.video-duration-seconds = max(4, min(15, value));
+        AppState.video-quote-ready = false;
+        AppState.request-video-quote(
+            AppState.video-aspect-ratio,
+            AppState.video-resolution,
+            AppState.video-duration-seconds
+        );
+    }
+
+    function select-ratio(value: string) {
+        AppState.video-aspect-ratio = value;
+        AppState.video-quote-ready = false;
+        AppState.request-video-quote(value, AppState.video-resolution, AppState.video-duration-seconds);
+    }
+
+    function select-resolution(value: string) {
+        AppState.video-resolution = value;
+        AppState.video-quote-ready = false;
+        AppState.request-video-quote(AppState.video-aspect-ratio, value, AppState.video-duration-seconds);
+    }
+
+    background: AppTheme.bg;
+
+    Rectangle {
+        x: 28px;
+        y: 16px;
+        width: parent.width - 56px;
+        height: 44px;
+        background: transparent;
+
+        PillButton {
+            x: 0px;
+            width: 88px;
+            height: 40px;
+            text: AppState.en ? "Back" : "返回";
+            clicked => { AppState.close-video-generation(); }
+        }
+        Text {
+            x: 112px;
+            width: parent.width - 224px;
+            height: 40px;
+            text: AppState.en ? "Generate Video" : "生成视频";
+            color: AppTheme.text;
+            font-size: 22px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    workspace := Rectangle {
+        x: 28px;
+        y: 72px;
+        width: parent.width - 56px;
+        height: parent.height - 90px;
+        background: transparent;
+
+        preview-card := Rectangle {
+            x: 0px;
+            y: 0px;
+            width: max(420px, parent.width - 430px);
+            height: parent.height;
+            background: #090d16;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            clip: true;
+
+            Image {
+                visible: AppState.video-result-path == "";
+                x: 20px;
+                y: 20px;
+                width: parent.width - 40px;
+                height: parent.height - 76px;
+                source: AppState.video-source-image;
+                image-fit: contain;
+            }
+            Text {
+                x: 20px;
+                y: parent.height - 50px;
+                width: parent.width - 40px;
+                height: 30px;
+                text: AppState.video-source-title;
+                color: #ffffffcc;
+                font-size: 13px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            if AppState.video-generating: Rectangle {
+                width: parent.width;
+                height: parent.height;
+                background: #05070cb8;
+                Text {
+                    x: 40px;
+                    y: (parent.height - 60px) / 2;
+                    width: parent.width - 80px;
+                    height: 60px;
+                    text: (AppState.en ? "Generating video " : "正在生成视频 ") + AppState.video-progress + "%";
+                    color: #ffffff;
+                    font-size: 18px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        settings-card := Rectangle {
+            x: preview-card.width + 18px;
+            y: 0px;
+            width: parent.width - preview-card.width - 18px;
+            height: parent.height;
+            background: AppTheme.panel;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+
+            Text { x: 20px; y: 18px; width: parent.width - 40px; height: 24px; text: AppState.en ? "Prompt" : "视频提示词"; color: AppTheme.text; font-size: 15px; font-weight: 600; }
+            prompt-box := Rectangle {
+                x: 20px;
+                y: 50px;
+                width: parent.width - 40px;
+                height: max(120px, parent.height - 488px);
+                background: AppTheme.panel-soft;
+                border-radius: 9px;
+                border-width: 1px;
+                border-color: prompt-input.has-focus ? AppTheme.accent : AppTheme.border;
+                prompt-input := TextInput {
+                    x: 14px;
+                    y: 12px;
+                    width: parent.width - 28px;
+                    height: parent.height - 24px;
+                    text <=> AppState.video-prompt;
+                    color: AppTheme.text;
+                    font-size: 13px;
+                    single-line: false;
+                    wrap: word-wrap;
+                }
+            }
+
+            ratio-title := Text { x: 20px; y: prompt-box.y + prompt-box.height + 18px; width: parent.width - 40px; height: 20px; text: AppState.en ? "Aspect ratio" : "视频尺寸"; color: AppTheme.muted; font-size: 13px; font-weight: 500; }
+            ratio-row-one := HorizontalLayout {
+                x: 20px;
+                y: ratio-title.y + 26px;
+                width: parent.width - 40px;
+                height: 42px;
+                spacing: 8px;
+                VideoChoiceButton { horizontal-stretch: 1; label: "21:9"; selected: AppState.video-aspect-ratio == "21:9"; clicked => { root.select-ratio("21:9"); } }
+                VideoChoiceButton { horizontal-stretch: 1; label: "16:9"; selected: AppState.video-aspect-ratio == "16:9"; clicked => { root.select-ratio("16:9"); } }
+                VideoChoiceButton { horizontal-stretch: 1; label: "4:3"; selected: AppState.video-aspect-ratio == "4:3"; clicked => { root.select-ratio("4:3"); } }
+            }
+            ratio-row-two := HorizontalLayout {
+                x: 20px;
+                y: ratio-row-one.y + 50px;
+                width: parent.width - 40px;
+                height: 42px;
+                spacing: 8px;
+                VideoChoiceButton { horizontal-stretch: 1; label: "1:1"; selected: AppState.video-aspect-ratio == "1:1"; clicked => { root.select-ratio("1:1"); } }
+                VideoChoiceButton { horizontal-stretch: 1; label: "3:4"; selected: AppState.video-aspect-ratio == "3:4"; clicked => { root.select-ratio("3:4"); } }
+                VideoChoiceButton { horizontal-stretch: 1; label: "9:16"; selected: AppState.video-aspect-ratio == "9:16"; clicked => { root.select-ratio("9:16"); } }
+            }
+
+            resolution-title := Text { x: 20px; y: ratio-row-two.y + 58px; width: parent.width - 40px; height: 20px; text: AppState.en ? "Resolution" : "清晰度"; color: AppTheme.muted; font-size: 13px; font-weight: 500; }
+            resolution-row := HorizontalLayout {
+                x: 20px;
+                y: resolution-title.y + 26px;
+                width: parent.width - 40px;
+                height: 42px;
+                spacing: 8px;
+                VideoChoiceButton { horizontal-stretch: 1; label: "480P"; selected: AppState.video-resolution == "480P"; clicked => { root.select-resolution("480P"); } }
+                VideoChoiceButton { horizontal-stretch: 1; label: "720P"; selected: AppState.video-resolution == "720P"; clicked => { root.select-resolution("720P"); } }
+                VideoChoiceButton { horizontal-stretch: 1; label: "1080P"; selected: AppState.video-resolution == "1080P"; clicked => { root.select-resolution("1080P"); } }
+            }
+
+            duration-title := Text { x: 20px; y: resolution-row.y + 58px; width: parent.width - 40px; height: 20px; text: AppState.en ? "Duration (4–15 seconds)" : "时长（4–15秒）"; color: AppTheme.muted; font-size: 13px; font-weight: 500; }
+            duration-row := HorizontalLayout {
+                x: 20px;
+                y: duration-title.y + 26px;
+                width: parent.width - 40px;
+                height: 40px;
+                spacing: 10px;
+                StepButton { label: "−"; disabled: AppState.video-duration-seconds <= 4; clicked => { root.update-duration(AppState.video-duration-seconds - 1); } }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 40px;
+                    background: AppTheme.panel-soft;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: AppTheme.border;
+                    Text { width: parent.width; height: parent.height; text: AppState.video-duration-seconds + (AppState.en ? " s" : " 秒"); color: AppTheme.text; font-size: 15px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                    duration-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: ew-resize;
+                        moved => { if self.pressed { root.update-duration(4 + round(self.mouse-x / self.width * 11)); } }
+                    }
+                }
+                StepButton { label: "+"; disabled: AppState.video-duration-seconds >= 15; clicked => { root.update-duration(AppState.video-duration-seconds + 1); } }
+            }
+
+            Text {
+                x: 20px;
+                y: parent.height - 100px;
+                width: parent.width - 40px;
+                height: 24px;
+                text: AppState.video-status;
+                color: AppState.video-quote-ready ? AppTheme.success : AppTheme.muted;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            PillButton {
+                x: 20px;
+                y: parent.height - 66px;
+                width: parent.width - 40px;
+                height: 46px;
+                primary: true;
+                disabled: !AppState.video-quote-ready || AppState.video-quote-loading || AppState.video-generating;
+                text: AppState.video-quote-loading
+                    ? (AppState.en ? "Getting price..." : "正在获取报价...")
+                    : (AppState.en ? "Generate Video" : "生成视频");
+                secondary-text: AppState.video-credit-cost == ""
+                    ? ""
+                    : (AppState.en ? AppState.video-credit-cost + " credits" : "需要 " + AppState.video-credit-cost + " 积分");
+                clicked => { AppState.submit-video-generation(); }
+            }
+        }
+    }
+}

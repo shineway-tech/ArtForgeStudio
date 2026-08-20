@@ -96,6 +96,8 @@ mod payment_checkout;
 use payment_checkout::*;
 mod agreement_window;
 use agreement_window::*;
+mod video_player;
+use video_player::*;
 #[path = "callbacks/generation.rs"]
 mod generation_callbacks;
 use generation_callbacks::*;
@@ -120,6 +122,9 @@ use reference_callbacks::*;
 #[path = "callbacks/viewer.rs"]
 mod viewer_callbacks;
 use viewer_callbacks::*;
+#[path = "callbacks/video_generation.rs"]
+mod video_generation_callbacks;
+use video_generation_callbacks::*;
 mod configuration;
 use configuration::*;
 #[path = "features/inspiration.rs"]

@@ -513,6 +513,10 @@ mod tests {
         assert!(history_popup.contains("x: root.history-list-width() + 12px;"));
         assert!(history_popup.contains("history-preview-popup.show();"));
         assert!(history_popup.contains("history-preview-popup.close();"));
+        assert!(history_popup.contains("width: parent.width;"));
+        assert!(history_popup.contains("root.prompt-history-selected-index = index;"));
+        assert!(history_popup.contains("index == root.prompt-history-hovered-index"));
+        assert!(history_popup.contains("root.sync-history-preview(index, self.has-hover);"));
         assert!(composer.contains("AppState.prompt-history[root.prompt-history-hovered-index]"));
         assert!(composer.contains("text: AppState.en ? \"Full prompt\" : \"完整提示词\""));
         assert!(composer.contains("changed has-hover =>"));
@@ -833,6 +837,20 @@ mod tests {
         assert!(composer.contains("font-weight: 600;"));
         assert!(composer.contains("selected-name.preferred-width"));
         assert!(composer.contains("background: AppTheme.panel-soft;"));
+        assert!(composer.contains("custom-prompt-prefix-icon := Image"));
+        assert!(composer.contains("visible: AppState.selected-custom-prompt-items.length > 0;"));
+        assert!(composer.contains("x: -AppState.settings-font-size * 1px - 4px;"));
+        assert!(composer.contains("width: AppState.settings-font-size * 1px;"));
+        assert!(composer.contains("height: AppState.settings-font-size * 1px;"));
+        assert!(composer.contains("../../assets/icons/custom-prompt-text.svg"));
+        assert!(composer.contains("colorize: AppTheme.custom-prompt-name;"));
+        let selected_name_mask = composer
+            .split("selected-name-mask := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("selected-name := Text").next())
+            .expect("selected custom prompt name mask");
+        assert!(selected_name_mask.contains("height: selected-name.preferred-height;"));
+        assert!(!selected_name_mask.contains("AppState.settings-font-size * 1px + 8px"));
         assert!(composer.contains("vertical-alignment: top;"));
         assert!(!composer.contains("function selected-custom-prompt-line-height() -> length"));
         assert!(composer.contains("y: 0px;"));
@@ -882,6 +900,19 @@ mod tests {
         assert!(callbacks.contains("if state.get_prompt().trim() == \"//\""));
         assert!(callbacks.contains("state.set_prompt(\"\".into());"));
         assert!(callbacks.contains("slint::Timer::single_shot(Duration::ZERO"));
+    }
+
+    #[test]
+    fn selected_custom_prompt_mask_never_reaches_wrapped_prompt_lines() {
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let selected_name_mask = composer
+            .split("selected-name-mask := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("selected-name := Text").next())
+            .expect("selected custom prompt name mask");
+
+        assert!(selected_name_mask.contains("height: selected-name.preferred-height;"));
+        assert!(!selected_name_mask.contains("AppState.settings-font-size * 1px + 8px"));
     }
 
     #[test]
@@ -1504,6 +1535,7 @@ mod tests {
     #[test]
     fn reference_thumbnails_use_a_responsive_four_column_grid() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let reference_thumb = include_str!("../../ui/components/reference-thumb.slint");
 
         assert!(composer.contains("return 4;"));
         assert!(composer.contains("function reference-card-size() -> length"));
@@ -1514,6 +1546,10 @@ mod tests {
         assert!(composer.contains("return 24px;"));
         assert!(composer.contains("- root.reference-card-size()"));
         assert!(composer.contains("(root.reference-row-count() - 1) * root.reference-row-height()"));
+        assert!(composer.contains("ordinal: index + 1;"));
+        assert!(reference_thumb.contains("in property <int> ordinal;"));
+        assert!(reference_thumb.contains("text: root.ordinal;"));
+        assert!(reference_thumb.contains("background: AppTheme.accent;"));
         assert!(!composer.contains("root.height - 80px"));
     }
 
@@ -2268,7 +2304,7 @@ mod tests {
         assert!(auth.contains("function confirm-auth()"));
         assert_eq!(
             auth.matches("accepted => { root.confirm-auth(); }").count(),
-            2
+            3
         );
 
         assert!(invoice.contains("function submit-form()"));
@@ -3564,7 +3600,7 @@ mod tests {
             .expect("step up area");
         assert!(step_up_area.contains("width: 10px * root.scale-factor;"));
         assert!(step_up_area.contains("height: 6px * root.scale-factor;"));
-        assert!(step_up_area.contains("y: 5px * root.scale-factor;"));
+        assert!(step_up_area.contains("y: 2px * root.scale-factor;"));
         assert!(!confirm.contains("Image {"));
         assert!(!confirm.contains("../../assets/icons/split.svg"));
         assert!(confirm.contains("horizontal-alignment: center;"));
@@ -4020,7 +4056,7 @@ mod tests {
         assert!(viewer.contains("AppState.viewer-use-reference();"));
         assert!(viewer.contains("AppState.viewer-import-to-canvas();"));
         assert!(viewer.contains("AppState.viewer-open-image-editor();"));
-        assert!(viewer.contains("AppState.viewer-edit();"));
+        assert!(viewer.contains("AppState.viewer-generate-video();"));
         assert!(viewer.contains("AppState.request-delete-asset(AppState.viewer-id);"));
         assert!(viewer.contains("@image-url(\"../../assets/icons/download.svg\")"));
         assert!(viewer.contains("@image-url(\"../../assets/icons/edit.svg\")"));
@@ -4036,6 +4072,113 @@ mod tests {
         assert!(callbacks.contains("open_viewer_image(&app, &store.borrow())"));
         assert!(feature.contains("pub(super) fn open_viewer_image"));
         assert!(feature.contains("open_path_with_default_app(&source)"));
+    }
+
+    #[test]
+    fn viewer_opens_the_image_to_video_workspace() {
+        let app = include_str!("../../ui/app.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+        let page = include_str!("../../ui/pages/video-generation-page.slint");
+
+        assert!(app.contains("import { VideoGenerationPage }"));
+        assert!(app.contains("if AppState.page == \"video-generation\": VideoGenerationPage"));
+        assert!(state.contains("callback viewer-generate-video();"));
+        assert!(state.contains("callback close-video-generation();"));
+        assert!(state.contains("callback request-video-quote(string, string, int);"));
+        assert!(state.contains("callback submit-video-generation();"));
+
+        let footer = viewer
+            .split("viewer-footer-actions := HorizontalLayout")
+            .nth(1)
+            .and_then(|value| value.split("if AppState.viewer-message").next())
+            .expect("viewer footer");
+        assert!(footer.contains("label: AppState.en ? \"Generate Video\" : \"生成视频\";"));
+        assert!(footer.contains("clicked => { AppState.viewer-generate-video(); }"));
+
+        let repeat = viewer
+            .split("viewer-repeat-card := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("if AppState.viewer-source == \"inspiration\"").next())
+            .expect("viewer right-side repeat actions");
+        assert!(repeat.contains("label: AppState.en ? \"Local Edit\" : \"局部修改\";"));
+        assert!(repeat.contains("clicked => { AppState.viewer-open-image-editor(); }"));
+        assert!(!repeat.contains("AppState.viewer-edit();"));
+
+        for ratio in ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] {
+            assert!(page.contains(ratio), "missing video ratio {ratio}");
+        }
+        for resolution in ["480P", "720P", "1080P"] {
+            assert!(page.contains(resolution), "missing video resolution {resolution}");
+        }
+        assert!(page.contains("max(4, min(15"));
+        assert!(page.contains("AppState.video-duration-seconds - 1"));
+        assert!(page.contains("AppState.video-duration-seconds + 1"));
+        assert!(page.contains("text <=> AppState.video-prompt"));
+        assert!(page.contains("AppState.video-credit-cost"));
+        assert!(page.contains("AppState.submit-video-generation();"));
+    }
+
+    #[test]
+    fn video_generation_callbacks_use_server_models_quotes_and_stable_requests() {
+        let callbacks = include_str!("callbacks/video_generation.rs");
+        let runtime = include_str!("mod.rs");
+        let app = include_str!("app.rs");
+        let auth = include_str!("callbacks/auth.rs");
+        let state = include_str!("../../ui/app-state.slint");
+
+        assert!(runtime.contains("mod video_generation_callbacks;"));
+        assert!(app.contains("wire_video_generation_callbacks(app, context.clone());"));
+        assert!(auth.contains("purpose == \"video_generation\""));
+        assert!(state.contains("property <string> video-model:"));
+        assert!(state.contains("property <bool> video-service-available:"));
+
+        assert!(callbacks.contains("state.on_viewer_generate_video"));
+        assert!(callbacks.contains("state.set_video_source_image"));
+        assert!(callbacks.contains("state.set_video_prompt(state.get_viewer_prompt())"));
+        assert!(callbacks.contains("state.on_request_video_quote"));
+        assert!(callbacks.contains("CreateVideoQuote"));
+        assert!(callbacks.contains("quote_video_scoped"));
+        assert!(callbacks.contains("state.set_video_quote_ready(false)"));
+        assert!(callbacks.contains("视频服务暂未开放"));
+        assert!(callbacks.contains("state.on_submit_video_generation"));
+        assert!(callbacks.contains("CreateVideoGenerationTask"));
+        assert!(callbacks.contains("pending_client_request_id"));
+    }
+
+    #[test]
+    fn video_player_is_local_restricted_and_uses_custom_controls() {
+        let runtime = include_str!("mod.rs");
+        let player = include_str!("video_player.rs");
+        let html = include_str!("video_player/player.html");
+        let state = include_str!("../../ui/app-state.slint");
+        let page = include_str!("../../ui/pages/video-generation-page.slint");
+
+        assert!(runtime.contains("mod video_player;"));
+        assert!(player.contains("validated_local_video_url"));
+        assert!(player.contains("parse_player_command"));
+        assert!(player.contains("NewWindowResponse::Deny"));
+        assert!(player.contains("with_navigation_handler"));
+        assert!(player.contains("with_download_started_handler"));
+        assert!(player.contains("build_as_child"));
+        assert!(player.contains("set_bounds"));
+        assert!(state.contains("callback sync-video-player(float, float, float, float);"));
+        assert!(page.contains("AppState.sync-video-player("));
+
+        for control in [
+            "playButton",
+            "seek",
+            "timeLabel",
+            "volume",
+            "loopButton",
+            "fullscreenButton",
+            "downloadButton",
+            "folderButton",
+            "regenerateButton",
+        ] {
+            assert!(html.contains(control), "missing player control {control}");
+        }
+        assert!(!html.contains("controls autoplay"));
     }
 
     #[test]
@@ -4306,7 +4449,7 @@ mod tests {
         assert!(tools.contains("@image-url(\"../../assets/icons/focus.svg\")"));
         assert!(repeat.contains("HorizontalLayout"));
         assert_eq!(repeat.matches("ViewerToolActionButton {").count(), 2);
-        assert!(repeat.contains("label: AppState.en ? \"Use Prompt\" : \"使用提示词\""));
+        assert!(repeat.contains("label: AppState.en ? \"Local Edit\" : \"局部修改\""));
         assert!(repeat.contains("label: AppState.en ? \"Generate Again\" : \"再次生成\""));
         assert!(repeat.contains("@image-url(\"../../assets/icons/edit.svg\")"));
         assert!(repeat.contains("@image-url(\"../../assets/icons/redo.svg\")"));

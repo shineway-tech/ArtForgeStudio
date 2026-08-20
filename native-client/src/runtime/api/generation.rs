@@ -134,6 +134,87 @@ pub(crate) struct CreateGenerationTask {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub(crate) struct CreateVideoQuote {
+    pub(crate) model_code: String,
+    pub(crate) source_file_id: String,
+    pub(crate) aspect_ratio: String,
+    pub(crate) resolution: String,
+    pub(crate) duration_secs: i32,
+}
+
+impl CreateVideoQuote {
+    pub(crate) fn validate(&self) -> Result<(), ApiError> {
+        if self.model_code.trim().is_empty() || self.source_file_id.trim().is_empty() {
+            return Err(video_parameter_error("视频模型或源图片无效"));
+        }
+        if !matches!(
+            self.aspect_ratio.as_str(),
+            "21:9" | "16:9" | "4:3" | "1:1" | "3:4" | "9:16"
+        ) {
+            return Err(video_parameter_error("视频尺寸无效"));
+        }
+        if !matches!(self.resolution.as_str(), "480P" | "720P" | "1080P") {
+            return Err(video_parameter_error("视频清晰度无效"));
+        }
+        if !(4..=15).contains(&self.duration_secs) {
+            return Err(video_parameter_error("视频时长必须在 4 到 15 秒之间"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct VideoQuote {
+    pub(crate) quote_id: String,
+    pub(crate) credit_cost: String,
+    pub(crate) expires_at: String,
+    pub(crate) aspect_ratio: String,
+    pub(crate) resolution: String,
+    pub(crate) duration_secs: i32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct CreateVideoGenerationTask {
+    pub(crate) client_request_id: String,
+    pub(crate) task_type: String,
+    pub(crate) model_code: String,
+    pub(crate) prompt: String,
+    pub(crate) source_file_id: String,
+    pub(crate) aspect_ratio: String,
+    pub(crate) resolution: String,
+    pub(crate) duration_secs: i32,
+    pub(crate) quote_id: String,
+}
+
+impl CreateVideoGenerationTask {
+    pub(crate) fn validate(&self) -> Result<(), ApiError> {
+        CreateVideoQuote {
+            model_code: self.model_code.clone(),
+            source_file_id: self.source_file_id.clone(),
+            aspect_ratio: self.aspect_ratio.clone(),
+            resolution: self.resolution.clone(),
+            duration_secs: self.duration_secs,
+        }
+        .validate()?;
+        if self.client_request_id.trim().is_empty()
+            || self.quote_id.trim().is_empty()
+            || self.prompt.trim().is_empty()
+            || self.task_type != "image_to_video"
+        {
+            return Err(video_parameter_error("视频生成请求无效"));
+        }
+        Ok(())
+    }
+}
+
+fn video_parameter_error(message: &str) -> ApiError {
+    ApiError::Protocol {
+        message: message.to_string(),
+        request_id: None,
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct CreateUpscaleGenerationTask {
     pub(crate) client_request_id: String,
     pub(crate) task_type: String,
@@ -408,6 +489,59 @@ impl GenerationApi {
                 scope,
             )
             .map(|response| response.data)
+    }
+
+    pub(crate) fn quote_video(
+        &self,
+        request: &CreateVideoQuote,
+    ) -> Result<VideoQuote, ApiError> {
+        request.validate()?;
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .authenticated_json::<VideoQuote>(
+                Method::POST,
+                "/v1/generation/video-quotes",
+                Some(body),
+                None,
+            )
+            .map(|response| response.data)
+    }
+
+    pub(crate) fn quote_video_scoped(
+        &self,
+        request: &CreateVideoQuote,
+        scope: &SessionScope,
+    ) -> Result<VideoQuote, ApiError> {
+        request.validate()?;
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .authenticated_json_scoped::<VideoQuote>(
+                Method::POST,
+                "/v1/generation/video-quotes",
+                Some(body),
+                None,
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
+    pub(crate) fn create_video_task(
+        &self,
+        request: &CreateVideoGenerationTask,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        request.validate()?;
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.create_task_body(&request.client_request_id, body)
+    }
+
+    pub(crate) fn create_video_task_scoped(
+        &self,
+        request: &CreateVideoGenerationTask,
+        scope: &SessionScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        request.validate()?;
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.create_task_body_scoped(&request.client_request_id, body, scope)
     }
 
     pub(crate) fn create_upscale_task(
@@ -988,6 +1122,78 @@ mod tests {
         assert_eq!(body["quality"], "2K");
         assert!(body.get("count").is_none());
         assert!(body.get("reference_file_ids").is_none());
+    }
+
+    #[test]
+    fn video_quote_accepts_only_supported_parameters_and_serializes_decimal_credits() {
+        for ratio in ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] {
+            for resolution in ["480P", "720P", "1080P"] {
+                for duration_secs in [4, 15] {
+                    let request = CreateVideoQuote {
+                        model_code: "seedance".to_string(),
+                        source_file_id: "source-file".to_string(),
+                        aspect_ratio: ratio.to_string(),
+                        resolution: resolution.to_string(),
+                        duration_secs,
+                    };
+                    assert!(request.validate().is_ok());
+                }
+            }
+        }
+
+        for (ratio, resolution, duration_secs) in [
+            ("2:1", "720P", 4),
+            ("16:9", "2K", 4),
+            ("16:9", "720P", 3),
+            ("16:9", "720P", 16),
+        ] {
+            assert!(CreateVideoQuote {
+                model_code: "seedance".to_string(),
+                source_file_id: "source-file".to_string(),
+                aspect_ratio: ratio.to_string(),
+                resolution: resolution.to_string(),
+                duration_secs,
+            }
+            .validate()
+            .is_err());
+        }
+
+        let quote: VideoQuote = serde_json::from_value(serde_json::json!({
+            "quote_id": "quote-1",
+            "credit_cost": "120",
+            "expires_at": "2026-08-20T12:00:00Z",
+            "aspect_ratio": "16:9",
+            "resolution": "720P",
+            "duration_secs": 8
+        }))
+        .unwrap();
+        assert_eq!(quote.credit_cost, "120");
+        assert_eq!(quote.duration_secs, 8);
+    }
+
+    #[test]
+    fn image_to_video_task_has_explicit_quote_and_source_fields() {
+        let body = serde_json::to_value(CreateVideoGenerationTask {
+            client_request_id: "video-request".to_string(),
+            task_type: "image_to_video".to_string(),
+            model_code: "seedance".to_string(),
+            prompt: "slow camera move".to_string(),
+            source_file_id: "source-file".to_string(),
+            aspect_ratio: "16:9".to_string(),
+            resolution: "1080P".to_string(),
+            duration_secs: 15,
+            quote_id: "quote-1".to_string(),
+        })
+        .unwrap();
+
+        assert_eq!(body["task_type"], "image_to_video");
+        assert_eq!(body["source_file_id"], "source-file");
+        assert_eq!(body["aspect_ratio"], "16:9");
+        assert_eq!(body["resolution"], "1080P");
+        assert_eq!(body["duration_secs"], 15);
+        assert_eq!(body["quote_id"], "quote-1");
+        assert!(body.get("count").is_none());
+        assert!(body.get("quality").is_none());
     }
 
     #[test]

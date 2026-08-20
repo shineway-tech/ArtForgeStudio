@@ -397,6 +397,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
     wire_generation_callbacks(app, context.clone());
     wire_prompt_task_recovery_callbacks(app, context.clone());
     wire_viewer_callbacks(app, context.clone());
+    wire_video_generation_callbacks(app, context.clone());
     wire_notification_callbacks(app, context);
 }
 

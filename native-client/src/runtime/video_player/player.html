@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #090d16; color: #fff; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; }
+    #player { position: relative; width: 100%; height: 100%; background: #090d16; }
+    video { width: 100%; height: 100%; object-fit: contain; display: block; }
+    #player::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 104px; pointer-events: none; background: linear-gradient(transparent, rgba(3, 7, 13, .92)); }
+    #controls { position: absolute; z-index: 2; left: 14px; right: 14px; bottom: 12px; display: grid; grid-template-columns: auto minmax(80px, 1fr) auto auto 72px auto auto auto auto auto; gap: 10px; align-items: center; padding: 9px 12px; border: 1px solid rgba(255,255,255,.16); border-radius: 13px; background: rgba(10,15,24,.82); backdrop-filter: blur(14px); transition: opacity .18s ease; }
+    button { min-width: 36px; height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: #fff; cursor: pointer; font-size: 13px; white-space: nowrap; }
+    button:hover, button.active { background: rgba(0,217,130,.18); color: #55f0b2; }
+    #playButton { font-size: 18px; min-width: 40px; }
+    #seek { width: 100%; accent-color: #00d982; cursor: pointer; }
+    #timeLabel { min-width: 92px; color: rgba(255,255,255,.78); font-variant-numeric: tabular-nums; font-size: 12px; text-align: center; }
+    #volume { width: 72px; accent-color: #00d982; cursor: pointer; }
+    #centerPlay { position: absolute; z-index: 3; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 66px; height: 66px; border-radius: 50%; background: rgba(0,217,130,.92); font-size: 27px; box-shadow: 0 12px 40px rgba(0,0,0,.35); }
+    #centerPlay:hover { background: #00d982; color: #fff; transform: translate(-50%,-50%) scale(1.04); }
+    .hidden { opacity: 0; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="player">
+    <video id="video" preload="metadata" playsinline></video>
+    <button id="centerPlay" aria-label="播放">▶</button>
+    <div id="controls">
+      <button id="playButton" aria-label="播放或暂停">▶</button>
+      <input id="seek" type="range" min="0" max="1000" value="0" aria-label="播放进度">
+      <span id="timeLabel">00:00 / 00:00</span>
+      <button id="muteButton" aria-label="静音">音量</button>
+      <input id="volume" type="range" min="0" max="1" value="1" step="0.05" aria-label="音量">
+      <button id="loopButton" aria-label="循环播放">循环</button>
+      <button id="fullscreenButton" aria-label="全屏">全屏</button>
+      <button id="downloadButton" aria-label="另存视频">下载</button>
+      <button id="folderButton" aria-label="打开文件夹">文件夹</button>
+      <button id="regenerateButton" aria-label="再次生成">再次生成</button>
+    </div>
+  </div>
+  <script>
+    const video = document.getElementById('video');
+    video.src = __VIDEO_SRC_JSON__;
+    const player = document.getElementById('player');
+    const playButton = document.getElementById('playButton');
+    const centerPlay = document.getElementById('centerPlay');
+    const seek = document.getElementById('seek');
+    const timeLabel = document.getElementById('timeLabel');
+    const volume = document.getElementById('volume');
+    const muteButton = document.getElementById('muteButton');
+    const loopButton = document.getElementById('loopButton');
+    const fullscreenButton = document.getElementById('fullscreenButton');
+    const downloadButton = document.getElementById('downloadButton');
+    const folderButton = document.getElementById('folderButton');
+    const regenerateButton = document.getElementById('regenerateButton');
+    const send = command => window.ipc.postMessage(JSON.stringify({ command }));
+    const formatTime = value => {
+      if (!Number.isFinite(value)) return '00:00';
+      const seconds = Math.max(0, Math.floor(value));
+      return `${String(Math.floor(seconds / 60)).padStart(2,'0')}:${String(seconds % 60).padStart(2,'0')}`;
+    };
+    const syncPlay = () => {
+      const paused = video.paused;
+      playButton.textContent = paused ? '▶' : 'Ⅱ';
+      centerPlay.classList.toggle('hidden', !paused);
+    };
+    const togglePlay = () => video.paused ? video.play() : video.pause();
+    playButton.onclick = togglePlay;
+    centerPlay.onclick = togglePlay;
+    video.onclick = togglePlay;
+    video.onplay = syncPlay;
+    video.onpause = syncPlay;
+    video.ontimeupdate = () => {
+      seek.value = video.duration ? String(Math.round(video.currentTime / video.duration * 1000)) : '0';
+      timeLabel.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
+    };
+    seek.oninput = () => { if (video.duration) video.currentTime = Number(seek.value) / 1000 * video.duration; };
+    volume.oninput = () => { video.volume = Number(volume.value); video.muted = false; muteButton.textContent = '音量'; };
+    muteButton.onclick = () => { video.muted = !video.muted; muteButton.textContent = video.muted ? '静音' : '音量'; };
+    loopButton.onclick = () => { video.loop = !video.loop; loopButton.classList.toggle('active', video.loop); };
+    fullscreenButton.onclick = async () => { if (!document.fullscreenElement) await player.requestFullscreen(); else await document.exitFullscreen(); };
+    downloadButton.onclick = () => send('download');
+    folderButton.onclick = () => send('open_folder');
+    regenerateButton.onclick = () => send('regenerate');
+    syncPlay();
+  </script>
+</body>
+</html>

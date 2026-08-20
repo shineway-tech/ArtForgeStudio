@@ -4,6 +4,7 @@ import { ReferenceItem } from "../types.slint";
 
 export component ReferenceThumb {
     in property <ReferenceItem> item;
+    in property <int> ordinal;
     width: 88px;
     height: 88px;
 
@@ -28,6 +29,27 @@ export component ReferenceThumb {
             height: parent.height;
             mouse-cursor: pointer;
             clicked => { AppState.open-reference(root.item.id); }
+        }
+    }
+
+    Rectangle {
+        x: -6px;
+        y: -6px;
+        width: 22px;
+        height: 22px;
+        border-radius: 11px;
+        background: AppTheme.accent;
+        clip: false;
+
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.ordinal;
+            color: #ffffff;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            font-size: 12px;
+            font-weight: 600;
         }
     }
 

@@ -1664,6 +1664,9 @@ pub(super) fn clear_account_snapshot_state(app: &AppWindow, context: &AppContext
     state.set_image_editor_price_1k(0);
     state.set_image_editor_price_2k(0);
     state.set_image_editor_price_4k(0);
+    state.set_video_model("".into());
+    state.set_video_model_name("".into());
+    state.set_video_service_available(false);
     state.set_style_analysis_available(false);
     state.set_style_analysis_model_code("".into());
     state.set_style_analysis_display_name("".into());
@@ -2049,6 +2052,10 @@ pub(super) fn apply_backend_snapshot(
                 .iter()
                 .find(|item| item.purpose == "prompt_processing")
         });
+    let selected_video = snapshot
+        .models
+        .iter()
+        .find(|item| item.purpose == "video_generation");
     let mut model_groups = Vec::new();
     if !image_models.is_empty() {
         model_groups.push(model_group(
@@ -2081,6 +2088,15 @@ pub(super) fn apply_backend_snapshot(
     if let Some(model) = selected_prompt {
         state.set_reasoning_model(model.code.clone().into());
         state.set_reasoning_model_name(model.name.clone().into());
+    }
+    if let Some(model) = selected_video {
+        state.set_video_model(model.code.clone().into());
+        state.set_video_model_name(model_display_name(model).into());
+        state.set_video_service_available(true);
+    } else {
+        state.set_video_model("".into());
+        state.set_video_model_name("".into());
+        state.set_video_service_available(false);
     }
     sync_style_analysis_selection(&state);
     *context

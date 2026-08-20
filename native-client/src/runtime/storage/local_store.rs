@@ -951,7 +951,11 @@ mod generated_asset_persistence_tests {
         let ordinary = controller
             .split("pub(super) fn add_stream_success_item")
             .nth(1)
-            .and_then(|value| value.split("pub(super) fn add_stream_failure_item").next())
+            .and_then(|value| {
+                value
+                    .split("pub(super) fn add_canvas_stream_success_item")
+                    .next()
+            })
             .unwrap();
         let cutout_save = cutout
             .split("fn save_image_cutout_asset")
@@ -961,6 +965,7 @@ mod generated_asset_persistence_tests {
         let enhancement_save = enhancement
             .split("fn save_image_enhancement_asset")
             .nth(1)
+            .and_then(|value| value.split("#[cfg(test)]").next())
             .unwrap();
         let watermark_save = toolbox
             .split("fn save_watermark_asset")

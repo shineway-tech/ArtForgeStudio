@@ -25,6 +25,7 @@ import { CustomPromptEditorPage } from "pages/custom-prompt-editor-page.slint";
 import { InspirationPage } from "pages/inspiration-page.slint";
 import { InfiniteCanvasPage } from "pages/infinite-canvas-page.slint";
 import { ImageEditorPage } from "pages/image-editor-page.slint";
+import { VideoGenerationPage } from "pages/video-generation-page.slint";
 import { InvitationGiftPage } from "pages/invitation-gift-page.slint";
 import { NotificationsPage } from "pages/notifications-page.slint";
 import { SettingsPage } from "pages/settings-page.slint";
@@ -68,6 +69,7 @@ export component AppWindow inherits Window {
                 if AppState.page == "generation": StudioSplitPage { width: parent.width; height: parent.height; generation: true; }
                 if AppState.page == "canvas": InfiniteCanvasPage { width: parent.width; height: parent.height; }
                 if AppState.page == "image-editor": ImageEditorPage { width: parent.width; height: parent.height; }
+                if AppState.page == "video-generation": VideoGenerationPage { width: parent.width; height: parent.height; }
                 if AppState.page == "toolbox": ToolboxPage { width: parent.width; height: parent.height; }
                 if AppState.page == "toolbox-enhance": ToolboxEnhancePage { width: parent.width; height: parent.height; }
                 if AppState.page == "toolbox-compress": ToolboxCompressionPage { width: parent.width; height: parent.height; }

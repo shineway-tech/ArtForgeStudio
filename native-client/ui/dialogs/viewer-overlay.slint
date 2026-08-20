@@ -320,9 +320,9 @@ export component ViewerOverlay {
                 }
                 ViewerFooterActionButton {
                     horizontal-stretch: 1;
-                    icon: @image-url("../../assets/icons/edit.svg");
-                    label: AppState.en ? "Edit" : "编辑";
-                    clicked => { AppState.viewer-open-image-editor(); }
+                    icon: @image-url("../../assets/icons/video.svg");
+                    label: AppState.en ? "Generate Video" : "生成视频";
+                    clicked => { AppState.viewer-generate-video(); }
                 }
                 ViewerFooterActionButton {
                     horizontal-stretch: 1;
@@ -460,8 +460,8 @@ export component ViewerOverlay {
                         ViewerToolActionButton {
                             horizontal-stretch: 1;
                             icon: @image-url("../../assets/icons/edit.svg");
-                            label: AppState.en ? "Use Prompt" : "使用提示词";
-                            clicked => { AppState.viewer-edit(); }
+                            label: AppState.en ? "Local Edit" : "局部修改";
+                            clicked => { AppState.viewer-open-image-editor(); }
                         }
                         ViewerToolActionButton {
                             horizontal-stretch: 1;
