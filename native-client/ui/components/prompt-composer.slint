@@ -242,58 +242,15 @@ export component PromptComposer {
             height: root.prompt-input-height();
             spacing: 6px;
 
-            for item in AppState.selected-custom-prompt-items: Rectangle {
-                width: selected-title.preferred-width + 38px;
-                height: 26px;
-                background: AppTheme.panel-soft;
-                border-radius: 13px;
-                border-width: 1px;
-                border-color: AppTheme.accent;
-                selected-title := Text {
-                    x: 10px;
-                    width: parent.width - 34px;
-                    height: parent.height;
-                    text: item.name;
-                    color: AppTheme.accent-dark;
-                    font-size: AppState.settings-font-size * 1px - 1px;
-                    font-weight: 400;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    overflow: clip;
-                }
-                selected-tag-touch := TouchArea {
-                    width: parent.width;
-                    height: parent.height;
-                    mouse-cursor: pointer;
-                }
-                selected-close := Rectangle {
-                    x: parent.width - 24px;
-                    y: 2px;
-                    width: 22px;
-                    height: 22px;
-                    visible: selected-tag-touch.has-hover || selected-close-touch.has-hover;
-                    border-radius: 11px;
-                    background: AppTheme.panel;
-
-                    Text {
-                        width: parent.width;
-                        height: parent.height;
-                        text: "×";
-                        color: AppTheme.muted;
-                        font-size: 14px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    selected-close-touch := TouchArea {
-                        width: parent.width;
-                        height: parent.height;
-                        mouse-cursor: pointer;
-                        clicked => {
-                            root.queue-custom-prompt-selection(item.content);
-                        }
-                    }
-                }
+            for item in AppState.selected-custom-prompt-items: selected-name := Text {
+                width: min(selected-name.preferred-width, root.width * 0.42);
+                height: min(parent.height, AppState.settings-font-size * 1px + 8px);
+                text: item.name;
+                color: AppTheme.custom-prompt-name;
+                font-size: AppState.settings-font-size * 1px;
+                font-weight: 600;
+                vertical-alignment: center;
+                overflow: elide;
             }
 
             prompt-cursor-area := TouchArea {
@@ -302,11 +259,9 @@ export component PromptComposer {
                 height: root.prompt-input-height();
                 mouse-cursor: text;
                 prompt-scroll := ScrollView {
-                    y: AppState.selected-custom-prompt-items.length > 0
-                        ? max(0px, (26px - AppState.settings-font-size * 1px) / 2)
-                        : 0px;
+                    y: 0px;
                     width: parent.width;
-                    height: parent.height - self.y;
+                    height: parent.height;
                     viewport-width: self.visible-width;
                     viewport-height: max(self.visible-height, prompt-input.preferred-height);
                     prompt-input := TextInput {

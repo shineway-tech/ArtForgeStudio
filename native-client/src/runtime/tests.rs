@@ -770,7 +770,7 @@ mod tests {
     }
 
     #[test]
-    fn double_slash_selection_closes_inline_and_backspace_removes_the_tag() {
+    fn double_slash_selection_shows_an_inline_colored_name_and_backspace_removes_it() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         let callbacks = include_str!("callbacks/custom_prompt.rs");
         let popup = composer
@@ -787,10 +787,15 @@ mod tests {
         assert!(composer.contains("prompt-cursor-area := TouchArea"));
         assert!(composer.contains("mouse-cursor: text;"));
         assert!(composer.contains("horizontal-stretch: 1;"));
-        assert!(composer.contains("? max(0px, (26px - AppState.settings-font-size * 1px) / 2)"));
-        assert!(composer.contains("height: parent.height - self.y;"));
-        assert!(composer.contains("width: selected-title.preferred-width + 38px;"));
-        assert!(composer.contains("for item in AppState.selected-custom-prompt-items: Rectangle"));
+        assert!(composer.contains(
+            "for item in AppState.selected-custom-prompt-items: selected-name := Text"
+        ));
+        assert!(composer.contains("text: item.name;"));
+        assert!(composer.contains("color: AppTheme.custom-prompt-name;"));
+        assert!(composer.contains("font-weight: 600;"));
+        assert!(composer.contains("selected-name.preferred-width"));
+        assert!(composer.contains("root.width * 0.42"));
+        assert!(!composer.contains("for item in AppState.selected-custom-prompt-items: Rectangle"));
         assert!(!composer.contains("selected-prompt-tags := Rectangle"));
         assert!(!composer.contains("selected-prompt-row := HorizontalLayout"));
         assert!(!composer.contains(
@@ -823,11 +828,8 @@ mod tests {
         assert!(!popup.contains("AppState.toggle-custom-prompt-selection(item.content)"));
         assert!(composer.contains("root.custom-prompt-selected-index = -1;"));
         assert!(composer.contains("root.custom-prompt-selected-index < 0"));
-        assert!(composer
-            .contains("visible: selected-tag-touch.has-hover || selected-close-touch.has-hover;"));
-        assert!(composer.contains("selected-close-touch := TouchArea"));
-        assert!(composer.contains("text: \"×\""));
-        assert!(composer.contains("selected-title.preferred-width + 38px"));
+        assert!(!composer.contains("selected-close-touch := TouchArea"));
+        assert!(!composer.contains("selected-title.preferred-width + 38px"));
         assert!(composer.contains("tag-title.preferred-width + 28px"));
         assert!(popup.contains("overflow: clip"));
         assert!(callbacks.contains("if state.get_prompt().trim() == \"//\""));
@@ -888,7 +890,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_custom_prompt_tags_keep_the_default_placeholder_hidden_without_focus() {
+    fn selected_custom_prompt_name_keeps_the_default_placeholder_hidden_without_focus() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         let placeholder = composer
             .split("text: root.prompt-placeholder()")
