@@ -3,6 +3,7 @@ import { AgreementCheckbox } from "../components/agreement-checkbox.slint";
 import { DialogCloseButton } from "../components/dialog-close-button.slint";
 import { Field } from "../components/field.slint";
 import { PillButton } from "../components/pill-button.slint";
+import { SegmentedControl } from "../components/segmented-control.slint";
 import { SectionTitle } from "../components/section-title.slint";
 import { AppTheme } from "../theme.slint";
 
@@ -336,26 +337,20 @@ export component AuthDialog {
                 if AppState.auth-method == "email": VerticalLayout {
                     spacing: 12px;
                     HorizontalLayout {
-                        height: 36px;
-                        spacing: 10px;
+                        height: 44px;
                         Rectangle { horizontal-stretch: 1; background: transparent; }
-                        PillButton {
-                            width: 150px;
-                            active: AppState.auth-email-mode == "code";
+                        SegmentedControl {
+                            width: 320px;
+                            first-text: AppState.en ? "Verification Code" : "验证码登录";
+                            second-text: AppState.en ? "Password" : "密码登录";
+                            first-active: AppState.auth-email-mode == "code";
                             disabled: AppState.auth-busy || AppState.auth-code-busy;
-                            text: AppState.en ? "Verification Code" : "验证码登录";
-                            clicked => {
+                            first-clicked => {
                                 AppState.auth-email-mode = "code";
                                 AppState.auth-password = "";
                                 AppState.auth-error = "";
                             }
-                        }
-                        PillButton {
-                            width: 150px;
-                            active: AppState.auth-email-mode == "password";
-                            disabled: AppState.auth-busy || AppState.auth-code-busy;
-                            text: AppState.en ? "Password" : "密码登录";
-                            clicked => {
+                            second-clicked => {
                                 AppState.auth-email-mode = "password";
                                 AppState.auth-code = "";
                                 AppState.auth-error = "";
@@ -599,10 +594,13 @@ export component AuthDialog {
                         accepted => { AppState.reset-password(); }
                     }
                     Text {
-                        height: 28px;
-                        text: AppState.en ? "12–128 characters, at most 512 bytes, not all whitespace" : "12–128 个字符，最多 512 字节，不能全为空白";
+                        height: 38px;
+                        text: AppState.en
+                            ? "8–20 characters with 0–9, A–Z and a–z; symbols allowed"
+                            : "8–20 个字符，至少包含 0–9、A–Z 和 a–z，可使用符号";
                         color: AppTheme.muted;
                         font-size: 12px;
+                        wrap: word-wrap;
                         vertical-alignment: center;
                     }
                     AgreementChoice {

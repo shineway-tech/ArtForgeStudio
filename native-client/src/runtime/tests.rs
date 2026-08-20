@@ -2219,7 +2219,7 @@ mod tests {
         assert!(auth.contains("function confirm-auth()"));
         assert_eq!(
             auth.matches("accepted => { root.confirm-auth(); }").count(),
-            2
+            3
         );
 
         assert!(invoice.contains("function submit-form()"));
@@ -2235,6 +2235,78 @@ mod tests {
         assert!(prompt.contains("return reject"));
         assert!(prompt.contains("AppState.generate()"));
         assert!(prompt.contains("return accept"));
+    }
+
+    #[test]
+    fn auth_and_password_management_share_the_segmented_mode_switch() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let segmented = std::fs::read_to_string(
+            manifest_dir.join("ui/components/segmented-control.slint"),
+        )
+        .unwrap_or_default();
+        let auth = include_str!("../../ui/dialogs/auth-dialog.slint");
+        let profile = include_str!("../../ui/dialogs/profile-dialog.slint");
+
+        assert!(!segmented.is_empty(), "shared segmented control source");
+        for contract in [
+            "accessible-role: button;",
+            "accessible-role: none;",
+            "accessible-enabled: !root.disabled;",
+            "accessible-checkable: true;",
+            "accessible-checked: root.active;",
+            "accessible-action-default =>",
+            "forward-focus:",
+            "FocusScope",
+            "key-pressed(event)",
+            "focus.has-focus ? 2px",
+        ] {
+            assert!(segmented.contains(contract), "{contract}");
+        }
+        assert_eq!(auth.matches("SegmentedControl {").count(), 1);
+        assert_eq!(profile.matches("SegmentedControl {").count(), 1);
+        for contract in [
+            "AppState.auth-email-mode == \"code\"",
+            "AppState.auth-email-mode == \"password\"",
+        ] {
+            assert!(auth.contains(contract), "{contract}");
+        }
+        for contract in [
+            "AppState.password-verification-mode == \"current_password\"",
+            "AppState.password-verification-mode == \"email_code\"",
+        ] {
+            assert!(profile.contains(contract), "{contract}");
+        }
+    }
+
+    #[test]
+    fn secret_fields_use_accessible_eye_icons_instead_of_text() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let field = include_str!("../../ui/components/field.slint");
+        let auth = include_str!("../../ui/dialogs/auth-dialog.slint");
+        let profile = include_str!("../../ui/dialogs/profile-dialog.slint");
+
+        assert!(field.contains("input-type: root.secret && !root.revealed ? password : text;"));
+        assert!(field.contains("root.revealed = !root.revealed;"));
+        assert!(field.contains("assets/icons/eye.svg"));
+        assert!(field.contains("assets/icons/eye-off.svg"));
+        assert!(field.contains("accessible-role: button;"));
+        assert!(field.contains("accessible-label: root.revealed"));
+        for contract in [
+            "accessible-role: none;",
+            "accessible-enabled: root.enabled;",
+            "accessible-action-default =>",
+            "forward-focus:",
+            "FocusScope",
+            "key-pressed(event)",
+        ] {
+            assert!(field.contains(contract), "{contract}");
+        }
+        assert!(!field.contains("AppState.en ? \"Hide\" : \"隐藏\""));
+        assert!(!field.contains("AppState.en ? \"Show\" : \"显示\""));
+        assert!(manifest_dir.join("assets/icons/eye.svg").is_file());
+        assert!(manifest_dir.join("assets/icons/eye-off.svg").is_file());
+        assert_eq!(auth.matches("secret: true;").count(), 3);
+        assert_eq!(profile.matches("secret: true;").count(), 3);
     }
 
     #[test]

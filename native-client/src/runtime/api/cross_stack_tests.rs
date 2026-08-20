@@ -20,9 +20,9 @@ const TRANSPARENT_MASK_PNG: [u8; 68] = [
 const VALID_UPLOAD_SHA256: &str =
     "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460";
 const MOCK_PASSWORD_CODE: &str = "123456";
-const PASSWORD_ALPHA: &str = "Cross-stack alpha 9284!";
-const PASSWORD_BETA: &str = "Cross-stack beta 6317!";
-const PASSWORD_RESET: &str = "Cross-stack reset 4826!";
+const PASSWORD_ALPHA: &str = "CrossAlpha1!";
+const PASSWORD_BETA: &str = "CrossBeta2!";
+const PASSWORD_RESET: &str = "CrossReset3!";
 const OUTDATED_PASSWORD_CLIENT_VERSION: &str = "0.0.0";
 
 fn base_url() -> Url {

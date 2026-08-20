@@ -14,6 +14,9 @@ enum PasswordInputError {
     TooLong,
     TooManyBytes,
     AllWhitespace,
+    MissingDigit,
+    MissingUppercase,
+    MissingLowercase,
     ConfirmationMismatch,
 }
 
@@ -34,18 +37,27 @@ pub(super) fn validate_login_password(password: &str) -> Result<(), PasswordLogi
 }
 
 fn validate_new_password(password: &str, confirmation: &str) -> Result<(), PasswordInputError> {
+    let characters = password.chars().count();
+    if characters < 8 {
+        return Err(PasswordInputError::TooShort);
+    }
+    if characters > 20 {
+        return Err(PasswordInputError::TooLong);
+    }
     if password.len() > 512 {
         return Err(PasswordInputError::TooManyBytes);
     }
-    let characters = password.chars().count();
-    if characters < 12 {
-        return Err(PasswordInputError::TooShort);
-    }
-    if characters > 128 {
-        return Err(PasswordInputError::TooLong);
-    }
     if password.chars().all(char::is_whitespace) {
         return Err(PasswordInputError::AllWhitespace);
+    }
+    if !password.bytes().any(|value| value.is_ascii_digit()) {
+        return Err(PasswordInputError::MissingDigit);
+    }
+    if !password.bytes().any(|value| value.is_ascii_uppercase()) {
+        return Err(PasswordInputError::MissingUppercase);
+    }
+    if !password.bytes().any(|value| value.is_ascii_lowercase()) {
+        return Err(PasswordInputError::MissingLowercase);
     }
     if password != confirmation {
         return Err(PasswordInputError::ConfirmationMismatch);
@@ -151,10 +163,13 @@ fn valid_password_email(email: &str) -> bool {
 
 fn password_input_error_message(error: PasswordInputError) -> &'static str {
     match error {
-        PasswordInputError::TooShort => "新密码至少需要 12 个字符",
-        PasswordInputError::TooLong => "新密码不能超过 128 个字符",
+        PasswordInputError::TooShort => "新密码至少需要 8 个字符",
+        PasswordInputError::TooLong => "新密码不能超过 20 个字符",
         PasswordInputError::TooManyBytes => "新密码不能超过 512 字节",
         PasswordInputError::AllWhitespace => "新密码不能全为空白",
+        PasswordInputError::MissingDigit => "新密码必须包含数字",
+        PasswordInputError::MissingUppercase => "新密码必须包含大写英文字母",
+        PasswordInputError::MissingLowercase => "新密码必须包含小写英文字母",
         PasswordInputError::ConfirmationMismatch => "两次输入的新密码不一致",
     }
 }
@@ -887,28 +902,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_password_validation_preserves_unicode_and_enforces_every_structural_bound() {
-        assert!(validate_new_password("  正确 horse battery  ", "  正确 horse battery  ").is_ok());
-        assert_eq!(
-            validate_new_password("short", "short"),
-            Err(PasswordInputError::TooShort)
-        );
-        assert_eq!(
-            validate_new_password("            ", "            "),
-            Err(PasswordInputError::AllWhitespace)
-        );
-        assert_eq!(
-            validate_new_password(&"界".repeat(129), &"界".repeat(129)),
-            Err(PasswordInputError::TooLong)
-        );
-        assert_eq!(
-            validate_new_password(&"🦀".repeat(129), &"🦀".repeat(129)),
-            Err(PasswordInputError::TooManyBytes)
-        );
-        assert_eq!(
-            validate_new_password("a sufficiently long passphrase", "different confirmation"),
-            Err(PasswordInputError::ConfirmationMismatch)
-        );
+    fn new_password_validation_preserves_unicode_and_enforces_the_public_policy() {
+        for value in ["Abcdef1!", "正确Abcd1!", "Abc def1!"] {
+            assert!(validate_new_password(value, value).is_ok(), "{value}");
+        }
+        for (value, message) in [
+            ("Abcdef1", "新密码至少需要 8 个字符"),
+            ("Abcdefghijklmnopqrs1!", "新密码不能超过 20 个字符"),
+            ("        ", "新密码不能全为空白"),
+            ("Abcdefgh!", "新密码必须包含数字"),
+            ("abcdefgh1!", "新密码必须包含大写英文字母"),
+            ("ABCDEFGH1!", "新密码必须包含小写英文字母"),
+        ] {
+            let error = validate_new_password(value, value).expect_err(value);
+            assert_eq!(password_input_error_message(error), message, "{value}");
+        }
+        let error = validate_new_password("Abcdef1!", "Abcdef2!")
+            .expect_err("different confirmation");
+        assert_eq!(password_input_error_message(error), "两次输入的新密码不一致");
     }
 
     #[test]
@@ -1014,6 +1025,7 @@ mod tests {
     #[test]
     fn password_login_uses_transport_bounds_without_new_password_policy() {
         assert!(validate_login_password("short").is_ok());
+        assert!(validate_login_password("legacy passphrase longer than twenty").is_ok());
         assert!(validate_login_password(&"🦀".repeat(128)).is_ok());
         assert_eq!(
             validate_login_password("        "),

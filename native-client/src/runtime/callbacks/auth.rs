@@ -2460,6 +2460,7 @@ pub(super) fn sign_out_locally(
     state.set_offline_available(false);
     state.set_auth_open(true);
     state.set_auth_code("".into());
+    state.set_auth_email("".into());
     state.set_auth_password("".into());
     clear_password_reset_state(&state);
     state.set_auth_wechat_login_id("".into());
@@ -2547,6 +2548,20 @@ fn valid_email(email: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signing_out_removes_credentials_from_the_previous_account() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_auth_email("previous-account@example.com".into());
+        state.set_auth_password("PreviousPass1!".into());
+
+        sign_out_locally(&app, &AppContext::default(), false, None);
+
+        assert_eq!(state.get_auth_email().as_str(), "");
+        assert_eq!(state.get_auth_password().as_str(), "");
+    }
 
     #[test]
     fn disconnected_worker_is_not_mistaken_for_a_pending_result() {
