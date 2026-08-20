@@ -794,6 +794,11 @@ mod tests {
         assert!(composer.contains("color: AppTheme.custom-prompt-name;"));
         assert!(composer.contains("font-weight: 600;"));
         assert!(composer.contains("selected-name.preferred-width"));
+        assert!(composer.contains("height: selected-name.preferred-height;"));
+        assert!(composer.contains("vertical-alignment: top;"));
+        assert!(!composer.contains(
+            "height: min(parent.height, AppState.settings-font-size * 1px + 8px);"
+        ));
         assert!(composer.contains("root.width * 0.42"));
         assert!(!composer.contains("for item in AppState.selected-custom-prompt-items: Rectangle"));
         assert!(!composer.contains("selected-prompt-tags := Rectangle"));

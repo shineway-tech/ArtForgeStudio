@@ -244,12 +244,12 @@ export component PromptComposer {
 
             for item in AppState.selected-custom-prompt-items: selected-name := Text {
                 width: min(selected-name.preferred-width, root.width * 0.42);
-                height: min(parent.height, AppState.settings-font-size * 1px + 8px);
+                height: selected-name.preferred-height;
                 text: item.name;
                 color: AppTheme.custom-prompt-name;
                 font-size: AppState.settings-font-size * 1px;
                 font-weight: 600;
-                vertical-alignment: center;
+                vertical-alignment: top;
                 overflow: elide;
             }
 
