@@ -499,15 +499,20 @@ mod tests {
     #[test]
     fn prompt_history_hover_opens_full_prompt_preview_on_the_right() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let history_popup = composer
+            .split("history-popup := PopupWindow")
+            .nth(1)
+            .and_then(|value| value.split("custom-prompt-popup := PopupWindow").next())
+            .expect("history popup");
 
         assert!(composer.contains("property <int> prompt-history-hovered-index: -1"));
-        assert!(composer.contains("history-preview-popup := PopupWindow"));
-        assert!(composer.contains("x: root.width + 12px;"));
+        assert!(!composer.contains("history-preview-popup := PopupWindow"));
+        assert!(history_popup.contains("history-list := Rectangle"));
+        assert!(history_popup.contains("history-preview := Rectangle"));
+        assert!(history_popup.contains("x: root.history-list-width() + 12px;"));
         assert!(composer.contains("AppState.prompt-history[root.prompt-history-hovered-index]"));
         assert!(composer.contains("text: AppState.en ? \"Full prompt\" : \"完整提示词\""));
         assert!(composer.contains("changed has-hover =>"));
-        assert!(composer.contains("history-preview-popup.show()"));
-        assert!(composer.contains("history-preview-popup.close()"));
         assert!(composer.contains("wrap: word-wrap;"));
     }
 
@@ -796,7 +801,7 @@ mod tests {
     }
 
     #[test]
-    fn double_slash_selection_shows_an_inline_colored_name_and_backspace_removes_it() {
+    fn double_slash_selection_shows_a_colored_name_without_reserving_a_left_column() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         let callbacks = include_str!("callbacks/custom_prompt.rs");
         let popup = composer
@@ -809,10 +814,9 @@ mod tests {
             })
             .expect("custom prompt popup");
 
-        assert!(composer.contains("prompt-entry-row := HorizontalLayout"));
+        assert!(composer.contains("prompt-entry-area := Rectangle"));
         assert!(composer.contains("prompt-cursor-area := TouchArea"));
         assert!(composer.contains("mouse-cursor: text;"));
-        assert!(composer.contains("horizontal-stretch: 1;"));
         assert!(composer.contains(
             "for item in AppState.selected-custom-prompt-items: selected-name := Text"
         ));
@@ -822,6 +826,12 @@ mod tests {
         assert!(composer.contains("selected-name.preferred-width"));
         assert!(composer.contains("height: selected-name.preferred-height;"));
         assert!(composer.contains("vertical-alignment: top;"));
+        assert!(composer.contains("function selected-custom-prompt-line-height() -> length"));
+        assert!(composer.contains("y: root.selected-custom-prompt-line-height();"));
+        assert!(composer.contains("width: parent.width;"));
+        assert!(composer.contains(
+            "height: root.prompt-input-height() - root.selected-custom-prompt-line-height();"
+        ));
         assert!(!composer.contains(
             "height: min(parent.height, AppState.settings-font-size * 1px + 8px);"
         ));
@@ -833,15 +843,16 @@ mod tests {
             "width: min(max(72px, selected-title.preferred-width + 38px), root.width - 104px);"
         ));
         let prompt_entry = composer
-            .split("prompt-entry-row := HorizontalLayout")
+            .split("prompt-entry-area := Rectangle")
             .nth(1)
             .and_then(|value| {
                 value
                     .split("for item in AppState.selected-custom-prompt-items")
                     .next()
             })
-            .expect("prompt entry row");
+            .expect("prompt entry area");
         assert!(!prompt_entry.contains("alignment: start;"));
+        assert!(!prompt_entry.contains("HorizontalLayout"));
         assert!(!composer
             .contains("x: AppState.selected-custom-prompt-items.length > 0 ? 270px : 24px;"));
         assert!(composer.contains("y: root.prompt-input-y();"));
@@ -3450,6 +3461,22 @@ mod tests {
     }
 
     #[test]
+    fn infinite_canvas_media_actions_center_the_icon_and_label_as_one_group() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let action = page
+            .split("component CanvasMediaAction")
+            .nth(1)
+            .and_then(|value| value.split("component CanvasSplitConfirmButton").next())
+            .expect("canvas media action");
+
+        assert!(action.contains("action-content := HorizontalLayout"));
+        assert!(action.contains("alignment: center;"));
+        assert!(action.contains("spacing: 6px * root.scale-factor;"));
+        assert!(!action.contains("x: 8px * root.scale-factor;"));
+        assert!(!action.contains("x: 30px * root.scale-factor;"));
+    }
+
+    #[test]
     fn infinite_canvas_split_previews_grid_and_reports_local_progress() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
         let state = include_str!("../../ui/app-state.slint");
@@ -3506,10 +3533,44 @@ mod tests {
         assert!(number.contains("step-down := TouchArea"));
         assert_eq!(number.matches("../../assets/icons/arrow-up.svg").count(), 2);
         assert!(number.contains("transform-rotation: 180deg;"));
+        let divider = number
+            .find("split-step-horizontal-divider := Rectangle")
+            .expect("horizontal step divider");
+        let step_up = number
+            .find("step-up-area := Rectangle")
+            .expect("step up area");
+        assert!(divider < step_up, "divider must render behind the arrow buttons");
+        let step_up_area = number
+            .split("step-up-area := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("step-down-area := Rectangle").next())
+            .expect("step up area");
+        assert!(step_up_area.contains("width: 12px * root.scale-factor;"));
+        assert!(step_up_area.contains("/ 2 - 2px * root.scale-factor;"));
         assert!(!confirm.contains("Image {"));
         assert!(!confirm.contains("../../assets/icons/split.svg"));
         assert!(confirm.contains("horizontal-alignment: center;"));
         assert!(confirm.contains("font-weight: 500;"));
+    }
+
+    #[test]
+    fn infinite_canvas_split_action_bar_hugs_its_controls() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .and_then(|value| value.split("export component InfiniteCanvasPage").next())
+            .expect("canvas node component");
+        let split_layout = node
+            .split("if root.split-mode: HorizontalLayout")
+            .nth(1)
+            .and_then(|value| value.split("if root.note.kind == \"video\"").next())
+            .expect("split action layout");
+
+        assert!(node.contains("function split-action-bar-width() -> length"));
+        assert!(node.contains("return 464px * root.node-scale();"));
+        assert!(node.contains("root.split-mode ? root.split-action-bar-width()"));
+        assert!(!split_layout.contains("horizontal-stretch: 1;"));
     }
 
     #[test]

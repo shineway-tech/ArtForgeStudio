@@ -224,25 +224,29 @@ component CanvasMediaAction {
     Rectangle {
         background: action-touch.has-hover ? (root.danger ? #fee9e7 : #ebe9e7) : transparent;
         border-radius: 6px * root.scale-factor;
-        Image {
-            x: 8px * root.scale-factor;
-            y: (parent.height - 16px * root.scale-factor) / 2;
-            width: 16px * root.scale-factor;
-            height: self.width;
-            source: root.icon;
-            colorize: root.danger ? #d7473f : #302c29;
-            image-fit: contain;
-        }
-        Text {
-            x: 30px * root.scale-factor;
-            width: parent.width - 36px * root.scale-factor;
+        action-content := HorizontalLayout {
+            width: parent.width;
             height: parent.height;
-            text: root.text;
-            color: root.danger ? #d7473f : #302c29;
-            font-size: 13px * root.scale-factor;
-            vertical-alignment: center;
-            wrap: no-wrap;
-            overflow: elide;
+            padding-left: 6px * root.scale-factor;
+            padding-right: 6px * root.scale-factor;
+            spacing: 6px * root.scale-factor;
+            alignment: center;
+            Image {
+                width: 16px * root.scale-factor;
+                height: self.width;
+                source: root.icon;
+                colorize: root.danger ? #d7473f : #302c29;
+                image-fit: contain;
+            }
+            Text {
+                height: parent.height;
+                text: root.text;
+                color: root.danger ? #d7473f : #302c29;
+                font-size: 13px * root.scale-factor;
+                vertical-alignment: center;
+                wrap: no-wrap;
+                overflow: elide;
+            }
         }
         action-touch := TouchArea {
             width: parent.width;
@@ -327,23 +331,31 @@ component CanvasSplitNumberField {
             vertical-alignment: center;
         }
 
-        Rectangle {
+        split-step-vertical-divider := Rectangle {
             x: parent.width - 24px * root.scale-factor;
             width: 1px * root.scale-factor;
             height: parent.height;
             background: #e4e0dc;
         }
 
-        Rectangle {
+        split-step-horizontal-divider := Rectangle {
+            x: parent.width - 23px * root.scale-factor;
+            y: parent.height / 2;
+            width: 23px * root.scale-factor;
+            height: 1px * root.scale-factor;
+            background: #e4e0dc;
+        }
+
+        step-up-area := Rectangle {
             x: parent.width - 23px * root.scale-factor;
             width: 23px * root.scale-factor;
             height: parent.height / 2;
             background: step-up.has-hover ? #f0eeec : transparent;
             border-radius: 5px * root.scale-factor;
             Image {
-                x: (parent.width - 9px * root.scale-factor) / 2;
-                y: (parent.height - 9px * root.scale-factor) / 2;
-                width: 9px * root.scale-factor;
+                x: (parent.width - 12px * root.scale-factor) / 2;
+                y: (parent.height - 12px * root.scale-factor) / 2 - 2px * root.scale-factor;
+                width: 12px * root.scale-factor;
                 height: self.width;
                 source: @image-url("../../assets/icons/arrow-up.svg");
                 colorize: #716a65;
@@ -357,7 +369,7 @@ component CanvasSplitNumberField {
             }
         }
 
-        Rectangle {
+        step-down-area := Rectangle {
             x: parent.width - 23px * root.scale-factor;
             y: parent.height / 2;
             width: 23px * root.scale-factor;
@@ -365,9 +377,9 @@ component CanvasSplitNumberField {
             background: step-down.has-hover ? #f0eeec : transparent;
             border-radius: 5px * root.scale-factor;
             Image {
-                x: (parent.width - 9px * root.scale-factor) / 2;
-                y: (parent.height - 9px * root.scale-factor) / 2;
-                width: 9px * root.scale-factor;
+                x: (parent.width - 12px * root.scale-factor) / 2;
+                y: (parent.height - 12px * root.scale-factor) / 2;
+                width: 12px * root.scale-factor;
                 height: self.width;
                 source: @image-url("../../assets/icons/arrow-up.svg");
                 colorize: #716a65;
@@ -382,13 +394,6 @@ component CanvasSplitNumberField {
             }
         }
 
-        Rectangle {
-            x: parent.width - 23px * root.scale-factor;
-            y: parent.height / 2;
-            width: 23px * root.scale-factor;
-            height: 1px * root.scale-factor;
-            background: #e4e0dc;
-        }
     }
 }
 
@@ -879,6 +884,10 @@ component CanvasNodeCard {
 
     function group-control-scale() -> float {
         return max(0.75, root.node-scale());
+    }
+
+    function split-action-bar-width() -> length {
+        return 464px * root.node-scale();
     }
 
     function split-row-line-count() -> int {
@@ -1555,7 +1564,7 @@ component CanvasNodeCard {
         }
 
         if (root.is-visual-media() || root.is-board-image()) && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-action-bar := Rectangle {
-            width: (root.split-mode ? 568px : (root.note.kind == "video" ? 380px : ((root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "" ? 612px : 312px))) * root.node-scale();
+            width: root.split-mode ? root.split-action-bar-width() : (root.note.kind == "video" ? 380px : ((root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "" ? 612px : 312px)) * root.node-scale();
             height: 46px * root.node-scale();
             x: (parent.width - self.width) / 2;
             y: root.action-bar-y();
@@ -1594,10 +1603,6 @@ component CanvasNodeCard {
                     scale-factor: root.node-scale();
                     suffix: AppState.en ? "C" : "列";
                     value <=> root.split-columns;
-                }
-                Rectangle {
-                    horizontal-stretch: 1;
-                    background: transparent;
                 }
                 CanvasSplitConfirmButton {
                     scale-factor: root.node-scale();

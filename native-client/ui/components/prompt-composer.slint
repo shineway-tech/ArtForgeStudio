@@ -117,17 +117,34 @@ export component PromptComposer {
     function close-history-preview() {
         root.history-preview-close-pending = false;
         root.prompt-history-hovered-index = -1;
-        history-preview-popup.close();
     }
 
     function sync-history-preview(index: int, hovered: bool) {
         if hovered {
             root.history-preview-close-pending = false;
             root.prompt-history-hovered-index = index;
-            history-preview-popup.show();
         } else if root.prompt-history-hovered-index == index {
             root.history-preview-close-pending = true;
         }
+    }
+
+    function history-list-width() -> length {
+        return root.width - 48px;
+    }
+
+    function history-list-height() -> length {
+        return 52px + min(10, AppState.prompt-history.length) * 32px;
+    }
+
+    function history-popup-width() -> length {
+        return root.history-list-width()
+            + (root.prompt-history-hovered-index >= 0 ? 432px : 0px);
+    }
+
+    function history-popup-height() -> length {
+        return root.prompt-history-hovered-index >= 0
+            ? max(root.history-list-height(), 300px)
+            : root.history-list-height();
     }
 
     Timer {
@@ -265,14 +282,15 @@ export component PromptComposer {
             font-weight: 400;
             overflow: elide;
         }
-        prompt-entry-row := HorizontalLayout {
+        prompt-entry-area := Rectangle {
             x: 24px;
             y: root.prompt-input-y();
             width: parent.width - 48px;
             height: root.prompt-input-height();
-            spacing: 6px;
 
             for item in AppState.selected-custom-prompt-items: selected-name := Text {
+                x: 0px;
+                y: 0px;
                 width: min(selected-name.preferred-width, root.width * 0.42);
                 height: selected-name.preferred-height;
                 text: item.name;
@@ -284,9 +302,10 @@ export component PromptComposer {
             }
 
             prompt-cursor-area := TouchArea {
-                horizontal-stretch: 1;
-                min-width: 36px;
-                height: root.prompt-input-height();
+                x: 0px;
+                y: root.selected-custom-prompt-line-height();
+                width: parent.width;
+                height: root.prompt-input-height() - root.selected-custom-prompt-line-height();
                 mouse-cursor: text;
                 prompt-scroll := ScrollView {
                     y: 0px;
@@ -506,10 +525,12 @@ export component PromptComposer {
     history-popup := PopupWindow {
         x: 24px;
         y: root.prompt-input-y() + (AppState.selected-custom-prompt-items.length > 0 ? 66px : 32px);
-        width: root.width - 48px;
-        height: 52px + min(10, AppState.prompt-history.length) * 32px;
+        width: root.history-popup-width();
+        height: root.history-popup-height();
         close-policy: close-on-click-outside;
-        Rectangle {
+        history-list := Rectangle {
+            width: root.history-list-width();
+            height: root.history-list-height();
             visible: AppState.prompt-history-open && AppState.prompt-history.length > 0;
             background: AppTheme.panel;
             border-radius: 8px;
@@ -611,15 +632,12 @@ export component PromptComposer {
                 }
             }
         }
-    }
 
-    history-preview-popup := PopupWindow {
-        x: root.width + 12px;
-        y: root.prompt-input-y() + (AppState.selected-custom-prompt-items.length > 0 ? 66px : 32px);
-        width: 420px;
-        height: 300px;
-
-        Rectangle {
+        history-preview := Rectangle {
+            x: root.history-list-width() + 12px;
+            y: 0px;
+            width: 420px;
+            height: 300px;
             visible: root.prompt-history-hovered-index >= 0
                 && root.prompt-history-hovered-index < AppState.prompt-history.length;
             background: AppTheme.panel;
@@ -896,6 +914,12 @@ export component PromptComposer {
 
     function prompt-input-height() -> length {
         return max(96px, root.reference-tray-y() - root.prompt-input-y() - 12px);
+    }
+
+    function selected-custom-prompt-line-height() -> length {
+        return AppState.selected-custom-prompt-items.length > 0
+            ? AppState.settings-font-size * 1px + 8px
+            : 0px;
     }
 
     function prompt-placeholder() -> string {
