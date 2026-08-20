@@ -9,9 +9,45 @@ fn persist_custom_prompt_before_ack(
     Ok(())
 }
 
+fn normalize_prompt_editor_text(
+    editor_text: &str,
+    selected_prefix: &str,
+    current_prompt: &str,
+) -> (String, String) {
+    if selected_prefix.is_empty() {
+        return (editor_text.to_string(), editor_text.to_string());
+    }
+    if let Some(prompt) = editor_text.strip_prefix(selected_prefix) {
+        return (editor_text.to_string(), prompt.to_string());
+    }
+    (
+        format!("{selected_prefix}{current_prompt}"),
+        current_prompt.to_string(),
+    )
+}
+
 pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
     let store = context.store.clone();
+
+    {
+        let app_weak = app.as_weak();
+        state.on_normalize_prompt_editor_text(move |editor_text, selected_prefix| {
+            let Some(app) = app_weak.upgrade() else {
+                return editor_text;
+            };
+            let state = app.global::<AppState>();
+            let (normalized, prompt) = normalize_prompt_editor_text(
+                editor_text.as_str(),
+                selected_prefix.as_str(),
+                state.get_prompt().as_str(),
+            );
+            if state.get_prompt().as_str() != prompt {
+                state.set_prompt(prompt.into());
+            }
+            normalized.into()
+        });
+    }
 
     {
         let app_weak = app.as_weak();
@@ -782,5 +818,25 @@ mod tests {
         .unwrap();
 
         assert_eq!(*events.borrow(), vec!["durable_save", "acknowledge"]);
+    }
+
+    #[test]
+    fn prompt_editor_text_keeps_the_custom_prompt_name_inline_and_returns_only_the_suffix() {
+        assert_eq!(
+            normalize_prompt_editor_text("像素模板 霓虹街道", "像素模板 ", "霓虹街道"),
+            ("像素模板 霓虹街道".to_string(), "霓虹街道".to_string())
+        );
+        assert_eq!(
+            normalize_prompt_editor_text("普通提示词", "", ""),
+            ("普通提示词".to_string(), "普通提示词".to_string())
+        );
+    }
+
+    #[test]
+    fn prompt_editor_text_restores_a_selected_custom_prompt_name_if_it_is_edited() {
+        assert_eq!(
+            normalize_prompt_editor_text("素模板 霓虹街道", "像素模板 ", "霓虹街道"),
+            ("像素模板 霓虹街道".to_string(), "霓虹街道".to_string())
+        );
     }
 }

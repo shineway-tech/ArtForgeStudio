@@ -477,9 +477,7 @@ mod tests {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         assert!(composer.contains("history-popup := PopupWindow"));
         assert!(composer.contains("close-policy: close-on-click-outside"));
-        assert!(composer.contains(
-            "y: root.prompt-input-y() + (AppState.selected-custom-prompt-items.length > 0 ? 66px : 32px);"
-        ));
+        assert!(composer.contains("y: root.prompt-input-y() + 32px;"));
         assert!(composer.contains("width: root.width - 48px"));
         assert!(composer.contains("history-popup.show()"));
         assert!(composer.contains("history-popup.close()"));
@@ -506,10 +504,15 @@ mod tests {
             .expect("history popup");
 
         assert!(composer.contains("property <int> prompt-history-hovered-index: -1"));
-        assert!(!composer.contains("history-preview-popup := PopupWindow"));
+        assert!(history_popup.contains("history-preview-popup := PopupWindow"));
         assert!(history_popup.contains("history-list := Rectangle"));
-        assert!(history_popup.contains("history-preview := Rectangle"));
+        assert!(history_popup.contains("width: root.history-list-width();"));
+        assert!(history_popup.contains("height: root.history-list-height();"));
+        assert!(!history_popup.contains("root.history-popup-width()"));
+        assert!(!history_popup.contains("root.history-popup-height()"));
         assert!(history_popup.contains("x: root.history-list-width() + 12px;"));
+        assert!(history_popup.contains("history-preview-popup.show();"));
+        assert!(history_popup.contains("history-preview-popup.close();"));
         assert!(composer.contains("AppState.prompt-history[root.prompt-history-hovered-index]"));
         assert!(composer.contains("text: AppState.en ? \"Full prompt\" : \"完整提示词\""));
         assert!(composer.contains("changed has-hover =>"));
@@ -536,10 +539,10 @@ mod tests {
             .and_then(|value| value.split("key-pressed(event)").next())
             .expect("prompt edited handler");
 
-        assert!(edited_handler.contains("self.text != \"/\""));
+        assert!(edited_handler.contains("AppState.prompt != \"/\""));
         assert!(edited_handler.contains("AppState.prompt-history-open = false"));
         assert!(edited_handler.contains("history-popup.close()"));
-        assert!(edited_handler.contains("self.text != \"//\""));
+        assert!(edited_handler.contains("AppState.prompt != \"//\""));
         assert!(edited_handler.contains("AppState.custom-prompt-open = false"));
         assert!(edited_handler.contains("custom-prompt-popup.close()"));
     }
@@ -801,8 +804,9 @@ mod tests {
     }
 
     #[test]
-    fn double_slash_selection_shows_a_colored_name_without_reserving_a_left_column() {
+    fn double_slash_selection_shows_a_colored_name_inline_with_the_editable_prompt() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let state = include_str!("../../ui/app-state.slint");
         let callbacks = include_str!("callbacks/custom_prompt.rs");
         let popup = composer
             .split("custom-prompt-popup := PopupWindow")
@@ -817,25 +821,24 @@ mod tests {
         assert!(composer.contains("prompt-entry-area := Rectangle"));
         assert!(composer.contains("prompt-cursor-area := TouchArea"));
         assert!(composer.contains("mouse-cursor: text;"));
+        assert!(composer.contains("property <string> prompt-editor-text:"));
+        assert!(composer.contains("property <string> selected-custom-prompt-prefix:"));
+        assert!(composer.contains("text <=> root.prompt-editor-text;"));
+        assert!(composer.contains("AppState.normalize-prompt-editor-text("));
         assert!(composer.contains(
-            "for item in AppState.selected-custom-prompt-items: selected-name := Text"
+            "for item in AppState.selected-custom-prompt-items: selected-name-mask := Rectangle"
         ));
         assert!(composer.contains("text: item.name;"));
         assert!(composer.contains("color: AppTheme.custom-prompt-name;"));
         assert!(composer.contains("font-weight: 600;"));
         assert!(composer.contains("selected-name.preferred-width"));
-        assert!(composer.contains("height: selected-name.preferred-height;"));
+        assert!(composer.contains("background: AppTheme.panel-soft;"));
         assert!(composer.contains("vertical-alignment: top;"));
-        assert!(composer.contains("function selected-custom-prompt-line-height() -> length"));
-        assert!(composer.contains("y: root.selected-custom-prompt-line-height();"));
+        assert!(!composer.contains("function selected-custom-prompt-line-height() -> length"));
+        assert!(composer.contains("y: 0px;"));
         assert!(composer.contains("width: parent.width;"));
-        assert!(composer.contains(
-            "height: root.prompt-input-height() - root.selected-custom-prompt-line-height();"
-        ));
-        assert!(!composer.contains(
-            "height: min(parent.height, AppState.settings-font-size * 1px + 8px);"
-        ));
-        assert!(composer.contains("root.width * 0.42"));
+        assert!(composer.contains("height: root.prompt-input-height();"));
+        assert!(!composer.contains("root.width * 0.42"));
         assert!(!composer.contains("for item in AppState.selected-custom-prompt-items: Rectangle"));
         assert!(!composer.contains("selected-prompt-tags := Rectangle"));
         assert!(!composer.contains("selected-prompt-row := HorizontalLayout"));
@@ -874,6 +877,8 @@ mod tests {
         assert!(!composer.contains("selected-title.preferred-width + 38px"));
         assert!(composer.contains("tag-title.preferred-width + 28px"));
         assert!(popup.contains("overflow: clip"));
+        assert!(state.contains("callback normalize-prompt-editor-text(string, string) -> string;"));
+        assert!(callbacks.contains("state.on_normalize_prompt_editor_text"));
         assert!(callbacks.contains("if state.get_prompt().trim() == \"//\""));
         assert!(callbacks.contains("state.set_prompt(\"\".into());"));
         assert!(callbacks.contains("slint::Timer::single_shot(Duration::ZERO"));
@@ -940,7 +945,7 @@ mod tests {
             .and_then(|value| value.rsplit("Text {").next())
             .expect("prompt placeholder");
 
-        assert!(placeholder.contains("prompt-input.text == \"\""));
+        assert!(placeholder.contains("root.prompt-editor-text == \"\""));
         assert!(placeholder.contains("AppState.selected-custom-prompt-items.length == 0"));
         assert!(placeholder.contains("!prompt-input.has-focus"));
     }
@@ -2422,7 +2427,7 @@ mod tests {
 
         assert!(clear_action.contains("clicked => { root.clear-current-prompt(); }"));
         assert!(clear_function.contains("AppState.prompt = \"\";"));
-        assert!(clear_function.contains("prompt-input.text = \"\";"));
+        assert!(clear_function.contains("root.prompt-editor-text = \"\";"));
         assert!(clear_function.contains("AppState.toggle-custom-prompt-selection("));
         assert!(clear_function.contains("AppState.invalidate-deep-prompt-binding();"));
         assert!(!clear_function.contains("AppState.references"));
@@ -3469,9 +3474,16 @@ mod tests {
             .and_then(|value| value.split("component CanvasSplitConfirmButton").next())
             .expect("canvas media action");
 
-        assert!(action.contains("action-content := HorizontalLayout"));
-        assert!(action.contains("alignment: center;"));
-        assert!(action.contains("spacing: 6px * root.scale-factor;"));
+        assert!(!action.contains("HorizontalLayout"));
+        assert!(action.contains("property <length> action-content-width:"));
+        assert!(action.contains("x: (parent.width - root.action-content-width) / 2;"));
+        assert_eq!(
+            action
+                .matches("y: (parent.height - 16px * root.scale-factor) / 2;")
+                .count(),
+            1
+        );
+        assert!(action.contains("vertical-alignment: center;"));
         assert!(!action.contains("x: 8px * root.scale-factor;"));
         assert!(!action.contains("x: 30px * root.scale-factor;"));
     }
@@ -3529,9 +3541,14 @@ mod tests {
 
         assert!(number.contains("function step-value(delta: int)"));
         assert!(number.contains("max(1, min(64"));
-        assert!(number.contains("step-up := TouchArea"));
-        assert!(number.contains("step-down := TouchArea"));
-        assert_eq!(number.matches("../../assets/icons/arrow-up.svg").count(), 2);
+        assert!(number.contains("step-controls := TouchArea"));
+        assert!(number.contains(
+            "clicked => { root.step-value(self.mouse-y < self.height / 2 ? 1 : -1); }"
+        ));
+        assert!(!number.contains("step-up := TouchArea"));
+        assert!(!number.contains("step-down := TouchArea"));
+        assert_eq!(number.matches("../../assets/icons/chevron-up-tight.svg").count(), 2);
+        assert!(!number.contains("../../assets/icons/arrow-up.svg"));
         assert!(number.contains("transform-rotation: 180deg;"));
         let divider = number
             .find("split-step-horizontal-divider := Rectangle")
@@ -3545,8 +3562,9 @@ mod tests {
             .nth(1)
             .and_then(|value| value.split("step-down-area := Rectangle").next())
             .expect("step up area");
-        assert!(step_up_area.contains("width: 12px * root.scale-factor;"));
-        assert!(step_up_area.contains("/ 2 - 2px * root.scale-factor;"));
+        assert!(step_up_area.contains("width: 10px * root.scale-factor;"));
+        assert!(step_up_area.contains("height: 6px * root.scale-factor;"));
+        assert!(step_up_area.contains("y: 5px * root.scale-factor;"));
         assert!(!confirm.contains("Image {"));
         assert!(!confirm.contains("../../assets/icons/split.svg"));
         assert!(confirm.contains("horizontal-alignment: center;"));

@@ -57,6 +57,12 @@ export component PromptComposer {
     property <length> custom-prompt-scroll-x: 0px;
     property <string> pending-custom-prompt-content: "";
     property <bool> custom-prompt-selection-pending: false;
+    property <string> selected-custom-prompt-prefix: AppState.selected-custom-prompt-items.length > 0
+        ? AppState.selected-custom-prompt-items[0].name + " "
+        : "";
+    property <string> observed-prompt: AppState.prompt;
+    property <string> prompt-editor-text: root.selected-custom-prompt-prefix + AppState.prompt;
+    property <bool> prompt-editor-focus-pending: false;
     property <bool> geometry-sidebar-collapsed: AppState.sidebar-collapsed;
     property <bool> geometry-logged-in: AppState.logged-in;
     height: AppState.references.length > 0 || AppState.quote-title != "" ? 650px : 600px;
@@ -73,6 +79,18 @@ export component PromptComposer {
     changed height => { root.sync-reference-drop-bounds(); }
     changed geometry-sidebar-collapsed => { root.sync-reference-drop-bounds(); }
     changed geometry-logged-in => { root.sync-reference-drop-bounds(); }
+    changed selected-custom-prompt-prefix => {
+        root.sync-prompt-editor-text();
+        root.prompt-editor-focus-pending = true;
+    }
+    changed observed-prompt => { root.sync-prompt-editor-text(); }
+
+    function sync-prompt-editor-text() {
+        let expected = root.selected-custom-prompt-prefix + AppState.prompt;
+        if root.prompt-editor-text != expected {
+            root.prompt-editor-text = expected;
+        }
+    }
 
     function queue-custom-prompt-selection(value: string) {
         root.pending-custom-prompt-content = value;
@@ -86,7 +104,7 @@ export component PromptComposer {
         history-popup.close();
         custom-prompt-popup.close();
         prompt-input.focus();
-        prompt-input.text = value;
+        root.prompt-editor-text = value;
         AppState.prompt = value;
         AppState.deep-optimization-applied-chinese = "";
         AppState.deep-optimization-applied-english = "";
@@ -106,7 +124,7 @@ export component PromptComposer {
             );
         }
         AppState.prompt = "";
-        prompt-input.text = "";
+        root.prompt-editor-text = "";
         AppState.deep-optimization-applied-chinese = "";
         AppState.deep-optimization-applied-english = "";
         AppState.invalidate-deep-prompt-binding();
@@ -134,27 +152,6 @@ export component PromptComposer {
 
     function history-list-height() -> length {
         return 52px + min(10, AppState.prompt-history.length) * 32px;
-    }
-
-    function history-popup-width() -> length {
-        return root.history-list-width()
-            + (root.prompt-history-hovered-index >= 0 ? 432px : 0px);
-    }
-
-    function history-popup-height() -> length {
-        return root.prompt-history-hovered-index >= 0
-            ? max(root.history-list-height(), 300px)
-            : root.history-list-height();
-    }
-
-    Timer {
-        interval: 160ms;
-        running: root.history-preview-close-pending;
-        triggered => {
-            if root.history-preview-close-pending {
-                root.close-history-preview();
-            }
-        }
     }
 
     Timer {
@@ -288,24 +285,11 @@ export component PromptComposer {
             width: parent.width - 48px;
             height: root.prompt-input-height();
 
-            for item in AppState.selected-custom-prompt-items: selected-name := Text {
-                x: 0px;
-                y: 0px;
-                width: min(selected-name.preferred-width, root.width * 0.42);
-                height: selected-name.preferred-height;
-                text: item.name;
-                color: AppTheme.custom-prompt-name;
-                font-size: AppState.settings-font-size * 1px;
-                font-weight: 600;
-                vertical-alignment: top;
-                overflow: elide;
-            }
-
             prompt-cursor-area := TouchArea {
                 x: 0px;
-                y: root.selected-custom-prompt-line-height();
+                y: 0px;
                 width: parent.width;
-                height: root.prompt-input-height() - root.selected-custom-prompt-line-height();
+                height: root.prompt-input-height();
                 mouse-cursor: text;
                 prompt-scroll := ScrollView {
                     y: 0px;
@@ -314,7 +298,7 @@ export component PromptComposer {
                     viewport-width: self.visible-width;
                     viewport-height: max(self.visible-height, prompt-input.preferred-height);
                     prompt-input := TextInput {
-                    text <=> AppState.prompt;
+                    text <=> root.prompt-editor-text;
                     single-line: false;
                     color: AppTheme.text;
                     font-size: AppState.settings-font-size * 1px;
@@ -329,18 +313,26 @@ export component PromptComposer {
                         }
                     }
                     edited => {
+                        let normalized = AppState.normalize-prompt-editor-text(
+                            self.text,
+                            root.selected-custom-prompt-prefix,
+                        );
+                        if normalized != self.text {
+                            root.prompt-editor-text = normalized;
+                            self.set-selection-offsets(2147483647, 2147483647);
+                        }
                         if AppState.deep-optimization-applied-chinese != ""
-                            && self.text != AppState.deep-optimization-applied-chinese {
+                            && AppState.prompt != AppState.deep-optimization-applied-chinese {
                             AppState.deep-optimization-applied-chinese = "";
                             AppState.deep-optimization-applied-english = "";
                             AppState.invalidate-deep-prompt-binding();
                         }
-                        if AppState.prompt-history-open && self.text != "/" {
+                        if AppState.prompt-history-open && AppState.prompt != "/" {
                             AppState.prompt-history-open = false;
                             root.close-history-preview();
                             history-popup.close();
                         }
-                        if AppState.custom-prompt-open && self.text != "//" {
+                        if AppState.custom-prompt-open && AppState.prompt != "//" {
                             AppState.custom-prompt-open = false;
                             custom-prompt-popup.close();
                         }
@@ -452,10 +444,29 @@ export component PromptComposer {
                     }
                 }
             }
+
+            for item in AppState.selected-custom-prompt-items: selected-name-mask := Rectangle {
+                x: 0px;
+                y: 0px;
+                width: selected-name.preferred-width + 1px;
+                height: AppState.settings-font-size * 1px + 8px;
+                background: AppTheme.panel-soft;
+
+                selected-name := Text {
+                    width: self.preferred-width;
+                    height: parent.height;
+                    text: item.name;
+                    color: AppTheme.custom-prompt-name;
+                    font-size: AppState.settings-font-size * 1px;
+                    font-weight: 600;
+                    vertical-alignment: top;
+                    wrap: no-wrap;
+                }
+            }
         }
         }
         Text {
-            visible: prompt-input.text == ""
+            visible: root.prompt-editor-text == ""
                 && AppState.selected-custom-prompt-items.length == 0
                 && !prompt-input.has-focus;
             x: 24px;
@@ -524,9 +535,9 @@ export component PromptComposer {
 
     history-popup := PopupWindow {
         x: 24px;
-        y: root.prompt-input-y() + (AppState.selected-custom-prompt-items.length > 0 ? 66px : 32px);
-        width: root.history-popup-width();
-        height: root.history-popup-height();
+        y: root.prompt-input-y() + 32px;
+        width: root.history-list-width();
+        height: root.history-list-height();
         close-policy: close-on-click-outside;
         history-list := Rectangle {
             width: root.history-list-width();
@@ -572,6 +583,9 @@ export component PromptComposer {
                             mouse-cursor: pointer;
                             changed has-hover => {
                                 root.sync-history-preview(index, self.has-hover);
+                                if self.has-hover {
+                                    history-preview-popup.show();
+                                }
                             }
                             clicked => {
                                 root.apply-selected-prompt(AppState.prompt-history[index]);
@@ -633,63 +647,86 @@ export component PromptComposer {
             }
         }
 
-        history-preview := Rectangle {
+        history-preview-popup := PopupWindow {
             x: root.history-list-width() + 12px;
             y: 0px;
             width: 420px;
             height: 300px;
-            visible: root.prompt-history-hovered-index >= 0
-                && root.prompt-history-hovered-index < AppState.prompt-history.length;
-            background: AppTheme.panel;
-            border-radius: 10px;
-            border-width: 1px;
-            border-color: AppTheme.border;
+            close-policy: close-on-click-outside;
 
-            Text {
-                x: 16px;
-                y: 14px;
-                width: parent.width - 32px;
-                height: 22px;
-                text: AppState.en ? "Full prompt" : "完整提示词";
-                color: AppTheme.text;
-                font-size: AppState.settings-font-size * 1px;
-                font-weight: 600;
-                vertical-alignment: center;
-            }
+            history-preview := Rectangle {
+                background: AppTheme.panel;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: AppTheme.border;
 
-            history-preview-scroll := ScrollView {
-                x: 16px;
-                y: 46px;
-                width: parent.width - 32px;
-                height: parent.height - 62px;
-                viewport-width: self.visible-width;
-                viewport-height: max(self.visible-height, history-preview-text.preferred-height);
-                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
-                mouse-drag-pan-enabled: true;
-
-                history-preview-text := Text {
-                    width: history-preview-scroll.visible-width - 10px;
-                    height: max(history-preview-scroll.visible-height, self.preferred-height);
-                    text: root.prompt-history-hovered-index >= 0
-                        && root.prompt-history-hovered-index < AppState.prompt-history.length
-                        ? AppState.prompt-history[root.prompt-history-hovered-index]
-                        : "";
+                Text {
+                    x: 16px;
+                    y: 14px;
+                    width: parent.width - 32px;
+                    height: 22px;
+                    text: AppState.en ? "Full prompt" : "完整提示词";
                     color: AppTheme.text;
                     font-size: AppState.settings-font-size * 1px;
-                    font-weight: 400;
-                    vertical-alignment: top;
-                    wrap: word-wrap;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                history-preview-scroll := ScrollView {
+                    x: 16px;
+                    y: 46px;
+                    width: parent.width - 32px;
+                    height: parent.height - 62px;
+                    viewport-width: self.visible-width;
+                    viewport-height: max(self.visible-height, history-preview-text.preferred-height);
+                    horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                    mouse-drag-pan-enabled: true;
+
+                    history-preview-text := Text {
+                        width: history-preview-scroll.visible-width - 10px;
+                        height: max(history-preview-scroll.visible-height, self.preferred-height);
+                        text: root.prompt-history-hovered-index >= 0
+                            && root.prompt-history-hovered-index < AppState.prompt-history.length
+                            ? AppState.prompt-history[root.prompt-history-hovered-index]
+                            : "";
+                        color: AppTheme.text;
+                        font-size: AppState.settings-font-size * 1px;
+                        font-weight: 400;
+                        vertical-alignment: top;
+                        wrap: word-wrap;
+                    }
+                }
+
+                preview-hover := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    changed has-hover => {
+                        root.history-preview-close-pending = !self.has-hover;
+                    }
+                    scroll-event(event) => { return reject; }
                 }
             }
 
-            preview-hover := TouchArea {
-                width: parent.width;
-                height: parent.height;
-                changed has-hover => {
-                    root.history-preview-close-pending = !self.has-hover;
+            Timer {
+                interval: 160ms;
+                running: root.history-preview-close-pending;
+                triggered => {
+                    if root.history-preview-close-pending {
+                        root.close-history-preview();
+                        history-preview-popup.close();
+                    }
                 }
-                scroll-event(event) => { return reject; }
             }
+        }
+    }
+
+    Timer {
+        interval: 1ms;
+        running: root.prompt-editor-focus-pending;
+        triggered => {
+            root.prompt-editor-focus-pending = false;
+            prompt-input.focus();
+            prompt-input.set-selection-offsets(2147483647, 2147483647);
         }
     }
 
@@ -914,12 +951,6 @@ export component PromptComposer {
 
     function prompt-input-height() -> length {
         return max(96px, root.reference-tray-y() - root.prompt-input-y() - 12px);
-    }
-
-    function selected-custom-prompt-line-height() -> length {
-        return AppState.selected-custom-prompt-items.length > 0
-            ? AppState.settings-font-size * 1px + 8px
-            : 0px;
     }
 
     function prompt-placeholder() -> string {

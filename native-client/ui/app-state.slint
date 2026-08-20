@@ -632,6 +632,7 @@ export global AppState {
     callback cancel-update();
     callback remove-prompt-history(string);
     callback clear-prompt-history();
+    callback normalize-prompt-editor-text(string, string) -> string;
     callback toggle-custom-prompt-selection(string);
     callback save-custom-prompt(string, string);
     callback remove-custom-prompt(string);

@@ -219,34 +219,37 @@ component CanvasMediaAction {
     in property <string> text;
     in property <bool> danger: false;
     in property <float> scale-factor: 1;
+    property <length> action-label-width: min(
+        action-label.preferred-width,
+        max(0px, root.width - 34px * root.scale-factor),
+    );
+    property <length> action-content-width: 16px * root.scale-factor
+        + 6px * root.scale-factor
+        + root.action-label-width;
     callback clicked();
     height: 38px * root.scale-factor;
     Rectangle {
         background: action-touch.has-hover ? (root.danger ? #fee9e7 : #ebe9e7) : transparent;
         border-radius: 6px * root.scale-factor;
-        action-content := HorizontalLayout {
-            width: parent.width;
+        Image {
+            x: (parent.width - root.action-content-width) / 2;
+            y: (parent.height - 16px * root.scale-factor) / 2;
+            width: 16px * root.scale-factor;
+            height: self.width;
+            source: root.icon;
+            colorize: root.danger ? #d7473f : #302c29;
+            image-fit: contain;
+        }
+        action-label := Text {
+            x: (parent.width - root.action-content-width) / 2 + 22px * root.scale-factor;
+            width: root.action-label-width;
             height: parent.height;
-            padding-left: 6px * root.scale-factor;
-            padding-right: 6px * root.scale-factor;
-            spacing: 6px * root.scale-factor;
-            alignment: center;
-            Image {
-                width: 16px * root.scale-factor;
-                height: self.width;
-                source: root.icon;
-                colorize: root.danger ? #d7473f : #302c29;
-                image-fit: contain;
-            }
-            Text {
-                height: parent.height;
-                text: root.text;
-                color: root.danger ? #d7473f : #302c29;
-                font-size: 13px * root.scale-factor;
-                vertical-alignment: center;
-                wrap: no-wrap;
-                overflow: elide;
-            }
+            text: root.text;
+            color: root.danger ? #d7473f : #302c29;
+            font-size: 13px * root.scale-factor;
+            vertical-alignment: center;
+            wrap: no-wrap;
+            overflow: elide;
         }
         action-touch := TouchArea {
             width: parent.width;
@@ -350,22 +353,16 @@ component CanvasSplitNumberField {
             x: parent.width - 23px * root.scale-factor;
             width: 23px * root.scale-factor;
             height: parent.height / 2;
-            background: step-up.has-hover ? #f0eeec : transparent;
+            background: step-controls.has-hover && step-controls.mouse-y < step-controls.height / 2 ? #f0eeec : transparent;
             border-radius: 5px * root.scale-factor;
             Image {
-                x: (parent.width - 12px * root.scale-factor) / 2;
-                y: (parent.height - 12px * root.scale-factor) / 2 - 2px * root.scale-factor;
-                width: 12px * root.scale-factor;
-                height: self.width;
-                source: @image-url("../../assets/icons/arrow-up.svg");
+                x: (parent.width - 10px * root.scale-factor) / 2;
+                y: 5px * root.scale-factor;
+                width: 10px * root.scale-factor;
+                height: 6px * root.scale-factor;
+                source: @image-url("../../assets/icons/chevron-up-tight.svg");
                 colorize: #716a65;
                 image-fit: contain;
-            }
-            step-up := TouchArea {
-                width: parent.width;
-                height: parent.height;
-                mouse-cursor: pointer;
-                clicked => { root.step-value(1); }
             }
         }
 
@@ -374,24 +371,26 @@ component CanvasSplitNumberField {
             y: parent.height / 2;
             width: 23px * root.scale-factor;
             height: parent.height / 2;
-            background: step-down.has-hover ? #f0eeec : transparent;
+            background: step-controls.has-hover && step-controls.mouse-y >= step-controls.height / 2 ? #f0eeec : transparent;
             border-radius: 5px * root.scale-factor;
             Image {
-                x: (parent.width - 12px * root.scale-factor) / 2;
-                y: (parent.height - 12px * root.scale-factor) / 2;
-                width: 12px * root.scale-factor;
-                height: self.width;
-                source: @image-url("../../assets/icons/arrow-up.svg");
+                x: (parent.width - 10px * root.scale-factor) / 2;
+                y: 7px * root.scale-factor;
+                width: 10px * root.scale-factor;
+                height: 6px * root.scale-factor;
+                source: @image-url("../../assets/icons/chevron-up-tight.svg");
                 colorize: #716a65;
                 image-fit: contain;
                 transform-rotation: 180deg;
             }
-            step-down := TouchArea {
-                width: parent.width;
-                height: parent.height;
-                mouse-cursor: pointer;
-                clicked => { root.step-value(-1); }
-            }
+        }
+
+        step-controls := TouchArea {
+            x: parent.width - 23px * root.scale-factor;
+            width: 23px * root.scale-factor;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.step-value(self.mouse-y < self.height / 2 ? 1 : -1); }
         }
 
     }
