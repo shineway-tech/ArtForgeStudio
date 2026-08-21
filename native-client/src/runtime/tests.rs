@@ -796,7 +796,7 @@ mod tests {
         assert!(local_store.contains("let was_selected = store"));
         assert!(local_store.contains("selected.insert(prompt.to_string());"));
         assert!(!local_store.contains("selected.clear();"));
-        assert!(composer.contains("for item in AppState.selected-custom-prompt-items"));
+        assert!(composer.contains("for item[index] in AppState.selected-custom-prompt-items"));
         assert!(popup.contains("text: item.name"));
         assert!(popup.contains("item.selected ? AppTheme.accent"));
         assert!(popup.contains("root.queue-custom-prompt-selection(item.content)"));
@@ -835,12 +835,14 @@ mod tests {
         assert!(composer.contains("text <=> root.prompt-editor-text;"));
         assert!(composer.contains("AppState.normalize-prompt-editor-text("));
         assert!(composer.contains(
-            "for item in AppState.selected-custom-prompt-items: InlineCustomPromptOverlay"
+            "for item[index] in AppState.selected-custom-prompt-items: InlineCustomPromptOverlay"
         ));
         assert!(composer.contains("prefix: item.prefix;"));
         assert!(composer.contains("name: item.name;"));
         assert!(overlay.contains("text: \"　\" + root.name;"));
-        assert!(overlay.contains("color: AppTheme.custom-prompt-name;"));
+        assert!(overlay.contains("color: root.marker-color;"));
+        assert!(overlay.contains("colorize: root.marker-color;"));
+        assert!(composer.contains("color-index: index;"));
         assert!(overlay.contains("font-weight: 600;"));
         assert!(overlay.contains("../../assets/icons/custom-prompt-text.svg"));
         assert!(overlay.contains("width: root.editor-font-size;"));
@@ -876,6 +878,68 @@ mod tests {
         assert!(callbacks.contains("state.on_normalize_prompt_editor_text"));
         assert!(callbacks.contains("insert_custom_prompt_name_at_byte_offset"));
         assert!(callbacks.contains("inline_custom_prompt_occurrences"));
+    }
+
+    #[test]
+    fn prompt_editors_keep_comfortable_text_metrics() {
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let expanded = include_str!("../../ui/components/prompt-expanded-editor.slint");
+
+        assert!(composer.contains(
+            "property <length> prompt-editor-font-size: AppState.settings-font-size * 1px + 2px;"
+        ));
+        assert!(composer.contains("font-size: root.prompt-editor-font-size;"));
+        assert!(composer.contains("editor-font-size: root.prompt-editor-font-size;"));
+        assert!(expanded.contains(
+            "property <length> prompt-editor-font-size: AppState.settings-font-size * 1px + 3px;"
+        ));
+        assert!(expanded.contains("font-size: root.prompt-editor-font-size;"));
+        assert!(expanded.contains("editor-font-size: root.prompt-editor-font-size;"));
+    }
+
+    #[test]
+    fn custom_prompt_palettes_are_distinct_colorful_and_separate_from_each_theme_accent() {
+        let cases = [
+            ("sprite", (0, 217, 130)),
+            ("light", (79, 70, 229)),
+            ("ocean", (14, 165, 233)),
+            ("warm", (245, 158, 11)),
+            ("forest", (34, 197, 94)),
+            ("rose", (244, 63, 94)),
+            ("cyber", (217, 70, 239)),
+            ("oled", (16, 185, 129)),
+            ("cream", (201, 107, 115)),
+            ("user", (91, 95, 199)),
+        ];
+
+        for (theme, accent) in cases {
+            let colors = custom_prompt_palette(theme);
+            assert_eq!(colors.len(), 6, "{theme} should expose six rotating colors");
+
+            for (index, color) in colors.iter().copied().enumerate() {
+                let channels = [color.0, color.1, color.2];
+                let spread = channels.iter().max().unwrap() - channels.iter().min().unwrap();
+                assert!(spread >= 48, "{theme} color {index} must not be black, white, or gray");
+
+                let accent_distance = (i32::from(color.0) - i32::from(accent.0)).pow(2)
+                    + (i32::from(color.1) - i32::from(accent.1)).pow(2)
+                    + (i32::from(color.2) - i32::from(accent.2)).pow(2);
+                assert!(
+                    accent_distance >= 4_096,
+                    "{theme} color {index} is too close to the theme accent"
+                );
+            }
+
+            for left in 0..colors.len() {
+                for right in left + 1..colors.len() {
+                    assert_ne!(colors[left], colors[right], "{theme} palette repeats a color");
+                }
+            }
+        }
+
+        assert_eq!(custom_prompt_palette("blue"), custom_prompt_palette("ocean"));
+        assert_eq!(custom_prompt_palette("system"), custom_prompt_palette("sprite"));
+        assert_eq!(custom_prompt_palette("unknown"), custom_prompt_palette("light"));
     }
 
     #[test]

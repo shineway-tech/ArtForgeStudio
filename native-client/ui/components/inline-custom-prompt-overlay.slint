@@ -11,9 +11,21 @@ export component InlineCustomPromptOverlay inherits Rectangle {
     in property <length> viewport-y;
     in property <length> editor-font-size;
     in property <brush> editor-background;
+    in property <int> color-index: 0;
     property <length> anchor-x: 0px;
     property <length> anchor-y: 0px;
     property <bool> measure-pending: true;
+    property <color> marker-color: Math.mod(root.color-index, 6) == 1
+        ? AppTheme.custom-prompt-name-2
+        : (Math.mod(root.color-index, 6) == 2
+            ? AppTheme.custom-prompt-name-3
+            : (Math.mod(root.color-index, 6) == 3
+                ? AppTheme.custom-prompt-name-4
+                : (Math.mod(root.color-index, 6) == 4
+                    ? AppTheme.custom-prompt-name-5
+                    : (Math.mod(root.color-index, 6) == 5
+                        ? AppTheme.custom-prompt-name-6
+                        : AppTheme.custom-prompt-name))));
 
     width: root.editor-width;
     height: root.editor-visible-height;
@@ -66,7 +78,7 @@ export component InlineCustomPromptOverlay inherits Rectangle {
             width: root.editor-font-size;
             height: root.editor-font-size;
             source: @image-url("../../assets/icons/custom-prompt-text.svg");
-            colorize: AppTheme.custom-prompt-name;
+            colorize: root.marker-color;
             image-fit: contain;
         }
 
@@ -76,7 +88,7 @@ export component InlineCustomPromptOverlay inherits Rectangle {
             width: parent.width - self.x;
             height: parent.height;
             text: root.name;
-            color: AppTheme.custom-prompt-name;
+            color: root.marker-color;
             font-size: root.editor-font-size;
             font-weight: 600;
             vertical-alignment: top;

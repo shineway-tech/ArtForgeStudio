@@ -217,6 +217,94 @@ pub(super) fn apply_theme(app: &AppWindow, theme: &str) {
             (239, 68, 68),
         ),
     }
+    set_custom_prompt_palette(app, custom_prompt_palette(theme));
+}
+
+pub(super) fn custom_prompt_palette(theme: &str) -> [(u8, u8, u8); 6] {
+    match theme {
+        "sprite" | "system" => [
+            (124, 58, 237),
+            (234, 88, 12),
+            (37, 99, 235),
+            (219, 39, 119),
+            (180, 83, 9),
+            (8, 145, 178),
+        ],
+        "ocean" | "blue" => [
+            (245, 158, 11),
+            (219, 39, 119),
+            (234, 88, 12),
+            (124, 58, 237),
+            (77, 124, 15),
+            (220, 38, 38),
+        ],
+        "warm" => [
+            (6, 182, 212),
+            (124, 58, 237),
+            (220, 38, 38),
+            (37, 99, 235),
+            (219, 39, 119),
+            (13, 148, 136),
+        ],
+        "forest" => [
+            (217, 70, 239),
+            (234, 88, 12),
+            (37, 99, 235),
+            (180, 83, 9),
+            (220, 38, 38),
+            (8, 145, 178),
+        ],
+        "rose" => [
+            (6, 182, 212),
+            (109, 40, 217),
+            (180, 83, 9),
+            (37, 99, 235),
+            (22, 163, 74),
+            (194, 65, 12),
+        ],
+        "cyber" => [
+            (132, 204, 22),
+            (234, 88, 12),
+            (6, 182, 212),
+            (37, 99, 235),
+            (220, 38, 38),
+            (180, 83, 9),
+        ],
+        "oled" => [
+            (249, 115, 22),
+            (124, 58, 237),
+            (37, 99, 235),
+            (219, 39, 119),
+            (180, 83, 9),
+            (8, 120, 190),
+        ],
+        "cream" => [
+            (37, 99, 235),
+            (13, 148, 136),
+            (124, 58, 237),
+            (180, 83, 9),
+            (22, 163, 74),
+            (8, 145, 178),
+        ],
+        _ => [
+            (194, 65, 12),
+            (13, 148, 136),
+            (190, 24, 93),
+            (180, 83, 9),
+            (14, 116, 144),
+            (220, 38, 38),
+        ],
+    }
+}
+
+fn set_custom_prompt_palette(app: &AppWindow, colors: [(u8, u8, u8); 6]) {
+    let p = app.global::<AppTheme>();
+    p.set_custom_prompt_name(rgb(colors[0]));
+    p.set_custom_prompt_name_2(rgb(colors[1]));
+    p.set_custom_prompt_name_3(rgb(colors[2]));
+    p.set_custom_prompt_name_4(rgb(colors[3]));
+    p.set_custom_prompt_name_5(rgb(colors[4]));
+    p.set_custom_prompt_name_6(rgb(colors[5]));
 }
 
 pub(super) fn set_theme_palette(

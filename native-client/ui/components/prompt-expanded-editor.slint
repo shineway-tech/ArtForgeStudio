@@ -7,6 +7,7 @@ import { PillButton } from "pill-button.slint";
 export component PromptExpandedEditor {
     visible: AppState.prompt-expanded-open;
     property <bool> editor-focus-pending: false;
+    property <length> prompt-editor-font-size: AppState.settings-font-size * 1px + 3px;
 
     changed visible => {
         if self.visible {
@@ -106,7 +107,7 @@ export component PromptExpandedEditor {
                     text <=> AppState.prompt;
                     single-line: false;
                     color: AppTheme.text;
-                    font-size: AppState.settings-font-size * 1px + 1px;
+                    font-size: root.prompt-editor-font-size;
                     font-weight: 400;
                     wrap: word-wrap;
                     page-height: expanded-scroll.visible-height;
@@ -126,7 +127,7 @@ export component PromptExpandedEditor {
                 }
             }
 
-            for item in AppState.selected-custom-prompt-items: InlineCustomPromptOverlay {
+            for item[index] in AppState.selected-custom-prompt-items: InlineCustomPromptOverlay {
                 x: 14px;
                 y: 14px;
                 prefix: item.prefix;
@@ -134,8 +135,9 @@ export component PromptExpandedEditor {
                 editor-width: expanded-input.width;
                 editor-visible-height: expanded-scroll.visible-height;
                 viewport-y: expanded-scroll.viewport-y;
-                editor-font-size: AppState.settings-font-size * 1px + 1px;
+                editor-font-size: root.prompt-editor-font-size;
                 editor-background: AppTheme.panel-soft;
+                color-index: index;
             }
         }
 

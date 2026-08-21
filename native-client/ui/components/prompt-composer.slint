@@ -62,6 +62,7 @@ export component PromptComposer {
     property <string> observed-prompt: AppState.prompt;
     property <string> prompt-editor-text: AppState.prompt;
     property <bool> prompt-editor-focus-pending: false;
+    property <length> prompt-editor-font-size: AppState.settings-font-size * 1px + 2px;
     property <bool> geometry-sidebar-collapsed: AppState.sidebar-collapsed;
     property <bool> geometry-logged-in: AppState.logged-in;
     height: AppState.references.length > 0 || AppState.quote-title != "" ? 650px : 600px;
@@ -298,7 +299,7 @@ export component PromptComposer {
                     text <=> root.prompt-editor-text;
                     single-line: false;
                     color: AppTheme.text;
-                    font-size: AppState.settings-font-size * 1px;
+                    font-size: root.prompt-editor-font-size;
                     font-weight: 400;
                     wrap: word-wrap;
                     page-height: prompt-scroll.visible-height;
@@ -444,7 +445,7 @@ export component PromptComposer {
                 }
             }
 
-            for item in AppState.selected-custom-prompt-items: InlineCustomPromptOverlay {
+            for item[index] in AppState.selected-custom-prompt-items: InlineCustomPromptOverlay {
                 x: 0px;
                 y: 0px;
                 prefix: item.prefix;
@@ -452,8 +453,9 @@ export component PromptComposer {
                 editor-width: prompt-input.width;
                 editor-visible-height: prompt-scroll.visible-height;
                 viewport-y: prompt-scroll.viewport-y;
-                editor-font-size: AppState.settings-font-size * 1px;
+                editor-font-size: root.prompt-editor-font-size;
                 editor-background: AppTheme.panel-soft;
+                color-index: index;
             }
 
             prompt-expand-button := Rectangle {
@@ -502,7 +504,7 @@ export component PromptComposer {
             height: root.prompt-input-height();
             text: root.prompt-placeholder();
             color: AppTheme.weak;
-            font-size: AppState.settings-font-size * 1px;
+            font-size: root.prompt-editor-font-size;
             font-weight: 400;
             wrap: word-wrap;
         }
