@@ -2,6 +2,7 @@ import { ScrollView } from "std-widgets.slint";
 import { AppState } from "../app-state.slint";
 import { GenerateActionButton } from "generate-action-button.slint";
 import { LoadingDots } from "loading-dots.slint";
+import { InlineCustomPromptOverlay } from "inline-custom-prompt-overlay.slint";
 import { PillButton } from "pill-button.slint";
 import { ReferenceThumb } from "reference-thumb.slint";
 import { UploadCard } from "upload-card.slint";
@@ -56,12 +57,10 @@ export component PromptComposer {
     property <length> prompt-history-scroll-y: 0px;
     property <length> custom-prompt-scroll-x: 0px;
     property <string> pending-custom-prompt-content: "";
+    property <int> custom-prompt-insert-offset: 0;
     property <bool> custom-prompt-selection-pending: false;
-    property <string> selected-custom-prompt-prefix: AppState.selected-custom-prompt-items.length > 0
-        ? AppState.selected-custom-prompt-items[0].name + " "
-        : "";
     property <string> observed-prompt: AppState.prompt;
-    property <string> prompt-editor-text: root.selected-custom-prompt-prefix + AppState.prompt;
+    property <string> prompt-editor-text: AppState.prompt;
     property <bool> prompt-editor-focus-pending: false;
     property <bool> geometry-sidebar-collapsed: AppState.sidebar-collapsed;
     property <bool> geometry-logged-in: AppState.logged-in;
@@ -79,14 +78,10 @@ export component PromptComposer {
     changed height => { root.sync-reference-drop-bounds(); }
     changed geometry-sidebar-collapsed => { root.sync-reference-drop-bounds(); }
     changed geometry-logged-in => { root.sync-reference-drop-bounds(); }
-    changed selected-custom-prompt-prefix => {
-        root.sync-prompt-editor-text();
-        root.prompt-editor-focus-pending = true;
-    }
     changed observed-prompt => { root.sync-prompt-editor-text(); }
 
     function sync-prompt-editor-text() {
-        let expected = root.selected-custom-prompt-prefix + AppState.prompt;
+        let expected = AppState.prompt;
         if root.prompt-editor-text != expected {
             root.prompt-editor-text = expected;
         }
@@ -105,7 +100,7 @@ export component PromptComposer {
         custom-prompt-popup.close();
         prompt-input.focus();
         root.prompt-editor-text = value;
-        AppState.prompt = value;
+        AppState.normalize-prompt-editor-text(value, "");
         AppState.deep-optimization-applied-chinese = "";
         AppState.deep-optimization-applied-english = "";
         AppState.invalidate-deep-prompt-binding();
@@ -118,11 +113,7 @@ export component PromptComposer {
         root.close-history-preview();
         history-popup.close();
         custom-prompt-popup.close();
-        if AppState.selected-custom-prompt-items.length > 0 {
-            AppState.toggle-custom-prompt-selection(
-                AppState.selected-custom-prompt-items[0].content,
-            );
-        }
+        AppState.clear-custom-prompt-selections();
         AppState.prompt = "";
         root.prompt-editor-text = "";
         AppState.deep-optimization-applied-chinese = "";
@@ -163,9 +154,14 @@ export component PromptComposer {
             root.pending-custom-prompt-content = "";
             AppState.custom-prompt-open = false;
             custom-prompt-popup.close();
-            AppState.toggle-custom-prompt-selection(value);
+            let edit = AppState.apply-inline-custom-prompt(
+                value,
+                root.prompt-editor-text,
+                root.custom-prompt-insert-offset,
+            );
+            root.prompt-editor-text = edit.text;
             prompt-input.focus();
-            prompt-input.set-selection-offsets(2147483647, 2147483647);
+            prompt-input.set-selection-offsets(edit.cursor-offset, edit.cursor-offset);
         }
     }
 
@@ -286,17 +282,6 @@ export component PromptComposer {
             width: parent.width - 48px;
             height: root.prompt-input-height();
 
-            custom-prompt-prefix-icon := Image {
-                visible: AppState.selected-custom-prompt-items.length > 0;
-                x: -AppState.settings-font-size * 1px - 4px;
-                y: 0px;
-                width: AppState.settings-font-size * 1px;
-                height: AppState.settings-font-size * 1px;
-                source: @image-url("../../assets/icons/custom-prompt-text.svg");
-                colorize: AppTheme.custom-prompt-name;
-                image-fit: contain;
-            }
-
             prompt-cursor-area := TouchArea {
                 x: 0px;
                 y: 0px;
@@ -327,7 +312,7 @@ export component PromptComposer {
                     edited => {
                         let normalized = AppState.normalize-prompt-editor-text(
                             self.text,
-                            root.selected-custom-prompt-prefix,
+                            "",
                         );
                         if normalized != self.text {
                             root.prompt-editor-text = normalized;
@@ -350,18 +335,28 @@ export component PromptComposer {
                         }
                     }
                     key-pressed(event) => {
-                    if event.text == "/" && AppState.prompt == "/" {
-                        AppState.prompt = "//";
-                        prompt-input.set-selection-offsets(2, 2);
-                        AppState.prompt-history-open = false;
-                        root.close-history-preview();
-                        history-popup.close();
-                        root.custom-prompt-selected-index = -1;
-                        root.custom-prompt-scroll-x = 0px;
-                        AppState.custom-prompt-open = true;
-                        custom-prompt-popup.show();
-                        prompt-input.focus();
-                        return accept;
+                    if event.text == "/" {
+                        let trigger-edit = AppState.prepare-custom-prompt-insertion(
+                            root.prompt-editor-text,
+                            prompt-input.cursor-position-byte-offset,
+                        );
+                        if trigger-edit.cursor-offset >= 0 {
+                            root.prompt-editor-text = trigger-edit.text;
+                            root.custom-prompt-insert-offset = trigger-edit.cursor-offset;
+                            prompt-input.set-selection-offsets(
+                                trigger-edit.cursor-offset,
+                                trigger-edit.cursor-offset,
+                            );
+                            AppState.prompt-history-open = false;
+                            root.close-history-preview();
+                            history-popup.close();
+                            root.custom-prompt-selected-index = -1;
+                            root.custom-prompt-scroll-x = 0px;
+                            AppState.custom-prompt-open = true;
+                            custom-prompt-popup.show();
+                            prompt-input.focus();
+                            return accept;
+                        }
                     }
                     if AppState.prompt-history-open && AppState.prompt-history.length > 0 {
                         if event.text == Key.DownArrow {
@@ -422,14 +417,6 @@ export component PromptComposer {
                             return accept;
                         }
                     }
-                    if event.text == Key.Backspace
-                        && AppState.prompt == ""
-                        && AppState.selected-custom-prompt-items.length > 0 {
-                        root.queue-custom-prompt-selection(
-                            AppState.selected-custom-prompt-items[0].content,
-                        );
-                        return accept;
-                    }
                     if event.text == Key.Return {
                         if event.modifiers.alt {
                             return reject;
@@ -457,23 +444,16 @@ export component PromptComposer {
                 }
             }
 
-            for item in AppState.selected-custom-prompt-items: selected-name-mask := Rectangle {
+            for item in AppState.selected-custom-prompt-items: InlineCustomPromptOverlay {
                 x: 0px;
                 y: 0px;
-                width: selected-name.preferred-width + 1px;
-                height: selected-name.preferred-height;
-                background: AppTheme.panel-soft;
-
-                selected-name := Text {
-                    width: self.preferred-width;
-                    height: parent.height;
-                    text: item.name;
-                    color: AppTheme.custom-prompt-name;
-                    font-size: AppState.settings-font-size * 1px;
-                    font-weight: 600;
-                    vertical-alignment: top;
-                    wrap: no-wrap;
-                }
+                prefix: item.prefix;
+                name: item.name;
+                editor-width: prompt-input.width;
+                editor-visible-height: prompt-scroll.visible-height;
+                viewport-y: prompt-scroll.viewport-y;
+                editor-font-size: AppState.settings-font-size * 1px;
+                editor-background: AppTheme.panel-soft;
             }
 
             prompt-expand-button := Rectangle {

@@ -695,6 +695,9 @@ pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
                 preview: preview.into(),
                 content: prompt.clone().into(),
                 selected: custom_prompt_selected_for_category(store, &category, prompt),
+                prefix: "".into(),
+                start_offset: -1,
+                end_offset: -1,
                 category: normalized_custom_prompt_category(
                     profile
                         .map(|profile| profile.category.as_str())
@@ -716,13 +719,37 @@ pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
             }
         })
         .collect::<Vec<_>>();
-    state.set_selected_custom_prompt_items(ModelRc::new(VecModel::from(
-        items
-            .iter()
-            .filter(|item| item.selected)
-            .cloned()
-            .collect::<Vec<_>>(),
-    )));
+    let replacements = selected_custom_prompt_replacements_for_category(store, &category);
+    let mut prompt = state.get_prompt().to_string();
+    let missing = replacements
+        .iter()
+        .filter(|(name, _)| !prompt.contains(&inline_custom_prompt_display_text(name)))
+        .map(|(name, _)| inline_custom_prompt_display_text(name))
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        let mut migrated = missing.join(" ");
+        if !prompt.is_empty() && prompt != "//" {
+            migrated.push(' ');
+            migrated.push_str(&prompt);
+        }
+        prompt = migrated;
+        state.set_prompt(prompt.clone().into());
+    }
+    let selected_items = inline_custom_prompt_occurrences(&prompt, &replacements)
+        .into_iter()
+        .filter_map(|occurrence| {
+            let mut item = items
+                .iter()
+                .find(|item| item.content.as_str() == occurrence.content)
+                .cloned()?;
+            item.name = occurrence.name.into();
+            item.prefix = occurrence.prefix.into();
+            item.start_offset = occurrence.start_offset;
+            item.end_offset = occurrence.end_offset;
+            Some(item)
+        })
+        .collect::<Vec<_>>();
+    state.set_selected_custom_prompt_items(ModelRc::new(VecModel::from(selected_items)));
     state.set_custom_prompt_items(ModelRc::new(VecModel::from(items)));
     state.set_custom_prompt_previews(ModelRc::new(VecModel::from(
         store

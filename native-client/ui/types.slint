@@ -175,9 +175,17 @@ export struct CustomPromptItem {
     preview: string,
     content: string,
     selected: bool,
+    prefix: string,
+    start-offset: int,
+    end-offset: int,
     category: string,
     format: string,
     time: string,
+}
+
+export struct PromptTextEdit {
+    text: string,
+    cursor-offset: int,
 }
 
 export struct DeepOptimizationRoundView {

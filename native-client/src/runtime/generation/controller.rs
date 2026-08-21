@@ -66,9 +66,12 @@ fn start_generation_for_destination(
     } else {
         let selected_prompts = {
             let store = context.store.borrow();
-            selected_custom_prompts_for_category(&store, &current_workspace_category(app))
+            selected_custom_prompt_replacements_for_category(
+                &store,
+                &current_workspace_category(app),
+            )
         };
-        compose_selected_custom_prompts(&input_prompt, &selected_prompts)
+        compose_inline_custom_prompts(&input_prompt, &selected_prompts)
     };
     if raw_prompt.trim().is_empty() {
         state.set_generation_status("请输入生成需求".into());
@@ -214,21 +217,34 @@ mod deep_prompt_tests {
     }
 }
 
-pub(super) fn compose_selected_custom_prompts(
+pub(super) fn compose_inline_custom_prompts(
     input_prompt: &str,
-    selected_prompts: &[String],
+    replacements: &[(String, String)],
 ) -> String {
-    let mut parts = selected_prompts
-        .iter()
-        .map(|prompt| prompt.trim())
-        .filter(|prompt| !prompt.is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    let input_prompt = input_prompt.trim();
-    if !input_prompt.is_empty() && input_prompt != "//" {
-        parts.push(input_prompt.to_string());
+    let mut composed = input_prompt.to_string();
+    let mut missing = Vec::new();
+    for (name, content) in replacements {
+        let content = content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        let display = inline_custom_prompt_display_text(name);
+        if composed.contains(&display) {
+            composed = composed.replacen(&display, content, 1);
+        } else {
+            missing.push(content.to_string());
+        }
     }
-    parts.join("\n\n")
+    let composed = composed.trim();
+    if composed.is_empty() || composed == "//" {
+        return missing.join("\n\n");
+    }
+    if missing.is_empty() {
+        composed.to_string()
+    } else {
+        missing.push(composed.to_string());
+        missing.join("\n\n")
+    }
 }
 
 pub(super) fn retry_failed_generation(app: &AppWindow, context: AppContext, id: String) {

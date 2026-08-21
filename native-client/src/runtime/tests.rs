@@ -561,7 +561,7 @@ mod tests {
         assert_eq!(composer.matches("event.text == Key.UpArrow").count(), 2);
         assert_eq!(composer.matches("event.text == Key.Escape").count(), 2);
         assert!(composer.contains("AppState.prompt-history[root.prompt-history-selected-index]"));
-        assert!(composer.contains("AppState.toggle-custom-prompt-selection("));
+        assert!(composer.contains("AppState.apply-inline-custom-prompt("));
         assert!(composer.contains("root.scroll-prompt-history-selection-into-view()"));
         assert!(composer.contains("root.scroll-custom-prompt-selection-into-view()"));
         assert!(composer.contains("index == root.prompt-history-selected-index"));
@@ -718,28 +718,29 @@ mod tests {
         assert!(custom_settings.contains("AppState.delete-confirm-open = true"));
         assert!(custom_editor.contains("AppState.save-custom-prompt"));
 
-        assert!(composer.contains("event.text == \"/\" && AppState.prompt == \"/\""));
-        assert!(composer.contains("AppState.prompt = \"//\";"));
+        assert!(composer.contains("AppState.prepare-custom-prompt-insertion("));
+        assert!(composer.contains("prompt-input.cursor-position-byte-offset"));
         let double_slash_handler = composer
-            .split("event.text == \"/\" && AppState.prompt == \"/\"")
+            .split("let trigger-edit = AppState.prepare-custom-prompt-insertion(")
             .nth(1)
             .and_then(|value| value.split("if event.text == Key.Return").next())
             .expect("double slash handler");
         assert!(double_slash_handler.contains("return accept;"));
-        assert!(double_slash_handler.contains("prompt-input.set-selection-offsets(2, 2);"));
+        assert!(double_slash_handler.contains("root.prompt-editor-text = trigger-edit.text;"));
+        assert!(double_slash_handler.contains("root.custom-prompt-insert-offset = trigger-edit.cursor-offset;"));
         let write_position = double_slash_handler
-            .find("AppState.prompt = \"//\";")
-            .expect("double slash value assignment");
+            .find("root.prompt-editor-text = trigger-edit.text;")
+            .expect("trigger removal assignment");
         let cursor_position = double_slash_handler
-            .find("prompt-input.set-selection-offsets(2, 2);")
-            .expect("double slash cursor assignment");
+            .find("prompt-input.set-selection-offsets(")
+            .expect("trigger cursor assignment");
         assert!(write_position < cursor_position);
         assert!(!double_slash_handler.contains("event.text == Key.Backspace"));
         assert!(composer.contains("history-popup.close()"));
         assert!(composer.contains("custom-prompt-popup.show()"));
         let composer_normalized = composer.replace("\r\n", "\n");
         assert!(composer_normalized.contains(
-            "custom-prompt-popup.show();\n                        prompt-input.focus();"
+            "custom-prompt-popup.show();\n                            prompt-input.focus();"
         ));
         assert!(composer_normalized
             .contains("history-popup.show();\n                        prompt-input.focus();"));
@@ -760,6 +761,8 @@ mod tests {
         assert!(callbacks.contains("state.set_custom_prompt_editor_open(false)"));
         assert!(callbacks.contains("state.on_begin_new_custom_prompt"));
         assert!(callbacks.contains("state.on_begin_edit_custom_prompt"));
+        assert!(callbacks.contains("state.on_prepare_custom_prompt_insertion"));
+        assert!(callbacks.contains("state.on_apply_inline_custom_prompt"));
         assert!(callbacks.contains("state.on_choose_custom_prompt_reference"));
         assert!(
             local_store.contains("custom_prompt_profiles: store.custom_prompt_profiles.clone()")
@@ -767,7 +770,7 @@ mod tests {
     }
 
     #[test]
-    fn double_slash_custom_prompts_are_single_select_title_tags() {
+    fn double_slash_custom_prompts_are_multi_select_inline_names() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         let state = include_str!("../../ui/app-state.slint");
         let types = include_str!("../../ui/types.slint");
@@ -791,7 +794,8 @@ mod tests {
         assert!(callbacks.contains("current_workspace_category(&app)"));
         assert!(callbacks.contains("toggle_custom_prompt_selection_for_category"));
         assert!(local_store.contains("let was_selected = store"));
-        assert!(local_store.contains("selected.clear();"));
+        assert!(local_store.contains("selected.insert(prompt.to_string());"));
+        assert!(!local_store.contains("selected.clear();"));
         assert!(composer.contains("for item in AppState.selected-custom-prompt-items"));
         assert!(popup.contains("text: item.name"));
         assert!(popup.contains("item.selected ? AppTheme.accent"));
@@ -803,13 +807,14 @@ mod tests {
         assert!(!popup.contains("root.apply-selected-prompt(item.content)"));
         assert!(!popup.contains("text: item.content"));
         assert!(!popup.contains("text: item.preview"));
-        assert!(controller.contains("compose_selected_custom_prompts"));
-        assert!(controller.contains("selected_custom_prompts_for_category"));
+        assert!(controller.contains("compose_inline_custom_prompts"));
+        assert!(controller.contains("selected_custom_prompt_replacements_for_category"));
     }
 
     #[test]
     fn double_slash_selection_shows_a_colored_name_inline_with_the_editable_prompt() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let overlay = include_str!("../../ui/components/inline-custom-prompt-overlay.slint");
         let state = include_str!("../../ui/app-state.slint");
         let callbacks = include_str!("callbacks/custom_prompt.rs");
         let popup = composer
@@ -825,37 +830,21 @@ mod tests {
         assert!(composer.contains("prompt-entry-area := Rectangle"));
         assert!(composer.contains("prompt-cursor-area := TouchArea"));
         assert!(composer.contains("mouse-cursor: text;"));
-        assert!(composer.contains("property <string> prompt-editor-text:"));
-        assert!(composer.contains("property <string> selected-custom-prompt-prefix:"));
+        assert!(composer.contains("property <string> prompt-editor-text: AppState.prompt;"));
+        assert!(!composer.contains("property <string> selected-custom-prompt-prefix:"));
         assert!(composer.contains("text <=> root.prompt-editor-text;"));
         assert!(composer.contains("AppState.normalize-prompt-editor-text("));
         assert!(composer.contains(
-            "for item in AppState.selected-custom-prompt-items: selected-name-mask := Rectangle"
+            "for item in AppState.selected-custom-prompt-items: InlineCustomPromptOverlay"
         ));
-        assert!(composer.contains("text: item.name;"));
-        assert!(composer.contains("color: AppTheme.custom-prompt-name;"));
-        assert!(composer.contains("font-weight: 600;"));
-        assert!(composer.contains("selected-name.preferred-width"));
-        assert!(composer.contains("background: AppTheme.panel-soft;"));
-        assert!(composer.contains("custom-prompt-prefix-icon := Image"));
-        assert!(composer.contains("visible: AppState.selected-custom-prompt-items.length > 0;"));
-        assert!(composer.contains("x: -AppState.settings-font-size * 1px - 4px;"));
-        assert!(composer.contains("width: AppState.settings-font-size * 1px;"));
-        assert!(composer.contains("height: AppState.settings-font-size * 1px;"));
-        assert!(composer.contains("../../assets/icons/custom-prompt-text.svg"));
-        assert!(composer.contains("colorize: AppTheme.custom-prompt-name;"));
-        let selected_name_mask = composer
-            .split("selected-name-mask := Rectangle")
-            .nth(1)
-            .and_then(|value| value.split("selected-name := Text").next())
-            .expect("selected custom prompt name mask");
-        assert!(selected_name_mask.contains("height: selected-name.preferred-height;"));
-        assert!(!selected_name_mask.contains("AppState.settings-font-size * 1px + 8px"));
-        assert!(composer.contains("vertical-alignment: top;"));
-        assert!(!composer.contains("function selected-custom-prompt-line-height() -> length"));
-        assert!(composer.contains("y: 0px;"));
-        assert!(composer.contains("width: parent.width;"));
-        assert!(composer.contains("height: root.prompt-input-height();"));
+        assert!(composer.contains("prefix: item.prefix;"));
+        assert!(composer.contains("name: item.name;"));
+        assert!(overlay.contains("text: \"　\" + root.name;"));
+        assert!(overlay.contains("color: AppTheme.custom-prompt-name;"));
+        assert!(overlay.contains("font-weight: 600;"));
+        assert!(overlay.contains("../../assets/icons/custom-prompt-text.svg"));
+        assert!(overlay.contains("width: root.editor-font-size;"));
+        assert!(overlay.contains("height: root.editor-font-size;"));
         assert!(!composer.contains("root.width * 0.42"));
         assert!(!composer.contains("for item in AppState.selected-custom-prompt-items: Rectangle"));
         assert!(!composer.contains("selected-prompt-tags := Rectangle"));
@@ -863,30 +852,17 @@ mod tests {
         assert!(!composer.contains(
             "width: min(max(72px, selected-title.preferred-width + 38px), root.width - 104px);"
         ));
-        let prompt_entry = composer
-            .split("prompt-entry-area := Rectangle")
-            .nth(1)
-            .and_then(|value| {
-                value
-                    .split("for item in AppState.selected-custom-prompt-items")
-                    .next()
-            })
-            .expect("prompt entry area");
-        assert!(!prompt_entry.contains("alignment: start;"));
-        assert!(!prompt_entry.contains("HorizontalLayout"));
         assert!(!composer
             .contains("x: AppState.selected-custom-prompt-items.length > 0 ? 270px : 24px;"));
         assert!(composer.contains("y: root.prompt-input-y();"));
-        assert!(composer.contains("event.text == Key.Backspace"));
-        assert!(composer.contains("&& AppState.prompt == \"\""));
-        assert!(composer.contains("AppState.selected-custom-prompt-items[0].content"));
+        assert!(!composer.contains("AppState.selected-custom-prompt-items[0].content"));
         assert!(composer.contains("property <bool> custom-prompt-selection-pending: false;"));
         assert!(composer.contains("function queue-custom-prompt-selection(value: string)"));
         assert!(composer.contains("interval: 1ms;"));
         assert!(composer.contains("running: root.custom-prompt-selection-pending;"));
         assert!(composer.contains("AppState.custom-prompt-open = false"));
         assert!(composer.contains("custom-prompt-popup.close()"));
-        assert!(composer.contains("prompt-input.set-selection-offsets(2147483647, 2147483647)"));
+        assert!(composer.contains("prompt-input.set-selection-offsets(edit.cursor-offset, edit.cursor-offset)"));
         assert!(popup.contains("root.queue-custom-prompt-selection(item.content)"));
         assert!(!popup.contains("AppState.toggle-custom-prompt-selection(item.content)"));
         assert!(composer.contains("root.custom-prompt-selected-index = -1;"));
@@ -896,10 +872,10 @@ mod tests {
         assert!(composer.contains("tag-title.preferred-width + 28px"));
         assert!(popup.contains("overflow: clip"));
         assert!(state.contains("callback normalize-prompt-editor-text(string, string) -> string;"));
+        assert!(state.contains("callback apply-inline-custom-prompt(string, string, int) -> PromptTextEdit;"));
         assert!(callbacks.contains("state.on_normalize_prompt_editor_text"));
-        assert!(callbacks.contains("if state.get_prompt().trim() == \"//\""));
-        assert!(callbacks.contains("state.set_prompt(\"\".into());"));
-        assert!(callbacks.contains("slint::Timer::single_shot(Duration::ZERO"));
+        assert!(callbacks.contains("insert_custom_prompt_name_at_byte_offset"));
+        assert!(callbacks.contains("inline_custom_prompt_occurrences"));
     }
 
     #[test]
@@ -929,19 +905,15 @@ mod tests {
 
     #[test]
     fn selected_custom_prompt_mask_never_reaches_wrapped_prompt_lines() {
-        let composer = include_str!("../../ui/components/prompt-composer.slint");
-        let selected_name_mask = composer
-            .split("selected-name-mask := Rectangle")
-            .nth(1)
-            .and_then(|value| value.split("selected-name := Text").next())
-            .expect("selected custom prompt name mask");
-
-        assert!(selected_name_mask.contains("height: selected-name.preferred-height;"));
-        assert!(!selected_name_mask.contains("AppState.settings-font-size * 1px + 8px"));
+        let overlay = include_str!("../../ui/components/inline-custom-prompt-overlay.slint");
+        assert!(overlay.contains("export component InlineCustomPromptOverlay inherits Rectangle"));
+        assert!(overlay.contains("clip: true;"));
+        assert!(overlay.contains("height: max(token-metric.preferred-height, root.editor-font-size + 3px);"));
+        assert!(!overlay.contains("height: root.editor-visible-height;\n        background: root.editor-background"));
     }
 
     #[test]
-    fn custom_prompt_selections_are_isolated_by_workspace_category() {
+    fn multiple_custom_prompt_selections_are_isolated_by_workspace_category() {
         let mut store = Store {
             custom_prompts: vec![
                 "角色提示词".to_string(),
@@ -971,7 +943,7 @@ mod tests {
         toggle_custom_prompt_selection_for_category(&mut store, "character", "角色提示词二");
         assert_eq!(
             selected_custom_prompts_for_category(&store, "character"),
-            vec!["角色提示词二".to_string()]
+            vec!["角色提示词".to_string(), "角色提示词二".to_string()]
         );
 
         toggle_custom_prompt_selection_for_category(&mut store, "scene", "场景提示词");
@@ -981,14 +953,51 @@ mod tests {
         );
         assert_eq!(
             selected_custom_prompts_for_category(&store, "character"),
-            vec!["角色提示词二".to_string()]
+            vec!["角色提示词".to_string(), "角色提示词二".to_string()]
         );
 
         toggle_custom_prompt_selection_for_category(&mut store, "character", "角色提示词二");
-        assert!(selected_custom_prompts_for_category(&store, "character").is_empty());
+        assert_eq!(
+            selected_custom_prompts_for_category(&store, "character"),
+            vec!["角色提示词".to_string()]
+        );
         assert_eq!(
             selected_custom_prompts_for_category(&store, "scene"),
             vec!["场景提示词".to_string()]
+        );
+    }
+
+    #[test]
+    fn selected_custom_prompt_replacements_include_their_display_names() {
+        let first = "PIXEL CONTENT".to_string();
+        let second = "CAMERA CONTENT".to_string();
+        let mut store = Store {
+            custom_prompts: vec![first.clone(), second.clone()],
+            ..Store::default()
+        };
+        store.custom_prompt_profiles.insert(
+            first.clone(),
+            CustomPromptProfile {
+                name: "像素模板".to_string(),
+                ..CustomPromptProfile::default()
+            },
+        );
+        store.custom_prompt_profiles.insert(
+            second.clone(),
+            CustomPromptProfile {
+                name: "镜头模板".to_string(),
+                ..CustomPromptProfile::default()
+            },
+        );
+        toggle_custom_prompt_selection_for_category(&mut store, "scene", &first);
+        toggle_custom_prompt_selection_for_category(&mut store, "scene", &second);
+
+        assert_eq!(
+            selected_custom_prompt_replacements_for_category(&store, "scene"),
+            vec![
+                ("像素模板".to_string(), first),
+                ("镜头模板".to_string(), second),
+            ]
         );
     }
 
@@ -1009,19 +1018,35 @@ mod tests {
     #[test]
     fn selected_custom_prompt_contents_are_composed_only_for_interactive_generation() {
         let selected = vec![
-            "portrait lighting".to_string(),
-            "  ink texture  ".to_string(),
+            ("灯光模板".to_string(), "portrait lighting".to_string()),
+            ("纹理模板".to_string(), "  ink texture  ".to_string()),
         ];
 
         assert_eq!(
-            compose_selected_custom_prompts("main subject", &selected),
+            compose_inline_custom_prompts("main subject", &selected),
             "portrait lighting\n\nink texture\n\nmain subject"
         );
         assert_eq!(
-            compose_selected_custom_prompts("//", &selected),
+            compose_inline_custom_prompts("//", &selected),
             "portrait lighting\n\nink texture"
         );
-        assert_eq!(compose_selected_custom_prompts("", &[]), "");
+        assert_eq!(compose_inline_custom_prompts("", &[]), "");
+    }
+
+    #[test]
+    fn inline_custom_prompt_contents_replace_names_without_changing_text_order() {
+        let replacements = vec![
+            ("像素模板".to_string(), "PIXEL CONTENT".to_string()),
+            ("镜头模板".to_string(), "CAMERA CONTENT".to_string()),
+        ];
+
+        assert_eq!(
+            compose_inline_custom_prompts(
+                "前文 \u{3000}像素模板 中段 \u{3000}镜头模板 后文",
+                &replacements,
+            ),
+            "前文 PIXEL CONTENT 中段 CAMERA CONTENT 后文"
+        );
     }
 
     #[test]
@@ -2302,7 +2327,7 @@ mod tests {
             .find("prompt-input.focus()")
             .expect("prompt input focus");
         let write_position = apply_prompt
-            .find("AppState.prompt = value")
+            .find("AppState.normalize-prompt-editor-text(value, \"\")")
             .expect("prompt value assignment");
         let cursor_position = apply_prompt
             .find("prompt-input.set-selection-offsets(2147483647, 2147483647)")
@@ -2489,7 +2514,7 @@ mod tests {
         assert!(clear_action.contains("clicked => { root.clear-current-prompt(); }"));
         assert!(clear_function.contains("AppState.prompt = \"\";"));
         assert!(clear_function.contains("root.prompt-editor-text = \"\";"));
-        assert!(clear_function.contains("AppState.toggle-custom-prompt-selection("));
+        assert!(clear_function.contains("AppState.clear-custom-prompt-selections();"));
         assert!(clear_function.contains("AppState.invalidate-deep-prompt-binding();"));
         assert!(!clear_function.contains("AppState.references"));
         assert!(!clear_function.contains("AppState.negative-prompt"));

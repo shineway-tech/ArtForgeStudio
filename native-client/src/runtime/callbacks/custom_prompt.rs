@@ -9,21 +9,174 @@ fn persist_custom_prompt_before_ack(
     Ok(())
 }
 
-fn normalize_prompt_editor_text(
+pub(super) const INLINE_CUSTOM_PROMPT_ICON_PLACEHOLDER: char = '\u{3000}';
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct PromptEditorEdit {
+    pub(super) text: String,
+    pub(super) cursor_offset: i32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct InlineCustomPromptOccurrence {
+    pub(super) name: String,
+    pub(super) content: String,
+    pub(super) prefix: String,
+    pub(super) start_offset: i32,
+    pub(super) end_offset: i32,
+}
+
+pub(super) fn inline_custom_prompt_display_text(name: &str) -> String {
+    format!("{INLINE_CUSTOM_PROMPT_ICON_PLACEHOLDER}{}", name.trim())
+}
+
+fn clamped_char_boundary(text: &str, requested: usize) -> usize {
+    let mut offset = requested.min(text.len());
+    while offset > 0 && !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
+fn needs_spacing(character: char) -> bool {
+    !character.is_whitespace()
+        && !matches!(
+            character,
+            '，' | '。' | '、' | '；' | '：' | '！' | '？' | ',' | '.' | ';' | ':' | '!' | '?'
+        )
+}
+
+pub(super) fn remove_custom_prompt_trigger_before_cursor(
     editor_text: &str,
-    selected_prefix: &str,
-    current_prompt: &str,
-) -> (String, String) {
-    if selected_prefix.is_empty() {
-        return (editor_text.to_string(), editor_text.to_string());
+    requested_offset: usize,
+) -> PromptEditorEdit {
+    let offset = clamped_char_boundary(editor_text, requested_offset);
+    if offset == 0 || !editor_text[..offset].ends_with('/') {
+        return PromptEditorEdit {
+            text: editor_text.to_string(),
+            cursor_offset: -1,
+        };
     }
-    if let Some(prompt) = editor_text.strip_prefix(selected_prefix) {
-        return (editor_text.to_string(), prompt.to_string());
+    let trigger_start = offset - 1;
+    let mut text = String::with_capacity(editor_text.len() - 1);
+    text.push_str(&editor_text[..trigger_start]);
+    text.push_str(&editor_text[offset..]);
+    PromptEditorEdit {
+        text,
+        cursor_offset: trigger_start.min(i32::MAX as usize) as i32,
     }
-    (
-        format!("{selected_prefix}{current_prompt}"),
-        current_prompt.to_string(),
-    )
+}
+
+pub(super) fn insert_custom_prompt_name_at_byte_offset(
+    editor_text: &str,
+    requested_offset: usize,
+    name: &str,
+) -> PromptEditorEdit {
+    let offset = clamped_char_boundary(editor_text, requested_offset);
+    let before = &editor_text[..offset];
+    let after = &editor_text[offset..];
+    let leading_space = before.chars().last().is_some_and(needs_spacing);
+    let trailing_space = after.chars().next().is_some_and(needs_spacing);
+    let display = inline_custom_prompt_display_text(name);
+    let mut inserted = String::new();
+    if leading_space {
+        inserted.push(' ');
+    }
+    inserted.push_str(&display);
+    if trailing_space {
+        inserted.push(' ');
+    }
+    let cursor_offset = offset.saturating_add(inserted.len());
+    let mut text = String::with_capacity(editor_text.len() + inserted.len());
+    text.push_str(before);
+    text.push_str(&inserted);
+    text.push_str(after);
+    PromptEditorEdit {
+        text,
+        cursor_offset: cursor_offset.min(i32::MAX as usize) as i32,
+    }
+}
+
+pub(super) fn remove_custom_prompt_name(editor_text: &str, name: &str) -> PromptEditorEdit {
+    let display = inline_custom_prompt_display_text(name);
+    let Some(start) = editor_text.find(&display) else {
+        return PromptEditorEdit {
+            text: editor_text.to_string(),
+            cursor_offset: editor_text.len().min(i32::MAX as usize) as i32,
+        };
+    };
+    let mut remove_start = start;
+    let mut remove_end = start + display.len();
+    let before = &editor_text[..remove_start];
+    let after = &editor_text[remove_end..];
+    let before_space = before.chars().last().filter(|value| value.is_whitespace());
+    let after_space = after.chars().next().filter(|value| value.is_whitespace());
+    if let Some(character) = after_space.filter(|_| before_space.is_some() || before.is_empty()) {
+        remove_end += character.len_utf8();
+    } else if let Some(character) = before_space.filter(|_| after.is_empty()) {
+        remove_start -= character.len_utf8();
+    }
+    let mut text = String::with_capacity(editor_text.len() - (remove_end - remove_start));
+    text.push_str(&editor_text[..remove_start]);
+    text.push_str(&editor_text[remove_end..]);
+    PromptEditorEdit {
+        text,
+        cursor_offset: remove_start.min(i32::MAX as usize) as i32,
+    }
+}
+
+pub(super) fn replace_custom_prompt_name(
+    editor_text: &str,
+    original_name: &str,
+    replacement_name: &str,
+) -> PromptEditorEdit {
+    let original = inline_custom_prompt_display_text(original_name);
+    let Some(start) = editor_text.find(&original) else {
+        return PromptEditorEdit {
+            text: editor_text.to_string(),
+            cursor_offset: editor_text.len().min(i32::MAX as usize) as i32,
+        };
+    };
+    let replacement = inline_custom_prompt_display_text(replacement_name);
+    let end = start + original.len();
+    let mut text = String::with_capacity(editor_text.len() + replacement.len() - original.len());
+    text.push_str(&editor_text[..start]);
+    text.push_str(&replacement);
+    text.push_str(&editor_text[end..]);
+    PromptEditorEdit {
+        text,
+        cursor_offset: (start + replacement.len()).min(i32::MAX as usize) as i32,
+    }
+}
+
+pub(super) fn inline_custom_prompt_occurrences(
+    editor_text: &str,
+    replacements: &[(String, String)],
+) -> Vec<InlineCustomPromptOccurrence> {
+    let mut occurrences = replacements
+        .iter()
+        .filter_map(|(name, content)| {
+            let display = inline_custom_prompt_display_text(name);
+            let start = editor_text.find(&display)?;
+            let end = start + display.len();
+            Some(InlineCustomPromptOccurrence {
+                name: name.clone(),
+                content: content.clone(),
+                prefix: editor_text[..start].to_string(),
+                start_offset: start.min(i32::MAX as usize) as i32,
+                end_offset: end.min(i32::MAX as usize) as i32,
+            })
+        })
+        .collect::<Vec<_>>();
+    occurrences.sort_by_key(|item| item.start_offset);
+    occurrences
+}
+
+fn slint_prompt_text_edit(edit: PromptEditorEdit) -> PromptTextEdit {
+    PromptTextEdit {
+        text: edit.text.into(),
+        cursor_offset: edit.cursor_offset,
+    }
 }
 
 pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext) {
@@ -32,20 +185,123 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
 
     {
         let app_weak = app.as_weak();
-        state.on_normalize_prompt_editor_text(move |editor_text, selected_prefix| {
+        let store = store.clone();
+        state.on_normalize_prompt_editor_text(move |editor_text, _selected_prefix| {
             let Some(app) = app_weak.upgrade() else {
                 return editor_text;
             };
             let state = app.global::<AppState>();
-            let (normalized, prompt) = normalize_prompt_editor_text(
-                editor_text.as_str(),
-                selected_prefix.as_str(),
-                state.get_prompt().as_str(),
-            );
-            if state.get_prompt().as_str() != prompt {
-                state.set_prompt(prompt.into());
+            let editor_text = editor_text.to_string();
+            if state.get_prompt().as_str() != editor_text {
+                state.set_prompt(editor_text.clone().into());
             }
-            normalized.into()
+            let category = current_workspace_category(&app);
+            let selection_changed = {
+                let mut store_mut = store.borrow_mut();
+                let selected = store_mut
+                    .selected_custom_prompts
+                    .get(&category)
+                    .cloned()
+                    .unwrap_or_default();
+                let retained = selected
+                    .into_iter()
+                    .filter(|prompt| {
+                        let name = custom_prompt_display_name(&store_mut, prompt);
+                        editor_text.contains(&inline_custom_prompt_display_text(&name))
+                    })
+                    .collect::<BTreeSet<_>>();
+                let changed = store_mut
+                    .selected_custom_prompts
+                    .get(&category)
+                    .is_some_and(|current| current != &retained);
+                if retained.is_empty() {
+                    store_mut.selected_custom_prompts.remove(&category);
+                } else {
+                    store_mut
+                        .selected_custom_prompts
+                        .insert(category.clone(), retained);
+                }
+                changed
+            };
+            push_custom_prompts(&app, &store.borrow());
+            if selection_changed {
+                save_local_store(&app, &store.borrow());
+            }
+            editor_text.into()
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_prepare_custom_prompt_insertion(move |editor_text, cursor_offset| {
+            let edit = remove_custom_prompt_trigger_before_cursor(
+                editor_text.as_str(),
+                cursor_offset.max(0) as usize,
+            );
+            if edit.cursor_offset >= 0 {
+                if let Some(app) = app_weak.upgrade() {
+                    app.global::<AppState>()
+                        .set_prompt(edit.text.clone().into());
+                }
+            }
+            slint_prompt_text_edit(edit)
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        state.on_apply_inline_custom_prompt(move |prompt, editor_text, cursor_offset| {
+            let Some(app) = app_weak.upgrade() else {
+                return PromptTextEdit {
+                    text: editor_text,
+                    cursor_offset,
+                };
+            };
+            let prompt = prompt.to_string();
+            let editor_text = editor_text.to_string();
+            let category = current_workspace_category(&app);
+            let (name, selected) = {
+                let store_ref = store.borrow();
+                (
+                    custom_prompt_display_name(&store_ref, &prompt),
+                    custom_prompt_selected_for_category(&store_ref, &category, &prompt),
+                )
+            };
+            let edit = if selected {
+                remove_custom_prompt_name(&editor_text, &name)
+            } else {
+                insert_custom_prompt_name_at_byte_offset(
+                    &editor_text,
+                    cursor_offset.max(0) as usize,
+                    &name,
+                )
+            };
+            {
+                let mut store_mut = store.borrow_mut();
+                if store_mut.custom_prompts.contains(&prompt) {
+                    toggle_custom_prompt_selection_for_category(&mut store_mut, &category, &prompt);
+                }
+            }
+            let state = app.global::<AppState>();
+            state.set_prompt(edit.text.clone().into());
+            push_custom_prompts(&app, &store.borrow());
+            save_local_store(&app, &store.borrow());
+            slint_prompt_text_edit(edit)
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        state.on_clear_custom_prompt_selections(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let category = current_workspace_category(&app);
+            store.borrow_mut().selected_custom_prompts.remove(&category);
+            push_custom_prompts(&app, &store.borrow());
+            save_local_store(&app, &store.borrow());
         });
     }
 
@@ -416,6 +672,21 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
             let timestamp = Local::now().format("%Y-%m-%d %H:%M").to_string();
             let format = normalized_custom_prompt_format(state.get_custom_prompt_format().as_str());
             let reference_paths = custom_prompt_reference_paths(&app);
+            let original_prompt = original.trim().to_string();
+            let category = current_workspace_category(&app);
+            let (original_name, selected_in_current_category) = {
+                let store_ref = store.borrow();
+                (
+                    custom_prompt_display_name(&store_ref, &original_prompt),
+                    custom_prompt_selected_for_category(
+                        &store_ref,
+                        &category,
+                        &original_prompt,
+                    ),
+                )
+            };
+            let replacement_name = name.clone();
+            let previous_prompt = state.get_prompt().to_string();
             let profile = CustomPromptProfile {
                 name,
                 category: normalized_custom_prompt_category(
@@ -441,7 +712,6 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
             };
             let result = {
                 let mut store = store.borrow_mut();
-                let original_prompt = original.trim().to_string();
                 let result =
                     save_custom_prompt_to_store(&mut store, &original, &prompt, &timestamp);
                 if result == SaveCustomPromptResult::Saved {
@@ -454,6 +724,14 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
             };
             match result {
                 SaveCustomPromptResult::Saved => {
+                    if selected_in_current_category && original_name != replacement_name {
+                        let edit = replace_custom_prompt_name(
+                            state.get_prompt().as_str(),
+                            &original_name,
+                            &replacement_name,
+                        );
+                        state.set_prompt(edit.text.into());
+                    }
                     push_custom_prompts(&app, &store.borrow());
                     let persisted = persist_custom_prompt_before_ack(
                         || save_local_store_checked(&app, &store.borrow()),
@@ -469,6 +747,7 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                         store_mut.custom_prompt_times = previous_custom_state.2;
                         store_mut.custom_prompt_profiles = previous_custom_state.3;
                         drop(store_mut);
+                        state.set_prompt(previous_prompt.clone().into());
                         push_custom_prompts(&app, &store.borrow());
                         state.set_custom_prompt_message(
                             if state.get_language().as_str() == "en" {
@@ -520,8 +799,20 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            let category = current_workspace_category(&app);
+            let (name, selected) = {
+                let store_ref = store.borrow();
+                (
+                    custom_prompt_display_name(&store_ref, &prompt),
+                    custom_prompt_selected_for_category(&store_ref, &category, &prompt),
+                )
+            };
             if remove_custom_prompt_from_store(&mut store.borrow_mut(), &prompt) {
                 let state = app.global::<AppState>();
+                if selected {
+                    let edit = remove_custom_prompt_name(state.get_prompt().as_str(), &name);
+                    state.set_prompt(edit.text.into());
+                }
                 state.set_custom_prompt_message("".into());
                 push_custom_prompts(&app, &store.borrow());
                 save_local_store(&app, &store.borrow());
@@ -821,22 +1112,72 @@ mod tests {
     }
 
     #[test]
-    fn prompt_editor_text_keeps_the_custom_prompt_name_inline_and_returns_only_the_suffix() {
+    fn custom_prompt_name_is_inserted_at_the_utf8_cursor_position() {
+        let edit = insert_custom_prompt_name_at_byte_offset("古城，夜景", 9, "像素模板");
+
+        assert_eq!(edit.text, "古城，\u{3000}像素模板 夜景");
+        assert_eq!(edit.cursor_offset, 25);
+    }
+
+    #[test]
+    fn custom_prompt_trigger_is_removed_at_a_middle_cursor_position() {
+        let edit = remove_custom_prompt_trigger_before_cursor("前文 /后文", 8);
+
+        assert_eq!(edit.text, "前文 后文");
+        assert_eq!(edit.cursor_offset, 7);
+    }
+
+    #[test]
+    fn inline_custom_prompt_occurrences_follow_their_text_order() {
+        let replacements = vec![
+            ("像素模板".to_string(), "PIXEL CONTENT".to_string()),
+            ("镜头模板".to_string(), "CAMERA CONTENT".to_string()),
+        ];
+
+        let occurrences = inline_custom_prompt_occurrences(
+            "前文 \u{3000}镜头模板 中段 \u{3000}像素模板 后文",
+            &replacements,
+        );
+
+        assert_eq!(occurrences.len(), 2);
+        assert_eq!(occurrences[0].name, "镜头模板");
+        assert_eq!(occurrences[0].prefix, "前文 ");
+        assert_eq!(occurrences[1].name, "像素模板");
+        assert_eq!(occurrences[1].prefix, "前文 \u{3000}镜头模板 中段 ");
+    }
+
+    #[test]
+    fn removing_one_inline_custom_prompt_preserves_the_other_text() {
+        let edit = remove_custom_prompt_name(
+            "前文 \u{3000}像素模板 中段 \u{3000}镜头模板 后文",
+            "像素模板",
+        );
+
+        assert_eq!(edit.text, "前文 中段 \u{3000}镜头模板 后文");
+        assert_eq!(edit.cursor_offset, 7);
+    }
+
+    #[test]
+    fn removing_an_edge_inline_custom_prompt_does_not_leave_padding() {
         assert_eq!(
-            normalize_prompt_editor_text("像素模板 霓虹街道", "像素模板 ", "霓虹街道"),
-            ("像素模板 霓虹街道".to_string(), "霓虹街道".to_string())
+            remove_custom_prompt_name("\u{3000}像素模板 后文", "像素模板").text,
+            "后文"
         );
         assert_eq!(
-            normalize_prompt_editor_text("普通提示词", "", ""),
-            ("普通提示词".to_string(), "普通提示词".to_string())
+            remove_custom_prompt_name("前文 \u{3000}像素模板", "像素模板").text,
+            "前文"
         );
     }
 
     #[test]
-    fn prompt_editor_text_restores_a_selected_custom_prompt_name_if_it_is_edited() {
-        assert_eq!(
-            normalize_prompt_editor_text("素模板 霓虹街道", "像素模板 ", "霓虹街道"),
-            ("像素模板 霓虹街道".to_string(), "霓虹街道".to_string())
+    fn renaming_an_inline_custom_prompt_preserves_its_position_and_other_names() {
+        let edit = replace_custom_prompt_name(
+            "前文 \u{3000}旧名称 中段 \u{3000}镜头模板 后文",
+            "旧名称",
+            "新名称",
         );
+
+        assert_eq!(edit.text, "前文 \u{3000}新名称 中段 \u{3000}镜头模板 后文");
+        assert_eq!(edit.cursor_offset, 19);
     }
 }

@@ -1,0 +1,95 @@
+import { AppTheme } from "../theme.slint";
+
+// TextInput does not expose rich-text spans. This overlay measures the text before
+// an inline custom-prompt marker with an identical, transparent TextInput, then
+// paints the marker as a colored icon and bold name at that exact caret position.
+export component InlineCustomPromptOverlay inherits Rectangle {
+    in property <string> prefix;
+    in property <string> name;
+    in property <length> editor-width;
+    in property <length> editor-visible-height;
+    in property <length> viewport-y;
+    in property <length> editor-font-size;
+    in property <brush> editor-background;
+    property <length> anchor-x: 0px;
+    property <length> anchor-y: 0px;
+    property <bool> measure-pending: true;
+
+    width: root.editor-width;
+    height: root.editor-visible-height;
+    background: transparent;
+    clip: true;
+
+    changed prefix => { root.measure-pending = true; }
+    changed editor-width => { root.measure-pending = true; }
+    changed editor-font-size => { root.measure-pending = true; }
+
+    measure-input := TextInput {
+        width: root.editor-width;
+        height: max(root.editor-visible-height, self.preferred-height);
+        text: root.prefix;
+        single-line: false;
+        wrap: word-wrap;
+        font-size: root.editor-font-size;
+        font-weight: 400;
+        color: transparent;
+        selection-background-color: transparent;
+        selection-foreground-color: transparent;
+        read-only: true;
+        enabled: false;
+        opacity: 0;
+        cursor-position-changed(position) => {
+            root.anchor-x = position.x;
+            root.anchor-y = position.y;
+        }
+    }
+
+    token-mask := Rectangle {
+        x: root.anchor-x;
+        y: root.anchor-y + root.viewport-y;
+        width: token-metric.preferred-width + 2px;
+        height: max(token-metric.preferred-height, root.editor-font-size + 3px);
+        background: root.editor-background;
+        clip: true;
+
+        token-metric := Text {
+            text: "　" + root.name;
+            color: transparent;
+            font-size: root.editor-font-size;
+            font-weight: 400;
+            wrap: no-wrap;
+        }
+
+        Image {
+            x: 0px;
+            y: 1px;
+            width: root.editor-font-size;
+            height: root.editor-font-size;
+            source: @image-url("../../assets/icons/custom-prompt-text.svg");
+            colorize: AppTheme.custom-prompt-name;
+            image-fit: contain;
+        }
+
+        Text {
+            x: root.editor-font-size;
+            y: 0px;
+            width: parent.width - self.x;
+            height: parent.height;
+            text: root.name;
+            color: AppTheme.custom-prompt-name;
+            font-size: root.editor-font-size;
+            font-weight: 600;
+            vertical-alignment: top;
+            wrap: no-wrap;
+        }
+    }
+
+    Timer {
+        interval: 1ms;
+        running: root.measure-pending;
+        triggered => {
+            root.measure-pending = false;
+            measure-input.set-selection-offsets(2147483647, 2147483647);
+        }
+    }
+}

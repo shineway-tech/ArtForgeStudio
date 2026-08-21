@@ -1,4 +1,4 @@
-import { AccountSession, AssetGroup, AssetItem, BrushPoint, CanvasLink, CanvasNote, CatalogModelView, CompressionImageItem, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, GalleryHeader, GalleryLoadingPlacement, GalleryPlacement, InvitedUserView, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
+import { AccountSession, AssetGroup, AssetItem, BrushPoint, CanvasLink, CanvasNote, CatalogModelView, CompressionImageItem, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, GalleryHeader, GalleryLoadingPlacement, GalleryPlacement, InvitedUserView, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, PromptTextEdit, ReferenceItem } from "types.slint";
 
 export global AppState {
     // The software renderer stays available for machines without a usable GPU. Expensive
@@ -657,6 +657,9 @@ export global AppState {
     callback clear-prompt-history();
     callback normalize-prompt-editor-text(string, string) -> string;
     callback toggle-custom-prompt-selection(string);
+    callback prepare-custom-prompt-insertion(string, int) -> PromptTextEdit;
+    callback apply-inline-custom-prompt(string, string, int) -> PromptTextEdit;
+    callback clear-custom-prompt-selections();
     callback save-custom-prompt(string, string);
     callback remove-custom-prompt(string);
     callback begin-new-custom-prompt();

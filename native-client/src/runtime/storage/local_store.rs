@@ -536,11 +536,15 @@ pub(super) fn toggle_custom_prompt_selection_for_category(
         .get(&category)
         .is_some_and(|selected| selected.contains(prompt));
     if was_selected {
-        store.selected_custom_prompts.remove(&category);
+        if let Some(selected) = store.selected_custom_prompts.get_mut(&category) {
+            selected.remove(prompt);
+            if selected.is_empty() {
+                store.selected_custom_prompts.remove(&category);
+            }
+        }
         return;
     }
     let selected = store.selected_custom_prompts.entry(category).or_default();
-    selected.clear();
     selected.insert(prompt.to_string());
 }
 
@@ -565,6 +569,26 @@ pub(super) fn selected_custom_prompts_for_category(store: &Store, category: &str
         .collect()
 }
 
+pub(super) fn custom_prompt_display_name(store: &Store, prompt: &str) -> String {
+    store
+        .custom_prompt_profiles
+        .get(prompt)
+        .map(|profile| profile.name.trim())
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| single_line_prompt_preview(prompt).chars().take(48).collect())
+}
+
+pub(super) fn selected_custom_prompt_replacements_for_category(
+    store: &Store,
+    category: &str,
+) -> Vec<(String, String)> {
+    selected_custom_prompts_for_category(store, category)
+        .into_iter()
+        .map(|prompt| (custom_prompt_display_name(store, &prompt), prompt))
+        .collect()
+}
+
 pub(super) fn replace_selected_custom_prompt(
     store: &mut Store,
     original_prompt: &str,
@@ -584,13 +608,11 @@ fn normalize_selected_custom_prompts(
     let mut normalized = BTreeMap::<String, BTreeSet<String>>::new();
     for (category, mut selected) in std::mem::take(selected_by_category) {
         selected.retain(|prompt| retained_prompts.contains(prompt));
-        if let Some(prompt) = selected.into_iter().next() {
-            let normalized_selection = normalized
+        if !selected.is_empty() {
+            normalized
                 .entry(resolve_category(&category, ""))
-                .or_default();
-            if normalized_selection.is_empty() {
-                normalized_selection.insert(prompt);
-            }
+                .or_default()
+                .extend(selected);
         }
     }
     *selected_by_category = normalized;

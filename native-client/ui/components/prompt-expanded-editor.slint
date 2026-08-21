@@ -1,6 +1,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { AppState } from "../app-state.slint";
 import { AppTheme } from "../theme.slint";
+import { InlineCustomPromptOverlay } from "inline-custom-prompt-overlay.slint";
 import { PillButton } from "pill-button.slint";
 
 export component PromptExpandedEditor {
@@ -81,40 +82,9 @@ export component PromptExpandedEditor {
             }
         }
 
-        if AppState.selected-custom-prompt-items.length > 0: Rectangle {
-            x: 24px;
-            y: 62px;
-            width: parent.width - 48px;
-            height: 38px;
-            background: AppTheme.panel-soft;
-            border-radius: 9px;
-
-            Image {
-                x: 12px;
-                y: 11px;
-                width: 16px;
-                height: 16px;
-                source: @image-url("../../assets/icons/custom-prompt-text.svg");
-                colorize: AppTheme.custom-prompt-name;
-                image-fit: contain;
-            }
-
-            for item in AppState.selected-custom-prompt-items: Text {
-                x: 34px;
-                width: parent.width - 46px;
-                height: parent.height;
-                text: item.name;
-                color: AppTheme.custom-prompt-name;
-                font-size: AppState.settings-font-size * 1px;
-                font-weight: 600;
-                vertical-alignment: center;
-                overflow: elide;
-            }
-        }
-
         editor-frame := Rectangle {
             x: 24px;
-            y: AppState.selected-custom-prompt-items.length > 0 ? 112px : 62px;
+            y: 62px;
             width: parent.width - 48px;
             height: parent.height - self.y - 82px;
             background: AppTheme.panel-soft;
@@ -141,6 +111,7 @@ export component PromptExpandedEditor {
                     wrap: word-wrap;
                     page-height: expanded-scroll.visible-height;
                     edited => {
+                        AppState.normalize-prompt-editor-text(self.text, "");
                         AppState.deep-optimization-applied-chinese = "";
                         AppState.deep-optimization-applied-english = "";
                         AppState.invalidate-deep-prompt-binding();
@@ -153,6 +124,18 @@ export component PromptExpandedEditor {
                         return reject;
                     }
                 }
+            }
+
+            for item in AppState.selected-custom-prompt-items: InlineCustomPromptOverlay {
+                x: 14px;
+                y: 14px;
+                prefix: item.prefix;
+                name: item.name;
+                editor-width: expanded-input.width;
+                editor-visible-height: expanded-scroll.visible-height;
+                viewport-y: expanded-scroll.viewport-y;
+                editor-font-size: AppState.settings-font-size * 1px + 1px;
+                editor-background: AppTheme.panel-soft;
             }
         }
 
