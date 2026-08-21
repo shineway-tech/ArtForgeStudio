@@ -129,6 +129,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
     let store = context.store.clone();
 
     wire_auth_callbacks(app, context.clone());
+    wire_password_callbacks(app, context.clone());
     wire_wechat_binding_callbacks(app, context.clone());
     wire_email_binding_callbacks(app, context.clone());
     wire_invitation_code_callbacks(app, context.clone());

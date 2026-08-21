@@ -1,86 +1,75 @@
-# 兑换码页面精简 Design QA
+# Design QA — email/password authentication controls
 
-- Source visual truth: `/var/folders/1j/k6y_5_2x7td4514dgwwm58z80000gn/T/codex-clipboard-77a59d9c-2840-483c-884e-252ca947789a.png`
-- Implementation screenshot: `/private/tmp/elunvi-redeem-trimmed-front.png`
-- Source pixels: 2688 × 1718.
-- Implementation pixels: 3360 × 2100 (`1440 × 928` app window at Retina density inside a `1680 × 1050` desktop capture).
-- State: signed-in Chinese desktop client, `积分 > 兑换码`, empty input state.
-- Comparison method: full-view structural comparison followed by focused inspection of the redemption form and notes card. Density was not used for pixel-perfect measurement because the source is an annotated crop; component hierarchy and visible scope were compared directly.
+**Source visual truth**
 
-## Full-view comparison evidence
+- `/Users/fanxiao/.codex/generated_images/01a018fd-ec5a-7123-923f-26112f90b1a1/exec-049b258b-4912-40ba-8c01-c19b8ed7f7a5.png`
+- Selected direction: option 2, compact segmented control with an icon-only password visibility action.
 
-- The source red frame identifies exactly two retained content blocks: the redemption input card and the redemption-notes card.
-- The implementation shows those two blocks directly below the shared page title and tabs.
-- The balance card, outer `兑换积分` section title, and credit ledger are absent from the redemption tab.
-- Recharge and subscription tabs remain unchanged in structure.
+**Implementation evidence**
 
-## Focused-region comparison evidence
+- Full login state on the normal service configuration: `/Users/fanxiao/workstation/ai/ArtForgeStudio/ArtForgeStudio/design-qa-artifacts/login-email-password-production-final.png`
+- Masked password state: `/Users/fanxiao/workstation/ai/ArtForgeStudio/ArtForgeStudio/design-qa-artifacts/login-password-masked-final.png`
+- Revealed/eye-off state: `/Users/fanxiao/workstation/ai/ArtForgeStudio/ArtForgeStudio/design-qa-artifacts/login-password-revealed-final.png`
+- Password-management state: `/Users/fanxiao/workstation/ai/ArtForgeStudio/ArtForgeStudio/design-qa-artifacts/password-management-prod-open.png`
+- Focused source region: `/Users/fanxiao/workstation/ai/ArtForgeStudio/ArtForgeStudio/design-qa-artifacts/source-login-controls.png`
+- Focused normalized implementation region: `/Users/fanxiao/workstation/ai/ArtForgeStudio/ArtForgeStudio/design-qa-artifacts/actual-login-controls-normalized.png`
 
-- Form title, explanatory copy, receiving account, input, action button, inline status slot, divider, and post-redemption note remain inside the primary card.
-- The secondary card retains its title and campaign-scope explanation.
-- The focused content uses the existing panel, border, radius, typography, and purple accent tokens; no new visual language was introduced.
+**Viewport and normalization**
 
-## Required fidelity surfaces
+- Native desktop window: `1440 × 928` logical pixels, light theme, Chinese locale.
+- Source raster: `1221 × 1289` pixels at generated-image density; focused source crop: `1180 × 720` pixels.
+- Implementation capture: `3104 × 2080` pixels, containing a `1440 × 928` logical-pixel Retina window plus the macOS window shadow (`2×` app-content density).
+- Focused implementation evidence was cropped to `1420 × 867`, then resampled to `1180 × 720` for equal-pixel comparison with the source crop. App/window chrome and surrounding canvas were excluded from focused fidelity judgments.
+- The source contains populated credentials and an error state; the final implementation capture uses the same required agreements but a clean sign-in state. Those dynamic field/error values were excluded from visual-fidelity findings. The compared state is email login with **Password login** selected and the password field masked.
 
-- Fonts and typography: existing application font sizes and weights are preserved; hierarchy matches the selected source region.
-- Spacing and layout rhythm: the two cards retain their original internal spacing, while removed regions no longer reserve height or create extra scrolling.
-- Colors and visual tokens: existing theme background, panel, border, muted text, and accent colors are unchanged.
-- Image quality and asset fidelity: the selected region contains no raster or illustrative assets, so no asset substitution was required.
-- Copy and content: retained copy remains product-appropriate; the ledger-specific note was changed to `兑换成功后，积分将自动到账当前账号。` because the ledger is no longer visible on this tab.
+**Full-view comparison evidence**
 
-## Findings
+- The selected email tab, compact two-option switch, explanatory copy, form order, password affordance, forgot-password link, and primary action retain the source hierarchy.
+- The implementation fits the established native dialog and theme rather than enlarging the dialog to the concept-board crop. No controls overlap, clip, or lose hierarchy at the tested viewport.
+- Password management reuses the same segmented-control and secret-field components, preserving visual and behavioral consistency.
 
-- No actionable P0, P1, or P2 visual mismatch remains for the requested scope reduction.
-- No focused-region crop was necessary beyond the full desktop evidence because all retained controls and text are legible at the captured density.
+**Focused region comparison evidence**
 
-## Comparison history
+- The equal-size comparison confirms the same compact two-segment silhouette, muted inactive surface, white active surface, purple active text/outline, centered labels, rounded corners, and eye icon placement.
+- Field labels, required markers, focus border, password masking, and forgot-password alignment remain legible and balanced.
+- The official Lucide `eye` / `eye-off` assets are sharp vector icons with consistent stroke weight; no text glyph, handcrafted SVG, CSS drawing, or placeholder is used.
 
-- Initial implementation included a balance card, `兑换积分` heading, and credit ledger outside the user's red frame.
-- Fix: removed those three regions from the redemption branch, limited the ledger to recharge, and recalculated redemption content height.
-- Post-fix evidence: `/private/tmp/elunvi-redeem-trimmed-front.png` shows only the two selected content blocks and no redundant scroll region.
+**Required fidelity surfaces**
 
-## Interaction verification
+- Fonts and typography: existing system CJK font stack, weights, hierarchy, line height, and truncation behavior are preserved. The segmented active label uses the intended stronger weight.
+- Spacing and layout rhythm: shared `320 × 44` segmented control, centered placement, internal two-pixel padding/gap, field spacing, radii, and button alignment are consistent in both dialogs.
+- Colors and tokens: implementation uses the existing panel, panel-soft, border, muted, weak, danger, and accent tokens. Active, hover, disabled, and keyboard-focus states remain distinguishable.
+- Image quality and asset fidelity: Lucide SVG assets render cleanly at `20 × 20` inside a `52 × 46` interaction target and share one source/license across every password field.
+- Copy and content: login-mode labels match the selected direction. New-password guidance states `8–20` characters with `0–9`, `A–Z`, and `a–z`, with symbols allowed, in both Chinese and English.
+- Accessibility and interaction: both segments are independent checkable buttons with checked state, default action, keyboard activation, disabled semantics, and a visible two-pixel focus ring. Visibility buttons have dynamic accessible labels, default action, Space/Enter support, and non-duplicated decorative icon semantics.
 
-- Client compiled and launched successfully.
-- Redemption input focus and disabled-button empty state are visible in the implementation capture.
-- Primary redemption interaction remains wired from the earlier prototype; this change only reduces visible scope.
+**Findings**
+
+- No actionable P0, P1, or P2 differences remain.
+- [P3] The native dialog renders the segmented control and surrounding form at a slightly denser scale than the standalone concept board. This is an intentional fit to the existing desktop dialog and does not change hierarchy, readability, or target size.
+
+**Primary interactions tested**
+
+- Switched email login from verification code to password and back.
+- Opened Settings → Account Center → Login Methods → Change Password.
+- Confirmed the change-password verification switch uses the same component.
+- Entered a local example password, then toggled masked and revealed states; the icon changes from `eye` to `eye-off`.
+- Confirmed no production mutation or deployment was performed during QA.
+
+**Open Questions**
+
+- None.
+
+**Comparison history**
+
+- Pass 1: compared the selected source and final normal-service implementation in one full-view input, then compared equal-pixel focused control regions in a second combined input. No P0/P1/P2 visual issue was found, so no visual-fix iteration was required.
+
+**Implementation checklist**
+
+- [x] Shared segmented control in login and password management.
+- [x] Unified eye/eye-off icons in every secret field.
+- [x] Keyboard and accessibility semantics for both control families.
+- [x] Local native interaction capture for login and password management.
+- [x] Equal-pixel focused comparison against the selected visual target.
 
 final result: passed
-
----
-
-## 已归档：图片裁剪 Design QA
-
-- Result: `passed`
-- Reference: `/Users/fanxiao/.codex/generated_images/019fb1ac-d6ee-7d12-92b0-3cef9678696f/call_8YThL9mLtp5xAtn1Yz3ECgLw.png`
-- Final editor state: `/private/tmp/artforge-crop-final-3x4.png`
-- Save confirmation: `/private/tmp/artforge-crop-final-saved.png`
-- Asset confirmation: `/private/tmp/artforge-assets-final-crop.png`
-- Side-by-side comparison: `/private/tmp/artforge-crop-final-comparison.png`
-- Comparison viewport: reference cropped to 1487 × 958; implementation normalized to 1487 × 958.
-
-### Verified states
-
-- Empty state supports click upload, drag-and-drop, and paste guidance.
-- The async macOS file picker opens without terminating the Slint event loop.
-- A non-square 1448 × 1086 image is fitted without distortion.
-- Original, free, 1:1, 4:3, 3:4, 16:9, and 9:16 ratios are available.
-- 3:4 produces an 815 × 1086 crop and keeps the source pixels without upscaling.
-- Crop movement, corner resizing, rotation, flips, reset, and image replacement are wired.
-- Saving is local, displays `0积分`, and does not invoke a credit-consuming API.
-- The saved PNG appears in `我的资产 > 其他` as an `图片裁剪` asset.
-- Crop assets do not expose regenerate or re-edit actions.
-
-### Visual review
-
-- The loaded editor starts directly below the application header, matching the reference hierarchy.
-- The editor and inspector are balanced for both landscape and portrait crop selections.
-- Settings and save actions are separated into two cards, matching the selected direction.
-- No P0, P1, or P2 visual, interaction, or accessibility blockers remain.
-
-### Automated verification
-
-- `cargo check -p artforge-studio-native`
-- `cargo test -p artforge-studio-native local_crop_uses_normalized_bounds_and_applies_transforms -- --nocapture`
-- `cargo test -p artforge-studio-native toolbox_crop_is_a_free_local_editor_that_saves_other_assets -- --nocapture`
-- Full native-client suite previously completed with 222 passed, 0 failed, and 39 ignored mock-API tests.

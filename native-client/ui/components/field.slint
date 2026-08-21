@@ -1,12 +1,63 @@
 import { AppState } from "../app-state.slint";
 import { AppTheme } from "../theme.slint";
 
+component SecretVisibilityButton inherits Rectangle {
+    in property <bool> revealed: false;
+    in property <bool> enabled: true;
+    callback clicked();
+    background: focus.has-focus ? AppTheme.accent.with-alpha(0.08) : transparent;
+    border-radius: 7px;
+    border-width: focus.has-focus ? 1px : 0px;
+    border-color: focus.has-focus ? AppTheme.accent : transparent;
+    forward-focus: focus;
+    accessible-role: button;
+    accessible-enabled: root.enabled;
+    accessible-label: root.revealed
+        ? (AppState.en ? "Hide password" : "隐藏密码")
+        : (AppState.en ? "Show password" : "显示密码");
+    accessible-action-default => {
+        if root.enabled { root.clicked(); }
+    }
+    Image {
+        x: (parent.width - 20px) / 2;
+        y: (parent.height - 20px) / 2;
+        width: 20px;
+        height: 20px;
+        source: root.revealed
+            ? @image-url("../../assets/icons/eye-off.svg")
+            : @image-url("../../assets/icons/eye.svg");
+        colorize: root.enabled ? AppTheme.accent : AppTheme.weak;
+        image-fit: contain;
+        accessible-role: none;
+    }
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { if root.enabled { root.clicked(); } }
+    }
+    focus := FocusScope {
+        width: 0px;
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == " " || event.text == "\n" {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
 export component Field {
     in property <string> label;
     in property <string> placeholder;
     in-out property <string> value;
     in property <bool> secret: false;
+    in-out property <bool> revealed: false;
     in property <bool> required: false;
+    in property <bool> enabled: true;
     callback accepted();
     height: 78px;
     VerticalLayout {
@@ -27,10 +78,11 @@ export component Field {
             border-color: input.has-focus ? AppTheme.accent : AppTheme.border;
             input := TextInput {
                 x: 14px;
-                width: parent.width - 28px;
+                width: parent.width - 28px - (root.secret ? 52px : 0px);
                 height: parent.height;
                 text <=> root.value;
-                input-type: root.secret ? password : text;
+                enabled: root.enabled;
+                input-type: root.secret && !root.revealed ? password : text;
                 single-line: true;
                 color: AppTheme.text;
                 font-size: AppState.settings-font-size * 1px;
@@ -40,7 +92,7 @@ export component Field {
             }
             if root.value == "" && !input.has-focus: Text {
                 x: 14px;
-                width: parent.width - 28px;
+                width: parent.width - 28px - (root.secret ? 52px : 0px);
                 height: parent.height;
                 text: root.placeholder;
                 color: AppTheme.weak;
@@ -48,6 +100,14 @@ export component Field {
                 font-weight: 400;
                 vertical-alignment: center;
                 overflow: elide;
+            }
+            if root.secret: SecretVisibilityButton {
+                x: parent.width - 52px;
+                width: 52px;
+                height: parent.height;
+                revealed: root.revealed;
+                enabled: root.enabled;
+                clicked => { root.revealed = !root.revealed; }
             }
         }
     }

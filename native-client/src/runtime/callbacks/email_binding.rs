@@ -272,20 +272,29 @@ fn poll_email_binding_result(
         state.set_email_bind_busy(false);
         match result {
             Ok(response) if response.bound => {
-                state.set_email_bound(true);
-                state.set_email_mask(response.email_masked.into());
-                state.set_email_bind_open(false);
-                state.set_email_bind_email("".into());
-                state.set_email_bind_code("".into());
-                state.set_email_bind_countdown(0);
-                state.set_email_bind_status("".into());
-                state.set_generation_status("邮箱绑定成功".into());
+                apply_email_binding_success(&state, &email, response);
                 save_user_profile(&app);
             }
             Ok(_) => state.set_email_bind_status("邮箱绑定未完成，请重试".into()),
             Err(error) => state.set_email_bind_status(error.user_message().into()),
         }
     });
+}
+
+fn apply_email_binding_success(
+    state: &AppState,
+    email: &str,
+    response: EmailBindingResponse,
+) {
+    state.set_email_bound(true);
+    state.set_email_mask(response.email_masked.into());
+    state.set_auth_email(email.into());
+    state.set_email_bind_open(false);
+    state.set_email_bind_email("".into());
+    state.set_email_bind_code("".into());
+    state.set_email_bind_countdown(0);
+    state.set_email_bind_status("".into());
+    state.set_generation_status("邮箱绑定成功".into());
 }
 
 fn account_poll_is_current<T>(
@@ -402,6 +411,29 @@ fn valid_binding_email(email: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn successful_binding_promotes_verified_email_to_login_form() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_auth_email("stale-account@example.com".into());
+        state.set_email_bind_email("  NEW@Example.com ".into());
+        let verified_email = normalized_binding_email(state.get_email_bind_email().as_str());
+
+        apply_email_binding_success(
+            &state,
+            &verified_email,
+            EmailBindingResponse {
+                bound: true,
+                email_masked: "n***@example.com".to_string(),
+            },
+        );
+
+        assert_eq!(state.get_auth_email().as_str(), "new@example.com");
+        assert!(state.get_email_bound());
+        assert_eq!(state.get_email_bind_email().as_str(), "");
+    }
 
     #[test]
     fn email_response_requires_matching_operation_and_normalized_email_snapshot() {

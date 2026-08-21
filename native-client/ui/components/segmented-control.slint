@@ -1,0 +1,91 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+component SegmentedOption inherits Rectangle {
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> disabled: false;
+    in property <length> label-font-size: AppState.settings-font-size * 1px;
+    callback clicked();
+    background: root.active
+        ? AppTheme.panel
+        : (touch.has-hover && !root.disabled ? AppTheme.accent.with-alpha(0.08) : transparent);
+    border-radius: 8px;
+    border-width: focus.has-focus ? 2px : (root.active ? 1px : 0px);
+    border-color: root.active || focus.has-focus ? AppTheme.accent : transparent;
+    forward-focus: focus;
+    accessible-role: button;
+    accessible-enabled: !root.disabled;
+    accessible-checkable: true;
+    accessible-checked: root.active;
+    accessible-label: root.text;
+    accessible-action-default => {
+        if !root.disabled { root.clicked(); }
+    }
+    Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        color: root.active ? AppTheme.accent : AppTheme.muted;
+        font-size: root.label-font-size;
+        font-weight: root.active ? 600 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+        accessible-role: none;
+    }
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        enabled: !root.disabled;
+        mouse-cursor: root.disabled ? default : pointer;
+        clicked => { if !root.disabled { root.clicked(); } }
+    }
+    focus := FocusScope {
+        width: 0px;
+        enabled: !root.disabled;
+        key-pressed(event) => {
+            if event.text == " " || event.text == "\n" {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
+export component SegmentedControl inherits Rectangle {
+    in property <string> first-text;
+    in property <string> second-text;
+    in property <bool> first-active: true;
+    in property <bool> disabled: false;
+    in property <length> label-font-size: AppState.settings-font-size * 1px;
+    callback first-clicked();
+    callback second-clicked();
+    height: 44px;
+    background: AppTheme.panel-soft;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: AppTheme.border;
+    opacity: root.disabled ? 0.52 : 1;
+    HorizontalLayout {
+        padding: 2px;
+        spacing: 2px;
+        SegmentedOption {
+            horizontal-stretch: 1;
+            text: root.first-text;
+            active: root.first-active;
+            disabled: root.disabled;
+            label-font-size: root.label-font-size;
+            clicked => { root.first-clicked(); }
+        }
+        SegmentedOption {
+            horizontal-stretch: 1;
+            text: root.second-text;
+            active: !root.first-active;
+            disabled: root.disabled;
+            label-font-size: root.label-font-size;
+            clicked => { root.second-clicked(); }
+        }
+    }
+}

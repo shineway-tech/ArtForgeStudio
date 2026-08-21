@@ -19,6 +19,11 @@ const TRANSPARENT_MASK_PNG: [u8; 68] = [
 ];
 const VALID_UPLOAD_SHA256: &str =
     "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460";
+const MOCK_PASSWORD_CODE: &str = "123456";
+const PASSWORD_ALPHA: &str = "CrossAlpha1!";
+const PASSWORD_BETA: &str = "CrossBeta2!";
+const PASSWORD_RESET: &str = "CrossReset3!";
+const OUTDATED_PASSWORD_CLIENT_VERSION: &str = "0.0.0";
 
 fn base_url() -> Url {
     Url::parse(
@@ -99,9 +104,14 @@ fn agreement_acceptances(auth: &AuthApi) -> Vec<AgreementAcceptance> {
 }
 
 fn login_new_user() -> (ApiClient, LoginResponse) {
+    let (client, login, _) = login_new_user_with_email("client-stack");
+    (client, login)
+}
+
+fn login_new_user_with_email(prefix: &str) -> (ApiClient, LoginResponse, String) {
     let client = new_client();
     let auth = AuthApi::new(client.clone());
-    let email = format!("client-stack-{}@example.com", Uuid::new_v4());
+    let email = format!("{prefix}-{}@example.com", Uuid::new_v4());
     let delivery = auth
         .request_email_code(&email)
         .expect("request Mock email code");
@@ -115,7 +125,7 @@ fn login_new_user() -> (ApiClient, LoginResponse) {
         .registration_credit_granted
         .parse::<u64>()
         .is_ok_and(|credits| credits > 0));
-    (client, login)
+    (client, login, email)
 }
 
 fn assert_http_error<T>(result: Result<T, ApiError>, expected_status: u16, expected_code: &str) {
@@ -2972,4 +2982,240 @@ fn cross_stack_catalog_and_account_dto_invariants() {
     AuthApi::new(client)
         .logout(false)
         .expect("logout DTO invariant user");
+}
+
+fn setup_cross_stack_password(
+    client: &ApiClient,
+    login: &LoginResponse,
+    new_password: &str,
+) -> SessionScope {
+    let scope = client
+        .session()
+        .scope_for_user(&login.user.id)
+        .expect("registered user has a current session scope");
+    let account = AccountApi::new(client.clone());
+    let delivery = account
+        .request_password_code_scoped(&scope)
+        .expect("request password verification code");
+    assert!(delivery.expires_in_seconds > 0);
+    assert!(delivery.resend_after_seconds > 0);
+    assert!(!delivery.email_masked.is_empty());
+    let mutation = account
+        .set_password_scoped(new_password, None, Some(MOCK_PASSWORD_CODE), &scope)
+        .expect("set password with verified email code");
+    assert!(mutation.set);
+    assert!(!mutation.changed_at.is_empty());
+    assert!(!mutation.other_sessions_revoked);
+    scope
+}
+
+fn install_password_login(client: &ApiClient, response: &LoginResponse) -> SessionScope {
+    client
+        .session()
+        .install_tokens_for_user(&response.tokens, &response.user.id)
+        .expect("install password login session")
+}
+
+#[test]
+#[ignore = "requires the dev Mock API server"]
+fn cross_stack_password_setup_logout_and_login() {
+    let (client, login, email) = login_new_user_with_email("password-setup");
+    setup_cross_stack_password(&client, &login, PASSWORD_ALPHA);
+    let snapshot = AccountApi::new(client.clone())
+        .snapshot()
+        .expect("load account after password setup");
+    assert!(snapshot.account.auth_methods.password.set);
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout email-code session");
+
+    let password_client = new_client();
+    let password_auth = AuthApi::new(password_client.clone());
+    let password_login = password_auth
+        .password_login_response(
+            &email,
+            PASSWORD_ALPHA,
+            &agreement_acceptances(&password_auth),
+        )
+        .expect("login with configured password");
+    assert!(!password_login.is_new_user);
+    install_password_login(&password_client, &password_login);
+    let snapshot = AccountApi::new(password_client.clone())
+        .snapshot()
+        .expect("load account after password login");
+    assert_eq!(snapshot.account.user.id, login.user.id);
+    assert!(snapshot.account.auth_methods.password.set);
+    password_auth
+        .logout(false)
+        .expect("logout password session");
+}
+
+#[test]
+#[ignore = "requires the dev Mock API server"]
+fn cross_stack_password_change_keeps_device_a_and_revokes_device_b() {
+    let (client_a, login_a, email) = login_new_user_with_email("password-change");
+    let scope_a = setup_cross_stack_password(&client_a, &login_a, PASSWORD_ALPHA);
+
+    let client_b = new_client();
+    let auth_b = AuthApi::new(client_b.clone());
+    let login_b = auth_b
+        .password_login_response(&email, PASSWORD_ALPHA, &agreement_acceptances(&auth_b))
+        .expect("login second device before password change");
+    install_password_login(&client_b, &login_b);
+
+    let mutation = AccountApi::new(client_a.clone())
+        .set_password_scoped(PASSWORD_BETA, Some(PASSWORD_ALPHA), None, &scope_a)
+        .expect("change password with current password");
+    assert!(mutation.set);
+    assert!(mutation.other_sessions_revoked);
+    assert!(!mutation.changed_at.is_empty());
+    let snapshot_a = AccountApi::new(client_a.clone())
+        .snapshot()
+        .expect("current device remains authenticated after password change");
+    assert_eq!(snapshot_a.account.user.id, login_a.user.id);
+
+    assert_http_error(
+        client_b.authenticated_json::<Value>(Method::GET, "/v1/account", None, None),
+        401,
+        "session_invalid",
+    );
+    assert!(client_b.session().access_token().is_none());
+    AuthApi::new(client_a)
+        .logout(false)
+        .expect("logout surviving password-change session");
+}
+
+#[test]
+#[ignore = "requires the dev Mock API server"]
+fn cross_stack_password_reset_revokes_old_sessions_and_installs_device_c() {
+    let (client_a, login_a, email) = login_new_user_with_email("password-reset");
+    setup_cross_stack_password(&client_a, &login_a, PASSWORD_ALPHA);
+
+    let client_b = new_client();
+    let auth_b = AuthApi::new(client_b.clone());
+    let login_b = auth_b
+        .password_login_response(&email, PASSWORD_ALPHA, &agreement_acceptances(&auth_b))
+        .expect("login second device before password reset");
+    install_password_login(&client_b, &login_b);
+
+    let client_c = new_client();
+    let auth_c = AuthApi::new(client_c.clone());
+    let reset_delivery = auth_c
+        .request_password_reset_code(&email)
+        .expect("request signed-out password reset code");
+    assert!(reset_delivery.accepted);
+    assert!(!reset_delivery.message.is_empty());
+    let reset_login = auth_c
+        .reset_password_response(
+            &email,
+            MOCK_PASSWORD_CODE,
+            PASSWORD_RESET,
+            &agreement_acceptances(&auth_c),
+        )
+        .expect("reset password and receive a fresh session");
+    assert_eq!(reset_login.user.id, login_a.user.id);
+    install_password_login(&client_c, &reset_login);
+
+    for revoked_client in [&client_a, &client_b] {
+        assert_http_error(
+            revoked_client.authenticated_json::<Value>(Method::GET, "/v1/account", None, None),
+            401,
+            "session_invalid",
+        );
+        assert!(revoked_client.session().access_token().is_none());
+    }
+    let snapshot_c = AccountApi::new(client_c.clone())
+        .snapshot()
+        .expect("reset session authenticates on device C");
+    assert_eq!(snapshot_c.account.user.id, login_a.user.id);
+    assert!(snapshot_c.account.auth_methods.password.set);
+    auth_c.logout(false).expect("logout password-reset session");
+}
+
+#[test]
+#[ignore = "kept with the password cross-stack acceptance group"]
+fn cross_stack_password_legacy_snapshot_defaults_to_unset() {
+    let snapshot: AccountSnapshot = serde_json::from_value(json!({
+        "user": {
+            "id": Uuid::new_v4(),
+            "email_masked": "l***y@example.com",
+            "nickname": null,
+            "status": "active",
+            "registered_at": "2026-08-19T00:00:00.000Z"
+        },
+        "auth_methods": {
+            "email": { "bound": true },
+            "wechat": { "bound": false, "can_unbind": false, "nickname": null }
+        },
+        "membership": {
+            "revision": "0",
+            "period_id": null,
+            "starts_at": null,
+            "ends_at": null,
+            "plan": null
+        },
+        "credits": null
+    }))
+    .expect("deserialize account snapshot from a pre-password server");
+
+    assert!(!snapshot.auth_methods.password.set);
+}
+
+#[test]
+#[ignore = "requires the dev Mock API server with minimum client version above 0.0.0"]
+fn cross_stack_password_preserves_agreement_and_client_version_errors() {
+    let (client, login, email) = login_new_user_with_email("password-errors");
+    setup_cross_stack_password(&client, &login, PASSWORD_ALPHA);
+    let acceptances = agreement_acceptances(&AuthApi::new(client.clone()));
+
+    let password_client = new_client();
+    let password_auth = AuthApi::new(password_client);
+    assert_http_error(
+        password_auth.password_login_response(&email, PASSWORD_ALPHA, &[]),
+        428,
+        "agreement_acceptance_required",
+    );
+
+    let reset_client = new_client();
+    let reset_auth = AuthApi::new(reset_client);
+    reset_auth
+        .request_password_reset_code(&email)
+        .expect("request reset code for error-contract checks");
+    assert_http_error(
+        reset_auth.reset_password_response(&email, MOCK_PASSWORD_CODE, PASSWORD_RESET, &[]),
+        428,
+        "agreement_acceptance_required",
+    );
+
+    let outdated_login_client = new_client_with(
+        format!("password-outdated-login-{}", Uuid::new_v4()),
+        OUTDATED_PASSWORD_CLIENT_VERSION,
+    );
+    assert_http_error(
+        AuthApi::new(outdated_login_client).password_login_response(
+            &email,
+            PASSWORD_ALPHA,
+            &acceptances,
+        ),
+        426,
+        "client_update_required",
+    );
+    let outdated_reset_client = new_client_with(
+        format!("password-outdated-reset-{}", Uuid::new_v4()),
+        OUTDATED_PASSWORD_CLIENT_VERSION,
+    );
+    assert_http_error(
+        AuthApi::new(outdated_reset_client).reset_password_response(
+            &email,
+            MOCK_PASSWORD_CODE,
+            PASSWORD_RESET,
+            &acceptances,
+        ),
+        426,
+        "client_update_required",
+    );
+
+    AuthApi::new(client)
+        .logout(false)
+        .expect("logout password error-contract session");
 }

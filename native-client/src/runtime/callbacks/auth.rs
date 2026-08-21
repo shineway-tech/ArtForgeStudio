@@ -18,14 +18,14 @@ enum WechatPollOutcome {
     Completed(LoginResponse),
 }
 
-fn begin_auth_operation(context: &AppContext) -> u64 {
+pub(super) fn begin_auth_operation(context: &AppContext) -> u64 {
     context
         .auth_operation_epoch
         .fetch_add(1, Ordering::SeqCst)
         .wrapping_add(1)
 }
 
-fn auth_operation_is_current(context: &AppContext, operation_epoch: u64) -> bool {
+pub(super) fn auth_operation_is_current(context: &AppContext, operation_epoch: u64) -> bool {
     context.auth_operation_epoch.load(Ordering::SeqCst) == operation_epoch
 }
 
@@ -187,12 +187,16 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
                 return;
             }
             if login_mode == "password" {
-                if credential.trim().is_empty() {
-                    state.set_auth_error("请输入密码".into());
-                    return;
-                }
-                if credential.chars().count() > 256 {
-                    state.set_auth_error("密码长度不能超过 256 个字符".into());
+                if let Err(error) = validate_login_password(&credential) {
+                    state.set_auth_error(
+                        match error {
+                            PasswordLoginInputError::Empty => "请输入密码",
+                            PasswordLoginInputError::TooManyBytes => {
+                                "密码不能超过 512 个 UTF-8 字节"
+                            }
+                        }
+                        .into(),
+                    );
                     return;
                 }
             } else if credential.len() != 6
@@ -834,7 +838,7 @@ fn poll_network_recovery(
     });
 }
 
-fn selected_login_agreement_acceptances(state: &AppState) -> Vec<AgreementAcceptance> {
+pub(super) fn selected_login_agreement_acceptances(state: &AppState) -> Vec<AgreementAcceptance> {
     let mut acceptances = Vec::new();
     if state.get_auth_user_terms_accepted() {
         acceptances.push(AgreementAcceptance {
@@ -1303,7 +1307,7 @@ fn poll_login_result(
     });
 }
 
-fn finish_login(
+pub(super) fn finish_login(
     app: &AppWindow,
     context: &AppContext,
     response: LoginResponse,
@@ -1330,6 +1334,7 @@ fn finish_login(
     state.set_nickname(response.user.nickname.unwrap_or_default().into());
     state.set_auth_code("".into());
     state.set_auth_password("".into());
+    clear_password_reset_state(&state);
     state.set_auth_error("".into());
     state.set_auth_open(false);
     state.set_agreement_update_busy(false);
@@ -1614,6 +1619,8 @@ pub(super) fn clear_account_snapshot_state(app: &AppWindow, context: &AppContext
     state.set_credit_insufficient_message("积分不足以支持本次生图，请前往充值".into());
 
     state.set_email_bound(false);
+    state.set_password_set(false);
+    clear_password_management_state(&state);
     state.set_email_bind_open(false);
     state.set_email_bind_email("".into());
     state.set_email_bind_code("".into());
@@ -1818,6 +1825,7 @@ pub(super) fn apply_backend_snapshot(
     };
     let state = app.global::<AppState>();
     if account_changed {
+        clear_password_management_state(&state);
         clear_credit_redemption_state(app);
         invalidate_credit_account_view(&context.store);
         context
@@ -1861,6 +1869,7 @@ pub(super) fn apply_backend_snapshot(
             .into(),
     );
     state.set_email_bound(snapshot.account.auth_methods.email.bound);
+    state.set_password_set(snapshot.account.auth_methods.password.set);
     state.set_wechat_bound(snapshot.account.auth_methods.wechat.bound);
     state.set_wechat_can_unbind(snapshot.account.auth_methods.wechat.can_unbind);
     state.set_wechat_bound_name(
@@ -2467,7 +2476,9 @@ pub(super) fn sign_out_locally(
     state.set_offline_available(false);
     state.set_auth_open(true);
     state.set_auth_code("".into());
+    state.set_auth_email("".into());
     state.set_auth_password("".into());
+    clear_password_reset_state(&state);
     state.set_auth_wechat_login_id("".into());
     state.set_auth_wechat_qr_ready(false);
     state.set_auth_wechat_scanned(false);
@@ -2553,6 +2564,20 @@ fn valid_email(email: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signing_out_removes_credentials_from_the_previous_account() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_auth_email("previous-account@example.com".into());
+        state.set_auth_password("PreviousPass1!".into());
+
+        sign_out_locally(&app, &AppContext::default(), false, None);
+
+        assert_eq!(state.get_auth_email().as_str(), "");
+        assert_eq!(state.get_auth_password().as_str(), "");
+    }
 
     #[test]
     fn disconnected_worker_is_not_mistaken_for_a_pending_result() {

@@ -96,18 +96,28 @@ pub(crate) struct AccountAuthMethods {
     pub(crate) email: AccountAuthMethod,
     #[serde(default)]
     pub(crate) wechat: WechatAuthMethod,
+    #[serde(default)]
+    pub(crate) password: PasswordAuthMethod,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct AccountAuthMethod {
+    #[serde(default)]
     pub(crate) bound: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct WechatAuthMethod {
+    #[serde(default)]
     pub(crate) bound: bool,
+    #[serde(default)]
     pub(crate) can_unbind: bool,
     pub(crate) nickname: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(crate) struct PasswordAuthMethod {
+    pub(crate) set: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -161,6 +171,29 @@ struct EmailBindingCodeRequest<'a> {
 struct EmailBindingRequest<'a> {
     email: &'a str,
     code: &'a str,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct PasswordCodeResponse {
+    pub(crate) email_masked: String,
+    pub(crate) expires_in_seconds: u64,
+    pub(crate) resend_after_seconds: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct PasswordMutationResponse {
+    pub(crate) set: bool,
+    pub(crate) changed_at: String,
+    pub(crate) other_sessions_revoked: bool,
+}
+
+#[derive(Serialize)]
+struct PasswordMutationRequest<'a> {
+    new_password: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_password: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    email_code: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -793,6 +826,48 @@ impl AccountApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn request_password_code_scoped(
+        &self,
+        scope: &SessionScope,
+    ) -> Result<PasswordCodeResponse, ApiError> {
+        self.client
+            .authenticated_json_scoped::<PasswordCodeResponse>(
+                Method::POST,
+                "/v1/account/password/code",
+                Some(serde_json::json!({})),
+                None,
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
+    pub(crate) fn set_password_scoped(
+        &self,
+        new_password: &str,
+        current_password: Option<&str>,
+        email_code: Option<&str>,
+        scope: &SessionScope,
+    ) -> Result<PasswordMutationResponse, ApiError> {
+        let body = serde_json::to_value(PasswordMutationRequest {
+            new_password,
+            current_password,
+            email_code,
+        })
+        .map_err(|error| ApiError::Protocol {
+            message: error.to_string(),
+            request_id: None,
+        })?;
+        self.client
+            .authenticated_json_scoped::<PasswordMutationResponse>(
+                Method::PUT,
+                "/v1/account/password",
+                Some(body),
+                None,
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
     pub(crate) fn submit_invitation_code(&self, code: &str) -> Result<Option<String>, ApiError> {
         let body = serde_json::to_value(InvitationCodeRequest { code }).map_err(|error| {
             ApiError::Protocol {
@@ -1083,6 +1158,37 @@ mod tests {
         .expect("invitation-code request should serialize");
 
         assert_eq!(body, serde_json::json!({ "code": "ELUNVI-2026" }));
+    }
+
+    #[test]
+    fn password_change_request_omits_the_unused_verification_method() {
+        let body = serde_json::to_value(PasswordMutationRequest {
+            new_password: "a sufficiently long passphrase",
+            current_password: Some("the current long passphrase"),
+            email_code: None,
+        })
+        .expect("serialize password mutation");
+
+        assert!(body.get("current_password").is_some());
+        assert!(body.get("email_code").is_none());
+    }
+
+    #[test]
+    fn account_auth_methods_default_missing_password_to_unset() {
+        let methods: AccountAuthMethods = serde_json::from_value(serde_json::json!({
+            "email": {},
+            "wechat": {}
+        }))
+        .expect("deserialize legacy auth methods");
+
+        assert!(!methods.password.set);
+
+        let methods: AccountAuthMethods = serde_json::from_value(serde_json::json!({
+            "password": { "set": true }
+        }))
+        .expect("deserialize password auth method");
+
+        assert!(methods.password.set);
     }
 
     #[test]

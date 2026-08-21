@@ -1,7 +1,9 @@
 import { ScrollView } from "std-widgets.slint";
 import { AppState } from "../app-state.slint";
 import { DialogCloseButton } from "../components/dialog-close-button.slint";
+import { Field } from "../components/field.slint";
 import { PillButton } from "../components/pill-button.slint";
+import { SegmentedControl } from "../components/segmented-control.slint";
 import { SectionTitle } from "../components/section-title.slint";
 import { AppTheme } from "../theme.slint";
 
@@ -360,12 +362,32 @@ export component ProfileDialog {
                         bound: AppState.email-bound;
                         primary-action: !AppState.email-bound;
                         action-disabled: AppState.email-bind-busy || AppState.email-bind-code-busy;
-                        last: true;
                         action => { AppState.email-bind-open = true; }
                     }
-                    Rectangle { y: 330px; width: parent.width; height: 1px; background: AppTheme.border; }
-                    Image { x: 0px; y: 354px; width: 19px; height: 19px; source: AppState.icon-account-shield-check; colorize: AppTheme.muted; image-fit: contain; }
-                    Text { x: 30px; y: 348px; width: parent.width - 30px; height: 32px; text: AppState.en ? "Keep at least one login method so you can always access your account" : "至少保留一种登录方式，避免账号无法登录"; color: AppTheme.muted; font-size: 13px; vertical-alignment: center; overflow: elide; }
+                    LoginMethodRow {
+                        y: 318px;
+                        width: parent.width;
+                        icon: AppState.icon-account-shield-lock;
+                        icon-color: AppTheme.accent;
+                        method-title: AppState.en ? "Password" : "密码";
+                        status: !AppState.email-bound
+                            ? (AppState.en ? "Bind email before setting a password" : "绑定邮箱后可设置密码")
+                            : (AppState.password-set ? (AppState.en ? "Set" : "已设置") : (AppState.en ? "Not set" : "未设置"));
+                        detail: !AppState.email-bound
+                            ? (AppState.en ? "A verified email is required for password recovery" : "只有已验证邮箱的账号可以设置密码")
+                            : (AppState.en ? "Use your verified email and password to sign in" : "设置后可使用邮箱和密码登录");
+                        action-text: !AppState.email-bound
+                            ? ""
+                            : (AppState.password-set ? (AppState.en ? "Change" : "修改密码") : (AppState.en ? "Set password" : "设置密码"));
+                        bound: AppState.password-set;
+                        primary-action: AppState.email-bound && !AppState.password-set;
+                        action-disabled: !AppState.email-bound || AppState.password-change-busy || AppState.password-change-code-busy;
+                        last: true;
+                        action => { AppState.open-password-management(); }
+                    }
+                    Rectangle { y: 438px; width: parent.width; height: 1px; background: AppTheme.border; }
+                    Image { x: 0px; y: 452px; width: 19px; height: 19px; source: AppState.icon-account-shield-check; colorize: AppTheme.muted; image-fit: contain; }
+                    Text { x: 30px; y: 446px; width: parent.width - 30px; height: 32px; text: AppState.en ? "Keep at least one login method so you can always access your account" : "至少保留一种登录方式，避免账号无法登录"; color: AppTheme.muted; font-size: 13px; vertical-alignment: center; overflow: elide; }
                 }
 
                 if AppState.profile-section == "overview": Rectangle {
@@ -542,6 +564,191 @@ export component ProfileDialog {
 
                 PillButton { x: parent.width - 320px; y: parent.height - 62px; width: 118px; text: AppState.en ? "Close" : "关闭"; clicked => { AppState.profile-open = false; } }
                 PillButton { x: parent.width - 186px; y: parent.height - 62px; width: 142px; text: AppState.en ? "Logout" : "退出登录"; danger: true; clicked => { AppState.logout(); } }
+            }
+        }
+    }
+
+    if AppState.password-manage-open: Rectangle {
+        background: #00000066;
+        TouchArea { width: parent.width; height: parent.height; }
+        password-dialog := Rectangle {
+            width: min(560px, root.width - 32px);
+            height: min(700px, root.height - 32px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            background: AppTheme.panel;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            DialogCloseButton {
+                z: 20;
+                x: parent.width - 42px;
+                y: 12px;
+                clicked => {
+                    if !AppState.password-change-busy && !AppState.password-change-code-busy {
+                        AppState.close-password-management();
+                    }
+                }
+            }
+            VerticalLayout {
+                padding: 28px;
+                spacing: 10px;
+                SectionTitle {
+                    text: AppState.password-set
+                        ? (AppState.en ? "Change password" : "修改密码")
+                        : (AppState.en ? "Set password" : "设置密码");
+                }
+                Text {
+                    height: 38px;
+                    text: AppState.en
+                        ? "Verified email: \{AppState.email-mask}"
+                        : "已验证邮箱：\{AppState.email-mask}";
+                    color: AppTheme.muted;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                if AppState.password-set: HorizontalLayout {
+                    height: 44px;
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    SegmentedControl {
+                        width: 320px;
+                        first-text: AppState.en ? "Current password" : "当前密码验证";
+                        second-text: AppState.en ? "Email code" : "邮箱验证码";
+                        first-active: AppState.password-verification-mode == "current_password";
+                        disabled: AppState.password-change-busy || AppState.password-change-code-busy;
+                        first-clicked => {
+                            AppState.password-verification-mode = "current_password";
+                            AppState.password-change-code = "";
+                            AppState.password-change-countdown = 0;
+                            AppState.password-change-status = "";
+                        }
+                        second-clicked => {
+                            AppState.password-verification-mode = "email_code";
+                            AppState.password-current-password = "";
+                            AppState.password-change-status = "";
+                        }
+                    }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                }
+                if !AppState.password-set: Text {
+                    height: 40px;
+                    text: AppState.en ? "Verify your email to set a password" : "首次设置密码需要验证已绑定邮箱";
+                    color: AppTheme.muted;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                }
+                if AppState.password-set && AppState.password-verification-mode == "current_password": Field {
+                    label: AppState.en ? "Current password" : "当前密码";
+                    placeholder: AppState.en ? "Enter current password" : "请输入当前密码";
+                    value <=> AppState.password-current-password;
+                    secret: true;
+                    required: true;
+                    enabled: !AppState.password-change-busy && !AppState.password-change-code-busy;
+                }
+                if AppState.password-verification-mode == "email_code": Rectangle {
+                    height: 78px;
+                    background: transparent;
+                    Text { x: 0px; y: 0px; text: AppState.en ? "Email code" : "邮箱验证码"; color: AppTheme.text; font-size: AppState.settings-font-size * 1px; }
+                    Rectangle {
+                        x: 0px;
+                        y: 32px;
+                        width: parent.width - 140px;
+                        height: 46px;
+                        background: AppTheme.panel;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: password-code-input.has-focus ? AppTheme.accent : AppTheme.border;
+                        password-code-input := TextInput {
+                            x: 14px;
+                            width: parent.width - 28px;
+                            height: parent.height;
+                            text <=> AppState.password-change-code;
+                            single-line: true;
+                            enabled: !AppState.password-change-busy && !AppState.password-change-code-busy;
+                            color: AppTheme.text;
+                            font-size: AppState.settings-font-size * 1px;
+                            vertical-alignment: center;
+                            accepted => { AppState.save-password(); }
+                        }
+                        if AppState.password-change-code == "" && !password-code-input.has-focus: Text {
+                            x: 14px;
+                            width: parent.width - 28px;
+                            height: parent.height;
+                            text: AppState.en ? "6-digit code" : "请输入 6 位验证码";
+                            color: AppTheme.weak;
+                            font-size: AppState.settings-font-size * 1px;
+                            vertical-alignment: center;
+                        }
+                    }
+                    PillButton {
+                        x: parent.width - 130px;
+                        y: 37px;
+                        width: 130px;
+                        disabled: AppState.password-change-code-busy || AppState.password-change-busy || AppState.password-change-countdown > 0;
+                        text: AppState.password-change-code-busy
+                            ? (AppState.en ? "Sending..." : "发送中...")
+                            : (AppState.password-change-countdown > 0
+                                ? (AppState.en ? "\{AppState.password-change-countdown}s" : "\{AppState.password-change-countdown}秒")
+                                : (AppState.en ? "Get Code" : "获取验证码"));
+                        clicked => { AppState.request-password-change-code(); }
+                    }
+                }
+                Field {
+                    label: AppState.en ? "New password" : "新密码";
+                    placeholder: AppState.en ? "Enter a new password" : "请输入新密码";
+                    value <=> AppState.password-new-password;
+                    secret: true;
+                    required: true;
+                    enabled: !AppState.password-change-busy && !AppState.password-change-code-busy;
+                }
+                Field {
+                    label: AppState.en ? "Confirm password" : "确认新密码";
+                    placeholder: AppState.en ? "Enter the new password again" : "请再次输入新密码";
+                    value <=> AppState.password-confirm-password;
+                    secret: true;
+                    required: true;
+                    enabled: !AppState.password-change-busy && !AppState.password-change-code-busy;
+                    accepted => { AppState.save-password(); }
+                }
+                Text {
+                    height: 38px;
+                    text: AppState.en
+                        ? "8–20 characters with 0–9, A–Z and a–z; symbols allowed"
+                        : "8–20 个字符，至少包含 0–9、A–Z 和 a–z，可使用符号";
+                    color: AppTheme.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                }
+                Text {
+                    height: 46px;
+                    text: AppState.password-change-status;
+                    color: AppState.password-change-status == "" ? transparent : AppTheme.muted;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    PillButton {
+                        horizontal-stretch: 1;
+                        disabled: AppState.password-change-busy || AppState.password-change-code-busy;
+                        text: AppState.en ? "Cancel" : "取消";
+                        clicked => { AppState.close-password-management(); }
+                    }
+                    PillButton {
+                        horizontal-stretch: 1;
+                        primary: true;
+                        disabled: AppState.password-change-busy || AppState.password-change-code-busy;
+                        text: AppState.password-change-busy
+                            ? (AppState.en ? "Saving..." : "保存中...")
+                            : (AppState.password-set
+                                ? (AppState.en ? "Save password" : "保存新密码")
+                                : (AppState.en ? "Set password" : "设置密码"));
+                        clicked => { AppState.save-password(); }
+                    }
+                }
             }
         }
     }
