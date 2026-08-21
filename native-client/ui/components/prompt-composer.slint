@@ -50,6 +50,11 @@ component PromptOptimizationAction {
 export component PromptComposer {
     in property <bool> generation: false;
     in property <bool> show-generate-button: true;
+    out property <bool> history-preview-open: root.history-preview-visible();
+    out property <string> history-preview-text: root.history-preview-visible()
+        ? AppState.prompt-history[root.prompt-history-hovered-index]
+        : "";
+    out property <length> history-preview-anchor-y: root.prompt-input-y() + 32px;
     property <int> prompt-history-selected-index: 0;
     property <int> prompt-history-hovered-index: -1;
     property <bool> history-preview-close-pending: false;
@@ -147,7 +152,8 @@ export component PromptComposer {
     }
 
     function history-preview-visible() -> bool {
-        return root.prompt-history-hovered-index >= 0
+        return AppState.prompt-history-open
+            && root.prompt-history-hovered-index >= 0
             && root.prompt-history-hovered-index < AppState.prompt-history.length;
     }
 
@@ -168,6 +174,16 @@ export component PromptComposer {
             root.prompt-editor-text = edit.text;
             prompt-input.focus();
             prompt-input.set-selection-offsets(edit.cursor-offset, edit.cursor-offset);
+        }
+    }
+
+    Timer {
+        interval: 160ms;
+        running: root.history-preview-close-pending;
+        triggered => {
+            if root.history-preview-close-pending {
+                root.close-history-preview();
+            }
         }
     }
 
@@ -570,8 +586,8 @@ export component PromptComposer {
     history-popup := PopupWindow {
         x: 24px;
         y: root.prompt-input-y() + 32px;
-        width: root.history-list-width() + 432px;
-        height: max(root.history-list-height(), 300px);
+        width: root.history-list-width();
+        height: root.history-list-height();
         close-policy: close-on-click-outside;
         history-list := Rectangle {
             width: root.history-list-width();
@@ -683,73 +699,6 @@ export component PromptComposer {
                     AppState.prompt-history-open = false;
                     root.close-history-preview();
                     history-popup.close();
-                }
-            }
-        }
-
-        history-preview := Rectangle {
-            visible: root.prompt-history-hovered-index >= 0;
-            x: root.history-list-width() + 12px;
-            y: 0px;
-            width: 420px;
-            height: 300px;
-            background: AppTheme.panel;
-            border-radius: 10px;
-            border-width: 1px;
-            border-color: AppTheme.border;
-
-            Text {
-                x: 16px;
-                y: 14px;
-                width: parent.width - 32px;
-                height: 22px;
-                text: AppState.en ? "Full prompt" : "完整提示词";
-                color: AppTheme.text;
-                font-size: AppState.settings-font-size * 1px;
-                font-weight: 600;
-                vertical-alignment: center;
-            }
-
-            history-preview-scroll := ScrollView {
-                x: 16px;
-                y: 46px;
-                width: parent.width - 32px;
-                height: parent.height - 62px;
-                viewport-width: self.visible-width;
-                viewport-height: max(self.visible-height, history-preview-text.preferred-height);
-                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
-                mouse-drag-pan-enabled: true;
-
-                history-preview-text := Text {
-                    width: history-preview-scroll.visible-width - 10px;
-                    height: max(history-preview-scroll.visible-height, self.preferred-height);
-                    text: root.history-preview-visible()
-                        ? AppState.prompt-history[root.prompt-history-hovered-index]
-                        : "";
-                    color: AppTheme.text;
-                    font-size: AppState.settings-font-size * 1px;
-                    font-weight: 400;
-                    vertical-alignment: top;
-                    wrap: word-wrap;
-                }
-            }
-
-            preview-hover := TouchArea {
-                width: parent.width;
-                height: parent.height;
-                changed has-hover => {
-                    root.history-preview-close-pending = !self.has-hover;
-                }
-                scroll-event(event) => { return reject; }
-            }
-        }
-
-        Timer {
-            interval: 160ms;
-            running: root.history-preview-close-pending;
-            triggered => {
-                if root.history-preview-close-pending {
-                    root.close-history-preview();
                 }
             }
         }

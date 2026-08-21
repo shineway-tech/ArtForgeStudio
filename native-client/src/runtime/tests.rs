@@ -497,31 +497,53 @@ mod tests {
     #[test]
     fn prompt_history_hover_opens_full_prompt_preview_on_the_right() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let work_panel = include_str!("../../ui/components/studio-work-panel.slint");
+        let split_page = include_str!("../../ui/pages/studio-split-page.slint");
+        let preview = fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/ui/components/prompt-history-preview.slint"
+        ))
+        .unwrap_or_default();
         let history_popup = composer
             .split("history-popup := PopupWindow")
             .nth(1)
             .and_then(|value| value.split("custom-prompt-popup := PopupWindow").next())
             .expect("history popup");
+        let history_popup_geometry = history_popup
+            .split("history-list := Rectangle")
+            .next()
+            .expect("history popup geometry");
 
         assert!(composer.contains("property <int> prompt-history-hovered-index: -1"));
         assert!(!history_popup.contains("history-preview-popup := PopupWindow"));
         assert!(history_popup.contains("history-list := Rectangle"));
-        assert!(history_popup.contains("width: root.history-list-width() + 432px;"));
-        assert!(history_popup.contains("height: max(root.history-list-height(), 300px);"));
+        assert!(history_popup_geometry.contains("width: root.history-list-width();"));
+        assert!(history_popup_geometry.contains("height: root.history-list-height();"));
+        assert!(!history_popup.contains("history-preview := Rectangle"));
         assert!(!composer.contains("function history-popup-width()"));
         assert!(!composer.contains("function history-popup-height()"));
-        assert!(history_popup.contains("x: root.history-list-width() + 12px;"));
         assert!(!history_popup.contains("history-preview-popup.show();"));
         assert!(!history_popup.contains("history-preview-popup.close();"));
-        assert!(history_popup.contains("visible: root.prompt-history-hovered-index >= 0;"));
-        assert!(history_popup.contains("width: parent.width;"));
         assert!(history_popup.contains("root.prompt-history-selected-index = index;"));
         assert!(history_popup.contains("index == root.prompt-history-hovered-index"));
         assert!(history_popup.contains("root.sync-history-preview(index, self.has-hover);"));
-        assert!(composer.contains("AppState.prompt-history[root.prompt-history-hovered-index]"));
-        assert!(composer.contains("text: AppState.en ? \"Full prompt\" : \"完整提示词\""));
-        assert!(composer.contains("changed has-hover =>"));
-        assert!(composer.contains("wrap: word-wrap;"));
+        assert!(composer.contains("out property <bool> history-preview-open"));
+        assert!(composer.contains("out property <string> history-preview-text"));
+        assert!(composer.contains("out property <length> history-preview-anchor-y"));
+        assert!(work_panel.contains("out property <bool> prompt-history-preview-open"));
+        assert!(work_panel.contains("composer.absolute-position.x - root.absolute-position.x"));
+        assert!(work_panel.contains("composer.absolute-position.y - root.absolute-position.y"));
+        assert!(preview.contains("export component PromptHistoryPreview"));
+        assert!(preview.contains("in property <string> prompt"));
+        assert!(preview.contains("text: root.prompt"));
+        assert!(preview.contains("wrap: word-wrap;"));
+        assert!(split_page.contains("history-preview := PromptHistoryPreview"));
+        assert!(
+            split_page.rfind("GenerationResultPanel {").unwrap()
+                < split_page
+                    .find("history-preview := PromptHistoryPreview")
+                    .unwrap()
+        );
     }
 
     #[test]
@@ -531,8 +553,8 @@ mod tests {
         assert!(composer.contains("property <bool> history-preview-close-pending: false"));
         assert!(composer.contains("interval: 160ms;"));
         assert!(composer.contains("running: root.history-preview-close-pending;"));
-        assert!(composer.contains("preview-hover := TouchArea"));
-        assert!(composer.contains("root.history-preview-close-pending = !self.has-hover;"));
+        assert!(composer.contains("root.sync-history-preview(index, self.has-hover);"));
+        assert!(!composer.contains("preview-hover := TouchArea"));
     }
 
     #[test]

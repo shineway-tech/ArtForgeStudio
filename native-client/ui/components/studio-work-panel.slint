@@ -14,6 +14,12 @@ import { AppTheme } from "../theme.slint";
 
 export component StudioWorkPanel {
     in property <bool> generation: false;
+    out property <bool> prompt-history-preview-open: composer.history-preview-open;
+    out property <string> prompt-history-preview-text: composer.history-preview-text;
+    out property <length> prompt-history-preview-x:
+        composer.absolute-position.x - root.absolute-position.x + composer.width - 12px;
+    out property <length> prompt-history-preview-y:
+        composer.absolute-position.y - root.absolute-position.y + composer.history-preview-anchor-y;
     Rectangle {
         background: AppTheme.panel;
         border-width: 0px;

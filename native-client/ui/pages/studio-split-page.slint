@@ -1,4 +1,5 @@
 import { GenerationResultPanel } from "../components/generation-result-panel.slint";
+import { PromptHistoryPreview } from "../components/prompt-history-preview.slint";
 import { StudioWorkPanel } from "../components/studio-work-panel.slint";
 import { AppTheme } from "../theme.slint";
 
@@ -6,7 +7,7 @@ export component StudioSplitPage {
     in property <bool> generation: false;
     Rectangle {
         background: AppTheme.bg;
-        StudioWorkPanel {
+        work-panel := StudioWorkPanel {
             x: 0px;
             y: 0px;
             width: 540px;
@@ -19,6 +20,14 @@ export component StudioSplitPage {
             y: 0px;
             width: parent.width - 541px;
             height: parent.height;
+        }
+        history-preview := PromptHistoryPreview {
+            visible: work-panel.prompt-history-preview-open;
+            x: work-panel.x + work-panel.prompt-history-preview-x;
+            y: work-panel.y + work-panel.prompt-history-preview-y;
+            width: 420px;
+            height: 300px;
+            prompt: work-panel.prompt-history-preview-text;
         }
     }
 }

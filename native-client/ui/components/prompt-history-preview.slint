@@ -1,0 +1,50 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component PromptHistoryPreview {
+    in property <string> prompt;
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: AppTheme.panel;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+
+        Text {
+            x: 16px;
+            y: 14px;
+            width: parent.width - 32px;
+            height: 22px;
+            text: AppState.en ? "Full prompt" : "完整提示词";
+            color: AppTheme.text;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+
+        preview-scroll := ScrollView {
+            x: 16px;
+            y: 46px;
+            width: parent.width - 32px;
+            height: parent.height - 62px;
+            viewport-width: self.visible-width;
+            viewport-height: max(self.visible-height, preview-text.preferred-height);
+            horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+            mouse-drag-pan-enabled: true;
+
+            preview-text := Text {
+                width: preview-scroll.visible-width - 10px;
+                height: max(preview-scroll.visible-height, self.preferred-height);
+                text: root.prompt;
+                color: AppTheme.text;
+                font-size: AppState.settings-font-size * 1px;
+                font-weight: 400;
+                vertical-alignment: top;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
