@@ -504,15 +504,14 @@ mod tests {
             .expect("history popup");
 
         assert!(composer.contains("property <int> prompt-history-hovered-index: -1"));
-        assert!(history_popup.contains("history-preview-popup := PopupWindow"));
+        assert!(!history_popup.contains("history-preview-popup := PopupWindow"));
         assert!(history_popup.contains("history-list := Rectangle"));
-        assert!(history_popup.contains("width: root.history-list-width();"));
-        assert!(history_popup.contains("height: root.history-list-height();"));
-        assert!(!history_popup.contains("root.history-popup-width()"));
-        assert!(!history_popup.contains("root.history-popup-height()"));
+        assert!(history_popup.contains("width: root.history-popup-width();"));
+        assert!(history_popup.contains("height: root.history-popup-height();"));
         assert!(history_popup.contains("x: root.history-list-width() + 12px;"));
-        assert!(history_popup.contains("history-preview-popup.show();"));
-        assert!(history_popup.contains("history-preview-popup.close();"));
+        assert!(!history_popup.contains("history-preview-popup.show();"));
+        assert!(!history_popup.contains("history-preview-popup.close();"));
+        assert!(history_popup.contains("visible: root.prompt-history-hovered-index >= 0;"));
         assert!(history_popup.contains("width: parent.width;"));
         assert!(history_popup.contains("root.prompt-history-selected-index = index;"));
         assert!(history_popup.contains("index == root.prompt-history-hovered-index"));

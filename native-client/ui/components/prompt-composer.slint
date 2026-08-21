@@ -146,6 +146,19 @@ export component PromptComposer {
         return 52px + min(10, AppState.prompt-history.length) * 32px;
     }
 
+    function history-preview-visible() -> bool {
+        return root.prompt-history-hovered-index >= 0
+            && root.prompt-history-hovered-index < AppState.prompt-history.length;
+    }
+
+    function history-popup-width() -> length {
+        return root.history-list-width() + (root.history-preview-visible() ? 432px : 0px);
+    }
+
+    function history-popup-height() -> length {
+        return root.history-preview-visible() ? max(root.history-list-height(), 300px) : root.history-list-height();
+    }
+
     Timer {
         interval: 1ms;
         running: root.custom-prompt-selection-pending;
@@ -565,8 +578,8 @@ export component PromptComposer {
     history-popup := PopupWindow {
         x: 24px;
         y: root.prompt-input-y() + 32px;
-        width: root.history-list-width();
-        height: root.history-list-height();
+        width: root.history-popup-width();
+        height: root.history-popup-height();
         close-policy: close-on-click-outside;
         history-list := Rectangle {
             width: root.history-list-width();
@@ -615,9 +628,6 @@ export component PromptComposer {
                                     root.prompt-history-selected-index = index;
                                 }
                                 root.sync-history-preview(index, self.has-hover);
-                                if self.has-hover {
-                                    history-preview-popup.show();
-                                }
                             }
                             clicked => {
                                 root.apply-selected-prompt(AppState.prompt-history[index]);
@@ -647,9 +657,6 @@ export component PromptComposer {
                                         root.prompt-history-selected-index = index;
                                     }
                                     root.sync-history-preview(index, self.has-hover);
-                                    if self.has-hover {
-                                        history-preview-popup.show();
-                                    }
                                 }
                                 clicked => {
                                     AppState.remove-prompt-history(AppState.prompt-history[index]);
@@ -688,74 +695,69 @@ export component PromptComposer {
             }
         }
 
-        history-preview-popup := PopupWindow {
+        history-preview := Rectangle {
+            visible: root.prompt-history-hovered-index >= 0;
             x: root.history-list-width() + 12px;
             y: 0px;
             width: 420px;
             height: 300px;
-            close-policy: close-on-click-outside;
+            background: AppTheme.panel;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: AppTheme.border;
 
-            history-preview := Rectangle {
-                background: AppTheme.panel;
-                border-radius: 10px;
-                border-width: 1px;
-                border-color: AppTheme.border;
+            Text {
+                x: 16px;
+                y: 14px;
+                width: parent.width - 32px;
+                height: 22px;
+                text: AppState.en ? "Full prompt" : "完整提示词";
+                color: AppTheme.text;
+                font-size: AppState.settings-font-size * 1px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
 
-                Text {
-                    x: 16px;
-                    y: 14px;
-                    width: parent.width - 32px;
-                    height: 22px;
-                    text: AppState.en ? "Full prompt" : "完整提示词";
+            history-preview-scroll := ScrollView {
+                x: 16px;
+                y: 46px;
+                width: parent.width - 32px;
+                height: parent.height - 62px;
+                viewport-width: self.visible-width;
+                viewport-height: max(self.visible-height, history-preview-text.preferred-height);
+                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                mouse-drag-pan-enabled: true;
+
+                history-preview-text := Text {
+                    width: history-preview-scroll.visible-width - 10px;
+                    height: max(history-preview-scroll.visible-height, self.preferred-height);
+                    text: root.history-preview-visible()
+                        ? AppState.prompt-history[root.prompt-history-hovered-index]
+                        : "";
                     color: AppTheme.text;
                     font-size: AppState.settings-font-size * 1px;
-                    font-weight: 600;
-                    vertical-alignment: center;
-                }
-
-                history-preview-scroll := ScrollView {
-                    x: 16px;
-                    y: 46px;
-                    width: parent.width - 32px;
-                    height: parent.height - 62px;
-                    viewport-width: self.visible-width;
-                    viewport-height: max(self.visible-height, history-preview-text.preferred-height);
-                    horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
-                    mouse-drag-pan-enabled: true;
-
-                    history-preview-text := Text {
-                        width: history-preview-scroll.visible-width - 10px;
-                        height: max(history-preview-scroll.visible-height, self.preferred-height);
-                        text: root.prompt-history-hovered-index >= 0
-                            && root.prompt-history-hovered-index < AppState.prompt-history.length
-                            ? AppState.prompt-history[root.prompt-history-hovered-index]
-                            : "";
-                        color: AppTheme.text;
-                        font-size: AppState.settings-font-size * 1px;
-                        font-weight: 400;
-                        vertical-alignment: top;
-                        wrap: word-wrap;
-                    }
-                }
-
-                preview-hover := TouchArea {
-                    width: parent.width;
-                    height: parent.height;
-                    changed has-hover => {
-                        root.history-preview-close-pending = !self.has-hover;
-                    }
-                    scroll-event(event) => { return reject; }
+                    font-weight: 400;
+                    vertical-alignment: top;
+                    wrap: word-wrap;
                 }
             }
 
-            Timer {
-                interval: 160ms;
-                running: root.history-preview-close-pending;
-                triggered => {
-                    if root.history-preview-close-pending {
-                        root.close-history-preview();
-                        history-preview-popup.close();
-                    }
+            preview-hover := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                changed has-hover => {
+                    root.history-preview-close-pending = !self.has-hover;
+                }
+                scroll-event(event) => { return reject; }
+            }
+        }
+
+        Timer {
+            interval: 160ms;
+            running: root.history-preview-close-pending;
+            triggered => {
+                if root.history-preview-close-pending {
+                    root.close-history-preview();
                 }
             }
         }
