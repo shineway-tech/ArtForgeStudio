@@ -506,8 +506,10 @@ mod tests {
         assert!(composer.contains("property <int> prompt-history-hovered-index: -1"));
         assert!(!history_popup.contains("history-preview-popup := PopupWindow"));
         assert!(history_popup.contains("history-list := Rectangle"));
-        assert!(history_popup.contains("width: root.history-popup-width();"));
-        assert!(history_popup.contains("height: root.history-popup-height();"));
+        assert!(history_popup.contains("width: root.history-list-width() + 432px;"));
+        assert!(history_popup.contains("height: max(root.history-list-height(), 300px);"));
+        assert!(!composer.contains("function history-popup-width()"));
+        assert!(!composer.contains("function history-popup-height()"));
         assert!(history_popup.contains("x: root.history-list-width() + 12px;"));
         assert!(!history_popup.contains("history-preview-popup.show();"));
         assert!(!history_popup.contains("history-preview-popup.close();"));

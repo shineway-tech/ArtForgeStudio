@@ -151,14 +151,6 @@ export component PromptComposer {
             && root.prompt-history-hovered-index < AppState.prompt-history.length;
     }
 
-    function history-popup-width() -> length {
-        return root.history-list-width() + (root.history-preview-visible() ? 432px : 0px);
-    }
-
-    function history-popup-height() -> length {
-        return root.history-preview-visible() ? max(root.history-list-height(), 300px) : root.history-list-height();
-    }
-
     Timer {
         interval: 1ms;
         running: root.custom-prompt-selection-pending;
@@ -578,8 +570,8 @@ export component PromptComposer {
     history-popup := PopupWindow {
         x: 24px;
         y: root.prompt-input-y() + 32px;
-        width: root.history-popup-width();
-        height: root.history-popup-height();
+        width: root.history-list-width() + 432px;
+        height: max(root.history-list-height(), 300px);
         close-policy: close-on-click-outside;
         history-list := Rectangle {
             width: root.history-list-width();
