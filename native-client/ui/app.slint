@@ -3,6 +3,7 @@ import { AppTheme } from "theme.slint";
 import { AccountSession, AssetGroup, AssetItem, BrushPoint, CanvasNote, CompressionImageItem, ConversationItem, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, InvoiceOrderView, ModelGroup, ModelOption, NotificationItem, ReferenceItem } from "types.slint";
 import { Sidebar } from "components/sidebar.slint";
 import { TopBar } from "components/top-bar.slint";
+import { PromptExpandedEditor } from "components/prompt-expanded-editor.slint";
 import { AlipayPaymentDialog } from "dialogs/alipay-payment-dialog.slint";
 import { AuthDialog } from "dialogs/auth-dialog.slint";
 import { CreditInsufficientDialog } from "dialogs/credit-insufficient-dialog.slint";
@@ -132,6 +133,7 @@ export component AppWindow inherits Window {
     RecoveredPromptResultDialog { width: root.width; height: root.height; }
     AgreementViewerDialog { width: root.width; height: root.height; }
     DeepPromptOptimizationDrawer { width: root.width; height: root.height; }
+    PromptExpandedEditor { width: root.width; height: root.height; }
     if AppState.contact-copy-toast-visible: Rectangle {
         width: 132px;
         height: 46px;

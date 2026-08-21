@@ -903,6 +903,31 @@ mod tests {
     }
 
     #[test]
+    fn prompt_editor_expands_into_a_large_editable_overlay() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let app = include_str!("../../ui/app.slint");
+        let expanded = std::fs::read_to_string(
+            manifest.join("ui/components/prompt-expanded-editor.slint"),
+        )
+        .unwrap_or_default();
+
+        assert!(state.contains("in-out property <bool> prompt-expanded-open: false;"));
+        assert!(composer.contains("prompt-expand-button := Rectangle"));
+        assert!(composer.contains("../../assets/icons/fit.svg"));
+        assert!(composer.contains("AppState.prompt-expanded-open = true;"));
+        assert!(app.contains("import { PromptExpandedEditor }"));
+        assert!(app.contains("PromptExpandedEditor { width: root.width; height: root.height; }"));
+        assert!(expanded.contains("visible: AppState.prompt-expanded-open;"));
+        assert!(expanded.contains("text <=> AppState.prompt;"));
+        assert!(expanded.contains("single-line: false;"));
+        assert!(expanded.contains("wrap: word-wrap;"));
+        assert!(expanded.contains("AppState.invalidate-deep-prompt-binding();"));
+        assert!(expanded.contains("AppState.prompt-expanded-open = false;"));
+    }
+
+    #[test]
     fn selected_custom_prompt_mask_never_reaches_wrapped_prompt_lines() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         let selected_name_mask = composer

@@ -306,7 +306,7 @@ export component PromptComposer {
                 prompt-scroll := ScrollView {
                     y: 0px;
                     width: parent.width;
-                    height: parent.height;
+                    height: parent.height - 36px;
                     viewport-width: self.visible-width;
                     viewport-height: max(self.visible-height, prompt-input.preferred-height);
                     prompt-input := TextInput {
@@ -473,6 +473,41 @@ export component PromptComposer {
                     font-weight: 600;
                     vertical-alignment: top;
                     wrap: no-wrap;
+                }
+            }
+
+            prompt-expand-button := Rectangle {
+                x: parent.width - 30px;
+                y: parent.height - 30px;
+                width: 28px;
+                height: 28px;
+                background: prompt-expand-touch.has-hover ? AppTheme.panel : transparent;
+                border-radius: 7px;
+                border-width: 1px;
+                border-color: prompt-expand-touch.has-hover ? AppTheme.accent : AppTheme.border;
+
+                Image {
+                    x: 6px;
+                    y: 6px;
+                    width: 16px;
+                    height: 16px;
+                    source: @image-url("../../assets/icons/fit.svg");
+                    colorize: prompt-expand-touch.has-hover ? AppTheme.accent : AppTheme.muted;
+                    image-fit: contain;
+                }
+
+                prompt-expand-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => {
+                        AppState.prompt-history-open = false;
+                        AppState.custom-prompt-open = false;
+                        root.close-history-preview();
+                        history-popup.close();
+                        custom-prompt-popup.close();
+                        AppState.prompt-expanded-open = true;
+                    }
                 }
             }
         }
