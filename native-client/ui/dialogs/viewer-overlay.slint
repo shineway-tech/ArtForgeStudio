@@ -126,6 +126,44 @@ export component ViewerOverlay {
     property <length> image-pan-start-y: 0px;
     if AppState.viewer-open: Rectangle {
         background: AppTheme.bg;
+        viewer-shortcuts := FocusScope {
+            width: 1px;
+            height: 1px;
+            focus-on-click: false;
+            init => { self.focus(); }
+            key-pressed(event) => {
+                if event.modifiers.control
+                    || event.modifiers.alt
+                    || event.modifiers.meta
+                    || AppState.viewer-processing
+                    || AppState.delete-confirm-open {
+                    return reject;
+                }
+                if (event.text == "o" || event.text == "O")
+                    && AppState.viewer-source != "reference" {
+                    AppState.viewer-open-image();
+                    return accept;
+                }
+                if (event.text == "e" || event.text == "E")
+                    && AppState.viewer-source != "reference"
+                    && AppState.viewer-source != "inspiration" {
+                    AppState.viewer-open-image-editor();
+                    return accept;
+                }
+                if (event.text == "a" || event.text == "A")
+                    && AppState.viewer-source != "reference" {
+                    AppState.viewer-use-reference();
+                    return accept;
+                }
+                if event.text == Key.Delete
+                    && AppState.viewer-source != "reference"
+                    && AppState.viewer-source != "inspiration" {
+                    AppState.request-delete-asset(AppState.viewer-id);
+                    return accept;
+                }
+                return reject;
+            }
+        }
         Timer {
             interval: 2200ms;
             running: AppState.viewer-message != "";

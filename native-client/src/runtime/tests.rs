@@ -4197,6 +4197,60 @@ mod tests {
     }
 
     #[test]
+    fn viewer_keyboard_shortcuts_invoke_the_matching_image_actions() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        let actions = Rc::new(RefCell::new(Vec::<String>::new()));
+
+        {
+            let actions = actions.clone();
+            state.on_viewer_open_image(move || actions.borrow_mut().push("open".to_string()));
+        }
+        {
+            let actions = actions.clone();
+            state.on_viewer_open_image_editor(move || {
+                actions.borrow_mut().push("local-edit".to_string())
+            });
+        }
+        {
+            let actions = actions.clone();
+            state.on_viewer_use_reference(move || {
+                actions.borrow_mut().push("add-reference".to_string())
+            });
+        }
+        {
+            let actions = actions.clone();
+            state.on_request_delete_asset(move |id| {
+                actions.borrow_mut().push(format!("delete:{id}"))
+            });
+        }
+
+        state.set_viewer_source("generation".into());
+        state.set_viewer_repeat_enabled(true);
+        state.set_viewer_id("image-42".into());
+        state.set_viewer_open(true);
+        app.show().expect("show app window");
+
+        for key in ["o", "e", "a"] {
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::KeyPressed { text: key.into() });
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::KeyReleased { text: key.into() });
+        }
+        let delete: slint::SharedString = slint::platform::Key::Delete.into();
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed { text: delete.clone() });
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::KeyReleased { text: delete });
+
+        assert_eq!(
+            actions.borrow().as_slice(),
+            ["open", "local-edit", "add-reference", "delete:image-42"]
+        );
+    }
+
+    #[test]
     fn viewer_opens_the_image_to_video_workspace() {
         let app = include_str!("../../ui/app.slint");
         let state = include_str!("../../ui/app-state.slint");
