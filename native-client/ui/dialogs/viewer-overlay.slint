@@ -481,6 +481,12 @@ export component ViewerOverlay {
                             disabled: AppState.viewer-processing || AppState.viewer-upscale-done;
                             clicked => { AppState.open-upscale-dialog(); }
                         }
+                        ViewerToolActionButton {
+                            horizontal-stretch: 1;
+                            icon: @image-url("../../assets/icons/edit.svg");
+                            label: AppState.en ? "Local Edit" : "局部修改";
+                            clicked => { AppState.viewer-open-image-editor(); }
+                        }
                     }
                 }
                 if AppState.viewer-source != "inspiration" && AppState.viewer-repeat-enabled: viewer-repeat-card := Rectangle {
@@ -498,8 +504,8 @@ export component ViewerOverlay {
                         ViewerToolActionButton {
                             horizontal-stretch: 1;
                             icon: @image-url("../../assets/icons/edit.svg");
-                            label: AppState.en ? "Local Edit" : "局部修改";
-                            clicked => { AppState.viewer-open-image-editor(); }
+                            label: AppState.en ? "Use Prompt" : "使用提示词";
+                            clicked => { AppState.viewer-edit(); }
                         }
                         ViewerToolActionButton {
                             horizontal-stretch: 1;

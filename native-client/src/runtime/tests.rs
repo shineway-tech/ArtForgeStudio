@@ -4359,14 +4359,20 @@ mod tests {
         assert!(footer.contains("label: AppState.en ? \"Generate Video\" : \"生成视频\";"));
         assert!(footer.contains("clicked => { AppState.viewer-generate-video(); }"));
 
+        let tools = viewer
+            .split("cutout-tools-card := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("viewer-repeat-card := Rectangle").next())
+            .expect("viewer right-side image tools");
         let repeat = viewer
             .split("viewer-repeat-card := Rectangle")
             .nth(1)
             .and_then(|value| value.split("if AppState.viewer-source == \"inspiration\"").next())
             .expect("viewer right-side repeat actions");
-        assert!(repeat.contains("label: AppState.en ? \"Local Edit\" : \"局部修改\";"));
-        assert!(repeat.contains("clicked => { AppState.viewer-open-image-editor(); }"));
-        assert!(!repeat.contains("AppState.viewer-edit();"));
+        assert!(tools.contains("label: AppState.en ? \"Local Edit\" : \"局部修改\";"));
+        assert!(tools.contains("clicked => { AppState.viewer-open-image-editor(); }"));
+        assert!(repeat.contains("label: AppState.en ? \"Use Prompt\" : \"使用提示词\";"));
+        assert!(repeat.contains("clicked => { AppState.viewer-edit(); }"));
 
         for ratio in ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] {
             assert!(page.contains(ratio), "missing video ratio {ratio}");
@@ -4664,7 +4670,7 @@ mod tests {
     }
 
     #[test]
-    fn viewer_processing_actions_use_two_compact_two_column_cards() {
+    fn viewer_groups_local_edit_with_image_tools_and_keeps_use_prompt() {
         let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
         let tools = viewer
             .split("cutout-tools-card := Rectangle")
@@ -4702,17 +4708,21 @@ mod tests {
         assert!(tools.contains("HorizontalLayout"));
         assert!(!tools.contains("GridLayout"));
         assert!(!tools.contains("Row {"));
-        assert_eq!(tools.matches("ViewerToolActionButton {").count(), 2);
-        assert_eq!(tools.matches("horizontal-stretch: 1;").count(), 2);
+        assert_eq!(tools.matches("ViewerToolActionButton {").count(), 3);
+        assert_eq!(tools.matches("horizontal-stretch: 1;").count(), 3);
         assert!(tools.contains("label: AppState.en ? \"Cutout\" : \"抠图\""));
         assert!(!tools.contains("label: AppState.en ? \"Remove Black\" : \"去黑\""));
         assert!(tools.contains("label: AppState.en ? \"Clear Upscale\" : \"清晰放大\""));
         assert!(tools.contains("@image-url(\"../../assets/icons/fit.svg\")"));
         assert!(!tools.contains("@image-url(\"../../assets/icons/palette.svg\")"));
         assert!(tools.contains("@image-url(\"../../assets/icons/focus.svg\")"));
+        assert!(tools.contains("label: AppState.en ? \"Local Edit\" : \"局部修改\""));
+        assert!(tools.contains("clicked => { AppState.viewer-open-image-editor(); }"));
+        assert!(tools.contains("@image-url(\"../../assets/icons/edit.svg\")"));
         assert!(repeat.contains("HorizontalLayout"));
         assert_eq!(repeat.matches("ViewerToolActionButton {").count(), 2);
-        assert!(repeat.contains("label: AppState.en ? \"Local Edit\" : \"局部修改\""));
+        assert!(repeat.contains("label: AppState.en ? \"Use Prompt\" : \"使用提示词\""));
+        assert!(repeat.contains("clicked => { AppState.viewer-edit(); }"));
         assert!(repeat.contains("label: AppState.en ? \"Generate Again\" : \"再次生成\""));
         assert!(repeat.contains("@image-url(\"../../assets/icons/edit.svg\")"));
         assert!(repeat.contains("@image-url(\"../../assets/icons/redo.svg\")"));
