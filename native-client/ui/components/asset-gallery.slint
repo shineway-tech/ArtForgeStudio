@@ -46,6 +46,7 @@ export component AssetGallery {
                 }
                 asset-gallery-content := VirtualizedGallery {
                     visible: !root.is-empty();
+                    y: 0px;
                     width: parent.width;
                     items: root.items;
                     placements: root.placements;

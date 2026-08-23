@@ -1758,6 +1758,57 @@ mod tests {
     }
 
     #[test]
+    fn asset_gallery_content_starts_below_the_filter_controls() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+
+        state.set_logged_in(true);
+        state.set_page("assets".into());
+        state.set_assets(slint::ModelRc::new(slint::VecModel::from(vec![AssetItem {
+            id: "asset-1".into(),
+            title: "Asset 1".into(),
+            category: "scene".into(),
+            kind: "game".into(),
+            width: 1024,
+            height: 1024,
+            source_path: "asset-1.png".into(),
+            ..Default::default()
+        }])));
+        state.set_asset_layout_items(slint::ModelRc::new(slint::VecModel::from(vec![
+            GalleryPlacement {
+                item_index: 0,
+                x: 0.0,
+                y: 40.0,
+                width: 200.0,
+                gap: 18.0,
+                masonry: false,
+            },
+        ])));
+        state.set_asset_layout_headers(slint::ModelRc::new(slint::VecModel::from(vec![
+            GalleryHeader {
+                title: "8月20日".into(),
+                y: 0.0,
+            },
+        ])));
+        state.set_asset_layout_height(284.0);
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().expect("show app window");
+
+        let cards = i_slint_backend_testing::ElementHandle::find_by_element_type_name(
+            &app,
+            "ThumbnailCard",
+        )
+        .collect::<Vec<_>>();
+        assert_eq!(cards.len(), 1, "expected the single asset thumbnail");
+        let card_y = cards[0].absolute_position().y;
+        assert!(
+            card_y < 320.0,
+            "asset thumbnail should stay near the filters, but started at y={card_y}"
+        );
+    }
+
+    #[test]
     fn waterfall_column_mapping_instantiates_every_item_exactly_once() {
         for item_count in [0_usize, 1, 2, 7, 24, 49] {
             for column_count in 1_usize..=8 {
