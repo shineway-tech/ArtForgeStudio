@@ -15,19 +15,6 @@ pub(super) fn category_is_generating(context: &AppContext, category: &str) -> bo
     context.generations.active.borrow().contains_key(category)
 }
 
-pub(super) fn active_generation_matches(
-    context: &AppContext,
-    category: &str,
-    task_id: &str,
-) -> bool {
-    context
-        .generations
-        .active
-        .borrow()
-        .get(category)
-        .is_some_and(|task| task.task_id == task_id)
-}
-
 pub(super) fn active_generation_matches_scope(
     context: &AppContext,
     category: &str,

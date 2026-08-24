@@ -14,20 +14,8 @@ pub(crate) const PICKER_IMAGE_EXTENSIONS: &[&str] = &[
     "exr", "qoi",
 ];
 
-#[cfg(target_os = "macos")]
-pub(crate) const SUPPORTED_IMAGE_FORMATS_WITH_PLATFORM_LABEL: &str =
-    "PNG、JPG、WebP、GIF、BMP、TIFF、ICO、AVIF、TGA、DDS、HDR、EXR、QOI、HEIC/HEIF";
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) const SUPPORTED_IMAGE_FORMATS_WITH_PLATFORM_LABEL: &str =
-    "PNG、JPG、WebP、GIF、BMP、TIFF、ICO、AVIF、TGA、DDS、HDR、EXR、QOI";
-
 pub(crate) fn picker_image_extensions() -> &'static [&'static str] {
     PICKER_IMAGE_EXTENSIONS
-}
-
-pub(crate) fn supported_image_formats_label() -> &'static str {
-    SUPPORTED_IMAGE_FORMATS_WITH_PLATFORM_LABEL
 }
 
 #[cfg(test)]

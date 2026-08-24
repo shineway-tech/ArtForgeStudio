@@ -557,15 +557,6 @@ pub(super) fn load_preview_image(path: &Path, purpose: PreviewPurpose) -> Result
     )
 }
 
-pub(super) fn prepare_preview_image(
-    path: &Path,
-    purpose: PreviewPurpose,
-) -> Result<PreparedPreview> {
-    prepare_preview_image_if(path, purpose, || true)?.ok_or_else(|| {
-        anyhow::anyhow!("缩略图请求已取消")
-    })
-}
-
 pub(super) fn prepare_preview_image_if(
     path: &Path,
     purpose: PreviewPurpose,
@@ -653,10 +644,6 @@ pub(super) fn inspect_image_dimensions(path: &Path) -> Result<(u32, u32)> {
         anyhow::bail!("图片尺寸过大，无法安全处理");
     }
     Ok((width, height))
-}
-
-pub(super) fn load_preview_image_with_edge(path: &Path, longest_edge: u32) -> Result<Image> {
-    load_preview_image_with_edge_and_purpose(path, longest_edge, "custom")
 }
 
 fn load_preview_image_with_edge_and_purpose(

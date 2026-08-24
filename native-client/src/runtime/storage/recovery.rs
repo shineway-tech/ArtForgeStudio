@@ -1054,11 +1054,6 @@ pub(super) fn path_is_referenced_by_pending_recovery(path: &Path) -> bool {
     }
 }
 
-fn prune_completed(file: &mut RecoveryFile) {
-    file.generations
-        .retain(|record| !generation_record_complete(record));
-}
-
 fn generation_record_complete(record: &PendingGenerationRecord) -> bool {
     record.terminal
         && record
@@ -1272,15 +1267,10 @@ mod tests {
 
     #[test]
     fn terminal_record_is_complete_only_after_every_success_is_acknowledged() {
-        let mut file = RecoveryFile {
-            schema_version: 1,
-            generations: vec![pending_record()],
-        };
-        prune_completed(&mut file);
-        assert_eq!(file.generations.len(), 1);
-        file.generations[0].deliveries[0].acknowledged = true;
-        prune_completed(&mut file);
-        assert!(file.generations.is_empty());
+        let mut record = pending_record();
+        assert!(!generation_record_complete(&record));
+        record.deliveries[0].acknowledged = true;
+        assert!(generation_record_complete(&record));
     }
 
     #[test]
@@ -1300,16 +1290,9 @@ mod tests {
                 ..PendingDeliveryRecord::default()
             },
         ];
-        let mut file = RecoveryFile {
-            schema_version: 1,
-            generations: vec![record],
-        };
-
-        prune_completed(&mut file);
-        assert_eq!(file.generations.len(), 1);
-        file.generations[0].deliveries[1].acknowledged = true;
-        prune_completed(&mut file);
-        assert!(file.generations.is_empty());
+        assert!(!generation_record_complete(&record));
+        record.deliveries[1].acknowledged = true;
+        assert!(generation_record_complete(&record));
     }
 
     #[test]

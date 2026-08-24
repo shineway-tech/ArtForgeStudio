@@ -918,12 +918,6 @@ fn schedule_canvas_previews(
         });
 }
 
-fn canvas_linked_input(store: &Store, target_id: &str) -> String {
-    canvas_linked_inputs(store)
-        .remove(target_id)
-        .unwrap_or_default()
-}
-
 fn canvas_linked_inputs(store: &Store) -> BTreeMap<String, String> {
     let notes_by_id = store
         .canvas_notes
@@ -1859,10 +1853,6 @@ pub(super) fn push_inspiration(app: &AppWindow, store: &Store) {
     refresh_virtual_gallery(app, store, PreviewCollection::Inspiration);
 }
 
-fn normalized_gallery_limit(limit: i32) -> usize {
-    limit.max(GALLERY_PAGE_SIZE) as usize
-}
-
 pub(super) fn reset_asset_gallery_page(app: &AppWindow) {
     cancel_gallery_previews(PreviewCollection::Assets);
     invalidate_virtual_gallery(PreviewCollection::Assets);
@@ -2309,10 +2299,6 @@ pub(super) fn include_gallery_item(item: &AssetData, kind: &str, category: &str)
     item.category == category
 }
 
-pub(super) fn group_asset_views(items: &[&AssetData], language: &str) -> Vec<AssetGroup> {
-    group_asset_views_with_previews(items, language, &BTreeMap::new())
-}
-
 fn group_asset_views_with_previews(
     items: &[&AssetData],
     language: &str,
@@ -2394,45 +2380,6 @@ pub(super) fn time_group_label(time: &str, language: &str) -> String {
         .to_string();
     }
     time.trim().to_string()
-}
-
-pub(super) fn split_gallery_columns(items: Vec<&AssetData>) -> [Vec<AssetItem>; 5] {
-    let mut cols: [Vec<AssetItem>; 5] =
-        [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()];
-    let mut heights = [0_i64; 5];
-    for item in items {
-        let index = heights
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, height)| **height)
-            .map(|(index, _)| index)
-            .unwrap_or(0);
-        heights[index] += gallery_height_score(item);
-        cols[index].push(to_asset_view(item));
-    }
-    cols
-}
-
-pub(super) fn split_asset_row_columns(items: Vec<&AssetData>) -> [Vec<AssetItem>; 5] {
-    let mut cols: [Vec<AssetItem>; 5] =
-        [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()];
-    for row in items.chunks(5) {
-        let row_items = row
-            .iter()
-            .map(|item| to_asset_view(item))
-            .collect::<Vec<_>>();
-        for (index, item) in row_items.into_iter().enumerate() {
-            cols[index].push(item);
-        }
-    }
-    cols
-}
-
-pub(super) fn gallery_height_score(item: &AssetData) -> i64 {
-    if item.width <= 0 || item.height <= 0 {
-        return 248;
-    }
-    ((item.height as i64) * 220 / (item.width as i64)).max(128)
 }
 
 pub(super) fn count_assets(store: &Store, category: &str) -> i32 {
@@ -2576,17 +2523,6 @@ pub(super) fn to_model_group_view(group: &ModelGroupData) -> ModelGroup {
         )),
         selected_model: group.selected_model.clone().into(),
     }
-}
-
-pub(super) fn to_asset_view(asset: &AssetData) -> AssetItem {
-    let mut item = to_asset_view_metadata(asset);
-    item.image = if asset.source_path == "failed" || asset.source_path.trim().is_empty() {
-        Image::default()
-    } else {
-        load_preview_image(Path::new(&asset.source_path), PreviewPurpose::Gallery)
-            .unwrap_or_default()
-    };
-    item
 }
 
 pub(super) fn to_asset_view_metadata(asset: &AssetData) -> AssetItem {
@@ -2886,7 +2822,9 @@ mod canvas_link_tests {
         };
 
         assert_eq!(
-            canvas_linked_input(&store, "image"),
+            canvas_linked_inputs(&store)
+                .remove("image")
+                .unwrap_or_default(),
             "雨夜城市\n电影感霓虹灯"
         );
         assert_eq!(meaningful_canvas_content(&store.canvas_notes[2]), "");

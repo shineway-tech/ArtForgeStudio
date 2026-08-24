@@ -1563,9 +1563,7 @@ mod tests {
     #[test]
     fn generation_loading_cards_bounce_left_to_right_every_two_seconds() {
         let card = include_str!("../../ui/components/generation-loading-card.slint");
-        let section = include_str!("../../ui/components/time-group-section.slint");
-        let waterfall = include_str!("../../ui/components/generation-waterfall.slint");
-        let column = include_str!("../../ui/components/generation-masonry-column.slint");
+        let gallery = include_str!("../../ui/components/virtualized-gallery.slint");
 
         assert!(card.contains("in property <int> sequence-index: 0;"));
         assert!(card.contains("in property <int> bounce-step: 0;"));
@@ -1575,16 +1573,11 @@ mod tests {
         assert!(card.contains(
             "animate y { duration: AppState.reduced-motion ? 0ms : 65ms; easing: ease-in-out; }"
         ));
-        assert!(section.contains("interval: AppState.reduced-motion ? 200ms : 50ms;"));
-        assert!(section.contains("running: root.loading-count > 0;"));
-        assert!(section.contains("Math.mod(root.loading-bounce-step + 1, 40)"));
-        for index in 0..4 {
-            assert!(section.contains(&format!("sequence-index: {index};")));
-            assert!(column.contains(&format!("sequence-index: {index};")));
-        }
-        assert!(section.contains("bounce-step: root.loading-bounce-step;"));
-        assert!(waterfall.contains("bounce-step: root.bounce-step;"));
-        assert!(column.contains("bounce-step: root.bounce-step;"));
+        assert!(gallery.contains("interval: AppState.reduced-motion ? 200ms : 50ms;"));
+        assert!(gallery.contains("running: root.loaders.length > 0;"));
+        assert!(gallery.contains("Math.mod(root.loading-bounce-step + 1, 40)"));
+        assert!(gallery.contains("sequence-index: loader.sequence-index;"));
+        assert!(gallery.contains("bounce-step: root.loading-bounce-step;"));
     }
 
     #[test]
@@ -1699,13 +1692,9 @@ mod tests {
         let inspiration = include_str!("../../ui/pages/inspiration-page.slint");
         let app = include_str!("app.rs");
         let profile = include_str!("storage/local_store.rs");
-        let groups = include_str!("../../ui/components/time-grouped-gallery.slint");
         let thumbnail = include_str!("../../ui/components/thumbnail-card.slint");
         let waterfall_column = include_str!("../../ui/components/waterfall-column.slint");
-        let generation_column =
-            include_str!("../../ui/components/generation-masonry-column.slint");
-        let waterfall = include_str!("../../ui/components/gallery-waterfall.slint");
-        let generation_waterfall = include_str!("../../ui/components/generation-waterfall.slint");
+        let virtualized = include_str!("../../ui/components/virtualized-gallery.slint");
 
         for property in [
             "generation-gallery-layout",
@@ -1732,26 +1721,14 @@ mod tests {
         assert!(app.contains("save_user_profile(&app);"));
         assert!(profile.contains("ui_preferences: UiPreferencesData"));
         assert!(profile.contains("state.set_generation_gallery_layout"));
-        assert!(groups.contains("layout-mode: root.layout-mode;"));
         assert!(thumbnail.contains("in property <bool> masonry: false;"));
         assert!(thumbnail.contains("root.item.height / root.item.width"));
         assert!(waterfall_column.contains("masonry: true;"));
-        for column in [waterfall_column, generation_column] {
-            assert!(column.contains("in root.column-length(): ThumbnailCard"));
-            assert!(column.contains("root.items[root.source-index(index)]"));
-            assert!(!column.contains("for item[index] in root.items"));
-            assert!(!column.contains("active: Math.mod"));
-        }
-        assert!(generation_column.contains("function first-source-index() -> int"));
-        assert!(generation_column.contains("Math.mod(root.loading-count, root.column-count)"));
-        assert!(waterfall
-            .contains("floor((root.grid-width() + root.grid-gap()) / root.item-slot-width())"));
-        assert!(!waterfall.contains("min(root.items.length"));
-        assert!(waterfall.contains(
-            "(root.grid-width() - (root.column-count() - 1) * root.grid-gap()) / root.column-count()"
-        ));
-        assert!(generation_waterfall.contains("card-width: root.item-width();"));
-        assert!(generation_waterfall.contains("function column-count() -> int"));
+        assert!(waterfall_column.contains("in root.column-length(): ThumbnailCard"));
+        assert!(waterfall_column.contains("root.items[root.source-index(index)]"));
+        assert!(!waterfall_column.contains("for item[index] in root.items"));
+        assert!(virtualized.contains("for placement in root.placements: ThumbnailCard"));
+        assert!(virtualized.contains("for loader in root.loaders: GenerationLoadingCard"));
         assert!(panel.contains(
             "AppState.generation-gallery-layout == \"waterfall\" ? root.base-thumb-width() : root.item-width()"
         ));
@@ -2480,10 +2457,9 @@ mod tests {
     }
 
     #[test]
-    fn enter_confirms_inputs_and_alt_enter_keeps_prompt_line_breaks() {
+    fn enter_confirms_auth_inputs_and_alt_enter_keeps_prompt_line_breaks() {
         let field = include_str!("../../ui/components/field.slint");
         let auth = include_str!("../../ui/dialogs/auth-dialog.slint");
-        let invoice = include_str!("../../ui/dialogs/invoice-dialog.slint");
         let prompt = include_str!("../../ui/components/prompt-composer.slint");
 
         assert!(field.contains("callback accepted();"));
@@ -2492,14 +2468,6 @@ mod tests {
         assert!(auth.contains("function confirm-auth()"));
         assert_eq!(
             auth.matches("accepted => { root.confirm-auth(); }").count(),
-            3
-        );
-
-        assert!(invoice.contains("function submit-form()"));
-        assert_eq!(
-            invoice
-                .matches("accepted => { root.submit-form(); }")
-                .count(),
             3
         );
 
@@ -2733,13 +2701,12 @@ mod tests {
     #[test]
     fn image_quality_is_not_limited_by_membership() {
         let chooser = include_str!("../../ui/components/inline-card-chooser.slint");
-        let quality_button = include_str!("../../ui/components/quality-button.slint");
         let canvas = include_str!("../../ui/pages/infinite-canvas-page.slint");
         let membership = include_str!("../../ui/components/membership-plans.slint");
         let profile = include_str!("../../ui/dialogs/profile-dialog.slint");
         let app = include_str!("../../ui/app.slint");
 
-        for source in [chooser, quality_button, canvas, membership, profile, app] {
+        for source in [chooser, canvas, membership, profile, app] {
             assert!(!source.contains("membership-max-quality"));
             assert!(!source.contains("QualityRestrictedDialog"));
         }
@@ -5300,7 +5267,6 @@ mod tests {
             .expect("decode macOS app icon")
             .to_rgba8();
         assert!(platform.contains("include_bytes!(\"../assets/app-icon-macos.png\")"));
-        assert!(!platform.contains("include_bytes!(\"../assets/app-icon.png\")"));
         assert_eq!(icon.dimensions(), (1024, 1024));
 
         let mut min_x = 1024;

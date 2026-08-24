@@ -647,15 +647,6 @@ pub(super) fn slint_image_from_rgba(rgba: &image::RgbaImage, width: u32, height:
     Image::from_rgba8(buffer)
 }
 
-pub(super) fn image_from_clipboard(img: arboard::ImageData<'_>) -> Image {
-    let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
-        img.bytes.as_ref(),
-        img.width as u32,
-        img.height as u32,
-    );
-    Image::from_rgba8(buffer)
-}
-
 pub(super) fn persist_reference_source(path: &Path) -> Result<PathBuf> {
     let (decoded, _) = decode_image_file(path)?;
     persist_reference_image(&decoded)
@@ -718,13 +709,6 @@ fn persist_reference_image(image: &image::DynamicImage) -> Result<PathBuf> {
         atomic_write_file(&destination, &bytes)?;
     }
     Ok(destination)
-}
-
-pub(super) fn load_image(path: &Path) -> Result<Image> {
-    let (decoded, _) = decode_image_file(path)?;
-    let rgba = decoded.to_rgba8();
-    let (width, height) = rgba.dimensions();
-    Ok(slint_image_from_rgba(&rgba, width, height))
 }
 
 pub(super) fn decode_image_file(
@@ -993,18 +977,20 @@ mod tests {
     }
 
     #[test]
-    fn preview_decode_uses_file_content_when_extension_is_wrong() {
+    fn decode_uses_file_content_when_extension_is_wrong() {
         let source =
             std::env::temp_dir().join(format!("artforge-reference-source-{}.jpg", Uuid::new_v4()));
         let rgba = image::RgbaImage::from_pixel(3, 2, image::Rgba([40, 120, 210, 255]));
         let bytes = encode_png_rgba(&rgba, rgba.width(), rgba.height()).expect("encode png");
         fs::write(&source, bytes).expect("write png with jpeg extension");
 
-        let preview = load_image(&source).expect("decode image from its content");
-        let preview = preview.to_rgba8().expect("read preview pixels");
+        let (preview, detected_format) =
+            decode_image_file(&source).expect("decode image from its content");
+        let preview = preview.to_rgba8();
 
         assert_eq!(preview.width(), 3);
         assert_eq!(preview.height(), 2);
+        assert_eq!(detected_format, Some(image::ImageFormat::Png));
         let _ = fs::remove_file(source);
     }
 
