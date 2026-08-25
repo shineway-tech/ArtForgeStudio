@@ -2691,6 +2691,34 @@ mod tests {
     }
 
     #[test]
+    fn studio_content_stays_top_aligned_in_tall_windows_for_every_category() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+
+        state.set_logged_in(true);
+        state.set_page("generation".into());
+        app.window()
+            .set_size(slint::LogicalSize::new(1351.0, 1335.0));
+        app.show().expect("show app window");
+
+        for category in ["character", "scene", "ui", "effect"] {
+            state.set_asset_type(category.into());
+            let composers = i_slint_backend_testing::ElementHandle::find_by_element_type_name(
+                &app,
+                "PromptComposer",
+            )
+            .collect::<Vec<_>>();
+            assert_eq!(composers.len(), 1, "expected one composer for {category}");
+            let composer_y = composers[0].absolute_position().y;
+            assert!(
+                composer_y < 200.0,
+                "{category} composer should stay near the workbench header, but started at y={composer_y}"
+            );
+        }
+    }
+
+    #[test]
     fn prompt_optimization_actions_are_compact_backgroundless_tags() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
 
