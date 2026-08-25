@@ -23,10 +23,10 @@ component ViewerFooterActionButton inherits Rectangle {
     in property <string> label;
     in property <color> foreground: AppTheme.text;
     height: 44px;
-    background: action-touch.has-hover ? AppTheme.panel-soft : AppTheme.panel;
+    background: action-touch.has-hover ? root.foreground.with-alpha(0.12) : root.foreground.with-alpha(0.045);
     border-radius: 8px;
     border-width: 1px;
-    border-color: action-touch.has-hover ? root.foreground.with-alpha(0.55) : AppTheme.border;
+    border-color: action-touch.has-hover ? root.foreground.with-alpha(0.55) : root.foreground.with-alpha(0.20);
     callback clicked();
 
     Image {
@@ -354,12 +354,14 @@ export component ViewerOverlay {
                     horizontal-stretch: 1;
                     icon: @image-url("../../assets/icons/download.svg");
                     label: AppState.en ? "Open Folder" : "打开文件夹";
+                    foreground: AppTheme.custom-prompt-name-3;
                     clicked => { AppState.viewer-download-image(); }
                 }
                 ViewerFooterActionButton {
                     horizontal-stretch: 1;
                     icon: @image-url("../../assets/icons/video.svg");
                     label: AppState.en ? "Generate Video" : "生成视频";
+                    foreground: AppTheme.custom-prompt-name;
                     clicked => { AppState.viewer-generate-video(); }
                 }
                 ViewerFooterActionButton {
@@ -373,6 +375,7 @@ export component ViewerOverlay {
                     horizontal-stretch: 1;
                     icon: @image-url("../../assets/icons/canvas.svg");
                     label: AppState.en ? "Import to Canvas" : "导入无限画布";
+                    foreground: AppTheme.custom-prompt-name-2;
                     clicked => { AppState.viewer-import-to-canvas(); }
                 }
                 ViewerFooterActionButton {

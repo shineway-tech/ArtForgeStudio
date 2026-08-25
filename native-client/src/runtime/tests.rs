@@ -1000,6 +1000,22 @@ mod tests {
     }
 
     #[test]
+    fn inline_custom_prompt_mask_does_not_cover_the_following_caret_lane() {
+        let overlay = include_str!("../../ui/components/inline-custom-prompt-overlay.slint");
+        let mask = overlay
+            .split("token-mask := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("Timer {").next())
+            .expect("inline custom prompt token mask");
+
+        assert!(mask.contains("width: token-metric.preferred-width;"));
+        assert!(
+            !mask.contains("token-metric.preferred-width +"),
+            "the token mask must not extend into the following caret lane"
+        );
+    }
+
+    #[test]
     fn multiple_custom_prompt_selections_are_isolated_by_workspace_category() {
         let mut store = Store {
             custom_prompts: vec![
@@ -4299,6 +4315,33 @@ mod tests {
         assert!(callbacks.contains("open_viewer_image(&app, &store.borrow())"));
         assert!(feature.contains("pub(super) fn open_viewer_image"));
         assert!(feature.contains("open_path_with_default_app(&source)"));
+    }
+
+    #[test]
+    fn viewer_footer_actions_use_five_distinct_semantic_colors() {
+        let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+        let footer = viewer
+            .split("viewer-footer-actions := HorizontalLayout")
+            .nth(1)
+            .and_then(|value| value.split("if AppState.viewer-message").next())
+            .expect("viewer footer");
+
+        for color in [
+            "AppTheme.custom-prompt-name-3",
+            "AppTheme.custom-prompt-name",
+            "AppTheme.success",
+            "AppTheme.custom-prompt-name-2",
+            "AppTheme.danger",
+        ] {
+            assert_eq!(
+                footer.matches(&format!("foreground: {color};")).count(),
+                1,
+                "each viewer footer action should own one distinct semantic color: {color}"
+            );
+        }
+        assert!(viewer.contains(
+            "background: action-touch.has-hover ? root.foreground.with-alpha(0.12) : root.foreground.with-alpha(0.045);"
+        ));
     }
 
     #[test]

@@ -59,7 +59,7 @@ export component InlineCustomPromptOverlay inherits Rectangle {
     token-mask := Rectangle {
         x: root.anchor-x;
         y: root.anchor-y + root.viewport-y;
-        width: token-metric.preferred-width + 2px;
+        width: token-metric.preferred-width;
         height: max(token-metric.preferred-height, root.editor-font-size + 3px);
         background: root.editor-background;
         clip: true;
