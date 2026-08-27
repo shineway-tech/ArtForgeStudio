@@ -2069,6 +2069,12 @@ pub(super) fn apply_backend_snapshot(
             snapshot
                 .models
                 .iter()
+                .find(|item| item.code == "openai_prompt")
+        })
+        .or_else(|| {
+            snapshot
+                .models
+                .iter()
                 .find(|item| item.purpose == "prompt_processing")
         });
     let selected_video_code = state.get_video_model().to_string();
