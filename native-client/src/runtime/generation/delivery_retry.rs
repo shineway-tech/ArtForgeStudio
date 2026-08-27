@@ -200,9 +200,17 @@ pub(super) fn select_recoverable_task_file<'a>(
     let size_bytes = file
         .size_bytes
         .parse::<u64>()
-        .map_err(|_| DeliveryRetryError::Expired)?;
+        .map_err(|_| {
+            DeliveryRetryError::Api(ApiError::Protocol {
+                message: "服务端返回了无效的文件大小".to_string(),
+                request_id: None,
+            })
+        })?;
     if size_bytes != delivery.size_bytes || !file.sha256.eq_ignore_ascii_case(&delivery.sha256) {
-        return Err(DeliveryRetryError::Expired);
+        return Err(DeliveryRetryError::Api(ApiError::Protocol {
+            message: "生成文件完整性信息与恢复记录不一致".to_string(),
+            request_id: None,
+        }));
     }
     Ok(file)
 }
@@ -596,6 +604,32 @@ mod tests {
             assert!(matches!(
                 select_recoverable_task_file(&detail, &delivery(1, "file-2")),
                 Err(DeliveryRetryError::Expired)
+            ));
+        }
+    }
+
+    #[test]
+    fn available_file_with_invalid_size_remains_recoverable() {
+        let mut detail = completed_task_with_two_files();
+        detail.items[1].file.as_mut().unwrap().size_bytes = "invalid".to_string();
+
+        assert!(matches!(
+            select_recoverable_task_file(&detail, &delivery(1, "file-2")),
+            Err(DeliveryRetryError::Api(ApiError::Protocol { .. }))
+        ));
+    }
+
+    #[test]
+    fn available_file_with_integrity_mismatch_remains_recoverable() {
+        let mut mismatched_size = completed_task_with_two_files();
+        mismatched_size.items[1].file.as_mut().unwrap().size_bytes = "4".to_string();
+        let mut mismatched_sha = completed_task_with_two_files();
+        mismatched_sha.items[1].file.as_mut().unwrap().sha256 = "def".to_string();
+
+        for detail in [&mismatched_size, &mismatched_sha] {
+            assert!(matches!(
+                select_recoverable_task_file(detail, &delivery(1, "file-2")),
+                Err(DeliveryRetryError::Api(ApiError::Protocol { .. }))
             ));
         }
     }

@@ -5114,6 +5114,38 @@ mod tests {
         assert!(cards[0].delivery_recoverable);
     }
 
+    #[test]
+    fn automatic_replacement_failure_retains_original_recoverable_card_and_notification() {
+        let failed_asset_id = "failed-delivery-asset";
+        let mut store = Store::default();
+        let mut original_card = delivery_failure_card(failed_asset_id, "Original failure");
+        original_card.delivery_downloading = true;
+        store.generations.push(original_card);
+        store.notifications.push(NotificationData {
+            id: "original-notification".to_string(),
+            title: "Generation failed".to_string(),
+            model: "model".to_string(),
+            time: "2026-08-27 00:00:00".to_string(),
+            reason: "initial delivery failure".to_string(),
+            success: false,
+            read: false,
+        });
+
+        assert!(retain_failed_delivery_after_replacement_failure(
+            &mut store,
+            failed_asset_id,
+        ));
+
+        assert_eq!(store.generations.len(), 1);
+        assert_eq!(store.generations[0].id, failed_asset_id);
+        assert_eq!(store.generations[0].title, "Original failure");
+        assert_eq!(store.generations[0].source_path, "failed");
+        assert!(store.generations[0].delivery_recoverable);
+        assert!(!store.generations[0].delivery_downloading);
+        assert_eq!(store.notifications.len(), 1);
+        assert_eq!(store.notifications[0].id, "original-notification");
+    }
+
     fn delivery_failure_card(id: &str, title: &str) -> AssetData {
         AssetData {
             id: id.to_string(),

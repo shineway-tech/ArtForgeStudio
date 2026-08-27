@@ -1,5 +1,18 @@
 use super::*;
 
+pub(super) fn retain_failed_delivery_after_replacement_failure(
+    store: &mut Store,
+    failed_asset_id: &str,
+) -> bool {
+    let Some(asset) = store.generations.iter_mut().find(|asset| {
+        asset.id == failed_asset_id && asset.source_path == "failed" && asset.delivery_recoverable
+    }) else {
+        return false;
+    };
+    asset.delivery_downloading = false;
+    true
+}
+
 pub(super) fn poll_generation_stream(
     app_weak: Weak<AppWindow>,
     context: AppContext,
@@ -165,10 +178,11 @@ pub(super) fn poll_generation_stream(
                 upscale_done,
                 delivery,
             } => {
-                let replacing_failed_delivery = delivery
+                let replacing_failed_asset_id = delivery
                     .as_ref()
                     .and_then(|delivery| delivery.failed_asset_id.as_deref())
-                    .is_some();
+                    .map(ToOwned::to_owned);
+                let replacing_failed_delivery = replacing_failed_asset_id.is_some();
                 let delivery_download = delivery
                     .as_ref()
                     .filter(|delivery| delivery.failed_asset_id.is_some())
@@ -302,7 +316,16 @@ pub(super) fn poll_generation_stream(
                         // accumulate full-size downloads indefinitely.
                         cleanup_failed_delivery_staging(Path::new(&local_path));
                         let reason = zh_error(&error.to_string());
-                        if destination == GenerationDestination::Gallery {
+                        if let Some(failed_asset_id) = replacing_failed_asset_id.as_deref() {
+                            let mut store_mut = store.borrow_mut();
+                            let _ = retain_failed_delivery_after_replacement_failure(
+                                &mut store_mut,
+                                failed_asset_id,
+                            );
+                            push_all(&app, &store_mut);
+                            drop(store_mut);
+                            set_generation_status_for_category(&context, &app, &category, &reason);
+                        } else if destination == GenerationDestination::Gallery {
                             let time = Local::now().format("%Y-%m-%d %H:%M").to_string();
                             add_stream_failure_item(
                                 &app,
