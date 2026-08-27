@@ -13,6 +13,10 @@ pub(super) struct PendingDeliveryRecord {
     pub(super) local_path: String,
     #[serde(default)]
     pub(super) acknowledged: bool,
+    #[serde(default)]
+    pub(super) failed_asset_id: String,
+    #[serde(default)]
+    pub(super) abandoned: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -867,10 +871,213 @@ pub(super) fn pending_delivery_saved(
                     size_bytes: delivery.size_bytes,
                     local_path: local_path.to_string(),
                     acknowledged: false,
+                    failed_asset_id: String::new(),
+                    abandoned: false,
                 });
             }
         },
     )
+}
+
+pub(super) fn pending_delivery_failed(
+    owner_user_id: &str,
+    expected_auth_epoch: u64,
+    client_request_id: &str,
+    delivery: &DeliveryConfirmation,
+    failed_asset_id: &str,
+) -> Result<bool> {
+    let mut matched = false;
+    mutate_recovery_file(|file| {
+        matched = pending_delivery_failed_in_memory(
+            file,
+            owner_user_id,
+            expected_auth_epoch,
+            client_request_id,
+            delivery,
+            failed_asset_id,
+        );
+    })?;
+    Ok(matched)
+}
+
+fn pending_delivery_failed_in_memory(
+    file: &mut RecoveryFile,
+    owner_user_id: &str,
+    expected_auth_epoch: u64,
+    client_request_id: &str,
+    delivery: &DeliveryConfirmation,
+    failed_asset_id: &str,
+) -> bool {
+    if owner_user_id.trim().is_empty() || failed_asset_id.trim().is_empty() {
+        return false;
+    }
+    update_generation_scoped_in_memory(
+        file,
+        owner_user_id,
+        expected_auth_epoch,
+        client_request_id,
+        |record| {
+            if let Some(item) = record
+                .deliveries
+                .iter_mut()
+                .find(|item| item.file_id == delivery.file_id)
+            {
+                item.failed_asset_id = failed_asset_id.to_string();
+            } else {
+                record.deliveries.push(PendingDeliveryRecord {
+                    item_index: delivery.item_index,
+                    file_id: delivery.file_id.clone(),
+                    sha256: delivery.sha256.clone(),
+                    size_bytes: delivery.size_bytes,
+                    local_path: String::new(),
+                    acknowledged: false,
+                    failed_asset_id: failed_asset_id.to_string(),
+                    abandoned: false,
+                });
+            }
+        },
+    )
+}
+
+pub(super) fn recoverable_delivery_for_failed_asset(
+    owner_user_id: &str,
+    expected_auth_epoch: u64,
+    failed_asset_id: &str,
+) -> Result<Option<(PendingGenerationRecord, PendingDeliveryRecord)>> {
+    let _guard = recovery_lock()
+        .lock()
+        .unwrap_or_else(|value| value.into_inner());
+    let file = read_recovery_file_for_update()?;
+    Ok(recoverable_delivery_for_failed_asset_in_memory(
+        &file,
+        owner_user_id,
+        expected_auth_epoch,
+        failed_asset_id,
+    ))
+}
+
+fn recoverable_delivery_for_failed_asset_in_memory(
+    file: &RecoveryFile,
+    owner_user_id: &str,
+    expected_auth_epoch: u64,
+    failed_asset_id: &str,
+) -> Option<(PendingGenerationRecord, PendingDeliveryRecord)> {
+    if owner_user_id.trim().is_empty() || failed_asset_id.trim().is_empty() {
+        return None;
+    }
+    let mut matches = file.generations.iter().flat_map(|record| {
+        record
+            .deliveries
+            .iter()
+            .filter(move |delivery| {
+                record.owner_user_id == owner_user_id
+                    && record.auth_epoch == expected_auth_epoch
+                    && delivery.failed_asset_id == failed_asset_id
+                    && !delivery.acknowledged
+                    && !delivery.abandoned
+            })
+            .map(move |delivery| (record.clone(), delivery.clone()))
+    });
+    let result = matches.next();
+    if matches.next().is_some() {
+        None
+    } else {
+        result
+    }
+}
+
+pub(super) fn recoverable_failed_asset_ids(
+    owner_user_id: &str,
+    expected_auth_epoch: u64,
+) -> Result<BTreeSet<String>> {
+    let _guard = recovery_lock()
+        .lock()
+        .unwrap_or_else(|value| value.into_inner());
+    let file = read_recovery_file_for_update()?;
+    Ok(recoverable_failed_asset_ids_in_memory(
+        &file,
+        owner_user_id,
+        expected_auth_epoch,
+    ))
+}
+
+fn recoverable_failed_asset_ids_in_memory(
+    file: &RecoveryFile,
+    owner_user_id: &str,
+    expected_auth_epoch: u64,
+) -> BTreeSet<String> {
+    if owner_user_id.trim().is_empty() {
+        return BTreeSet::new();
+    }
+    file.generations
+        .iter()
+        .filter(|record| {
+            record.owner_user_id == owner_user_id && record.auth_epoch == expected_auth_epoch
+        })
+        .flat_map(|record| record.deliveries.iter())
+        .filter(|delivery| {
+            !delivery.failed_asset_id.trim().is_empty()
+                && !delivery.acknowledged
+                && !delivery.abandoned
+        })
+        .map(|delivery| delivery.failed_asset_id.clone())
+        .collect()
+}
+
+pub(super) fn abandon_pending_delivery(
+    owner_user_id: &str,
+    expected_auth_epoch: u64,
+    failed_asset_id: &str,
+) -> Result<bool> {
+    let mut matched = false;
+    mutate_recovery_file(|file| {
+        matched = abandon_pending_delivery_in_memory(
+            file,
+            owner_user_id,
+            expected_auth_epoch,
+            failed_asset_id,
+        );
+    })?;
+    Ok(matched)
+}
+
+fn abandon_pending_delivery_in_memory(
+    file: &mut RecoveryFile,
+    owner_user_id: &str,
+    expected_auth_epoch: u64,
+    failed_asset_id: &str,
+) -> bool {
+    if owner_user_id.trim().is_empty() || failed_asset_id.trim().is_empty() {
+        return false;
+    }
+    let matching_indexes = file
+        .generations
+        .iter()
+        .enumerate()
+        .filter_map(|(index, record)| {
+            (record.owner_user_id == owner_user_id
+                && record.auth_epoch == expected_auth_epoch
+                && record
+                    .deliveries
+                    .iter()
+                    .any(|delivery| {
+                        delivery.failed_asset_id == failed_asset_id && !delivery.acknowledged
+                    }))
+            .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let [index] = matching_indexes.as_slice() else {
+        return false;
+    };
+    for delivery in &mut file.generations[*index].deliveries {
+        if delivery.failed_asset_id == failed_asset_id && !delivery.acknowledged {
+            delivery.abandoned = true;
+        }
+    }
+    if generation_record_complete(&file.generations[*index]) {
+        file.generations.remove(*index);
+    }
+    true
 }
 
 pub(super) fn pending_delivery_acknowledged(
@@ -1064,7 +1271,7 @@ fn generation_record_complete(record: &PendingGenerationRecord) -> bool {
         && record
             .deliveries
             .iter()
-            .filter(|item| item.acknowledged)
+            .filter(|item| item.acknowledged || item.abandoned)
             .count()
             >= record.expected_success_count
 }
@@ -1072,6 +1279,90 @@ fn generation_record_complete(record: &PendingGenerationRecord) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_delivery_defaults_to_non_recoverable_and_not_abandoned() {
+        let delivery: PendingDeliveryRecord = serde_json::from_value(serde_json::json!({
+            "item_index": 0,
+            "file_id": "file-1",
+            "sha256": "abc",
+            "size_bytes": 3,
+            "local_path": "",
+            "acknowledged": false
+        }))
+        .unwrap();
+        assert!(delivery.failed_asset_id.is_empty());
+        assert!(!delivery.abandoned);
+    }
+
+    #[test]
+    fn abandoned_delivery_resolves_recovery_without_faking_ack() {
+        let mut record = pending_record();
+        record.terminal = true;
+        record.expected_success_count = 1;
+        record.deliveries[0].abandoned = true;
+        assert!(generation_record_complete(&record));
+        assert!(!record.deliveries[0].acknowledged);
+    }
+
+    #[test]
+    fn failed_delivery_is_upserted_once_and_recovery_is_scope_bound() {
+        let mut file = RecoveryFile {
+            schema_version: 1,
+            generations: vec![PendingGenerationRecord {
+                deliveries: Vec::new(),
+                ..pending_record()
+            }],
+        };
+        let delivery = DeliveryConfirmation {
+            client_request_id: "request_123".to_string(),
+            item_index: 0,
+            task_id: "server".to_string(),
+            file_id: "file-1".to_string(),
+            sha256: "abc".to_string(),
+            size_bytes: 3,
+        };
+
+        assert!(pending_delivery_failed_in_memory(
+            &mut file,
+            "user-a",
+            9,
+            "request_123",
+            &delivery,
+            "asset-1",
+        ));
+        assert!(pending_delivery_failed_in_memory(
+            &mut file,
+            "user-a",
+            9,
+            "request_123",
+            &delivery,
+            "asset-1",
+        ));
+        assert_eq!(file.generations[0].deliveries.len(), 1);
+        assert_eq!(file.generations[0].deliveries[0].failed_asset_id, "asset-1");
+        assert!(recoverable_delivery_for_failed_asset_in_memory(
+            &file,
+            "user-a",
+            9,
+            "asset-1",
+        )
+        .is_some());
+        assert!(recoverable_delivery_for_failed_asset_in_memory(
+            &file,
+            "user-b",
+            9,
+            "asset-1",
+        )
+        .is_none());
+        assert!(recoverable_delivery_for_failed_asset_in_memory(
+            &file,
+            "user-a",
+            10,
+            "asset-1",
+        )
+        .is_none());
+    }
 
     fn pending_record() -> PendingGenerationRecord {
         PendingGenerationRecord {

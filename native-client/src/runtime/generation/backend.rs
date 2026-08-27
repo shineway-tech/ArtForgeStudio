@@ -2925,6 +2925,8 @@ mod image_edit_recovery_tests {
             size_bytes: bytes.len() as u64,
             local_path: path.display().to_string(),
             acknowledged: false,
+            failed_asset_id: String::new(),
+            abandoned: false,
         }
     }
 
