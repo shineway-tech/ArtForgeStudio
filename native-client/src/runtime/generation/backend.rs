@@ -277,6 +277,38 @@ struct UpscaleSource {
     height: i32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RetryGenerationRecoveryCommitError {
+    NewRecovery,
+    OldDelivery,
+    NewRecoveryRollback,
+}
+
+fn commit_retry_generation_recovery_with(
+    retry_failed_id: Option<&str>,
+    recoverable_delivery_id: Option<&str>,
+    persist_new_recovery: impl FnOnce() -> Result<()>,
+    abandon_old_delivery: impl FnOnce(&str) -> Result<bool>,
+    rollback_new_recovery: impl FnOnce() -> Result<bool>,
+    remove_retry_card: impl FnOnce(&str),
+) -> std::result::Result<(), RetryGenerationRecoveryCommitError> {
+    if persist_new_recovery().is_err() {
+        return Err(RetryGenerationRecoveryCommitError::NewRecovery);
+    }
+    if let Some(failed_asset_id) = recoverable_delivery_id {
+        if !matches!(abandon_old_delivery(failed_asset_id), Ok(true)) {
+            return match rollback_new_recovery() {
+                Ok(true) => Err(RetryGenerationRecoveryCommitError::OldDelivery),
+                Ok(false) | Err(_) => Err(RetryGenerationRecoveryCommitError::NewRecoveryRollback),
+            };
+        }
+    }
+    if let Some(retry_failed_id) = retry_failed_id {
+        remove_retry_card(retry_failed_id);
+    }
+    Ok(())
+}
+
 pub(super) fn start_backend_generation(
     app: &AppWindow,
     context: AppContext,
@@ -408,13 +440,13 @@ pub(super) fn start_backend_generation(
         &quality,
         language,
     );
-
-    if let Some(retry_failed_id) = retry_failed_id.as_deref() {
-        let mut store = store.borrow_mut();
-        store.generations.retain(|item| item.id != retry_failed_id);
-        save_local_store(app, &store);
-        push_all(app, &store);
-    }
+    let recoverable_delivery_id = retry_failed_id.as_deref().filter(|failed_asset_id| {
+        store.borrow().generations.iter().any(|item| {
+            item.id == *failed_asset_id
+                && item.source_path == "failed"
+                && item.delivery_recoverable
+        })
+    });
 
     let conversation_id = if create_conversation {
         Uuid::new_v4().to_string()
@@ -463,14 +495,50 @@ pub(super) fn start_backend_generation(
         },
         canvas_ui_extraction: false,
     };
-    if upsert_pending_generation_scoped(
-        recovery_record.clone(),
-        &session_scope.owner_user_id,
-        session_scope.auth_epoch,
-    )
-    .is_err()
-    {
-        state.set_generation_status("任务准备失败，请重试".into());
+    let recovery_commit = commit_retry_generation_recovery_with(
+        retry_failed_id.as_deref(),
+        recoverable_delivery_id,
+        || {
+            upsert_pending_generation_scoped(
+                recovery_record.clone(),
+                &session_scope.owner_user_id,
+                session_scope.auth_epoch,
+            )
+        },
+        |failed_asset_id| {
+            abandon_pending_delivery(
+                &session_scope.owner_user_id,
+                session_scope.auth_epoch,
+                failed_asset_id,
+            )
+        },
+        || {
+            remove_pending_generation_scoped(
+                &session_scope.owner_user_id,
+                session_scope.auth_epoch,
+                &request_id,
+            )
+        },
+        |retry_failed_id| {
+            let mut store = store.borrow_mut();
+            store.generations.retain(|item| item.id != retry_failed_id);
+            save_local_store(app, &store);
+            push_all(app, &store);
+        },
+    );
+    if let Err(error) = recovery_commit {
+        state.set_generation_status(
+            match error {
+                RetryGenerationRecoveryCommitError::NewRecovery => "任务准备失败，请重试",
+                RetryGenerationRecoveryCommitError::OldDelivery => {
+                    "本地生成恢复记录无法更新，请重启后重试"
+                }
+                RetryGenerationRecoveryCommitError::NewRecoveryRollback => {
+                    "本地生成恢复记录无法回滚，请重启后检查任务状态"
+                }
+            }
+            .into(),
+        );
         return;
     }
     insert_active_generation(
@@ -3001,6 +3069,72 @@ fn run_recovered_generation_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_recovery_upsert_failure_keeps_the_old_delivery_recoverable() {
+        let events = RefCell::new(Vec::new());
+        let abandoned = RefCell::new(false);
+
+        let result = commit_retry_generation_recovery_with(
+            Some("failed-card"),
+            Some("failed-card"),
+            || {
+                events.borrow_mut().push("upsert-new-recovery");
+                Err(anyhow!("new recovery persistence failed"))
+            },
+            |_| {
+                *abandoned.borrow_mut() = true;
+                events.borrow_mut().push("abandon-old-delivery");
+                Ok(true)
+            },
+            || {
+                events.borrow_mut().push("rollback-new-recovery");
+                Ok(true)
+            },
+            |_| events.borrow_mut().push("remove-old-card"),
+        );
+
+        assert!(result.is_err());
+        assert!(!*abandoned.borrow());
+        assert_eq!(events.into_inner(), vec!["upsert-new-recovery"]);
+    }
+
+    #[test]
+    fn committed_retry_abandons_the_old_delivery_immediately_before_removing_the_card() {
+        let events = RefCell::new(Vec::new());
+
+        let result = commit_retry_generation_recovery_with(
+            Some("failed-card"),
+            Some("failed-card"),
+            || {
+                events.borrow_mut().push("upsert-new-recovery");
+                Ok(())
+            },
+            |failed_asset_id| {
+                assert_eq!(failed_asset_id, "failed-card");
+                events.borrow_mut().push("abandon-old-delivery");
+                Ok(true)
+            },
+            || {
+                events.borrow_mut().push("rollback-new-recovery");
+                Ok(true)
+            },
+            |failed_asset_id| {
+                assert_eq!(failed_asset_id, "failed-card");
+                events.borrow_mut().push("remove-old-card");
+            },
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(
+            events.into_inner(),
+            vec![
+                "upsert-new-recovery",
+                "abandon-old-delivery",
+                "remove-old-card",
+            ]
+        );
+    }
 
     fn failed_generation_task(code: &str, message: &str) -> GenerationTaskDetail {
         GenerationTaskDetail {
