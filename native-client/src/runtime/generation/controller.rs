@@ -480,6 +480,13 @@ pub(super) fn add_canvas_stream_success_item(
     Ok(source_path)
 }
 
+pub(super) fn upsert_stream_failure_card(generations: &mut Vec<AssetData>, card: AssetData) {
+    if card.delivery_recoverable {
+        generations.retain(|existing| existing.id != card.id);
+    }
+    generations.insert(0, card);
+}
+
 pub(super) fn add_stream_failure_item(
     app: &AppWindow,
     store: &Rc<RefCell<Store>>,
@@ -502,8 +509,8 @@ pub(super) fn add_stream_failure_item(
     let delivery_recoverable = failed_asset_id.is_some();
     let mut store_mut = store.borrow_mut();
     reveal_prompt_history_entry(&mut store_mut, raw_prompt);
-    store_mut.generations.insert(
-        0,
+    upsert_stream_failure_card(
+        &mut store_mut.generations,
         AssetData {
             id: asset_id.clone(),
             conversation_id: conversation_id.to_string(),

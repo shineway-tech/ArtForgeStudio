@@ -5096,6 +5096,51 @@ mod tests {
     }
 
     #[test]
+    fn repeated_recoverable_delivery_failures_replace_the_existing_card() {
+        let failed_asset_id = "failed-delivery-asset";
+        let mut cards = Vec::new();
+
+        upsert_stream_failure_card(
+            &mut cards,
+            delivery_failure_card(failed_asset_id, "First delivery failure"),
+        );
+        upsert_stream_failure_card(
+            &mut cards,
+            delivery_failure_card(failed_asset_id, "Repeated delivery failure"),
+        );
+
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].id, failed_asset_id);
+        assert!(cards[0].delivery_recoverable);
+    }
+
+    fn delivery_failure_card(id: &str, title: &str) -> AssetData {
+        AssetData {
+            id: id.to_string(),
+            conversation_id: "conversation".to_string(),
+            title: title.to_string(),
+            category: "scene".to_string(),
+            kind: "generate".to_string(),
+            time: "2026-08-27 00:00:00".to_string(),
+            prompt: "A recoverable delivery failure".to_string(),
+            ratio: "1:1".to_string(),
+            quality: "1K".to_string(),
+            model: "model".to_string(),
+            origin: "backend".to_string(),
+            width: 0,
+            height: 0,
+            source_path: "failed".to_string(),
+            reference_paths: Vec::new(),
+            cutout_done: false,
+            remove_black_done: false,
+            upscale_done: false,
+            is_new: false,
+            delivery_recoverable: true,
+            delivery_downloading: false,
+        }
+    }
+
+    #[test]
     fn generation_keeps_prompt_text_until_the_user_clears_it() {
         let backend = include_str!("generation/backend.rs");
         let controller = include_str!("generation/controller.rs");
