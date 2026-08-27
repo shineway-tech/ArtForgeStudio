@@ -377,6 +377,8 @@ pub(super) fn add_stream_success_item(
         remove_black_done: false,
         upscale_done,
         is_new: true,
+        delivery_recoverable: false,
+        delivery_downloading: false,
     };
     let conversation_image =
         load_preview_image(Path::new(&source_path), PreviewPurpose::Reference)?;
@@ -492,13 +494,18 @@ pub(super) fn add_stream_failure_item(
     reason: &str,
     time: &str,
     reference_paths: &[String],
-) {
+    failed_asset_id: Option<&str>,
+) -> String {
+    let asset_id = failed_asset_id
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let delivery_recoverable = failed_asset_id.is_some();
     let mut store_mut = store.borrow_mut();
     reveal_prompt_history_entry(&mut store_mut, raw_prompt);
     store_mut.generations.insert(
         0,
         AssetData {
-            id: Uuid::new_v4().to_string(),
+            id: asset_id.clone(),
             conversation_id: conversation_id.to_string(),
             title: short_text(raw_prompt, 18),
             category: category.to_string(),
@@ -517,6 +524,8 @@ pub(super) fn add_stream_failure_item(
             remove_black_done: false,
             upscale_done: false,
             is_new: false,
+            delivery_recoverable,
+            delivery_downloading: false,
         },
     );
     store_mut.notifications.insert(
@@ -533,6 +542,7 @@ pub(super) fn add_stream_failure_item(
     );
     save_local_store(app, &store_mut);
     push_all(app, &store_mut);
+    asset_id
 }
 
 pub(super) fn restore_stream_inputs(

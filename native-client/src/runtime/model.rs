@@ -141,6 +141,8 @@ struct AssetData {
     remove_black_done: bool,
     upscale_done: bool,
     is_new: bool,
+    delivery_recoverable: bool,
+    delivery_downloading: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -212,6 +214,7 @@ enum GenerationOutcome {
     ImageFailure {
         reason: String,
         time: String,
+        delivery: Option<DeliveryConfirmation>,
     },
     Finished,
     CreditInsufficient {
@@ -300,6 +303,7 @@ struct DeliveryConfirmation {
     file_id: String,
     sha256: String,
     size_bytes: u64,
+    failed_asset_id: Option<String>,
 }
 
 #[derive(Clone)]

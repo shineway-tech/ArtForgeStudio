@@ -736,6 +736,8 @@ pub(super) fn recover_output_assets(app: &AppWindow, store: &Rc<RefCell<Store>>)
             remove_black_done: false,
             upscale_done: false,
             is_new: false,
+            delivery_recoverable: false,
+            delivery_downloading: false,
         });
     }
     if recovered.is_empty() {
@@ -904,6 +906,8 @@ mod generated_asset_persistence_tests {
             remove_black_done: false,
             upscale_done: false,
             is_new: false,
+            delivery_recoverable: false,
+            delivery_downloading: false,
         }
     }
 
@@ -1096,5 +1100,7 @@ pub(super) fn asset_from_stored(asset: StoredAssetData) -> Option<AssetData> {
         remove_black_done: asset.remove_black_done,
         upscale_done: asset.upscale_done,
         is_new: false,
+        delivery_recoverable: false,
+        delivery_downloading: false,
     })
 }

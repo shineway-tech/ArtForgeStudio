@@ -5085,6 +5085,17 @@ mod tests {
     }
 
     #[test]
+    fn delivery_failure_state_is_exposed_to_asset_cards() {
+        let types = include_str!("../../ui/types.slint");
+        let sync = include_str!("presentation/sync.rs");
+
+        assert!(types.contains("delivery-recoverable: bool"));
+        assert!(types.contains("delivery-downloading: bool"));
+        assert!(sync.contains("delivery_recoverable: asset.delivery_recoverable"));
+        assert!(sync.contains("delivery_downloading: asset.delivery_downloading"));
+    }
+
+    #[test]
     fn generation_keeps_prompt_text_until_the_user_clears_it() {
         let backend = include_str!("generation/backend.rs");
         let controller = include_str!("generation/controller.rs");

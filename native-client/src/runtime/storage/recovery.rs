@@ -1321,6 +1321,7 @@ mod tests {
             file_id: "file-1".to_string(),
             sha256: "abc".to_string(),
             size_bytes: 3,
+            failed_asset_id: None,
         };
 
         assert!(pending_delivery_failed_in_memory(

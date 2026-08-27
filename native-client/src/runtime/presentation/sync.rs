@@ -1751,6 +1751,8 @@ mod virtual_gallery_tests {
             remove_black_done: false,
             upscale_done: false,
             is_new: false,
+            delivery_recoverable: false,
+            delivery_downloading: false,
         }
     }
 
@@ -2153,6 +2155,8 @@ mod gallery_paging_tests {
             remove_black_done: false,
             upscale_done: false,
             is_new: false,
+            delivery_recoverable: false,
+            delivery_downloading: false,
         }
     }
 
@@ -2609,6 +2613,8 @@ pub(super) fn to_asset_view_metadata(asset: &AssetData) -> AssetItem {
         remove_black_done: asset.remove_black_done,
         upscale_done: asset.upscale_done,
         is_new: asset.is_new,
+        delivery_recoverable: asset.delivery_recoverable,
+        delivery_downloading: asset.delivery_downloading,
     }
 }
 

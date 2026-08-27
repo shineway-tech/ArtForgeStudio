@@ -247,6 +247,7 @@ pub(super) fn poll_generation_stream(
                                 &reason,
                                 &time,
                                 &generation_reference_paths,
+                                None,
                             );
                         } else {
                             set_generation_status_for_category(&context, &app, &category, &reason);
@@ -263,7 +264,11 @@ pub(super) fn poll_generation_stream(
                     }
                 }
             }
-            GenerationOutcome::ImageFailure { reason, time } => {
+            GenerationOutcome::ImageFailure {
+                reason,
+                time,
+                delivery,
+            } => {
                 if destination == GenerationDestination::Gallery {
                     add_stream_failure_item(
                         &app,
@@ -279,6 +284,9 @@ pub(super) fn poll_generation_stream(
                         &reason,
                         &time,
                         &generation_reference_paths,
+                        delivery
+                            .as_ref()
+                            .and_then(|delivery| delivery.failed_asset_id.as_deref()),
                     );
                 }
                 if let Some(active) = mark_active_generation_image_completed(
@@ -386,6 +394,7 @@ pub(super) fn poll_generation_stream(
                             &reason,
                             &time,
                             &generation_reference_paths,
+                            None,
                         );
                     }
                 }
