@@ -2056,6 +2056,12 @@ pub(super) fn apply_backend_snapshot(
             snapshot
                 .models
                 .iter()
+                .find(|item| item.code == "openai_prompt")
+        })
+        .or_else(|| {
+            snapshot
+                .models
+                .iter()
                 .find(|item| item.purpose == "prompt_processing")
         });
     let mut model_groups = Vec::new();

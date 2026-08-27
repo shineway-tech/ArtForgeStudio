@@ -4384,6 +4384,25 @@ mod tests {
     }
 
     #[test]
+    fn prompt_model_fallback_preserves_openai_prompt_as_the_default() {
+        let auth = include_str!("callbacks/auth.rs");
+        let selection_start = auth.find("let selected_prompt = snapshot").unwrap();
+        let selection_end = auth[selection_start..]
+            .find("let mut model_groups")
+            .map(|offset| selection_start + offset)
+            .unwrap();
+        let selection = &auth[selection_start..selection_end];
+        let saved_selection = selection.find("item.code == selected_prompt_code").unwrap();
+        let preferred_fallback = selection.find("item.code == \"openai_prompt\"").unwrap();
+        let generic_fallback = selection
+            .rfind("item.purpose == \"prompt_processing\"")
+            .unwrap();
+
+        assert!(saved_selection < preferred_fallback);
+        assert!(preferred_fallback < generic_fallback);
+    }
+
+    #[test]
     fn all_agreement_links_use_the_embedded_client_viewer() {
         let app = include_str!("../../ui/app.slint");
         let auth_dialog = include_str!("../../ui/dialogs/auth-dialog.slint");
