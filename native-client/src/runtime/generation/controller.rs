@@ -406,6 +406,81 @@ pub(super) fn add_stream_success_item(
     Ok((conversation_image, source_path, generated_id))
 }
 
+pub(super) fn replace_failed_delivery_asset_checked(
+    app: &AppWindow,
+    store: &Rc<RefCell<Store>>,
+    failed_asset_id: &str,
+    staged_path: &Path,
+    time: &str,
+) -> Result<(String, String)> {
+    let failed_asset = {
+        let store = store.borrow();
+        let mut matches = store.generations.iter().filter(|item| {
+            item.id == failed_asset_id
+                && item.source_path == "failed"
+                && item.delivery_recoverable
+        });
+        let failed_asset = matches.next().cloned();
+        if matches.next().is_some() {
+            anyhow::bail!("failed delivery card is ambiguous");
+        }
+        failed_asset.ok_or_else(|| anyhow!("failed delivery card is missing"))?
+    };
+    let (width, height) = inspect_image_dimensions(staged_path)?;
+    let source_path = save_generated_file(app, staged_path, &failed_asset.prompt)?;
+    let completed_asset = AssetData {
+        id: failed_asset.id.clone(),
+        conversation_id: failed_asset.conversation_id,
+        title: failed_asset.title,
+        category: failed_asset.category,
+        kind: failed_asset.kind,
+        time: time.to_string(),
+        prompt: failed_asset.prompt.clone(),
+        ratio: ratio_from_actual_dimensions(width as i32, height as i32),
+        quality: failed_asset.quality,
+        model: failed_asset.model.clone(),
+        origin: failed_asset.origin,
+        width: width as i32,
+        height: height as i32,
+        source_path: source_path.clone(),
+        reference_paths: failed_asset.reference_paths,
+        cutout_done: failed_asset.cutout_done,
+        remove_black_done: failed_asset.remove_black_done,
+        upscale_done: failed_asset.upscale_done,
+        is_new: true,
+        delivery_recoverable: false,
+        delivery_downloading: false,
+    };
+    let notification = NotificationData {
+        id: Uuid::new_v4().to_string(),
+        title: format!(
+            "图片下载完成：{}",
+            short_text(&failed_asset.prompt, 24)
+        ),
+        model: failed_asset.model,
+        time: time.to_string(),
+        reason: String::new(),
+        success: true,
+        read: false,
+    };
+    let persisted = {
+        let mut store = store.borrow_mut();
+        replace_failed_delivery_asset_with(
+            &mut store,
+            failed_asset_id,
+            completed_asset,
+            notification,
+            |pending| save_local_store_checked(app, pending),
+        )
+    };
+    if let Err(error) = persisted {
+        let _ = fs::remove_file(&source_path);
+        return Err(error);
+    }
+    push_all(app, &store.borrow());
+    Ok((source_path, failed_asset_id.to_string()))
+}
+
 pub(super) fn add_canvas_stream_success_item(
     app: &AppWindow,
     context: &AppContext,

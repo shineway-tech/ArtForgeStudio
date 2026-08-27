@@ -437,6 +437,7 @@ fn credit_sync_epoch_is_current(store: &Store, request_epoch: u64) -> bool {
 struct GenerationRegistry {
     active: RefCell<BTreeMap<String, ActiveGeneration>>,
     statuses: RefCell<BTreeMap<String, String>>,
+    delivery_downloads: RefCell<BTreeSet<String>>,
 }
 
 #[derive(Clone)]

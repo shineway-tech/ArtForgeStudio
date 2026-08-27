@@ -1,6 +1,6 @@
 use super::*;
 
-fn generation_download_staging_path(
+pub(super) fn generation_download_staging_path(
     client_request_id: &str,
     item_index: usize,
     file: &TaskOutputFile,
@@ -2419,6 +2419,9 @@ fn resume_pending_generation(
         auth_epoch: record.auth_epoch,
     };
     if !generation_scope_matches_context(&context, &session_scope) {
+        return;
+    }
+    if !reserve_recovered_delivery_downloads(app, &context, &record) {
         return;
     }
     let saved_count = record

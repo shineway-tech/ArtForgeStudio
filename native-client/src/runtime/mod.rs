@@ -139,6 +139,9 @@ use viewer::*;
 #[path = "generation/controller.rs"]
 mod generation_controller;
 use generation_controller::*;
+#[path = "generation/delivery_retry.rs"]
+mod delivery_retry;
+use delivery_retry::*;
 #[path = "generation/backend.rs"]
 mod backend_generation;
 use backend_generation::*;

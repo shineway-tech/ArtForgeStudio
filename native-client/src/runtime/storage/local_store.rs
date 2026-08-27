@@ -881,6 +881,65 @@ fn remove_front_asset_if_matches(items: &mut Vec<AssetData>, expected_id: &str) 
     }
 }
 
+pub(super) fn replace_failed_delivery_asset_with<F>(
+    store: &mut Store,
+    failed_asset_id: &str,
+    completed_asset: AssetData,
+    notification: NotificationData,
+    persist: F,
+) -> Result<()>
+where
+    F: FnOnce(&Store) -> Result<()>,
+{
+    if failed_asset_id.trim().is_empty()
+        || completed_asset.id != failed_asset_id
+        || completed_asset.source_path == "failed"
+        || completed_asset.source_path.trim().is_empty()
+    {
+        anyhow::bail!("failed delivery replacement metadata is invalid");
+    }
+    let matching_generation_indexes = store
+        .generations
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| (item.id == failed_asset_id).then_some(index))
+        .collect::<Vec<_>>();
+    let [generation_index] = matching_generation_indexes.as_slice() else {
+        anyhow::bail!("failed delivery card is missing or ambiguous");
+    };
+    if store.generations[*generation_index].source_path != "failed"
+        || store
+            .assets
+            .iter()
+            .any(|item| item.id == failed_asset_id)
+    {
+        anyhow::bail!("failed delivery card cannot be replaced safely");
+    }
+
+    let failed_card = std::mem::replace(
+        &mut store.generations[*generation_index],
+        completed_asset.clone(),
+    );
+    let notification_id = notification.id.clone();
+    store.assets.insert(0, completed_asset);
+    store.notifications.insert(0, notification);
+
+    if let Err(error) = persist(store) {
+        store.generations[*generation_index] = failed_card;
+        remove_front_asset_if_matches(&mut store.assets, failed_asset_id);
+        if store
+            .notifications
+            .first()
+            .is_some_and(|item| item.id == notification_id)
+        {
+            store.notifications.remove(0);
+        }
+        return Err(error);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod generated_asset_persistence_tests {
     use super::*;
@@ -1048,6 +1107,102 @@ mod generated_asset_persistence_tests {
                 .unwrap()
                 < colorization_flow.find("pending_delivery_saved(").unwrap(),
         );
+    }
+}
+
+#[cfg(test)]
+mod failed_card_replacement_tests {
+    use super::*;
+
+    fn asset(id: &str, source_path: &str) -> AssetData {
+        AssetData {
+            id: id.to_string(),
+            conversation_id: "conversation".to_string(),
+            title: "generated".to_string(),
+            category: "other".to_string(),
+            kind: "game".to_string(),
+            time: "now".to_string(),
+            prompt: "paid prompt".to_string(),
+            ratio: "1:1".to_string(),
+            quality: "1K".to_string(),
+            model: "test".to_string(),
+            origin: "generation".to_string(),
+            width: 1,
+            height: 1,
+            source_path: source_path.to_string(),
+            reference_paths: vec![],
+            cutout_done: false,
+            remove_black_done: false,
+            upscale_done: false,
+            is_new: source_path != "failed",
+            delivery_recoverable: source_path == "failed",
+            delivery_downloading: false,
+        }
+    }
+
+    fn notification() -> NotificationData {
+        NotificationData {
+            id: "notification-1".to_string(),
+            title: "图片下载完成：paid prompt".to_string(),
+            model: "test".to_string(),
+            time: "now".to_string(),
+            reason: String::new(),
+            success: true,
+            read: false,
+        }
+    }
+
+    #[test]
+    fn failed_card_replacement_preserves_position_and_adds_one_notification() {
+        let mut store = Store::default();
+        store.generations.push(asset("before", "/saved/before.png"));
+        store.generations.push(asset("failed-1", "failed"));
+        store.generations.push(asset("after", "/saved/after.png"));
+
+        replace_failed_delivery_asset_with(
+            &mut store,
+            "failed-1",
+            asset("failed-1", "/saved/image.png"),
+            notification(),
+            |_| Ok(()),
+        )
+        .unwrap();
+
+        assert_eq!(store.generations[1].id, "failed-1");
+        assert_eq!(store.generations[1].source_path, "/saved/image.png");
+        assert_eq!(
+            store
+                .assets
+                .iter()
+                .filter(|item| item.id == "failed-1")
+                .count(),
+            1
+        );
+        assert_eq!(store.notifications.len(), 1);
+    }
+
+    #[test]
+    fn failed_card_replacement_rolls_back_every_change_when_persistence_fails() {
+        let mut store = Store::default();
+        store.generations.push(asset("failed-1", "failed"));
+
+        let result = replace_failed_delivery_asset_with(
+            &mut store,
+            "failed-1",
+            asset("failed-1", "/saved/image.png"),
+            notification(),
+            |pending| {
+                assert_eq!(pending.generations[0].source_path, "/saved/image.png");
+                assert_eq!(pending.assets.len(), 1);
+                assert_eq!(pending.notifications.len(), 1);
+                Err(anyhow!("disk full"))
+            },
+        );
+
+        assert!(result.is_err());
+        assert_eq!(store.generations[0].source_path, "failed");
+        assert!(store.assets.is_empty());
+        assert!(store.notifications.is_empty());
     }
 }
 
