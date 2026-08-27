@@ -248,6 +248,7 @@ fn apply_local_store_data(
 ) -> bool {
     let saved_image_model = data.image_model.clone();
     let saved_reasoning_model = data.reasoning_model.clone();
+    let saved_video_model = data.video_model.clone();
     let migrated_local_store = {
         let mut store_mut = store.borrow_mut();
         // Legacy provider endpoints and API keys are intentionally ignored.
@@ -326,6 +327,7 @@ fn apply_local_store_data(
     state.set_contact_popup_open(!store.borrow().contact_popup_dismissed);
     state.set_image_model(saved_image_model.into());
     state.set_reasoning_model(saved_reasoning_model.into());
+    state.set_video_model(saved_video_model.into());
     let category = resolve_category(&state.get_asset_type().to_string(), "");
     state.set_asset_type(category.clone().into());
     state.set_prompt(prompt_draft_for_category(&store.borrow().prompt_drafts, &category).into());
@@ -778,6 +780,7 @@ fn local_store_data(app: &AppWindow, store: &Store) -> LocalStoreData {
         notifications: store.notifications.clone(),
         image_model: state.get_image_model().to_string(),
         reasoning_model: state.get_reasoning_model().to_string(),
+        video_model: state.get_video_model().to_string(),
         prompt_drafts: store.prompt_drafts.clone(),
         dismissed_prompt_history: store.dismissed_prompt_history.clone(),
         custom_prompts: store.custom_prompts.clone(),

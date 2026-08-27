@@ -503,6 +503,8 @@ struct LocalStoreData {
     #[serde(default)]
     reasoning_model: String,
     #[serde(default)]
+    video_model: String,
+    #[serde(default)]
     prompt_drafts: PromptDrafts,
     #[serde(default)]
     dismissed_prompt_history: BTreeSet<String>,

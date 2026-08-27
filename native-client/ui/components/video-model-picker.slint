@@ -1,0 +1,163 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { DropdownIcon } from "dropdown-icon.slint";
+import { AppTheme } from "../theme.slint";
+
+export component VideoModelPicker inherits Rectangle {
+    in property <bool> disabled: false;
+    callback select-model(string);
+
+    height: 58px;
+    opacity: root.disabled ? 0.55 : 1;
+    background: picker-touch.has-hover && !root.disabled ? AppTheme.panel-soft : AppTheme.panel;
+    border-radius: 9px;
+    border-width: 1px;
+    border-color: picker-touch.has-hover && !root.disabled ? AppTheme.accent : AppTheme.border;
+
+    Image {
+        x: 12px;
+        y: 13px;
+        width: 20px;
+        height: 20px;
+        source: @image-url("../../assets/icons/video.svg");
+        colorize: AppTheme.accent-dark;
+        image-fit: contain;
+    }
+    Text {
+        x: 42px;
+        y: 8px;
+        width: parent.width - 82px;
+        height: 21px;
+        text: AppState.video-model-name == ""
+            ? (AppState.en ? "No model available" : "暂无可用模型")
+            : AppState.video-model-name;
+        color: AppTheme.text;
+        font-size: 14px;
+        font-weight: 600;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Text {
+        x: 42px;
+        y: 31px;
+        width: parent.width - 82px;
+        height: 18px;
+        text: AppState.video-model-description == ""
+            ? (AppState.en ? "Image-to-video model" : "图生视频模型")
+            : AppState.video-model-description;
+        color: AppTheme.muted;
+        font-size: 11px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    DropdownIcon {
+        x: parent.width - 28px;
+        y: (parent.height - 12px) / 2;
+    }
+    picker-touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        enabled: !root.disabled && AppState.video-model-options.length > 0;
+        mouse-cursor: self.enabled ? pointer : default;
+        accessible-role: combobox;
+        accessible-label: AppState.en ? "Select video model" : "选择视频模型";
+        clicked => { popup.show(); }
+    }
+
+    popup := PopupWindow {
+        x: 0px;
+        y: root.height + 6px;
+        width: root.width;
+        height: root.popup-height();
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: AppTheme.panel;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: AppTheme.accent;
+            clip: true;
+
+            ScrollView {
+                width: parent.width;
+                height: parent.height;
+                viewport-width: self.width;
+                viewport-height: max(self.height, 12px + AppState.video-model-options.length * 64px);
+
+                VerticalLayout {
+                    width: parent.viewport-width;
+                    height: parent.viewport-height;
+                    padding: 6px;
+                    spacing: 2px;
+
+                    for model in AppState.video-model-options: Rectangle {
+                        height: 62px;
+                        background: model-touch.has-hover
+                            ? AppTheme.panel-soft
+                            : (AppState.video-model == model.code ? AppTheme.accent.with-alpha(0.09) : transparent);
+                        border-radius: 7px;
+
+                        Image {
+                            x: 10px;
+                            y: 13px;
+                            width: 18px;
+                            height: 18px;
+                            source: @image-url("../../assets/icons/video.svg");
+                            colorize: AppState.video-model == model.code ? AppTheme.accent-dark : AppTheme.muted;
+                            image-fit: contain;
+                        }
+                        Text {
+                            x: 38px;
+                            y: 8px;
+                            width: parent.width - 74px;
+                            height: 21px;
+                            text: model.name;
+                            color: AppTheme.text;
+                            font-size: 13px;
+                            font-weight: AppState.video-model == model.code ? 600 : 500;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Text {
+                            x: 38px;
+                            y: 31px;
+                            width: parent.width - 74px;
+                            height: 18px;
+                            text: model.pricing == ""
+                                ? model.capabilities
+                                : model.capabilities + " · " + model.pricing;
+                            color: AppTheme.muted;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        if AppState.video-model == model.code: Image {
+                            x: parent.width - 26px;
+                            y: 22px;
+                            width: 14px;
+                            height: 14px;
+                            source: @image-url("../../assets/icons/check.svg");
+                            colorize: AppTheme.accent-dark;
+                            image-fit: contain;
+                        }
+                        model-touch := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            accessible-role: button;
+                            accessible-label: model.name;
+                            clicked => {
+                                root.select-model(model.code);
+                                popup.close();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    function popup-height() -> length {
+        return min(326px, max(74px, 12px + AppState.video-model-options.length * 64px));
+    }
+}

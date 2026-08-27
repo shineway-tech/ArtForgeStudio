@@ -380,6 +380,7 @@ fn write_local_store(connection: &mut Connection, data: &LocalStoreData) -> Resu
 
     write_setting_json(&transaction, "image_model", &data.image_model)?;
     write_setting_json(&transaction, "reasoning_model", &data.reasoning_model)?;
+    write_setting_json(&transaction, "video_model", &data.video_model)?;
     write_setting_json(&transaction, "prompt_drafts", &data.prompt_drafts)?;
     write_setting_json(
         &transaction,
@@ -683,6 +684,7 @@ fn read_local_store_transaction(transaction: &Transaction<'_>) -> Result<LocalSt
         notifications: read_notifications(transaction)?,
         image_model: read_setting_json_or_default(transaction, "image_model")?,
         reasoning_model: read_setting_json_or_default(transaction, "reasoning_model")?,
+        video_model: read_setting_json_or_default(transaction, "video_model")?,
         prompt_drafts: read_setting_json_or_default(transaction, "prompt_drafts")?,
         dismissed_prompt_history: read_setting_json_or_default(
             transaction,
@@ -923,6 +925,7 @@ mod tests {
         let mut connection = open_client_state_connection(&path).expect("open");
         migrate_client_state_schema(&mut connection).expect("schema");
         let data = LocalStoreData {
+            video_model: "seedance-pro".to_string(),
             assets: vec![StoredAssetData {
                 id: "asset-1".to_string(),
                 conversation_id: "conversation-1".to_string(),
@@ -960,6 +963,7 @@ mod tests {
             data.assets[0].reference_paths
         );
         assert_eq!(restored.assets[0].width, 1600);
+        assert_eq!(restored.video_model, data.video_model);
         assert_eq!(restored.custom_prompts, data.custom_prompts);
         assert_eq!(
             restored.custom_prompt_times.get("custom"),

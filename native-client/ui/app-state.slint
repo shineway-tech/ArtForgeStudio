@@ -83,6 +83,7 @@ export global AppState {
     in-out property <[ModelOption]> model-image-options: [];
     in-out property <[ModelOption]> model-reasoning-options: [];
     in-out property <[CatalogModelView]> catalog-models: [];
+    in-out property <[CatalogModelView]> video-model-options: [];
     in-out property <string> image-model: "";
     in-out property <string> image-model-name: "";
     in-out property <string> reasoning-model: "";
@@ -534,6 +535,7 @@ export global AppState {
     in-out property <string> video-quote-id: "";
     in-out property <string> video-model: "";
     in-out property <string> video-model-name: "";
+    in-out property <string> video-model-description: "";
     in-out property <bool> video-service-available: false;
     in-out property <string> video-status: "";
     in-out property <bool> video-generating: false;
@@ -826,6 +828,7 @@ export global AppState {
     callback viewer-open-image-editor();
     callback viewer-generate-video();
     callback close-video-generation();
+    callback select-video-model(string);
     callback request-video-quote(string, string, int);
     callback submit-video-generation();
     callback sync-video-player(float, float, float, float);

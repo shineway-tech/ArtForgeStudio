@@ -5,11 +5,52 @@ enum VideoGenerationOutcome {
     Failure { message: String },
 }
 
+fn apply_video_model_selection(state: &AppState, model_code: &str) -> bool {
+    if state.get_video_generating() || state.get_video_model().as_str() == model_code {
+        return false;
+    }
+    let selected = state
+        .get_catalog_models()
+        .iter()
+        .find(|model| model.code == model_code && model.purpose == "video_generation");
+    let Some(selected) = selected else {
+        return false;
+    };
+
+    state.set_video_model(selected.code);
+    state.set_video_model_name(selected.name);
+    state.set_video_model_description(selected.capabilities);
+    state.set_video_quote_loading(false);
+    state.set_video_quote_ready(false);
+    state.set_video_quote_id("".into());
+    state.set_video_credit_cost("".into());
+    state.invoke_request_video_quote(
+        state.get_video_aspect_ratio(),
+        state.get_video_resolution(),
+        state.get_video_duration_seconds(),
+    );
+    true
+}
+
 pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
     let store = context.store.clone();
     let quote_epoch = Arc::new(AtomicU64::new(0));
     let pending_client_request_id = Arc::new(Mutex::new(String::new()));
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        state.on_select_video_model(move |model_code| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            if apply_video_model_selection(&state, model_code.as_str()) {
+                save_local_store(&app, &store.borrow());
+            }
+        });
+    }
 
     {
         let app_weak = app.as_weak();
@@ -359,5 +400,84 @@ fn run_video_generation_task(
     }
     VideoGenerationOutcome::Success {
         local_path: local_path.to_string_lossy().into_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn catalog_model(code: &str, name: &str, purpose: &str) -> CatalogModelView {
+        CatalogModelView {
+            code: code.into(),
+            name: name.into(),
+            purpose: purpose.into(),
+            version: 1,
+            capabilities: "支持图生视频".into(),
+            pricing: String::new().into(),
+            price_1k: 0,
+            price_2k: 0,
+            price_4k: 0,
+            price_standard: String::new().into(),
+            supports_image_edit: false,
+            supports_style_analysis: false,
+        }
+    }
+
+    #[test]
+    fn selecting_video_model_invalidates_quote_and_requests_fresh_quote() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+
+        state.set_catalog_models(ModelRc::new(VecModel::from(vec![
+            catalog_model("seedance-lite", "Seedance Lite", "video_generation"),
+            catalog_model("seedance-pro", "Seedance Pro", "video_generation"),
+            catalog_model("image-only", "Image Only", "image_generation"),
+        ])));
+        state.set_video_model("seedance-lite".into());
+        state.set_video_model_name("Seedance Lite".into());
+        state.set_video_aspect_ratio("9:16".into());
+        state.set_video_resolution("1080P".into());
+        state.set_video_duration_seconds(8);
+        state.set_video_quote_ready(true);
+        state.set_video_quote_id("quote-old".into());
+        state.set_video_credit_cost("42".into());
+
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        {
+            let observed = observed.clone();
+            let weak = app.as_weak();
+            state.on_request_video_quote(move |ratio, resolution, duration| {
+                let app = weak.upgrade().expect("app remains alive");
+                let state = app.global::<AppState>();
+                observed.borrow_mut().push((
+                    state.get_video_model().to_string(),
+                    state.get_video_model_name().to_string(),
+                    state.get_video_quote_ready(),
+                    state.get_video_quote_id().to_string(),
+                    state.get_video_credit_cost().to_string(),
+                    ratio.to_string(),
+                    resolution.to_string(),
+                    duration,
+                ));
+            });
+        }
+
+        assert!(apply_video_model_selection(&state, "seedance-pro"));
+
+        assert_eq!(
+            observed.borrow().as_slice(),
+            &[(
+                "seedance-pro".to_string(),
+                "Seedance Pro".to_string(),
+                false,
+                String::new(),
+                String::new(),
+                "9:16".to_string(),
+                "1080P".to_string(),
+                8,
+            )]
+        );
     }
 }
