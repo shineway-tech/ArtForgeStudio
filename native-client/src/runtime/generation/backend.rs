@@ -562,6 +562,7 @@ pub(super) fn start_backend_generation(
             latest_success_id: None,
             session_scope: session_scope.clone(),
             destination: destination.clone(),
+            delivery_download_reservations: Vec::new(),
         },
     );
     set_generation_status_for_category(&context, app, &category, "正在优化并上传参考图...");
@@ -895,6 +896,7 @@ pub(super) fn start_backend_generation(
         app.as_weak(),
         context,
         session_scope,
+        Vec::new(),
         Rc::new(RefCell::new(Some(receiver))),
         display_prompt,
         category,
@@ -1065,6 +1067,7 @@ pub(super) fn start_backend_image_edit(
             latest_success_id: None,
             session_scope: session_scope.clone(),
             destination: GenerationDestination::Gallery,
+            delivery_download_reservations: Vec::new(),
         },
     );
     set_generation_status_for_category(&context, app, &category, "正在上传原图和遮罩...");
@@ -1082,6 +1085,7 @@ pub(super) fn start_backend_image_edit(
         app.as_weak(),
         context,
         session_scope,
+        Vec::new(),
         Rc::new(RefCell::new(Some(receiver))),
         prompt,
         category,
@@ -1295,6 +1299,7 @@ pub(super) fn start_backend_upscale(
             latest_success_id: None,
             session_scope: session_scope.clone(),
             destination: GenerationDestination::Gallery,
+            delivery_download_reservations: Vec::new(),
         },
     );
     state.set_viewer_processing(true);
@@ -1605,6 +1610,7 @@ pub(super) fn start_backend_upscale(
         app.as_weak(),
         context,
         session_scope,
+        Vec::new(),
         Rc::new(RefCell::new(Some(receiver))),
         raw_prompt,
         source_category,
@@ -2489,9 +2495,11 @@ fn resume_pending_generation(
     if !generation_scope_matches_context(&context, &session_scope) {
         return;
     }
-    if !reserve_recovered_delivery_downloads(app, &context, &record) {
+    let Some(delivery_download_reservations) =
+        reserve_recovered_delivery_downloads(app, &context, &record)
+    else {
         return;
-    }
+    };
     let saved_count = record
         .deliveries
         .iter()
@@ -2526,6 +2534,7 @@ fn resume_pending_generation(
                     source_node_id: record.canvas_source_node_id.clone(),
                 }
             },
+            delivery_download_reservations: delivery_download_reservations.clone(),
         },
     );
     let state = app.global::<AppState>();
@@ -2574,6 +2583,7 @@ fn resume_pending_generation(
         app.as_weak(),
         context,
         session_scope,
+        delivery_download_reservations,
         Rc::new(RefCell::new(Some(receiver))),
         record.raw_prompt,
         record.category,
@@ -3132,6 +3142,93 @@ mod tests {
                 "upsert-new-recovery",
                 "abandon-old-delivery",
                 "remove-old-card",
+            ]
+        );
+    }
+
+    #[test]
+    fn retry_recovery_abandonment_failure_rolls_back_new_recovery_and_keeps_old_card() {
+        let events = RefCell::new(Vec::new());
+        let new_recovery_persisted = std::cell::Cell::new(false);
+        let old_card_removed = std::cell::Cell::new(false);
+
+        let result = commit_retry_generation_recovery_with(
+            Some("failed-card"),
+            Some("failed-card"),
+            || {
+                events.borrow_mut().push("persist-new-recovery");
+                new_recovery_persisted.set(true);
+                Ok(())
+            },
+            |failed_asset_id| {
+                assert_eq!(failed_asset_id, "failed-card");
+                events.borrow_mut().push("abandon-old-delivery");
+                Err(anyhow!("old delivery persistence failed"))
+            },
+            || {
+                events.borrow_mut().push("rollback-new-recovery");
+                new_recovery_persisted.set(false);
+                Ok(true)
+            },
+            |_| {
+                events.borrow_mut().push("remove-old-card");
+                old_card_removed.set(true);
+            },
+        );
+
+        assert_eq!(
+            result,
+            Err(RetryGenerationRecoveryCommitError::OldDelivery)
+        );
+        assert!(!new_recovery_persisted.get());
+        assert!(!old_card_removed.get());
+        assert_eq!(
+            events.into_inner(),
+            vec![
+                "persist-new-recovery",
+                "abandon-old-delivery",
+                "rollback-new-recovery",
+            ]
+        );
+    }
+
+    #[test]
+    fn retry_recovery_reports_when_rollback_persistence_also_fails() {
+        let events = RefCell::new(Vec::new());
+        let old_card_removed = std::cell::Cell::new(false);
+
+        let result = commit_retry_generation_recovery_with(
+            Some("failed-card"),
+            Some("failed-card"),
+            || {
+                events.borrow_mut().push("persist-new-recovery");
+                Ok(())
+            },
+            |_| {
+                events.borrow_mut().push("abandon-old-delivery");
+                Ok(false)
+            },
+            || {
+                events.borrow_mut().push("rollback-new-recovery");
+                Err(anyhow!("rollback persistence failed"))
+            },
+            |_| {
+                events.borrow_mut().push("remove-old-card");
+                old_card_removed.set(true);
+            },
+        );
+
+        assert_eq!(
+            result,
+            Err(RetryGenerationRecoveryCommitError::NewRecoveryRollback)
+        );
+        assert!(!old_card_removed.get());
+        assert_eq!(
+            events.into_inner(),
+            vec![
+                "persist-new-recovery",
+                "abandon-old-delivery",
+                "rollback-new-recovery",
             ]
         );
     }

@@ -12,71 +12,107 @@ pub(super) enum DeliveryRetryError {
     Local(#[from] anyhow::Error),
 }
 
-pub(super) fn delivery_download_key(client_request_id: &str, file_id: &str) -> String {
-    format!(
-        "{}:{}:{}",
-        client_request_id.len(),
-        client_request_id,
-        file_id
-    )
+impl DeliveryDownloadKey {
+    fn new(session_scope: &SessionScope, client_request_id: &str, file_id: &str) -> Self {
+        Self {
+            owner_user_id: session_scope.owner_user_id.clone(),
+            auth_epoch: session_scope.auth_epoch,
+            client_request_id: client_request_id.to_string(),
+            file_id: file_id.to_string(),
+        }
+    }
+
+    fn belongs_to_scope(&self, session_scope: &SessionScope) -> bool {
+        self.owner_user_id == session_scope.owner_user_id
+            && self.auth_epoch == session_scope.auth_epoch
+    }
 }
 
-fn delivery_download_key_has_request(key: &str, client_request_id: &str) -> bool {
-    key.starts_with(&format!(
-        "{}:{}:",
-        client_request_id.len(),
-        client_request_id
-    ))
-}
-
-fn try_reserve_delivery_download_pairs(
-    downloads: &RefCell<BTreeSet<String>>,
+pub(super) fn try_reserve_delivery_download_pairs(
+    registry: &GenerationRegistry,
+    session_scope: &SessionScope,
     pairs: &[(String, String)],
-) -> Option<BTreeSet<String>> {
+) -> Option<Vec<DeliveryDownloadReservation>> {
     let keys = pairs
         .iter()
-        .map(|(client_request_id, file_id)| delivery_download_key(client_request_id, file_id))
+        .map(|(client_request_id, file_id)| {
+            DeliveryDownloadKey::new(session_scope, client_request_id, file_id)
+        })
         .collect::<BTreeSet<_>>();
-    let mut downloads = downloads.borrow_mut();
-    if keys.iter().any(|key| downloads.contains(key)) {
+    let mut downloads = registry.delivery_downloads.borrow_mut();
+    if keys.iter().any(|key| downloads.contains_key(key)) {
         return None;
     }
-    downloads.extend(keys.iter().cloned());
-    Some(keys)
+    if keys.is_empty() {
+        return Some(Vec::new());
+    }
+    let mut reservation_id = registry
+        .next_delivery_download_reservation_id
+        .get()
+        .wrapping_add(1);
+    if reservation_id == 0 {
+        reservation_id = 1;
+    }
+    registry
+        .next_delivery_download_reservation_id
+        .set(reservation_id);
+    let reservations = keys
+        .into_iter()
+        .map(|key| DeliveryDownloadReservation {
+            key,
+            reservation_id,
+        })
+        .collect::<Vec<_>>();
+    downloads.extend(
+        reservations
+            .iter()
+            .map(|reservation| (reservation.key.clone(), reservation.reservation_id)),
+    );
+    Some(reservations)
 }
 
-fn release_delivery_download_key(context: &AppContext, client_request_id: &str, file_id: &str) {
-    context
-        .generations
-        .delivery_downloads
-        .borrow_mut()
-        .remove(&delivery_download_key(client_request_id, file_id));
+pub(super) fn release_delivery_download_reservations_in_registry(
+    registry: &GenerationRegistry,
+    reservations: &[DeliveryDownloadReservation],
+) -> bool {
+    let mut downloads = registry.delivery_downloads.borrow_mut();
+    let mut released = false;
+    for reservation in reservations {
+        if downloads.get(&reservation.key) == Some(&reservation.reservation_id) {
+            downloads.remove(&reservation.key);
+            released = true;
+        }
+    }
+    released
+}
+
+pub(super) fn release_delivery_download_reservations(
+    context: &AppContext,
+    reservations: &[DeliveryDownloadReservation],
+) -> bool {
+    release_delivery_download_reservations_in_registry(&context.generations, reservations)
 }
 
 pub(super) fn complete_delivery_download(
     app: &AppWindow,
     context: &AppContext,
-    client_request_id: &str,
-    file_id: &str,
+    reservation: &DeliveryDownloadReservation,
 ) {
-    release_delivery_download_key(context, client_request_id, file_id);
+    release_delivery_download_reservations(context, std::slice::from_ref(reservation));
     refresh_delivery_download_flags(app, context);
 }
 
-pub(super) fn release_delivery_downloads_for_request(
-    app: &AppWindow,
+pub(super) fn release_delivery_downloads_for_scope(
     context: &AppContext,
-    client_request_id: &str,
-) {
-    context
-        .generations
-        .delivery_downloads
-        .borrow_mut()
-        .retain(|key| !delivery_download_key_has_request(key, client_request_id));
-    refresh_delivery_download_flags(app, context);
+    session_scope: &SessionScope,
+) -> bool {
+    let mut downloads = context.generations.delivery_downloads.borrow_mut();
+    let previous_len = downloads.len();
+    downloads.retain(|key, _| !key.belongs_to_scope(session_scope));
+    downloads.len() != previous_len
 }
 
-fn refresh_delivery_download_flags(app: &AppWindow, context: &AppContext) {
+pub(super) fn refresh_delivery_download_flags(app: &AppWindow, context: &AppContext) {
     let Some(scope) = current_generation_session_scope(context) else {
         let mut store = context.store.borrow_mut();
         for asset in &mut store.generations {
@@ -100,7 +136,8 @@ fn refresh_delivery_download_flags(app: &AppWindow, context: &AppContext) {
         .ok()
         .flatten()
         .is_some_and(|(record, delivery)| {
-            downloads.contains(&delivery_download_key(
+            downloads.contains_key(&DeliveryDownloadKey::new(
+                &scope,
                 &record.client_request_id,
                 &delivery.file_id,
             ))
@@ -140,11 +177,33 @@ fn clear_failed_delivery_recovery(app: &AppWindow, context: &AppContext, failed_
     push_generations(app, &store);
 }
 
+pub(super) fn reserve_recovered_delivery_download_pairs(
+    registry: &GenerationRegistry,
+    record: &PendingGenerationRecord,
+) -> Option<Vec<DeliveryDownloadReservation>> {
+    let session_scope = SessionScope {
+        owner_user_id: record.owner_user_id.clone(),
+        auth_epoch: record.auth_epoch,
+    };
+    let pairs = record
+        .deliveries
+        .iter()
+        .filter(|delivery| {
+            !delivery.failed_asset_id.trim().is_empty()
+                && delivery.local_path.trim().is_empty()
+                && !delivery.acknowledged
+                && !delivery.abandoned
+        })
+        .map(|delivery| (record.client_request_id.clone(), delivery.file_id.clone()))
+        .collect::<Vec<_>>();
+    try_reserve_delivery_download_pairs(registry, &session_scope, &pairs)
+}
+
 pub(super) fn reserve_recovered_delivery_downloads(
     app: &AppWindow,
     context: &AppContext,
     record: &PendingGenerationRecord,
-) -> bool {
+) -> Option<Vec<DeliveryDownloadReservation>> {
     let pending = record
         .deliveries
         .iter()
@@ -155,15 +214,7 @@ pub(super) fn reserve_recovered_delivery_downloads(
                 && !delivery.abandoned
         })
         .collect::<Vec<_>>();
-    let pairs = pending
-        .iter()
-        .map(|delivery| (record.client_request_id.clone(), delivery.file_id.clone()))
-        .collect::<Vec<_>>();
-    if try_reserve_delivery_download_pairs(&context.generations.delivery_downloads, &pairs)
-        .is_none()
-    {
-        return false;
-    }
+    let reservations = reserve_recovered_delivery_download_pairs(&context.generations, record)?;
     if !pending.is_empty() {
         let failed_ids = pending
             .iter()
@@ -177,7 +228,7 @@ pub(super) fn reserve_recovered_delivery_downloads(
         }
         push_generations(app, &store);
     }
-    true
+    Some(reservations)
 }
 
 pub(super) fn select_recoverable_task_file<'a>(
@@ -343,14 +394,16 @@ pub(super) fn retry_failed_delivery(app: &AppWindow, context: AppContext, failed
         }
     };
     let pair = (record.client_request_id.clone(), delivery.file_id.clone());
-    if try_reserve_delivery_download_pairs(
-        &context.generations.delivery_downloads,
+    let Some(mut reservations) = try_reserve_delivery_download_pairs(
+        &context.generations,
+        &scope,
         std::slice::from_ref(&pair),
-    )
-    .is_none()
-    {
+    ) else {
         return;
-    }
+    };
+    let reservation = reservations
+        .pop()
+        .expect("a non-empty delivery pair reserves one key");
     set_failed_delivery_downloading(app, &context, &failed_asset_id, true);
     state.set_generation_status("正在重新下载图片...".into());
 
@@ -366,8 +419,7 @@ pub(super) fn retry_failed_delivery(app: &AppWindow, context: AppContext, failed
         context,
         scope,
         failed_asset_id,
-        pair.0,
-        pair.1,
+        reservation,
         Rc::new(RefCell::new(Some(receiver))),
     );
 }
@@ -377,8 +429,7 @@ fn poll_failed_delivery_retry(
     context: AppContext,
     scope: SessionScope,
     failed_asset_id: String,
-    client_request_id: String,
-    file_id: String,
+    reservation: DeliveryDownloadReservation,
     receiver: Rc<
         RefCell<Option<mpsc::Receiver<std::result::Result<RetrySuccess, DeliveryRetryError>>>>,
     >,
@@ -387,6 +438,15 @@ fn poll_failed_delivery_retry(
         let result = {
             let mut receiver = receiver.borrow_mut();
             let Some(channel) = receiver.as_ref() else {
+                drop(receiver);
+                if let Some(app) = app_weak.upgrade() {
+                    complete_delivery_download(&app, &context, &reservation);
+                } else {
+                    release_delivery_download_reservations(
+                        &context,
+                        std::slice::from_ref(&reservation),
+                    );
+                }
                 return;
             };
             match channel.try_recv() {
@@ -409,18 +469,20 @@ fn poll_failed_delivery_retry(
                 context,
                 scope,
                 failed_asset_id,
-                client_request_id,
-                file_id,
+                reservation,
                 receiver,
             );
             return;
         };
         let Some(app) = app_weak.upgrade() else {
-            release_delivery_download_key(&context, &client_request_id, &file_id);
+            release_delivery_download_reservations(
+                &context,
+                std::slice::from_ref(&reservation),
+            );
             return;
         };
         if !generation_scope_matches_context(&context, &scope) {
-            release_delivery_download_key(&context, &client_request_id, &file_id);
+            complete_delivery_download(&app, &context, &reservation);
             set_failed_delivery_downloading(&app, &context, &failed_asset_id, false);
             return;
         }
@@ -511,7 +573,7 @@ fn poll_failed_delivery_retry(
                 );
             }
         }
-        complete_delivery_download(&app, &context, &client_request_id, &file_id);
+        complete_delivery_download(&app, &context, &reservation);
     });
 }
 
@@ -577,6 +639,48 @@ mod tests {
         }
     }
 
+    fn scope(owner_user_id: &str, auth_epoch: u64) -> SessionScope {
+        SessionScope {
+            owner_user_id: owner_user_id.to_string(),
+            auth_epoch,
+        }
+    }
+
+    fn recoverable_record(scope: &SessionScope) -> PendingGenerationRecord {
+        PendingGenerationRecord {
+            schema_version: 1,
+            created_at_epoch_ms: 0,
+            client_request_id: "request-a".to_string(),
+            owner_user_id: scope.owner_user_id.clone(),
+            auth_epoch: scope.auth_epoch,
+            local_task_id: "local-task".to_string(),
+            server_task_id: "server-task".to_string(),
+            raw_prompt: "prompt".to_string(),
+            generation_prompt: "prompt".to_string(),
+            task_type: "image_generation".to_string(),
+            category: "character".to_string(),
+            mode: "game".to_string(),
+            ratio: "1:1".to_string(),
+            quality: "1K".to_string(),
+            model_code: "model".to_string(),
+            conversation_id: "conversation".to_string(),
+            count: 1,
+            target_width: 0,
+            target_height: 0,
+            create_conversation: true,
+            reference_paths: Vec::new(),
+            reference_sha256: Vec::new(),
+            reference_size_bytes: Vec::new(),
+            lineage_reference_paths: Vec::new(),
+            uploaded_file_ids: Vec::new(),
+            deliveries: vec![delivery(0, "file-1")],
+            terminal: true,
+            expected_success_count: 1,
+            canvas_source_node_id: String::new(),
+            canvas_ui_extraction: false,
+        }
+    }
+
     #[test]
     fn retry_selects_only_the_original_successful_file() {
         let detail = completed_task_with_two_files();
@@ -635,32 +739,161 @@ mod tests {
     }
 
     #[test]
-    fn delivery_download_key_distinguishes_the_exact_request_and_file_pair() {
+    fn delivery_download_key_captures_scope_request_and_file_identity() {
+        let scope_a = scope("user-a", 7);
+        let scope_b = scope("user-b", 7);
+        let newer_scope_a = scope("user-a", 8);
         assert_ne!(
-            delivery_download_key("request-a", "file-1"),
-            delivery_download_key("request-b", "file-1")
+            DeliveryDownloadKey::new(&scope_a, "request-a", "file-1"),
+            DeliveryDownloadKey::new(&scope_a, "request-b", "file-1")
         );
         assert_ne!(
-            delivery_download_key("request-a", "file-1"),
-            delivery_download_key("request-a", "file-2")
+            DeliveryDownloadKey::new(&scope_a, "request-a", "file-1"),
+            DeliveryDownloadKey::new(&scope_a, "request-a", "file-2")
+        );
+        assert_ne!(
+            DeliveryDownloadKey::new(&scope_a, "request-a", "file-1"),
+            DeliveryDownloadKey::new(&scope_b, "request-a", "file-1")
+        );
+        assert_ne!(
+            DeliveryDownloadKey::new(&scope_a, "request-a", "file-1"),
+            DeliveryDownloadKey::new(&newer_scope_a, "request-a", "file-1")
         );
     }
 
     #[test]
     fn delivery_download_pair_reservation_is_atomic_when_one_pair_is_in_flight() {
-        let downloads = RefCell::new(BTreeSet::from([delivery_download_key(
-            "request-a",
-            "file-1",
-        )]));
+        let registry = GenerationRegistry::default();
+        let scope = scope("user-a", 7);
+        let occupied = [("request-a".to_string(), "file-1".to_string())];
+        assert!(try_reserve_delivery_download_pairs(&registry, &scope, &occupied).is_some());
         let pairs = vec![
             ("request-a".to_string(), "file-2".to_string()),
             ("request-a".to_string(), "file-1".to_string()),
         ];
 
-        assert!(try_reserve_delivery_download_pairs(&downloads, &pairs).is_none());
-        assert!(!downloads
-            .borrow()
-            .contains(&delivery_download_key("request-a", "file-2")));
+        assert!(try_reserve_delivery_download_pairs(&registry, &scope, &pairs).is_none());
+        assert!(!registry.delivery_downloads.borrow().contains_key(
+            &DeliveryDownloadKey::new(&scope, "request-a", "file-2")
+        ));
+    }
+
+    #[test]
+    fn stopping_an_automatically_recovered_task_releases_only_its_exact_reservations() {
+        let context = AppContext::default();
+        let scope = scope("user-a", 7);
+        let category = "character".to_string();
+        let task_pair = [("request-a".to_string(), "file-1".to_string())];
+        let unrelated_pair = [("request-a".to_string(), "file-2".to_string())];
+        let reservations = try_reserve_delivery_download_pairs(
+            &context.generations,
+            &scope,
+            &task_pair,
+        )
+        .expect("reserve recovered task delivery");
+        assert!(try_reserve_delivery_download_pairs(
+            &context.generations,
+            &scope,
+            &unrelated_pair,
+        )
+        .is_some());
+        insert_active_generation(
+            &context,
+            ActiveGeneration {
+                task_id: "recovered-task".to_string(),
+                client_request_id: Some(task_pair[0].0.clone()),
+                category: category.clone(),
+                session_scope: scope.clone(),
+                delivery_download_reservations: reservations,
+                ..ActiveGeneration::default()
+            },
+        );
+
+        assert!(remove_active_generation(&context, &category, "recovered-task").is_some());
+
+        assert!(try_reserve_delivery_download_pairs(
+            &context.generations,
+            &scope,
+            &task_pair,
+        )
+        .is_some());
+        assert!(try_reserve_delivery_download_pairs(
+            &context.generations,
+            &scope,
+            &unrelated_pair,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn generation_account_teardown_clears_only_the_captured_scope_reservations() {
+        let context = AppContext::default();
+        let scope_a = scope("user-a", 7);
+        let scope_b = scope("user-b", 7);
+        let pair = [("request-a".to_string(), "file-1".to_string())];
+        assert!(try_reserve_delivery_download_pairs(
+            &context.generations,
+            &scope_a,
+            &pair,
+        )
+        .is_some());
+        assert!(try_reserve_delivery_download_pairs(
+            &context.generations,
+            &scope_b,
+            &pair,
+        )
+        .is_some());
+
+        release_delivery_downloads_for_scope(&context, &scope_a);
+
+        assert!(try_reserve_delivery_download_pairs(
+            &context.generations,
+            &scope_a,
+            &pair,
+        )
+        .is_some());
+        assert!(try_reserve_delivery_download_pairs(
+            &context.generations,
+            &scope_b,
+            &pair,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn manual_and_automatic_recovery_mutually_exclude_the_same_scoped_pair() {
+        let registry = GenerationRegistry::default();
+        let scope = scope("user-a", 7);
+        let record = recoverable_record(&scope);
+        let pair = [(record.client_request_id.clone(), "file-1".to_string())];
+
+        let automatic = reserve_recovered_delivery_download_pairs(&registry, &record)
+            .expect("automatic recovery reserves pair");
+        assert!(try_reserve_delivery_download_pairs(&registry, &scope, &pair).is_none());
+
+        release_delivery_download_reservations_in_registry(&registry, &automatic);
+        let manual = try_reserve_delivery_download_pairs(&registry, &scope, &pair)
+            .expect("manual retry reserves released pair");
+        assert!(reserve_recovered_delivery_download_pairs(&registry, &record).is_none());
+
+        release_delivery_download_reservations_in_registry(&registry, &manual);
+    }
+
+    #[test]
+    fn stale_reservation_cleanup_cannot_release_a_new_reservation_for_the_same_key() {
+        let registry = GenerationRegistry::default();
+        let scope = scope("user-a", 7);
+        let pair = [("request-a".to_string(), "file-1".to_string())];
+        let stale = try_reserve_delivery_download_pairs(&registry, &scope, &pair)
+            .expect("reserve original worker");
+        release_delivery_download_reservations_in_registry(&registry, &stale);
+        let current = try_reserve_delivery_download_pairs(&registry, &scope, &pair)
+            .expect("reserve replacement worker");
+
+        release_delivery_download_reservations_in_registry(&registry, &stale);
+
+        assert!(try_reserve_delivery_download_pairs(&registry, &scope, &pair).is_none());
+        release_delivery_download_reservations_in_registry(&registry, &current);
     }
 
     #[test]

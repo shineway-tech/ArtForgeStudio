@@ -5126,6 +5126,7 @@ mod tests {
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].id, failed_asset_id);
         assert!(cards[0].delivery_recoverable);
+        assert_eq!(cards[0].title, "Repeated delivery failure");
     }
 
     #[test]

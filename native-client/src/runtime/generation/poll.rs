@@ -13,10 +13,55 @@ pub(super) fn retain_failed_delivery_after_replacement_failure(
     true
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GenerationPollTermination {
+    ScopeRejected,
+    WindowDropped,
+    ActiveGenerationMissing,
+    ReceiverDropped,
+    OutcomeScopeRejected,
+    OutcomeActiveGenerationMissing,
+    Finished,
+    CreditInsufficient,
+    WorkerFailure,
+    ReceiverDisconnected,
+}
+
+#[cfg(test)]
+impl GenerationPollTermination {
+    const ALL: [Self; 10] = [
+        Self::ScopeRejected,
+        Self::WindowDropped,
+        Self::ActiveGenerationMissing,
+        Self::ReceiverDropped,
+        Self::OutcomeScopeRejected,
+        Self::OutcomeActiveGenerationMissing,
+        Self::Finished,
+        Self::CreditInsufficient,
+        Self::WorkerFailure,
+        Self::ReceiverDisconnected,
+    ];
+}
+
+fn terminate_generation_poll(
+    context: &AppContext,
+    app: Option<&AppWindow>,
+    receiver: &Rc<RefCell<Option<mpsc::Receiver<GenerationOutcome>>>>,
+    reservations: &[DeliveryDownloadReservation],
+    _termination: GenerationPollTermination,
+) {
+    receiver.borrow_mut().take();
+    release_delivery_download_reservations(context, reservations);
+    if let Some(app) = app {
+        refresh_delivery_download_flags(app, context);
+    }
+}
+
 pub(super) fn poll_generation_stream(
     app_weak: Weak<AppWindow>,
     context: AppContext,
     session_scope: SessionScope,
+    delivery_download_reservations: Vec<DeliveryDownloadReservation>,
     receiver: Rc<RefCell<Option<mpsc::Receiver<GenerationOutcome>>>>,
     raw_prompt: String,
     category: String,
@@ -37,42 +82,44 @@ pub(super) fn poll_generation_stream(
     let store = context.store.clone();
     slint::Timer::single_shot(Duration::from_millis(80), move || {
         if !generation_scope_allows_polling(&app_weak, &context, &session_scope) {
-            if let Some(app) = app_weak.upgrade() {
-                let client_request_id = context
-                    .generations
-                    .active
-                    .borrow()
-                    .get(&category)
-                    .filter(|active| active.task_id == task_id)
-                    .and_then(|active| active.client_request_id.clone());
-                if let Some(client_request_id) = client_request_id {
-                    release_delivery_downloads_for_request(
-                        &app,
-                        &context,
-                        &client_request_id,
-                    );
-                }
-            }
-            receiver.borrow_mut().take();
+            let app = app_weak.upgrade();
+            terminate_generation_poll(
+                &context,
+                app.as_ref(),
+                &receiver,
+                &delivery_download_reservations,
+                GenerationPollTermination::ScopeRejected,
+            );
             return;
         }
         let Some(app) = app_weak.upgrade() else {
+            terminate_generation_poll(
+                &context,
+                None,
+                &receiver,
+                &delivery_download_reservations,
+                GenerationPollTermination::WindowDropped,
+            );
             return;
         };
-        if !generation_scope_allows_polling(&app_weak, &context, &session_scope)
-            || !active_generation_matches_scope(&context, &category, &task_id, &session_scope)
-        {
-            let client_request_id = context
-                .generations
-                .active
-                .borrow()
-                .get(&category)
-                .filter(|active| active.task_id == task_id)
-                .and_then(|active| active.client_request_id.clone());
-            if let Some(client_request_id) = client_request_id {
-                release_delivery_downloads_for_request(&app, &context, &client_request_id);
-            }
-            receiver.borrow_mut().take();
+        if !generation_scope_allows_polling(&app_weak, &context, &session_scope) {
+            terminate_generation_poll(
+                &context,
+                Some(&app),
+                &receiver,
+                &delivery_download_reservations,
+                GenerationPollTermination::ScopeRejected,
+            );
+            return;
+        }
+        if !active_generation_matches_scope(&context, &category, &task_id, &session_scope) {
+            terminate_generation_poll(
+                &context,
+                Some(&app),
+                &receiver,
+                &delivery_download_reservations,
+                GenerationPollTermination::ActiveGenerationMissing,
+            );
             return;
         }
         let elapsed = started_at.elapsed().as_secs() as i32;
@@ -86,20 +133,31 @@ pub(super) fn poll_generation_stream(
             (wait_secs - elapsed).clamp(1, wait_secs),
         );
 
-        let outcome = {
+        let (outcome, worker_failure_termination) = {
             let mut slot = receiver.borrow_mut();
             let Some(rx) = slot.as_ref() else {
+                drop(slot);
+                terminate_generation_poll(
+                    &context,
+                    Some(&app),
+                    &receiver,
+                    &delivery_download_reservations,
+                    GenerationPollTermination::ReceiverDropped,
+                );
                 return;
             };
             match rx.try_recv() {
-                Ok(outcome) => Some(outcome),
-                Err(TryRecvError::Empty) => None,
+                Ok(outcome) => (Some(outcome), None),
+                Err(TryRecvError::Empty) => (None, None),
                 Err(TryRecvError::Disconnected) => {
                     slot.take();
-                    Some(GenerationOutcome::Failure {
-                        reason: "生成任务已中断，请重新生成。".to_string(),
-                        time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
-                    })
+                    (
+                        Some(GenerationOutcome::Failure {
+                            reason: "生成任务已中断，请重新生成。".to_string(),
+                            time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
+                        }),
+                        Some(GenerationPollTermination::ReceiverDisconnected),
+                    )
                 }
             }
         };
@@ -109,6 +167,7 @@ pub(super) fn poll_generation_stream(
                 app_weak,
                 context,
                 session_scope,
+                delivery_download_reservations,
                 receiver,
                 raw_prompt,
                 category,
@@ -129,10 +188,24 @@ pub(super) fn poll_generation_stream(
             return;
         };
 
-        if !generation_scope_allows_polling(&app_weak, &context, &session_scope)
-            || !active_generation_matches_scope(&context, &category, &task_id, &session_scope)
-        {
-            receiver.borrow_mut().take();
+        if !generation_scope_allows_polling(&app_weak, &context, &session_scope) {
+            terminate_generation_poll(
+                &context,
+                Some(&app),
+                &receiver,
+                &delivery_download_reservations,
+                GenerationPollTermination::OutcomeScopeRejected,
+            );
+            return;
+        }
+        if !active_generation_matches_scope(&context, &category, &task_id, &session_scope) {
+            terminate_generation_poll(
+                &context,
+                Some(&app),
+                &receiver,
+                &delivery_download_reservations,
+                GenerationPollTermination::OutcomeActiveGenerationMissing,
+            );
             return;
         }
         let state = app.global::<AppState>();
@@ -358,7 +431,14 @@ pub(super) fn poll_generation_stream(
                     }
                 }
                 if let Some((client_request_id, file_id)) = delivery_download {
-                    complete_delivery_download(&app, &context, &client_request_id, &file_id);
+                    if let Some(reservation) = delivery_download_reservations.iter().find(
+                        |reservation| {
+                            reservation.key.client_request_id == client_request_id
+                                && reservation.key.file_id == file_id
+                        },
+                    ) {
+                        complete_delivery_download(&app, &context, reservation);
+                    }
                 }
             }
             GenerationOutcome::ImageFailure {
@@ -405,23 +485,29 @@ pub(super) fn poll_generation_stream(
                     }
                 }
                 if let Some(delivery) = delivery.as_ref() {
-                    complete_delivery_download(
-                        &app,
-                        &context,
-                        &delivery.client_request_id,
-                        &delivery.file_id,
-                    );
+                    if let Some(reservation) = delivery_download_reservations.iter().find(
+                        |reservation| {
+                            reservation.key.client_request_id == delivery.client_request_id
+                                && reservation.key.file_id == delivery.file_id
+                        },
+                    ) {
+                        complete_delivery_download(&app, &context, reservation);
+                    }
                 }
             }
             GenerationOutcome::Finished => {
                 keep_polling = false;
-                receiver.borrow_mut().take();
-                let Some(task) = remove_active_generation(&context, &category, &task_id) else {
+                let task = remove_active_generation(&context, &category, &task_id);
+                terminate_generation_poll(
+                    &context,
+                    Some(&app),
+                    &receiver,
+                    &delivery_download_reservations,
+                    GenerationPollTermination::Finished,
+                );
+                let Some(task) = task else {
                     return;
                 };
-                if let Some(client_request_id) = task.client_request_id.as_deref() {
-                    release_delivery_downloads_for_request(&app, &context, client_request_id);
-                }
                 if create_conversation && task.success_count == 0 {
                     finish_conversation_placeholder(&state, &conversation_id, None);
                 }
@@ -455,13 +541,17 @@ pub(super) fn poll_generation_stream(
             }
             GenerationOutcome::CreditInsufficient { message } => {
                 keep_polling = false;
-                receiver.borrow_mut().take();
-                let Some(task) = remove_active_generation(&context, &category, &task_id) else {
+                let task = remove_active_generation(&context, &category, &task_id);
+                terminate_generation_poll(
+                    &context,
+                    Some(&app),
+                    &receiver,
+                    &delivery_download_reservations,
+                    GenerationPollTermination::CreditInsufficient,
+                );
+                let Some(task) = task else {
                     return;
                 };
-                if let Some(client_request_id) = task.client_request_id.as_deref() {
-                    release_delivery_downloads_for_request(&app, &context, client_request_id);
-                }
                 if create_conversation && task.success_count == 0 {
                     remove_conversation_placeholder(&state, &conversation_id);
                 }
@@ -484,13 +574,18 @@ pub(super) fn poll_generation_stream(
             }
             GenerationOutcome::Failure { reason, time } => {
                 keep_polling = false;
-                receiver.borrow_mut().take();
-                let Some(task) = remove_active_generation(&context, &category, &task_id) else {
+                let task = remove_active_generation(&context, &category, &task_id);
+                terminate_generation_poll(
+                    &context,
+                    Some(&app),
+                    &receiver,
+                    &delivery_download_reservations,
+                    worker_failure_termination
+                        .unwrap_or(GenerationPollTermination::WorkerFailure),
+                );
+                let Some(task) = task else {
                     return;
                 };
-                if let Some(client_request_id) = task.client_request_id.as_deref() {
-                    release_delivery_downloads_for_request(&app, &context, client_request_id);
-                }
                 let remaining = (task.total_count - task.completed_count).max(1);
                 if destination == GenerationDestination::Gallery {
                     for _ in 0..remaining {
@@ -549,6 +644,7 @@ pub(super) fn poll_generation_stream(
                 app_weak,
                 context,
                 session_scope,
+                delivery_download_reservations,
                 receiver,
                 raw_prompt,
                 category,
@@ -615,4 +711,45 @@ pub(super) fn acknowledge_delivery_after_local_save(
         session_scope,
         Rc::new(RefCell::new(Some(receiver))),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_poll_terminal_and_abort_path_releases_its_captured_reservations() {
+        let scope = SessionScope {
+            owner_user_id: "user-a".to_string(),
+            auth_epoch: 7,
+        };
+        let pair = [("request-a".to_string(), "file-1".to_string())];
+
+        for termination in GenerationPollTermination::ALL {
+            let context = AppContext::default();
+            let reservations = try_reserve_delivery_download_pairs(
+                &context.generations,
+                &scope,
+                &pair,
+            )
+            .expect("reserve delivery before terminating poll");
+            let (_sender, receiver) = mpsc::channel::<GenerationOutcome>();
+            let receiver = Rc::new(RefCell::new(Some(receiver)));
+
+            terminate_generation_poll(
+                &context,
+                None,
+                &receiver,
+                &reservations,
+                termination,
+            );
+
+            assert!(receiver.borrow().is_none(), "{termination:?}");
+            assert!(
+                try_reserve_delivery_download_pairs(&context.generations, &scope, &pair)
+                    .is_some(),
+                "{termination:?}"
+            );
+        }
+    }
 }

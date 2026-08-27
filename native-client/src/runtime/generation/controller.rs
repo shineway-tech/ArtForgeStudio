@@ -302,6 +302,7 @@ pub(super) fn stop_generation(app: &AppWindow, context: &AppContext) {
         sync_generation_state_for_current_category(context, app);
         return;
     };
+    refresh_delivery_download_flags(app, context);
     set_generation_status_for_category(context, app, &category, "已停止生成");
     sync_generation_state_for_current_category(context, app);
     if task.destination == GenerationDestination::Gallery {

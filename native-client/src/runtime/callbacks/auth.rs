@@ -390,7 +390,12 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
             if let Some(scope) = logout_scope.as_ref() {
                 let _ = backend.api.session().clear_scope(scope);
             }
-            sign_out_locally(&app, &context, false, None);
+            sign_out_locally(
+                &app,
+                &context,
+                false,
+                logout_scope.as_ref().map(|scope| scope.auth_epoch),
+            );
             if let Some(logout_token) = logout_token {
                 let api = AuthApi::new(backend.api.clone());
                 std::thread::spawn(move || {
@@ -420,7 +425,12 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
             if let Some(scope) = logout_scope.as_ref() {
                 let _ = backend.api.session().clear_scope(scope);
             }
-            sign_out_locally(&app, &context, false, None);
+            sign_out_locally(
+                &app,
+                &context,
+                false,
+                logout_scope.as_ref().map(|scope| scope.auth_epoch),
+            );
             if let Some(logout_token) = logout_token {
                 let api = AuthApi::new(backend.api.clone());
                 std::thread::spawn(move || {
@@ -2468,6 +2478,22 @@ pub(super) fn sign_out_locally(
     revoked: bool,
     expected_auth_epoch: Option<u64>,
 ) {
+    let generation_owner_user_id = context
+        .current_user_id
+        .lock()
+        .unwrap_or_else(|value| value.into_inner())
+        .clone()
+        .filter(|value| !value.trim().is_empty());
+    let generation_teardown_scope = expected_auth_epoch
+        .and_then(|auth_epoch| {
+            generation_owner_user_id
+                .clone()
+                .map(|owner_user_id| SessionScope {
+                    owner_user_id,
+                    auth_epoch,
+                })
+        })
+        .or_else(|| current_generation_session_scope(context));
     if revoked {
         if let (Some(backend), Some(auth_epoch)) = (context.backend.as_ref(), expected_auth_epoch) {
             // Compare-and-clear the captured lease. If a new login won the race, clear_epoch
@@ -2486,7 +2512,7 @@ pub(super) fn sign_out_locally(
     clear_notification_account_state(app, context);
     clear_prompt_task_account_state(app);
     clear_prompt_optimization_account_state(app, context);
-    clear_generation_account_state(app, context);
+    clear_generation_account_state(app, context, generation_teardown_scope.as_ref());
     close_agreement_window();
     let state = app.global::<AppState>();
     state.set_auth_busy(false);
