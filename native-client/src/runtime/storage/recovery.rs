@@ -1306,6 +1306,39 @@ mod tests {
     }
 
     #[test]
+    fn abandoning_a_recoverable_delivery_is_scoped_and_never_acknowledges_it() {
+        let mut record = pending_record();
+        record.expected_success_count = 2;
+        record.deliveries = vec![
+            PendingDeliveryRecord {
+                failed_asset_id: "failed-asset".to_string(),
+                ..PendingDeliveryRecord::default()
+            },
+            PendingDeliveryRecord::default(),
+        ];
+        let mut file = RecoveryFile {
+            schema_version: 1,
+            generations: vec![record],
+        };
+
+        assert!(!abandon_pending_delivery_in_memory(
+            &mut file,
+            "user-b",
+            9,
+            "failed-asset",
+        ));
+        assert!(abandon_pending_delivery_in_memory(
+            &mut file,
+            "user-a",
+            9,
+            "failed-asset",
+        ));
+        assert!(file.generations[0].deliveries[0].abandoned);
+        assert!(!file.generations[0].deliveries[0].acknowledged);
+        assert!(!generation_record_complete(&file.generations[0]));
+    }
+
+    #[test]
     fn failed_delivery_is_upserted_once_and_recovery_is_scope_bound() {
         let mut file = RecoveryFile {
             schema_version: 1,

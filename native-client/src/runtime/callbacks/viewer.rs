@@ -598,22 +598,24 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         let store = store.clone();
+        let context = context.clone();
         state.on_confirm_delete(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            confirm_pending_asset_delete(&app, &store, false);
+            confirm_pending_asset_delete(&app, &context, &store, false);
         });
     }
 
     {
         let app_weak = app.as_weak();
         let store = store.clone();
+        let context = context.clone();
         state.on_confirm_delete_local_file(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            confirm_pending_asset_delete(&app, &store, true);
+            confirm_pending_asset_delete(&app, &context, &store, true);
         });
     }
 }
@@ -659,6 +661,19 @@ impl RemovedStoreRecord {
             }
         }
     }
+
+    fn recoverable_failed_delivery_id(&self) -> Option<&str> {
+        match self {
+            Self::Asset { source, item, .. }
+                if source == "generation"
+                    && item.source_path == "failed"
+                    && item.delivery_recoverable =>
+            {
+                Some(item.id.as_str())
+            }
+            Self::Asset { .. } | Self::Reference { .. } => None,
+        }
+    }
 }
 
 fn asset_collection_mut<'a>(store: &'a mut Store, source: &str) -> &'a mut Vec<AssetData> {
@@ -696,6 +711,7 @@ fn take_pending_store_record(
 
 fn confirm_pending_asset_delete(
     app: &AppWindow,
+    context: &AppContext,
     store: &Rc<RefCell<Store>>,
     delete_local_file: bool,
 ) {
@@ -718,6 +734,39 @@ fn confirm_pending_asset_delete(
     };
 
     let mut removed = Some(removed);
+    if let Some(failed_asset_id) = removed
+        .as_ref()
+        .and_then(RemovedStoreRecord::recoverable_failed_delivery_id)
+    {
+        let abandoned = current_generation_session_scope(context).is_some_and(|scope| {
+            matches!(
+                abandon_pending_delivery(&scope.owner_user_id, scope.auth_epoch, failed_asset_id),
+                Ok(true)
+            )
+        });
+        if !abandoned {
+            let restore_result = {
+                let mut store_mut = store.borrow_mut();
+                if let Some(record) = removed.take() {
+                    record.restore(&mut store_mut);
+                }
+                let result = save_local_store_checked(app, &store_mut);
+                rebuild_storage_references(&store_mut);
+                result
+            };
+            state.set_viewer_message(
+                match restore_result {
+                    Ok(()) => "删除失败：无法更新本地生成恢复记录，失败图片已保留".into(),
+                    Err(error) => format!(
+                        "删除失败：无法更新本地生成恢复记录，且恢复失败图片写入失败：{error}"
+                    )
+                    .into(),
+                },
+            );
+            push_all(app, &store.borrow());
+            return;
+        }
+    }
     if delete_local_file {
         let path_text = removed
             .as_ref()

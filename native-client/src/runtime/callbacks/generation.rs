@@ -154,6 +154,17 @@ pub(super) fn wire_generation_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         let context = context.clone();
+        state.on_retry_generation_delivery(move |id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            retry_failed_delivery(&app, context.clone(), id.to_string());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let context = context.clone();
         state.on_optimize_custom_prompt_content(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;

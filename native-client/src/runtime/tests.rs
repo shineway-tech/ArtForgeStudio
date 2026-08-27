@@ -5096,6 +5096,20 @@ mod tests {
     }
 
     #[test]
+    fn recoverable_failure_card_has_independent_download_action() {
+        let card = include_str!("../../ui/components/thumbnail-card.slint");
+        let state = include_str!("../../ui/app-state.slint");
+
+        assert!(state.contains("callback retry-generation-delivery(string);"));
+        assert!(card.contains("root.item.delivery-recoverable"));
+        assert!(card.contains("../../assets/icons/download.svg"));
+        assert!(card.contains("AppState.retry-generation-delivery(root.item.id)"));
+        assert!(card.contains("root.item.delivery-downloading"));
+        assert!(card.contains("图片已生成，下载失败"));
+        assert!(card.contains("x: root.item.delivery-recoverable ? parent.width - 76px : parent.width - 38px;"));
+    }
+
+    #[test]
     fn repeated_recoverable_delivery_failures_replace_the_existing_card() {
         let failed_asset_id = "failed-delivery-asset";
         let mut cards = Vec::new();

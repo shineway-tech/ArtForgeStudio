@@ -270,6 +270,21 @@ pub(super) fn retry_failed_generation(app: &AppWindow, context: AppContext, id: 
     if !restore_asset_regeneration_inputs(app, &context, &item) {
         return;
     }
+    if item.delivery_recoverable {
+        let Some(scope) = current_generation_session_scope(&context) else {
+            app.global::<AppState>()
+                .set_generation_status("登录状态已变化，无法放弃原下载记录".into());
+            return;
+        };
+        if !matches!(
+            abandon_pending_delivery(&scope.owner_user_id, scope.auth_epoch, &item.id),
+            Ok(true)
+        ) {
+            app.global::<AppState>()
+                .set_generation_status("本地生成恢复记录无法更新，请重启后重试".into());
+            return;
+        }
+    }
     let state = app.global::<AppState>();
     state.set_count(1);
     state.set_prompt(item.prompt.clone().into());
