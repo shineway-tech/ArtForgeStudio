@@ -751,9 +751,9 @@ pub(super) fn wire_custom_prompt_callbacks(app: &AppWindow, context: AppContext)
                         push_custom_prompts(&app, &store.borrow());
                         state.set_custom_prompt_message(
                             if state.get_language().as_str() == "en" {
-                                "Unable to save locally. The recovered result is still available; please retry."
+                                "Unable to save locally. Your entered content is still available; please retry."
                             } else {
-                                "本地保存失败，恢复结果仍已保留，请重试"
+                                "本地保存失败，填写的内容仍已保留，请重试"
                             }
                             .into(),
                         );

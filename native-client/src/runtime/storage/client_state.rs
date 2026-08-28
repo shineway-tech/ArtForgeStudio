@@ -51,17 +51,17 @@ pub(super) fn initialize_client_state_repository() -> Result<()> {
     }
     let mut connection = open_client_state_connection(&path)?;
     migrate_client_state_schema(&mut connection)?;
-    drop(connection);
 
     // One wake-up is enough: ordinary saves replace the pending snapshot, so a
     // slow disk can never accumulate an unbounded queue of full metadata copies.
     let (sender, receiver) = mpsc::sync_channel(1);
     let pending = Arc::new(Mutex::new(PendingClientState::default()));
-    let worker_path = path.clone();
     let worker_pending = pending.clone();
     std::thread::Builder::new()
         .name("client-state-writer".to_string())
-        .spawn(move || client_state_writer_loop(worker_path, receiver, worker_pending))
+        // Transfer the validated connection instead of racing the startup readers
+        // to open and migrate the database again in the background.
+        .spawn(move || client_state_writer_loop(connection, receiver, worker_pending))
         .context("无法启动本地数据库写入线程")?;
     CLIENT_STATE_WRITER
         .set(ClientStateWriter { sender, pending })
@@ -170,21 +170,10 @@ fn wake_client_state_writer(writer: &ClientStateWriter) -> Result<()> {
 }
 
 fn client_state_writer_loop(
-    path: PathBuf,
+    mut connection: Connection,
     receiver: Receiver<ClientStateWrite>,
     pending: Arc<Mutex<PendingClientState>>,
 ) {
-    let mut connection = match open_client_state_connection(&path).and_then(|mut connection| {
-        migrate_client_state_schema(&mut connection)?;
-        Ok(connection)
-    }) {
-        Ok(connection) => connection,
-        Err(error) => {
-            fail_pending_client_state_writes(receiver, error.to_string());
-            return;
-        }
-    };
-
     while let Ok(command) = receiver.recv() {
         match command {
             ClientStateWrite::DirectoryLocationsChecked { data, acknowledgement } => {
@@ -237,24 +226,6 @@ fn flush_pending_client_state(
     if let Some(data) = pending_profile {
         if let Err(error) = write_user_profile(connection, &data) {
             eprintln!("failed to persist local user profile: {error}");
-        }
-    }
-}
-
-fn fail_pending_client_state_writes(receiver: Receiver<ClientStateWrite>, message: String) {
-    for command in receiver {
-        let acknowledgement = match command {
-            ClientStateWrite::Wake => None,
-            ClientStateWrite::DirectoryLocationsChecked { acknowledgement, .. } => Some(acknowledgement),
-            ClientStateWrite::LocalStoreChecked {
-                acknowledgement, ..
-            }
-            | ClientStateWrite::UserProfileChecked {
-                acknowledgement, ..
-            } => Some(acknowledgement),
-        };
-        if let Some(acknowledgement) = acknowledgement {
-            let _ = acknowledgement.send(Err(message.clone()));
         }
     }
 }
@@ -953,6 +924,47 @@ fn read_meta(connection: &Connection, key: &str) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn client_state_writer_retries_after_a_temporary_startup_database_lock() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("client-state.sqlite3");
+        let mut connection = open_client_state_connection(&path).unwrap();
+        migrate_client_state_schema(&mut connection).unwrap();
+        let blocker = open_client_state_connection(&path).unwrap();
+        blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let pending = Arc::new(Mutex::new(PendingClientState::default()));
+        let worker = std::thread::spawn(move || {
+            client_state_writer_loop(connection, receiver, pending);
+        });
+        let save = |prompt: &str| {
+            let (acknowledgement, result) = mpsc::channel();
+            sender
+                .send(ClientStateWrite::LocalStoreChecked {
+                    data: LocalStoreData {
+                        custom_prompts: vec![prompt.to_string()],
+                        ..LocalStoreData::default()
+                    },
+                    acknowledgement,
+                })
+                .unwrap();
+            result.recv_timeout(Duration::from_secs(10)).unwrap()
+        };
+        let blocked = save("保留的提示词");
+        assert!(blocked.is_err(), "the database must still be locked");
+        blocker.execute_batch("ROLLBACK").unwrap();
+        let retried = save("解锁后保存的长提示词".repeat(100).as_str());
+        drop(sender);
+        worker.join().unwrap();
+        retried.expect("a released startup lock must not disable saving for the entire session");
+
+        let mut connection = open_client_state_connection(&path).unwrap();
+        let transaction = connection.transaction().unwrap();
+        let restored = read_local_store_transaction(&transaction).unwrap();
+        assert_eq!(restored.custom_prompts, vec!["解锁后保存的长提示词".repeat(100)]);
+    }
 
     #[test]
     fn video_prompt_draft_survives_sqlite_round_trip_without_changing_image_drafts() {
