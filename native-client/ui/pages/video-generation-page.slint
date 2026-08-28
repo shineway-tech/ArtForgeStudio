@@ -3,6 +3,7 @@ import { ScrollView } from "std-widgets.slint";
 import { PillButton } from "../components/pill-button.slint";
 import { VideoModelPicker } from "../components/video-model-picker.slint";
 import { VideoPromptOptimizeButton } from "../components/video-prompt-optimize-button.slint";
+import { VideoImageGrid } from "../components/video-image-grid.slint";
 import { AppTheme } from "../theme.slint";
 
 component VideoChoiceButton inherits Rectangle {
@@ -141,22 +142,45 @@ export component VideoGenerationPage inherits Rectangle {
             y: 0px;
             width: max(420px, parent.width - 430px);
             height: parent.height;
-            background: #090d16;
+            background: AppState.video-result-path != "" ? #090d16 : AppTheme.panel;
             border-radius: 12px;
             border-width: 1px;
             border-color: AppTheme.border;
             clip: true;
 
-            Image {
-                visible: AppState.video-result-path == "";
-                x: 20px;
-                y: 20px;
-                width: parent.width - 40px;
-                height: parent.height - 76px;
-                source: AppState.video-source-image;
-                image-fit: contain;
+            if AppState.video-result-path == "": Rectangle {
+                width: parent.width; height: parent.height; background: transparent;
+                Text {
+                    x: 20px; y: 20px; width: parent.width - 160px; height: 28px;
+                    text: (AppState.en ? "Source images" : "图片素材") + " · " + AppState.video-images.length;
+                    color: AppTheme.text; font-size: 18px; font-weight: 600; vertical-alignment: center;
+                }
+                PillButton {
+                    x: parent.width - 120px; y: 16px; width: 100px; height: 36px;
+                    text: AppState.en ? "Add images" : "添加图片";
+                    disabled: AppState.video-generating || AppState.video-images-loading;
+                    clicked => { AppState.video-image-dialog = "source"; }
+                }
+                Text {
+                    x: 20px; y: 56px; width: parent.width - 40px; height: 24px;
+                    text: AppState.en ? "Add from My Assets or upload multiple local images" : "从我的资产添加或本地上传，均支持多选";
+                    color: AppTheme.muted; font-size: 12px; vertical-alignment: center;
+                }
+                VideoImageGrid {
+                    x: 20px; y: 98px; width: parent.width - 40px; height: parent.height - 172px;
+                    items: AppState.video-images; show-add: true;
+                    enabled: !AppState.video-generating && !AppState.video-images-loading;
+                    add => { AppState.video-image-dialog = "source"; }
+                    remove(id) => { AppState.remove-video-image(id); }
+                }
+                Text {
+                    x: 20px; y: parent.height - 64px; width: parent.width - 40px; height: 44px;
+                    text: AppState.video-images-loading ? (AppState.en ? "Loading images…" : "正在加载图片…") : AppState.video-images-status;
+                    color: AppTheme.muted; font-size: 12px; wrap: word-wrap; vertical-alignment: center;
+                }
             }
             Text {
+                visible: AppState.video-result-path != "";
                 x: 20px;
                 y: parent.height - 50px;
                 width: parent.width - 40px;
@@ -385,7 +409,7 @@ export component VideoGenerationPage inherits Rectangle {
                 width: parent.width - 40px;
                 height: 46px;
                 primary: true;
-                disabled: !AppState.video-quote-ready || AppState.video-quote-loading || AppState.video-generating || AppState.optimizing-video-prompt;
+                disabled: !AppState.video-quote-ready || AppState.video-quote-loading || AppState.video-generating || AppState.optimizing-video-prompt || AppState.video-images-loading || AppState.video-images.length != 1;
                 text: AppState.video-quote-loading
                     ? (AppState.en ? "Getting price..." : "正在获取报价...")
                     : (AppState.en ? "Generate Video" : "生成视频");

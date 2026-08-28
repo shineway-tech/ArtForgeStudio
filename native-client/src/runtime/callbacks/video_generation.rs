@@ -38,6 +38,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
     let store = context.store.clone();
     let quote_epoch = Arc::new(AtomicU64::new(0));
     let pending_client_request_id = Arc::new(Mutex::new(String::new()));
+    let image_epoch = wire_video_image_callbacks(app, store.clone(), quote_epoch.clone(), pending_client_request_id.clone());
 
     {
         let app_weak = app.as_weak();
@@ -60,7 +61,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
                 return;
             };
             let state = app.global::<AppState>();
-            if state.get_video_prompt_expanded_open() || state.get_recovered_prompt_result_open() {
+            if state.get_video_prompt_expanded_open() || state.get_recovered_prompt_result_open() || state.get_video_image_dialog() != "" {
                 set_video_player_visible(false);
                 return;
             }
@@ -79,6 +80,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
         let app_weak = app.as_weak();
         let quote_epoch = quote_epoch.clone();
         let pending_client_request_id = pending_client_request_id.clone();
+        let image_epoch = image_epoch.clone();
         let context = context.clone();
         state.on_viewer_generate_video(move || {
             let Some(app) = app_weak.upgrade() else {
@@ -86,6 +88,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
             };
             let state = app.global::<AppState>();
             quote_epoch.fetch_add(1, Ordering::SeqCst);
+            reset_video_images(&state, &image_epoch);
             close_video_player();
             pending_client_request_id
                 .lock()
@@ -136,6 +139,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
         let app_weak = app.as_weak();
         let store = store.clone();
         let quote_epoch = quote_epoch.clone();
+        let image_epoch = image_epoch.clone();
         state.on_close_video_generation(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -143,6 +147,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
             quote_epoch.fetch_add(1, Ordering::SeqCst);
             close_video_player();
             let state = app.global::<AppState>();
+            cancel_video_image_work(&state, &image_epoch);
             let return_page = state.get_video_return_page().to_string();
             state.set_video_prompt_expanded_open(false);
             state.set_video_quote_loading(false);
@@ -160,9 +165,15 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
                 return;
             };
             let state = app.global::<AppState>();
+            let request_epoch = quote_epoch.fetch_add(1, Ordering::SeqCst) + 1;
             state.set_video_quote_ready(false);
             state.set_video_quote_id("".into());
             state.set_video_credit_cost("".into());
+            if let Some(error) = video_image_generation_error(&state) {
+                state.set_video_quote_loading(false);
+                state.set_video_status(error.into());
+                return;
+            }
             if !state.get_video_service_available() || state.get_video_model().trim().is_empty() {
                 state.set_video_quote_loading(false);
                 state.set_video_status("视频服务暂未开放".into());
@@ -190,7 +201,6 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
             state.set_video_duration_seconds(duration_secs.clamp(4, 15));
             state.set_video_quote_loading(true);
             state.set_video_status("正在获取服务端报价...".into());
-            let request_epoch = quote_epoch.fetch_add(1, Ordering::SeqCst) + 1;
             let model_code = state.get_video_model().to_string();
             let existing_file_id = state.get_video_source_file_id().to_string();
             let weak = app.as_weak();
@@ -254,6 +264,10 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
             };
             let state = app.global::<AppState>();
             if state.get_video_generating() || state.get_optimizing_video_prompt() {
+                return;
+            }
+            if let Some(error) = video_image_generation_error(&state) {
+                state.set_video_status(error.into());
                 return;
             }
             if !state.get_video_quote_ready() || state.get_video_quote_id().trim().is_empty() {
@@ -423,6 +437,48 @@ fn run_video_generation_task(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn video_workspace_starts_with_a_thumbnail_and_offers_both_image_sources() {
+        use i_slint_backend_testing::{ElementHandle, TestingBackend, TestingBackendOptions};
+        use slint::platform::PointerEventButton;
+
+        slint::platform::set_platform(Box::new(TestingBackend::new(TestingBackendOptions {
+            mock_time: true,
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        }))).unwrap();
+        let app = AppWindow::new().unwrap();
+        wire_video_generation_callbacks(&app, AppContext::default());
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_session_state("offline".into());
+        state.set_page("assets".into());
+        state.set_viewer_id("source".into());
+        state.set_viewer_source_path("source.png".into());
+        state.set_viewer_title("Source image".into());
+        state.set_viewer_prompt("Keep this prompt".into());
+        state.invoke_viewer_generate_video();
+        assert_eq!(state.get_page(), "video-generation");
+        assert_eq!(state.get_video_images().row_count(), 1);
+        app.show().unwrap();
+
+        for (width, height) in [(1180.0, 760.0), (1440.0, 900.0), (1920.0, 1080.0)] {
+            app.window().set_size(slint::LogicalSize::new(width, height));
+            let cards: Vec<_> = ElementHandle::find_by_element_type_name(&app, "VideoImageCard").collect();
+            assert_eq!(cards.len(), 1, "the original image must appear as one thumbnail");
+            assert!(cards[0].size().width <= 240.0 && cards[0].size().height <= 280.0,
+                "a source image must not grow into a full-height preview");
+            let add = ElementHandle::find_by_element_id(&app, "VideoImageGrid::add-image")
+                .next().expect("add tile beside the image");
+            assert!(add.absolute_position().x >= cards[0].absolute_position().x + cards[0].size().width);
+        }
+        ElementHandle::find_by_element_id(&app, "VideoImageGrid::add-image").next().unwrap()
+            .mock_single_click(PointerEventButton::Left);
+        assert!(ElementHandle::find_by_accessible_label(&app, "从我的资产添加").next().is_some());
+        assert!(ElementHandle::find_by_accessible_label(&app, "本地上传").next().is_some());
+        assert_eq!(state.get_video_prompt(), "Keep this prompt");
+    }
 
     #[test]
     fn viewer_video_workspace_uses_full_width_and_restores_navigation_on_return() {

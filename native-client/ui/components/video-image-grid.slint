@@ -1,0 +1,122 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { VideoImageItem } from "../types.slint";
+
+export component VideoImageCard inherits Rectangle {
+    in property <VideoImageItem> item;
+    in property <int> number;
+    in property <bool> selection-mode: false;
+    in property <bool> enabled: true;
+    callback selected();
+    callback remove();
+    background: AppTheme.panel;
+    border-radius: 10px;
+    border-width: root.item.selected ? 2px : 1px;
+    border-color: root.item.selected ? AppTheme.accent : AppTheme.border;
+    accessible-role: button;
+    accessible-label: root.item.title;
+    accessible-action-default => { if root.selection-mode && root.enabled && !root.item.added { root.selected(); } }
+    Rectangle {
+        x: 6px; y: 6px; width: parent.width - 12px; height: parent.width - 12px;
+        border-radius: 6px; clip: true; background: AppTheme.panel-soft;
+        Image { width: parent.width; height: parent.height; source: root.item.image; image-fit: contain; }
+    }
+    Text {
+        x: 10px; y: parent.width + 4px; width: parent.width - 20px; height: 24px;
+        text: root.item.title; color: AppTheme.text; font-size: 12px;
+        vertical-alignment: center; overflow: elide;
+    }
+    Rectangle {
+        x: 12px; y: 12px; width: 26px; height: 24px;
+        background: #000000a6; border-radius: 6px;
+        Text {
+            width: parent.width; height: parent.height; text: root.number;
+            color: #ffffff; font-size: 12px; horizontal-alignment: center; vertical-alignment: center;
+        }
+    }
+    select-touch := TouchArea {
+        enabled: root.selection-mode && root.enabled && !root.item.added;
+        mouse-cursor: self.enabled ? pointer : default;
+        clicked => { root.selected(); }
+    }
+    if root.selection-mode: Rectangle {
+        x: parent.width - 36px; y: 12px; width: 24px; height: 24px;
+        background: root.item.selected || root.item.added ? AppTheme.accent : AppTheme.panel;
+        border-radius: 6px; border-width: 1px;
+        border-color: root.item.selected || root.item.added ? AppTheme.accent : AppTheme.border;
+        Image {
+            visible: root.item.selected || root.item.added;
+            x: 4px; y: 4px; width: 16px; height: 16px;
+            source: @image-url("../../assets/icons/check.svg"); colorize: #ffffff;
+        }
+        TouchArea {
+            enabled: root.enabled && !root.item.added;
+            mouse-cursor: self.enabled ? pointer : default;
+            clicked => { root.selected(); }
+        }
+    }
+    if root.selection-mode && root.item.added: Rectangle {
+        x: 6px; y: parent.width - 32px; width: parent.width - 12px; height: 26px;
+        background: #000000a6;
+        Text { width: parent.width; height: parent.height; text: AppState.en ? "Added" : "已添加"; color: #ffffff; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+    }
+    if !root.selection-mode: Rectangle {
+        x: parent.width - 36px; y: 10px; width: 26px; height: 26px;
+        background: remove-touch.has-hover && root.enabled ? AppTheme.danger : AppTheme.panel;
+        border-radius: 13px; border-width: 1px; border-color: AppTheme.border;
+        opacity: root.enabled ? 1 : 0.4;
+        accessible-role: button;
+        accessible-label: (AppState.en ? "Remove " : "移除 ") + root.item.title;
+        accessible-action-default => { if root.enabled { root.remove(); } }
+        Image { x: 7px; y: 7px; width: 12px; height: 12px; source: @image-url("../../assets/icons/close.svg"); colorize: remove-touch.has-hover && root.enabled ? #ffffff : AppTheme.muted; }
+        remove-touch := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.remove(); } }
+    }
+}
+
+export component VideoImageGrid inherits Rectangle {
+    in property <[VideoImageItem]> items;
+    in property <bool> show-add: false;
+    in property <bool> selection-mode: false;
+    in property <bool> enabled: true;
+    callback add();
+    callback toggle(string);
+    callback remove(string);
+    property <int> columns: max(1, floor((root.width + 14px) / 214px));
+    property <length> card-width: min(200px, (root.width - (root.columns - 1) * 14px) / root.columns);
+    property <length> row-height: root.card-width + 50px;
+    property <int> item-count: root.items.length + (root.show-add ? 1 : 0);
+    background: transparent;
+    clip: true;
+    grid-scroll := Flickable {
+        width: parent.width; height: parent.height;
+        viewport-width: self.width;
+        viewport-height: max(self.height, ceil(root.item-count / root.columns) * root.row-height);
+        for item[index] in root.items: Rectangle {
+            x: Math.mod(index, root.columns) * (root.card-width + 14px);
+            y: floor(index / root.columns) * root.row-height;
+            width: root.card-width; height: root.row-height - 14px;
+            if self.y + self.height + grid-scroll.viewport-y >= 0px && self.y + grid-scroll.viewport-y < grid-scroll.height: VideoImageCard {
+                width: parent.width; height: parent.height;
+                item: item; number: index + 1;
+                selection-mode: root.selection-mode; enabled: root.enabled;
+                selected => { root.toggle(item.id); }
+                remove => { root.remove(item.id); }
+            }
+        }
+        if root.show-add: add-image := Rectangle {
+            x: Math.mod(root.items.length, root.columns) * (root.card-width + 14px);
+            y: floor(root.items.length / root.columns) * root.row-height;
+            width: root.card-width; height: root.row-height - 14px;
+            border-radius: 10px; border-width: 1px;
+            border-color: add-touch.has-hover ? AppTheme.accent : AppTheme.border;
+            background: add-touch.has-hover ? AppTheme.accent.with-alpha(0.06) : AppTheme.panel-soft;
+            opacity: root.enabled ? 1 : 0.5;
+            accessible-role: button;
+            accessible-label: AppState.en ? "Add images" : "添加图片";
+            accessible-action-default => { if root.enabled { root.add(); } }
+            Image { x: (parent.width - 28px) / 2; y: parent.height / 2 - 32px; width: 28px; height: 28px; source: @image-url("../../assets/icons/plus.svg"); colorize: AppTheme.accent; }
+            Text { y: parent.height / 2 + 10px; width: parent.width; height: 24px; text: AppState.en ? "Add images" : "添加图片"; color: AppTheme.text; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
+            add-touch := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.add(); } }
+        }
+    }
+}

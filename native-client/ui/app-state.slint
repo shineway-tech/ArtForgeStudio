@@ -1,4 +1,4 @@
-import { AccountSession, AssetGroup, AssetItem, BrushPoint, CanvasLink, CanvasNote, CatalogModelView, CompressionImageItem, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, GalleryHeader, GalleryLoadingPlacement, GalleryPlacement, InvitedUserView, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, PromptTextEdit, ReferenceItem } from "types.slint";
+import { AccountSession, AssetGroup, AssetItem, BrushPoint, CanvasLink, CanvasNote, CatalogModelView, CompressionImageItem, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, GalleryHeader, GalleryLoadingPlacement, GalleryPlacement, InvitedUserView, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, PromptTextEdit, ReferenceItem, VideoImageItem } from "types.slint";
 
 export global AppState {
     // The software renderer stays available for machines without a usable GPU. Expensive
@@ -522,6 +522,18 @@ export global AppState {
     in-out property <bool> viewer-remove-black-done: false;
     in-out property <bool> viewer-upscale-done: false;
     in-out property <string> video-source-id: "";
+    in-out property <[VideoImageItem]> video-images: [];
+    in-out property <[VideoImageItem]> video-asset-choices: [];
+    in-out property <string> video-image-dialog: "";
+    in-out property <bool> video-images-loading: false;
+    in-out property <int> video-asset-selected-count: 0;
+    in-out property <string> video-images-status: "";
+    callback open-video-asset-picker();
+    callback upload-video-images();
+    callback toggle-video-asset(string);
+    callback confirm-video-assets();
+    callback close-video-image-dialog();
+    callback remove-video-image(string);
     in-out property <string> video-source-path: "";
     in-out property <string> video-source-file-id: "";
     in-out property <image> video-source-image;

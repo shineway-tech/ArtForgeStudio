@@ -1,0 +1,98 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { VideoImageGrid } from "../components/video-image-grid.slint";
+
+component ImageSourceOption inherits Rectangle {
+    in property <string> label;
+    in property <string> detail;
+    in property <image> icon;
+    callback clicked();
+    background: touch.has-hover ? AppTheme.accent.with-alpha(0.06) : AppTheme.panel-soft;
+    border-radius: 12px; border-width: 1px;
+    border-color: touch.has-hover ? AppTheme.accent : AppTheme.border;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    Image { x: 20px; y: 22px; width: 26px; height: 26px; source: root.icon; colorize: AppTheme.accent; }
+    Text { x: 20px; y: 64px; width: parent.width - 40px; height: 26px; text: root.label; color: AppTheme.text; font-size: 15px; font-weight: 500; }
+    Text { x: 20px; y: 98px; width: parent.width - 40px; height: 32px; text: root.detail; color: AppTheme.muted; font-size: 12px; wrap: word-wrap; }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+export component VideoImagePickerDialog inherits Rectangle {
+    property <bool> choosing-assets: AppState.video-image-dialog == "assets";
+    background: #00000070;
+    TouchArea { clicked => { AppState.close-video-image-dialog(); } }
+    FocusScope {
+        width: parent.width; height: parent.height;
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if event.text == Key.Escape { AppState.close-video-image-dialog(); return accept; }
+            return reject;
+        }
+    }
+    dialog-card := Rectangle {
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+        width: root.choosing-assets ? min(1040px, parent.width - 64px) : min(560px, parent.width - 64px);
+        height: root.choosing-assets ? min(760px, parent.height - 64px) : 302px;
+        background: AppTheme.panel; border-radius: 16px; border-width: 1px; border-color: AppTheme.border;
+        TouchArea {}
+        Text {
+            x: 24px; y: 24px; width: parent.width - 150px; height: 28px;
+            text: root.choosing-assets ? (AppState.en ? "Add from My Assets" : "从我的资产添加") : (AppState.en ? "Add images" : "添加图片");
+            color: AppTheme.text; font-size: 20px; font-weight: 600;
+        }
+        PillButton {
+            x: parent.width - 100px; y: 20px; width: 76px; height: 34px;
+            text: AppState.en ? "Close" : "关闭";
+            clicked => { AppState.close-video-image-dialog(); }
+        }
+        if !root.choosing-assets: HorizontalLayout {
+            x: 24px; y: 80px; width: parent.width - 48px; height: 148px; spacing: 16px;
+            ImageSourceOption {
+                horizontal-stretch: 1;
+                label: AppState.en ? "From My Assets" : "从我的资产添加";
+                detail: AppState.en ? "Select multiple saved images" : "选择已有图片，支持多选";
+                icon: @image-url("../../assets/icons/assets.svg");
+                clicked => { AppState.open-video-asset-picker(); }
+            }
+            ImageSourceOption {
+                horizontal-stretch: 1;
+                label: AppState.en ? "Local upload" : "本地上传";
+                detail: AppState.en ? "Select multiple files on this device" : "选择电脑中的图片，支持多选";
+                icon: @image-url("../../assets/icons/upload.svg");
+                clicked => { AppState.upload-video-images(); }
+            }
+        }
+        if root.choosing-assets: VideoImageGrid {
+            x: 24px; y: 100px; width: parent.width - 48px; height: parent.height - 186px;
+            items: AppState.video-asset-choices; selection-mode: true;
+            enabled: !AppState.video-images-loading;
+            toggle(id) => { AppState.toggle-video-asset(id); }
+        }
+        if root.choosing-assets && AppState.video-asset-choices.length == 0: Text {
+            x: 24px; y: parent.height / 2 - 30px; width: parent.width - 48px; height: 60px;
+            text: AppState.video-images-loading ? (AppState.en ? "Loading images…" : "正在加载图片…") : (AppState.en ? "No images available. Try local upload." : "暂无可用图片，可返回选择本地上传");
+            color: AppTheme.muted; font-size: 14px; wrap: word-wrap; horizontal-alignment: center;
+        }
+        if root.choosing-assets: Text {
+            x: 24px; y: 62px; width: parent.width - 48px; height: 22px;
+            text: AppState.en ? "Click images to select · Added images cannot be added again" : "点击图片可多选 · 已添加的图片无需重复选择";
+            color: AppTheme.muted; font-size: 12px;
+        }
+        Text {
+            x: 24px; y: parent.height - 56px;
+            width: root.choosing-assets ? parent.width - 240px : parent.width - 48px; height: 32px;
+            text: root.choosing-assets ? AppState.video-images-status : (AppState.en ? "New images will be appended to the current list" : "新图片将追加到当前列表，原有图片会保留");
+            color: AppTheme.muted; font-size: 12px; wrap: word-wrap; vertical-alignment: center;
+        }
+        if root.choosing-assets: PillButton {
+            x: parent.width - 194px; y: parent.height - 62px; width: 170px; height: 38px;
+            primary: true;
+            disabled: AppState.video-images-loading || AppState.video-asset-selected-count == 0;
+            text: (AppState.en ? "Add selected (" : "添加选中图片（") + AppState.video-asset-selected-count + (AppState.en ? ")" : "）");
+            clicked => { AppState.confirm-video-assets(); }
+        }
+    }
+}

@@ -134,6 +134,9 @@ use viewer_callbacks::*;
 #[path = "callbacks/video_generation.rs"]
 mod video_generation_callbacks;
 use video_generation_callbacks::*;
+#[path = "callbacks/video_images.rs"]
+mod video_image_callbacks;
+use video_image_callbacks::*;
 mod configuration;
 use configuration::*;
 #[path = "features/inspiration.rs"]
