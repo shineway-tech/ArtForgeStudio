@@ -51,7 +51,7 @@ export component VersionCheckDialog {
 
                 Text {
                     height: 30px;
-                    text: AppState.update-stage == "downloading"
+                    text: AppState.local-build ? (AppState.en ? "Local changes are protected" : "本地修改已保护") : AppState.update-stage == "downloading"
                         ? (AppState.en ? "Downloading update" : "正在下载更新")
                         : (AppState.update-stage == "cancelling"
                             ? (AppState.en ? "Cancelling update" : "正在取消更新")
@@ -82,7 +82,7 @@ export component VersionCheckDialog {
                             padding: 10px;
                             spacing: 2px;
                             Text {
-                                text: AppState.en ? "Current version" : "当前版本";
+                                text: AppState.local-build ? (AppState.en ? "Local development build" : "本地开发版") : (AppState.en ? "Current version" : "当前版本");
                                 color: AppTheme.muted;
                                 font-size: 12px;
                                 horizontal-alignment: center;
@@ -211,7 +211,9 @@ export component VersionCheckDialog {
                         y: 10px;
                         width: parent.width - 28px;
                         height: parent.height - 20px;
-                        text: AppState.update-stage == "failed" || AppState.update-stage == "manual"
+                        text: AppState.local-build
+                            ? (AppState.en ? "Online installers do not include unpublished local changes. Installation is blocked. Merge and publish these changes before updating." : "线上安装包不包含尚未发布的本地修改，已阻止覆盖。请先合并并发布这些修改，再使用线上更新。")
+                            : AppState.update-stage == "failed" || AppState.update-stage == "manual"
                             ? AppState.update-download-message
                             : (AppState.update-required
                                 ? (AppState.en
@@ -258,14 +260,14 @@ export component VersionCheckDialog {
                             AppState.enter-offline();
                         }
                     }
-                    if !AppState.update-active: PillButton {
+                    if !AppState.update-active: update-action := PillButton {
                         horizontal-stretch: 1;
                         height: 42px;
-                        text: AppState.update-stage == "failed"
+                        text: AppState.local-build ? (AppState.en ? "Local build protected" : "已保护本地修改") : AppState.update-stage == "failed"
                             ? (AppState.en ? "Try again" : "重试更新")
                             : (AppState.en ? "Update now" : "立即更新");
                         primary: true;
-                        disabled: AppState.update-download-url == "";
+                        disabled: AppState.local-build || AppState.update-download-url == "";
                         clicked => { AppState.start-update(); }
                     }
                 }

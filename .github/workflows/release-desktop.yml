@@ -13,6 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  ELUNVI_BUILD_CHANNEL: release
   CARGO_TERM_COLOR: always
   CARGO_NET_RETRY: 10
   CARGO_HTTP_TIMEOUT: 600

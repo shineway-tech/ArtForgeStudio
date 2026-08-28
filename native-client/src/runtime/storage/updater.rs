@@ -8,7 +8,14 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 #[path = "windows_update.rs"]
 mod windows_update;
 
+pub(super) fn is_local_build() -> bool {
+    option_env!("ELUNVI_BUILD_CHANNEL") != Some("release")
+}
+
 pub(super) fn restore_update_installation_result(app: &AppWindow) {
+    if is_local_build() {
+        return;
+    }
     #[cfg(windows)]
     windows_update::restore_result(app);
     #[cfg(not(windows))]
@@ -35,6 +42,89 @@ struct UpdateDownloadRequest {
 
 pub(super) fn new_update_cancellation() -> UpdateCancellation {
     Arc::new(AtomicBool::new(false))
+}
+
+#[cfg(test)]
+mod local_build_tests {
+    use super::*;
+
+    #[test]
+    fn local_build_blocks_update_before_external_download_fallback() {
+        if option_env!("ELUNVI_BUILD_CHANNEL") == Some("release") {
+            return;
+        }
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        init_version_state(&app);
+        let state = app.global::<AppState>();
+        state.set_update_available(true);
+        // The runtime guard must not rely on a mutable UI property.
+        state.set_local_build(false);
+        state.set_update_release_notes("keep existing release notes".into());
+        state.set_update_download_size("1".into());
+        state.set_update_download_sha256("0".repeat(64).into());
+        let cancellation = new_update_cancellation();
+        cancellation.store(true, AtomicOrdering::Release);
+
+        for url in [
+            // Fail here before any network/browser side effect if the guard is removed.
+            "file:///not-an-update.exe",
+            "https://static.honeykid.cn/__elunvi_local_build_guard_fixture__.exe",
+        ] {
+            state.set_update_download_url(url.into());
+            begin_automatic_update(&app, cancellation.clone());
+            assert_eq!(state.get_update_stage(), "protected");
+            assert!(state.get_update_result_open());
+            assert!(!state.get_update_active());
+            assert!(cancellation.load(AtomicOrdering::Acquire));
+            assert_eq!(state.get_update_release_notes(), "keep existing release notes");
+        }
+    }
+
+    #[test]
+    fn local_build_update_actions_are_blocked_while_release_actions_remain_available() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true, renderer_name: Some("software".into()), ..Default::default()
+            },
+        ))).unwrap();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_page("settings".into());
+        state.set_settings_section("about".into());
+        state.set_current_version("1.0.21".into());
+        state.set_latest_version("1.0.22".into());
+        state.set_update_available(true);
+        state.set_update_download_url("https://static.honeykid.cn/fixture.exe".into());
+        let requests = Rc::new(RefCell::new(0));
+        let observed = requests.clone();
+        state.on_start_update(move || *observed.borrow_mut() += 1);
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().unwrap();
+
+        for (local, expected_requests) in [(true, 0), (false, 1)] {
+            state.set_local_build(local);
+            ElementHandle::find_by_element_id(&app, "SettingsPage::settings-update-action")
+                .next().unwrap().mock_single_click(PointerEventButton::Left);
+            assert_eq!(*requests.borrow(), expected_requests);
+        }
+        state.set_update_result_open(true);
+        for (local, expected_requests) in [(true, 1), (false, 2)] {
+            state.set_local_build(local);
+            ElementHandle::find_by_element_id(&app, "VersionCheckDialog::update-action")
+                .next().unwrap().mock_single_click(PointerEventButton::Left);
+            assert_eq!(*requests.borrow(), expected_requests);
+        }
+        state.set_local_build(true);
+        if let Some(directory) = std::env::var_os("ELUNVI_TEST_ARTIFACT_DIR") {
+            let directory = PathBuf::from(directory);
+            fs::create_dir_all(&directory).unwrap();
+            let pixels = app.window().take_snapshot().unwrap();
+            image::save_buffer(directory.join("local-build-protection.png"), pixels.as_bytes(), pixels.width(), pixels.height(), image::ColorType::Rgba8).unwrap();
+        }
+    }
 }
 
 pub(super) fn cleanup_stale_update_dirs() {
@@ -74,6 +164,12 @@ pub(super) fn is_update_temp_dir_name(name: &str) -> bool {
 
 pub(super) fn begin_automatic_update(app: &AppWindow, cancellation: UpdateCancellation) {
     let state = app.global::<AppState>();
+    if is_local_build() {
+        state.set_update_stage("protected".into());
+        state.set_update_download_message("当前是本地开发版，线上安装包不包含未发布的本地修改，已阻止覆盖。请先合并并发布这些修改后再更新。".into());
+        state.set_update_result_open(true);
+        return;
+    }
     if state.get_update_active() {
         return;
     }

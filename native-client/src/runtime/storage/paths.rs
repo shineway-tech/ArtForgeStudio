@@ -17,6 +17,7 @@ pub(super) fn app_dir() -> PathBuf {
 pub(super) fn init_version_state(app: &AppWindow) {
     let state = app.global::<AppState>();
     let current = env!("CARGO_PKG_VERSION");
+    state.set_local_build(is_local_build());
     state.set_current_version(current.into());
     state.set_latest_version(current.into());
     state.set_update_download_url(default_update_download_url().into());
@@ -211,7 +212,7 @@ fn apply_update_manifest(app: &AppWindow, manifest: UpdateManifest, manual: bool
         }
         .into(),
     );
-    if available || manual {
+    if manual || (available && !state.get_local_build()) {
         state.set_update_result_open(true);
     }
 }
@@ -851,6 +852,25 @@ pub(super) fn unique_path(path: PathBuf) -> PathBuf {
 #[cfg(test)]
 mod update_state_tests {
     use super::*;
+
+    #[test]
+    fn local_build_update_checks_are_informational_without_bypassing_required_updates() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        for (local, manual, should_open) in [(true, false, false), (true, true, true), (false, false, true)] {
+            state.set_local_build(local);
+            state.set_update_result_open(false);
+            apply_update_manifest(&app, UpdateManifest { version: "99.0.0".into(), ..Default::default() }, manual);
+            assert!(state.get_update_available());
+            assert_eq!(state.get_update_result_open(), should_open);
+        }
+        state.set_local_build(true);
+        state.set_update_result_open(false);
+        show_required_update_prompt(&app, "99.0.0");
+        assert!(state.get_update_required());
+        assert!(state.get_update_result_open());
+    }
 
     #[test]
     fn manifest_refresh_preserves_installation_failures_and_active_progress() {

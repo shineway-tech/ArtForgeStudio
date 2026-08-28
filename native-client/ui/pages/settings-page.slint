@@ -437,7 +437,7 @@ export component SettingsPage {
                     border-color: AppTheme.border;
                     Text { x: 18px; y: 18px; text: AppState.en ? "Version" : "版本信息"; color: AppTheme.text; font-size: 14px; font-weight: 400; }
                     Text { x: 18px; y: 58px; text: "Elunvi Canvas"; color: AppTheme.text; font-size: 18px; font-weight: 500; }
-                    Text { x: 18px; y: 88px; text: AppState.en ? ("Version: " + AppState.current-version) : ("版本：" + AppState.current-version); color: AppTheme.muted; font-size: 13px; font-weight: 400; }
+                    Text { x: 18px; y: 88px; text: (AppState.en ? ("Version: " + AppState.current-version) : ("版本：" + AppState.current-version)) + (AppState.local-build ? (AppState.en ? " · Local development build" : " · 本地开发版") : ""); color: AppTheme.muted; font-size: 13px; font-weight: 400; }
                     if AppState.update-available: Rectangle {
                         x: 18px;
                         y: 116px;
@@ -453,7 +453,7 @@ export component SettingsPage {
                         width: parent.width - 300px;
                         height: 22px;
                         text: AppState.update-checking ? (AppState.en ? "Checking for updates..." : "正在检查版本...")
-                            : (AppState.update-available ? (AppState.en ? ("New version " + AppState.latest-version + " available") : ("发现新版本 " + AppState.latest-version))
+                            : (AppState.update-available ? (AppState.local-build ? (AppState.en ? ("Online version " + AppState.latest-version + " · Local build protected") : ("线上版本 " + AppState.latest-version + " · 本地修改已保护")) : (AppState.en ? ("New version " + AppState.latest-version + " available") : ("发现新版本 " + AppState.latest-version)))
                             : AppState.update-message);
                         color: AppState.update-available ? AppTheme.danger : AppTheme.muted;
                         font-size: 13px;
@@ -473,11 +473,11 @@ export component SettingsPage {
                             disabled: AppState.update-checking;
                             clicked => { AppState.check-version(); }
                         }
-                        PillButton {
+                        settings-update-action := PillButton {
                             horizontal-stretch: 1;
-                            text: AppState.en ? "Update" : "更新";
-                            primary: AppState.update-available;
-                            disabled: !AppState.update-available || AppState.update-checking;
+                            text: AppState.local-build ? (AppState.en ? "Protected" : "本地保护") : (AppState.en ? "Update" : "更新");
+                            primary: AppState.update-available && !AppState.local-build;
+                            disabled: AppState.local-build || !AppState.update-available || AppState.update-checking;
                             clicked => { AppState.start-update(); }
                         }
                     }

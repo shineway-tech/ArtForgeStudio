@@ -15,6 +15,10 @@ git push origin vX.Y.Z
 
 ## Local packages
 
+普通本地构建（包括 `cargo build --release`）使用 `local` 构建渠道，界面标记“本地开发版”，不会自动弹出普通更新提示，也不允许安装线上更新包覆盖未发布修改。手动检查仍可查看线上版本；服务端最低版本要求不受此保护影响，不能通过本地标记绕过。
+
+正式发布工作流显式设置 `ELUNVI_BUILD_CHANNEL=release`，生成保留正常自动更新能力的发布包。只有确认所需修改已经合并并通过验证后，才应使用该渠道构建；Cargo 的 release 优化配置与正式发布渠道不是同一概念。
+
 macOS DMG：
 
 ```bash
