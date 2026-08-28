@@ -218,6 +218,10 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
             if let Some(app) = app_weak.upgrade() {
                 let state = app.global::<AppState>();
                 let page = state.get_page().to_string();
+                if page == "video-generation" {
+                    state.invoke_close_video_generation();
+                    return;
+                }
                 if page == "custom-prompt-editor" {
                     close_custom_prompt_editor(&app, &context);
                     return;

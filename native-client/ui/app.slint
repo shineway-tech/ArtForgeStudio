@@ -63,7 +63,7 @@ export component AppWindow inherits Window {
     }
 
     if AppState.page != "welcome": HorizontalLayout {
-        if AppState.logged-in: Sidebar {}
+        if AppState.logged-in && AppState.page != "video-generation": Sidebar {}
         VerticalLayout {
             TopBar {}
             Rectangle {

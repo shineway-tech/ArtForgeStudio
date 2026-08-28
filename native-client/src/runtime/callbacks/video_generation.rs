@@ -424,6 +424,86 @@ fn run_video_generation_task(
 mod tests {
     use super::*;
 
+    #[test]
+    fn viewer_video_workspace_uses_full_width_and_restores_navigation_on_return() {
+        use i_slint_backend_testing::{ElementHandle, TestingBackend, TestingBackendOptions};
+        use slint::platform::PointerEventButton;
+
+        slint::platform::set_platform(Box::new(TestingBackend::new(TestingBackendOptions {
+            mock_time: true,
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        })))
+        .unwrap();
+        let app = AppWindow::new().unwrap();
+        super::super::app::wire_callbacks(&app, AppContext::default());
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_session_state("offline".into());
+        app.show().unwrap();
+
+        for (origin, collapsed, width, height, top_bar_back) in [
+            ("generation", false, 1180.0, 760.0, false),
+            ("assets", true, 1440.0, 900.0, true),
+            ("generation", true, 1920.0, 1080.0, true),
+            ("assets", false, 1440.0, 900.0, false),
+        ] {
+            app.window().set_size(slint::LogicalSize::new(width, height));
+            state.set_page(origin.into());
+            state.set_sidebar_collapsed(collapsed);
+            state.set_viewer_source(origin.into());
+            state.set_viewer_id("video-source-image".into());
+            state.set_viewer_title("Source image".into());
+            state.set_viewer_prompt("Keep the original scene and move the camera slowly.".into());
+            state.set_viewer_open(true);
+            let sidebar = ElementHandle::find_by_element_type_name(&app, "Sidebar")
+                .next().expect("navigation is available before entering the video page");
+            // Read the settled layout, not the sidebar's 160ms collapse animation.
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(200));
+            let sidebar_width = sidebar.size().width;
+
+            ElementHandle::find_by_element_type_name(&app, "ViewerFooterActionButton")
+                .nth(1).expect("generate video action in image details")
+                .mock_single_click(PointerEventButton::Left);
+
+            assert_eq!(state.get_page(), "video-generation");
+            assert!(!state.get_viewer_open());
+            assert_eq!(state.get_video_source_id(), "video-source-image");
+            assert_eq!(state.get_video_prompt(), "Keep the original scene and move the camera slowly.");
+            assert!(ElementHandle::find_by_element_type_name(&app, "Sidebar").next().is_none(),
+                "the video workspace must not show the main navigation sidebar");
+            let video_page = ElementHandle::find_by_element_type_name(&app, "VideoGenerationPage")
+                .next().expect("dedicated video generation page");
+            assert!(video_page.absolute_position().x.abs() < 1.0);
+            assert!((video_page.size().width - width).abs() < 1.0,
+                "hiding navigation must also reclaim its layout width");
+            let preview = ElementHandle::find_by_element_id(&app, "VideoGenerationPage::preview-card")
+                .next().unwrap();
+            let settings = ElementHandle::find_by_element_id(&app, "VideoGenerationPage::settings-card")
+                .next().unwrap();
+            assert!(preview.absolute_position().x + preview.size().width < settings.absolute_position().x);
+            assert!(settings.absolute_position().x + settings.size().width <= width);
+            assert!(settings.absolute_position().y + settings.size().height <= height);
+
+            let back_container = if top_bar_back {
+                ElementHandle::find_by_element_type_name(&app, "TopBar").next().unwrap()
+            } else {
+                video_page
+            };
+            back_container.query_descendants().match_inherits("PillButton")
+                .find_first().expect("back action")
+                .mock_single_click(PointerEventButton::Left);
+
+            assert_eq!(state.get_page().as_str(), origin);
+            assert!(state.get_viewer_open(), "return to the current image details");
+            assert_eq!(state.get_viewer_id(), "video-source-image");
+            assert_eq!(state.get_sidebar_collapsed(), collapsed);
+            let restored_sidebar = ElementHandle::find_by_element_type_name(&app, "Sidebar")
+                .next().expect("navigation must return after leaving the video page");
+            assert_eq!(restored_sidebar.size().width, sidebar_width);
+        }
+    }
+
     fn catalog_model(code: &str, name: &str, purpose: &str) -> CatalogModelView {
         CatalogModelView {
             code: code.into(),
