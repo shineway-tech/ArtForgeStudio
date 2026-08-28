@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "video_prompt_format.rs"]
+mod formatting;
+
 pub(super) fn wire_video_prompt_callbacks(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
     {
@@ -22,7 +25,7 @@ pub(super) fn wire_video_prompt_callbacks(app: &AppWindow, context: AppContext) 
                     return;
                 }
             };
-            state.set_video_prompt_status("正在整理视频提示词...".into());
+            state.set_video_prompt_status("正在按时间线整理视频提示词的五项内容...".into());
             state.set_optimizing_video_prompt(true);
             start_backend_prompt_task(&app, context.clone(), task);
         });
@@ -81,13 +84,7 @@ fn video_prompt_task(state: &AppState) -> std::result::Result<PromptTaskRequest,
     Ok(PromptTaskRequest {
         model_code,
         task_type: "prompt_optimize",
-        prompt: format!(
-            "请将以下内容整理为适合图生视频的提示词，优化表述、分段和格式。\
-             保持原文语言、主体、场景、风格和约束不变；原文已包含的动作与镜头运动应表述清楚，\
-             不要擅自添加人物、情节、运动或改变画面内容。\
-             按原文已有信息合理分段，只返回可直接使用的提示词，不要解释、代码块或 Markdown 标记。\n\n{}",
-            input.trim()
-        ),
+        prompt: formatting::optimization_input(&input, state.get_video_duration_seconds()),
         target_language: None,
         optimize: true,
         target: PromptResultTarget::Video {
@@ -170,6 +167,7 @@ mod tests {
         state.set_video_prompt("  镜头缓慢推进，保持人物不变。\n  ".into());
         state.set_prompt("unrelated image prompt".into());
         state.set_reasoning_model("server-prompt-model".into());
+        state.set_video_duration_seconds(8);
         let task = video_prompt_task(&state).unwrap();
         assert_eq!(task.task_type, "prompt_optimize");
         assert_eq!(task.model_code, "server-prompt-model");
@@ -177,10 +175,15 @@ mod tests {
         assert!(task.prompt.ends_with("镜头缓慢推进，保持人物不变。"));
         assert!(!task.prompt.contains("unrelated image prompt"));
         assert!(task.reference_paths.is_empty());
+        assert!(task.prompt.contains("时间线：0–4秒"));
+        assert!(task.prompt.contains("时间线：4–8秒"));
         assert!(
             matches!(task.target, PromptResultTarget::Video { source_id, input }
             if source_id == "image-a" && input == "  镜头缓慢推进，保持人物不变。\n  ")
         );
+        state.set_video_duration_seconds(15);
+        let task = video_prompt_task(&state).unwrap();
+        assert!(task.prompt.contains("时间线：12–15秒"));
         state.set_video_prompt(" \n ".into());
         assert!(video_prompt_task(&state).is_err());
     }
