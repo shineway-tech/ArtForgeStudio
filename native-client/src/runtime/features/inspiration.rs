@@ -91,6 +91,8 @@ pub(super) fn seed_inspiration(_app: &AppWindow, store: &Rc<RefCell<Store>>) -> 
                     remove_black_done: false,
                     upscale_done: false,
                     is_new: false,
+                    delivery_recoverable: false,
+                    delivery_downloading: false,
                 });
             }
         }

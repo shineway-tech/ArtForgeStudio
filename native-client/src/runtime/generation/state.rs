@@ -122,7 +122,14 @@ pub(super) fn observe_detached_generation_scope(
     });
 }
 
-pub(super) fn clear_generation_account_state(app: &AppWindow, context: &AppContext) {
+pub(super) fn clear_generation_account_state(
+    app: &AppWindow,
+    context: &AppContext,
+    session_scope: Option<&SessionScope>,
+) {
+    if let Some(session_scope) = session_scope {
+        release_delivery_downloads_for_scope(context, session_scope);
+    }
     context.generations.active.borrow_mut().clear();
     context.generations.statuses.borrow_mut().clear();
     if let Ok(mut cancellations) = context.cancelled_generation_requests.lock() {
@@ -149,6 +156,7 @@ pub(super) fn clear_generation_account_state(app: &AppWindow, context: &AppConte
     state.set_watermark_progress(0);
     state.set_colorize_processing(false);
     state.set_colorize_progress(0);
+    refresh_delivery_download_flags(app, context);
 }
 
 pub(super) fn insert_active_generation(context: &AppContext, task: ActiveGeneration) {
@@ -165,14 +173,22 @@ pub(super) fn remove_active_generation(
     task_id: &str,
 ) -> Option<ActiveGeneration> {
     let mut tasks = context.generations.active.borrow_mut();
-    if tasks
+    let removed = if tasks
         .get(category)
         .is_some_and(|task| task.task_id == task_id)
     {
         tasks.remove(category)
     } else {
         None
+    };
+    drop(tasks);
+    if let Some(task) = removed.as_ref() {
+        release_delivery_download_reservations(
+            context,
+            &task.delivery_download_reservations,
+        );
     }
+    removed
 }
 
 pub(super) fn set_generation_status_for_category(

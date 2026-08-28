@@ -583,7 +583,6 @@ mod tests {
         assert!(composer.contains("AppState.prompt-history[root.prompt-history-selected-index]"));
         assert!(composer.contains("AppState.apply-inline-custom-prompt("));
         assert!(composer.contains("root.scroll-prompt-history-selection-into-view()"));
-        assert!(composer.contains("root.scroll-custom-prompt-selection-into-view()"));
         assert!(composer.contains("index == root.prompt-history-selected-index"));
         assert!(composer.contains("index == root.custom-prompt-selected-index"));
         assert!(composer.contains("root.custom-prompt-selected-index = index"));
@@ -821,7 +820,6 @@ mod tests {
         assert!(popup.contains("item.selected ? AppTheme.accent"));
         assert!(popup.contains("root.queue-custom-prompt-selection(item.content)"));
         assert!(!popup.contains("AppState.toggle-custom-prompt-selection(item.content)"));
-        assert!(popup.contains("custom-prompt-row := HorizontalLayout"));
         assert!(popup.contains("tag-title.preferred-width + 28px"));
         assert!(!composer.contains("function custom-prompt-tag-width()"));
         assert!(!popup.contains("root.apply-selected-prompt(item.content)"));
@@ -892,7 +890,6 @@ mod tests {
         assert!(!composer.contains("selected-close-touch := TouchArea"));
         assert!(!composer.contains("selected-title.preferred-width + 38px"));
         assert!(composer.contains("tag-title.preferred-width + 28px"));
-        assert!(popup.contains("overflow: clip"));
         assert!(state.contains("callback normalize-prompt-editor-text(string, string) -> string;"));
         assert!(state.contains("callback apply-inline-custom-prompt(string, string, int) -> PromptTextEdit;"));
         assert!(callbacks.contains("state.on_normalize_prompt_editor_text"));
@@ -1150,6 +1147,147 @@ mod tests {
     }
 
     #[test]
+    fn custom_prompt_choices_wrap_inside_the_popup_and_remain_selectable() {
+        use i_slint_backend_testing::{ElementHandle, TestingBackend, TestingBackendOptions};
+        use slint::platform::{Key, PointerEventButton, WindowEvent};
+
+        slint::platform::set_platform(Box::new(TestingBackend::new(TestingBackendOptions {
+            mock_time: true,
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        }))).unwrap();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_page("generation".into());
+        state.set_contact_popup_open(false);
+        let names = ["CG电影", "测试标题3", "测试标题2", "测试标题1", "中国古风质感人物与场景", "像素模板", "横板闯关场景", "电影镜头"];
+        state.set_custom_prompt_items(ModelRc::new(VecModel::from(names.iter().enumerate().map(|(index, name)| CustomPromptItem {
+            name: (*name).into(), content: format!("prompt-{index}").into(), ..Default::default()
+        }).collect::<Vec<_>>())));
+        // Exercise the real editor trigger without writing any user drafts to disk.
+        let weak = app.as_weak();
+        state.on_normalize_prompt_editor_text(move |text, _| {
+            weak.unwrap().global::<AppState>().set_prompt(text.clone());
+            text
+        });
+        let weak = app.as_weak();
+        state.on_prepare_custom_prompt_insertion(move |text, offset| {
+            let edit = remove_custom_prompt_trigger_before_cursor(&text, offset.max(0) as usize);
+            weak.unwrap().global::<AppState>().set_prompt(edit.text.clone().into());
+            PromptTextEdit { text: edit.text.into(), cursor_offset: edit.cursor_offset }
+        });
+        let selections = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed = selections.clone();
+        state.on_apply_inline_custom_prompt(move |content, text, cursor_offset| {
+            observed.borrow_mut().push(content.to_string());
+            PromptTextEdit { text, cursor_offset }
+        });
+        let press = |text: SharedString| {
+            app.window().dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+            app.window().dispatch_event(WindowEvent::KeyReleased { text });
+        };
+        app.show().unwrap();
+
+        for (width, theme, font_size) in [(1050.0, "light", 14), (1440.0, "ocean", 14), (1920.0, "sprite", 18)] {
+            apply_theme(&app, theme);
+            state.set_settings_font_size(font_size);
+            app.window().set_size(slint::LogicalSize::new(width, 900.0));
+            state.set_prompt("/".into());
+            ElementHandle::find_by_element_id(&app, "PromptComposer::prompt-input")
+                .next().unwrap().mock_single_click(PointerEventButton::Left);
+            press(Key::End.into());
+            press("/".into());
+            assert!(state.get_custom_prompt_open(), "double slash opens the picker");
+            let viewport = ElementHandle::find_by_element_id(&app, "PromptComposer::custom-prompt-scroll")
+                .next().unwrap();
+            let labels = ElementHandle::find_by_element_id(&app, "PromptComposer::tag-title").collect::<Vec<_>>();
+            assert_eq!(labels.len(), names.len());
+            let top = labels[0].absolute_position().y;
+            assert!(labels.iter().any(|label| label.absolute_position().y > top + 20.0),
+                "choices must wrap to additional rows at window width {width}");
+            let bounds = viewport.absolute_position();
+            let size = viewport.size();
+            for label in &labels {
+                let pos = label.absolute_position();
+                assert!(pos.x >= bounds.x && pos.x + label.size().width <= bounds.x + size.width + 1.0,
+                    "every choice must fit horizontally without scrolling: {pos:?}, viewport {bounds:?} {size:?}");
+                assert!(pos.y >= bounds.y && pos.y + label.size().height <= bounds.y + size.height + 1.0,
+                    "popup must expand to show its wrapped choices");
+            }
+            let footer = ElementHandle::find_by_accessible_label(&app, "管理").next().unwrap();
+            assert!(footer.absolute_position().y >= bounds.y + size.height,
+                "footer must remain below the wrapped choices");
+            assert!(viewport.query_descendants().match_inherits("ScrollBar").find_all().is_empty(),
+                "the choice list must not render scrollbar tracks");
+            if let Some(directory) = std::env::var_os("ELUNVI_TEST_ARTIFACT_DIR") {
+                let directory = PathBuf::from(directory);
+                fs::create_dir_all(&directory).unwrap();
+                let pixels = app.window().take_snapshot().unwrap();
+                image::save_buffer(directory.join(format!("custom-prompt-wrap-{width}.png")), pixels.as_bytes(), pixels.width(), pixels.height(), image::ColorType::Rgba8).unwrap();
+            }
+            press(Key::Escape.into());
+            assert!(!state.get_custom_prompt_open());
+        }
+
+        state.set_prompt("/".into());
+        ElementHandle::find_by_element_id(&app, "PromptComposer::prompt-input")
+            .next().unwrap().mock_single_click(PointerEventButton::Left);
+        press(Key::End.into());
+        press("/".into());
+        let choice = ElementHandle::find_by_element_id(&app, "PromptComposer::custom-row").last().unwrap();
+        let editor = ElementHandle::find_by_element_id(&app, "PromptComposer::prompt-input").next().unwrap();
+        // Popup element coordinates are popup-local in the testing backend.
+        // Translate to the main window using the editor-anchored popup origin.
+        let position = slint::LogicalPosition::new(
+            editor.absolute_position().x + choice.absolute_position().x + choice.size().width / 2.0,
+            editor.absolute_position().y + 32.0 + choice.absolute_position().y + choice.size().height / 2.0,
+        );
+        app.window().dispatch_event(WindowEvent::PointerMoved { position });
+        app.window().dispatch_event(WindowEvent::PointerPressed { position, button: PointerEventButton::Left });
+        app.window().dispatch_event(WindowEvent::PointerReleased { position, button: PointerEventButton::Left });
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(20));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(selections.borrow().as_slice(), ["prompt-7"]);
+        assert!(!state.get_custom_prompt_open());
+
+        state.set_prompt("/".into());
+        ElementHandle::find_by_element_id(&app, "PromptComposer::prompt-input")
+            .next().unwrap().mock_single_click(PointerEventButton::Left);
+        press(Key::End.into());
+        press("/".into());
+        press(Key::UpArrow.into());
+        press(Key::Return.into());
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(20));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(selections.borrow().as_slice(), ["prompt-7", "prompt-7"]);
+        assert!(!state.get_custom_prompt_open());
+
+        state.set_custom_prompt_items(ModelRc::new(VecModel::from((0..100).map(|index| CustomPromptItem {
+            name: if index == 50 { "很长的自定义提示词名称".repeat(12).into() } else { format!("自定义提示词{index}").into() },
+            content: format!("long-list-{index}").into(), ..Default::default()
+        }).collect::<Vec<_>>())));
+        state.set_prompt("/".into());
+        ElementHandle::find_by_element_id(&app, "PromptComposer::prompt-input")
+            .next().unwrap().mock_single_click(PointerEventButton::Left);
+        press(Key::End.into());
+        press("/".into());
+        press(Key::UpArrow.into());
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(20));
+        slint::platform::update_timers_and_animations();
+        let last = ElementHandle::find_by_accessible_label(&app, "自定义提示词99").next().unwrap();
+        let viewport = ElementHandle::find_by_element_id(&app, "PromptComposer::custom-prompt-scroll").next().unwrap();
+        assert!(last.absolute_position().y >= viewport.absolute_position().y);
+        assert!(last.absolute_position().y + last.size().height <= viewport.absolute_position().y + viewport.size().height + 1.0,
+            "keyboard selection must bring the last wrapped row into view");
+        assert!(viewport.size().height <= 360.0, "a long list must stay inside the window");
+        press(Key::Return.into());
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(20));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(selections.borrow().last().unwrap(), "long-list-99");
+    }
+
+    #[test]
     fn populated_custom_prompt_popup_exposes_low_emphasis_create_and_manage_actions() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         let popup = composer
@@ -1174,8 +1312,6 @@ mod tests {
         assert!(popup.contains("AppState.settings-section = \"prompts\""));
         assert!(popup.contains("AppState.navigate(\"settings\")"));
         assert!(popup.contains("AppState.begin-new-custom-prompt()"));
-        assert!(popup.contains("custom-prompt-row := HorizontalLayout"));
-        assert!(popup.contains("height: 36px;"));
     }
 
     #[test]
@@ -2421,7 +2557,7 @@ mod tests {
     }
 
     #[test]
-    fn prompt_popups_show_ten_single_line_rows_without_losing_full_values() {
+    fn prompt_popups_preserve_full_prompt_values_and_custom_names() {
         assert_eq!(
             single_line_prompt_preview("first line\nsecond\tline  end"),
             "first line second line end"
@@ -2433,9 +2569,6 @@ mod tests {
         assert!(composer.contains("root.apply-selected-prompt(AppState.prompt-history[index])"));
         assert!(composer.contains("root.queue-custom-prompt-selection(item.content)"));
         assert!(composer.contains("viewport-height: AppState.prompt-history.length * 32px"));
-        assert!(
-            composer.contains("viewport-width: max(self.width, custom-prompt-row.preferred-width)")
-        );
         assert!(composer.contains("for item[index] in AppState.custom-prompt-items"));
         assert!(composer.contains("text: item.name"));
     }
@@ -5116,6 +5249,109 @@ mod tests {
         assert!(discovery.contains("backend_generation_scope_active(&backend, &worker_scope)"));
         assert!(discovery.contains("sender.send(Err(()))"));
         assert!(discovery.contains("generation_scope_allows_polling"));
+    }
+
+    #[test]
+    fn delivery_failure_state_is_exposed_to_asset_cards() {
+        let types = include_str!("../../ui/types.slint");
+        let sync = include_str!("presentation/sync.rs");
+
+        assert!(types.contains("delivery-recoverable: bool"));
+        assert!(types.contains("delivery-downloading: bool"));
+        assert!(sync.contains("delivery_recoverable: asset.delivery_recoverable"));
+        assert!(sync.contains("delivery_downloading: asset.delivery_downloading"));
+    }
+
+    #[test]
+    fn recoverable_failure_card_has_independent_download_action() {
+        let card = include_str!("../../ui/components/thumbnail-card.slint");
+        let state = include_str!("../../ui/app-state.slint");
+
+        assert!(state.contains("callback retry-generation-delivery(string);"));
+        assert!(card.contains("root.item.delivery-recoverable"));
+        assert!(card.contains("../../assets/icons/download.svg"));
+        assert!(card.contains("AppState.retry-generation-delivery(root.item.id)"));
+        assert!(card.contains("root.item.delivery-downloading"));
+        assert!(card.contains("图片已生成，下载失败"));
+        assert!(card.contains("x: root.item.delivery-recoverable ? parent.width - 76px : parent.width - 38px;"));
+    }
+
+    #[test]
+    fn repeated_recoverable_delivery_failures_replace_the_existing_card() {
+        let failed_asset_id = "failed-delivery-asset";
+        let mut cards = Vec::new();
+
+        upsert_stream_failure_card(
+            &mut cards,
+            delivery_failure_card(failed_asset_id, "First delivery failure"),
+        );
+        upsert_stream_failure_card(
+            &mut cards,
+            delivery_failure_card(failed_asset_id, "Repeated delivery failure"),
+        );
+
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].id, failed_asset_id);
+        assert!(cards[0].delivery_recoverable);
+        assert_eq!(cards[0].title, "Repeated delivery failure");
+    }
+
+    #[test]
+    fn automatic_replacement_failure_retains_original_recoverable_card_and_notification() {
+        let failed_asset_id = "failed-delivery-asset";
+        let mut store = Store::default();
+        let mut original_card = delivery_failure_card(failed_asset_id, "Original failure");
+        original_card.delivery_downloading = true;
+        store.generations.push(original_card);
+        store.notifications.push(NotificationData {
+            id: "original-notification".to_string(),
+            title: "Generation failed".to_string(),
+            model: "model".to_string(),
+            time: "2026-08-27 00:00:00".to_string(),
+            reason: "initial delivery failure".to_string(),
+            success: false,
+            read: false,
+        });
+
+        assert!(retain_failed_delivery_after_replacement_failure(
+            &mut store,
+            failed_asset_id,
+        ));
+
+        assert_eq!(store.generations.len(), 1);
+        assert_eq!(store.generations[0].id, failed_asset_id);
+        assert_eq!(store.generations[0].title, "Original failure");
+        assert_eq!(store.generations[0].source_path, "failed");
+        assert!(store.generations[0].delivery_recoverable);
+        assert!(!store.generations[0].delivery_downloading);
+        assert_eq!(store.notifications.len(), 1);
+        assert_eq!(store.notifications[0].id, "original-notification");
+    }
+
+    fn delivery_failure_card(id: &str, title: &str) -> AssetData {
+        AssetData {
+            id: id.to_string(),
+            conversation_id: "conversation".to_string(),
+            title: title.to_string(),
+            category: "scene".to_string(),
+            kind: "generate".to_string(),
+            time: "2026-08-27 00:00:00".to_string(),
+            prompt: "A recoverable delivery failure".to_string(),
+            ratio: "1:1".to_string(),
+            quality: "1K".to_string(),
+            model: "model".to_string(),
+            origin: "backend".to_string(),
+            width: 0,
+            height: 0,
+            source_path: "failed".to_string(),
+            reference_paths: Vec::new(),
+            cutout_done: false,
+            remove_black_done: false,
+            upscale_done: false,
+            is_new: false,
+            delivery_recoverable: true,
+            delivery_downloading: false,
+        }
     }
 
     #[test]

@@ -565,6 +565,8 @@ pub(super) fn save_processed_viewer_image(
         remove_black_done: base_remove_black_done || matches!(mode, ProcessImageMode::RemoveBlack),
         upscale_done: base_upscale_done || matches!(mode, ProcessImageMode::Upscale { .. }),
         is_new: false,
+        delivery_recoverable: false,
+        delivery_downloading: false,
     };
     {
         let mut store_mut = store.borrow_mut();

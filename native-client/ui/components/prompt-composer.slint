@@ -60,7 +60,7 @@ export component PromptComposer {
     property <bool> history-preview-close-pending: false;
     property <int> custom-prompt-selected-index: -1;
     property <length> prompt-history-scroll-y: 0px;
-    property <length> custom-prompt-scroll-x: 0px;
+    property <length> custom-prompt-scroll-y: 0px;
     property <string> pending-custom-prompt-content: "";
     property <int> custom-prompt-insert-offset: 0;
     property <bool> custom-prompt-selection-pending: false;
@@ -373,7 +373,7 @@ export component PromptComposer {
                             root.close-history-preview();
                             history-popup.close();
                             root.custom-prompt-selected-index = -1;
-                            root.custom-prompt-scroll-x = 0px;
+                            root.custom-prompt-scroll-y = 0px;
                             AppState.custom-prompt-open = true;
                             custom-prompt-popup.show();
                             prompt-input.focus();
@@ -415,14 +415,12 @@ export component PromptComposer {
                                     AppState.custom-prompt-items.length - 1,
                                     root.custom-prompt-selected-index + 1,
                                 );
-                            root.scroll-custom-prompt-selection-into-view();
                             return accept;
                         }
                         if event.text == Key.UpArrow {
                             root.custom-prompt-selected-index = root.custom-prompt-selected-index < 0
                                 ? AppState.custom-prompt-items.length - 1
                                 : max(0, root.custom-prompt-selected-index - 1);
-                            root.scroll-custom-prompt-selection-into-view();
                             return accept;
                         }
                         if event.text == Key.Return
@@ -719,7 +717,7 @@ export component PromptComposer {
         y: root.prompt-input-y() + 32px;
         width: root.width - 48px;
         height: AppState.custom-prompt-items.length > 0
-            ? 88px
+            ? min(360px, custom-prompt-row.preferred-height) + 52px
             : 54px;
         close-policy: close-on-click-outside;
         Rectangle {
@@ -759,23 +757,36 @@ export component PromptComposer {
                     }
                 }
             }
-            custom-prompt-scroll := ScrollView {
+            custom-prompt-scroll := Flickable {
                 visible: AppState.custom-prompt-items.length > 0;
-                viewport-x <=> root.custom-prompt-scroll-x;
+                viewport-x: 0px;
+                viewport-y <=> root.custom-prompt-scroll-y;
                 x: 8px;
                 y: 8px;
                 width: parent.width - 16px;
-                height: 36px;
-                viewport-width: max(self.width, custom-prompt-row.preferred-width);
-                viewport-height: 36px;
-                custom-prompt-row := HorizontalLayout {
-                    width: max(parent.viewport-width, self.preferred-width);
-                    height: 36px;
-                    spacing: 8px;
+                height: min(360px, custom-prompt-row.preferred-height);
+                viewport-width: self.width;
+                viewport-height: custom-prompt-row.preferred-height;
+                interactive: self.viewport-height > self.height;
+                custom-prompt-row := FlexboxLayout {
+                    width: parent.width;
+                    height: self.preferred-height;
+                    flex-wrap: wrap;
+                    spacing-horizontal: 8px;
+                    spacing-vertical: 0px;
                     alignment: start;
+                    align-content: start;
+                    cross-axis-alignment: start;
                     for item[index] in AppState.custom-prompt-items: Rectangle {
                         width: min(max(72px, tag-title.preferred-width + 28px), root.width - 64px);
                         height: 36px;
+                        flex-shrink: 0;
+                        property <bool> keyboard-selected: index == root.custom-prompt-selected-index;
+                        changed keyboard-selected => {
+                            if self.keyboard-selected {
+                                root.scroll-custom-prompt-selection-into-view(self.y, self.height, custom-prompt-scroll.height);
+                            }
+                        }
                         background: transparent;
                         Rectangle {
                             x: 0px;
@@ -801,7 +812,7 @@ export component PromptComposer {
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
                                 wrap: no-wrap;
-                                overflow: clip;
+                                overflow: elide;
                             }
                             custom-row := TouchArea {
                                 width: parent.width;
@@ -857,17 +868,12 @@ export component PromptComposer {
         }
     }
 
-    function scroll-custom-prompt-selection-into-view() {
-        if root.custom-prompt-selected-index < 0 {
-            return;
-        }
-        let selected-left = root.custom-prompt-selected-index * 120px;
-        let selected-right = selected-left + 120px;
-        let visible-width = max(120px, root.width - 64px);
-        if selected-left + root.custom-prompt-scroll-x < 0px {
-            root.custom-prompt-scroll-x = -selected-left;
-        } else if selected-right + root.custom-prompt-scroll-x > visible-width {
-            root.custom-prompt-scroll-x = visible-width - selected-right;
+    function scroll-custom-prompt-selection-into-view(selected-top: length, selected-height: length, visible-height: length) {
+        let selected-bottom = selected-top + selected-height;
+        if selected-top + root.custom-prompt-scroll-y < 0px {
+            root.custom-prompt-scroll-y = -selected-top;
+        } else if selected-bottom + root.custom-prompt-scroll-y > visible-height {
+            root.custom-prompt-scroll-y = visible-height - selected-bottom;
         }
     }
 

@@ -1,6 +1,6 @@
 use super::*;
 
-fn generation_download_staging_path(
+pub(super) fn generation_download_staging_path(
     client_request_id: &str,
     item_index: usize,
     file: &TaskOutputFile,
@@ -18,6 +18,66 @@ fn generation_download_staging_path(
         extension
     ))
 }
+
+fn delivery_confirmation_for_item(
+    client_request_id: &str,
+    detail: &GenerationTaskDetail,
+    item_index: usize,
+) -> Option<DeliveryConfirmation> {
+    let item = detail.items.iter().find(|item| item.index == item_index)?;
+    if item.status != "succeeded" {
+        return None;
+    }
+    let file = item.file.as_ref()?;
+    Some(DeliveryConfirmation {
+        client_request_id: client_request_id.to_string(),
+        item_index,
+        task_id: detail.id.clone(),
+        file_id: file.id.clone(),
+        sha256: file.sha256.clone(),
+        size_bytes: file.size_bytes.parse().unwrap_or(0),
+        failed_asset_id: None,
+    })
+}
+
+fn failed_delivery_confirmation_for_item(
+    session_scope: &SessionScope,
+    client_request_id: &str,
+    detail: &GenerationTaskDetail,
+    item_index: usize,
+    existing_failed_asset_id: Option<&str>,
+) -> Result<DeliveryConfirmation> {
+    let mut delivery = delivery_confirmation_for_item(client_request_id, detail, item_index)
+        .ok_or_else(|| anyhow!("succeeded generation item is missing delivery metadata"))?;
+    let failed_asset_id = existing_failed_asset_id
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    if !matches!(
+        pending_delivery_failed(
+            &session_scope.owner_user_id,
+            session_scope.auth_epoch,
+            client_request_id,
+            &delivery,
+            &failed_asset_id,
+        ),
+        Ok(true)
+    ) {
+        return Err(anyhow!("pending generation delivery cannot be marked recoverable"));
+    }
+    delivery.failed_asset_id = Some(failed_asset_id);
+    Ok(delivery)
+}
+
+fn failed_asset_id_for_delivery(record: &PendingGenerationRecord, file_id: &str) -> Option<String> {
+    record
+        .deliveries
+        .iter()
+        .find(|delivery| delivery.file_id == file_id)
+        .map(|delivery| delivery.failed_asset_id.clone())
+        .filter(|value| !value.trim().is_empty())
+}
+
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
@@ -47,6 +107,7 @@ fn report_unhandled_terminal_failures(
         let _ = sender.send(GenerationOutcome::ImageFailure {
             reason: reason.clone(),
             time: time.clone(),
+            delivery: None,
         });
     }
 }
@@ -216,6 +277,38 @@ struct UpscaleSource {
     height: i32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RetryGenerationRecoveryCommitError {
+    NewRecovery,
+    OldDelivery,
+    NewRecoveryRollback,
+}
+
+fn commit_retry_generation_recovery_with(
+    retry_failed_id: Option<&str>,
+    recoverable_delivery_id: Option<&str>,
+    persist_new_recovery: impl FnOnce() -> Result<()>,
+    abandon_old_delivery: impl FnOnce(&str) -> Result<bool>,
+    rollback_new_recovery: impl FnOnce() -> Result<bool>,
+    remove_retry_card: impl FnOnce(&str),
+) -> std::result::Result<(), RetryGenerationRecoveryCommitError> {
+    if persist_new_recovery().is_err() {
+        return Err(RetryGenerationRecoveryCommitError::NewRecovery);
+    }
+    if let Some(failed_asset_id) = recoverable_delivery_id {
+        if !matches!(abandon_old_delivery(failed_asset_id), Ok(true)) {
+            return match rollback_new_recovery() {
+                Ok(true) => Err(RetryGenerationRecoveryCommitError::OldDelivery),
+                Ok(false) | Err(_) => Err(RetryGenerationRecoveryCommitError::NewRecoveryRollback),
+            };
+        }
+    }
+    if let Some(retry_failed_id) = retry_failed_id {
+        remove_retry_card(retry_failed_id);
+    }
+    Ok(())
+}
+
 pub(super) fn start_backend_generation(
     app: &AppWindow,
     context: AppContext,
@@ -347,13 +440,13 @@ pub(super) fn start_backend_generation(
         &quality,
         language,
     );
-
-    if let Some(retry_failed_id) = retry_failed_id.as_deref() {
-        let mut store = store.borrow_mut();
-        store.generations.retain(|item| item.id != retry_failed_id);
-        save_local_store(app, &store);
-        push_all(app, &store);
-    }
+    let recoverable_delivery_id = retry_failed_id.as_deref().filter(|failed_asset_id| {
+        store.borrow().generations.iter().any(|item| {
+            item.id == *failed_asset_id
+                && item.source_path == "failed"
+                && item.delivery_recoverable
+        })
+    });
 
     let conversation_id = if create_conversation {
         Uuid::new_v4().to_string()
@@ -402,14 +495,50 @@ pub(super) fn start_backend_generation(
         },
         canvas_ui_extraction: false,
     };
-    if upsert_pending_generation_scoped(
-        recovery_record.clone(),
-        &session_scope.owner_user_id,
-        session_scope.auth_epoch,
-    )
-    .is_err()
-    {
-        state.set_generation_status("任务准备失败，请重试".into());
+    let recovery_commit = commit_retry_generation_recovery_with(
+        retry_failed_id.as_deref(),
+        recoverable_delivery_id,
+        || {
+            upsert_pending_generation_scoped(
+                recovery_record.clone(),
+                &session_scope.owner_user_id,
+                session_scope.auth_epoch,
+            )
+        },
+        |failed_asset_id| {
+            abandon_pending_delivery(
+                &session_scope.owner_user_id,
+                session_scope.auth_epoch,
+                failed_asset_id,
+            )
+        },
+        || {
+            remove_pending_generation_scoped(
+                &session_scope.owner_user_id,
+                session_scope.auth_epoch,
+                &request_id,
+            )
+        },
+        |retry_failed_id| {
+            let mut store = store.borrow_mut();
+            store.generations.retain(|item| item.id != retry_failed_id);
+            save_local_store(app, &store);
+            push_all(app, &store);
+        },
+    );
+    if let Err(error) = recovery_commit {
+        state.set_generation_status(
+            match error {
+                RetryGenerationRecoveryCommitError::NewRecovery => "任务准备失败，请重试",
+                RetryGenerationRecoveryCommitError::OldDelivery => {
+                    "本地生成恢复记录无法更新，请重启后重试"
+                }
+                RetryGenerationRecoveryCommitError::NewRecoveryRollback => {
+                    "本地生成恢复记录无法回滚，请重启后检查任务状态"
+                }
+            }
+            .into(),
+        );
         return;
     }
     insert_active_generation(
@@ -433,6 +562,7 @@ pub(super) fn start_backend_generation(
             latest_success_id: None,
             session_scope: session_scope.clone(),
             destination: destination.clone(),
+            delivery_download_reservations: Vec::new(),
         },
     );
     set_generation_status_for_category(&context, app, &category, "正在优化并上传参考图...");
@@ -667,14 +797,11 @@ pub(super) fn start_backend_generation(
                                         display_prompt: display_prompt_for_worker.clone(),
                                         time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
                                         upscale_done: false,
-                                        delivery: Some(DeliveryConfirmation {
-                                            client_request_id: request.client_request_id.clone(),
-                                            item_index: item.index,
-                                            task_id: task_id.clone(),
-                                            file_id: file.id.clone(),
-                                            sha256: file.sha256.clone(),
-                                            size_bytes: file.size_bytes.parse().unwrap_or(0),
-                                        }),
+                                        delivery: delivery_confirmation_for_item(
+                                            &request.client_request_id,
+                                            &detail,
+                                            item.index,
+                                        ),
                                     })
                                     .is_err()
                                 {
@@ -684,9 +811,24 @@ pub(super) fn start_backend_generation(
                             }
                             Err(error) if detail.terminal() => {
                                 handled_failure.insert(item.index);
+                                let (reason, delivery) = match failed_delivery_confirmation_for_item(
+                                    &worker_scope,
+                                    &request.client_request_id,
+                                    &detail,
+                                    item.index,
+                                    None,
+                                ) {
+                                    Ok(delivery) => (error.generation_message(), Some(delivery)),
+                                    Err(_) => (
+                                        "本地生成恢复记录无法安全更新，已暂停交付，请重启后重试"
+                                            .to_string(),
+                                        None,
+                                    ),
+                                };
                                 let _ = sender.send(GenerationOutcome::ImageFailure {
-                                    reason: error.generation_message(),
+                                    reason,
                                     time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
+                                    delivery,
                                 });
                             }
                             Err(_) => {}
@@ -703,6 +845,7 @@ pub(super) fn start_backend_generation(
                     let _ = sender.send(GenerationOutcome::ImageFailure {
                         reason,
                         time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
+                        delivery: None,
                     });
                 }
             }
@@ -753,6 +896,7 @@ pub(super) fn start_backend_generation(
         app.as_weak(),
         context,
         session_scope,
+        Vec::new(),
         Rc::new(RefCell::new(Some(receiver))),
         display_prompt,
         category,
@@ -923,6 +1067,7 @@ pub(super) fn start_backend_image_edit(
             latest_success_id: None,
             session_scope: session_scope.clone(),
             destination: GenerationDestination::Gallery,
+            delivery_download_reservations: Vec::new(),
         },
     );
     set_generation_status_for_category(&context, app, &category, "正在上传原图和遮罩...");
@@ -940,6 +1085,7 @@ pub(super) fn start_backend_image_edit(
         app.as_weak(),
         context,
         session_scope,
+        Vec::new(),
         Rc::new(RefCell::new(Some(receiver))),
         prompt,
         category,
@@ -1153,6 +1299,7 @@ pub(super) fn start_backend_upscale(
             latest_success_id: None,
             session_scope: session_scope.clone(),
             destination: GenerationDestination::Gallery,
+            delivery_download_reservations: Vec::new(),
         },
     );
     state.set_viewer_processing(true);
@@ -1363,14 +1510,11 @@ pub(super) fn start_backend_upscale(
                                         display_prompt: source_prompt_for_result.clone(),
                                         time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
                                         upscale_done: true,
-                                        delivery: Some(DeliveryConfirmation {
-                                            client_request_id: request.client_request_id.clone(),
-                                            item_index: item.index,
-                                            task_id: task_id.clone(),
-                                            file_id: file.id.clone(),
-                                            sha256: file.sha256.clone(),
-                                            size_bytes: file.size_bytes.parse().unwrap_or(0),
-                                        }),
+                                        delivery: delivery_confirmation_for_item(
+                                            &request.client_request_id,
+                                            &detail,
+                                            item.index,
+                                        ),
                                     })
                                     .is_err()
                                 {
@@ -1380,9 +1524,24 @@ pub(super) fn start_backend_upscale(
                             }
                             Err(error) if detail.terminal() => {
                                 handled_failure.insert(item.index);
+                                let (reason, delivery) = match failed_delivery_confirmation_for_item(
+                                    &worker_scope,
+                                    &request.client_request_id,
+                                    &detail,
+                                    item.index,
+                                    None,
+                                ) {
+                                    Ok(delivery) => (error.generation_message(), Some(delivery)),
+                                    Err(_) => (
+                                        "本地生成恢复记录无法安全更新，已暂停交付，请重启后重试"
+                                            .to_string(),
+                                        None,
+                                    ),
+                                };
                                 let _ = sender.send(GenerationOutcome::ImageFailure {
-                                    reason: error.generation_message(),
+                                    reason,
                                     time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
+                                    delivery,
                                 });
                             }
                             Err(_) => {}
@@ -1399,6 +1558,7 @@ pub(super) fn start_backend_upscale(
                     let _ = sender.send(GenerationOutcome::ImageFailure {
                         reason,
                         time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
+                        delivery: None,
                     });
                 }
             }
@@ -1450,6 +1610,7 @@ pub(super) fn start_backend_upscale(
         app.as_weak(),
         context,
         session_scope,
+        Vec::new(),
         Rc::new(RefCell::new(Some(receiver))),
         raw_prompt,
         source_category,
@@ -1823,6 +1984,9 @@ pub(super) fn recover_pending_generations(app: &AppWindow, context: AppContext) 
             local_records.push(record);
         }
     }
+    if !reconcile_recoverable_delivery_cards(app, &context, &session_scope) {
+        return;
+    }
     for record in local_records {
         if record.schema_version != 1 || record.client_request_id.trim().is_empty() {
             continue;
@@ -1852,6 +2016,38 @@ pub(super) fn recover_pending_generations(app: &AppWindow, context: AppContext) 
         resume_pending_generation(app, context.clone(), record);
     }
     recover_server_generation_tasks(app, context, session_scope, known_server_ids);
+}
+
+fn reconcile_recoverable_delivery_cards(
+    app: &AppWindow,
+    context: &AppContext,
+    session_scope: &SessionScope,
+) -> bool {
+    let recoverable_ids = match recoverable_failed_asset_ids(
+        &session_scope.owner_user_id,
+        session_scope.auth_epoch,
+    ) {
+        Ok(ids) => ids,
+        Err(_) => {
+            let mut store = context.store.borrow_mut();
+            for item in &mut store.generations {
+                item.delivery_recoverable = false;
+                item.delivery_downloading = false;
+            }
+            push_all(app, &store);
+            app.global::<AppState>().set_generation_status(
+                "本地生成恢复记录无法安全读取，已暂停恢复下载，请重启后重试".into(),
+            );
+            return false;
+        }
+    };
+    let mut store = context.store.borrow_mut();
+    for item in &mut store.generations {
+        item.delivery_recoverable = recoverable_ids.contains(&item.id);
+        item.delivery_downloading = false;
+    }
+    push_all(app, &store);
+    true
 }
 
 fn bind_generation_recovery_candidate(
@@ -2306,6 +2502,11 @@ fn resume_pending_generation(
     if !generation_scope_matches_context(&context, &session_scope) {
         return;
     }
+    let Some(delivery_download_reservations) =
+        reserve_recovered_delivery_downloads(app, &context, &record)
+    else {
+        return;
+    };
     let saved_count = record
         .deliveries
         .iter()
@@ -2340,6 +2541,7 @@ fn resume_pending_generation(
                     source_node_id: record.canvas_source_node_id.clone(),
                 }
             },
+            delivery_download_reservations: delivery_download_reservations.clone(),
         },
     );
     let state = app.global::<AppState>();
@@ -2388,6 +2590,7 @@ fn resume_pending_generation(
         app.as_weak(),
         context,
         session_scope,
+        delivery_download_reservations,
         Rc::new(RefCell::new(Some(receiver))),
         record.raw_prompt,
         record.category,
@@ -2778,13 +2981,15 @@ fn run_recovered_generation_worker(
                                     display_prompt: record.raw_prompt.clone(),
                                     time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
                                     upscale_done: record.task_type == "image_upscale",
-                                    delivery: Some(DeliveryConfirmation {
-                                        client_request_id: record.client_request_id.clone(),
-                                        item_index: item.index,
-                                        task_id: server_task_id.clone(),
-                                        file_id: file.id.clone(),
-                                        sha256: file.sha256.clone(),
-                                        size_bytes: file.size_bytes.parse().unwrap_or(0),
+                                    delivery: delivery_confirmation_for_item(
+                                        &record.client_request_id,
+                                        &detail,
+                                        item.index,
+                                    )
+                                    .map(|mut delivery| {
+                                        delivery.failed_asset_id =
+                                            failed_asset_id_for_delivery(&record, &file.id);
+                                        delivery
                                     }),
                                 })
                                 .is_err()
@@ -2795,9 +3000,26 @@ fn run_recovered_generation_worker(
                         }
                         Err(error) if detail.terminal() => {
                             handled_failure.insert(item.index);
+                            let existing_failed_asset_id =
+                                failed_asset_id_for_delivery(&record, &file.id);
+                            let (reason, delivery) = match failed_delivery_confirmation_for_item(
+                                &session_scope,
+                                &record.client_request_id,
+                                &detail,
+                                item.index,
+                                existing_failed_asset_id.as_deref(),
+                            ) {
+                                Ok(delivery) => (error.generation_message(), Some(delivery)),
+                                Err(_) => (
+                                    "本地生成恢复记录无法安全更新，已暂停交付，请重启后重试"
+                                        .to_string(),
+                                    None,
+                                ),
+                            };
                             let _ = sender.send(GenerationOutcome::ImageFailure {
-                                reason: error.generation_message(),
+                                reason,
                                 time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
+                                delivery,
                             });
                         }
                         Err(_) => {}
@@ -2813,6 +3035,7 @@ fn run_recovered_generation_worker(
                         .map(TaskFailure::generation_message)
                         .unwrap_or_else(|| "服务端未能生成该图片".to_string()),
                     time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
+                    delivery: None,
                 });
             }
         }
@@ -2861,8 +3084,161 @@ fn run_recovered_generation_worker(
 }
 
 #[cfg(test)]
-mod image_edit_recovery_tests {
+mod tests {
     use super::*;
+
+    #[test]
+    fn retry_recovery_upsert_failure_keeps_the_old_delivery_recoverable() {
+        let events = RefCell::new(Vec::new());
+        let abandoned = RefCell::new(false);
+
+        let result = commit_retry_generation_recovery_with(
+            Some("failed-card"),
+            Some("failed-card"),
+            || {
+                events.borrow_mut().push("upsert-new-recovery");
+                Err(anyhow!("new recovery persistence failed"))
+            },
+            |_| {
+                *abandoned.borrow_mut() = true;
+                events.borrow_mut().push("abandon-old-delivery");
+                Ok(true)
+            },
+            || {
+                events.borrow_mut().push("rollback-new-recovery");
+                Ok(true)
+            },
+            |_| events.borrow_mut().push("remove-old-card"),
+        );
+
+        assert!(result.is_err());
+        assert!(!*abandoned.borrow());
+        assert_eq!(events.into_inner(), vec!["upsert-new-recovery"]);
+    }
+
+    #[test]
+    fn committed_retry_abandons_the_old_delivery_immediately_before_removing_the_card() {
+        let events = RefCell::new(Vec::new());
+
+        let result = commit_retry_generation_recovery_with(
+            Some("failed-card"),
+            Some("failed-card"),
+            || {
+                events.borrow_mut().push("upsert-new-recovery");
+                Ok(())
+            },
+            |failed_asset_id| {
+                assert_eq!(failed_asset_id, "failed-card");
+                events.borrow_mut().push("abandon-old-delivery");
+                Ok(true)
+            },
+            || {
+                events.borrow_mut().push("rollback-new-recovery");
+                Ok(true)
+            },
+            |failed_asset_id| {
+                assert_eq!(failed_asset_id, "failed-card");
+                events.borrow_mut().push("remove-old-card");
+            },
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(
+            events.into_inner(),
+            vec![
+                "upsert-new-recovery",
+                "abandon-old-delivery",
+                "remove-old-card",
+            ]
+        );
+    }
+
+    #[test]
+    fn retry_recovery_abandonment_failure_rolls_back_new_recovery_and_keeps_old_card() {
+        let events = RefCell::new(Vec::new());
+        let new_recovery_persisted = std::cell::Cell::new(false);
+        let old_card_removed = std::cell::Cell::new(false);
+
+        let result = commit_retry_generation_recovery_with(
+            Some("failed-card"),
+            Some("failed-card"),
+            || {
+                events.borrow_mut().push("persist-new-recovery");
+                new_recovery_persisted.set(true);
+                Ok(())
+            },
+            |failed_asset_id| {
+                assert_eq!(failed_asset_id, "failed-card");
+                events.borrow_mut().push("abandon-old-delivery");
+                Err(anyhow!("old delivery persistence failed"))
+            },
+            || {
+                events.borrow_mut().push("rollback-new-recovery");
+                new_recovery_persisted.set(false);
+                Ok(true)
+            },
+            |_| {
+                events.borrow_mut().push("remove-old-card");
+                old_card_removed.set(true);
+            },
+        );
+
+        assert_eq!(
+            result,
+            Err(RetryGenerationRecoveryCommitError::OldDelivery)
+        );
+        assert!(!new_recovery_persisted.get());
+        assert!(!old_card_removed.get());
+        assert_eq!(
+            events.into_inner(),
+            vec![
+                "persist-new-recovery",
+                "abandon-old-delivery",
+                "rollback-new-recovery",
+            ]
+        );
+    }
+
+    #[test]
+    fn retry_recovery_reports_when_rollback_persistence_also_fails() {
+        let events = RefCell::new(Vec::new());
+        let old_card_removed = std::cell::Cell::new(false);
+
+        let result = commit_retry_generation_recovery_with(
+            Some("failed-card"),
+            Some("failed-card"),
+            || {
+                events.borrow_mut().push("persist-new-recovery");
+                Ok(())
+            },
+            |_| {
+                events.borrow_mut().push("abandon-old-delivery");
+                Ok(false)
+            },
+            || {
+                events.borrow_mut().push("rollback-new-recovery");
+                Err(anyhow!("rollback persistence failed"))
+            },
+            |_| {
+                events.borrow_mut().push("remove-old-card");
+                old_card_removed.set(true);
+            },
+        );
+
+        assert_eq!(
+            result,
+            Err(RetryGenerationRecoveryCommitError::NewRecoveryRollback)
+        );
+        assert!(!old_card_removed.get());
+        assert_eq!(
+            events.into_inner(),
+            vec![
+                "persist-new-recovery",
+                "abandon-old-delivery",
+                "rollback-new-recovery",
+            ]
+        );
+    }
 
     fn failed_generation_task(code: &str, message: &str) -> GenerationTaskDetail {
         GenerationTaskDetail {
@@ -2884,6 +3260,56 @@ mod image_edit_recovery_tests {
             task_type: "image_generation".to_string(),
             items: Vec::new(),
         }
+    }
+
+    fn completed_task_with_available_file(file_id: &str) -> GenerationTaskDetail {
+        GenerationTaskDetail {
+            id: "completed-task".to_string(),
+            status: "completed".to_string(),
+            progress_percent: 100,
+            success_count: 1,
+            failure_count: 0,
+            failure: None,
+            prompt: None,
+            result_prompt: None,
+            request: serde_json::Value::Null,
+            model: None,
+            quality: "1K".to_string(),
+            requested_count: 1,
+            task_type: "image_generation".to_string(),
+            items: vec![GenerationTaskItem {
+                index: 0,
+                status: "succeeded".to_string(),
+                credit_cost: "0".to_string(),
+                failure: None,
+                file: Some(TaskOutputFile {
+                    id: file_id.to_string(),
+                    status: "available".to_string(),
+                    mime_type: "image/png".to_string(),
+                    size_bytes: "3".to_string(),
+                    sha256: "abc".to_string(),
+                    width: Some(1),
+                    height: Some(1),
+                    download_url: Some("https://example.invalid/file.png".to_string()),
+                }),
+            }],
+        }
+    }
+
+    #[test]
+    fn succeeded_item_download_error_keeps_delivery_identity() {
+        let detail = completed_task_with_available_file("file-1");
+        let delivery = delivery_confirmation_for_item("request-1", &detail, 0).unwrap();
+
+        assert_eq!(delivery.file_id, "file-1");
+        assert_eq!(delivery.item_index, 0);
+    }
+
+    #[test]
+    fn failed_provider_item_has_no_recoverable_delivery() {
+        let detail = failed_generation_task("provider_error", "failed");
+
+        assert!(delivery_confirmation_for_item("request-1", &detail, 0).is_none());
     }
 
     #[test]
@@ -2932,6 +3358,8 @@ mod image_edit_recovery_tests {
             size_bytes: bytes.len() as u64,
             local_path: path.display().to_string(),
             acknowledged: false,
+            failed_asset_id: String::new(),
+            abandoned: false,
         }
     }
 

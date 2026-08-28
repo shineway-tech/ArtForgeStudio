@@ -141,6 +141,8 @@ struct AssetData {
     remove_black_done: bool,
     upscale_done: bool,
     is_new: bool,
+    delivery_recoverable: bool,
+    delivery_downloading: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -212,6 +214,7 @@ enum GenerationOutcome {
     ImageFailure {
         reason: String,
         time: String,
+        delivery: Option<DeliveryConfirmation>,
     },
     Finished,
     CreditInsufficient {
@@ -300,6 +303,21 @@ struct DeliveryConfirmation {
     file_id: String,
     sha256: String,
     size_bytes: u64,
+    failed_asset_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct DeliveryDownloadKey {
+    owner_user_id: String,
+    auth_epoch: u64,
+    client_request_id: String,
+    file_id: String,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct DeliveryDownloadReservation {
+    key: DeliveryDownloadKey,
+    reservation_id: u64,
 }
 
 #[derive(Clone)]
@@ -322,6 +340,7 @@ struct ActiveGeneration {
     latest_success_id: Option<String>,
     session_scope: SessionScope,
     destination: GenerationDestination,
+    delivery_download_reservations: Vec<DeliveryDownloadReservation>,
 }
 
 impl Default for ActiveGeneration {
@@ -348,6 +367,7 @@ impl Default for ActiveGeneration {
                 auth_epoch: 0,
             },
             destination: GenerationDestination::Gallery,
+            delivery_download_reservations: Vec::new(),
         }
     }
 }
@@ -433,6 +453,8 @@ fn credit_sync_epoch_is_current(store: &Store, request_epoch: u64) -> bool {
 struct GenerationRegistry {
     active: RefCell<BTreeMap<String, ActiveGeneration>>,
     statuses: RefCell<BTreeMap<String, String>>,
+    delivery_downloads: RefCell<BTreeMap<DeliveryDownloadKey, u64>>,
+    next_delivery_download_reservation_id: Cell<u64>,
 }
 
 #[derive(Clone)]

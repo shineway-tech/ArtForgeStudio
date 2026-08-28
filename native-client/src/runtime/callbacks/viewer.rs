@@ -598,22 +598,24 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         let store = store.clone();
+        let context = context.clone();
         state.on_confirm_delete(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            confirm_pending_asset_delete(&app, &store, false);
+            confirm_pending_asset_delete(&app, &context, &store, false);
         });
     }
 
     {
         let app_weak = app.as_weak();
         let store = store.clone();
+        let context = context.clone();
         state.on_confirm_delete_local_file(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            confirm_pending_asset_delete(&app, &store, true);
+            confirm_pending_asset_delete(&app, &context, &store, true);
         });
     }
 }
@@ -659,6 +661,54 @@ impl RemovedStoreRecord {
             }
         }
     }
+
+    fn recoverable_failed_delivery_id(&self) -> Option<&str> {
+        match self {
+            Self::Asset { source, item, .. }
+                if source == "generation"
+                    && item.source_path == "failed"
+                    && item.delivery_recoverable =>
+            {
+                Some(item.id.as_str())
+            }
+            Self::Asset { .. } | Self::Reference { .. } => None,
+        }
+    }
+}
+
+enum StoreRecordRemovalCommitError {
+    StorePersistence(anyhow::Error),
+    DeliveryAbandonment,
+    DeliveryRollback(anyhow::Error),
+}
+
+fn commit_removed_store_record_with<P, A>(
+    store: &mut Store,
+    removed: RemovedStoreRecord,
+    mut persist_store: P,
+    abandon_delivery: A,
+) -> std::result::Result<RemovedStoreRecord, StoreRecordRemovalCommitError>
+where
+    P: FnMut(&Store) -> Result<()>,
+    A: FnOnce(&str) -> Result<bool>,
+{
+    let recoverable_failed_delivery_id = removed
+        .recoverable_failed_delivery_id()
+        .map(ToOwned::to_owned);
+    if let Err(error) = persist_store(store) {
+        removed.restore(store);
+        return Err(StoreRecordRemovalCommitError::StorePersistence(error));
+    }
+    if let Some(failed_asset_id) = recoverable_failed_delivery_id {
+        if !matches!(abandon_delivery(&failed_asset_id), Ok(true)) {
+            removed.restore(store);
+            return match persist_store(store) {
+                Ok(()) => Err(StoreRecordRemovalCommitError::DeliveryAbandonment),
+                Err(error) => Err(StoreRecordRemovalCommitError::DeliveryRollback(error)),
+            };
+        }
+    }
+    Ok(removed)
 }
 
 fn asset_collection_mut<'a>(store: &'a mut Store, source: &str) -> &'a mut Vec<AssetData> {
@@ -696,25 +746,59 @@ fn take_pending_store_record(
 
 fn confirm_pending_asset_delete(
     app: &AppWindow,
+    context: &AppContext,
     store: &Rc<RefCell<Store>>,
     delete_local_file: bool,
 ) {
     let state = app.global::<AppState>();
     let id = state.get_pending_delete_id().to_string();
     let source = state.get_pending_delete_source().to_string();
-    let (removed, shared_in_store) = {
+    let removal_result = {
         let mut store_mut = store.borrow_mut();
         let Some(removed) = take_pending_store_record(&mut store_mut, &state, &id, &source) else {
             return;
         };
-        if let Err(error) = save_local_store_checked(app, &store_mut) {
-            removed.restore(&mut store_mut);
-            state.set_viewer_message(format!("删除记录失败：{error}").into());
+        let result = commit_removed_store_record_with(
+            &mut store_mut,
+            removed,
+            |store| save_local_store_checked(app, store),
+            |failed_asset_id| {
+                let Some(scope) = current_generation_session_scope(context) else {
+                    return Ok(false);
+                };
+                abandon_pending_delivery(
+                    &scope.owner_user_id,
+                    scope.auth_epoch,
+                    failed_asset_id,
+                )
+            },
+        );
+        rebuild_storage_references(&store_mut);
+        result.map(|removed| {
+            let shared = store_references_path(&store_mut, Path::new(removed.source_path()));
+            (removed, shared)
+        })
+    };
+    let (removed, shared_in_store) = match removal_result {
+        Ok(value) => value,
+        Err(error) => {
+            state.set_viewer_message(
+                match error {
+                    StoreRecordRemovalCommitError::StorePersistence(error) => {
+                        format!("删除记录失败：{error}")
+                    }
+                    StoreRecordRemovalCommitError::DeliveryAbandonment => {
+                        "删除失败：无法更新本地生成恢复记录，失败图片已保留".to_string()
+                    }
+                    StoreRecordRemovalCommitError::DeliveryRollback(error) => format!(
+                        "删除失败：无法更新本地生成恢复记录，且恢复失败图片写入失败：{error}"
+                    ),
+                }
+                .into(),
+            );
+            push_all(app, &store.borrow());
             return;
         }
-        rebuild_storage_references(&store_mut);
-        let shared = store_references_path(&store_mut, Path::new(removed.source_path()));
-        (removed, shared)
     };
 
     let mut removed = Some(removed);
@@ -1094,6 +1178,125 @@ mod image_editor_tests {
         assert_eq!(mask.dimensions(), (40, 30));
         assert_eq!(mask.get_pixel(0, 0).0[3], 0);
         assert_eq!(mask.get_pixel(39, 29).0[3], 255);
+    }
+}
+
+#[cfg(test)]
+mod recoverable_card_delete_tests {
+    use super::*;
+
+    fn recoverable_card() -> AssetData {
+        AssetData {
+            id: "failed-card".to_string(),
+            conversation_id: "conversation".to_string(),
+            title: "Recoverable delivery".to_string(),
+            category: "scene".to_string(),
+            kind: "generate".to_string(),
+            time: "2026-08-27 00:00:00".to_string(),
+            prompt: "prompt".to_string(),
+            ratio: "1:1".to_string(),
+            quality: "1K".to_string(),
+            model: "model".to_string(),
+            origin: "backend".to_string(),
+            width: 0,
+            height: 0,
+            source_path: "failed".to_string(),
+            reference_paths: Vec::new(),
+            cutout_done: false,
+            remove_black_done: false,
+            upscale_done: false,
+            is_new: false,
+            delivery_recoverable: true,
+            delivery_downloading: false,
+        }
+    }
+
+    fn take_recoverable_card(store: &mut Store) -> RemovedStoreRecord {
+        RemovedStoreRecord::Asset {
+            source: "generation".to_string(),
+            index: 0,
+            item: store.generations.remove(0),
+        }
+    }
+
+    #[test]
+    fn recoverable_card_delete_abandonment_failure_restores_memory_and_durable_store_without_ack()
+    {
+        let mut store = Store::default();
+        store.generations.push(recoverable_card());
+        let removed = take_recoverable_card(&mut store);
+        let events = RefCell::new(Vec::new());
+        let durable_ids = RefCell::new(vec!["failed-card".to_string()]);
+
+        let result = commit_removed_store_record_with(
+            &mut store,
+            removed,
+            |store| {
+                let ids = store
+                    .generations
+                    .iter()
+                    .map(|item| item.id.clone())
+                    .collect::<Vec<_>>();
+                events.borrow_mut().push(if ids.is_empty() {
+                    "persist-card-removal"
+                } else {
+                    "persist-card-rollback"
+                });
+                *durable_ids.borrow_mut() = ids;
+                Ok(())
+            },
+            |failed_asset_id| {
+                assert_eq!(failed_asset_id, "failed-card");
+                events.borrow_mut().push("abandon-delivery");
+                Err(anyhow!("recovery persistence failed"))
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(StoreRecordRemovalCommitError::DeliveryAbandonment)
+        ));
+        assert_eq!(store.generations.len(), 1);
+        assert_eq!(store.generations[0].id, "failed-card");
+        assert_eq!(store.generations[0].title, "Recoverable delivery");
+        assert_eq!(durable_ids.into_inner(), vec!["failed-card"]);
+        assert_eq!(
+            events.into_inner(),
+            vec![
+                "persist-card-removal",
+                "abandon-delivery",
+                "persist-card-rollback",
+            ]
+        );
+    }
+
+    #[test]
+    fn recoverable_card_delete_store_failure_restores_card_before_abandonment() {
+        let mut store = Store::default();
+        store.generations.push(recoverable_card());
+        let removed = take_recoverable_card(&mut store);
+        let events = RefCell::new(Vec::new());
+
+        let result = commit_removed_store_record_with(
+            &mut store,
+            removed,
+            |_| {
+                events.borrow_mut().push("persist-card-removal");
+                Err(anyhow!("local store persistence failed"))
+            },
+            |_| {
+                events.borrow_mut().push("abandon-delivery");
+                Ok(true)
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(StoreRecordRemovalCommitError::StorePersistence(_))
+        ));
+        assert_eq!(store.generations.len(), 1);
+        assert_eq!(store.generations[0].id, "failed-card");
+        assert_eq!(events.into_inner(), vec!["persist-card-removal"]);
     }
 }
 

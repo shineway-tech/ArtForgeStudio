@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use slint::{Image, Model, ModelRc, SharedString, VecModel, Weak};
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Cursor;
@@ -145,6 +145,9 @@ use viewer::*;
 #[path = "generation/controller.rs"]
 mod generation_controller;
 use generation_controller::*;
+#[path = "generation/delivery_retry.rs"]
+mod delivery_retry;
+use delivery_retry::*;
 #[path = "generation/backend.rs"]
 mod backend_generation;
 use backend_generation::*;

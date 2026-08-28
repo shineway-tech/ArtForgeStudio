@@ -466,6 +466,7 @@ fn run_image_cutout_worker(
                 file_id: saved.file_id.clone(),
                 sha256: saved.sha256.clone(),
                 size_bytes: saved.size_bytes,
+                failed_asset_id: None,
             });
             let _ = sender.send(ImageCutoutOutcome::Recovered {
                 local_path: saved.local_path.clone(),
@@ -642,6 +643,7 @@ fn run_image_cutout_worker(
                                 file_id: file.id.clone(),
                                 sha256: file.sha256.clone(),
                                 size_bytes: file.size_bytes.parse().unwrap_or(0),
+                                failed_asset_id: None,
                             },
                         });
                         return;
@@ -1049,6 +1051,8 @@ fn save_image_cutout_asset(
         remove_black_done: false,
         upscale_done: false,
         is_new: false,
+        delivery_recoverable: false,
+        delivery_downloading: false,
     };
     let notification = NotificationData {
         id: Uuid::new_v4().to_string(),

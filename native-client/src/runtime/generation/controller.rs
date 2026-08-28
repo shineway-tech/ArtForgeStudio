@@ -302,6 +302,7 @@ pub(super) fn stop_generation(app: &AppWindow, context: &AppContext) {
         sync_generation_state_for_current_category(context, app);
         return;
     };
+    refresh_delivery_download_flags(app, context);
     set_generation_status_for_category(context, app, &category, "已停止生成");
     sync_generation_state_for_current_category(context, app);
     if task.destination == GenerationDestination::Gallery {
@@ -377,6 +378,8 @@ pub(super) fn add_stream_success_item(
         remove_black_done: false,
         upscale_done,
         is_new: true,
+        delivery_recoverable: false,
+        delivery_downloading: false,
     };
     let conversation_image =
         load_preview_image(Path::new(&source_path), PreviewPurpose::Reference)?;
@@ -402,6 +405,81 @@ pub(super) fn add_stream_success_item(
     )?;
     push_all(app, &store_mut);
     Ok((conversation_image, source_path, generated_id))
+}
+
+pub(super) fn replace_failed_delivery_asset_checked(
+    app: &AppWindow,
+    store: &Rc<RefCell<Store>>,
+    failed_asset_id: &str,
+    staged_path: &Path,
+    time: &str,
+) -> Result<(String, String)> {
+    let failed_asset = {
+        let store = store.borrow();
+        let mut matches = store.generations.iter().filter(|item| {
+            item.id == failed_asset_id
+                && item.source_path == "failed"
+                && item.delivery_recoverable
+        });
+        let failed_asset = matches.next().cloned();
+        if matches.next().is_some() {
+            anyhow::bail!("failed delivery card is ambiguous");
+        }
+        failed_asset.ok_or_else(|| anyhow!("failed delivery card is missing"))?
+    };
+    let (width, height) = inspect_image_dimensions(staged_path)?;
+    let source_path = save_generated_file(app, staged_path, &failed_asset.prompt)?;
+    let completed_asset = AssetData {
+        id: failed_asset.id.clone(),
+        conversation_id: failed_asset.conversation_id,
+        title: failed_asset.title,
+        category: failed_asset.category,
+        kind: failed_asset.kind,
+        time: time.to_string(),
+        prompt: failed_asset.prompt.clone(),
+        ratio: ratio_from_actual_dimensions(width as i32, height as i32),
+        quality: failed_asset.quality,
+        model: failed_asset.model.clone(),
+        origin: failed_asset.origin,
+        width: width as i32,
+        height: height as i32,
+        source_path: source_path.clone(),
+        reference_paths: failed_asset.reference_paths,
+        cutout_done: failed_asset.cutout_done,
+        remove_black_done: failed_asset.remove_black_done,
+        upscale_done: failed_asset.upscale_done,
+        is_new: true,
+        delivery_recoverable: false,
+        delivery_downloading: false,
+    };
+    let notification = NotificationData {
+        id: Uuid::new_v4().to_string(),
+        title: format!(
+            "图片下载完成：{}",
+            short_text(&failed_asset.prompt, 24)
+        ),
+        model: failed_asset.model,
+        time: time.to_string(),
+        reason: String::new(),
+        success: true,
+        read: false,
+    };
+    let persisted = {
+        let mut store = store.borrow_mut();
+        replace_failed_delivery_asset_with(
+            &mut store,
+            failed_asset_id,
+            completed_asset,
+            notification,
+            |pending| save_local_store_checked(app, pending),
+        )
+    };
+    if let Err(error) = persisted {
+        let _ = fs::remove_file(&source_path);
+        return Err(error);
+    }
+    push_all(app, &store.borrow());
+    Ok((source_path, failed_asset_id.to_string()))
 }
 
 pub(super) fn add_canvas_stream_success_item(
@@ -478,6 +556,13 @@ pub(super) fn add_canvas_stream_success_item(
     Ok(source_path)
 }
 
+pub(super) fn upsert_stream_failure_card(generations: &mut Vec<AssetData>, card: AssetData) {
+    if card.delivery_recoverable {
+        generations.retain(|existing| existing.id != card.id);
+    }
+    generations.insert(0, card);
+}
+
 pub(super) fn add_stream_failure_item(
     app: &AppWindow,
     store: &Rc<RefCell<Store>>,
@@ -492,13 +577,18 @@ pub(super) fn add_stream_failure_item(
     reason: &str,
     time: &str,
     reference_paths: &[String],
-) {
+    failed_asset_id: Option<&str>,
+) -> String {
+    let asset_id = failed_asset_id
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let delivery_recoverable = failed_asset_id.is_some();
     let mut store_mut = store.borrow_mut();
     reveal_prompt_history_entry(&mut store_mut, raw_prompt);
-    store_mut.generations.insert(
-        0,
+    upsert_stream_failure_card(
+        &mut store_mut.generations,
         AssetData {
-            id: Uuid::new_v4().to_string(),
+            id: asset_id.clone(),
             conversation_id: conversation_id.to_string(),
             title: short_text(raw_prompt, 18),
             category: category.to_string(),
@@ -517,6 +607,8 @@ pub(super) fn add_stream_failure_item(
             remove_black_done: false,
             upscale_done: false,
             is_new: false,
+            delivery_recoverable,
+            delivery_downloading: false,
         },
     );
     store_mut.notifications.insert(
@@ -533,6 +625,7 @@ pub(super) fn add_stream_failure_item(
     );
     save_local_store(app, &store_mut);
     push_all(app, &store_mut);
+    asset_id
 }
 
 pub(super) fn restore_stream_inputs(

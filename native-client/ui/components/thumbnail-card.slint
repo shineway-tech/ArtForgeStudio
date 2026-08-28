@@ -225,7 +225,9 @@ export component ThumbnailCard {
                 y: parent.height / 2 - 30px;
                 width: parent.width - 24px;
                 height: 24px;
-                text: AppState.en ? "Failed" : "生成失败";
+                text: root.item.delivery-recoverable
+                    ? (AppState.en ? "Image ready, download failed" : "图片已生成，下载失败")
+                    : (AppState.en ? "Failed" : "生成失败");
                 color: AppTheme.danger;
                 font-size: 13px;
                 font-weight: 400;
@@ -243,8 +245,47 @@ export component ThumbnailCard {
                 disabled: AppState.generating && AppState.generation-active-category == root.item.category;
                 clicked => { AppState.retry-generation(root.item.id); }
             }
-            failed-delete-touch := TouchArea {
+            if root.item.delivery-recoverable: Rectangle {
                 x: parent.width - 38px;
+                y: 8px;
+                width: 30px;
+                height: 30px;
+                opacity: root.item.delivery-downloading ? 0.48 : 1;
+                background: delivery-download-touch.pressed && !root.item.delivery-downloading
+                    ? AppTheme.accent
+                    : #000000b8;
+                border-radius: AppState.card-style == "rounded" ? 6px : 0px;
+                Image {
+                    x: 7px;
+                    y: 7px;
+                    width: 16px;
+                    height: 16px;
+                    visible: !root.item.delivery-downloading;
+                    source: @image-url("../../assets/icons/download.svg");
+                    colorize: #ffffff;
+                    image-fit: contain;
+                }
+                Text {
+                    width: parent.width;
+                    height: parent.height;
+                    visible: root.item.delivery-downloading;
+                    text: "...";
+                    color: #ffffff;
+                    font-size: 13px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                delivery-download-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    enabled: !root.item.delivery-downloading;
+                    mouse-cursor: root.item.delivery-downloading ? default : pointer;
+                    clicked => { AppState.retry-generation-delivery(root.item.id); }
+                }
+            }
+            failed-delete-touch := TouchArea {
+                x: root.item.delivery-recoverable ? parent.width - 76px : parent.width - 38px;
                 y: 8px;
                 width: 30px;
                 height: 30px;
@@ -255,7 +296,7 @@ export component ThumbnailCard {
             }
             Rectangle {
                 visible: failed-hover.has-hover || failed-delete-touch.has-hover;
-                x: parent.width - 38px;
+                x: root.item.delivery-recoverable ? parent.width - 76px : parent.width - 38px;
                 y: 8px;
                 width: 30px;
                 height: 30px;
