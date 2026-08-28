@@ -196,9 +196,11 @@ fn apply_update_manifest(app: &AppWindow, manifest: UpdateManifest, manual: bool
     state.set_update_download_url(download_url.into());
     state.set_update_download_sha256(artifact.sha256.trim().into());
     state.set_update_download_size(artifact.size_bytes.to_string().into());
-    state.set_update_stage("idle".into());
-    state.set_update_download_progress(0);
-    state.set_update_download_message("".into());
+    if !state.get_update_active() && state.get_update_stage() != "failed" {
+        state.set_update_stage("idle".into());
+        state.set_update_download_progress(0);
+        state.set_update_download_message("".into());
+    }
     state.set_update_message(
         if required {
             format!("在线功能要求升级到 {latest}")
@@ -844,6 +846,32 @@ pub(super) fn unique_path(path: PathBuf) -> PathBuf {
         }
     }
     path
+}
+
+#[cfg(test)]
+mod update_state_tests {
+    use super::*;
+
+    #[test]
+    fn manifest_refresh_preserves_installation_failures_and_active_progress() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        for stage in ["failed", "downloading", "verifying", "installing"] {
+            state.set_update_stage(stage.into());
+            state.set_update_download_progress(72);
+            state.set_update_download_message("保留本次更新结果".into());
+            apply_update_manifest(
+                &app,
+                UpdateManifest { version: "99.0.0".into(), ..Default::default() },
+                false,
+            );
+            assert_eq!(state.get_update_stage(), stage);
+            assert_eq!(state.get_update_download_progress(), 72);
+            assert_eq!(state.get_update_download_message(), "保留本次更新结果");
+            assert!(state.get_update_available());
+        }
+    }
 }
 
 #[cfg(test)]

@@ -126,6 +126,14 @@ OSS 上传：
 
 Windows Runner 使用 MSVC 构建 release 二进制。`package-native-client.ps1` 组装 portable 目录、素材和数据目录，再创建 ZIP。
 
+Windows 自动更新必须通过更新辅助程序显式传入当前 EXE 目录作为安装器的 `/DIR`，不能依赖历史安装记录。辅助程序完成校验并通知就绪后，客户端才退出；辅助程序等待旧进程结束、检查安装退出码和目标 EXE 版本，然后确保同一路径的客户端重新打开。安装器日志保存在该次临时更新目录的 `install.log`，失败结果保存在当前数据目录的 `update-result.json`，重启后显示。现有 `data` 不属于安装覆盖范围。
+
+Windows 更新链路的隔离回归测试（临时程序、临时目录，不安装真实发布包、不写卸载注册表）：
+
+```powershell
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/windows-update-helper.ps1
+```
+
 CI 随后查找或安装 Inno Setup，并使用 `installer/ElunviCanvas.iss` 生成当前用户安装器。安装器输入目录、版本和输出目录由工作流通过以下临时环境变量传入：
 
 - `ARTFORGE_APP_VERSION`

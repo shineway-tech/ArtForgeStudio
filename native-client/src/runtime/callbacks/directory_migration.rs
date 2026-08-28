@@ -369,6 +369,47 @@ mod tests {
     }
 
     #[test]
+    fn about_config_path_migration_uses_the_displayed_input_directory() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true, renderer_name: Some("software".into()), ..Default::default()
+            },
+        ))).unwrap();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_page("settings".into());
+        state.set_settings_section("about".into());
+        state.set_input_dir(r"E:\我的素材\input".into());
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let captured = observed.clone();
+        state.on_pick_dir(move |kind| captured.borrow_mut().push(kind.to_string()));
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().unwrap();
+        let button = ElementHandle::find_by_element_id(&app, "SettingsPage::config-path-migrate")
+            .next().expect("configuration path migration button");
+        for (width, height) in [(1180.0, 760.0), (1440.0, 900.0), (1920.0, 1080.0)] {
+            app.window().set_size(slint::LogicalSize::new(width, height));
+            assert!(button.absolute_position().x + button.size().width < width);
+            assert!(button.absolute_position().y + button.size().height < height);
+        }
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        if let Some(directory) = std::env::var_os("ELUNVI_TEST_ARTIFACT_DIR") {
+            let directory = PathBuf::from(directory);
+            fs::create_dir_all(&directory).unwrap();
+            let pixels = app.window().take_snapshot().unwrap();
+            image::save_buffer(directory.join("about-config-migration.png"), pixels.as_bytes(), pixels.width(), pixels.height(), image::ColorType::Rgba8).unwrap();
+        }
+        button.mock_single_click(PointerEventButton::Left);
+        assert_eq!(observed.borrow().as_slice(), &["input"]);
+        assert_eq!(state.get_input_dir(), r"E:\我的素材\input");
+        state.set_directory_migration_open(true);
+        button.mock_single_click(PointerEventButton::Left);
+        assert_eq!(observed.borrow().len(), 1);
+    }
+
+    #[test]
     fn directory_migration_dialog_layout_and_cancel_are_usable() {
         use i_slint_backend_testing::ElementHandle;
         use slint::platform::PointerEventButton;

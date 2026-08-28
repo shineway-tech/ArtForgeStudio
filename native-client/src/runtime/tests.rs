@@ -46,8 +46,6 @@ mod tests {
             shell_quote("ArtForge's update"),
             "'ArtForge'\"'\"'s update'"
         );
-        assert!(windows_update_installer_args().contains(&"/VERYSILENT"));
-        assert!(windows_update_installer_args().contains(&"/CLOSEAPPLICATIONS"));
         assert!(is_update_temp_dir_name(&format!(
             "artforge-update-{}",
             Uuid::new_v4()
@@ -125,7 +123,6 @@ mod tests {
         assert!(updater.contains("Sha256"));
         assert!(updater.contains("hdiutil verify"));
         assert!(updater.contains("codesign --verify --deep --strict"));
-        assert!(updater.contains("\"/VERYSILENT\""));
         assert!(installer.contains("skipifnotsilent"));
         assert!(release_workflow.contains("actions/download-artifact@v8"));
         assert!(manifest_script.contains("size_bytes"));

@@ -45,6 +45,7 @@ pub(super) fn run() -> Result<()> {
     push_startup_state(&app, &store.borrow());
 
     wire_callbacks(&app, context.clone());
+    restore_update_installation_result(&app);
     begin_update_check(&app, false);
     initialize_auth(&app, context.clone());
     app.run()?;

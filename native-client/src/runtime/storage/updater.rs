@@ -4,6 +4,17 @@ use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
+#[cfg(windows)]
+#[path = "windows_update.rs"]
+mod windows_update;
+
+pub(super) fn restore_update_installation_result(app: &AppWindow) {
+    #[cfg(windows)]
+    windows_update::restore_result(app);
+    #[cfg(not(windows))]
+    let _ = app;
+}
+
 pub(super) type UpdateCancellation = Arc<AtomicBool>;
 
 const UPDATE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
@@ -328,6 +339,17 @@ fn handoff_update_to_installer(app: &AppWindow, package_path: &Path) {
     state.set_update_download_progress(100);
     state.set_update_download_message("安装包校验通过，正在启动安装…".into());
     let expected_version = state.get_latest_version().to_string();
+    #[cfg(windows)]
+    {
+        match windows_update::launch(package_path, &expected_version, state.get_update_download_sha256().as_str()) {
+            Ok(handoff) => windows_update::poll(app.as_weak(), Rc::new(RefCell::new(handoff)), 150),
+            Err(_) => {
+                state.set_update_stage("failed".into());
+                state.set_update_download_message("无法启动更新辅助程序，当前程序未关闭。请检查目录权限后重试。".into());
+            }
+        }
+    }
+    #[cfg(not(windows))]
     match launch_update_installer(package_path, &expected_version) {
         Ok(()) => {
             let _ = app.window().hide();
@@ -351,27 +373,6 @@ fn update_package_file_name() -> &'static str {
     } else {
         "ElunviCanvas-update.bin"
     }
-}
-
-#[cfg(target_os = "windows")]
-fn launch_update_installer(package_path: &Path, _expected_version: &str) -> Result<()> {
-    Command::new(package_path)
-        .args(windows_update_installer_args())
-        .spawn()
-        .context("无法启动 Windows 更新安装器")?;
-    Ok(())
-}
-
-#[cfg(any(target_os = "windows", test))]
-pub(super) fn windows_update_installer_args() -> &'static [&'static str] {
-    &[
-        "/SP-",
-        "/VERYSILENT",
-        "/SUPPRESSMSGBOXES",
-        "/NOCANCEL",
-        "/NORESTART",
-        "/CLOSEAPPLICATIONS",
-    ]
 }
 
 #[cfg(target_os = "macos")]
