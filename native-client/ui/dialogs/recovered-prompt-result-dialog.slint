@@ -3,6 +3,8 @@ import { PillButton } from "../components/pill-button.slint";
 import { AppTheme } from "../theme.slint";
 
 export component RecoveredPromptResultDialog {
+    property <bool> video-target-unavailable: AppState.recovered-prompt-target-kind == "video_prompt"
+        && (AppState.page != "video-generation" || AppState.video-source-id != AppState.recovered-prompt-target-id || AppState.video-generating);
     if AppState.recovered-prompt-result-open: Rectangle {
         background: #00000066;
         TouchArea { width: parent.width; height: parent.height; }
@@ -36,10 +38,12 @@ export component RecoveredPromptResultDialog {
                     text: AppState.en
                         ? (AppState.recovered-prompt-error != ""
                             ? "The paid task completed without a usable result. Keep this recovery record and contact support."
-                            : "The original editor changed or was closed, so the result was not written over your current content.")
+                            : (root.video-target-unavailable ? "Return to the original image's video settings to use this result, or copy it below."
+                                : "The original editor changed or was closed, so the result was not written over your current content."))
                         : (AppState.recovered-prompt-error != ""
                             ? "付费任务已结束但没有可用结果。请保留这条恢复记录并联系客服。"
-                            : "原编辑内容已变化或页面已关闭，因此没有覆盖当前内容。你可以检查后手动使用。");
+                            : (root.video-target-unavailable ? "请返回原图片的视频设置后使用此结果，也可以先复制结果。当前内容未被覆盖。"
+                                : "原编辑内容已变化或页面已关闭，因此没有覆盖当前内容。你可以检查后手动使用。"));
                     color: AppTheme.muted;
                     font-size: 12px;
                     wrap: word-wrap;
@@ -74,6 +78,11 @@ export component RecoveredPromptResultDialog {
                 HorizontalLayout {
                     height: 42px;
                     spacing: 10px;
+                    if AppState.recovered-prompt-target-kind == "video_prompt": video-result-later := PillButton {
+                        horizontal-stretch: 1;
+                        text: AppState.en ? "Later" : "稍后处理";
+                        clicked => { AppState.recovered-prompt-result-open = false; }
+                    }
                     PillButton {
                         horizontal-stretch: 1;
                         text: AppState.en ? "Discard" : "丢弃";
@@ -89,7 +98,7 @@ export component RecoveredPromptResultDialog {
                         horizontal-stretch: 1;
                         text: AppState.en ? "Use result" : "使用结果";
                         primary: true;
-                        disabled: AppState.recovered-prompt-error != "";
+                        disabled: AppState.recovered-prompt-error != "" || root.video-target-unavailable;
                         clicked => { AppState.apply-recovered-prompt-result(); }
                     }
                 }

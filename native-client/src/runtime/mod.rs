@@ -101,6 +101,9 @@ mod agreement_window;
 use agreement_window::*;
 mod video_player;
 use video_player::*;
+#[path = "callbacks/video_prompt.rs"]
+mod video_prompt_callbacks;
+use video_prompt_callbacks::*;
 #[path = "callbacks/generation.rs"]
 mod generation_callbacks;
 use generation_callbacks::*;

@@ -919,6 +919,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn video_prompt_draft_survives_sqlite_round_trip_without_changing_image_drafts() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate_client_state_schema(&mut connection).unwrap();
+        let data: LocalStoreData = serde_json::from_value(serde_json::json!({
+            "prompt_drafts": {
+                "scene": "image prompt",
+                "video_by_owner": {
+                    "user-a": {"source_id": "image-a", "prompt": "video prompt\n镜头缓慢推进"}
+                }
+            }
+        })).unwrap();
+        write_local_store(&mut connection, &data).unwrap();
+        let transaction = connection.transaction().unwrap();
+        let restored = serde_json::to_value(read_local_store_transaction(&transaction).unwrap()).unwrap();
+        assert_eq!(restored["prompt_drafts"]["scene"], "image prompt");
+        assert_eq!(
+            restored["prompt_drafts"]["video_by_owner"]["user-a"]["prompt"],
+            "video prompt\n镜头缓慢推进"
+        );
+    }
+
+    #[test]
     fn sqlite_round_trip_preserves_normalized_client_state() {
         let directory = tempfile::tempdir().expect("tempdir");
         let path = directory.path().join("client-state.sqlite3");

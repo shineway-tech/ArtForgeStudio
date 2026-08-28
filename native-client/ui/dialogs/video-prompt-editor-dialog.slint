@@ -1,0 +1,146 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { VideoPromptOptimizeButton } from "../components/video-prompt-optimize-button.slint";
+
+export component VideoPromptEditorDialog inherits Rectangle {
+    background: #00000070;
+    property <bool> focus-pending: true;
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        clicked => { AppState.video-prompt-expanded-open = false; }
+    }
+    editor-card := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: min(1040px, parent.width - 64px);
+        height: min(820px, parent.height - 64px);
+        background: AppTheme.panel;
+        border-radius: 16px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        drop-shadow-blur: 28px;
+        drop-shadow-color: #00000048;
+        drop-shadow-offset-y: 10px;
+        TouchArea { width: parent.width; height: parent.height; }
+
+        HorizontalLayout {
+            x: 24px;
+            y: 20px;
+            width: parent.width - 48px;
+            height: 32px;
+            spacing: 12px;
+            Text {
+                horizontal-stretch: 1;
+                text: AppState.en ? "Edit video prompt" : "编辑视频提示词";
+                color: AppTheme.text;
+                font-size: 18px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            VideoPromptOptimizeButton {}
+            close-button := Rectangle {
+                width: 32px;
+                height: 32px;
+                background: close-touch.has-hover ? AppTheme.panel-soft : transparent;
+                border-radius: 8px;
+                accessible-role: button;
+                accessible-label: AppState.en ? "Close" : "关闭";
+                accessible-action-default => { AppState.video-prompt-expanded-open = false; }
+                Image {
+                    x: 8px;
+                    y: 8px;
+                    width: 16px;
+                    height: 16px;
+                    source: @image-url("../../assets/icons/close.svg");
+                    colorize: AppTheme.muted;
+                }
+                close-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => { AppState.video-prompt-expanded-open = false; }
+                }
+            }
+        }
+        editor-frame := Rectangle {
+            x: 24px;
+            y: 68px;
+            width: parent.width - 48px;
+            height: parent.height - 150px;
+            background: AppTheme.panel-soft;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: expanded-input.has-focus ? AppTheme.accent : AppTheme.border;
+            clip: true;
+            expanded-scroll := ScrollView {
+                x: 18px;
+                y: 16px;
+                width: parent.width - 36px;
+                height: parent.height - 32px;
+                viewport-width: self.visible-width;
+                viewport-height: max(self.visible-height, expanded-input.preferred-height);
+                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                expanded-input := TextInput {
+                    width: expanded-scroll.visible-width - 10px;
+                    text <=> AppState.video-prompt;
+                    color: AppTheme.text;
+                    font-size: AppState.settings-font-size * 1px + 3px;
+                    font-weight: 400;
+                    single-line: false;
+                    wrap: word-wrap;
+                    read-only: AppState.video-generating;
+                    page-height: expanded-scroll.visible-height;
+                    edited => { AppState.video-prompt-edited(); }
+                    cursor-position-changed(position) => {
+                        if position.y + expanded-scroll.viewport-y < 8px {
+                            expanded-scroll.viewport-y = min(0px, max(expanded-scroll.visible-height - self.height, -position.y + 8px));
+                        } else if position.y + expanded-scroll.viewport-y > expanded-scroll.visible-height - 30px {
+                            expanded-scroll.viewport-y = min(0px, max(expanded-scroll.visible-height - self.height, expanded-scroll.visible-height - position.y - 30px));
+                        }
+                    }
+                    key-pressed(event) => {
+                        if event.text == Key.Escape {
+                            AppState.video-prompt-expanded-open = false;
+                            return accept;
+                        }
+                        return reject;
+                    }
+                }
+            }
+        }
+        Text {
+            x: 24px;
+            y: parent.height - 66px;
+            width: parent.width - 164px;
+            height: 42px;
+            text: AppState.video-prompt-status != "" ? AppState.video-prompt-status
+                : (AppState.en ? "Edits sync automatically · Esc to close" : "修改即时同步 · 按 Esc 关闭");
+            color: AppTheme.muted;
+            font-size: 12px;
+            wrap: word-wrap;
+            vertical-alignment: center;
+        }
+        done-button := PillButton {
+            x: parent.width - 116px;
+            y: parent.height - 62px;
+            width: 92px;
+            height: 36px;
+            primary: true;
+            text: AppState.en ? "Done" : "完成";
+            clicked => { AppState.video-prompt-expanded-open = false; }
+        }
+    }
+    Timer {
+        interval: 1ms;
+        running: root.focus-pending;
+        triggered => {
+            root.focus-pending = false;
+            expanded-input.focus();
+            expanded-input.set-selection-offsets(0, 0);
+        }
+    }
+}

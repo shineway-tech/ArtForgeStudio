@@ -1,6 +1,8 @@
 import { AppState } from "../app-state.slint";
+import { ScrollView } from "std-widgets.slint";
 import { PillButton } from "../components/pill-button.slint";
 import { VideoModelPicker } from "../components/video-model-picker.slint";
+import { VideoPromptOptimizeButton } from "../components/video-prompt-optimize-button.slint";
 import { AppTheme } from "../theme.slint";
 
 component VideoChoiceButton inherits Rectangle {
@@ -213,7 +215,48 @@ export component VideoGenerationPage inherits Rectangle {
                 select-model(code) => { AppState.select-video-model(code); }
             }
 
-            Text { x: 20px; y: 116px; width: parent.width - 40px; height: 20px; text: AppState.en ? "Prompt" : "视频提示词"; color: AppTheme.text; font-size: 15px; font-weight: 600; }
+            HorizontalLayout {
+                x: 20px;
+                y: 108px;
+                width: parent.width - 40px;
+                height: 30px;
+                spacing: 8px;
+                Text {
+                    horizontal-stretch: 1;
+                    text: AppState.en ? "Video prompt" : "视频提示词";
+                    color: AppTheme.text;
+                    font-size: 15px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                video-prompt-optimize := VideoPromptOptimizeButton {}
+                video-prompt-expand := Rectangle {
+                    width: 30px;
+                    height: 30px;
+                    background: expand-touch.has-hover ? AppTheme.panel-soft : transparent;
+                    border-radius: 7px;
+                    border-width: 1px;
+                    border-color: expand-touch.has-hover ? AppTheme.accent : AppTheme.border;
+                    accessible-role: button;
+                    accessible-label: AppState.en ? "Expand video prompt" : "展开视频提示词";
+                    accessible-action-default => { AppState.open-video-prompt-editor(); }
+                    Image {
+                        x: 7px;
+                        y: 7px;
+                        width: 16px;
+                        height: 16px;
+                        source: @image-url("../../assets/icons/fit.svg");
+                        colorize: expand-touch.has-hover ? AppTheme.accent : AppTheme.muted;
+                        image-fit: contain;
+                    }
+                    expand-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => { AppState.open-video-prompt-editor(); }
+                    }
+                }
+            }
             prompt-box := Rectangle {
                 x: 20px;
                 y: 144px;
@@ -223,17 +266,45 @@ export component VideoGenerationPage inherits Rectangle {
                 border-radius: 9px;
                 border-width: 1px;
                 border-color: prompt-input.has-focus ? AppTheme.accent : AppTheme.border;
-                prompt-input := TextInput {
+                clip: true;
+                prompt-scroll := ScrollView {
                     x: 14px;
                     y: 12px;
                     width: parent.width - 28px;
                     height: parent.height - 24px;
-                    text <=> AppState.video-prompt;
-                    color: AppTheme.text;
-                    font-size: 13px;
-                    single-line: false;
-                    wrap: word-wrap;
+                    viewport-width: self.visible-width;
+                    viewport-height: max(self.visible-height, prompt-input.preferred-height);
+                    horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                    prompt-input := TextInput {
+                        width: prompt-scroll.visible-width - 8px;
+                        text <=> AppState.video-prompt;
+                        color: AppTheme.text;
+                        font-size: 13px;
+                        font-weight: 400;
+                        single-line: false;
+                        wrap: word-wrap;
+                        read-only: AppState.video-generating;
+                        page-height: prompt-scroll.visible-height;
+                        edited => { AppState.video-prompt-edited(); }
+                        cursor-position-changed(position) => {
+                            if position.y + prompt-scroll.viewport-y < 8px {
+                                prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, -position.y + 8px));
+                            } else if position.y + prompt-scroll.viewport-y > prompt-scroll.visible-height - 26px {
+                                prompt-scroll.viewport-y = min(0px, max(prompt-scroll.visible-height - self.height, prompt-scroll.visible-height - position.y - 26px));
+                            }
+                        }
+                    }
                 }
+            }
+            Text {
+                x: 20px;
+                y: prompt-box.y + prompt-box.height + 2px;
+                width: parent.width - 40px;
+                height: 14px;
+                text: AppState.video-prompt-status;
+                color: AppTheme.muted;
+                font-size: 11px;
+                overflow: elide;
             }
 
             ratio-title := Text { x: 20px; y: prompt-box.y + prompt-box.height + 18px; width: parent.width - 40px; height: 20px; text: AppState.en ? "Aspect ratio" : "视频尺寸"; color: AppTheme.muted; font-size: 13px; font-weight: 500; }
@@ -314,7 +385,7 @@ export component VideoGenerationPage inherits Rectangle {
                 width: parent.width - 40px;
                 height: 46px;
                 primary: true;
-                disabled: !AppState.video-quote-ready || AppState.video-quote-loading || AppState.video-generating;
+                disabled: !AppState.video-quote-ready || AppState.video-quote-loading || AppState.video-generating || AppState.optimizing-video-prompt;
                 text: AppState.video-quote-loading
                     ? (AppState.en ? "Getting price..." : "正在获取报价...")
                     : (AppState.en ? "Generate Video" : "生成视频");

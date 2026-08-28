@@ -27,6 +27,7 @@ import { InspirationPage } from "pages/inspiration-page.slint";
 import { InfiniteCanvasPage } from "pages/infinite-canvas-page.slint";
 import { ImageEditorPage } from "pages/image-editor-page.slint";
 import { VideoGenerationPage } from "pages/video-generation-page.slint";
+import { VideoPromptEditorDialog } from "dialogs/video-prompt-editor-dialog.slint";
 import { InvitationGiftPage } from "pages/invitation-gift-page.slint";
 import { NotificationsPage } from "pages/notifications-page.slint";
 import { SettingsPage } from "pages/settings-page.slint";
@@ -130,6 +131,7 @@ export component AppWindow inherits Window {
     CanvasGroupNameDialog { width: root.width; height: root.height; }
     ModelRequiredDialog { width: root.width; height: root.height; }
     CreditInsufficientDialog { width: root.width; height: root.height; }
+    if AppState.page == "video-generation" && AppState.video-prompt-expanded-open: VideoPromptEditorDialog { width: root.width; height: root.height; }
     RecoveredPromptResultDialog { width: root.width; height: root.height; }
     AgreementViewerDialog { width: root.width; height: root.height; }
     DeepPromptOptimizationDrawer { width: root.width; height: root.height; }

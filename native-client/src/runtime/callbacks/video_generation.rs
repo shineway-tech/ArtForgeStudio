@@ -33,6 +33,7 @@ fn apply_video_model_selection(state: &AppState, model_code: &str) -> bool {
 }
 
 pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppContext) {
+    wire_video_prompt_callbacks(app, context.clone());
     let state = app.global::<AppState>();
     let store = context.store.clone();
     let quote_epoch = Arc::new(AtomicU64::new(0));
@@ -59,6 +60,10 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
                 return;
             };
             let state = app.global::<AppState>();
+            if state.get_video_prompt_expanded_open() || state.get_recovered_prompt_result_open() {
+                set_video_player_visible(false);
+                return;
+            }
             let path = PathBuf::from(state.get_video_result_path().to_string());
             if path.as_os_str().is_empty() {
                 close_video_player();
@@ -74,6 +79,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
         let app_weak = app.as_weak();
         let quote_epoch = quote_epoch.clone();
         let pending_client_request_id = pending_client_request_id.clone();
+        let context = context.clone();
         state.on_viewer_generate_video(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -90,7 +96,16 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
             state.set_video_source_file_id("".into());
             state.set_video_source_image(state.get_viewer_image());
             state.set_video_source_title(state.get_viewer_title());
-            state.set_video_prompt(state.get_viewer_prompt());
+            let owner = context.current_user_id.lock()
+                .unwrap_or_else(|value| value.into_inner()).clone().unwrap_or_default();
+            state.set_video_prompt(video_prompt_for_source(
+                &context.store.borrow().prompt_drafts,
+                &owner,
+                state.get_viewer_id().as_str(),
+                state.get_viewer_prompt().as_str(),
+            ).into());
+            state.set_video_prompt_expanded_open(false);
+            state.set_video_prompt_status("".into());
             state.set_video_aspect_ratio("16:9".into());
             state.set_video_resolution("720P".into());
             state.set_video_duration_seconds(4);
@@ -113,6 +128,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
             if state.get_video_service_available() {
                 state.invoke_request_video_quote("16:9".into(), "720P".into(), 4);
             }
+            recover_pending_prompt_tasks(&app, context.clone());
         });
     }
 
@@ -128,6 +144,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
             close_video_player();
             let state = app.global::<AppState>();
             let return_page = state.get_video_return_page().to_string();
+            state.set_video_prompt_expanded_open(false);
             state.set_video_quote_loading(false);
             navigate_to_with_store(&app, &store.borrow(), &return_page);
             state.set_viewer_open(true);
@@ -236,7 +253,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
                 return;
             };
             let state = app.global::<AppState>();
-            if state.get_video_generating() {
+            if state.get_video_generating() || state.get_optimizing_video_prompt() {
                 return;
             }
             if !state.get_video_quote_ready() || state.get_video_quote_id().trim().is_empty() {
@@ -422,6 +439,108 @@ mod tests {
             supports_image_edit: false,
             supports_style_analysis: false,
         }
+    }
+
+    #[test]
+    fn video_prompt_expand_edits_the_full_text_without_changing_image_prompt() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                renderer_name: Some("software".into()),
+                ..Default::default()
+            },
+        ))).unwrap();
+        let app = AppWindow::new().unwrap();
+        wire_video_prompt_callbacks(&app, AppContext::default());
+        let state = app.global::<AppState>();
+        state.set_page("video-generation".into());
+        state.set_prompt("image prompt stays unchanged".into());
+        let long_prompt = "主体缓慢向前行走，镜头平稳推进。\n".repeat(150);
+        state.set_video_prompt(long_prompt.clone().into());
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().unwrap();
+
+        for (width, height) in [(1180.0, 760.0), (1440.0, 900.0), (1920.0, 1080.0)] {
+            app.window().set_size(slint::LogicalSize::new(width, height));
+            let optimize = ElementHandle::find_by_element_id(
+                &app, "VideoGenerationPage::video-prompt-optimize",
+            ).next().expect("video prompt optimize button");
+            let expand = ElementHandle::find_by_element_id(
+                &app, "VideoGenerationPage::video-prompt-expand",
+            ).next().expect("video prompt expand button");
+            assert!(optimize.absolute_position().x + optimize.size().width < expand.absolute_position().x);
+            assert!((optimize.absolute_position().y - expand.absolute_position().y).abs() < 1.0);
+            assert!(expand.absolute_position().x + expand.size().width < width);
+        }
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        save_video_prompt_test_snapshot(&app, "video-prompt-header.png");
+
+        let expand = ElementHandle::find_by_element_id(
+            &app, "VideoGenerationPage::video-prompt-expand",
+        ).next().expect("video prompt expand button");
+        expand.mock_single_click(PointerEventButton::Left);
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(5));
+        let editor = ElementHandle::find_by_element_id(
+            &app, "VideoPromptEditorDialog::expanded-input",
+        ).next().expect("expanded video prompt editor");
+        assert_eq!(editor.accessible_value().unwrap().as_str(), long_prompt);
+        save_video_prompt_test_snapshot(&app, "video-prompt-expanded.png");
+        let edited = format!("{long_prompt}\n保持画面主体与光影不变。");
+        editor.set_accessible_value(edited.clone());
+        assert_eq!(state.get_video_prompt().as_str(), edited);
+        assert_eq!(state.get_prompt(), "image prompt stays unchanged");
+
+        let done = ElementHandle::find_by_element_id(
+            &app, "VideoPromptEditorDialog::done-button",
+        ).next().expect("done button");
+        done.mock_single_click(PointerEventButton::Left);
+        assert!(ElementHandle::find_by_element_id(
+            &app, "VideoPromptEditorDialog::expanded-input",
+        ).next().is_none());
+        assert_eq!(state.get_video_prompt().as_str(), edited);
+        expand.mock_single_click(PointerEventButton::Left);
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(5));
+        app.window().dispatch_event(slint::platform::WindowEvent::KeyPressed {
+            text: slint::platform::Key::Escape.into(),
+        });
+        app.window().dispatch_event(slint::platform::WindowEvent::KeyReleased {
+            text: slint::platform::Key::Escape.into(),
+        });
+        assert!(!state.get_video_prompt_expanded_open());
+        assert_eq!(state.get_video_prompt().as_str(), edited);
+
+        state.set_session_state("offline".into());
+        let optimize = ElementHandle::find_by_element_id(
+            &app, "VideoGenerationPage::video-prompt-optimize",
+        ).next().unwrap();
+        optimize.mock_single_click(PointerEventButton::Left);
+        assert!(!state.get_video_prompt_status().is_empty());
+        assert_eq!(state.get_video_prompt().as_str(), edited);
+
+        state.set_recovered_prompt_target_kind("video_prompt".into());
+        state.set_recovered_prompt_target_id("another-image".into());
+        state.set_recovered_prompt_result("retained result".into());
+        state.set_recovered_prompt_result_open(true);
+        let later = ElementHandle::find_by_element_id(
+            &app, "RecoveredPromptResultDialog::video-result-later",
+        ).next().expect("video recovery can be deferred without discarding it");
+        later.mock_single_click(PointerEventButton::Left);
+        assert!(!state.get_recovered_prompt_result_open());
+        assert_eq!(state.get_recovered_prompt_result(), "retained result");
+    }
+
+    fn save_video_prompt_test_snapshot(app: &AppWindow, name: &str) {
+        let Some(directory) = std::env::var_os("ELUNVI_TEST_ARTIFACT_DIR") else { return };
+        let directory = PathBuf::from(directory);
+        fs::create_dir_all(&directory).unwrap();
+        let pixels = app.window().take_snapshot().unwrap();
+        image::save_buffer(
+            directory.join(name), pixels.as_bytes(), pixels.width(), pixels.height(),
+            image::ColorType::Rgba8,
+        ).unwrap();
     }
 
     #[test]

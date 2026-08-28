@@ -62,7 +62,7 @@ windows-sys = { version = "0.61", features = [
 slint-build = "=1.17.1"
 
 [dev-dependencies]
-i-slint-backend-testing = "=1.17.1"
+i-slint-backend-testing = { version = "=1.17.1", features = ["renderer-software"] }
 tempfile = "3"
 
 [target.'cfg(windows)'.build-dependencies]

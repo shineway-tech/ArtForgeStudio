@@ -557,6 +557,8 @@ struct CustomPromptProfile {
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct PromptDrafts {
     #[serde(default)]
+    video_by_owner: BTreeMap<String, VideoPromptDraft>,
+    #[serde(default)]
     character: String,
     #[serde(default)]
     scene: String,
@@ -572,6 +574,12 @@ struct PromptDrafts {
     negative_ui: String,
     #[serde(default)]
     negative_effect: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct VideoPromptDraft {
+    source_id: String,
+    prompt: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

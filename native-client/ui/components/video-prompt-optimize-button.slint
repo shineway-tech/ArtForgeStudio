@@ -1,0 +1,15 @@
+import { AppState } from "../app-state.slint";
+import { PillButton } from "pill-button.slint";
+
+export component VideoPromptOptimizeButton inherits PillButton {
+    width: 100px;
+    height: 30px;
+    label-font-size: 12px;
+    text: AppState.optimizing-video-prompt
+        ? (AppState.en ? "Optimizing..." : "优化中...")
+        : (AppState.en ? "AI Optimize" : "AI优化");
+    active: AppState.optimizing-video-prompt;
+    disabled: AppState.optimizing-video-prompt || AppState.video-generating
+        || AppState.recovered-prompt-result-open || AppState.video-prompt == "";
+    clicked => { AppState.optimize-video-prompt(); }
+}

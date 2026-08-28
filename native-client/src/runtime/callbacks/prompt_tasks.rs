@@ -20,6 +20,10 @@ pub(super) enum PromptResultTarget {
         id: String,
         input: String,
     },
+    Video {
+        source_id: String,
+        input: String,
+    },
 }
 
 pub(super) struct PromptTaskRequest {
@@ -800,8 +804,9 @@ fn valid_pending_prompt_task(record: &PendingPromptTaskRecord) -> bool {
         && record.reference_paths.len() == record.reference_size_bytes.len()
         && matches!(
             record.target_kind.as_str(),
-            "composer" | "custom_prompt" | "canvas_node"
+            "composer" | "custom_prompt" | "canvas_node" | "video_prompt"
         )
+        && (record.target_kind != "video_prompt" || !record.target_id.trim().is_empty())
 }
 
 fn prompt_reference_fingerprints(paths: &[String]) -> std::result::Result<Vec<(String, u64)>, String> {
@@ -900,11 +905,20 @@ fn serialize_prompt_target(target: &PromptResultTarget) -> (String, String, Stri
             input.clone(),
             false,
         ),
+        PromptResultTarget::Video { source_id, input } => (
+            "video_prompt".to_string(),
+            source_id.clone(),
+            String::new(),
+            input.clone(),
+            false,
+        ),
     }
 }
 
 fn prompt_activity_kind(task_type: &str, target: &PromptResultTarget) -> &'static str {
-    if task_type == "prompt_translate" {
+    if matches!(target, PromptResultTarget::Video { .. }) {
+        "video_optimize"
+    } else if task_type == "prompt_translate" {
         "translate"
     } else if task_type == "image_style_analysis"
         && matches!(target, PromptResultTarget::CustomPrompt { .. })
@@ -921,6 +935,15 @@ fn prompt_target_matches(
     record: &PendingPromptTaskRecord,
 ) -> bool {
     let state = app.global::<AppState>();
+    if record.target_kind == "video_prompt" {
+        return state.get_page() == "video-generation"
+            && !state.get_video_generating()
+            && !record.target_id.is_empty()
+            && record.target_id == state.get_video_source_id().as_str()
+            && (record.target_input == state.get_video_prompt().as_str()
+                || (!record.result_prompt.is_empty()
+                    && record.result_prompt == state.get_video_prompt().as_str()));
+    }
     let canvas_input = if record.target_kind == "canvas_node" {
         context
             .store
@@ -1029,6 +1052,29 @@ fn apply_prompt_result_if_target_matches(
     }
     let state = app.global::<AppState>();
     match record.target_kind.as_str() {
+        "video_prompt" => {
+            let committed = durable_apply_before_result_commit(
+                || {
+                    store_video_prompt_draft(
+                        &mut context.store.borrow_mut().prompt_drafts,
+                        &record.owner_user_id,
+                        &record.target_id,
+                        &record.result_prompt,
+                    );
+                    save_local_store_checked(app, &context.store.borrow())
+                },
+                || update_prompt_task_record_scoped(record, |pending| {
+                    pending.result_committed = true;
+                }),
+            );
+            if !matches!(committed, Ok(true)) {
+                state.set_video_prompt_status("优化结果已保留，本地保存失败，请在恢复窗口重试".into());
+                return PromptResultApplication::NotApplied;
+            }
+            state.set_video_prompt(record.result_prompt.clone().into());
+            state.set_video_prompt_status("视频提示词已优化".into());
+            PromptResultApplication::AppliedDurably
+        }
         "composer" => {
             let cleanup_pending = !record.uploaded_file_ids.is_empty();
             let committed = durable_apply_before_result_commit(
@@ -1143,6 +1189,12 @@ fn prompt_task_success_message(record: &PendingPromptTaskRecord) -> &'static str
 fn set_prompt_task_activity(app: &AppWindow, record: &PendingPromptTaskRecord, active: bool) {
     let state = app.global::<AppState>();
     match record.activity_kind.as_str() {
+        "video_optimize" => {
+            state.set_optimizing_video_prompt(active);
+            state.set_video_prompt_request_id(
+                if active { record.client_request_id.clone() } else { String::new() }.into(),
+            );
+        }
         "translate" => {
             state.set_translating_prompt(active);
             state.set_translating_prompt_request_id(
@@ -1182,6 +1234,7 @@ fn set_prompt_task_activity(app: &AppWindow, record: &PendingPromptTaskRecord, a
 fn clear_prompt_task_activity_if_owned(app: &AppWindow, record: &PendingPromptTaskRecord) {
     let state = app.global::<AppState>();
     let owns_activity = match record.activity_kind.as_str() {
+        "video_optimize" => state.get_video_prompt_request_id().as_str() == record.client_request_id,
         "translate" => {
             state.get_translating_prompt_request_id().as_str() == record.client_request_id
         }
@@ -1198,6 +1251,10 @@ fn clear_prompt_task_activity_if_owned(app: &AppWindow, record: &PendingPromptTa
 fn set_prompt_task_start_failure(app: &AppWindow, target: &PromptResultTarget, reason: &str) {
     let state = app.global::<AppState>();
     match target {
+        PromptResultTarget::Video { .. } => {
+            state.set_optimizing_video_prompt(false);
+            state.set_video_prompt_status(reason.into());
+        }
         PromptResultTarget::CustomPrompt { .. } => {
             state.set_custom_prompt_analyzing(false);
             state.set_optimizing_prompt(false);
@@ -1213,7 +1270,9 @@ fn set_prompt_task_start_failure(app: &AppWindow, target: &PromptResultTarget, r
 
 fn set_prompt_task_failure(app: &AppWindow, record: &PendingPromptTaskRecord, reason: &str) {
     let state = app.global::<AppState>();
-    if record.target_kind == "custom_prompt" {
+    if record.target_kind == "video_prompt" {
+        state.set_video_prompt_status(format!("视频提示词优化失败：{reason}").into());
+    } else if record.target_kind == "custom_prompt" {
         state.set_custom_prompt_message(format!("提示词处理失败：{reason}").into());
     } else {
         state.set_generation_status(format!("提示词处理失败：{reason}").into());
@@ -1241,6 +1300,7 @@ fn present_next_recovered_prompt_result(app: &AppWindow, context: &AppContext) {
     state.set_recovered_prompt_client_request_id(record.client_request_id.into());
     state.set_recovered_prompt_task_type(record.task_type.into());
     state.set_recovered_prompt_target_kind(record.target_kind.into());
+    state.set_recovered_prompt_target_id(record.target_id.into());
     state.set_recovered_prompt_result(record.result_prompt.into());
     state.set_recovered_prompt_error(record.terminal_error.into());
     state.set_recovered_prompt_result_open(true);
@@ -1271,6 +1331,7 @@ fn clear_recovered_prompt_presentation(state: &AppState) {
     state.set_recovered_prompt_client_request_id("".into());
     state.set_recovered_prompt_task_type("".into());
     state.set_recovered_prompt_target_kind("".into());
+    state.set_recovered_prompt_target_id("".into());
     state.set_recovered_prompt_result("".into());
     state.set_recovered_prompt_error("".into());
 }
@@ -1302,7 +1363,24 @@ fn claim_recovered_prompt_result(app: &AppWindow, context: &AppContext) {
         return;
     }
     let state = app.global::<AppState>();
-    if record.target_kind == "custom_prompt" && state.get_custom_prompt_editor_open() {
+    if record.target_kind == "video_prompt" {
+        if state.get_page() != "video-generation"
+            || state.get_video_source_id().as_str() != record.target_id
+            || state.get_video_generating()
+        {
+            return;
+        }
+        // Explicitly accepting a recovered result may replace an edited video draft,
+        // but must never fall through to the image prompt editor.
+        let mut accepted = record.clone();
+        accepted.target_input = state.get_video_prompt().to_string();
+        if apply_prompt_result_if_target_matches(app, context, &accepted)
+            != PromptResultApplication::AppliedDurably
+        {
+            return;
+        }
+        let _ = remove_prompt_task_record_scoped(&record);
+    } else if record.target_kind == "custom_prompt" && state.get_custom_prompt_editor_open() {
         if !matches!(
             update_prompt_task_record_scoped(&record, |pending| {
                 pending.applied_to_target = true;
@@ -1441,6 +1519,11 @@ pub(super) fn clear_prompt_task_account_state(app: &AppWindow) {
     state.set_translating_prompt_request_id("".into());
     state.set_custom_style_analysis_request_id("".into());
     state.set_custom_prompt_recovered_request_id("".into());
+    state.set_optimizing_video_prompt(false);
+    state.set_video_prompt_request_id("".into());
+    state.set_video_prompt_status("".into());
+    state.set_video_prompt_expanded_open(false);
+    state.set_video_prompt("".into());
     clear_recovered_prompt_presentation(&state);
 }
 
@@ -1517,6 +1600,56 @@ mod tests {
             applied_to_target: false,
             result_committed: false,
         }
+    }
+
+    #[test]
+    fn video_prompt_activity_is_independent_and_only_the_owning_request_can_clear_it() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_optimizing_prompt(true);
+        let mut record = pending_record("video_prompt");
+        record.activity_kind = "video_optimize".into();
+        set_prompt_task_activity(&app, &record, true);
+        assert!(state.get_optimizing_video_prompt());
+        let mut stale = record.clone();
+        stale.client_request_id = "older-request".into();
+        clear_prompt_task_activity_if_owned(&app, &stale);
+        assert!(state.get_optimizing_video_prompt());
+        clear_prompt_task_activity_if_owned(&app, &record);
+        assert!(!state.get_optimizing_video_prompt());
+        assert!(state.get_optimizing_prompt());
+    }
+
+    #[test]
+    fn video_prompt_result_requires_the_same_source_page_and_unedited_text() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        let context = AppContext::default();
+        state.set_page("video-generation".into());
+        state.set_video_source_id("image-a".into());
+        state.set_video_prompt("original prompt".into());
+        state.set_prompt("image prompt must not change".into());
+
+        let mut record = pending_record("video_prompt");
+        record.task_type = "prompt_optimize".into();
+        record.target_id = "image-a".into();
+        assert!(valid_pending_prompt_task(&record));
+        assert!(prompt_target_matches(&app, &context, &record));
+
+        state.set_video_prompt("user edited the video prompt".into());
+        assert!(!prompt_target_matches(&app, &context, &record));
+        state.set_video_prompt("original prompt".into());
+        state.set_video_source_id("image-b".into());
+        assert!(!prompt_target_matches(&app, &context, &record));
+        state.set_video_source_id("image-a".into());
+        state.set_page("generation".into());
+        assert!(!prompt_target_matches(&app, &context, &record));
+        state.set_page("video-generation".into());
+        state.set_video_generating(true);
+        assert!(!prompt_target_matches(&app, &context, &record));
+        assert_eq!(state.get_prompt(), "image prompt must not change");
     }
 
     #[test]

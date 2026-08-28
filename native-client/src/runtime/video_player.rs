@@ -107,6 +107,13 @@ pub(super) fn close_video_player() {
     desktop_video_player::close();
 }
 
+pub(super) fn set_video_player_visible(visible: bool) {
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    desktop_video_player::set_visible(visible);
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let _ = visible;
+}
+
 fn handle_player_command(app: &AppWindow, local_path: &Path, command: PlayerCommand) {
     let state = app.global::<AppState>();
     match command {
@@ -221,6 +228,14 @@ mod desktop_video_player {
     pub(super) fn close() {
         VIDEO_WEBVIEW.with(|slot| {
             slot.borrow_mut().take();
+        });
+    }
+
+    pub(super) fn set_visible(visible: bool) {
+        VIDEO_WEBVIEW.with(|slot| {
+            if let Some(active) = slot.borrow().as_ref() {
+                active.webview.set_visible(visible).ok();
+            }
         });
     }
 }

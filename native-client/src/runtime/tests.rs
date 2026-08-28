@@ -4493,7 +4493,6 @@ mod tests {
 
         assert!(callbacks.contains("state.on_viewer_generate_video"));
         assert!(callbacks.contains("state.set_video_source_image"));
-        assert!(callbacks.contains("state.set_video_prompt(state.get_viewer_prompt())"));
         assert!(callbacks.contains("state.on_request_video_quote"));
         assert!(callbacks.contains("CreateVideoQuote"));
         assert!(callbacks.contains("quote_video_scoped"));
@@ -4502,6 +4501,34 @@ mod tests {
         assert!(callbacks.contains("state.on_submit_video_generation"));
         assert!(callbacks.contains("CreateVideoGenerationTask"));
         assert!(callbacks.contains("pending_client_request_id"));
+
+        i_slint_backend_testing::init_no_event_loop();
+        let window = AppWindow::new().unwrap();
+        let context = AppContext::default();
+        *context.current_user_id.lock().unwrap() = Some("user-a".into());
+        wire_video_generation_callbacks(&window, context.clone());
+        let state = window.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_session_state("offline".into());
+        state.set_viewer_id("image-a".into());
+        state.set_viewer_prompt("original image prompt".into());
+        state.set_prompt("unrelated workspace prompt".into());
+        state.invoke_viewer_generate_video();
+        assert_eq!(state.get_page(), "video-generation");
+        assert_eq!(state.get_video_prompt(), "original image prompt");
+
+        store_video_prompt_draft(
+            &mut context.store.borrow_mut().prompt_drafts,
+            "user-a", "image-a", "edited video prompt",
+        );
+        state.invoke_viewer_generate_video();
+        assert_eq!(state.get_video_prompt(), "edited video prompt");
+        assert_eq!(state.get_viewer_prompt(), "original image prompt");
+        assert_eq!(state.get_prompt(), "unrelated workspace prompt");
+
+        *context.current_user_id.lock().unwrap() = Some("user-b".into());
+        state.invoke_viewer_generate_video();
+        assert_eq!(state.get_video_prompt(), "original image prompt");
     }
 
     #[test]

@@ -100,6 +100,7 @@ export global AppState {
     in-out property <string> recovered-prompt-client-request-id: "";
     in-out property <string> recovered-prompt-task-type: "";
     in-out property <string> recovered-prompt-target-kind: "";
+    in-out property <string> recovered-prompt-target-id: "";
     in-out property <string> recovered-prompt-result: "";
     in-out property <string> recovered-prompt-error: "";
     in-out property <string> optimizing-prompt-request-id: "";
@@ -526,6 +527,13 @@ export global AppState {
     in-out property <image> video-source-image;
     in-out property <string> video-source-title: "";
     in-out property <string> video-prompt: "";
+    in-out property <bool> video-prompt-expanded-open: false;
+    in-out property <bool> optimizing-video-prompt: false;
+    in-out property <string> video-prompt-request-id: "";
+    in-out property <string> video-prompt-status: "";
+    callback optimize-video-prompt();
+    callback open-video-prompt-editor();
+    callback video-prompt-edited();
     in-out property <string> video-aspect-ratio: "16:9";
     in-out property <string> video-resolution: "720P";
     in-out property <int> video-duration-seconds: 4;
