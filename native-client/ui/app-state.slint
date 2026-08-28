@@ -616,6 +616,16 @@ export global AppState {
     in-out property <string> input-dir: ".\\data\\input";
     in-out property <string> output-dir: ".\\data\\out";
     in-out property <string> prompt-dir: ".\\data\\prompt";
+    in-out property <bool> directory-migration-open: false;
+    in-out property <string> directory-migration-kind: "";
+    in-out property <string> directory-migration-source: "";
+    in-out property <string> directory-migration-target: "";
+    in-out property <string> directory-migration-stage: "";
+    in-out property <string> directory-migration-message: "";
+    in-out property <int> directory-migration-progress: 0;
+    out property <bool> directory-migration-busy: directory-migration-stage == "checking" || directory-migration-stage == "copying";
+    callback confirm-directory-migration();
+    callback close-directory-migration();
     in-out property <bool> storage-busy: false;
     in-out property <string> storage-total-size: "--";
     in-out property <string> storage-output-size: "--";

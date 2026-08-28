@@ -1662,7 +1662,7 @@ fn cleanup_image_edit_input_path(path: &Path) {
 }
 
 fn managed_image_edit_input_dir() -> PathBuf {
-    app_data_dir().join("out").join("image-edit-inputs")
+    configured_output_directory().join("image-edit-inputs")
 }
 
 fn is_managed_image_edit_input_path(path: &Path) -> bool {
@@ -1682,7 +1682,7 @@ fn is_image_edit_input_name(path: &Path) -> bool {
 }
 
 fn managed_upscale_input_dir() -> PathBuf {
-    app_data_dir().join("out").join("upscale-references")
+    configured_output_directory().join("upscale-references")
 }
 
 fn is_managed_upscale_input_path(path: &Path) -> bool {
@@ -1761,6 +1761,13 @@ fn release_recovered_upscale_inputs(
 
 pub(super) fn recover_pending_generations(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
+    if state.get_directory_migration_open() {
+        let weak = app.as_weak();
+        slint::Timer::single_shot(Duration::from_secs(1), move || {
+            if let Some(app) = weak.upgrade() { recover_pending_generations(&app, context); }
+        });
+        return;
+    }
     if state.get_session_state().as_str() != "online" {
         return;
     }

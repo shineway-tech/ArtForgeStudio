@@ -9,6 +9,10 @@ const CLIENT_STATE_SCHEMA_VERSION: i32 = 1;
 
 enum ClientStateWrite {
     Wake,
+    DirectoryLocationsChecked {
+        data: DirectoryLocations,
+        acknowledgement: mpsc::Sender<std::result::Result<(), String>>,
+    },
     LocalStoreChecked {
         data: LocalStoreData,
         acknowledgement: mpsc::Sender<std::result::Result<(), String>>,
@@ -73,7 +77,8 @@ pub(super) fn load_client_state() -> Result<Option<LocalStoreData>> {
         return Ok(None);
     }
     let transaction = connection.transaction()?;
-    let data = read_local_store_transaction(&transaction)?;
+    let mut data = read_local_store_transaction(&transaction)?;
+    directory_locations().remap_local_store(&mut data);
     transaction.commit()?;
     Ok(Some(data))
 }
@@ -86,6 +91,19 @@ pub(super) fn load_client_user_profile() -> Result<Option<UserProfileData>> {
         return Ok(None);
     }
     read_setting_json(&connection, "user_profile").map(Some)
+}
+
+pub(super) fn load_directory_locations() -> Result<DirectoryLocations> {
+    let connection = open_initialized_client_state_connection()?;
+    read_setting_json_or_default(&connection, "directory_locations")
+}
+
+pub(super) fn persist_directory_locations_checked(data: DirectoryLocations) -> Result<()> {
+    let (sender, receiver) = mpsc::channel();
+    client_state_writer()?.sender.send(ClientStateWrite::DirectoryLocationsChecked {
+        data, acknowledgement: sender,
+    }).map_err(|_| anyhow!("本地数据库写入线程已退出"))?;
+    receiver.recv().map_err(|_| anyhow!("本地数据库写入线程未返回结果"))?.map_err(anyhow::Error::msg)
 }
 
 pub(super) fn persist_client_state_async(data: LocalStoreData) -> Result<()> {
@@ -169,6 +187,13 @@ fn client_state_writer_loop(
 
     while let Ok(command) = receiver.recv() {
         match command {
+            ClientStateWrite::DirectoryLocationsChecked { data, acknowledgement } => {
+                flush_pending_client_state(&mut connection, &pending);
+                let result = write_directory_locations(&mut connection, &data).map_err(|error| error.to_string());
+                if result.is_ok() { set_directory_locations(data); }
+                let _ = acknowledgement.send(result);
+                flush_pending_client_state(&mut connection, &pending);
+            }
             ClientStateWrite::Wake => {
                 flush_pending_client_state(&mut connection, &pending);
             }
@@ -220,6 +245,7 @@ fn fail_pending_client_state_writes(receiver: Receiver<ClientStateWrite>, messag
     for command in receiver {
         let acknowledgement = match command {
             ClientStateWrite::Wake => None,
+            ClientStateWrite::DirectoryLocationsChecked { acknowledgement, .. } => Some(acknowledgement),
             ClientStateWrite::LocalStoreChecked {
                 acknowledgement, ..
             }
@@ -370,6 +396,9 @@ fn migrate_client_state_schema(connection: &mut Connection) -> Result<()> {
 }
 
 fn write_local_store(connection: &mut Connection, data: &LocalStoreData) -> Result<()> {
+    let mut normalized = data.clone();
+    directory_locations().remap_local_store(&mut normalized);
+    let data = &normalized;
     let transaction = connection.transaction()?;
     write_asset_collection(&transaction, "generation", &data.generations)?;
     write_asset_collection(&transaction, "asset", &data.assets)?;
@@ -414,6 +443,13 @@ fn write_local_store(connection: &mut Connection, data: &LocalStoreData) -> Resu
         &data.contact_popup_dismissed,
     )?;
     write_meta(&transaction, "local_store_initialized", "1")?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn write_directory_locations(connection: &mut Connection, data: &DirectoryLocations) -> Result<()> {
+    let transaction = connection.transaction()?;
+    write_setting_json(&transaction, "directory_locations", data)?;
     transaction.commit()?;
     Ok(())
 }
@@ -1018,5 +1054,31 @@ mod tests {
 
         assert!(open_client_state_connection(&link).is_err());
         assert_eq!(fs::read(&target).expect("read target"), b"do-not-touch");
+    }
+
+    #[test]
+    fn directory_locations_are_atomic_and_survive_database_reopen() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("client.sqlite3");
+        let old = directory.path().join("old");
+        let new = directory.path().join("new");
+        let mut connection = open_client_state_connection(&path).unwrap();
+        migrate_client_state_schema(&mut connection).unwrap();
+        let defaults: DirectoryLocations = read_setting_json_or_default(&connection, "directory_locations").unwrap();
+        assert!(defaults.relocations.is_empty());
+        let config = defaults.migrated("output", old.clone(), new.clone()).unwrap();
+        write_directory_locations(&mut connection, &config).unwrap();
+        drop(connection);
+        let mut reopened = open_client_state_connection(&path).unwrap();
+        let restored: DirectoryLocations = read_setting_json(&reopened, "directory_locations").unwrap();
+        assert_eq!(restored.directory("output"), Some(new));
+        let mut historical = old.join("asset.png").display().to_string();
+        restored.remap(&mut historical);
+        assert_eq!(PathBuf::from(historical), directory.path().join("new/asset.png"));
+        reopened.execute_batch("CREATE TRIGGER reject_location_update BEFORE UPDATE ON client_settings WHEN NEW.key='directory_locations' BEGIN SELECT RAISE(ABORT, 'test disk failure'); END;").unwrap();
+        assert!(write_directory_locations(&mut reopened, &DirectoryLocations::default()).is_err());
+        let retained: DirectoryLocations = read_setting_json(&reopened, "directory_locations").unwrap();
+        assert_eq!(retained.output, restored.output);
+        assert_eq!(retained.relocations.len(), 1);
     }
 }

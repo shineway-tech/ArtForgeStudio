@@ -244,8 +244,9 @@ pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) -> b
 fn apply_local_store_data(
     app: &AppWindow,
     store: &Rc<RefCell<Store>>,
-    data: LocalStoreData,
+    mut data: LocalStoreData,
 ) -> bool {
+    directory_locations().remap_local_store(&mut data);
     let saved_image_model = data.image_model.clone();
     let saved_reasoning_model = data.reasoning_model.clone();
     let saved_video_model = data.video_model.clone();

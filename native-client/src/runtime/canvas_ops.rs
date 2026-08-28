@@ -83,6 +83,12 @@ pub(super) struct CanvasController {
 }
 
 impl CanvasController {
+    pub fn remap_file_locations(&mut self, locations: &DirectoryLocations) {
+        for snapshot in self.undo.iter_mut().chain(&mut self.redo) {
+            for note in &mut snapshot.notes { locations.remap(&mut note.image_path); }
+        }
+        for note in &mut self.clipboard.notes { locations.remap(&mut note.image_path); }
+    }
     pub fn record(&mut self, snapshot: CanvasSnapshot) {
         self.undo.push(snapshot);
         if self.undo.len() > MAX_CANVAS_HISTORY {

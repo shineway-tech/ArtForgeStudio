@@ -10,6 +10,7 @@ import { CreditInsufficientDialog } from "dialogs/credit-insufficient-dialog.sli
 import { ContactPopup } from "dialogs/contact-popup.slint";
 import { CanvasGroupNameDialog } from "dialogs/canvas-group-name-dialog.slint";
 import { DeleteConfirm } from "dialogs/delete-confirm.slint";
+import { DirectoryMigrationDialog } from "dialogs/directory-migration-dialog.slint";
 import { DeepPromptOptimizationDrawer } from "dialogs/deep-prompt-optimization-drawer.slint";
 import { ModelRequiredDialog } from "dialogs/model-required-dialog.slint";
 import { RecoveredPromptResultDialog } from "dialogs/recovered-prompt-result-dialog.slint";
@@ -136,6 +137,7 @@ export component AppWindow inherits Window {
     AgreementViewerDialog { width: root.width; height: root.height; }
     DeepPromptOptimizationDrawer { width: root.width; height: root.height; }
     PromptExpandedEditor { width: root.width; height: root.height; }
+    if AppState.directory-migration-open: DirectoryMigrationDialog { width: root.width; height: root.height; }
     if AppState.contact-copy-toast-visible: Rectangle {
         width: 132px;
         height: 46px;

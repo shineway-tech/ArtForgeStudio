@@ -609,8 +609,8 @@ pub(super) fn cleanup_stale_generation_transients(retained: Option<&BTreeSet<Pat
         is_delivery_staging_file,
     );
     for directory in [
-        data_dir.join("out").join("image-edit-inputs"),
-        data_dir.join("out").join("upscale-references"),
+        configured_output_directory().join("image-edit-inputs"),
+        configured_output_directory().join("upscale-references"),
         data_dir.join("references").join("imports"),
     ] {
         cleanup_stale_files_in_directory(
@@ -622,7 +622,7 @@ pub(super) fn cleanup_stale_generation_transients(retained: Option<&BTreeSet<Pat
         );
     }
     cleanup_stale_files_in_directory(
-        &data_dir.join("out"),
+        &configured_output_directory(),
         retained,
         now,
         STALE_PART_AGE,
@@ -646,10 +646,14 @@ pub(super) fn cleanup_failed_delivery_staging(path: &Path) {
 }
 
 pub(super) fn output_dir_path(app: &AppWindow) -> PathBuf {
+    let configured = directory_locations();
+    if !configured.output.is_empty() {
+        return configured.directory("output").unwrap();
+    }
     let value = app.global::<AppState>().get_output_dir().to_string();
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return app_data_dir().join("out");
+        return configured_output_directory();
     }
     let path = PathBuf::from(trimmed);
     if path.is_absolute() {

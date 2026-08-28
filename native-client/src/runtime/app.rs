@@ -22,6 +22,8 @@ pub(super) fn run() -> Result<()> {
     apply_theme(&app, "light");
     init_portable_dirs(&app)?;
     initialize_client_state_repository().context("无法初始化本地元数据库")?;
+    set_directory_locations(load_directory_locations().context("无法加载目录设置")?);
+    sync_directory_locations(&app);
     initialize_storage_index();
     initialize_preview_cache();
     cleanup_stale_reference_imports();
@@ -329,24 +331,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
         });
     }
 
-    {
-        let app_weak = app.as_weak();
-        state.on_pick_dir(move |kind| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                let text = path.display().to_string();
-                let state = app.global::<AppState>();
-                match kind.as_str() {
-                    "input" => state.set_input_dir(text.into()),
-                    "output" => state.set_output_dir(text.into()),
-                    "prompt" => state.set_prompt_dir(text.into()),
-                    _ => {}
-                }
-            }
-        });
-    }
+    wire_directory_migration_callbacks(app, context.clone());
 
     {
         let app_weak = app.as_weak();

@@ -172,6 +172,7 @@ pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>
 
 fn process_external_image_drops(app: &AppWindow, store: &Rc<RefCell<Store>>) {
     let drops = platform::take_external_image_drops();
+    if app.global::<AppState>().get_directory_migration_open() { return; }
     let page = app.global::<AppState>().get_page();
     if page.as_str() == "generation" {
         for drop in drops {

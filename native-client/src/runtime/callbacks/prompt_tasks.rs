@@ -170,6 +170,13 @@ pub(super) fn start_backend_prompt_task(
 }
 
 pub(super) fn recover_pending_prompt_tasks(app: &AppWindow, context: AppContext) {
+    if app.global::<AppState>().get_directory_migration_open() {
+        let weak = app.as_weak();
+        slint::Timer::single_shot(Duration::from_secs(1), move || {
+            if let Some(app) = weak.upgrade() { recover_pending_prompt_tasks(&app, context); }
+        });
+        return;
+    }
     if app.global::<AppState>().get_session_state().as_str() != "online" {
         return;
     }

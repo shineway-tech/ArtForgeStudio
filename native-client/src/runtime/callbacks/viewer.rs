@@ -885,7 +885,7 @@ fn prepare_image_edit_inputs(app: &AppWindow, points: &[BrushPoint]) -> Result<(
 
     let mask = rasterize_image_edit_mask(points, source.width(), source.height())?;
     let mask_bytes = encode_png_rgba(&mask, mask.width(), mask.height())?;
-    let directory = app_data_dir().join("out").join("image-edit-inputs");
+    let directory = configured_output_directory().join("image-edit-inputs");
     if !ensure_managed_subdirectory(&directory) {
         return Err(anyhow!("无法创建安全的图片编辑暂存目录"));
     }

@@ -708,7 +708,7 @@ fn schedule_network_recovery(app_weak: Weak<AppWindow>, context: AppContext) {
 
 fn try_network_recovery(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
-    if state.get_auth_busy() || !state.get_ever_authenticated() {
+    if state.get_auth_busy() || state.get_directory_migration_open() || !state.get_ever_authenticated() {
         return;
     }
     if !matches!(state.get_session_state().as_str(), "offline" | "signed_out") {

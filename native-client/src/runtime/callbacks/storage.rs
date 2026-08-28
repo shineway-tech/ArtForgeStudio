@@ -90,7 +90,7 @@ fn collect_storage_usage() -> StorageUsage {
     if !root_metadata.file_type().is_dir() || root_metadata.file_type().is_symlink() {
         return StorageUsage::default();
     }
-    let output_root = data.join("out");
+    let output_root = configured_output_directory();
     let image_edit_input_root = output_root.join("image-edit-inputs");
     let upscale_input_root = output_root.join("upscale-references");
     let reference_root = data.join("references");
@@ -99,7 +99,14 @@ fn collect_storage_usage() -> StorageUsage {
     let toolbox_root = data.join("toolbox");
     let delivery_root = data.join("delivery-staging");
     let mut usage = StorageUsage::default();
-    let mut pending = vec![data];
+    let mut pending = vec![data.clone()];
+    for kind in ["input", "output", "prompt"] {
+        if let Some(directory) = directory_locations().directory(kind) {
+            if !directory.starts_with(&data) && crate::directory_migration::checked_directory(&directory).is_ok() {
+                pending.push(directory);
+            }
+        }
+    }
     while let Some(directory) = pending.pop() {
         let Ok(entries) = fs::read_dir(directory) else {
             continue;
@@ -136,7 +143,7 @@ fn collect_storage_usage() -> StorageUsage {
     usage
 }
 
-fn format_storage_bytes(bytes: u64) -> String {
+pub(super) fn format_storage_bytes(bytes: u64) -> String {
     const KIB: f64 = 1024.0;
     const MIB: f64 = KIB * 1024.0;
     const GIB: f64 = MIB * 1024.0;

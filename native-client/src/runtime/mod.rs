@@ -122,6 +122,9 @@ use model_catalog_callbacks::*;
 #[path = "callbacks/storage.rs"]
 mod storage_callbacks;
 use storage_callbacks::*;
+#[path = "callbacks/directory_migration.rs"]
+mod directory_migration_callbacks;
+use directory_migration_callbacks::*;
 #[path = "callbacks/reference.rs"]
 mod reference_callbacks;
 use reference_callbacks::*;
@@ -174,6 +177,9 @@ use local_store::*;
 #[path = "storage/client_state.rs"]
 mod client_state;
 use client_state::*;
+#[path = "storage/directory_locations.rs"]
+mod directory_locations;
+use directory_locations::*;
 #[allow(dead_code)]
 #[path = "storage/file_index.rs"]
 mod file_index;

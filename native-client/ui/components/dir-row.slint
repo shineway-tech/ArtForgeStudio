@@ -11,7 +11,7 @@ export component DirRow {
         background: transparent;
         Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: AppTheme.border; }
         Text { x: 0px; y: 12px; text: root.label; color: AppTheme.text; font-size: 14px; font-weight: 400; }
-        Text { x: 0px; y: 35px; width: parent.width - 112px; text: root.value; color: AppTheme.muted; font-size: 13px; font-weight: 400; overflow: elide; }
-        PillButton { x: parent.width - 80px; y: 16px; width: 72px; text: AppState.en ? "Choose" : "选择"; clicked => { AppState.pick-dir(root.kind); } }
+        Text { x: 0px; y: 35px; width: parent.width - 136px; text: root.value; color: AppTheme.muted; font-size: 13px; font-weight: 400; overflow: elide; }
+        migrate-button := PillButton { x: parent.width - 112px; y: 16px; width: 104px; text: AppState.en ? "Migrate files" : "一键迁移"; disabled: AppState.directory-migration-open; clicked => { AppState.pick-dir(root.kind); } }
     }
 }

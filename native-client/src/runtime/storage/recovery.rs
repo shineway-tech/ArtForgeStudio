@@ -923,7 +923,14 @@ fn read_recovery_file_for_update_at(path: &Path) -> Result<RecoveryFile> {
         }
         Err(error) => return Err(error.into()),
     };
-    serde_json::from_str(&text).context("pending generation recovery file is invalid")
+    let mut file: RecoveryFile = serde_json::from_str(&text).context("pending generation recovery file is invalid")?;
+    let locations = directory_locations();
+    for record in &mut file.generations {
+        locations.remap_paths(&mut record.reference_paths);
+        locations.remap_paths(&mut record.lineage_reference_paths);
+        for delivery in &mut record.deliveries { locations.remap(&mut delivery.local_path); }
+    }
+    Ok(file)
 }
 
 fn write_recovery_file_at(path: &Path, file: &RecoveryFile) -> Result<()> {
@@ -999,7 +1006,10 @@ fn read_prompt_task_recovery_file_for_update_at(path: &Path) -> Result<PromptTas
         }
         Err(error) => return Err(error.into()),
     };
-    serde_json::from_str(&text).context("pending prompt task recovery file is invalid")
+    let mut file: PromptTaskRecoveryFile = serde_json::from_str(&text).context("pending prompt task recovery file is invalid")?;
+    let locations = directory_locations();
+    for record in &mut file.prompt_tasks { locations.remap_paths(&mut record.reference_paths); }
+    Ok(file)
 }
 
 pub(super) fn pending_recovery_file_references() -> Result<Vec<(String, String, String)>> {

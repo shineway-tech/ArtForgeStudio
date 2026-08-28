@@ -1,0 +1,76 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export component DirectoryMigrationDialog inherits Rectangle {
+    background: #00000070;
+    property <bool> focus-pending: true;
+    Timer {
+        interval: 1ms;
+        running: root.focus-pending;
+        triggered => { dialog-focus.focus(); root.focus-pending = false; }
+    }
+    TouchArea { width: parent.width; height: parent.height; }
+    dialog-focus := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        key-pressed(event) => {
+            if event.text == Key.Escape && !AppState.directory-migration-busy {
+                AppState.close-directory-migration();
+            }
+            return accept;
+        }
+    }
+    card := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: min(720px, parent.width - 64px);
+        height: min(490px, parent.height - 64px);
+        background: AppTheme.panel;
+        border-radius: 16px;
+        border-width: 1px;
+        border-color: AppTheme.border;
+        Text {
+            x: 28px; y: 24px; width: parent.width - 56px; height: 28px;
+            text: AppState.en ? "Migrate files" : "一键迁移";
+            color: AppTheme.text; font-size: 20px; font-weight: 600;
+        }
+        ScrollView {
+            x: 28px; y: 72px; width: parent.width - 56px; height: parent.height - 160px;
+            viewport-width: self.width;
+            viewport-height: max(content.preferred-height, self.height);
+            content := VerticalLayout {
+                width: parent.width; spacing: 10px; padding: 0px;
+                Text { text: AppState.en ? "Current folder" : "原文件夹"; color: AppTheme.muted; font-size: 13px; }
+                Text { text: AppState.directory-migration-source; color: AppTheme.text; font-size: 14px; wrap: char-wrap; }
+                Rectangle { height: 10px; background: transparent; }
+                Text { text: AppState.en ? "New folder" : "新文件夹"; color: AppTheme.muted; font-size: 13px; }
+                Text { text: AppState.directory-migration-target; color: AppTheme.text; font-size: 14px; wrap: char-wrap; }
+                Rectangle { height: 12px; background: transparent; }
+                Text { text: AppState.directory-migration-message; color: AppState.directory-migration-stage == "error" ? AppTheme.danger : AppTheme.muted; font-size: 14px; wrap: word-wrap; }
+                if AppState.directory-migration-stage == "copying": Rectangle {
+                    height: 6px; border-radius: 3px; background: AppTheme.panel-soft;
+                    Rectangle { height: parent.height; width: parent.width * AppState.directory-migration-progress / 100; background: AppTheme.accent; border-radius: 3px; }
+                }
+                if AppState.directory-migration-stage == "copying": Text {
+                    text: AppState.directory-migration-progress + "%"; color: AppTheme.muted; font-size: 13px; horizontal-alignment: right;
+                }
+                Rectangle { vertical-stretch: 1; background: transparent; }
+            }
+        }
+        HorizontalLayout {
+            x: 28px; y: parent.height - 64px; width: parent.width - 56px; height: 36px; spacing: 12px;
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            close-button := PillButton {
+                width: 100px; disabled: AppState.directory-migration-busy;
+                text: AppState.directory-migration-stage == "confirm" ? (AppState.en ? "Cancel" : "取消") : (AppState.en ? "Close" : "关闭");
+                clicked => { AppState.close-directory-migration(); }
+            }
+            if AppState.directory-migration-stage == "confirm": confirm-button := PillButton {
+                width: 120px; primary: true; text: AppState.en ? "Confirm move" : "确认迁移";
+                clicked => { AppState.confirm-directory-migration(); }
+            }
+        }
+    }
+}

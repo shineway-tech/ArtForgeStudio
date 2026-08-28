@@ -227,7 +227,7 @@ fn collect_path_reference(
 
 pub(super) fn managed_file_registration(path: &Path) -> ManagedFileRegistration {
     let byte_size = fs::metadata(path).map(|metadata| metadata.len()).unwrap_or(0);
-    let managed = is_path_within(&app_data_dir(), path);
+    let managed = is_path_within(&app_data_dir(), path) || is_path_within(&configured_output_directory(), path);
     ManagedFileRegistration {
         path: path.to_path_buf(),
         kind: managed_file_kind(path).to_string(),
@@ -238,10 +238,10 @@ pub(super) fn managed_file_registration(path: &Path) -> ManagedFileRegistration 
         } else if is_path_within(&app_data_dir().join("cache"), path) {
             "cache"
         } else if is_path_within(
-            &app_data_dir().join("out").join("image-edit-inputs"),
+            &configured_output_directory().join("image-edit-inputs"),
             path,
         ) || is_path_within(
-            &app_data_dir().join("out").join("upscale-references"),
+            &configured_output_directory().join("upscale-references"),
             path,
         ) {
             "transient"
@@ -261,11 +261,11 @@ fn managed_file_kind(path: &Path) -> &'static str {
     let data = app_data_dir();
     if is_path_within(&data.join("cache").join("previews"), path) {
         "preview"
-    } else if is_path_within(&data.join("out").join("image-edit-inputs"), path) {
+    } else if is_path_within(&configured_output_directory().join("image-edit-inputs"), path) {
         "image-edit-input"
-    } else if is_path_within(&data.join("out").join("upscale-references"), path) {
+    } else if is_path_within(&configured_output_directory().join("upscale-references"), path) {
         "upscale-input"
-    } else if is_path_within(&data.join("out"), path) {
+    } else if is_path_within(&configured_output_directory(), path) {
         "output"
     } else if is_path_within(&data.join("toolbox"), path) {
         "toolbox"
@@ -282,7 +282,7 @@ fn managed_file_kind(path: &Path) -> &'static str {
 
 pub(super) fn managed_output_path(path_text: &str) -> Option<PathBuf> {
     let path = usable_file_path(path_text)?;
-    let output_root = app_data_dir().join("out");
+    let output_root = configured_output_directory();
     if !safe_managed_subdirectory(&output_root) {
         return None;
     }
@@ -426,6 +426,10 @@ fn is_path_within(root: &Path, candidate: &Path) -> bool {
 }
 
 pub(super) fn safe_managed_subdirectory(directory: &Path) -> bool {
+    let output = configured_output_directory();
+    if !directory.starts_with(app_data_dir()) && (directory == output || directory.starts_with(&output)) {
+        return crate::directory_migration::checked_directory(directory).is_ok();
+    }
     let data = app_data_dir();
     let Ok(data_metadata) = fs::symlink_metadata(&data) else {
         return false;
@@ -466,6 +470,23 @@ pub(super) fn safe_managed_subdirectory(directory: &Path) -> bool {
 }
 
 pub(super) fn ensure_managed_subdirectory(directory: &Path) -> bool {
+    let output = configured_output_directory();
+    if !directory.starts_with(app_data_dir()) && (directory == output || directory.starts_with(&output)) {
+        if crate::directory_migration::checked_directory(&output).is_err() { return false; }
+        let Ok(relative) = directory.strip_prefix(&output) else { return false; };
+        let mut current = output;
+        for component in relative.components() {
+            let std::path::Component::Normal(component) = component else { return false; };
+            current.push(component);
+            match fs::create_dir(&current) {
+                Ok(()) => {},
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {},
+                Err(_) => return false,
+            }
+            if crate::directory_migration::checked_directory(&current).is_err() { return false; }
+        }
+        return true;
+    }
     let data = app_data_dir();
     let Ok(relative) = directory.strip_prefix(&data) else {
         return false;
