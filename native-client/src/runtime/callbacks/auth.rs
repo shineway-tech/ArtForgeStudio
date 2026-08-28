@@ -1659,6 +1659,9 @@ pub(super) fn clear_account_snapshot_state(app: &AppWindow, context: &AppContext
     state.set_invitation_users_message("".into());
 
     state.set_catalog_models(ModelRc::new(VecModel::from(Vec::<CatalogModelView>::new())));
+    state.set_video_model_options(ModelRc::new(VecModel::from(
+        Vec::<CatalogModelView>::new(),
+    )));
     state.set_image_model("".into());
     state.set_image_model_name("".into());
     state.set_reasoning_model("".into());
@@ -1673,6 +1676,7 @@ pub(super) fn clear_account_snapshot_state(app: &AppWindow, context: &AppContext
     state.set_image_editor_price_4k(0);
     state.set_video_model("".into());
     state.set_video_model_name("".into());
+    state.set_video_model_description("".into());
     state.set_video_service_available(false);
     state.set_style_analysis_available(false);
     state.set_style_analysis_model_code("".into());
@@ -1989,7 +1993,13 @@ pub(super) fn apply_backend_snapshot(
                 && model_supports_operation(model, "analyze_style"),
         })
         .collect::<Vec<_>>();
+    let video_model_options = catalog_models
+        .iter()
+        .filter(|model| model.purpose == "video_generation")
+        .cloned()
+        .collect::<Vec<_>>();
     state.set_catalog_models(ModelRc::new(VecModel::from(catalog_models)));
+    state.set_video_model_options(ModelRc::new(VecModel::from(video_model_options)));
     let credit_snapshot_is_current =
         credit_sync_epoch_is_current(&context.store.borrow(), credit_sync_epoch);
     if credit_snapshot_applied && credit_snapshot_is_current {
@@ -2059,12 +2069,16 @@ pub(super) fn apply_backend_snapshot(
             snapshot
                 .models
                 .iter()
+                .find(|item| item.code == "openai_prompt")
+        })
+        .or_else(|| {
+            snapshot
+                .models
+                .iter()
                 .find(|item| item.purpose == "prompt_processing")
         });
-    let selected_video = snapshot
-        .models
-        .iter()
-        .find(|item| item.purpose == "video_generation");
+    let selected_video_code = state.get_video_model().to_string();
+    let selected_video = select_video_catalog_model(&snapshot.models, &selected_video_code);
     let mut model_groups = Vec::new();
     if !image_models.is_empty() {
         model_groups.push(model_group(
@@ -2101,10 +2115,12 @@ pub(super) fn apply_backend_snapshot(
     if let Some(model) = selected_video {
         state.set_video_model(model.code.clone().into());
         state.set_video_model_name(model_display_name(model).into());
+        state.set_video_model_description(model_capabilities_text(model).into());
         state.set_video_service_available(true);
     } else {
         state.set_video_model("".into());
         state.set_video_model_name("".into());
+        state.set_video_model_description("".into());
         state.set_video_service_available(false);
     }
     sync_style_analysis_selection(&state);
@@ -2138,6 +2154,20 @@ fn model_group(
         used_models: model_codes,
         models,
     }
+}
+
+fn select_video_catalog_model<'a>(
+    models: &'a [ModelCatalogItem],
+    preferred: &str,
+) -> Option<&'a ModelCatalogItem> {
+    models
+        .iter()
+        .find(|item| item.purpose == "video_generation" && item.code == preferred)
+        .or_else(|| {
+            models
+                .iter()
+                .find(|item| item.purpose == "video_generation")
+        })
 }
 
 fn model_price(model: &ModelCatalogItem, quality: &str) -> i32 {
@@ -2862,5 +2892,44 @@ mod tests {
         };
         assert_eq!(model_display_name(&pro), "nano-banana-pro");
         assert_eq!(model_display_name(&fast), "nano-banana");
+    }
+
+    #[test]
+    fn video_model_selector_preserves_an_available_preference_then_falls_back() {
+        let models = vec![
+            ModelCatalogItem {
+                code: "seedance-lite".to_string(),
+                version: 1,
+                purpose: "video_generation".to_string(),
+                name: "Seedance Lite".to_string(),
+                capabilities: serde_json::json!({}),
+                prices: vec![],
+            },
+            ModelCatalogItem {
+                code: "seedance-pro".to_string(),
+                version: 1,
+                purpose: "video_generation".to_string(),
+                name: "Seedance Pro".to_string(),
+                capabilities: serde_json::json!({}),
+                prices: vec![],
+            },
+            ModelCatalogItem {
+                code: "image-only".to_string(),
+                version: 1,
+                purpose: "image_generation".to_string(),
+                name: "Image Only".to_string(),
+                capabilities: serde_json::json!({}),
+                prices: vec![],
+            },
+        ];
+
+        assert_eq!(
+            select_video_catalog_model(&models, "seedance-pro").map(|model| model.code.as_str()),
+            Some("seedance-pro")
+        );
+        assert_eq!(
+            select_video_catalog_model(&models, "missing").map(|model| model.code.as_str()),
+            Some("seedance-lite")
+        );
     }
 }

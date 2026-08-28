@@ -2675,6 +2675,34 @@ mod tests {
     }
 
     #[test]
+    fn studio_content_stays_top_aligned_in_tall_windows_for_every_category() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+
+        state.set_logged_in(true);
+        state.set_page("generation".into());
+        app.window()
+            .set_size(slint::LogicalSize::new(1351.0, 1335.0));
+        app.show().expect("show app window");
+
+        for category in ["character", "scene", "ui", "effect"] {
+            state.set_asset_type(category.into());
+            let composers = i_slint_backend_testing::ElementHandle::find_by_element_type_name(
+                &app,
+                "PromptComposer",
+            )
+            .collect::<Vec<_>>();
+            assert_eq!(composers.len(), 1, "expected one composer for {category}");
+            let composer_y = composers[0].absolute_position().y;
+            assert!(
+                composer_y < 200.0,
+                "{category} composer should stay near the workbench header, but started at y={composer_y}"
+            );
+        }
+    }
+
+    #[test]
     fn prompt_optimization_actions_are_compact_backgroundless_tags() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
 
@@ -4924,6 +4952,25 @@ mod tests {
             callbacks.contains("continue_payment_order(&app, context, backend, started, false);")
         );
         assert!(callbacks.contains("已恢复未完成订单，可重新打开支付宝继续支付"));
+    }
+
+    #[test]
+    fn prompt_model_fallback_preserves_openai_prompt_as_the_default() {
+        let auth = include_str!("callbacks/auth.rs");
+        let selection_start = auth.find("let selected_prompt = snapshot").unwrap();
+        let selection_end = auth[selection_start..]
+            .find("let mut model_groups")
+            .map(|offset| selection_start + offset)
+            .unwrap();
+        let selection = &auth[selection_start..selection_end];
+        let saved_selection = selection.find("item.code == selected_prompt_code").unwrap();
+        let preferred_fallback = selection.find("item.code == \"openai_prompt\"").unwrap();
+        let generic_fallback = selection
+            .rfind("item.purpose == \"prompt_processing\"")
+            .unwrap();
+
+        assert!(saved_selection < preferred_fallback);
+        assert!(preferred_fallback < generic_fallback);
     }
 
     #[test]

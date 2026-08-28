@@ -18,6 +18,7 @@ use std::time::Duration;
 
 const REFERENCE_TRANSFER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REFERENCE_TRANSFER_TIMEOUT: Duration = Duration::from_secs(120);
+const GENERATION_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct TaskFailure {
@@ -309,7 +310,7 @@ impl GenerationApi {
             client,
             download: reqwest::blocking::Client::builder()
                 .connect_timeout(REFERENCE_TRANSFER_CONNECT_TIMEOUT)
-                .timeout(REFERENCE_TRANSFER_TIMEOUT)
+                .timeout(GENERATION_DOWNLOAD_TIMEOUT)
                 .build()
                 .unwrap_or_else(|_| reqwest::blocking::Client::new()),
         }
