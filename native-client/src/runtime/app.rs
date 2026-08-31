@@ -230,6 +230,10 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
                     navigate_to_with_store(&app, &store.borrow(), "toolbox");
                     return;
                 }
+                if page == "canvas" {
+                    navigate_to_with_store(&app, &store.borrow(), "free-canvas");
+                    return;
+                }
                 if page == "generation" {
                     return;
                 }

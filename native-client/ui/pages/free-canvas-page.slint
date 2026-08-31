@@ -1,0 +1,302 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+component FreeCanvasCard {
+    in property <string> card-id;
+    in property <string> title;
+    in property <string> description;
+    in property <image> artwork;
+    in property <string> category: "character";
+    in property <string> prompt-zh: "";
+    in property <string> prompt-en: "";
+    in property <bool> opens-canvas: false;
+
+    Rectangle {
+        background: AppTheme.panel;
+        border-radius: 16px;
+        border-width: card-touch.has-hover ? 2px : 1px;
+        border-color: card-touch.has-hover ? AppTheme.accent : AppTheme.border;
+        drop-shadow-blur: card-touch.has-hover ? 18px : 10px;
+        drop-shadow-color: card-touch.has-hover ? #00d98233 : #07130f18;
+        drop-shadow-offset-y: card-touch.has-hover ? 7px : 4px;
+        animate border-color { duration: 120ms; }
+        animate drop-shadow-blur { duration: 120ms; }
+
+        artwork-frame := Rectangle {
+            x: 8px;
+            y: 8px;
+            width: parent.width - 16px;
+            height: parent.height - 60px;
+            background: #121a2c;
+            border-radius: 12px;
+            clip: true;
+
+            if !root.opens-canvas: Image {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+                source: root.artwork;
+                image-fit: contain;
+            }
+
+            if root.opens-canvas: Rectangle {
+                width: parent.width;
+                height: parent.height;
+                background: #121a2c;
+
+                for column in 8: Rectangle {
+                    x: column * parent.width / 7;
+                    width: 1px;
+                    height: parent.height;
+                    background: #52617b46;
+                }
+                for row in 6: Rectangle {
+                    y: row * parent.height / 5;
+                    width: parent.width;
+                    height: 1px;
+                    background: #52617b46;
+                }
+
+                Text {
+                    x: 16px;
+                    y: 13px;
+                    width: parent.width - 64px;
+                    height: 26px;
+                    text: AppState.en ? "Infinite Canvas" : "无限画布";
+                    color: AppTheme.accent;
+                    font-size: 19px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                Text {
+                    x: 16px;
+                    y: 40px;
+                    width: parent.width - 32px;
+                    height: 18px;
+                    text: AppState.en ? "Connect images, text and ideas freely" : "自由连接图片、文字与灵感";
+                    color: #e7eef9;
+                    font-size: 11px;
+                    font-weight: 400;
+                }
+
+                Rectangle {
+                    x: 22px;
+                    y: 78px;
+                    width: 76px;
+                    height: 52px;
+                    border-radius: 9px;
+                    background: #ffffff;
+                    border-width: 2px;
+                    border-color: #32e79b;
+                    Rectangle { x: 11px; y: 11px; width: 40px; height: 5px; border-radius: 2px; background: #1d2b3f; }
+                    Rectangle { x: 11px; y: 22px; width: 54px; height: 4px; border-radius: 2px; background: #8ea0ba; }
+                    Rectangle { x: 11px; y: 32px; width: 45px; height: 4px; border-radius: 2px; background: #c2ccda; }
+                }
+
+                Rectangle {
+                    x: 98px;
+                    y: 102px;
+                    width: 58px;
+                    height: 3px;
+                    border-radius: 2px;
+                    background: #5d6bff;
+                    transform-rotation: -14deg;
+                }
+                Rectangle {
+                    x: 149px;
+                    y: 88px;
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: #5d6bff;
+                }
+
+                Rectangle {
+                    x: parent.width - 102px;
+                    y: 68px;
+                    width: 78px;
+                    height: 78px;
+                    border-radius: 12px;
+                    background: #eefcf6;
+                    border-width: 2px;
+                    border-color: #5d6bff;
+                    Image {
+                        x: 19px;
+                        y: 19px;
+                        width: 40px;
+                        height: 40px;
+                        source: @image-url("../../assets/icons/image.svg");
+                        colorize: #344258;
+                        image-fit: contain;
+                    }
+                }
+            }
+        }
+
+        Text {
+            x: 18px;
+            y: parent.height - 45px;
+            width: parent.width - 58px;
+            height: 30px;
+            text: root.title;
+            color: AppTheme.text;
+            font-size: 15px;
+            font-weight: 500;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            x: parent.width - 38px;
+            y: parent.height - 45px;
+            width: 20px;
+            height: 30px;
+            text: "→";
+            color: card-touch.has-hover ? AppTheme.accent-dark : AppTheme.muted;
+            font-size: 18px;
+            font-weight: 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        card-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => {
+                if root.opens-canvas {
+                    AppState.navigate("canvas");
+                } else {
+                    AppState.asset-type = root.category;
+                    AppState.prompt = AppState.en ? root.prompt-en : root.prompt-zh;
+                    AppState.navigate("generation");
+                }
+            }
+        }
+    }
+}
+
+export component FreeCanvasPage {
+    function cards-width() -> length {
+        return min(916px, root.width - 48px);
+    }
+
+    function card-gap() -> length {
+        return 18px;
+    }
+
+    function card-width() -> length {
+        return (root.cards-width() - root.card-gap() * 2) / 3;
+    }
+
+    function card-height() -> length {
+        return min(280px, max(232px, (root.height - 142px - root.card-gap()) / 2));
+    }
+
+    Rectangle {
+        background: AppTheme.bg;
+
+        Text {
+            x: 32px;
+            y: 22px;
+            width: parent.width - 64px;
+            height: 34px;
+            text: AppState.en ? "Free Canvas" : "自由画布";
+            color: AppTheme.text;
+            font-size: 25px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        Text {
+            x: 32px;
+            y: 59px;
+            width: parent.width - 64px;
+            height: 22px;
+            text: AppState.en ? "Choose a creative workflow, or open the infinite canvas" : "选择一种创作方式，或进入无限画布自由编排";
+            color: AppTheme.muted;
+            font-size: 13px;
+            font-weight: 400;
+            vertical-alignment: center;
+        }
+
+        cards := Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: 100px;
+            width: root.cards-width();
+            height: root.card-height() * 2 + root.card-gap();
+            background: transparent;
+
+            FreeCanvasCard {
+                x: 0px;
+                y: 0px;
+                width: root.card-width();
+                height: root.card-height();
+                card-id: "plant-growth";
+                title: AppState.en ? "Plant Growth Generator" : "植物生成器";
+                description: AppState.en ? "Generate five growth stages" : "一键生成植物的五个生长阶段";
+                category: "scene";
+                artwork: @image-url("../../assets/free-canvas/plant-growth.png");
+                prompt-zh: "根据参考图中的植物和关键词，生成同一植物从种子、幼苗、生长开花、结果到衰败的5个连续生长阶段。将五个阶段安排在同一张横向画面中，保持植物品种、花盆、视角、比例、背景和绘制风格一致，各阶段轮廓完整、间距均匀、演变清晰。";
+                prompt-en: "Using the reference plant and keyword, create five consecutive growth stages of the same plant: seed, seedling, flowering growth, fruiting, and withering. Arrange all five stages in one horizontal image. Keep the species, pot, camera, scale, background, and rendering style consistent, with complete silhouettes, even spacing, and a clear progression.";
+            }
+            FreeCanvasCard {
+                x: root.card-width() + root.card-gap();
+                y: 0px;
+                width: root.card-width();
+                height: root.card-height();
+                card-id: "character-outfit";
+                title: AppState.en ? "Character Outfit Swap" : "角色换装";
+                description: AppState.en ? "Keep the character, change the outfit" : "保持角色一致并生成多套服装";
+                artwork: @image-url("../../assets/free-canvas/character-outfit.png");
+                prompt-zh: "根据参考角色生成5套不同服装造型。保持角色身份、面部、发型、体型、姿势、视角和绘制风格一致，只改变服装、鞋履和配饰。将五套造型完整排列在同一张横向角色设定图中，间距均匀，背景干净。";
+                prompt-en: "Create five outfit variations for the reference character. Preserve identity, face, hair, body shape, pose, camera, and rendering style; change only clothing, footwear, and accessories. Arrange the five full-body designs evenly in one clean horizontal character sheet.";
+            }
+            FreeCanvasCard {
+                x: (root.card-width() + root.card-gap()) * 2;
+                y: 0px;
+                width: root.card-width();
+                height: root.card-height();
+                card-id: "monster-generator";
+                title: AppState.en ? "Monster Generator" : "怪物生成器";
+                description: AppState.en ? "Expand one motif into five monsters" : "根据原型扩展五个怪物设计";
+                artwork: @image-url("../../assets/free-canvas/monster-generator.png");
+                prompt-zh: "以参考图中的造型、材质和主题为核心，生成5个同一世界观下的怪物设计。保留可识别的核心视觉基因，让体型、轮廓、肢体结构和细节产生明确变化。将五个完整怪物均匀排列在同一张横向设定图中，视角和画风统一，背景干净。";
+                prompt-en: "Use the reference shape, material, and motif to create five monster designs from the same world. Preserve recognizable visual DNA while varying body mass, silhouette, anatomy, and details. Arrange five complete monsters evenly in one clean horizontal concept sheet with a consistent camera and art style.";
+            }
+            FreeCanvasCard {
+                x: 0px;
+                y: root.card-height() + root.card-gap();
+                width: root.card-width();
+                height: root.card-height();
+                card-id: "character-age";
+                title: AppState.en ? "Character Age Progression" : "角色年龄变化";
+                description: AppState.en ? "Generate five life stages" : "生成同一角色的五个年龄阶段";
+                artwork: @image-url("../../assets/free-canvas/character-age.png");
+                prompt-zh: "根据参考角色生成从婴儿、儿童、青年、中年到老年的5个年龄阶段。保持角色身份特征、服装主题、配色和绘制风格连贯，让面部、身高、体型和姿态符合年龄变化。将五个完整角色均匀排列在同一张横向设定图中。";
+                prompt-en: "Create five age stages of the reference character: infant, child, young adult, middle-aged adult, and elderly. Preserve identity cues, outfit theme, palette, and art style while changing face, height, body proportions, and posture appropriately. Arrange all five full characters evenly in one horizontal character sheet.";
+            }
+            FreeCanvasCard {
+                x: root.card-width() + root.card-gap();
+                y: root.card-height() + root.card-gap();
+                width: root.card-width();
+                height: root.card-height();
+                card-id: "character-body";
+                title: AppState.en ? "Character Body Variations" : "角色体型修改器";
+                description: AppState.en ? "Explore five body silhouettes" : "保持角色身份并改变体型轮廓";
+                artwork: @image-url("../../assets/free-canvas/character-body.png");
+                prompt-zh: "根据参考角色生成5种明显不同的体型变化。保持角色身份、面部、发型、服装主题、武器和绘制风格一致，只改变身高、肩宽、肌肉量、脂肪比例和身体轮廓。将五个完整角色均匀排列在同一张横向设定图中。";
+                prompt-en: "Create five clearly different body-shape variations of the reference character. Preserve identity, face, hair, outfit theme, weapon, and art style; change only height, shoulder width, muscle mass, body-fat distribution, and silhouette. Arrange all five full characters evenly in one horizontal character sheet.";
+            }
+            FreeCanvasCard {
+                x: (root.card-width() + root.card-gap()) * 2;
+                y: root.card-height() + root.card-gap();
+                width: root.card-width();
+                height: root.card-height();
+                card-id: "infinite-canvas";
+                title: AppState.en ? "Infinite Canvas" : "无限画布";
+                description: AppState.en ? "Connect images, text and ideas freely" : "自由连接图片、文字与灵感";
+                opens-canvas: true;
+            }
+        }
+    }
+}

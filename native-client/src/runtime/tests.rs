@@ -2082,7 +2082,9 @@ mod tests {
         let state = include_str!("../../ui/app-state.slint");
         let page = include_str!("../../ui/pages/toolbox-page.slint");
 
-        let canvas = sidebar.find("page: \"canvas\"").expect("canvas nav");
+        let canvas = sidebar
+            .find("page: \"free-canvas\"")
+            .expect("free canvas nav");
         let toolbox = sidebar.find("page: \"toolbox\"").expect("toolbox nav");
         let assets = sidebar.find("page: \"assets\"").expect("assets nav");
         assert!(canvas < toolbox && toolbox < assets);
@@ -2141,6 +2143,56 @@ mod tests {
         assert!(sidebar.contains(
             "active: AppState.page == \"settings\" || AppState.page == \"custom-prompt-editor\";"
         ));
+    }
+
+    #[test]
+    fn free_canvas_entry_opens_a_six_choice_launcher_before_the_infinite_canvas() {
+        let app = include_str!("../../ui/app.slint");
+        let sidebar = include_str!("../../ui/components/sidebar.slint");
+        let page = include_str!("../../ui/pages/free-canvas-page.slint");
+        let runtime = include_str!("app.rs");
+        let viewer = include_str!("callbacks/viewer.rs");
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+        assert!(sidebar.contains("label: AppState.en ? \"Free Canvas\" : \"自由画布\""));
+        assert!(sidebar.contains("page: \"free-canvas\""));
+        assert!(sidebar.contains(
+            "active: AppState.page == \"free-canvas\" || AppState.page == \"canvas\""
+        ));
+        assert!(app.contains("import { FreeCanvasPage }"));
+        assert!(app.contains("AppState.page == \"free-canvas\": FreeCanvasPage"));
+        assert!(app.contains("AppState.page == \"canvas\": InfiniteCanvasPage"));
+        assert_eq!(page.matches("card-id: \"").count(), 6);
+        for (card_id, title) in [
+            ("plant-growth", "植物生成器"),
+            ("character-outfit", "角色换装"),
+            ("monster-generator", "怪物生成器"),
+            ("character-age", "角色年龄变化"),
+            ("character-body", "角色体型修改器"),
+            ("infinite-canvas", "无限画布"),
+        ] {
+            assert!(page.contains(&format!("card-id: \"{card_id}\"")));
+            assert!(page.contains(title));
+        }
+        assert_eq!(page.matches("prompt-zh:").count(), 6);
+        assert_eq!(page.matches("prompt-en:").count(), 6);
+        assert!(page.contains("AppState.navigate(\"generation\")"));
+        assert!(page.contains("AppState.navigate(\"canvas\")"));
+        assert!(page.contains("opens-canvas: true"));
+        assert!(runtime.contains(
+            "if page == \"canvas\" {\n                    navigate_to_with_store(&app, &store.borrow(), \"free-canvas\")"
+        ));
+        assert!(viewer.contains("navigate_to_with_store(&app, &store.borrow(), \"canvas\")"));
+
+        for image in [
+            "plant-growth.png",
+            "character-outfit.png",
+            "monster-generator.png",
+            "character-age.png",
+            "character-body.png",
+        ] {
+            assert!(manifest.join("assets/free-canvas").join(image).is_file());
+        }
     }
 
     #[test]
@@ -3070,7 +3122,9 @@ mod tests {
         let workbench = sidebar
             .find("CategoryWorkspaceMenu {")
             .expect("workbench menu");
-        let canvas = sidebar.find("page: \"canvas\"").expect("canvas nav item");
+        let canvas = sidebar
+            .find("page: \"free-canvas\"")
+            .expect("free canvas nav item");
         let assets = sidebar.find("page: \"assets\"").expect("assets nav item");
         assert!(workbench < canvas && canvas < assets);
         assert!(app.contains("import { InfiniteCanvasPage }"));

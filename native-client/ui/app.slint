@@ -25,6 +25,7 @@ import { AssetsPage } from "pages/assets-page.slint";
 import { CreditsPage } from "pages/credits-page.slint";
 import { CustomPromptEditorPage } from "pages/custom-prompt-editor-page.slint";
 import { InspirationPage } from "pages/inspiration-page.slint";
+import { FreeCanvasPage } from "pages/free-canvas-page.slint";
 import { InfiniteCanvasPage } from "pages/infinite-canvas-page.slint";
 import { ImageEditorPage } from "pages/image-editor-page.slint";
 import { VideoGenerationPage } from "pages/video-generation-page.slint";
@@ -71,6 +72,7 @@ export component AppWindow inherits Window {
                 horizontal-stretch: 1;
                 vertical-stretch: 1;
                 if AppState.page == "generation": StudioSplitPage { width: parent.width; height: parent.height; generation: true; }
+                if AppState.page == "free-canvas": FreeCanvasPage { width: parent.width; height: parent.height; }
                 if AppState.page == "canvas": InfiniteCanvasPage { width: parent.width; height: parent.height; }
                 if AppState.page == "image-editor": ImageEditorPage { width: parent.width; height: parent.height; }
                 if AppState.page == "video-generation": VideoGenerationPage { width: parent.width; height: parent.height; }

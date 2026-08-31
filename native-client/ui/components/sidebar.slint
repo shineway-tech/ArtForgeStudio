@@ -74,7 +74,13 @@ export component Sidebar {
             }
             Rectangle { height: 1px; background: AppTheme.border; }
             CategoryWorkspaceMenu { collapsed: AppState.sidebar-collapsed; }
-            NavItem { collapsed: AppState.sidebar-collapsed; icon: "canvas"; label: AppState.en ? "Infinite Canvas" : "无限画布"; page: "canvas"; }
+            NavItem {
+                collapsed: AppState.sidebar-collapsed;
+                icon: "canvas";
+                label: AppState.en ? "Free Canvas" : "自由画布";
+                page: "free-canvas";
+                active: AppState.page == "free-canvas" || AppState.page == "canvas";
+            }
             NavItem {
                 collapsed: AppState.sidebar-collapsed;
                 icon: "toolbox";
