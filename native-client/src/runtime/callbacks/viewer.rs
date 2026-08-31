@@ -552,6 +552,11 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
                 }
                 .into(),
             );
+            state.set_canvas_workflow_id("".into());
+            state.set_canvas_workflow_title("".into());
+            state.set_canvas_workflow_prompt("".into());
+            state.set_canvas_workflow_template("".into());
+            state.set_canvas_workflow_hint("".into());
             navigate_to_with_store(&app, &store.borrow(), "canvas");
         });
     }

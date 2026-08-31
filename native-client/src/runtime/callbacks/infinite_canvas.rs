@@ -1278,6 +1278,50 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
         let app_weak = app.as_weak();
         let store = store.clone();
         let history = history.clone();
+        state.on_create_canvas_generation_source(move |prompt, center_x, center_y| {
+            let Some(app) = app_weak.upgrade() else {
+                return "".into();
+            };
+            let prompt = prompt.trim().to_string();
+            if prompt.is_empty() {
+                return "".into();
+            }
+
+            let state = app.global::<AppState>();
+            let mut store_mut = store.borrow_mut();
+            if store_mut.canvas_notes.len() >= MAX_CANVAS_NODES {
+                show_canvas_capacity_status(&app);
+                return "".into();
+            }
+
+            let (_, width, height) =
+                canvas_node_defaults("image", state.get_language().as_str() == "en");
+            let id = Uuid::new_v4().to_string();
+            history.borrow_mut().record(canvas_snapshot(&store_mut));
+            clear_selection(&mut store_mut.canvas_notes);
+            store_mut.canvas_notes.push(CanvasNoteData {
+                id: id.clone(),
+                kind: "image".to_string(),
+                content: prompt,
+                x: center_x - width / 2.0,
+                y: center_y - height / 2.0,
+                width,
+                height,
+                selected: true,
+                ..CanvasNoteData::default()
+            });
+            persist_canvas(&app, &store_mut);
+            sync_canvas_selection(&app, &store_mut);
+            state.set_canvas_selected_id(id.clone().into());
+            sync_history_state(&app, &history.borrow());
+            id.into()
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        let history = history.clone();
         state.on_add_canvas_node(move |kind, center_x, center_y| {
             let Some(app) = app_weak.upgrade() else {
                 return;

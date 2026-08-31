@@ -9,6 +9,8 @@ component FreeCanvasCard {
     in property <string> category: "character";
     in property <string> prompt-zh: "";
     in property <string> prompt-en: "";
+    in property <string> hint-zh: "";
+    in property <string> hint-en: "";
     in property <bool> opens-canvas: false;
 
     Rectangle {
@@ -165,11 +167,22 @@ component FreeCanvasCard {
             mouse-cursor: pointer;
             clicked => {
                 if root.opens-canvas {
+                    AppState.canvas-workflow-id = "";
+                    AppState.canvas-workflow-title = "";
+                    AppState.canvas-workflow-prompt = "";
+                    AppState.canvas-workflow-template = "";
+                    AppState.canvas-workflow-hint = "";
                     AppState.navigate("canvas");
                 } else {
                     AppState.asset-type = root.category;
-                    AppState.prompt = AppState.en ? root.prompt-en : root.prompt-zh;
-                    AppState.navigate("generation");
+                    AppState.canvas-workflow-id = root.card-id;
+                    AppState.canvas-workflow-title = root.title;
+                    AppState.canvas-workflow-prompt = "";
+                    AppState.canvas-workflow-template = AppState.en ? root.prompt-en : root.prompt-zh;
+                    AppState.canvas-workflow-hint = AppState.en ? root.hint-en : root.hint-zh;
+                    AppState.canvas-grid-style = "dot";
+                    AppState.canvas-dark-background = true;
+                    AppState.navigate("canvas");
                 }
             }
         }
@@ -238,6 +251,8 @@ export component FreeCanvasPage {
                 artwork: @image-url("../../assets/free-canvas/plant-growth.png");
                 prompt-zh: "根据参考图中的植物和关键词，生成同一植物从种子、幼苗、生长开花、结果到衰败的5个连续生长阶段。将五个阶段安排在同一张横向画面中，保持植物品种、花盆、视角、比例、背景和绘制风格一致，各阶段轮廓完整、间距均匀、演变清晰。";
                 prompt-en: "Using the reference plant and keyword, create five consecutive growth stages of the same plant: seed, seedling, flowering growth, fruiting, and withering. Arrange all five stages in one horizontal image. Keep the species, pot, camera, scale, background, and rendering style consistent, with complete silhouettes, even spacing, and a clear progression.";
+                hint-zh: "简单描述植物和风格，例如：西红柿，陶盆，儿童科普插画";
+                hint-en: "Describe the plant and style, e.g. tomato in a clay pot, educational illustration";
             }
             FreeCanvasCard {
                 x: root.card-width() + root.card-gap();
@@ -250,6 +265,8 @@ export component FreeCanvasPage {
                 artwork: @image-url("../../assets/free-canvas/character-outfit.png");
                 prompt-zh: "根据参考角色生成5套不同服装造型。保持角色身份、面部、发型、体型、姿势、视角和绘制风格一致，只改变服装、鞋履和配饰。将五套造型完整排列在同一张横向角色设定图中，间距均匀，背景干净。";
                 prompt-en: "Create five outfit variations for the reference character. Preserve identity, face, hair, body shape, pose, camera, and rendering style; change only clothing, footwear, and accessories. Arrange the five full-body designs evenly in one clean horizontal character sheet.";
+                hint-zh: "简单描述角色和换装方向，例如：女剑士，礼服与战斗服";
+                hint-en: "Describe the character and outfit direction, e.g. swordswoman, formal and battle outfits";
             }
             FreeCanvasCard {
                 x: (root.card-width() + root.card-gap()) * 2;
@@ -262,6 +279,8 @@ export component FreeCanvasPage {
                 artwork: @image-url("../../assets/free-canvas/monster-generator.png");
                 prompt-zh: "以参考图中的造型、材质和主题为核心，生成5个同一世界观下的怪物设计。保留可识别的核心视觉基因，让体型、轮廓、肢体结构和细节产生明确变化。将五个完整怪物均匀排列在同一张横向设定图中，视角和画风统一，背景干净。";
                 prompt-en: "Use the reference shape, material, and motif to create five monster designs from the same world. Preserve recognizable visual DNA while varying body mass, silhouette, anatomy, and details. Arrange five complete monsters evenly in one clean horizontal concept sheet with a consistent camera and art style.";
+                hint-zh: "简单描述原型和气质，例如：石雕图腾，厚重但可爱";
+                hint-en: "Describe the motif and mood, e.g. stone idol, massive but cute";
             }
             FreeCanvasCard {
                 x: 0px;
@@ -274,6 +293,8 @@ export component FreeCanvasPage {
                 artwork: @image-url("../../assets/free-canvas/character-age.png");
                 prompt-zh: "根据参考角色生成从婴儿、儿童、青年、中年到老年的5个年龄阶段。保持角色身份特征、服装主题、配色和绘制风格连贯，让面部、身高、体型和姿态符合年龄变化。将五个完整角色均匀排列在同一张横向设定图中。";
                 prompt-en: "Create five age stages of the reference character: infant, child, young adult, middle-aged adult, and elderly. Preserve identity cues, outfit theme, palette, and art style while changing face, height, body proportions, and posture appropriately. Arrange all five full characters evenly in one horizontal character sheet.";
+                hint-zh: "简单描述角色特征，例如：蓝袍法师，始终保留蓝色魔法";
+                hint-en: "Describe the character cue, e.g. blue-robed mage, keep the blue magic";
             }
             FreeCanvasCard {
                 x: root.card-width() + root.card-gap();
@@ -286,6 +307,8 @@ export component FreeCanvasPage {
                 artwork: @image-url("../../assets/free-canvas/character-body.png");
                 prompt-zh: "根据参考角色生成5种明显不同的体型变化。保持角色身份、面部、发型、服装主题、武器和绘制风格一致，只改变身高、肩宽、肌肉量、脂肪比例和身体轮廓。将五个完整角色均匀排列在同一张横向设定图中。";
                 prompt-en: "Create five clearly different body-shape variations of the reference character. Preserve identity, face, hair, outfit theme, weapon, and art style; change only height, shoulder width, muscle mass, body-fat distribution, and silhouette. Arrange all five full characters evenly in one horizontal character sheet.";
+                hint-zh: "简单描述角色特征，例如：绿色兽人战士，从瘦小到魁梧";
+                hint-en: "Describe the character cue, e.g. green orc warrior, lean to massive";
             }
             FreeCanvasCard {
                 x: (root.card-width() + root.card-gap()) * 2;

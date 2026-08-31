@@ -2176,7 +2176,7 @@ mod tests {
         }
         assert_eq!(page.matches("prompt-zh:").count(), 6);
         assert_eq!(page.matches("prompt-en:").count(), 6);
-        assert!(page.contains("AppState.navigate(\"generation\")"));
+        assert!(!page.contains("AppState.navigate(\"generation\")"));
         assert!(page.contains("AppState.navigate(\"canvas\")"));
         assert!(page.contains("opens-canvas: true"));
         assert!(runtime.contains(
@@ -2193,6 +2193,58 @@ mod tests {
         ] {
             assert!(manifest.join("assets/free-canvas").join(image).is_file());
         }
+    }
+
+    #[test]
+    fn free_canvas_presets_open_the_shared_canvas_composer() {
+        let state = include_str!("../../ui/app-state.slint");
+        let launcher = include_str!("../../ui/pages/free-canvas-page.slint");
+        let canvas = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let callbacks = include_str!("callbacks/infinite_canvas.rs");
+        let viewer = include_str!("callbacks/viewer.rs");
+
+        for property in [
+            "canvas-workflow-id",
+            "canvas-workflow-title",
+            "canvas-workflow-prompt",
+            "canvas-workflow-template",
+            "canvas-workflow-hint",
+        ] {
+            assert!(state.contains(property));
+        }
+        assert!(launcher.contains("AppState.canvas-workflow-id = root.card-id"));
+        assert!(launcher.contains("AppState.canvas-workflow-title = root.title"));
+        assert!(launcher.contains(
+            "AppState.canvas-workflow-template = AppState.en ? root.prompt-en : root.prompt-zh"
+        ));
+        assert!(launcher.contains(
+            "AppState.canvas-workflow-hint = AppState.en ? root.hint-en : root.hint-zh"
+        ));
+        assert!(launcher.contains("AppState.canvas-workflow-prompt = \"\""));
+        assert!(launcher.contains("AppState.canvas-grid-style = \"dot\""));
+        assert!(launcher.contains("AppState.canvas-dark-background = true"));
+        assert!(!launcher.contains("AppState.navigate(\"generation\")"));
+        assert!(launcher.contains("AppState.navigate(\"canvas\")"));
+
+        assert!(canvas.contains("canvas-workflow-dock := Rectangle"));
+        assert!(canvas.contains("text <=> AppState.canvas-workflow-prompt"));
+        assert!(canvas.contains("for reference[index] in AppState.references"));
+        assert!(canvas.contains("AppState.add-reference()"));
+        assert!(canvas.contains("AppState.open-reference(reference.id)"));
+        assert!(canvas.contains("AppState.remove-reference(reference.id)"));
+        assert!(canvas.contains("AppState.create-canvas-generation-source"));
+        assert!(canvas.contains("AppState.canvas-workflow-template == \"\""));
+        assert!(canvas.contains(": AppState.canvas-workflow-template"));
+        assert!(canvas.contains("User description:"));
+        assert!(canvas.contains("用户描述："));
+        assert!(canvas.contains("AppState.generate-canvas-node(source-id, submitted-prompt)"));
+
+        assert!(state.contains(
+            "callback create-canvas-generation-source(string, float, float) -> string"
+        ));
+        assert!(callbacks.contains("state.on_create_canvas_generation_source"));
+        assert!(viewer.contains("state.set_canvas_workflow_id(\"\".into())"));
+        assert!(viewer.contains("state.set_canvas_workflow_prompt(\"\".into())"));
     }
 
     #[test]

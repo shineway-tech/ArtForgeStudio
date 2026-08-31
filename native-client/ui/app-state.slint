@@ -203,6 +203,11 @@ export global AppState {
     in-out property <string> colorize-message: "";
     in-out property <[CanvasNote]> canvas-notes: [];
     in-out property <[CanvasLink]> canvas-links: [];
+    in-out property <string> canvas-workflow-id: "";
+    in-out property <string> canvas-workflow-title: "";
+    in-out property <string> canvas-workflow-prompt: "";
+    in-out property <string> canvas-workflow-template: "";
+    in-out property <string> canvas-workflow-hint: "";
     in-out property <string> canvas-selected-id: "";
     // Transient UI-only state used while a local image split worker is running.
     in-out property <string> canvas-split-loading-node-id: "";
@@ -768,6 +773,7 @@ export global AppState {
     callback reset-crop-source();
     callback save-crop-result();
     callback add-canvas-node(string, float, float);
+    callback create-canvas-generation-source(string, float, float) -> string;
     callback update-canvas-node(string, string, float, float);
     callback rename-canvas-group(string, string) -> bool;
     callback remove-canvas-node(string);
