@@ -272,10 +272,40 @@ fn apply_local_store_data(
         store_mut.selected_custom_prompts = data.selected_custom_prompts;
         store_mut.custom_prompt_times = data.custom_prompt_times;
         store_mut.custom_prompt_profiles = data.custom_prompt_profiles;
+        let active_canvas_workspace_id =
+            normalize_canvas_workspace_id(&data.active_canvas_workspace_id);
+        let migrated_canvas_workspaces = data.active_canvas_workspace_id.trim().is_empty()
+            || !data
+                .canvas_workspaces
+                .contains_key(&active_canvas_workspace_id);
+        store_mut.active_canvas_workspace_id = active_canvas_workspace_id.clone();
+        store_mut.canvas_workspaces = data.canvas_workspaces;
         store_mut.canvas_notes = data.canvas_notes;
         normalize_canvas_groups(&mut store_mut.canvas_notes);
         let fitted_canvas_groups = fit_groups_to_children(&mut store_mut.canvas_notes);
         store_mut.canvas_links = data.canvas_links;
+        let active_prompt = store_mut
+            .canvas_workspaces
+            .get(&active_canvas_workspace_id)
+            .map(|workspace| workspace.prompt.clone())
+            .unwrap_or_default();
+        let active_canvas_references = store_mut
+            .canvas_workspaces
+            .get(&active_canvas_workspace_id)
+            .map(|workspace| workspace.references.clone())
+            .unwrap_or_default();
+        store_mut.canvas_references = active_canvas_references.clone();
+        let active_canvas_notes = store_mut.canvas_notes.clone();
+        let active_canvas_links = store_mut.canvas_links.clone();
+        store_mut.canvas_workspaces.insert(
+            active_canvas_workspace_id,
+            CanvasWorkspaceData {
+                notes: active_canvas_notes,
+                links: active_canvas_links,
+                prompt: active_prompt,
+                references: active_canvas_references,
+            },
+        );
         store_mut.deep_prompt_jobs_by_owner = data
             .deep_prompt_jobs_by_owner
             .into_iter()
@@ -321,6 +351,7 @@ fn apply_local_store_data(
                 .or_insert_with(|| migration_time.clone());
         }
         migrated_prompt_drafts
+            || migrated_canvas_workspaces
             || fitted_canvas_groups
             || store_mut.custom_prompt_times != original_prompt_times
     };
@@ -329,6 +360,15 @@ fn apply_local_store_data(
     state.set_image_model(saved_image_model.into());
     state.set_reasoning_model(saved_reasoning_model.into());
     state.set_video_model(saved_video_model.into());
+    let active_canvas_prompt = {
+        let store = store.borrow();
+        store
+            .canvas_workspaces
+            .get(&store.active_canvas_workspace_id)
+            .map(|workspace| workspace.prompt.clone())
+            .unwrap_or_default()
+    };
+    state.set_canvas_workflow_prompt(active_canvas_prompt.into());
     let category = resolve_category(&state.get_asset_type().to_string(), "");
     state.set_asset_type(category.clone().into());
     state.set_prompt(prompt_draft_for_category(&store.borrow().prompt_drafts, &category).into());
@@ -684,6 +724,30 @@ pub(super) fn references_for_category_mut<'a>(
     }
 }
 
+pub(super) fn references_for_context<'a>(
+    store: &'a Store,
+    category: &str,
+    canvas: bool,
+) -> &'a Vec<ReferenceData> {
+    if canvas {
+        &store.canvas_references
+    } else {
+        references_for_category(&store.references, category)
+    }
+}
+
+pub(super) fn references_for_context_mut<'a>(
+    store: &'a mut Store,
+    category: &str,
+    canvas: bool,
+) -> &'a mut Vec<ReferenceData> {
+    if canvas {
+        &mut store.canvas_references
+    } else {
+        references_for_category_mut(&mut store.references, category)
+    }
+}
+
 pub(super) fn recover_output_assets(app: &AppWindow, store: &Rc<RefCell<Store>>) {
     let dir = output_dir_path(app);
     let Ok(entries) = fs::read_dir(&dir) else {
@@ -777,6 +841,18 @@ pub(super) fn save_local_store_checked(app: &AppWindow, store: &Store) -> Result
 
 fn local_store_data(app: &AppWindow, store: &Store) -> LocalStoreData {
     let state = app.global::<AppState>();
+    let active_canvas_workspace_id =
+        normalize_canvas_workspace_id(&store.active_canvas_workspace_id);
+    let mut canvas_workspaces = store.canvas_workspaces.clone();
+    canvas_workspaces.insert(
+        active_canvas_workspace_id.clone(),
+        CanvasWorkspaceData {
+            notes: store.canvas_notes.clone(),
+            links: store.canvas_links.clone(),
+            prompt: state.get_canvas_workflow_prompt().to_string(),
+            references: store.canvas_references.clone(),
+        },
+    );
     LocalStoreData {
         generations: store.generations.iter().map(stored_asset_from).collect(),
         assets: store.assets.iter().map(stored_asset_from).collect(),
@@ -792,6 +868,8 @@ fn local_store_data(app: &AppWindow, store: &Store) -> LocalStoreData {
         custom_prompt_profiles: store.custom_prompt_profiles.clone(),
         canvas_notes: store.canvas_notes.clone(),
         canvas_links: store.canvas_links.clone(),
+        active_canvas_workspace_id,
+        canvas_workspaces,
         deep_prompt_job_id: store.legacy_deep_prompt_job_id.clone(),
         deep_prompt_jobs_by_owner: store.deep_prompt_jobs_by_owner.clone(),
         deep_prompt_pending_requests_by_owner: store

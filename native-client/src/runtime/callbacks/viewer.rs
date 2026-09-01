@@ -3,6 +3,7 @@ use super::*;
 pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
     let store = context.store.clone();
+    let canvas_history = context.canvas_history.clone();
     let image_editor_points = Rc::new(VecModel::<BrushPoint>::default());
     let image_editor_last_point = Rc::new(RefCell::new(None::<(f32, f32, f32)>));
     state.set_image_editor_points(image_editor_points.clone().into());
@@ -504,6 +505,7 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         let store = store.clone();
+        let canvas_history = canvas_history.clone();
         state.on_viewer_import_to_canvas(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -524,6 +526,15 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
                 }
             };
 
+            let canvas_prompt = {
+                let mut store_mut = store.borrow_mut();
+                switch_canvas_workspace(
+                    &mut store_mut,
+                    state.get_canvas_workflow_prompt().as_str(),
+                    DEFAULT_CANVAS_WORKSPACE_ID,
+                )
+            };
+            state.set_canvas_workflow_prompt(canvas_prompt.into());
             let import_result = {
                 let mut store_mut = store.borrow_mut();
                 import_viewer_image_to_canvas(&app, &mut store_mut, &source_path)
@@ -554,9 +565,14 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
             );
             state.set_canvas_workflow_id("".into());
             state.set_canvas_workflow_title("".into());
-            state.set_canvas_workflow_prompt("".into());
             state.set_canvas_workflow_template("".into());
             state.set_canvas_workflow_hint("".into());
+            *canvas_history.borrow_mut() = CanvasController::default();
+            state.set_canvas_can_undo(false);
+            state.set_canvas_can_redo(false);
+            state.set_canvas_workspace_switch_request(
+                state.get_canvas_workspace_switch_request().saturating_add(1),
+            );
             navigate_to_with_store(&app, &store.borrow(), "canvas");
         });
     }
@@ -1462,10 +1478,11 @@ pub(super) fn add_reference_from_path(
         return false;
     }
     let category = resolve_category(&state.get_asset_type().to_string(), "");
+    let canvas = state.get_page().as_str() == "canvas";
     let max_references = max_reference_images_for_category(&category);
     {
         let mut store_mut = store.borrow_mut();
-        let references = references_for_category_mut(&mut store_mut.references, &category);
+        let references = references_for_context_mut(&mut store_mut, &category, canvas);
         if references.len() >= max_references {
             state.set_generation_status(reference_limit_message(max_references).into());
             return true;
@@ -1480,7 +1497,7 @@ pub(super) fn add_reference_from_path(
         }
     };
     let mut store_mut = store.borrow_mut();
-    let references = references_for_category_mut(&mut store_mut.references, &category);
+    let references = references_for_context_mut(&mut store_mut, &category, canvas);
     if references.len() >= max_references {
         state.set_generation_status(reference_limit_message(max_references).into());
         return true;
@@ -1489,7 +1506,12 @@ pub(super) fn add_reference_from_path(
         id: Uuid::new_v4().to_string(),
         source_path,
     });
-    push_references(app, &store_mut);
+    if canvas {
+        push_canvas_references(app, &store_mut);
+    } else {
+        push_references(app, &store_mut);
+    }
+    save_local_store(app, &store_mut);
     state.set_generation_status("已添加参考图".into());
     true
 }

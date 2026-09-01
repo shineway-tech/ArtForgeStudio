@@ -2242,12 +2242,24 @@ export component InfiniteCanvasPage {
     in-out property <bool> space-pan-active: false;
     in-out property <bool> temporary-pan-active: false;
     in-out property <bool> node-search-open: false;
+    in-out property <bool> workflow-composer-collapsed: false;
     in-out property <string> node-search-query: "";
     in-out property <string> node-search-source-id: "";
     in-out property <float> node-search-world-x: 0;
     in-out property <float> node-search-world-y: 0;
     in-out property <int> node-search-index: 0;
     in-out property <int> link-flow-step: 0;
+    in property <int> workspace-switch-request: AppState.canvas-workspace-switch-request;
+
+    changed workspace-switch-request => {
+        root.reset-view();
+        root.workflow-composer-collapsed = false;
+        root.appearance-open = false;
+        root.image-insert-open = false;
+        root.connection-dragging = false;
+        root.marquee-active = false;
+        root.node-search-open = false;
+    }
 
     Timer {
         interval: 1ms;
@@ -2365,7 +2377,7 @@ export component InfiniteCanvasPage {
                 + (AppState.en ? "\n\nUser description: " : "\n\n用户描述：")
                 + AppState.canvas-workflow-prompt;
         let world-x = (canvas.width / 2 - root.pan-x) * 100 / root.zoom-percent;
-        let world-y = ((canvas.height - canvas-workflow-dock.height) / 2 - root.pan-y) * 100 / root.zoom-percent;
+        let world-y = ((canvas.height - (canvas-workflow-dock.height - 23px)) / 2 - root.pan-y) * 100 / root.zoom-percent;
         let source-id = AppState.create-canvas-generation-source(
             AppState.canvas-workflow-prompt,
             world-x / 1px,
@@ -2890,44 +2902,107 @@ export component InfiniteCanvasPage {
             canvas-workflow-dock := Rectangle {
                 x: max(16px, (parent.width - self.width) / 2);
                 y: parent.height - self.height - 14px;
-                width: min(920px, parent.width - 32px);
-                height: 166px;
-                background: #151820f5;
-                border-radius: 15px;
-                border-width: 1px;
-                border-color: #6573ff;
-                drop-shadow-blur: 24px;
-                drop-shadow-color: #00000088;
-                drop-shadow-offset-y: 8px;
+                width: min(900px, parent.width - 32px);
+                height: root.workflow-composer-collapsed ? 67px : 213px;
+                background: transparent;
                 clip: false;
+                animate height { duration: 140ms; }
 
-                Rectangle {
-                    x: 18px;
-                    y: 0px;
-                    width: parent.width - 36px;
-                    height: 2px;
-                    background: AppTheme.accent;
-                    border-radius: 1px;
+                workflow-dock-surface := Rectangle {
+                    y: 23px;
+                    width: parent.width;
+                    height: parent.height - 23px;
+                    background: #19191ef7;
+                    border-radius: 14px;
+                    border-width: 1px;
+                    border-color: #7468ff;
+                    drop-shadow-blur: 22px;
+                    drop-shadow-color: #00000099;
+                    drop-shadow-offset-y: 7px;
                 }
 
-                Text {
+                workflow-collapse-handle := Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    y: 0px;
+                    width: 34px;
+                    height: 22px;
+                    background: #202027;
+                    border-radius: 11px;
+                    border-width: 1px;
+                    border-color: #303039;
+                    Image {
+                        x: 9px;
+                        y: 6px;
+                        width: 16px;
+                        height: 10px;
+                        source: @image-url("../../assets/icons/chevron-up-tight.svg");
+                        colorize: #8f8d98;
+                        image-fit: contain;
+                        transform-rotation: root.workflow-composer-collapsed ? 180deg : 0deg;
+                    }
+                    TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => { root.workflow-composer-collapsed = !root.workflow-composer-collapsed; }
+                    }
+                }
+
+                if root.workflow-composer-collapsed: Text {
                     x: 16px;
-                    y: 9px;
-                    width: parent.width - 172px;
-                    height: 24px;
-                    text: AppState.canvas-workflow-title == ""
-                        ? (AppState.en ? "Canvas image generation" : "画布图片生成")
-                        : AppState.canvas-workflow-title + (AppState.en ? " · Built-in prompt" : " · 入口预设");
-                    color: #f1f4ff;
-                    font-size: 13px;
-                    font-weight: 500;
+                    y: 23px;
+                    width: parent.width - 32px;
+                    height: parent.height - 23px;
+                    text: AppState.en ? "Image generation · Click the handle to expand" : "图片生成 · 点击上方按钮展开";
+                    color: #a7a4ae;
+                    font-size: 12px;
+                    font-weight: 400;
+                    horizontal-alignment: center;
                     vertical-alignment: center;
-                    overflow: elide;
+                }
+
+                canvas-workflow-mode-tabs := Rectangle {
+                    visible: !root.workflow-composer-collapsed;
+                    x: 12px;
+                    y: 32px;
+                    width: parent.width - 128px;
+                    height: 30px;
+                    background: transparent;
+
+                    Rectangle {
+                        x: 0px;
+                        width: 94px;
+                        height: parent.height;
+                        background: #25232d;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: #685df0;
+                        Image { x: 10px; y: 7px; width: 16px; height: 16px; source: @image-url("../../assets/icons/image.svg"); colorize: #b5aaff; image-fit: contain; }
+                        Text { x: 32px; width: parent.width - 38px; height: parent.height; text: AppState.en ? "Image generation" : "图片生成"; color: #f5f2ff; font-size: 12px; font-weight: 500; vertical-alignment: center; }
+                    }
+                    Rectangle {
+                        x: 102px;
+                        width: 94px;
+                        height: parent.height;
+                        background: transparent;
+                        Image { x: 8px; y: 7px; width: 16px; height: 16px; source: @image-url("../../assets/icons/video.svg"); colorize: #767480; image-fit: contain; }
+                        Text { x: 30px; width: parent.width - 34px; height: parent.height; text: AppState.en ? "Video generation" : "视频生成"; color: #8e8b96; font-size: 12px; font-weight: 400; vertical-alignment: center; }
+                    }
+                    Rectangle {
+                        x: 204px;
+                        width: 94px;
+                        height: parent.height;
+                        background: transparent;
+                        Image { x: 8px; y: 7px; width: 16px; height: 16px; source: @image-url("../../assets/icons/group.svg"); colorize: #767480; image-fit: contain; }
+                        Text { x: 30px; width: parent.width - 34px; height: parent.height; text: AppState.en ? "3D generation" : "3D生成"; color: #8e8b96; font-size: 12px; font-weight: 400; vertical-alignment: center; }
+                    }
                 }
 
                 workflow-reference-drop := DropArea {
+                    visible: !root.workflow-composer-collapsed;
+                    y: 23px;
                     width: parent.width;
-                    height: parent.height;
+                    height: parent.height - 23px;
                     can-drop(event) => { return DragAction.copy; }
                     dropped(event) => {
                         return AppState.add-reference-from-transfer(event.data)
@@ -2937,24 +3012,23 @@ export component InfiniteCanvasPage {
                 }
 
                 workflow-prompt-frame := Rectangle {
-                    x: 16px;
-                    y: 38px;
-                    width: parent.width - 176px;
-                    height: 70px;
-                    background: #0c1019;
-                    border-radius: 10px;
-                    border-width: 1px;
-                    border-color: workflow-prompt-input.has-focus ? AppTheme.accent : #353d50;
+                    visible: !root.workflow-composer-collapsed;
+                    x: 14px;
+                    y: 66px;
+                    width: parent.width - 126px;
+                    height: 48px;
+                    background: transparent;
+                    border-width: 0px;
 
                     workflow-prompt-input := TextInput {
-                        x: 12px;
-                        y: 9px;
-                        width: parent.width - 24px;
-                        height: parent.height - 18px;
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: parent.height;
                         text <=> AppState.canvas-workflow-prompt;
                         single-line: false;
                         wrap: word-wrap;
-                        color: #eef2ff;
+                        color: #f4f1fb;
                         font-size: 13px;
                         font-weight: 400;
                         key-pressed(event) => {
@@ -2966,47 +3040,34 @@ export component InfiniteCanvasPage {
                         }
                     }
                     if AppState.canvas-workflow-prompt == "" && !workflow-prompt-input.has-focus: Text {
-                        x: 12px;
-                        y: 9px;
-                        width: parent.width - 24px;
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
                         height: 24px;
-                        text: AppState.canvas-workflow-hint == ""
-                            ? (AppState.en ? "Describe the image you want to generate..." : "输入希望在画布中生成的图片提示词…")
-                            : AppState.canvas-workflow-hint;
-                        color: #778096;
+                        text: AppState.en ? "Image editing, enter a prompt" : "图片编辑，请输入提示词";
+                        color: #9895a1;
                         font-size: 13px;
                         font-weight: 400;
                         vertical-alignment: center;
                     }
                 }
 
-                Text {
-                    x: 16px;
-                    y: 116px;
-                    width: 54px;
-                    height: 36px;
-                    text: AppState.en ? "Reference" : "参考图";
-                    color: #9aa4bb;
-                    font-size: 11px;
-                    font-weight: 400;
-                    vertical-alignment: center;
-                }
-
                 for reference[index] in AppState.references: Rectangle {
-                    x: 72px + index * 46px;
-                    y: 113px;
-                    width: 40px;
-                    height: 40px;
-                    background: #0c1019;
-                    border-radius: 7px;
+                    visible: !root.workflow-composer-collapsed;
+                    x: 14px + index * 48px;
+                    y: 117px;
+                    width: 42px;
+                    height: 42px;
+                    background: #24242b;
+                    border-radius: 8px;
                     border-width: 1px;
-                    border-color: #3d465a;
+                    border-color: #47444f;
                     clip: false;
                     Image {
-                        x: 3px;
-                        y: 3px;
-                        width: parent.width - 6px;
-                        height: parent.height - 6px;
+                        x: 2px;
+                        y: 2px;
+                        width: parent.width - 4px;
+                        height: parent.height - 4px;
                         source: reference.image;
                         image-fit: cover;
                     }
@@ -3041,23 +3102,35 @@ export component InfiniteCanvasPage {
                     }
                 }
 
-                if AppState.references.length < 8: Rectangle {
-                    x: 72px + AppState.references.length * 46px;
-                    y: 113px;
-                    width: 40px;
-                    height: 40px;
-                    background: upload-reference-touch.has-hover ? #252b3b : #0c1019;
-                    border-radius: 7px;
+                if AppState.references.length < 8 && !root.workflow-composer-collapsed: Rectangle {
+                    x: 14px + AppState.references.length * 48px;
+                    y: 117px;
+                    width: 42px;
+                    height: 42px;
+                    background: upload-reference-touch.has-hover ? #302e38 : #28272e;
+                    border-radius: 8px;
                     border-width: 1px;
-                    border-color: upload-reference-touch.has-hover ? AppTheme.accent : #3d465a;
+                    border-color: upload-reference-touch.has-hover ? #766aff : #4d4a55;
                     Image {
-                        x: 11px;
-                        y: 11px;
-                        width: 18px;
-                        height: 18px;
+                        x: 14px;
+                        y: 7px;
+                        width: 14px;
+                        height: 14px;
                         source: @image-url("../../assets/icons/plus.svg");
-                        colorize: upload-reference-touch.has-hover ? AppTheme.accent : #aeb7ca;
+                        colorize: upload-reference-touch.has-hover ? #bdb4ff : #a9a6b0;
                         image-fit: contain;
+                    }
+                    Text {
+                        x: 2px;
+                        y: 23px;
+                        width: parent.width - 4px;
+                        height: 15px;
+                        text: AppState.en ? "Image" : "图片";
+                        color: #b0adb7;
+                        font-size: 9px;
+                        font-weight: 400;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
                     }
                     upload-reference-touch := TouchArea {
                         width: parent.width;
@@ -3067,57 +3140,168 @@ export component InfiniteCanvasPage {
                     }
                 }
 
-                workflow-generate-button := Rectangle {
-                    x: parent.width - 146px;
-                    y: 38px;
-                    width: 130px;
-                    height: 115px;
-                    property <bool> disabled: !AppState.generating
-                        && (AppState.canvas-workflow-prompt == "" || AppState.image-model == "");
-                    opacity: self.disabled ? 0.46 : 1;
-                    background: generate-workflow-touch.has-hover && !self.disabled
-                        ? AppTheme.accent-dark
-                        : AppTheme.accent;
-                    border-radius: 12px;
+                workflow-template-action := Rectangle {
+                    visible: !root.workflow-composer-collapsed;
+                    x: parent.width - 104px;
+                    y: 34px;
+                    width: 90px;
+                    height: 88px;
+                    background: @linear-gradient(0deg, #3a2c6c, #202027);
+                    border-radius: 14px;
                     border-width: 1px;
-                    border-color: #ffffff38;
-
+                    border-color: template-action-touch.has-hover ? #9c91ff : #766aff;
+                    drop-shadow-blur: template-action-touch.has-hover ? 14px : 8px;
+                    drop-shadow-color: #766aff55;
                     Image {
-                        x: (parent.width - 24px) / 2;
-                        y: 22px;
-                        width: 24px;
-                        height: 24px;
-                        source: AppState.generating
-                            ? @image-url("../../assets/icons/close.svg")
-                            : @image-url("../../assets/icons/generation.svg");
-                        colorize: #ffffff;
+                        x: (parent.width - 22px) / 2;
+                        y: 19px;
+                        width: 22px;
+                        height: 22px;
+                        source: @image-url("../../assets/icons/generation.svg");
+                        colorize: #f3f0ff;
                         image-fit: contain;
                     }
                     Text {
-                        x: 8px;
-                        y: 50px;
-                        width: parent.width - 16px;
-                        height: 24px;
-                        text: AppState.generating
-                            ? (AppState.en ? "Stop" : "停止")
-                            : (AppState.en ? "Generate" : "生成图片");
-                        color: #ffffff;
-                        font-size: 14px;
+                        x: 7px;
+                        y: 48px;
+                        width: parent.width - 14px;
+                        height: 30px;
+                        text: AppState.canvas-workflow-title == ""
+                            ? (AppState.en ? "Choose template" : "选择模板创作")
+                            : AppState.canvas-workflow-title;
+                        color: #f4f1ff;
+                        font-size: 10px;
                         font-weight: 500;
+                        wrap: word-wrap;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
+                    template-action-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => { AppState.navigate("free-canvas"); }
+                    }
+                }
+
+                workflow-bottom-controls := Rectangle {
+                    visible: !root.workflow-composer-collapsed;
+                    x: 14px;
+                    y: 169px;
+                    width: parent.width - 28px;
+                    height: 32px;
+                    background: transparent;
+
+                    Rectangle {
+                        x: 0px;
+                        width: 132px;
+                        height: parent.height;
+                        background: #25242b;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: #504d58;
+                        Image { x: 9px; y: 8px; width: 16px; height: 16px; source: @image-url("../../assets/icons/models.svg"); colorize: #e3c58e; image-fit: contain; }
+                        Text { x: 30px; width: parent.width - 50px; height: parent.height; text: AppState.image-model-name == "" ? (AppState.en ? "Select model" : "选择模型") : AppState.image-model-name; color: #e8e5ed; font-size: 11px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+                        Image { x: parent.width - 17px; y: 11px; width: 9px; height: 9px; source: @image-url("../../assets/icons/dropdown.svg"); colorize: #8f8c96; image-fit: contain; }
+                    }
+                    quality-control := Rectangle {
+                        x: 140px;
+                        width: 138px;
+                        height: parent.height;
+                        background: quality-touch.has-hover ? #302e38 : #25242b;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: quality-touch.has-hover ? #6e63ef : #504d58;
+                        Image { x: 9px; y: 8px; width: 16px; height: 16px; source: @image-url("../../assets/icons/controls.svg"); colorize: #aaa5b3; image-fit: contain; }
+                        Text { x: 30px; width: parent.width - 49px; height: parent.height; text: AppState.quality + (AppState.en ? " smart" : " 智能"); color: #e8e5ed; font-size: 11px; font-weight: 400; vertical-alignment: center; }
+                        Image { x: parent.width - 17px; y: 11px; width: 9px; height: 9px; source: @image-url("../../assets/icons/dropdown.svg"); colorize: #8f8c96; image-fit: contain; }
+                        quality-touch := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => { AppState.quality = AppState.quality == "1K" ? "2K" : (AppState.quality == "2K" ? "4K" : "1K"); }
+                        }
+                    }
+                    Rectangle {
+                        x: 286px;
+                        width: 112px;
+                        height: parent.height;
+                        background: #222127;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: #403e47;
+                        opacity: 0.58;
+                        Image { x: 9px; y: 8px; width: 16px; height: 16px; source: @image-url("../../assets/icons/generation.svg"); colorize: #77747e; image-fit: contain; }
+                        Text { x: 30px; width: parent.width - 34px; height: parent.height; text: AppState.en ? "Prompt boost · 1" : "提示增强 · 1"; color: #8b8891; font-size: 10px; font-weight: 400; vertical-alignment: center; }
+                    }
+                    Rectangle {
+                        x: parent.width - 210px;
+                        width: 32px;
+                        height: parent.height;
+                        background: #222127;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: #4b4853;
+                        Text { width: parent.width; height: parent.height; text: "@"; color: #e1dee7; font-size: 14px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    clear-workflow-action := Rectangle {
+                        x: parent.width - 170px;
+                        width: 80px;
+                        height: parent.height;
+                        background: clear-workflow-touch.has-hover ? #302e38 : transparent;
+                        border-radius: 8px;
+                        Image { x: 7px; y: 9px; width: 14px; height: 14px; source: @image-url("../../assets/icons/restore.svg"); colorize: #77747e; image-fit: contain; }
+                        Text { x: 25px; width: parent.width - 28px; height: parent.height; text: AppState.en ? "Clear all" : "全部清空"; color: #77747e; font-size: 10px; font-weight: 400; vertical-alignment: center; }
+                        clear-workflow-touch := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => {
+                                AppState.canvas-workflow-prompt = "";
+                                AppState.clear-references();
+                            }
+                        }
+                    }
+                }
+
+                workflow-generate-button := Rectangle {
+                    visible: !root.workflow-composer-collapsed;
+                    x: parent.width - 86px;
+                    y: 169px;
+                    width: 72px;
+                    height: 32px;
+                    property <bool> disabled: !AppState.generating
+                        && (AppState.canvas-workflow-prompt == "" || AppState.image-model == "");
+                    opacity: self.disabled ? 0.46 : 1;
+                    background: self.disabled
+                        ? #4c4b50
+                        : (generate-workflow-touch.has-hover ? #7468ff : #6258e8);
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: self.disabled ? #5c5a60 : #8177ff;
+
+                    Image {
+                        x: 9px;
+                        y: 8px;
+                        width: 15px;
+                        height: 15px;
+                        source: AppState.generating
+                            ? @image-url("../../assets/icons/close.svg")
+                            : @image-url("../../assets/icons/generation.svg");
+                        colorize: #e4e1ea;
+                        image-fit: contain;
+                    }
                     Text {
-                        x: 8px;
-                        y: 76px;
-                        width: parent.width - 16px;
-                        height: 18px;
+                        x: 27px;
+                        y: 0px;
+                        width: parent.width - 32px;
+                        height: parent.height;
                         text: AppState.generating
-                            ? (AppState.en ? "Working on canvas" : "正在画布生成")
-                            : AppState.generation-estimated-credit-cost + (AppState.en ? " credits" : " 积分");
-                        color: #ffffffcc;
-                        font-size: 11px;
-                        font-weight: 400;
+                            ? (AppState.en ? "Stop" : "停止")
+                            : AppState.generation-estimated-credit-cost;
+                        color: #f1eef5;
+                        font-size: 12px;
+                        font-weight: 500;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
@@ -3156,7 +3340,8 @@ export component InfiniteCanvasPage {
             zoom-panel := Rectangle {
                 visible: !AppState.canvas-node-info-open;
                 x: 16px;
-                y: canvas-workflow-dock.y - self.height - 10px;
+                // Keep the canvas controls clear of the composer's raised collapse handle.
+                y: canvas-workflow-dock.y + 23px - self.height - 34px;
                 width: min(250px, parent.width - 32px);
                 height: 48px;
                 background: AppState.canvas-dark-background ? #211e1c : AppTheme.panel.with-alpha(0.98);
@@ -3240,7 +3425,8 @@ export component InfiniteCanvasPage {
             toolbar := Rectangle {
                 visible: !AppState.canvas-node-info-open;
                 x: max(16px, (parent.width - self.width) / 2);
-                y: canvas-workflow-dock.y - self.height - 10px;
+                // The reference layout leaves a dedicated gap for the collapse handle.
+                y: canvas-workflow-dock.y + 23px - self.height - 34px;
                 width: min(parent.width - 32px, parent.width < 620px ? 300px : 388px);
                 height: parent.width < 620px ? 44px : 52px;
                 background: AppTheme.panel.with-alpha(0.98);

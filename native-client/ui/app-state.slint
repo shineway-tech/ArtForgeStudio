@@ -208,6 +208,7 @@ export global AppState {
     in-out property <string> canvas-workflow-prompt: "";
     in-out property <string> canvas-workflow-template: "";
     in-out property <string> canvas-workflow-hint: "";
+    in-out property <int> canvas-workspace-switch-request: 0;
     in-out property <string> canvas-selected-id: "";
     // Transient UI-only state used while a local image split worker is running.
     in-out property <string> canvas-split-loading-node-id: "";
@@ -772,6 +773,7 @@ export global AppState {
     callback transform-crop-source(string);
     callback reset-crop-source();
     callback save-crop-result();
+    callback open-canvas-workspace(string);
     callback add-canvas-node(string, float, float);
     callback create-canvas-generation-source(string, float, float) -> string;
     callback update-canvas-node(string, string, float, float);
@@ -821,6 +823,7 @@ export global AppState {
     callback update-gallery-viewport(string, float, float, float, string, float, int);
     callback add-reference();
     callback add-reference-from-transfer(data-transfer) -> bool;
+    callback clear-references();
     callback start-thumbnail-drag-preview(string) -> bool;
     callback start-thumbnail-file-drag(string) -> bool;
     callback start-viewer-file-drag() -> bool;

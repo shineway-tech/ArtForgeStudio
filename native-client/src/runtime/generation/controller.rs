@@ -492,24 +492,45 @@ pub(super) fn add_canvas_stream_success_item(
     total_count: i32,
 ) -> Result<String> {
     let (bytes, _, width, height) = generated_image_from_bytes(bytes)?;
-    {
+    let target_workspace_id = {
         let store = context.store.borrow();
-        let source_exists = store
-            .canvas_notes
-            .iter()
-            .any(|note| note.id == source_node_id);
-        if store.canvas_notes.len() >= 200 || (source_exists && store.canvas_links.len() >= 400) {
+        let active_workspace_id = normalize_canvas_workspace_id(&store.active_canvas_workspace_id);
+        let target_workspace_id = canvas_workspace_id_for_source(&store, source_node_id)
+            .ok_or_else(|| anyhow!("生成来源所在画板已不存在"))?;
+        let (node_count, link_count) = if target_workspace_id == active_workspace_id {
+            (store.canvas_notes.len(), store.canvas_links.len())
+        } else {
+            let workspace = store
+                .canvas_workspaces
+                .get(&target_workspace_id)
+                .ok_or_else(|| anyhow!("生成来源所在画板已不存在"))?;
+            (workspace.notes.len(), workspace.links.len())
+        };
+        if node_count >= 200 || link_count >= 400 {
             return Err(anyhow!("画布已达到容量上限"));
         }
-    }
+        target_workspace_id
+    };
     let source_path = save_generated_bytes(app, &bytes, raw_prompt)?;
     let mut store = context.store.borrow_mut();
+    let active_workspace_id = normalize_canvas_workspace_id(&store.active_canvas_workspace_id);
+    let target_is_active = target_workspace_id == active_workspace_id;
+    let (target_notes, target_links) = if target_is_active {
+        let store = &mut *store;
+        (&mut store.canvas_notes, &mut store.canvas_links)
+    } else {
+        let workspace = store
+            .canvas_workspaces
+            .get_mut(&target_workspace_id)
+            .ok_or_else(|| anyhow!("生成来源所在画板已不存在"))?;
+        (&mut workspace.notes, &mut workspace.links)
+    };
 
-    let source = store
-        .canvas_notes
+    let source = target_notes
         .iter()
         .find(|note| note.id == source_node_id)
-        .cloned();
+        .cloned()
+        .ok_or_else(|| anyhow!("生成来源所在画板已不存在"))?;
     let mut result = CanvasNoteData {
         id: Uuid::new_v4().to_string(),
         kind: "image".to_string(),
@@ -518,8 +539,7 @@ pub(super) fn add_canvas_stream_success_item(
         width: 340.0,
         height: 250.0,
         parent_group_id: String::new(),
-        z_index: store
-            .canvas_notes
+        z_index: target_notes
             .iter()
             .map(|note| note.z_index)
             .max()
@@ -530,7 +550,7 @@ pub(super) fn add_canvas_stream_success_item(
     };
     fit_image_node_to_intrinsic_aspect(&mut result, width as f32, height as f32);
     let (x, y) = generated_canvas_result_position(
-        source.as_ref(),
+        Some(&source),
         result.width,
         result.height,
         result_index,
@@ -540,20 +560,50 @@ pub(super) fn add_canvas_stream_success_item(
     result.y = y;
     let result_id = result.id.clone();
 
-    context
-        .canvas_history
-        .borrow_mut()
-        .record(canvas_snapshot(&store));
-    store.canvas_notes.push(result);
-    if source.is_some() {
-        let _ = connect_nodes(&mut store.canvas_links, source_node_id, &result_id);
+    if target_is_active {
+        context
+            .canvas_history
+            .borrow_mut()
+            .record(CanvasSnapshot {
+                notes: target_notes.clone(),
+                links: target_links.clone(),
+            });
     }
+    target_notes.push(result);
+    let _ = connect_nodes(target_links, source_node_id, &result_id);
     save_local_store(app, &store);
-    push_canvas_notes(app, &store);
-    let state = app.global::<AppState>();
-    state.set_canvas_can_undo(context.canvas_history.borrow().can_undo());
-    state.set_canvas_can_redo(context.canvas_history.borrow().can_redo());
+    if target_is_active {
+        push_canvas_notes(app, &store);
+        let state = app.global::<AppState>();
+        state.set_canvas_can_undo(context.canvas_history.borrow().can_undo());
+        state.set_canvas_can_redo(context.canvas_history.borrow().can_redo());
+    }
     Ok(source_path)
+}
+
+pub(super) fn canvas_workspace_id_for_source(
+    store: &Store,
+    source_node_id: &str,
+) -> Option<String> {
+    let active_workspace_id = normalize_canvas_workspace_id(&store.active_canvas_workspace_id);
+    if store
+        .canvas_notes
+        .iter()
+        .any(|note| note.id == source_node_id)
+    {
+        return Some(active_workspace_id.clone());
+    }
+    store
+        .canvas_workspaces
+        .iter()
+        .find(|(workspace_id, workspace)| {
+            *workspace_id != &active_workspace_id
+                && workspace
+                    .notes
+                    .iter()
+                    .any(|note| note.id == source_node_id)
+        })
+        .map(|(workspace_id, _)| workspace_id.clone())
 }
 
 pub(super) fn upsert_stream_failure_card(generations: &mut Vec<AssetData>, card: AssetData) {

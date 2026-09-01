@@ -798,10 +798,85 @@ fn sync_canvas_selection_rows(app: &AppWindow, store: &Store) {
     }
 }
 
+pub(super) fn switch_canvas_workspace(
+    store: &mut Store,
+    current_prompt: &str,
+    target_workspace_id: &str,
+) -> String {
+    let current_workspace_id = normalize_canvas_workspace_id(&store.active_canvas_workspace_id);
+    store.canvas_workspaces.insert(
+        current_workspace_id,
+        CanvasWorkspaceData {
+            notes: store.canvas_notes.clone(),
+            links: store.canvas_links.clone(),
+            prompt: current_prompt.to_string(),
+            references: store.canvas_references.clone(),
+        },
+    );
+
+    let target_workspace_id = normalize_canvas_workspace_id(target_workspace_id);
+    let target = store
+        .canvas_workspaces
+        .get(&target_workspace_id)
+        .cloned()
+        .unwrap_or_default();
+    store.active_canvas_workspace_id = target_workspace_id.clone();
+    store.canvas_notes = target.notes;
+    store.canvas_links = target.links;
+    store.canvas_references = target.references;
+    clear_selection(&mut store.canvas_notes);
+    store.canvas_workspaces.insert(
+        target_workspace_id,
+        CanvasWorkspaceData {
+            notes: store.canvas_notes.clone(),
+            links: store.canvas_links.clone(),
+            prompt: target.prompt.clone(),
+            references: store.canvas_references.clone(),
+        },
+    );
+    target.prompt
+}
+
 pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
     let store = context.store.clone();
     let history = context.canvas_history.clone();
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        let history = history.clone();
+        state.on_open_canvas_workspace(move |workspace_id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            let prompt = {
+                let mut store = store.borrow_mut();
+                let prompt = switch_canvas_workspace(
+                    &mut store,
+                    state.get_canvas_workflow_prompt().as_str(),
+                    workspace_id.as_str(),
+                );
+                push_canvas_notes(&app, &store);
+                push_canvas_references(&app, &store);
+                prompt
+            };
+            *history.borrow_mut() = CanvasController::default();
+            state.set_canvas_workflow_prompt(prompt.into());
+            save_local_store(&app, &store.borrow());
+            state.set_canvas_selected_id("".into());
+            state.set_canvas_selected_link_id("".into());
+            state.set_canvas_selected_count(0);
+            state.set_canvas_node_info_open(false);
+            state.set_canvas_group_name_dialog_open(false);
+            state.set_canvas_can_undo(false);
+            state.set_canvas_can_redo(false);
+            state.set_canvas_workspace_switch_request(
+                state.get_canvas_workspace_switch_request().saturating_add(1),
+            );
+        });
+    }
 
     {
         let app_weak = app.as_weak();

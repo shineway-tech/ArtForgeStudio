@@ -34,6 +34,7 @@ pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>
             };
             let state = app.global::<AppState>();
             let category = resolve_category(&state.get_asset_type().to_string(), "");
+            let canvas = state.get_page().as_str() == "canvas";
             let max_references = max_reference_images_for_category(&category);
             let Ok(mut clipboard) = arboard::Clipboard::new() else {
                 return false;
@@ -49,7 +50,7 @@ pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>
                 }
             };
             let mut store = store.borrow_mut();
-            let references = references_for_category_mut(&mut store.references, &category);
+            let references = references_for_context_mut(&mut store, &category, canvas);
             if references.len() >= max_references {
                 state.set_generation_status(reference_limit_message(max_references).into());
                 return true;
@@ -58,7 +59,8 @@ pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>
                 id: Uuid::new_v4().to_string(),
                 source_path,
             });
-            push_references(&app, &store);
+            push_references_for_context(&app, &store, canvas);
+            save_local_store(&app, &store);
             state.set_generation_status("已从剪贴板粘贴参考图".into());
             true
         });
@@ -109,12 +111,30 @@ pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>
         state.on_remove_reference(move |id| {
             if let Some(app) = app_weak.upgrade() {
                 let id = id.to_string();
-                let category =
-                    resolve_category(&app.global::<AppState>().get_asset_type().to_string(), "");
-                references_for_category_mut(&mut store.borrow_mut().references, &category)
+                let state = app.global::<AppState>();
+                let category = resolve_category(&state.get_asset_type().to_string(), "");
+                let canvas = state.get_page().as_str() == "canvas";
+                references_for_context_mut(&mut store.borrow_mut(), &category, canvas)
                     .retain(|r| r.id != id);
-                push_references(&app, &store.borrow());
+                push_references_for_context(&app, &store.borrow(), canvas);
+                save_local_store(&app, &store.borrow());
             }
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
+        state.on_clear_references(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            let category = resolve_category(&state.get_asset_type().to_string(), "");
+            let canvas = state.get_page().as_str() == "canvas";
+            references_for_context_mut(&mut store.borrow_mut(), &category, canvas).clear();
+            push_references_for_context(&app, &store.borrow(), canvas);
+            save_local_store(&app, &store.borrow());
         });
     }
 
@@ -126,10 +146,11 @@ pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>
                 return;
             };
             let id = id.to_string();
-            let category =
-                resolve_category(&app.global::<AppState>().get_asset_type().to_string(), "");
+            let state = app.global::<AppState>();
+            let category = resolve_category(&state.get_asset_type().to_string(), "");
+            let canvas = state.get_page().as_str() == "canvas";
             let store_ref = store.borrow();
-            let Some(item) = references_for_category(&store_ref.references, &category)
+            let Some(item) = references_for_context(&store_ref, &category, canvas)
                 .iter()
                 .find(|r| r.id == id)
                 .cloned()
@@ -170,11 +191,19 @@ pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>
     }
 }
 
+fn push_references_for_context(app: &AppWindow, store: &Store, canvas: bool) {
+    if canvas {
+        push_canvas_references(app, store);
+    } else {
+        push_references(app, store);
+    }
+}
+
 fn process_external_image_drops(app: &AppWindow, store: &Rc<RefCell<Store>>) {
     let drops = platform::take_external_image_drops();
     if app.global::<AppState>().get_directory_migration_open() { return; }
     let page = app.global::<AppState>().get_page();
-    if page.as_str() == "generation" {
+    if matches!(page.as_str(), "generation" | "canvas") {
         for drop in drops {
             match drop {
                 ExternalImageDrop::Paths(paths, position)

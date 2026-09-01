@@ -119,6 +119,14 @@ impl DirectoryLocations {
         for note in &mut data.canvas_notes {
             self.remap(&mut note.image_path);
         }
+        for workspace in data.canvas_workspaces.values_mut() {
+            for note in &mut workspace.notes {
+                self.remap(&mut note.image_path);
+            }
+            for reference in &mut workspace.references {
+                self.remap(&mut reference.source_path);
+            }
+        }
         for profile in data.custom_prompt_profiles.values_mut() {
             self.remap_profile(profile);
         }
@@ -136,6 +144,17 @@ impl DirectoryLocations {
         }
         for note in &mut store.canvas_notes {
             self.remap(&mut note.image_path);
+        }
+        for workspace in store.canvas_workspaces.values_mut() {
+            for note in &mut workspace.notes {
+                self.remap(&mut note.image_path);
+            }
+            for reference in &mut workspace.references {
+                self.remap(&mut reference.source_path);
+            }
+        }
+        for reference in &mut store.canvas_references {
+            self.remap(&mut reference.source_path);
         }
         for profile in store.custom_prompt_profiles.values_mut() {
             self.remap_profile(profile);

@@ -92,6 +92,36 @@ pub(super) fn rebuild_storage_references(store: &Store) -> bool {
             &note.id,
         );
     }
+    for reference in &store.canvas_references {
+        collect_path_reference(
+            &mut references,
+            &reference.source_path,
+            "canvas-reference",
+            &reference.id,
+        );
+    }
+    let active_workspace_id = normalize_canvas_workspace_id(&store.active_canvas_workspace_id);
+    for (workspace_id, workspace) in &store.canvas_workspaces {
+        if workspace_id == &active_workspace_id {
+            continue;
+        }
+        for note in &workspace.notes {
+            collect_path_reference(
+                &mut references,
+                &note.image_path,
+                "canvas-node",
+                &format!("{workspace_id}:{}", note.id),
+            );
+        }
+        for reference in &workspace.references {
+            collect_path_reference(
+                &mut references,
+                &reference.source_path,
+                "canvas-reference",
+                &format!("{workspace_id}:{}", reference.id),
+            );
+        }
+    }
     for (profile_id, profile) in &store.custom_prompt_profiles {
         collect_path_reference(
             &mut references,
@@ -353,6 +383,23 @@ pub(super) fn store_references_path(store: &Store, path: &Path) -> bool {
             .canvas_notes
             .iter()
             .any(|note| paths_refer_to_same_file(Path::new(&note.image_path), path))
+        || store.canvas_workspaces.iter().any(|(workspace_id, workspace)| {
+            workspace_id != &normalize_canvas_workspace_id(&store.active_canvas_workspace_id)
+                && workspace
+                    .notes
+                    .iter()
+                    .any(|note| paths_refer_to_same_file(Path::new(&note.image_path), path))
+        })
+        || store
+            .canvas_references
+            .iter()
+            .any(|reference| paths_refer_to_same_file(Path::new(&reference.source_path), path))
+        || store.canvas_workspaces.iter().any(|(workspace_id, workspace)| {
+            workspace_id != &normalize_canvas_workspace_id(&store.active_canvas_workspace_id)
+                && workspace.references.iter().any(|reference| {
+                    paths_refer_to_same_file(Path::new(&reference.source_path), path)
+                })
+        })
     {
         return true;
     }

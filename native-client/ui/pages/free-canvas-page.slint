@@ -166,10 +166,10 @@ component FreeCanvasCard {
             height: parent.height;
             mouse-cursor: pointer;
             clicked => {
+                AppState.open-canvas-workspace(root.card-id);
                 if root.opens-canvas {
                     AppState.canvas-workflow-id = "";
                     AppState.canvas-workflow-title = "";
-                    AppState.canvas-workflow-prompt = "";
                     AppState.canvas-workflow-template = "";
                     AppState.canvas-workflow-hint = "";
                     AppState.navigate("canvas");
@@ -177,7 +177,6 @@ component FreeCanvasCard {
                     AppState.asset-type = root.category;
                     AppState.canvas-workflow-id = root.card-id;
                     AppState.canvas-workflow-title = root.title;
-                    AppState.canvas-workflow-prompt = "";
                     AppState.canvas-workflow-template = AppState.en ? root.prompt-en : root.prompt-zh;
                     AppState.canvas-workflow-hint = AppState.en ? root.hint-en : root.hint-zh;
                     AppState.canvas-grid-style = "dot";

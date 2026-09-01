@@ -156,7 +156,7 @@ struct NotificationData {
     read: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 struct ReferenceData {
     id: String,
     source_path: String,
@@ -387,6 +387,29 @@ enum ExistingGenerationPolicy {
     KeepExisting,
 }
 
+const DEFAULT_CANVAS_WORKSPACE_ID: &str = "infinite-canvas";
+
+fn normalize_canvas_workspace_id(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        DEFAULT_CANVAS_WORKSPACE_ID.to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+struct CanvasWorkspaceData {
+    #[serde(default)]
+    notes: Vec<CanvasNoteData>,
+    #[serde(default)]
+    links: Vec<CanvasLinkData>,
+    #[serde(default)]
+    prompt: String,
+    #[serde(default)]
+    references: Vec<ReferenceData>,
+}
+
 #[derive(Default)]
 struct Store {
     model_groups: Vec<ModelGroupData>,
@@ -404,6 +427,9 @@ struct Store {
     custom_prompt_profiles: BTreeMap<String, CustomPromptProfile>,
     canvas_notes: Vec<CanvasNoteData>,
     canvas_links: Vec<CanvasLinkData>,
+    canvas_references: Vec<ReferenceData>,
+    active_canvas_workspace_id: String,
+    canvas_workspaces: BTreeMap<String, CanvasWorkspaceData>,
     credit_ledger_pagination: CreditLedgerPagination,
     /// Last applied server credit-account version. This prevents an idempotency replay or a
     /// slower account refresh from moving the visible balance backwards.
@@ -542,6 +568,10 @@ struct LocalStoreData {
     canvas_notes: Vec<CanvasNoteData>,
     #[serde(default)]
     canvas_links: Vec<CanvasLinkData>,
+    #[serde(default)]
+    active_canvas_workspace_id: String,
+    #[serde(default)]
+    canvas_workspaces: BTreeMap<String, CanvasWorkspaceData>,
     #[serde(default)]
     deep_prompt_job_id: String,
     #[serde(default)]

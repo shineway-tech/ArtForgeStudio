@@ -2201,6 +2201,7 @@ mod tests {
         let launcher = include_str!("../../ui/pages/free-canvas-page.slint");
         let canvas = include_str!("../../ui/pages/infinite-canvas-page.slint");
         let callbacks = include_str!("callbacks/infinite_canvas.rs");
+        let reference_callbacks = include_str!("callbacks/reference.rs");
         let viewer = include_str!("callbacks/viewer.rs");
 
         for property in [
@@ -2209,9 +2210,12 @@ mod tests {
             "canvas-workflow-prompt",
             "canvas-workflow-template",
             "canvas-workflow-hint",
+            "canvas-workspace-switch-request",
         ] {
             assert!(state.contains(property));
         }
+        assert!(state.contains("callback open-canvas-workspace(string)"));
+        assert!(launcher.contains("AppState.open-canvas-workspace(root.card-id)"));
         assert!(launcher.contains("AppState.canvas-workflow-id = root.card-id"));
         assert!(launcher.contains("AppState.canvas-workflow-title = root.title"));
         assert!(launcher.contains(
@@ -2220,18 +2224,28 @@ mod tests {
         assert!(launcher.contains(
             "AppState.canvas-workflow-hint = AppState.en ? root.hint-en : root.hint-zh"
         ));
-        assert!(launcher.contains("AppState.canvas-workflow-prompt = \"\""));
+        assert!(!launcher.contains("AppState.canvas-workflow-prompt = \"\""));
         assert!(launcher.contains("AppState.canvas-grid-style = \"dot\""));
         assert!(launcher.contains("AppState.canvas-dark-background = true"));
         assert!(!launcher.contains("AppState.navigate(\"generation\")"));
         assert!(launcher.contains("AppState.navigate(\"canvas\")"));
 
         assert!(canvas.contains("canvas-workflow-dock := Rectangle"));
+        assert!(canvas.contains("workflow-dock-surface := Rectangle"));
+        assert!(canvas.contains("canvas-workflow-mode-tabs := Rectangle"));
+        assert!(canvas.contains("workflow-collapse-handle := Rectangle"));
+        assert!(canvas.contains("changed workspace-switch-request"));
+        assert!(canvas.contains("workflow-template-action := Rectangle"));
+        assert!(canvas.contains("workflow-bottom-controls := Rectangle"));
+        assert!(canvas.contains("AppState.en ? \"Image generation\" : \"图片生成\""));
+        assert!(canvas.contains("AppState.en ? \"Video generation\" : \"视频生成\""));
+        assert!(canvas.contains("AppState.en ? \"3D generation\" : \"3D生成\""));
         assert!(canvas.contains("text <=> AppState.canvas-workflow-prompt"));
         assert!(canvas.contains("for reference[index] in AppState.references"));
         assert!(canvas.contains("AppState.add-reference()"));
         assert!(canvas.contains("AppState.open-reference(reference.id)"));
         assert!(canvas.contains("AppState.remove-reference(reference.id)"));
+        assert!(canvas.contains("AppState.clear-references()"));
         assert!(canvas.contains("AppState.create-canvas-generation-source"));
         assert!(canvas.contains("AppState.canvas-workflow-template == \"\""));
         assert!(canvas.contains(": AppState.canvas-workflow-template"));
@@ -2243,8 +2257,12 @@ mod tests {
             "callback create-canvas-generation-source(string, float, float) -> string"
         ));
         assert!(callbacks.contains("state.on_create_canvas_generation_source"));
+        assert!(callbacks.contains("state.on_open_canvas_workspace"));
+        assert!(callbacks.contains("switch_canvas_workspace"));
+        assert!(state.contains("callback clear-references()"));
+        assert!(reference_callbacks.contains("state.on_clear_references"));
         assert!(viewer.contains("state.set_canvas_workflow_id(\"\".into())"));
-        assert!(viewer.contains("state.set_canvas_workflow_prompt(\"\".into())"));
+        assert!(viewer.contains("DEFAULT_CANVAS_WORKSPACE_ID"));
     }
 
     #[test]
@@ -3247,6 +3265,7 @@ mod tests {
         assert!(callbacks.contains("save_local_store"));
         assert!(local_store.contains("canvas_notes: store.canvas_notes.clone()"));
         assert!(local_store.contains("canvas_links: store.canvas_links.clone()"));
+        assert!(local_store.contains("let mut canvas_workspaces = store.canvas_workspaces.clone()"));
         assert!(local_store.contains("store_mut.canvas_notes = data.canvas_notes"));
         assert!(sync.contains("push_canvas_notes(app, store)"));
     }
@@ -3261,6 +3280,79 @@ mod tests {
         assert_eq!(note.parent_group_id, "");
         assert_eq!(note.z_index, 0);
         assert!(!note.selected);
+    }
+
+    #[test]
+    fn free_canvas_entries_keep_independent_nodes_links_and_prompts() {
+        let mut store = Store {
+            active_canvas_workspace_id: "plant-growth".to_string(),
+            canvas_notes: vec![CanvasNoteData {
+                id: "plant-note".to_string(),
+                content: "番茄".to_string(),
+                selected: true,
+                ..CanvasNoteData::default()
+            }],
+            canvas_links: vec![CanvasLinkData {
+                id: "plant-link".to_string(),
+                source_id: "plant-note".to_string(),
+                target_id: "plant-note".to_string(),
+                ..CanvasLinkData::default()
+            }],
+            canvas_references: vec![ReferenceData {
+                id: "plant-reference".to_string(),
+                source_path: "plant.png".to_string(),
+            }],
+            ..Store::default()
+        };
+
+        let monster_prompt = switch_canvas_workspace(
+            &mut store,
+            "红色番茄，陶盆",
+            "monster-generator",
+        );
+        assert!(monster_prompt.is_empty());
+        assert!(store.canvas_notes.is_empty());
+        assert!(store.canvas_links.is_empty());
+        assert!(store.canvas_references.is_empty());
+
+        store.canvas_notes.push(CanvasNoteData {
+            id: "monster-note".to_string(),
+            content: "岩石怪物".to_string(),
+            ..CanvasNoteData::default()
+        });
+        store.canvas_references.push(ReferenceData {
+            id: "monster-reference".to_string(),
+            source_path: "monster.png".to_string(),
+        });
+        let plant_prompt =
+            switch_canvas_workspace(&mut store, "紫水晶石像", "plant-growth");
+
+        assert_eq!(plant_prompt, "红色番茄，陶盆");
+        assert_eq!(store.canvas_notes.len(), 1);
+        assert_eq!(store.canvas_notes[0].id, "plant-note");
+        assert_eq!(store.canvas_links.len(), 1);
+        assert_eq!(store.canvas_references[0].id, "plant-reference");
+        assert!(!store.canvas_notes[0].selected);
+        assert_eq!(
+            store.canvas_workspaces["monster-generator"].notes[0].id,
+            "monster-note"
+        );
+        assert_eq!(
+            store.canvas_workspaces["monster-generator"].prompt,
+            "紫水晶石像"
+        );
+        assert_eq!(
+            store.canvas_workspaces["monster-generator"].references[0].id,
+            "monster-reference"
+        );
+        assert_eq!(
+            canvas_workspace_id_for_source(&store, "monster-note").as_deref(),
+            Some("monster-generator")
+        );
+        assert_eq!(
+            canvas_workspace_id_for_source(&store, "plant-note").as_deref(),
+            Some("plant-growth")
+        );
     }
 
     #[test]

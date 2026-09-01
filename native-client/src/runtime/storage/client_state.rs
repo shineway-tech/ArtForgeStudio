@@ -392,6 +392,16 @@ fn write_local_store(connection: &mut Connection, data: &LocalStoreData) -> Resu
         "selected_custom_prompts",
         &data.selected_custom_prompts,
     )?;
+    write_setting_json(
+        &transaction,
+        "active_canvas_workspace_id",
+        &data.active_canvas_workspace_id,
+    )?;
+    write_setting_json(
+        &transaction,
+        "canvas_workspaces",
+        &data.canvas_workspaces,
+    )?;
     write_setting_json(&transaction, "deep_prompt_job_id", &data.deep_prompt_job_id)?;
     write_setting_json(
         &transaction,
@@ -706,6 +716,11 @@ fn read_local_store_transaction(transaction: &Transaction<'_>) -> Result<LocalSt
         custom_prompt_profiles,
         canvas_notes: read_canvas_nodes(transaction)?,
         canvas_links: read_canvas_links(transaction)?,
+        active_canvas_workspace_id: read_setting_json_or_default(
+            transaction,
+            "active_canvas_workspace_id",
+        )?,
+        canvas_workspaces: read_setting_json_or_default(transaction, "canvas_workspaces")?,
         deep_prompt_job_id: read_setting_json_or_default(transaction, "deep_prompt_job_id")?,
         deep_prompt_jobs_by_owner: read_setting_json_or_default(
             transaction,
@@ -1021,6 +1036,23 @@ mod tests {
                 "custom".to_string(),
                 "2026-08-12 10:01".to_string(),
             )]),
+            active_canvas_workspace_id: "monster-generator".to_string(),
+            canvas_workspaces: BTreeMap::from([(
+                "plant-growth".to_string(),
+                CanvasWorkspaceData {
+                    notes: vec![CanvasNoteData {
+                        id: "plant-note".to_string(),
+                        content: "番茄".to_string(),
+                        ..CanvasNoteData::default()
+                    }],
+                    prompt: "陶盆里的番茄".to_string(),
+                    references: vec![ReferenceData {
+                        id: "plant-reference".to_string(),
+                        source_path: "/tmp/plant.png".to_string(),
+                    }],
+                    ..CanvasWorkspaceData::default()
+                },
+            )]),
             ..LocalStoreData::default()
         };
         write_local_store(&mut connection, &data).expect("write");
@@ -1035,6 +1067,11 @@ mod tests {
         assert_eq!(restored.assets[0].width, 1600);
         assert_eq!(restored.video_model, data.video_model);
         assert_eq!(restored.custom_prompts, data.custom_prompts);
+        assert_eq!(
+            restored.active_canvas_workspace_id,
+            data.active_canvas_workspace_id
+        );
+        assert_eq!(restored.canvas_workspaces, data.canvas_workspaces);
         assert_eq!(
             restored.custom_prompt_times.get("custom"),
             data.custom_prompt_times.get("custom")

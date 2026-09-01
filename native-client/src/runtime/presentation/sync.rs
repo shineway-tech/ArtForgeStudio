@@ -365,8 +365,9 @@ pub(super) fn navigate_to_with_store(app: &AppWindow, store: &Store, page: &str)
     if page == "inspiration" && app.global::<AppState>().get_logged_in() {
         push_inspiration(app, store);
     }
-    if page == "canvas" && app.global::<AppState>().get_logged_in() {
+    if page == "canvas" {
         push_canvas_notes(app, store);
+        push_canvas_references(app, store);
     }
 }
 
@@ -622,7 +623,10 @@ pub(super) fn push_all(app: &AppWindow, store: &Store) {
         }
         "assets" => push_assets(app, store),
         "inspiration" => push_inspiration(app, store),
-        "canvas" => push_canvas_notes(app, store),
+        "canvas" => {
+            push_canvas_notes(app, store);
+            push_canvas_references(app, store);
+        }
         _ => {}
     }
 }
@@ -2396,9 +2400,26 @@ pub(super) fn count_assets(store: &Store, category: &str) -> i32 {
 
 pub(super) fn push_references(app: &AppWindow, store: &Store) {
     let state = app.global::<AppState>();
-    let preview_epoch = REFERENCE_PREVIEW_EPOCH.fetch_add(1, Ordering::AcqRel) + 1;
     let category = resolve_category(&state.get_asset_type().to_string(), "");
     let max_references = max_reference_images_for_category(&category);
+    push_reference_items(
+        app,
+        references_for_category(&store.references, &category),
+        max_references,
+    );
+}
+
+pub(super) fn push_canvas_references(app: &AppWindow, store: &Store) {
+    push_reference_items(app, &store.canvas_references, MAX_REFERENCE_IMAGES);
+}
+
+fn push_reference_items(
+    app: &AppWindow,
+    source: &[ReferenceData],
+    max_references: usize,
+) {
+    let state = app.global::<AppState>();
+    let preview_epoch = REFERENCE_PREVIEW_EPOCH.fetch_add(1, Ordering::AcqRel) + 1;
     let existing_previews = state
         .get_references()
         .iter()
@@ -2411,7 +2432,7 @@ pub(super) fn push_references(app: &AppWindow, store: &Store) {
         })
         .collect::<BTreeMap<_, _>>();
     let mut preview_tasks = Vec::new();
-    let references = references_for_category(&store.references, &category)
+    let references = source
         .iter()
         .take(max_references)
         .map(|item| {

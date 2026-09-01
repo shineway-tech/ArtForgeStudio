@@ -363,11 +363,18 @@ pub(super) fn start_backend_generation(
     let quality = state.get_quality().to_string();
     let count = forced_count.unwrap_or_else(|| state.get_count().clamp(1, 4));
     let mode = state.get_mode().to_string();
-    let original_references = references_for_category(&store.borrow().references, &category)
-        .iter()
-        .take(max_reference_images_for_category(&category))
-        .cloned()
-        .collect::<Vec<_>>();
+    let original_references = {
+        let store = store.borrow();
+        let references = match &destination {
+            GenerationDestination::Canvas { .. } => &store.canvas_references,
+            GenerationDestination::Gallery => references_for_category(&store.references, &category),
+        };
+        references
+            .iter()
+            .take(max_reference_images_for_category(&category))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
     let reference_paths = original_references
         .iter()
         .map(|item| PathBuf::from(&item.source_path))
@@ -1643,7 +1650,8 @@ fn upscale_source_for_viewer(app: &AppWindow, store: &Store) -> Option<UpscaleSo
     let source = state.get_viewer_source().to_string();
     if source == "reference" {
         let category = resolve_category(&state.get_asset_type().to_string(), "");
-        let reference = references_for_category(&store.references, &category)
+        let canvas = state.get_page().as_str() == "canvas";
+        let reference = references_for_context(store, &category, canvas)
             .iter()
             .find(|item| item.id == id)?;
         return Some(UpscaleSource {
