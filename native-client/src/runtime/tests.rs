@@ -2280,6 +2280,23 @@ mod tests {
     }
 
     #[test]
+    fn reference_picker_does_not_block_the_slint_event_loop() {
+        let callbacks = include_str!("callbacks/reference.rs");
+        let add_reference = callbacks
+            .split("state.on_add_reference")
+            .nth(1)
+            .and_then(|block| block.split("state.on_paste_reference").next())
+            .expect("add-reference callback implementation");
+
+        assert!(add_reference.contains("drop(app);"));
+        assert!(add_reference.contains("slint::spawn_local(async move"));
+        assert!(add_reference.contains("rfd::AsyncFileDialog::new()"));
+        assert!(add_reference.contains(".pick_files()"));
+        assert!(add_reference.contains(".await"));
+        assert!(!add_reference.contains("rfd::FileDialog::new()"));
+    }
+
+    #[test]
     fn canvas_workflow_matches_inline_references_and_loading_result_behavior() {
         let state = include_str!("../../ui/app-state.slint");
         let launcher = include_str!("../../ui/pages/free-canvas-page.slint");

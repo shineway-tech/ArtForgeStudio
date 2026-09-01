@@ -14,14 +14,24 @@ pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            if let Some(files) = rfd::FileDialog::new()
-                .add_filter("Images", crate::image_formats::picker_image_extensions())
-                .pick_files()
-            {
-                for path in files {
-                    add_reference_from_path(&app, &store, &path);
+            let app_weak = app.as_weak();
+            let store = store.clone();
+            drop(app);
+            let _ = slint::spawn_local(async move {
+                let Some(files) = rfd::AsyncFileDialog::new()
+                    .add_filter("Images", crate::image_formats::picker_image_extensions())
+                    .pick_files()
+                    .await
+                else {
+                    return;
+                };
+                let Some(app) = app_weak.upgrade() else {
+                    return;
+                };
+                for file in files {
+                    add_reference_from_path(&app, &store, file.path());
                 }
-            }
+            });
         });
     }
 
