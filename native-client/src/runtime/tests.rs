@@ -2332,8 +2332,10 @@ mod tests {
             .and_then(|block| block.split("workflow-reference-mentions := Rectangle").next())
             .expect("workflow prompt input");
 
-        assert!(prompt_input.contains("y: 4px;"));
-        assert!(prompt_input.contains("vertical-alignment: top;"));
+        assert!(prompt_input.contains("y: 0px;"));
+        assert!(prompt_input.contains("height: 24px;"));
+        assert!(prompt_input.contains("single-line: true;"));
+        assert!(prompt_input.contains("vertical-alignment: center;"));
     }
 
     #[test]

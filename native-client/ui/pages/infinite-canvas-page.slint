@@ -3040,16 +3040,16 @@ export component InfiniteCanvasPage {
 
                     workflow-prompt-input := TextInput {
                         x: workflow-prompt-frame.reference-mention-width;
-                        y: 4px;
+                        y: 0px;
                         width: parent.width - self.x;
-                        height: parent.height - self.y;
+                        height: 24px;
                         text <=> AppState.canvas-workflow-prompt;
-                        single-line: false;
-                        wrap: word-wrap;
+                        single-line: true;
+                        wrap: no-wrap;
                         color: #f4f1fb;
                         font-size: 13px;
                         font-weight: 400;
-                        vertical-alignment: top;
+                        vertical-alignment: center;
                         key-pressed(event) => {
                             if event.modifiers.control && event.text == Key.Return {
                                 root.generate-workflow();
