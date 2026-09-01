@@ -5,6 +5,8 @@ pub(super) const GROUP_PADDING: f32 = 36.0;
 pub(super) const GROUP_TOP_PADDING: f32 = 72.0;
 const MIN_IMAGE_NODE_EDGE: f32 = 80.0;
 const MAX_IMAGE_NODE_EDGE: f32 = 4096.0;
+const GENERATED_NODE_GAP: f32 = 48.0;
+const GENERATED_NODE_SEARCH_RINGS: i32 = 64;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct CanvasRect {
@@ -39,6 +41,94 @@ fn note_rect(note: &CanvasNoteData) -> CanvasRect {
         width: note.width,
         height: note.height,
     }
+}
+
+fn canvas_position_is_free(
+    notes: &[CanvasNoteData],
+    candidate: CanvasRect,
+    ignore_id: Option<&str>,
+) -> bool {
+    notes.iter().all(|note| {
+        if note.kind == "group" || ignore_id.is_some_and(|id| note.id == id) {
+            return true;
+        }
+        let occupied = note_rect(note);
+        candidate.x >= occupied.x + occupied.width + GENERATED_NODE_GAP
+            || candidate.x + candidate.width + GENERATED_NODE_GAP <= occupied.x
+            || candidate.y >= occupied.y + occupied.height + GENERATED_NODE_GAP
+            || candidate.y + candidate.height + GENERATED_NODE_GAP <= occupied.y
+    })
+}
+
+pub(super) fn nearest_free_canvas_position(
+    notes: &[CanvasNoteData],
+    desired_x: f32,
+    desired_y: f32,
+    width: f32,
+    height: f32,
+    ignore_id: Option<&str>,
+) -> (f32, f32) {
+    let candidate_is_free = |x: f32, y: f32| {
+        canvas_position_is_free(
+            notes,
+            CanvasRect {
+                x,
+                y,
+                width,
+                height,
+            },
+            ignore_id,
+        )
+    };
+    if candidate_is_free(desired_x, desired_y) {
+        return (desired_x, desired_y);
+    }
+
+    let step_x = width + GENERATED_NODE_GAP;
+    let step_y = height + GENERATED_NODE_GAP;
+    for ring in 1..=GENERATED_NODE_SEARCH_RINGS {
+        let cardinal = [(ring, 0), (0, ring), (-ring, 0), (0, -ring)];
+        for (grid_x, grid_y) in cardinal {
+            let x = desired_x + grid_x as f32 * step_x;
+            let y = desired_y + grid_y as f32 * step_y;
+            if candidate_is_free(x, y) {
+                return (x, y);
+            }
+        }
+        for offset in 1..ring {
+            let perimeter = [
+                (ring, offset),
+                (ring, -offset),
+                (offset, ring),
+                (-offset, ring),
+                (-ring, offset),
+                (-ring, -offset),
+                (offset, -ring),
+                (-offset, -ring),
+            ];
+            for (grid_x, grid_y) in perimeter {
+                let x = desired_x + grid_x as f32 * step_x;
+                let y = desired_y + grid_y as f32 * step_y;
+                if candidate_is_free(x, y) {
+                    return (x, y);
+                }
+            }
+        }
+        for (grid_x, grid_y) in [(ring, ring), (ring, -ring), (-ring, ring), (-ring, -ring)] {
+            let x = desired_x + grid_x as f32 * step_x;
+            let y = desired_y + grid_y as f32 * step_y;
+            if candidate_is_free(x, y) {
+                return (x, y);
+            }
+        }
+    }
+
+    let rightmost = notes
+        .iter()
+        .filter(|note| note.kind != "group" && !ignore_id.is_some_and(|id| note.id == id))
+        .map(|note| note.x + note.width)
+        .fold(desired_x, f32::max);
+    (rightmost + GENERATED_NODE_GAP, desired_y)
 }
 
 pub(super) fn generated_canvas_result_position(

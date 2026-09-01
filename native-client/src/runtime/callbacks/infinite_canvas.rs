@@ -1371,6 +1371,14 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
 
             let (_, width, height) =
                 canvas_node_defaults("image", state.get_language().as_str() == "en");
+            let (x, y) = nearest_free_canvas_position(
+                &store_mut.canvas_notes,
+                center_x - width / 2.0,
+                center_y - height / 2.0,
+                width,
+                height,
+                None,
+            );
             let id = Uuid::new_v4().to_string();
             history.borrow_mut().record(canvas_snapshot(&store_mut));
             clear_selection(&mut store_mut.canvas_notes);
@@ -1378,8 +1386,8 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                 id: id.clone(),
                 kind: "image".to_string(),
                 content: prompt,
-                x: center_x - width / 2.0,
-                y: center_y - height / 2.0,
+                x,
+                y,
                 width,
                 height,
                 selected: true,

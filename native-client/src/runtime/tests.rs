@@ -3981,7 +3981,7 @@ mod tests {
             "if (root.is-visual-media() || root.is-board-image()) && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-action-bar"
         ));
         assert!(node.contains(
-            "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-editor-panel"
+            "if root.is-visual-media() && (root.note.kind != \"image\" || root.note.image-path == \"\") && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-editor-panel"
         ));
         assert!(!node.contains(
             "AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 45: media-action-bar"
@@ -4361,7 +4361,7 @@ mod tests {
             "if (root.is-visual-media() || root.is-board-image()) && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-action-bar"
         ));
         assert!(node.contains(
-            "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-editor-panel"
+            "if root.is-visual-media() && (root.note.kind != \"image\" || root.note.image-path == \"\") && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-editor-panel"
         ));
         assert!(node.contains("visible: root.note.kind == \"group\" && root.zoom-percent >= 30"));
     }

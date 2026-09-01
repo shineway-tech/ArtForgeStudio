@@ -1670,7 +1670,7 @@ component CanvasNodeCard {
             }
         }
 
-        if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-editor-panel := Rectangle {
+        if root.is-visual-media() && (root.note.kind != "image" || root.note.image-path == "") && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-editor-panel := Rectangle {
             x: (parent.width - root.media-editor-width()) / 2;
             y: root.media-editor-y();
             width: root.media-editor-width();

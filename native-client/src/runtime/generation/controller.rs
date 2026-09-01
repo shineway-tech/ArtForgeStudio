@@ -251,6 +251,50 @@ mod deep_prompt_tests {
         assert_eq!(notes[0].y, 240.0);
         assert!(!notes[0].selected);
     }
+
+    #[test]
+    fn composer_generation_moves_result_away_from_an_existing_image() {
+        let mut notes = vec![
+            CanvasNoteData {
+                id: "existing-image".to_string(),
+                kind: "image".to_string(),
+                image_path: "existing.png".to_string(),
+                x: 100.0,
+                y: 200.0,
+                width: 340.0,
+                height: 250.0,
+                ..CanvasNoteData::default()
+            },
+            CanvasNoteData {
+                id: "loading-result".to_string(),
+                kind: "image".to_string(),
+                content: "tomato growth".to_string(),
+                x: 100.0,
+                y: 200.0,
+                width: 340.0,
+                height: 250.0,
+                selected: true,
+                ..CanvasNoteData::default()
+            },
+        ];
+
+        assert!(replace_canvas_generation_placeholder(
+            &mut notes,
+            "loading-result",
+            "loading-result",
+            "generated.png",
+            680.0,
+            500.0,
+            0,
+        ));
+
+        let generated = notes
+            .iter()
+            .find(|note| note.id == "loading-result")
+            .expect("generated image");
+        assert_eq!(generated.x, 488.0);
+        assert_eq!(generated.y, 200.0);
+    }
 }
 
 pub(super) fn compose_inline_custom_prompts(
@@ -631,8 +675,14 @@ pub(super) fn add_canvas_stream_success_item(
         result_index,
         total_count,
     );
-    result.x = x;
-    result.y = y;
+    (result.x, result.y) = nearest_free_canvas_position(
+        target_notes,
+        x,
+        y,
+        result.width,
+        result.height,
+        None,
+    );
     let result_id = result.id.clone();
 
     target_notes.push(result);
@@ -659,22 +709,40 @@ fn replace_canvas_generation_placeholder(
     if result_index != 0 || loading_node_id != source_node_id {
         return false;
     }
-    let Some(source) = notes.iter_mut().find(|note| {
+    let Some(source_index) = notes.iter().position(|note| {
         note.id == source_node_id && note.kind == "image" && note.image_path.trim().is_empty()
     }) else {
         return false;
     };
 
-    let center_x = source.x + source.width / 2.0;
-    let center_y = source.y + source.height / 2.0;
-    source.content.clear();
-    source.image_path = source_path.to_string();
-    source.width = 340.0;
-    source.height = 250.0;
-    fit_image_node_to_intrinsic_aspect(source, image_width, image_height);
-    source.x = center_x - source.width / 2.0;
-    source.y = center_y - source.height / 2.0;
-    source.selected = false;
+    let (desired_x, desired_y, width, height, source_id) = {
+        let source = &mut notes[source_index];
+        let center_x = source.x + source.width / 2.0;
+        let center_y = source.y + source.height / 2.0;
+        source.content.clear();
+        source.image_path = source_path.to_string();
+        source.width = 340.0;
+        source.height = 250.0;
+        fit_image_node_to_intrinsic_aspect(source, image_width, image_height);
+        source.selected = false;
+        (
+            center_x - source.width / 2.0,
+            center_y - source.height / 2.0,
+            source.width,
+            source.height,
+            source.id.clone(),
+        )
+    };
+    let (x, y) = nearest_free_canvas_position(
+        notes,
+        desired_x,
+        desired_y,
+        width,
+        height,
+        Some(&source_id),
+    );
+    notes[source_index].x = x;
+    notes[source_index].y = y;
     true
 }
 
