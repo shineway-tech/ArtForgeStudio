@@ -2263,7 +2263,9 @@ mod tests {
         assert!(canvas.contains(": AppState.canvas-workflow-template"));
         assert!(canvas.contains("User description:"));
         assert!(canvas.contains("用户描述："));
-        assert!(canvas.contains("AppState.generate-canvas-node(source-id, submitted-prompt)"));
+        assert!(canvas.contains(
+            "AppState.generate-canvas-node(AppState.canvas-generation-loading-node-id, submitted-prompt)"
+        ));
 
         assert!(state.contains(
             "callback create-canvas-generation-source(string, float, float) -> string"
@@ -2275,6 +2277,33 @@ mod tests {
         assert!(reference_callbacks.contains("state.on_clear_references"));
         assert!(viewer.contains("state.set_canvas_workflow_id(\"\".into())"));
         assert!(viewer.contains("DEFAULT_CANVAS_WORKSPACE_ID"));
+    }
+
+    #[test]
+    fn canvas_workflow_matches_inline_references_and_loading_result_behavior() {
+        let state = include_str!("../../ui/app-state.slint");
+        let launcher = include_str!("../../ui/pages/free-canvas-page.slint");
+        let canvas = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let controller = include_str!("generation/controller.rs");
+
+        assert!(canvas.contains("workflow-reference-mentions := Rectangle"));
+        assert!(canvas.contains("text: (AppState.en ? \"Image\" : \"图片\") + (index + 1)"));
+        assert!(canvas.contains("x: workflow-prompt-frame.reference-mention-width"));
+        assert!(canvas.contains("workflow-prompt-input.set-selection-offsets(2147483647, 2147483647)"));
+        assert!(canvas.contains("x: 14px;\n                    y: 117px"));
+        assert!(canvas.contains("x: 62px + index * 48px"));
+
+        assert!(state.contains("canvas-generation-loading-node-id"));
+        assert!(canvas.contains("function generation-loading() -> bool"));
+        assert!(canvas.contains("workflow-generation-loading := Rectangle"));
+        assert!(controller.contains("replace_canvas_generation_placeholder"));
+        assert!(controller.contains("state.set_canvas_generation_loading_node_id(\"\".into())"));
+
+        assert!(canvas.contains(
+            "transform-rotation: root.workflow-composer-collapsed ? 0deg : 180deg;"
+        ));
+        assert!(launcher.contains("默认直接生长在自然土壤中"));
+        assert!(launcher.contains("Only use a pot or container when the user explicitly requests one"));
     }
 
     #[test]
@@ -3935,7 +3964,7 @@ mod tests {
             "if (root.is-visual-media() || root.is-board-image()) && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-action-bar"
         ));
         assert!(node.contains(
-            "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-editor-panel"
+            "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-editor-panel"
         ));
         assert!(!node.contains(
             "AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 45: media-action-bar"
@@ -4293,7 +4322,9 @@ mod tests {
         assert!(node.contains(
             "return root.note.selected || AppState.canvas-selected-id == root.note.id;"
         ));
-        assert!(node.contains("if root.node-selected(): selection-outline := Rectangle"));
+        assert!(node.contains(
+            "if root.node-selected() && !root.generation-loading(): selection-outline := Rectangle"
+        ));
         assert!(outline.contains("border-width: 3px"));
         assert!(outline.contains("border-color: AppTheme.accent"));
         assert!(outline.contains("z: 50"));
@@ -4313,7 +4344,7 @@ mod tests {
             "if (root.is-visual-media() || root.is-board-image()) && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-action-bar"
         ));
         assert!(node.contains(
-            "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-editor-panel"
+            "if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-editor-panel"
         ));
         assert!(node.contains("visible: root.note.kind == \"group\" && root.zoom-percent >= 30"));
     }

@@ -190,7 +190,10 @@ fn submitted_prompt_for_visible_prompt(
 
 #[cfg(test)]
 mod deep_prompt_tests {
-    use super::submitted_prompt_for_visible_prompt;
+    use super::{
+        replace_canvas_generation_placeholder, submitted_prompt_for_visible_prompt,
+        CanvasNoteData,
+    };
 
     #[test]
     fn applied_chinese_prompt_submits_its_matching_english_version() {
@@ -214,6 +217,39 @@ mod deep_prompt_tests {
             ),
             "月下的古老锻造工坊",
         );
+    }
+
+    #[test]
+    fn composer_generation_replaces_its_loading_rectangle_in_place() {
+        let mut notes = vec![CanvasNoteData {
+            id: "loading-result".to_string(),
+            kind: "image".to_string(),
+            content: "tomato growth".to_string(),
+            x: 100.0,
+            y: 200.0,
+            width: 340.0,
+            height: 250.0,
+            selected: true,
+            ..CanvasNoteData::default()
+        }];
+
+        assert!(replace_canvas_generation_placeholder(
+            &mut notes,
+            "loading-result",
+            "loading-result",
+            "generated.png",
+            1024.0,
+            512.0,
+            0,
+        ));
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].image_path, "generated.png");
+        assert_eq!(notes[0].content, "");
+        assert_eq!(notes[0].width, 340.0);
+        assert_eq!(notes[0].height, 170.0);
+        assert_eq!(notes[0].x, 100.0);
+        assert_eq!(notes[0].y, 240.0);
+        assert!(!notes[0].selected);
     }
 }
 
@@ -302,6 +338,7 @@ pub(super) fn stop_generation(app: &AppWindow, context: &AppContext) {
         sync_generation_state_for_current_category(context, app);
         return;
     };
+    discard_canvas_generation_placeholder(&state, &task.destination);
     refresh_delivery_download_flags(app, context);
     set_generation_status_for_category(context, app, &category, "已停止生成");
     sync_generation_state_for_current_category(context, app);
@@ -492,6 +529,11 @@ pub(super) fn add_canvas_stream_success_item(
     total_count: i32,
 ) -> Result<String> {
     let (bytes, _, width, height) = generated_image_from_bytes(bytes)?;
+    let loading_node_id = app
+        .global::<AppState>()
+        .get_canvas_generation_loading_node_id()
+        .to_string();
+    let replaces_loading_placeholder = result_index == 0 && loading_node_id == source_node_id;
     let target_workspace_id = {
         let store = context.store.borrow();
         let active_workspace_id = normalize_canvas_workspace_id(&store.active_canvas_workspace_id);
@@ -506,7 +548,7 @@ pub(super) fn add_canvas_stream_success_item(
                 .ok_or_else(|| anyhow!("生成来源所在画板已不存在"))?;
             (workspace.notes.len(), workspace.links.len())
         };
-        if node_count >= 200 || link_count >= 400 {
+        if !replaces_loading_placeholder && (node_count >= 200 || link_count >= 400) {
             return Err(anyhow!("画布已达到容量上限"));
         }
         target_workspace_id
@@ -531,6 +573,39 @@ pub(super) fn add_canvas_stream_success_item(
         .find(|note| note.id == source_node_id)
         .cloned()
         .ok_or_else(|| anyhow!("生成来源所在画板已不存在"))?;
+
+    if target_is_active {
+        context
+            .canvas_history
+            .borrow_mut()
+            .record(CanvasSnapshot {
+                notes: target_notes.clone(),
+                links: target_links.clone(),
+            });
+    }
+
+    if replace_canvas_generation_placeholder(
+        target_notes,
+        source_node_id,
+        &loading_node_id,
+        &source_path,
+        width as f32,
+        height as f32,
+        result_index,
+    ) {
+        save_local_store(app, &store);
+        let state = app.global::<AppState>();
+        state.set_canvas_generation_loading_node_id("".into());
+        if target_is_active {
+            state.set_canvas_selected_id("".into());
+            state.set_canvas_selected_count(0);
+            push_canvas_notes(app, &store);
+            state.set_canvas_can_undo(context.canvas_history.borrow().can_undo());
+            state.set_canvas_can_redo(context.canvas_history.borrow().can_redo());
+        }
+        return Ok(source_path);
+    }
+
     let mut result = CanvasNoteData {
         id: Uuid::new_v4().to_string(),
         kind: "image".to_string(),
@@ -560,15 +635,6 @@ pub(super) fn add_canvas_stream_success_item(
     result.y = y;
     let result_id = result.id.clone();
 
-    if target_is_active {
-        context
-            .canvas_history
-            .borrow_mut()
-            .record(CanvasSnapshot {
-                notes: target_notes.clone(),
-                links: target_links.clone(),
-            });
-    }
     target_notes.push(result);
     let _ = connect_nodes(target_links, source_node_id, &result_id);
     save_local_store(app, &store);
@@ -579,6 +645,51 @@ pub(super) fn add_canvas_stream_success_item(
         state.set_canvas_can_redo(context.canvas_history.borrow().can_redo());
     }
     Ok(source_path)
+}
+
+fn replace_canvas_generation_placeholder(
+    notes: &mut [CanvasNoteData],
+    source_node_id: &str,
+    loading_node_id: &str,
+    source_path: &str,
+    image_width: f32,
+    image_height: f32,
+    result_index: i32,
+) -> bool {
+    if result_index != 0 || loading_node_id != source_node_id {
+        return false;
+    }
+    let Some(source) = notes.iter_mut().find(|note| {
+        note.id == source_node_id && note.kind == "image" && note.image_path.trim().is_empty()
+    }) else {
+        return false;
+    };
+
+    let center_x = source.x + source.width / 2.0;
+    let center_y = source.y + source.height / 2.0;
+    source.content.clear();
+    source.image_path = source_path.to_string();
+    source.width = 340.0;
+    source.height = 250.0;
+    fit_image_node_to_intrinsic_aspect(source, image_width, image_height);
+    source.x = center_x - source.width / 2.0;
+    source.y = center_y - source.height / 2.0;
+    source.selected = false;
+    true
+}
+
+pub(super) fn discard_canvas_generation_placeholder(
+    state: &AppState,
+    destination: &GenerationDestination,
+) {
+    let GenerationDestination::Canvas { source_node_id } = destination else {
+        return;
+    };
+    if state.get_canvas_generation_loading_node_id().as_str() != source_node_id {
+        return;
+    }
+    state.set_canvas_generation_loading_node_id("".into());
+    state.invoke_remove_canvas_node(source_node_id.clone().into());
 }
 
 pub(super) fn canvas_workspace_id_for_source(

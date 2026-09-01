@@ -508,6 +508,9 @@ pub(super) fn poll_generation_stream(
                 let Some(task) = task else {
                     return;
                 };
+                if task.success_count == 0 {
+                    discard_canvas_generation_placeholder(&state, &task.destination);
+                }
                 if create_conversation && task.success_count == 0 {
                     finish_conversation_placeholder(&state, &conversation_id, None);
                 }
@@ -552,6 +555,7 @@ pub(super) fn poll_generation_stream(
                 let Some(task) = task else {
                     return;
                 };
+                discard_canvas_generation_placeholder(&state, &task.destination);
                 if create_conversation && task.success_count == 0 {
                     remove_conversation_placeholder(&state, &conversation_id);
                 }
@@ -586,6 +590,9 @@ pub(super) fn poll_generation_stream(
                 let Some(task) = task else {
                     return;
                 };
+                if task.success_count == 0 {
+                    discard_canvas_generation_placeholder(&state, &task.destination);
+                }
                 let remaining = (task.total_count - task.completed_count).max(1);
                 if destination == GenerationDestination::Gallery {
                     for _ in 0..remaining {

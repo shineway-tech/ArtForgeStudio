@@ -2475,7 +2475,9 @@ fn schedule_reference_previews(
                 let weak = weak.clone();
                 let _ = weak.upgrade_in_event_loop(move |app| {
                     if REFERENCE_PREVIEW_EPOCH.load(Ordering::Acquire) != preview_epoch
-                        || app.global::<AppState>().get_page().as_str() != "generation"
+                        || !reference_preview_page_is_visible(
+                            app.global::<AppState>().get_page().as_str(),
+                        )
                     {
                         return;
                     }
@@ -2498,6 +2500,10 @@ fn schedule_reference_previews(
         });
 }
 
+fn reference_preview_page_is_visible(page: &str) -> bool {
+    matches!(page, "generation" | "canvas")
+}
+
 pub(super) fn push_notifications(app: &AppWindow, store: &Store) {
     let has_unread = store.notifications.iter().any(|n| !n.read);
     let state = app.global::<AppState>();
@@ -2517,6 +2523,18 @@ pub(super) fn push_notifications(app: &AppWindow, store: &Store) {
             })
             .collect::<Vec<_>>(),
     )));
+}
+
+#[cfg(test)]
+mod reference_preview_page_tests {
+    use super::reference_preview_page_is_visible;
+
+    #[test]
+    fn canvas_reference_previews_remain_visible_on_canvas_pages() {
+        assert!(reference_preview_page_is_visible("generation"));
+        assert!(reference_preview_page_is_visible("canvas"));
+        assert!(!reference_preview_page_is_visible("settings"));
+    }
 }
 
 pub(super) fn to_model_group_view(group: &ModelGroupData) -> ModelGroup {

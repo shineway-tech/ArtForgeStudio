@@ -249,10 +249,10 @@ export component FreeCanvasPage {
                 description: AppState.en ? "Generate five growth stages" : "一键生成植物的五个生长阶段";
                 category: "scene";
                 artwork: @image-url("../../assets/free-canvas/plant-growth.png");
-                prompt-zh: "根据参考图中的植物和关键词，生成同一植物从种子、幼苗、生长开花、结果到衰败的5个连续生长阶段。将五个阶段安排在同一张横向画面中，保持植物品种、花盆、视角、比例、背景和绘制风格一致，各阶段轮廓完整、间距均匀、演变清晰。";
-                prompt-en: "Using the reference plant and keyword, create five consecutive growth stages of the same plant: seed, seedling, flowering growth, fruiting, and withering. Arrange all five stages in one horizontal image. Keep the species, pot, camera, scale, background, and rendering style consistent, with complete silhouettes, even spacing, and a clear progression.";
-                hint-zh: "简单描述植物和风格，例如：西红柿，陶盆，儿童科普插画";
-                hint-en: "Describe the plant and style, e.g. tomato in a clay pot, educational illustration";
+                prompt-zh: "根据参考图中的植物和关键词，生成同一植物从种子、幼苗、生长开花、结果到衰败的5个连续生长阶段。将五个阶段安排在同一张横向画面中，保持植物品种、视角、比例、背景和绘制风格一致，各阶段轮廓完整、间距均匀、演变清晰。默认直接生长在自然土壤中，不使用花盆或其他容器；只有当用户在描述中明确要求花盆、花器或容器时，才采用对应容器，并保持五个阶段一致。";
+                prompt-en: "Using the reference plant and keyword, create five consecutive growth stages of the same plant: seed, seedling, flowering growth, fruiting, and withering. Arrange all five stages in one horizontal image. Keep the species, camera, scale, background, and rendering style consistent, with complete silhouettes, even spacing, and a clear progression. By default, grow every stage directly in natural soil without a pot or container. Only use a pot or container when the user explicitly requests one, and keep it consistent across all five stages.";
+                hint-zh: "简单描述植物和风格，例如：西红柿，儿童科普插画";
+                hint-en: "Describe the plant and style, e.g. tomato, educational illustration";
             }
             FreeCanvasCard {
                 x: root.card-width() + root.card-gap();

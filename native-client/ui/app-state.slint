@@ -211,6 +211,8 @@ export global AppState {
     in-out property <image> canvas-workflow-artwork;
     in-out property <int> canvas-workspace-switch-request: 0;
     in-out property <string> canvas-selected-id: "";
+    // Transient UI-only state for the composer result rectangle while image generation runs.
+    in-out property <string> canvas-generation-loading-node-id: "";
     // Transient UI-only state used while a local image split worker is running.
     in-out property <string> canvas-split-loading-node-id: "";
     // Transient UI-only state used while elements are extracted from the current image.

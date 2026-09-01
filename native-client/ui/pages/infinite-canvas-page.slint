@@ -898,8 +898,15 @@ component CanvasNodeCard {
     }
 
     function image-processing() -> bool {
-        return AppState.canvas-split-loading-node-id == root.note.id
+        return root.generation-loading()
+            || AppState.canvas-split-loading-node-id == root.note.id
             || AppState.canvas-extraction-loading-node-id == root.note.id;
+    }
+
+    function generation-loading() -> bool {
+        return AppState.canvas-generation-loading-node-id == root.note.id
+            && root.note.kind == "image"
+            && root.note.image-path == "";
     }
 
     function node-selected() -> bool {
@@ -1404,7 +1411,7 @@ component CanvasNodeCard {
             }
         }
 
-        if (root.note.kind == "text" || root.is-visual-media()) && root.zoom-percent >= 30: Text {
+        if (root.note.kind == "text" || root.is-visual-media()) && root.zoom-percent >= 30 && !root.generation-loading(): Text {
             x: 12px * root.node-scale();
             y: root.y < 40px * root.node-scale() ? 12px * root.node-scale() : -34px * root.node-scale();
             width: parent.width - 2 * self.x;
@@ -1492,7 +1499,33 @@ component CanvasNodeCard {
             }
         }
 
-        if root.node-selected(): selection-outline := Rectangle {
+        if root.generation-loading(): workflow-generation-loading := Rectangle {
+            x: 2px * root.node-scale();
+            y: self.x;
+            width: parent.width - 2 * self.x;
+            height: parent.height - 2 * self.y;
+            background: #24222a;
+            border-radius: 18px * root.node-scale();
+            clip: true;
+            LoadingDots {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2 - 14px * root.node-scale();
+            }
+            Text {
+                x: 16px * root.node-scale();
+                y: parent.height / 2 + 15px * root.node-scale();
+                width: parent.width - 32px * root.node-scale();
+                height: 28px * root.node-scale();
+                text: AppState.en ? "Generating..." : "生成中…";
+                color: #f2eff8;
+                font-size: 13px * root.node-scale();
+                font-weight: 500;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        if root.node-selected() && !root.generation-loading(): selection-outline := Rectangle {
             x: -3px;
             y: -3px;
             width: parent.width + 6px;
@@ -1504,7 +1537,7 @@ component CanvasNodeCard {
             z: 50;
         }
 
-        if root.is-visual-media() && (root.note.kind != "image" || root.note.image-path == "") && root.zoom-percent >= 30: Rectangle {
+        if root.is-visual-media() && (root.note.kind != "image" || root.note.image-path == "") && root.zoom-percent >= 30 && !root.generation-loading(): Rectangle {
             x: (parent.width - 64px * root.node-scale()) / 2;
             y: (parent.height - 104px * root.node-scale()) / 2;
             width: 64px * root.node-scale();
@@ -1523,7 +1556,7 @@ component CanvasNodeCard {
             }
         }
 
-        if root.is-visual-media() && (root.note.kind != "image" || root.note.image-path == "") && root.zoom-percent >= 30: Text {
+        if root.is-visual-media() && (root.note.kind != "image" || root.note.image-path == "") && root.zoom-percent >= 30 && !root.generation-loading(): Text {
             x: 12px * root.node-scale();
             y: parent.height / 2 + 28px * root.node-scale();
             width: parent.width - 24px * root.node-scale();
@@ -1637,7 +1670,7 @@ component CanvasNodeCard {
             }
         }
 
-        if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30: media-editor-panel := Rectangle {
+        if root.is-visual-media() && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-editor-panel := Rectangle {
             x: (parent.width - root.media-editor-width()) / 2;
             y: root.media-editor-y();
             width: root.media-editor-width();
@@ -2384,7 +2417,12 @@ export component InfiniteCanvasPage {
             world-y / 1px,
         );
         if source-id != "" {
-            AppState.generate-canvas-node(source-id, submitted-prompt);
+            AppState.canvas-generation-loading-node-id = source-id;
+            AppState.generate-canvas-node(AppState.canvas-generation-loading-node-id, submitted-prompt);
+            if !AppState.generating && AppState.canvas-generation-loading-node-id != "" {
+                AppState.remove-canvas-node(AppState.canvas-generation-loading-node-id);
+                AppState.canvas-generation-loading-node-id = "";
+            }
             AppState.canvas-tool = "pan";
         }
     }
@@ -2911,6 +2949,15 @@ export component InfiniteCanvasPage {
                 height: root.workflow-composer-collapsed ? 67px : 213px;
                 background: transparent;
                 clip: false;
+                property <int> observed-reference-count: AppState.references.length;
+                property <int> previous-reference-count: 0;
+                property <bool> workflow-prompt-focus-pending: false;
+                changed observed-reference-count => {
+                    if self.observed-reference-count > self.previous-reference-count {
+                        self.workflow-prompt-focus-pending = true;
+                    }
+                    self.previous-reference-count = self.observed-reference-count;
+                }
                 animate height { duration: 140ms; }
 
                 workflow-dock-surface := Rectangle {
@@ -2943,7 +2990,7 @@ export component InfiniteCanvasPage {
                         source: @image-url("../../assets/icons/chevron-up-tight.svg");
                         colorize: #8f8d98;
                         image-fit: contain;
-                        transform-rotation: root.workflow-composer-collapsed ? 180deg : 0deg;
+                        transform-rotation: root.workflow-composer-collapsed ? 0deg : 180deg;
                     }
                     TouchArea {
                         width: parent.width;
@@ -2987,11 +3034,14 @@ export component InfiniteCanvasPage {
                     height: 80px;
                     background: transparent;
                     border-width: 0px;
+                    property <length> reference-mention-width: AppState.references.length == 0
+                        ? 0px
+                        : min(AppState.references.length * 58px, max(0px, self.width - 96px));
 
                     workflow-prompt-input := TextInput {
-                        x: 0px;
+                        x: workflow-prompt-frame.reference-mention-width;
                         y: 0px;
-                        width: parent.width;
+                        width: parent.width - self.x;
                         height: parent.height;
                         text <=> AppState.canvas-workflow-prompt;
                         single-line: false;
@@ -3007,10 +3057,46 @@ export component InfiniteCanvasPage {
                             return reject;
                         }
                     }
-                    if AppState.canvas-workflow-prompt == "" && !workflow-prompt-input.has-focus: Text {
+                    workflow-reference-mentions := Rectangle {
                         x: 0px;
                         y: 0px;
-                        width: parent.width;
+                        width: workflow-prompt-frame.reference-mention-width;
+                        height: 24px;
+                        background: transparent;
+                        clip: true;
+                        for reference[index] in AppState.references: Rectangle {
+                            x: index * 58px;
+                            y: 1px;
+                            width: 54px;
+                            height: 22px;
+                            background: #25252c;
+                            border-radius: 6px;
+                            Image {
+                                x: 3px;
+                                y: 3px;
+                                width: 16px;
+                                height: 16px;
+                                source: reference.image;
+                                image-fit: cover;
+                            }
+                            Text {
+                                x: 21px;
+                                width: parent.width - 24px;
+                                height: parent.height;
+                                text: (AppState.en ? "Image" : "图片") + (index + 1);
+                                color: #b7b4c0;
+                                font-size: 11px;
+                                font-weight: 400;
+                                vertical-alignment: center;
+                                wrap: no-wrap;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                    if AppState.canvas-workflow-prompt == "" && !workflow-prompt-input.has-focus: Text {
+                        x: workflow-prompt-frame.reference-mention-width;
+                        y: 0px;
+                        width: parent.width - self.x;
                         height: 24px;
                         text: AppState.en ? "Image editing, enter a prompt" : "图片编辑，请输入提示词";
                         color: #9895a1;
@@ -3020,58 +3106,18 @@ export component InfiniteCanvasPage {
                     }
                 }
 
-                for reference[index] in AppState.references: Rectangle {
-                    visible: !root.workflow-composer-collapsed;
-                    x: 14px + index * 48px;
-                    y: 117px;
-                    width: 42px;
-                    height: 42px;
-                    background: #24242b;
-                    border-radius: 8px;
-                    border-width: 1px;
-                    border-color: #47444f;
-                    clip: false;
-                    Image {
-                        x: 2px;
-                        y: 2px;
-                        width: parent.width - 4px;
-                        height: parent.height - 4px;
-                        source: reference.image;
-                        image-fit: cover;
-                    }
-                    TouchArea {
-                        width: parent.width;
-                        height: parent.height;
-                        mouse-cursor: pointer;
-                        clicked => { AppState.open-reference(reference.id); }
-                    }
-                    Rectangle {
-                        x: parent.width - 9px;
-                        y: -5px;
-                        width: 14px;
-                        height: 14px;
-                        border-radius: 7px;
-                        background: #ef4b58;
-                        Text {
-                            width: parent.width;
-                            height: parent.height;
-                            text: "×";
-                            color: #ffffff;
-                            font-size: 10px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                        TouchArea {
-                            width: parent.width;
-                            height: parent.height;
-                            mouse-cursor: pointer;
-                            clicked => { AppState.remove-reference(reference.id); }
-                        }
+                Timer {
+                    interval: 1ms;
+                    running: canvas-workflow-dock.workflow-prompt-focus-pending;
+                    triggered => {
+                        canvas-workflow-dock.workflow-prompt-focus-pending = false;
+                        workflow-prompt-input.focus();
+                        workflow-prompt-input.set-selection-offsets(2147483647, 2147483647);
                     }
                 }
 
                 if AppState.references.length < 8 && !root.workflow-composer-collapsed: Rectangle {
-                    x: 14px + AppState.references.length * 48px;
+                    x: 14px;
                     y: 117px;
                     width: 42px;
                     height: 42px;
@@ -3105,6 +3151,75 @@ export component InfiniteCanvasPage {
                         height: parent.height;
                         mouse-cursor: pointer;
                         clicked => { AppState.add-reference(); }
+                    }
+                }
+
+                for reference[index] in AppState.references: Rectangle {
+                    visible: !root.workflow-composer-collapsed;
+                    x: 62px + index * 48px;
+                    y: 117px;
+                    width: 42px;
+                    height: 42px;
+                    background: #24242b;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: #47444f;
+                    clip: false;
+                    Image {
+                        x: 2px;
+                        y: 2px;
+                        width: parent.width - 4px;
+                        height: parent.height - 4px;
+                        source: reference.image;
+                        image-fit: cover;
+                    }
+                    reference-open-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => { AppState.open-reference(reference.id); }
+                    }
+                    Rectangle {
+                        x: -3px;
+                        y: parent.height - 11px;
+                        width: 14px;
+                        height: 14px;
+                        background: #ffffff;
+                        border-radius: 7px;
+                        Text {
+                            width: parent.width;
+                            height: parent.height;
+                            text: index + 1;
+                            color: #34313a;
+                            font-size: 9px;
+                            font-weight: 500;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                    Rectangle {
+                        visible: reference-open-touch.has-hover || remove-reference-touch.has-hover;
+                        x: parent.width - 9px;
+                        y: -5px;
+                        width: 14px;
+                        height: 14px;
+                        border-radius: 7px;
+                        background: #ef4b58;
+                        Text {
+                            width: parent.width;
+                            height: parent.height;
+                            text: "×";
+                            color: #ffffff;
+                            font-size: 10px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        remove-reference-touch := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => { AppState.remove-reference(reference.id); }
+                        }
                     }
                 }
 
