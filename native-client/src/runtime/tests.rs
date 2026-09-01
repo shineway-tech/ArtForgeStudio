@@ -2324,6 +2324,18 @@ mod tests {
     }
 
     #[test]
+    fn plant_growth_template_keeps_each_stage_on_separate_soil() {
+        let launcher = include_str!("../../ui/pages/free-canvas-page.slint");
+
+        assert!(launcher.contains("每个阶段分别位于一块独立的小土堆上"));
+        assert!(launcher.contains("土块之间必须保留清晰的背景空隙"));
+        assert!(launcher.contains("禁止形成连续土带、共享地面或相互连接的土壤"));
+        assert!(launcher.contains("Place each stage on its own separate mound of soil"));
+        assert!(launcher.contains("visible background gaps between every mound"));
+        assert!(launcher.contains("Never form a continuous soil strip, shared ground, or connected soil"));
+    }
+
+    #[test]
     fn toolbox_conversion_reuses_the_batch_upload_layout() {
         let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
         let conversion = include_str!("../../ui/pages/toolbox-conversion-page.slint");
