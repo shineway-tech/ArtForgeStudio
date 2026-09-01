@@ -2210,6 +2210,7 @@ mod tests {
             "canvas-workflow-prompt",
             "canvas-workflow-template",
             "canvas-workflow-hint",
+            "canvas-workflow-artwork",
             "canvas-workspace-switch-request",
         ] {
             assert!(state.contains(property));
@@ -2224,6 +2225,7 @@ mod tests {
         assert!(launcher.contains(
             "AppState.canvas-workflow-hint = AppState.en ? root.hint-en : root.hint-zh"
         ));
+        assert!(launcher.contains("AppState.canvas-workflow-artwork = root.artwork"));
         assert!(!launcher.contains("AppState.canvas-workflow-prompt = \"\""));
         assert!(launcher.contains("AppState.canvas-grid-style = \"dot\""));
         assert!(launcher.contains("AppState.canvas-dark-background = true"));
@@ -2232,14 +2234,24 @@ mod tests {
 
         assert!(canvas.contains("canvas-workflow-dock := Rectangle"));
         assert!(canvas.contains("workflow-dock-surface := Rectangle"));
-        assert!(canvas.contains("canvas-workflow-mode-tabs := Rectangle"));
+        assert!(!canvas.contains("canvas-workflow-mode-tabs := Rectangle"));
         assert!(canvas.contains("workflow-collapse-handle := Rectangle"));
         assert!(canvas.contains("changed workspace-switch-request"));
         assert!(canvas.contains("workflow-template-action := Rectangle"));
         assert!(canvas.contains("workflow-bottom-controls := Rectangle"));
-        assert!(canvas.contains("AppState.en ? \"Image generation\" : \"图片生成\""));
-        assert!(canvas.contains("AppState.en ? \"Video generation\" : \"视频生成\""));
-        assert!(canvas.contains("AppState.en ? \"3D generation\" : \"3D生成\""));
+        assert!(!canvas.contains("AppState.en ? \"Video generation\" : \"视频生成\""));
+        assert!(!canvas.contains("AppState.en ? \"3D generation\" : \"3D生成\""));
+        assert!(!canvas.contains("text: \"@\""));
+        assert!(canvas.contains("source: AppState.canvas-workflow-artwork"));
+        assert!(canvas.contains("workflow-model-control := Rectangle"));
+        assert!(canvas.contains("workflow-model-popup := PopupWindow"));
+        assert!(canvas.contains("workflow-settings-popup := PopupWindow"));
+        assert!(canvas.contains("AppState.select-image-model(model.code)"));
+        assert!(canvas.contains("workflow-model-popup.show()"));
+        assert!(canvas.contains("workflow-settings-popup.show()"));
+        assert!(canvas.contains("AppState.ratio + \" · \" + AppState.quality"));
+        assert!(canvas.contains("AppState.quality = \"4K\""));
+        assert!(canvas.contains("AppState.ratio = \"16:9\""));
         assert!(canvas.contains("text <=> AppState.canvas-workflow-prompt"));
         assert!(canvas.contains("for reference[index] in AppState.references"));
         assert!(canvas.contains("AppState.add-reference()"));
@@ -3403,6 +3415,11 @@ mod tests {
             .nth(1)
             .and_then(|value| value.split("scroll-event(event)").next())
             .expect("canvas pointer handler");
+        let canvas_scroll = page
+            .split("scroll-event(event)")
+            .nth(1)
+            .and_then(|value| value.split("canvas-keyboard := FocusScope").next())
+            .expect("canvas scroll handler");
 
         for interaction in [
             "marquee-active",
@@ -3430,6 +3447,13 @@ mod tests {
         assert!(canvas_pointer.contains(
             "if event.button == PointerEventButton.middle || root.space-pan-active"
         ));
+        assert!(canvas_scroll.contains("event.modifiers.control"));
+        assert!(canvas_scroll.contains("root.set-zoom"));
+        assert!(canvas_scroll.contains("root.pan-y += event.delta-y"));
+        assert!(canvas_scroll.contains("root.pan-x += event.delta-x"));
+        assert!(page.contains("if event.text == Key.Space"));
+        assert!(page.contains("root.space-pan-active = true"));
+        assert!(page.contains("root.space-pan-active = false"));
         assert!(!canvas_pointer.contains("AppState.canvas-tool == \"pan\""));
         assert!(
             !page.contains("AppState.select-canvas-node(root.note.id, event.modifiers.control);")
@@ -3815,7 +3839,7 @@ mod tests {
         assert!(page.contains(
             "node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover"
         ));
-        assert!(page.contains("toolbar.y - self.height - 10px"));
+        assert!(page.contains("x: toolbar.x + toolbar.width + 10px"));
         assert!(state.contains("canvas-drag-preview-id"));
         assert!(dialog.contains("确认删除这条连接？"));
     }
@@ -4333,6 +4357,8 @@ mod tests {
             .expect("zoom panel");
 
         assert!(page.contains("component CanvasZoomButton"));
+        assert!(zoom_panel.contains("x: parent.width - self.width - 16px"));
+        assert!(zoom_panel.contains("y: 16px"));
         assert!(zoom_panel.contains("width: min(250px"));
         assert!(zoom_panel.contains("height: 48px"));
         assert!(zoom_panel.contains("compass.svg"));
@@ -4346,6 +4372,30 @@ mod tests {
         assert!(zoom_panel.contains("x: zoom-track.thumb-center-x - 7px"));
         assert!(!zoom_panel.contains("parent.width * (root.zoom-percent - 5) / 495"));
         assert!(!zoom_panel.contains("background: AppTheme.accent"));
+    }
+
+    #[test]
+    fn infinite_canvas_uses_a_full_width_workspace_with_a_vertical_tool_strip() {
+        let app = include_str!("../../ui/app.slint");
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let toolbar = page
+            .split("toolbar := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("if root.image-insert-open").next())
+            .expect("canvas toolbar");
+
+        assert!(app.contains(
+            "AppState.page != \"video-generation\" && AppState.page != \"canvas\": Sidebar"
+        ));
+        assert!(toolbar.contains("x: 16px"));
+        assert!(toolbar.contains("y: max(16px, (parent.height - self.height) / 2)"));
+        assert!(toolbar.contains("width: 44px"));
+        assert!(toolbar.contains("height: 310px"));
+        assert!(toolbar.contains("VerticalLayout"));
+        assert!(!toolbar.contains("HorizontalLayout"));
+        assert!(page.contains("x: toolbar.x + toolbar.width + 10px"));
+        assert!(page.contains("toolbar.y + image-button.y"));
+        assert!(page.contains("toolbar.y + appearance-button.y"));
     }
 
     #[test]

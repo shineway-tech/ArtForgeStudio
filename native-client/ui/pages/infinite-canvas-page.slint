@@ -2615,8 +2615,13 @@ export component InfiniteCanvasPage {
                     }
                 }
                 scroll-event(event) => {
-                    if event.delta-y != 0 {
+                    if event.modifiers.control && event.delta-y != 0 {
                         root.set-zoom(root.zoom-percent + (event.delta-y > 0 ? 10 : -10), self.mouse-x, self.mouse-y);
+                        return accept;
+                    }
+                    if event.delta-x != 0 || event.delta-y != 0 {
+                        root.pan-x += event.delta-x;
+                        root.pan-y += event.delta-y;
                         return accept;
                     }
                     return reject;
@@ -2961,43 +2966,6 @@ export component InfiniteCanvasPage {
                     vertical-alignment: center;
                 }
 
-                canvas-workflow-mode-tabs := Rectangle {
-                    visible: !root.workflow-composer-collapsed;
-                    x: 12px;
-                    y: 32px;
-                    width: parent.width - 128px;
-                    height: 30px;
-                    background: transparent;
-
-                    Rectangle {
-                        x: 0px;
-                        width: 94px;
-                        height: parent.height;
-                        background: #25232d;
-                        border-radius: 8px;
-                        border-width: 1px;
-                        border-color: #685df0;
-                        Image { x: 10px; y: 7px; width: 16px; height: 16px; source: @image-url("../../assets/icons/image.svg"); colorize: #b5aaff; image-fit: contain; }
-                        Text { x: 32px; width: parent.width - 38px; height: parent.height; text: AppState.en ? "Image generation" : "图片生成"; color: #f5f2ff; font-size: 12px; font-weight: 500; vertical-alignment: center; }
-                    }
-                    Rectangle {
-                        x: 102px;
-                        width: 94px;
-                        height: parent.height;
-                        background: transparent;
-                        Image { x: 8px; y: 7px; width: 16px; height: 16px; source: @image-url("../../assets/icons/video.svg"); colorize: #767480; image-fit: contain; }
-                        Text { x: 30px; width: parent.width - 34px; height: parent.height; text: AppState.en ? "Video generation" : "视频生成"; color: #8e8b96; font-size: 12px; font-weight: 400; vertical-alignment: center; }
-                    }
-                    Rectangle {
-                        x: 204px;
-                        width: 94px;
-                        height: parent.height;
-                        background: transparent;
-                        Image { x: 8px; y: 7px; width: 16px; height: 16px; source: @image-url("../../assets/icons/group.svg"); colorize: #767480; image-fit: contain; }
-                        Text { x: 30px; width: parent.width - 34px; height: parent.height; text: AppState.en ? "3D generation" : "3D生成"; color: #8e8b96; font-size: 12px; font-weight: 400; vertical-alignment: center; }
-                    }
-                }
-
                 workflow-reference-drop := DropArea {
                     visible: !root.workflow-composer-collapsed;
                     y: 23px;
@@ -3014,9 +2982,9 @@ export component InfiniteCanvasPage {
                 workflow-prompt-frame := Rectangle {
                     visible: !root.workflow-composer-collapsed;
                     x: 14px;
-                    y: 66px;
+                    y: 34px;
                     width: parent.width - 126px;
-                    height: 48px;
+                    height: 80px;
                     background: transparent;
                     border-width: 0px;
 
@@ -3152,7 +3120,16 @@ export component InfiniteCanvasPage {
                     border-color: template-action-touch.has-hover ? #9c91ff : #766aff;
                     drop-shadow-blur: template-action-touch.has-hover ? 14px : 8px;
                     drop-shadow-color: #766aff55;
-                    Image {
+                    clip: true;
+                    if AppState.canvas-workflow-id != "": Image {
+                        x: 3px;
+                        y: 3px;
+                        width: parent.width - 6px;
+                        height: parent.height - 6px;
+                        source: AppState.canvas-workflow-artwork;
+                        image-fit: contain;
+                    }
+                    if AppState.canvas-workflow-id == "": Image {
                         x: (parent.width - 22px) / 2;
                         y: 19px;
                         width: 22px;
@@ -3161,14 +3138,12 @@ export component InfiniteCanvasPage {
                         colorize: #f3f0ff;
                         image-fit: contain;
                     }
-                    Text {
+                    if AppState.canvas-workflow-id == "": Text {
                         x: 7px;
                         y: 48px;
                         width: parent.width - 14px;
                         height: 30px;
-                        text: AppState.canvas-workflow-title == ""
-                            ? (AppState.en ? "Choose template" : "选择模板创作")
-                            : AppState.canvas-workflow-title;
+                        text: AppState.en ? "Choose template" : "选择模板创作";
                         color: #f4f1ff;
                         font-size: 10px;
                         font-weight: 500;
@@ -3192,17 +3167,23 @@ export component InfiniteCanvasPage {
                     height: 32px;
                     background: transparent;
 
-                    Rectangle {
+                    workflow-model-control := Rectangle {
                         x: 0px;
                         width: 132px;
                         height: parent.height;
-                        background: #25242b;
+                        background: workflow-model-touch.has-hover ? #302e38 : #25242b;
                         border-radius: 8px;
                         border-width: 1px;
-                        border-color: #504d58;
+                        border-color: workflow-model-touch.has-hover ? #6e63ef : #504d58;
                         Image { x: 9px; y: 8px; width: 16px; height: 16px; source: @image-url("../../assets/icons/models.svg"); colorize: #e3c58e; image-fit: contain; }
                         Text { x: 30px; width: parent.width - 50px; height: parent.height; text: AppState.image-model-name == "" ? (AppState.en ? "Select model" : "选择模型") : AppState.image-model-name; color: #e8e5ed; font-size: 11px; font-weight: 400; vertical-alignment: center; overflow: elide; }
                         Image { x: parent.width - 17px; y: 11px; width: 9px; height: 9px; source: @image-url("../../assets/icons/dropdown.svg"); colorize: #8f8c96; image-fit: contain; }
+                        workflow-model-touch := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => { workflow-model-popup.show(); }
+                        }
                     }
                     quality-control := Rectangle {
                         x: 140px;
@@ -3213,13 +3194,13 @@ export component InfiniteCanvasPage {
                         border-width: 1px;
                         border-color: quality-touch.has-hover ? #6e63ef : #504d58;
                         Image { x: 9px; y: 8px; width: 16px; height: 16px; source: @image-url("../../assets/icons/controls.svg"); colorize: #aaa5b3; image-fit: contain; }
-                        Text { x: 30px; width: parent.width - 49px; height: parent.height; text: AppState.quality + (AppState.en ? " smart" : " 智能"); color: #e8e5ed; font-size: 11px; font-weight: 400; vertical-alignment: center; }
+                        Text { x: 30px; width: parent.width - 49px; height: parent.height; text: AppState.ratio + " · " + AppState.quality; color: #e8e5ed; font-size: 11px; font-weight: 400; vertical-alignment: center; overflow: elide; }
                         Image { x: parent.width - 17px; y: 11px; width: 9px; height: 9px; source: @image-url("../../assets/icons/dropdown.svg"); colorize: #8f8c96; image-fit: contain; }
                         quality-touch := TouchArea {
                             width: parent.width;
                             height: parent.height;
                             mouse-cursor: pointer;
-                            clicked => { AppState.quality = AppState.quality == "1K" ? "2K" : (AppState.quality == "2K" ? "4K" : "1K"); }
+                            clicked => { workflow-settings-popup.show(); }
                         }
                     }
                     Rectangle {
@@ -3233,16 +3214,6 @@ export component InfiniteCanvasPage {
                         opacity: 0.58;
                         Image { x: 9px; y: 8px; width: 16px; height: 16px; source: @image-url("../../assets/icons/generation.svg"); colorize: #77747e; image-fit: contain; }
                         Text { x: 30px; width: parent.width - 34px; height: parent.height; text: AppState.en ? "Prompt boost · 1" : "提示增强 · 1"; color: #8b8891; font-size: 10px; font-weight: 400; vertical-alignment: center; }
-                    }
-                    Rectangle {
-                        x: parent.width - 210px;
-                        width: 32px;
-                        height: parent.height;
-                        background: #222127;
-                        border-radius: 8px;
-                        border-width: 1px;
-                        border-color: #4b4853;
-                        Text { width: parent.width; height: parent.height; text: "@"; color: #e1dee7; font-size: 14px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
                     }
                     clear-workflow-action := Rectangle {
                         x: parent.width - 170px;
@@ -3339,9 +3310,8 @@ export component InfiniteCanvasPage {
 
             zoom-panel := Rectangle {
                 visible: !AppState.canvas-node-info-open;
-                x: 16px;
-                // Keep the canvas controls clear of the composer's raised collapse handle.
-                y: canvas-workflow-dock.y + 23px - self.height - 34px;
+                x: parent.width - self.width - 16px;
+                y: 16px;
                 width: min(250px, parent.width - 32px);
                 height: 48px;
                 background: AppState.canvas-dark-background ? #211e1c : AppTheme.panel.with-alpha(0.98);
@@ -3424,24 +3394,23 @@ export component InfiniteCanvasPage {
 
             toolbar := Rectangle {
                 visible: !AppState.canvas-node-info-open;
-                x: max(16px, (parent.width - self.width) / 2);
-                // The reference layout leaves a dedicated gap for the collapse handle.
-                y: canvas-workflow-dock.y + 23px - self.height - 34px;
-                width: min(parent.width - 32px, parent.width < 620px ? 300px : 388px);
-                height: parent.width < 620px ? 44px : 52px;
+                x: 16px;
+                y: max(16px, (parent.height - self.height) / 2);
+                width: 44px;
+                height: 310px;
                 background: AppTheme.panel.with-alpha(0.98);
-                border-radius: 7px;
+                border-radius: 20px;
                 border-width: 1px;
                 border-color: AppTheme.border;
-                HorizontalLayout {
+                VerticalLayout {
                     padding: 4px;
-                    spacing: 4px;
-                    CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/move.svg"); label: AppState.en ? "Pan" : "移动画布"; selected: AppState.canvas-tool == "pan"; clicked => { AppState.canvas-tool = "pan"; } }
-                    CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/undo.svg"); label: AppState.en ? "Undo" : "撤销"; disabled: !AppState.canvas-can-undo; clicked => { AppState.undo-canvas(); } }
-                    CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/redo.svg"); label: AppState.en ? "Redo" : "重做"; disabled: !AppState.canvas-can-redo; clicked => { AppState.redo-canvas(); } }
-                    CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/text.svg"); label: AppState.en ? "Text node" : "文本节点"; clicked => { root.add-node("text"); } }
+                    spacing: 2px;
+                    CanvasToolButton { compact: true; icon: @image-url("../../assets/icons/move.svg"); label: AppState.en ? "Pan" : "移动画布"; selected: AppState.canvas-tool == "pan"; clicked => { AppState.canvas-tool = "pan"; } }
+                    CanvasToolButton { compact: true; icon: @image-url("../../assets/icons/undo.svg"); label: AppState.en ? "Undo" : "撤销"; disabled: !AppState.canvas-can-undo; clicked => { AppState.undo-canvas(); } }
+                    CanvasToolButton { compact: true; icon: @image-url("../../assets/icons/redo.svg"); label: AppState.en ? "Redo" : "重做"; disabled: !AppState.canvas-can-redo; clicked => { AppState.redo-canvas(); } }
+                    CanvasToolButton { compact: true; icon: @image-url("../../assets/icons/text.svg"); label: AppState.en ? "Text node" : "文本节点"; clicked => { root.add-node("text"); } }
                     image-button := CanvasToolButton {
-                        compact: canvas.width < 620px;
+                        compact: true;
                         icon: @image-url("../../assets/icons/image.svg");
                         label: AppState.en ? "Insert image" : "添加图片";
                         selected: root.image-insert-open;
@@ -3451,7 +3420,7 @@ export component InfiniteCanvasPage {
                         }
                     }
                     CanvasToolButton {
-                        compact: canvas.width < 620px;
+                        compact: true;
                         icon: @image-url("../../assets/icons/group.svg");
                         label: AppState.en ? "Group" : "分组";
                         clicked => {
@@ -3461,7 +3430,7 @@ export component InfiniteCanvasPage {
                         }
                     }
                     appearance-button := CanvasToolButton {
-                        compact: canvas.width < 620px;
+                        compact: true;
                         icon: @image-url("../../assets/icons/palette.svg");
                         label: AppState.en ? "Canvas appearance" : "画布外观";
                         selected: root.appearance-open;
@@ -3470,13 +3439,13 @@ export component InfiniteCanvasPage {
                             root.appearance-open = !root.appearance-open;
                         }
                     }
-                    CanvasToolButton { compact: canvas.width < 620px; icon: @image-url("../../assets/icons/trash.svg"); label: AppState.en ? "Delete selected" : "删除所选"; disabled: AppState.canvas-selected-count == 0 && AppState.canvas-selected-link-id == ""; clicked => { root.request-selected-delete(); } }
+                    CanvasToolButton { compact: true; icon: @image-url("../../assets/icons/trash.svg"); label: AppState.en ? "Delete selected" : "删除所选"; disabled: AppState.canvas-selected-count == 0 && AppState.canvas-selected-link-id == ""; clicked => { root.request-selected-delete(); } }
                 }
             }
 
             if root.image-insert-open: Rectangle {
-                x: max(16px, min(toolbar.x + image-button.x + (image-button.width - self.width) / 2, parent.width - self.width - 16px));
-                y: max(16px, toolbar.y - self.height - 10px);
+                x: toolbar.x + toolbar.width + 10px;
+                y: max(16px, min(toolbar.y + image-button.y + (image-button.height - self.height) / 2, parent.height - self.height - 16px));
                 width: 176px;
                 height: 96px;
                 background: AppTheme.panel.with-alpha(0.99);
@@ -3506,8 +3475,8 @@ export component InfiniteCanvasPage {
             }
 
             if root.appearance-open: Rectangle {
-                x: max(16px, min(toolbar.x + appearance-button.x + (appearance-button.width - self.width) / 2, parent.width - self.width - 16px));
-                y: max(16px, toolbar.y - self.height - 10px);
+                x: toolbar.x + toolbar.width + 10px;
+                y: max(16px, min(toolbar.y + appearance-button.y + (appearance-button.height - self.height) / 2, parent.height - self.height - 16px));
                 width: min(280px, parent.width - 32px);
                 height: 214px;
                 background: AppTheme.panel.with-alpha(0.99);
@@ -3652,6 +3621,187 @@ export component InfiniteCanvasPage {
         CanvasNodeInfoDialog {
             width: parent.width;
             height: parent.height;
+        }
+    }
+
+    workflow-model-popup := PopupWindow {
+        x: canvas.x + canvas-workflow-dock.x + 14px;
+        y: canvas.y + canvas-workflow-dock.y + 161px - self.height;
+        width: 270px;
+        height: min(270px, max(58px, 12px + AppState.model-image-options.length * 42px));
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: #211f26;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #514d5c;
+            clip: true;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #00000088;
+            drop-shadow-offset-y: 6px;
+
+            if AppState.model-image-options.length > 0: VerticalLayout {
+                padding: 6px;
+                spacing: 4px;
+                for model in AppState.model-image-options: Rectangle {
+                    height: 38px;
+                    background: workflow-model-option-touch.has-hover
+                        ? #37333f
+                        : (AppState.image-model == model.code ? #302c48 : transparent);
+                    border-radius: 7px;
+                    Image {
+                        x: 10px;
+                        y: 11px;
+                        width: 16px;
+                        height: 16px;
+                        source: @image-url("../../assets/icons/models.svg");
+                        colorize: AppState.image-model == model.code ? #b8afff : #ddd9e4;
+                        image-fit: contain;
+                    }
+                    Text {
+                        x: 36px;
+                        width: parent.width - 68px;
+                        height: parent.height;
+                        text: model.name;
+                        color: #f0edf4;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        wrap: no-wrap;
+                        overflow: elide;
+                    }
+                    if AppState.image-model == model.code: Image {
+                        x: parent.width - 25px;
+                        y: 12px;
+                        width: 14px;
+                        height: 14px;
+                        source: @image-url("../../assets/icons/check.svg");
+                        colorize: #b8afff;
+                        image-fit: contain;
+                    }
+                    workflow-model-option-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            AppState.select-image-model(model.code);
+                            workflow-model-popup.close();
+                        }
+                    }
+                }
+            }
+
+            if AppState.model-image-options.length == 0: Rectangle {
+                x: 6px;
+                y: 6px;
+                width: parent.width - 12px;
+                height: parent.height - 12px;
+                background: workflow-empty-model-touch.has-hover ? #37333f : transparent;
+                border-radius: 7px;
+                Text {
+                    x: 12px;
+                    width: parent.width - 24px;
+                    height: parent.height;
+                    text: AppState.en ? "Configure an image model" : "前往模型管理配置";
+                    color: #f0edf4;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+                workflow-empty-model-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => {
+                        workflow-model-popup.close();
+                        AppState.settings-section = "models";
+                        AppState.navigate("settings");
+                    }
+                }
+            }
+        }
+    }
+
+    workflow-settings-popup := PopupWindow {
+        x: canvas.x + canvas-workflow-dock.x + 154px;
+        y: canvas.y + canvas-workflow-dock.y + 161px - self.height;
+        width: 342px;
+        height: 250px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: #211f26;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: #514d5c;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #00000088;
+            drop-shadow-offset-y: 6px;
+
+            Text {
+                x: 16px;
+                y: 10px;
+                width: parent.width - 32px;
+                height: 24px;
+                text: AppState.en ? "Size and quality" : "尺寸与清晰度";
+                color: #f1eef5;
+                font-size: 14px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            Text {
+                x: 16px;
+                y: 39px;
+                width: parent.width - 32px;
+                height: 18px;
+                text: AppState.en ? "Quality" : "清晰度";
+                color: #aaa6b2;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+            HorizontalLayout {
+                x: 16px;
+                y: 61px;
+                width: parent.width - 32px;
+                height: 32px;
+                spacing: 8px;
+                CanvasOptionPill { text: "1K"; selected: AppState.quality == "1K"; clicked => { AppState.quality = "1K"; } }
+                CanvasOptionPill { text: "2K"; selected: AppState.quality == "2K"; clicked => { AppState.quality = "2K"; } }
+                CanvasOptionPill { text: "4K"; selected: AppState.quality == "4K"; clicked => { AppState.quality = "4K"; } }
+            }
+            Text {
+                x: 16px;
+                y: 101px;
+                width: parent.width - 32px;
+                height: 18px;
+                text: AppState.en ? "Aspect ratio" : "图片尺寸";
+                color: #aaa6b2;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+            GridLayout {
+                x: 16px;
+                y: 123px;
+                width: parent.width - 32px;
+                height: 110px;
+                spacing: 7px;
+                Row {
+                    CanvasOptionPill { width: 72px; height: 32px; text: "1:1"; selected: AppState.ratio == "1:1"; clicked => { AppState.ratio = "1:1"; } }
+                    CanvasOptionPill { width: 72px; height: 32px; text: "3:2"; selected: AppState.ratio == "3:2"; clicked => { AppState.ratio = "3:2"; } }
+                    CanvasOptionPill { width: 72px; height: 32px; text: "2:3"; selected: AppState.ratio == "2:3"; clicked => { AppState.ratio = "2:3"; } }
+                    CanvasOptionPill { width: 72px; height: 32px; text: "4:3"; selected: AppState.ratio == "4:3"; clicked => { AppState.ratio = "4:3"; } }
+                }
+                Row {
+                    CanvasOptionPill { width: 72px; height: 32px; text: "3:4"; selected: AppState.ratio == "3:4"; clicked => { AppState.ratio = "3:4"; } }
+                    CanvasOptionPill { width: 72px; height: 32px; text: "16:9"; selected: AppState.ratio == "16:9"; clicked => { AppState.ratio = "16:9"; } }
+                    CanvasOptionPill { width: 72px; height: 32px; text: "9:16"; selected: AppState.ratio == "9:16"; clicked => { AppState.ratio = "9:16"; } }
+                    CanvasOptionPill { width: 72px; height: 32px; text: "2:1"; selected: AppState.ratio == "2:1"; clicked => { AppState.ratio = "2:1"; } }
+                }
+                Row {
+                    CanvasOptionPill { width: 72px; height: 32px; text: "1:2"; selected: AppState.ratio == "1:2"; clicked => { AppState.ratio = "1:2"; } }
+                    CanvasOptionPill { width: 72px; height: 32px; text: "21:9"; selected: AppState.ratio == "21:9"; clicked => { AppState.ratio = "21:9"; } }
+                    CanvasOptionPill { width: 72px; height: 32px; text: "9:21"; selected: AppState.ratio == "9:21"; clicked => { AppState.ratio = "9:21"; } }
+                }
+            }
         }
     }
 }

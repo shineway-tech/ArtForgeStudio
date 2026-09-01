@@ -167,6 +167,7 @@ component FreeCanvasCard {
             mouse-cursor: pointer;
             clicked => {
                 AppState.open-canvas-workspace(root.card-id);
+                AppState.canvas-workflow-artwork = root.artwork;
                 if root.opens-canvas {
                     AppState.canvas-workflow-id = "";
                     AppState.canvas-workflow-title = "";
