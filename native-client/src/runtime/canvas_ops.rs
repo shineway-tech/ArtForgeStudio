@@ -5,6 +5,7 @@ pub(super) const GROUP_PADDING: f32 = 36.0;
 pub(super) const GROUP_TOP_PADDING: f32 = 72.0;
 const MIN_IMAGE_NODE_EDGE: f32 = 80.0;
 const MAX_IMAGE_NODE_EDGE: f32 = 4096.0;
+const LEGACY_DEFAULT_IMAGE_LONGEST_EDGE: f32 = 340.0;
 const GENERATED_NODE_GAP: f32 = 48.0;
 const GENERATED_NODE_SEARCH_RINGS: i32 = 64;
 
@@ -658,12 +659,9 @@ pub(super) fn fit_image_node_to_intrinsic_aspect(
         return false;
     }
 
-    let longest_edge = note.width.max(note.height).max(MIN_IMAGE_NODE_EDGE);
-    let (mut width, mut height) = if image_width >= image_height {
-        (longest_edge, longest_edge * image_height / image_width)
-    } else {
-        (longest_edge * image_width / image_height, longest_edge)
-    };
+    let base_edge = note.width.max(note.height).max(MIN_IMAGE_NODE_EDGE);
+    let aspect_scale = (image_width / image_height).sqrt();
+    let (mut width, mut height) = (base_edge * aspect_scale, base_edge / aspect_scale);
     if width < MIN_IMAGE_NODE_EDGE {
         let scale = MIN_IMAGE_NODE_EDGE / width;
         width *= scale;
@@ -685,6 +683,46 @@ pub(super) fn fit_image_node_to_intrinsic_aspect(
     note.x = center_x - width / 2.0;
     note.y = center_y - height / 2.0;
     true
+}
+
+pub(super) fn migrate_legacy_auto_sized_image_node(
+    note: &mut CanvasNoteData,
+    image_width: f32,
+    image_height: f32,
+) -> bool {
+    if !matches!(note.kind.as_str(), "image" | "board-image")
+        || image_width <= 0.0
+        || image_height <= 0.0
+    {
+        return false;
+    }
+
+    let (mut legacy_width, mut legacy_height) = if image_width >= image_height {
+        (
+            LEGACY_DEFAULT_IMAGE_LONGEST_EDGE,
+            LEGACY_DEFAULT_IMAGE_LONGEST_EDGE * image_height / image_width,
+        )
+    } else {
+        (
+            LEGACY_DEFAULT_IMAGE_LONGEST_EDGE * image_width / image_height,
+            LEGACY_DEFAULT_IMAGE_LONGEST_EDGE,
+        )
+    };
+    if legacy_width < MIN_IMAGE_NODE_EDGE {
+        let scale = MIN_IMAGE_NODE_EDGE / legacy_width;
+        legacy_width *= scale;
+        legacy_height *= scale;
+    }
+    if legacy_height < MIN_IMAGE_NODE_EDGE {
+        let scale = MIN_IMAGE_NODE_EDGE / legacy_height;
+        legacy_width *= scale;
+        legacy_height *= scale;
+    }
+
+    if (note.width - legacy_width).abs() > 0.5 || (note.height - legacy_height).abs() > 0.5 {
+        return false;
+    }
+    fit_image_node_to_intrinsic_aspect(note, image_width, image_height)
 }
 
 pub(super) fn resize_image_node_proportionally(
@@ -1148,10 +1186,73 @@ mod tests {
             &mut image, 1000.0, 2000.0
         ));
 
-        assert_eq!(image.width, 170.0);
-        assert_eq!(image.height, 340.0);
-        assert_eq!(image.x, 85.0);
-        assert_eq!(image.y, -45.0);
+        assert!((image.width / image.height - 0.5).abs() < 0.001);
+        assert!((image.width * image.height - 340.0 * 340.0).abs() < 1.0);
+        assert!((image.x + image.width / 2.0 - 170.0).abs() < 0.001);
+        assert!((image.y + image.height / 2.0 - 125.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn landscape_canvas_image_keeps_the_same_visual_area_as_a_square() {
+        let mut square = CanvasNoteData {
+            width: 340.0,
+            height: 250.0,
+            ..note("square", "image", 0.0, 0.0)
+        };
+        let mut landscape = CanvasNoteData {
+            width: 340.0,
+            height: 250.0,
+            ..note("landscape", "image", 0.0, 0.0)
+        };
+
+        assert!(fit_image_node_to_intrinsic_aspect(
+            &mut square, 1024.0, 1024.0
+        ));
+        assert!(fit_image_node_to_intrinsic_aspect(
+            &mut landscape,
+            1920.0,
+            1080.0,
+        ));
+
+        assert!(landscape.width > square.width);
+        assert!((landscape.width * landscape.height - square.width * square.height).abs() < 1.0);
+    }
+
+    #[test]
+    fn legacy_auto_sized_landscape_is_migrated_without_touching_manual_sizes() {
+        let mut legacy = CanvasNoteData {
+            x: 40.0,
+            y: 60.0,
+            width: 340.0,
+            height: 191.25,
+            ..note("legacy", "image", 40.0, 60.0)
+        };
+        let legacy_center = (
+            legacy.x + legacy.width / 2.0,
+            legacy.y + legacy.height / 2.0,
+        );
+        assert!(migrate_legacy_auto_sized_image_node(
+            &mut legacy,
+            1920.0,
+            1080.0,
+        ));
+        assert!(legacy.width > 340.0);
+        assert!((legacy.width * legacy.height - 340.0 * 340.0).abs() < 1.0);
+        assert!((legacy.x + legacy.width / 2.0 - legacy_center.0).abs() < 0.001);
+        assert!((legacy.y + legacy.height / 2.0 - legacy_center.1).abs() < 0.001);
+
+        let mut manually_resized = CanvasNoteData {
+            width: 680.0,
+            height: 382.5,
+            ..note("manual", "image", 0.0, 0.0)
+        };
+        assert!(!migrate_legacy_auto_sized_image_node(
+            &mut manually_resized,
+            1920.0,
+            1080.0,
+        ));
+        assert_eq!(manually_resized.width, 680.0);
+        assert_eq!(manually_resized.height, 382.5);
     }
 
     #[test]

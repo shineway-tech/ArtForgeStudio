@@ -2324,6 +2324,19 @@ mod tests {
     }
 
     #[test]
+    fn workflow_prompt_text_starts_on_the_same_row_as_reference_mentions() {
+        let canvas = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let prompt_input = canvas
+            .split("workflow-prompt-input := TextInput")
+            .nth(1)
+            .and_then(|block| block.split("workflow-reference-mentions := Rectangle").next())
+            .expect("workflow prompt input");
+
+        assert!(prompt_input.contains("y: 4px;"));
+        assert!(prompt_input.contains("vertical-alignment: top;"));
+    }
+
+    #[test]
     fn plant_growth_template_keeps_each_stage_on_separate_soil() {
         let launcher = include_str!("../../ui/pages/free-canvas-page.slint");
 

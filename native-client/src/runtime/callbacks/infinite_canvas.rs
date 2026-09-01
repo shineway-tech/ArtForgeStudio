@@ -724,6 +724,41 @@ fn persist_canvas(app: &AppWindow, store: &Store) {
     save_local_store(app, store);
 }
 
+fn migrate_legacy_auto_sized_canvas_images(notes: &mut [CanvasNoteData]) -> bool {
+    let mut changed = false;
+    for index in 0..notes.len() {
+        let source_path = notes[index].image_path.trim();
+        if source_path.is_empty() {
+            continue;
+        }
+        let Ok((image_width, image_height)) = inspect_image_dimensions(Path::new(source_path))
+        else {
+            continue;
+        };
+        if !migrate_legacy_auto_sized_image_node(
+            &mut notes[index],
+            image_width as f32,
+            image_height as f32,
+        ) {
+            continue;
+        }
+        let migrated = &notes[index];
+        let migrated_id = migrated.id.clone();
+        let (x, y) = nearest_free_canvas_position(
+            notes,
+            migrated.x,
+            migrated.y,
+            migrated.width,
+            migrated.height,
+            Some(&migrated_id),
+        );
+        notes[index].x = x;
+        notes[index].y = y;
+        changed = true;
+    }
+    changed
+}
+
 fn show_canvas_capacity_status(app: &AppWindow) {
     let state = app.global::<AppState>();
     state.set_generation_status(
@@ -858,6 +893,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                     state.get_canvas_workflow_prompt().as_str(),
                     workspace_id.as_str(),
                 );
+                migrate_legacy_auto_sized_canvas_images(&mut store.canvas_notes);
                 push_canvas_notes(&app, &store);
                 push_canvas_references(&app, &store);
                 prompt

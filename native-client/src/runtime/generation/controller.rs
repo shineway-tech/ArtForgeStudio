@@ -245,10 +245,10 @@ mod deep_prompt_tests {
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].image_path, "generated.png");
         assert_eq!(notes[0].content, "");
-        assert_eq!(notes[0].width, 340.0);
-        assert_eq!(notes[0].height, 170.0);
-        assert_eq!(notes[0].x, 100.0);
-        assert_eq!(notes[0].y, 240.0);
+        assert!((notes[0].width / notes[0].height - 2.0).abs() < 0.001);
+        assert!((notes[0].width * notes[0].height - 340.0 * 340.0).abs() < 1.0);
+        assert!((notes[0].x + notes[0].width / 2.0 - 270.0).abs() < 0.001);
+        assert!((notes[0].y + notes[0].height / 2.0 - 325.0).abs() < 0.001);
         assert!(!notes[0].selected);
     }
 
@@ -292,8 +292,16 @@ mod deep_prompt_tests {
             .iter()
             .find(|note| note.id == "loading-result")
             .expect("generated image");
-        assert_eq!(generated.x, 488.0);
-        assert_eq!(generated.y, 200.0);
+        let existing = notes
+            .iter()
+            .find(|note| note.id == "existing-image")
+            .expect("existing image");
+        assert!(
+            generated.x >= existing.x + existing.width + 48.0
+                || generated.x + generated.width + 48.0 <= existing.x
+                || generated.y >= existing.y + existing.height + 48.0
+                || generated.y + generated.height + 48.0 <= existing.y
+        );
     }
 }
 
