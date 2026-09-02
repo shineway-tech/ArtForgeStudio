@@ -208,6 +208,7 @@ export global AppState {
     in-out property <string> canvas-workflow-prompt: "";
     in-out property <string> canvas-workflow-template: "";
     in-out property <string> canvas-workflow-hint: "";
+    in-out property <int> canvas-workflow-step-count: 5;
     in-out property <image> canvas-workflow-artwork;
     in-out property <int> canvas-workspace-switch-request: 0;
     in-out property <string> canvas-selected-id: "";
@@ -779,6 +780,7 @@ export global AppState {
     callback open-canvas-workspace(string);
     callback add-canvas-node(string, float, float);
     callback normalize-canvas-workflow-prompt(string) -> string;
+    callback compose-canvas-workflow-prompt(string, string, int, bool) -> string;
     callback create-canvas-generation-source(string, float, float) -> string;
     callback update-canvas-node(string, string, float, float);
     callback rename-canvas-group(string, string) -> bool;

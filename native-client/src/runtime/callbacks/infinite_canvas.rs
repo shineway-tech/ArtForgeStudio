@@ -849,6 +849,27 @@ pub(super) fn normalize_canvas_workflow_prompt(prompt: &str) -> String {
         .join(" ")
 }
 
+pub(super) fn compose_canvas_workflow_prompt(
+    template: &str,
+    user_description: &str,
+    requested_step_count: i32,
+    english: bool,
+) -> String {
+    let user_description = user_description.trim();
+    if template.trim().is_empty() {
+        return user_description.to_string();
+    }
+
+    let step_count = requested_step_count.clamp(4, 12).to_string();
+    let template = template.trim().replace("{count}", &step_count);
+    let label = if english {
+        "User description: "
+    } else {
+        "用户描述："
+    };
+    format!("{template}\n\n{label}{user_description}")
+}
+
 pub(super) fn normalize_canvas_workspace_prompts(
     workspaces: &mut BTreeMap<String, CanvasWorkspaceData>,
 ) -> bool {
@@ -910,6 +931,15 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
 
     state.on_normalize_canvas_workflow_prompt(|prompt| {
         normalize_canvas_workflow_prompt(prompt.as_str()).into()
+    });
+    state.on_compose_canvas_workflow_prompt(|template, prompt, step_count, english| {
+        compose_canvas_workflow_prompt(
+            template.as_str(),
+            prompt.as_str(),
+            step_count,
+            english,
+        )
+        .into()
     });
 
     {

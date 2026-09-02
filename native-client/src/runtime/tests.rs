@@ -2346,6 +2346,39 @@ mod tests {
     }
 
     #[test]
+    fn canvas_workflow_step_count_replaces_every_template_placeholder() {
+        assert_eq!(
+            compose_canvas_workflow_prompt(
+                "Create exactly {count} stages with {count} separate subjects.",
+                "tomato",
+                8,
+                true,
+            ),
+            "Create exactly 8 stages with 8 separate subjects.\n\nUser description: tomato"
+        );
+    }
+
+    #[test]
+    fn canvas_workflow_step_count_is_clamped_between_four_and_twelve() {
+        assert_eq!(
+            compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 1, false),
+            "制作4个步骤。\n\n用户描述：番茄"
+        );
+        assert_eq!(
+            compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 99, false),
+            "制作12个步骤。\n\n用户描述：番茄"
+        );
+    }
+
+    #[test]
+    fn canvas_workflow_defaults_to_five_steps() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+
+        assert_eq!(app.global::<AppState>().get_canvas_workflow_step_count(), 5);
+    }
+
+    #[test]
     fn legacy_canvas_workspace_prompts_are_migrated_to_single_line_text() {
         let mut workspaces = BTreeMap::from([(
             "plant-growth".to_string(),

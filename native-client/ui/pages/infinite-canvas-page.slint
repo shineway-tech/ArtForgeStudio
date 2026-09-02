@@ -2404,11 +2404,12 @@ export component InfiniteCanvasPage {
             AppState.generation-status = AppState.en ? "Select an image model first" : "请先选择生图模型";
             return;
         }
-        let submitted-prompt = AppState.canvas-workflow-template == ""
-            ? AppState.canvas-workflow-prompt
-            : AppState.canvas-workflow-template
-                + (AppState.en ? "\n\nUser description: " : "\n\n用户描述：")
-                + AppState.canvas-workflow-prompt;
+        let submitted-prompt = AppState.compose-canvas-workflow-prompt(
+            AppState.canvas-workflow-template,
+            AppState.canvas-workflow-prompt,
+            AppState.canvas-workflow-step-count,
+            AppState.en,
+        );
         let world-x = (canvas.width / 2 - root.pan-x) * 100 / root.zoom-percent;
         let world-y = ((canvas.height - (canvas-workflow-dock.height - 23px)) / 2 - root.pan-y) * 100 / root.zoom-percent;
         let source-id = AppState.create-canvas-generation-source(
@@ -3326,17 +3327,76 @@ export component InfiniteCanvasPage {
                             clicked => { workflow-settings-popup.show(); }
                         }
                     }
-                    Rectangle {
+                    workflow-step-count-control := Rectangle {
+                        visible: AppState.canvas-workflow-id != "";
                         x: 286px;
-                        width: 112px;
+                        width: 190px;
                         height: parent.height;
-                        background: #222127;
+                        background: workflow-step-count-touch.has-hover ? #302e38 : #25242b;
                         border-radius: 8px;
                         border-width: 1px;
-                        border-color: #403e47;
-                        opacity: 0.58;
-                        Image { x: 9px; y: 8px; width: 16px; height: 16px; source: @image-url("../../assets/icons/generation.svg"); colorize: #77747e; image-fit: contain; }
-                        Text { x: 30px; width: parent.width - 34px; height: parent.height; text: AppState.en ? "Prompt boost · 1" : "提示增强 · 1"; color: #8b8891; font-size: 10px; font-weight: 400; vertical-alignment: center; }
+                        border-color: workflow-step-count-touch.has-hover ? #6e63ef : #504d58;
+                        Text {
+                            x: 9px;
+                            width: 56px;
+                            height: parent.height;
+                            text: AppState.en ? "Steps" : "生成数量";
+                            color: #c9c5cf;
+                            font-size: 10px;
+                            font-weight: 400;
+                            vertical-alignment: center;
+                        }
+                        Rectangle {
+                            x: 68px;
+                            y: 15px;
+                            width: 88px;
+                            height: 2px;
+                            border-radius: 1px;
+                            background: #4b4852;
+                        }
+                        Rectangle {
+                            x: 68px;
+                            y: 15px;
+                            width: 88px * (AppState.canvas-workflow-step-count - 4) / 8;
+                            height: 2px;
+                            border-radius: 1px;
+                            background: #786df2;
+                        }
+                        Rectangle {
+                            x: 68px + 80px * (AppState.canvas-workflow-step-count - 4) / 8;
+                            y: 8px;
+                            width: 16px;
+                            height: 16px;
+                            border-radius: 8px;
+                            background: #f0eef6;
+                            border-width: 2px;
+                            border-color: #6258e8;
+                        }
+                        Text {
+                            x: 163px;
+                            width: 19px;
+                            height: parent.height;
+                            text: AppState.canvas-workflow-step-count;
+                            color: #f0eef6;
+                            font-size: 11px;
+                            font-weight: 500;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        workflow-step-count-touch := TouchArea {
+                            x: 62px;
+                            width: 100px;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => {
+                                AppState.canvas-workflow-step-count = max(4, min(12, round((self.mouse-x - 6px) / 88px * 8 + 4)));
+                            }
+                            moved => {
+                                if self.pressed {
+                                    AppState.canvas-workflow-step-count = max(4, min(12, round((max(6px, min(94px, self.mouse-x)) - 6px) / 88px * 8 + 4)));
+                                }
+                            }
+                        }
                     }
                     clear-workflow-action := Rectangle {
                         x: parent.width - 170px;
