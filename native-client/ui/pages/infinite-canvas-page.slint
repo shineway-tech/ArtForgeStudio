@@ -3050,6 +3050,13 @@ export component InfiniteCanvasPage {
                         font-size: 13px;
                         font-weight: 400;
                         vertical-alignment: center;
+                        edited => {
+                            let normalized = AppState.normalize-canvas-workflow-prompt(self.text);
+                            if normalized != self.text {
+                                AppState.canvas-workflow-prompt = normalized;
+                                self.set-selection-offsets(2147483647, 2147483647);
+                            }
+                        }
                         key-pressed(event) => {
                             if event.modifiers.control && event.text == Key.Return {
                                 root.generate-workflow();

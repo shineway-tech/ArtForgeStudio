@@ -833,6 +833,36 @@ fn sync_canvas_selection_rows(app: &AppWindow, store: &Store) {
     }
 }
 
+pub(super) fn normalize_canvas_workflow_prompt(prompt: &str) -> String {
+    if !prompt
+        .chars()
+        .any(|character| matches!(character, '\r' | '\n' | '\u{2028}' | '\u{2029}'))
+    {
+        return prompt.to_string();
+    }
+
+    prompt
+        .split(|character| matches!(character, '\r' | '\n' | '\u{2028}' | '\u{2029}'))
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub(super) fn normalize_canvas_workspace_prompts(
+    workspaces: &mut BTreeMap<String, CanvasWorkspaceData>,
+) -> bool {
+    let mut changed = false;
+    for workspace in workspaces.values_mut() {
+        let normalized = normalize_canvas_workflow_prompt(&workspace.prompt);
+        if normalized != workspace.prompt {
+            workspace.prompt = normalized;
+            changed = true;
+        }
+    }
+    changed
+}
+
 pub(super) fn switch_canvas_workspace(
     store: &mut Store,
     current_prompt: &str,
@@ -844,17 +874,18 @@ pub(super) fn switch_canvas_workspace(
         CanvasWorkspaceData {
             notes: store.canvas_notes.clone(),
             links: store.canvas_links.clone(),
-            prompt: current_prompt.to_string(),
+            prompt: normalize_canvas_workflow_prompt(current_prompt),
             references: store.canvas_references.clone(),
         },
     );
 
     let target_workspace_id = normalize_canvas_workspace_id(target_workspace_id);
-    let target = store
+    let mut target = store
         .canvas_workspaces
         .get(&target_workspace_id)
         .cloned()
         .unwrap_or_default();
+    target.prompt = normalize_canvas_workflow_prompt(&target.prompt);
     store.active_canvas_workspace_id = target_workspace_id.clone();
     store.canvas_notes = target.notes;
     store.canvas_links = target.links;
@@ -876,6 +907,10 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
     let state = app.global::<AppState>();
     let store = context.store.clone();
     let history = context.canvas_history.clone();
+
+    state.on_normalize_canvas_workflow_prompt(|prompt| {
+        normalize_canvas_workflow_prompt(prompt.as_str()).into()
+    });
 
     {
         let app_weak = app.as_weak();

@@ -280,6 +280,8 @@ fn apply_local_store_data(
                 .contains_key(&active_canvas_workspace_id);
         store_mut.active_canvas_workspace_id = active_canvas_workspace_id.clone();
         store_mut.canvas_workspaces = data.canvas_workspaces;
+        let migrated_canvas_prompt_text =
+            normalize_canvas_workspace_prompts(&mut store_mut.canvas_workspaces);
         store_mut.canvas_notes = data.canvas_notes;
         normalize_canvas_groups(&mut store_mut.canvas_notes);
         let fitted_canvas_groups = fit_groups_to_children(&mut store_mut.canvas_notes);
@@ -352,6 +354,7 @@ fn apply_local_store_data(
         }
         migrated_prompt_drafts
             || migrated_canvas_workspaces
+            || migrated_canvas_prompt_text
             || fitted_canvas_groups
             || store_mut.custom_prompt_times != original_prompt_times
     };
@@ -844,12 +847,15 @@ fn local_store_data(app: &AppWindow, store: &Store) -> LocalStoreData {
     let active_canvas_workspace_id =
         normalize_canvas_workspace_id(&store.active_canvas_workspace_id);
     let mut canvas_workspaces = store.canvas_workspaces.clone();
+    normalize_canvas_workspace_prompts(&mut canvas_workspaces);
     canvas_workspaces.insert(
         active_canvas_workspace_id.clone(),
         CanvasWorkspaceData {
             notes: store.canvas_notes.clone(),
             links: store.canvas_links.clone(),
-            prompt: state.get_canvas_workflow_prompt().to_string(),
+            prompt: normalize_canvas_workflow_prompt(
+                state.get_canvas_workflow_prompt().as_str(),
+            ),
             references: store.canvas_references.clone(),
         },
     );

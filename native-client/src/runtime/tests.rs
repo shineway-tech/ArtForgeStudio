@@ -2324,18 +2324,32 @@ mod tests {
     }
 
     #[test]
-    fn workflow_prompt_text_starts_on_the_same_row_as_reference_mentions() {
-        let canvas = include_str!("../../ui/pages/infinite-canvas-page.slint");
-        let prompt_input = canvas
-            .split("workflow-prompt-input := TextInput")
-            .nth(1)
-            .and_then(|block| block.split("workflow-reference-mentions := Rectangle").next())
-            .expect("workflow prompt input");
+    fn workflow_prompt_discards_hidden_line_breaks_before_rendering() {
+        assert_eq!(normalize_canvas_workflow_prompt("番茄 "), "番茄 ");
+        assert_eq!(normalize_canvas_workflow_prompt("\n番茄"), "番茄");
+        assert_eq!(
+            normalize_canvas_workflow_prompt("番茄\r\n五个生长阶段"),
+            "番茄 五个生长阶段"
+        );
+        assert_eq!(
+            normalize_canvas_workflow_prompt("  番茄\u{2028}\u{2029}自然土壤  "),
+            "番茄 自然土壤"
+        );
+    }
 
-        assert!(prompt_input.contains("y: 0px;"));
-        assert!(prompt_input.contains("height: 24px;"));
-        assert!(prompt_input.contains("single-line: true;"));
-        assert!(prompt_input.contains("vertical-alignment: center;"));
+    #[test]
+    fn legacy_canvas_workspace_prompts_are_migrated_to_single_line_text() {
+        let mut workspaces = BTreeMap::from([(
+            "plant-growth".to_string(),
+            CanvasWorkspaceData {
+                prompt: "\n番茄".to_string(),
+                ..CanvasWorkspaceData::default()
+            },
+        )]);
+
+        assert!(normalize_canvas_workspace_prompts(&mut workspaces));
+        assert_eq!(workspaces["plant-growth"].prompt, "番茄");
+        assert!(!normalize_canvas_workspace_prompts(&mut workspaces));
     }
 
     #[test]
@@ -3392,7 +3406,7 @@ mod tests {
 
         let monster_prompt = switch_canvas_workspace(
             &mut store,
-            "红色番茄，陶盆",
+            "\n红色番茄，陶盆",
             "monster-generator",
         );
         assert!(monster_prompt.is_empty());
@@ -3409,8 +3423,11 @@ mod tests {
             id: "monster-reference".to_string(),
             source_path: "monster.png".to_string(),
         });
-        let plant_prompt =
-            switch_canvas_workspace(&mut store, "紫水晶石像", "plant-growth");
+        let plant_prompt = switch_canvas_workspace(
+            &mut store,
+            "\r\n紫水晶石像\r\n",
+            "plant-growth",
+        );
 
         assert_eq!(plant_prompt, "红色番茄，陶盆");
         assert_eq!(store.canvas_notes.len(), 1);

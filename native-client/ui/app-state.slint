@@ -778,6 +778,7 @@ export global AppState {
     callback save-crop-result();
     callback open-canvas-workspace(string);
     callback add-canvas-node(string, float, float);
+    callback normalize-canvas-workflow-prompt(string) -> string;
     callback create-canvas-generation-source(string, float, float) -> string;
     callback update-canvas-node(string, string, float, float);
     callback rename-canvas-group(string, string) -> bool;
