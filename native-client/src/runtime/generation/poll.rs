@@ -279,6 +279,15 @@ pub(super) fn poll_generation_stream(
                                     &bytes,
                                     active.success_count,
                                     active.total_count,
+                                    &mode,
+                                    &quality,
+                                    &image_model,
+                                    &result_origin,
+                                    &conversation_id,
+                                    &display_prompt,
+                                    &time,
+                                    &generation_reference_paths,
+                                    upscale_done,
                                 )
                             })
                             .map(|source_path| (Image::default(), source_path, String::new()))

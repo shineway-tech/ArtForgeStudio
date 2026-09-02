@@ -191,8 +191,8 @@ fn submitted_prompt_for_visible_prompt(
 #[cfg(test)]
 mod deep_prompt_tests {
     use super::{
-        replace_canvas_generation_placeholder, submitted_prompt_for_visible_prompt,
-        CanvasNoteData,
+        insert_canvas_generated_asset, replace_canvas_generation_placeholder,
+        submitted_prompt_for_visible_prompt, CanvasNoteData, Store,
     };
 
     #[test]
@@ -303,6 +303,37 @@ mod deep_prompt_tests {
                 || generated.y >= existing.y + existing.height + 48.0
                 || generated.y + generated.height + 48.0 <= existing.y
         );
+    }
+
+    #[test]
+    fn canvas_generation_is_added_to_other_assets_without_copying_its_file() {
+        let mut store = Store::default();
+        let references = vec!["reference.png".to_string()];
+
+        insert_canvas_generated_asset(
+            &mut store,
+            "生成角色体型变化",
+            "生成角色体型变化",
+            "game",
+            "2K",
+            "openai_image",
+            "generation",
+            "canvas-conversation",
+            "2026-09-02 12:30",
+            "generated.png",
+            &references,
+            2048,
+            1152,
+            false,
+        );
+
+        assert_eq!(store.assets.len(), 1);
+        assert!(store.generations.is_empty());
+        let asset = &store.assets[0];
+        assert_eq!(asset.category, "other");
+        assert_eq!(asset.source_path, "generated.png");
+        assert_eq!(asset.ratio, "16:9");
+        assert_eq!(asset.reference_paths, references);
     }
 }
 
@@ -580,6 +611,15 @@ pub(super) fn add_canvas_stream_success_item(
     bytes: &[u8],
     result_index: i32,
     total_count: i32,
+    mode: &str,
+    quality: &str,
+    image_model: &str,
+    origin: &str,
+    conversation_id: &str,
+    display_prompt: &str,
+    time: &str,
+    reference_paths: &[String],
+    upscale_done: bool,
 ) -> Result<String> {
     let (bytes, _, width, height) = generated_image_from_bytes(bytes)?;
     let loading_node_id = app
@@ -646,6 +686,22 @@ pub(super) fn add_canvas_stream_success_item(
         height as f32,
         result_index,
     ) {
+        insert_canvas_generated_asset(
+            &mut store,
+            raw_prompt,
+            display_prompt,
+            mode,
+            quality,
+            image_model,
+            origin,
+            conversation_id,
+            time,
+            &source_path,
+            reference_paths,
+            width as i32,
+            height as i32,
+            upscale_done,
+        );
         save_local_store(app, &store);
         let state = app.global::<AppState>();
         state.set_canvas_generation_loading_node_id("".into());
@@ -656,6 +712,7 @@ pub(super) fn add_canvas_stream_success_item(
             state.set_canvas_can_undo(context.canvas_history.borrow().can_undo());
             state.set_canvas_can_redo(context.canvas_history.borrow().can_redo());
         }
+        push_generations(app, &store);
         return Ok(source_path);
     }
 
@@ -696,6 +753,22 @@ pub(super) fn add_canvas_stream_success_item(
 
     target_notes.push(result);
     let _ = connect_nodes(target_links, source_node_id, &result_id);
+    insert_canvas_generated_asset(
+        &mut store,
+        raw_prompt,
+        display_prompt,
+        mode,
+        quality,
+        image_model,
+        origin,
+        conversation_id,
+        time,
+        &source_path,
+        reference_paths,
+        width as i32,
+        height as i32,
+        upscale_done,
+    );
     save_local_store(app, &store);
     if target_is_active {
         push_canvas_notes(app, &store);
@@ -703,7 +776,51 @@ pub(super) fn add_canvas_stream_success_item(
         state.set_canvas_can_undo(context.canvas_history.borrow().can_undo());
         state.set_canvas_can_redo(context.canvas_history.borrow().can_redo());
     }
+    push_generations(app, &store);
     Ok(source_path)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_canvas_generated_asset(
+    store: &mut Store,
+    raw_prompt: &str,
+    display_prompt: &str,
+    mode: &str,
+    quality: &str,
+    image_model: &str,
+    origin: &str,
+    conversation_id: &str,
+    time: &str,
+    source_path: &str,
+    reference_paths: &[String],
+    width: i32,
+    height: i32,
+    upscale_done: bool,
+) {
+    let item = AssetData {
+        id: Uuid::new_v4().to_string(),
+        conversation_id: conversation_id.to_string(),
+        title: short_text(raw_prompt, 18),
+        category: "other".to_string(),
+        kind: mode.to_string(),
+        time: time.to_string(),
+        prompt: display_generation_prompt(display_prompt),
+        ratio: ratio_from_actual_dimensions(width, height),
+        quality: quality.to_string(),
+        model: image_model.to_string(),
+        origin: origin.to_string(),
+        width,
+        height,
+        source_path: source_path.to_string(),
+        reference_paths: reference_paths.to_vec(),
+        cutout_done: false,
+        remove_black_done: false,
+        upscale_done,
+        is_new: true,
+        delivery_recoverable: false,
+        delivery_downloading: false,
+    };
+    store.assets.insert(0, item);
 }
 
 fn replace_canvas_generation_placeholder(
