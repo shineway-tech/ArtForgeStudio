@@ -860,14 +860,39 @@ pub(super) fn compose_canvas_workflow_prompt(
         return user_description.to_string();
     }
 
-    let step_count = requested_step_count.clamp(4, 12).to_string();
-    let template = template.trim().replace("{count}", &step_count);
+    let step_count = requested_step_count.clamp(4, 12);
+    let template = template
+        .trim()
+        .replace("{count}", &step_count.to_string());
+    let composition_rules = if english {
+        let layout = if step_count > 8 {
+            format!(
+                "Arrange all {step_count} subjects in two rows, ordered left to right and then top to bottom."
+            )
+        } else {
+            format!("Arrange all {step_count} subjects in one row in progression order.")
+        };
+        format!(
+            "Mandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. {layout}"
+        )
+    } else {
+        let layout = if step_count > 8 {
+            format!(
+                "将全部{step_count}个对象分成上下两行，按从左到右、从上到下的顺序排列。"
+            )
+        } else {
+            format!("将全部{step_count}个对象按演变顺序排列在同一行。")
+        };
+        format!(
+            "强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。{layout}"
+        )
+    };
     let label = if english {
         "User description: "
     } else {
         "用户描述："
     };
-    format!("{template}\n\n{label}{user_description}")
+    format!("{template}\n\n{composition_rules}\n\n{label}{user_description}")
 }
 
 pub(super) fn normalize_canvas_workspace_prompts(

@@ -2267,10 +2267,8 @@ mod tests {
         assert!(canvas.contains("AppState.remove-reference(reference.id)"));
         assert!(canvas.contains("AppState.clear-references()"));
         assert!(canvas.contains("AppState.create-canvas-generation-source"));
-        assert!(canvas.contains("AppState.canvas-workflow-template == \"\""));
-        assert!(canvas.contains(": AppState.canvas-workflow-template"));
-        assert!(canvas.contains("User description:"));
-        assert!(canvas.contains("用户描述："));
+        assert!(canvas.contains("AppState.compose-canvas-workflow-prompt("));
+        assert!(canvas.contains("AppState.canvas-workflow-step-count"));
         assert!(canvas.contains(
             "AppState.generate-canvas-node(AppState.canvas-generation-loading-node-id, submitted-prompt)"
         ));
@@ -2278,7 +2276,11 @@ mod tests {
         assert!(state.contains(
             "callback create-canvas-generation-source(string, float, float) -> string"
         ));
+        assert!(state.contains(
+            "callback compose-canvas-workflow-prompt(string, string, int, bool) -> string"
+        ));
         assert!(callbacks.contains("state.on_create_canvas_generation_source"));
+        assert!(callbacks.contains("state.on_compose_canvas_workflow_prompt"));
         assert!(callbacks.contains("state.on_open_canvas_workspace"));
         assert!(callbacks.contains("switch_canvas_workspace"));
         assert!(state.contains("callback clear-references()"));
@@ -2354,7 +2356,7 @@ mod tests {
                 8,
                 true,
             ),
-            "Create exactly 8 stages with 8 separate subjects.\n\nUser description: tomato"
+            "Create exactly 8 stages with 8 separate subjects.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Arrange all 8 subjects in one row in progression order.\n\nUser description: tomato"
         );
     }
 
@@ -2362,11 +2364,35 @@ mod tests {
     fn canvas_workflow_step_count_is_clamped_between_four_and_twelve() {
         assert_eq!(
             compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 1, false),
-            "制作4个步骤。\n\n用户描述：番茄"
+            "制作4个步骤。\n\n强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。将全部4个对象按演变顺序排列在同一行。\n\n用户描述：番茄"
         );
         assert_eq!(
             compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 99, false),
-            "制作12个步骤。\n\n用户描述：番茄"
+            "制作12个步骤。\n\n强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。将全部12个对象分成上下两行，按从左到右、从上到下的顺序排列。\n\n用户描述：番茄"
+        );
+    }
+
+    #[test]
+    fn canvas_workflow_prompt_requires_a_solid_background_and_no_labels() {
+        assert_eq!(
+            compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 5, false),
+            "制作5个步骤。\n\n强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。将全部5个对象按演变顺序排列在同一行。\n\n用户描述：番茄"
+        );
+    }
+
+    #[test]
+    fn canvas_workflow_prompt_keeps_eight_subjects_in_one_row() {
+        assert_eq!(
+            compose_canvas_workflow_prompt("Create {count} stages.", "tomato", 8, true),
+            "Create 8 stages.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Arrange all 8 subjects in one row in progression order.\n\nUser description: tomato"
+        );
+    }
+
+    #[test]
+    fn canvas_workflow_prompt_splits_more_than_eight_subjects_into_two_rows() {
+        assert_eq!(
+            compose_canvas_workflow_prompt("Create {count} stages.", "tomato", 9, true),
+            "Create 9 stages.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Arrange all 9 subjects in two rows, ordered left to right and then top to bottom.\n\nUser description: tomato"
         );
     }
 
