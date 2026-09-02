@@ -170,6 +170,7 @@ component FreeCanvasCard {
                 AppState.canvas-workflow-artwork = root.artwork;
                 if root.opens-canvas {
                     AppState.canvas-workflow-id = "";
+                    AppState.canvas-tool = "pan";
                     AppState.canvas-workflow-title = "";
                     AppState.canvas-workflow-template = "";
                     AppState.canvas-workflow-hint = "";
@@ -177,6 +178,7 @@ component FreeCanvasCard {
                 } else {
                     AppState.asset-type = root.category;
                     AppState.canvas-workflow-id = root.card-id;
+                    AppState.canvas-tool = "select";
                     AppState.canvas-workflow-title = root.title;
                     AppState.canvas-workflow-template = AppState.en ? root.prompt-en : root.prompt-zh;
                     AppState.canvas-workflow-hint = AppState.en ? root.hint-en : root.hint-zh;

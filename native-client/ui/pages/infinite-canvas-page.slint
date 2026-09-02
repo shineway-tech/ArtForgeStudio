@@ -59,6 +59,56 @@ component CanvasToolButton {
     }
 }
 
+component CanvasModeButton {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> selected: false;
+    callback clicked();
+    width: 34px;
+    height: 34px;
+
+    Rectangle {
+        clip: false;
+        background: root.selected
+            ? AppTheme.accent
+            : (button-touch.has-hover ? AppTheme.panel-soft : transparent);
+        border-radius: self.width / 2;
+        Image {
+            x: 8px;
+            y: 8px;
+            width: 18px;
+            height: 18px;
+            source: root.icon;
+            colorize: root.selected ? #ffffff : AppTheme.text;
+            image-fit: contain;
+        }
+        if button-touch.has-hover: Rectangle {
+            x: parent.width + 10px;
+            y: (parent.height - 28px) / 2;
+            width: max(64px, tooltip-text.preferred-width + 18px);
+            height: 28px;
+            background: AppTheme.text;
+            border-radius: 5px;
+            tooltip-text := Text {
+                width: parent.width;
+                height: parent.height;
+                text: root.label;
+                color: AppTheme.panel;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: no-wrap;
+            }
+        }
+        button-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
 component CanvasImageInsertChoice {
     in property <image> icon;
     in property <string> text;
@@ -2391,6 +2441,10 @@ export component InfiniteCanvasPage {
         AppState.canvas-tool = "pan";
     }
 
+    function workflow-hand-mode() -> bool {
+        return AppState.canvas-workflow-id != "" && AppState.canvas-tool == "hand";
+    }
+
     function generate-workflow() {
         if AppState.generating {
             AppState.stop-generation();
@@ -2424,7 +2478,6 @@ export component InfiniteCanvasPage {
                 AppState.remove-canvas-node(AppState.canvas-generation-loading-node-id);
                 AppState.canvas-generation-loading-node-id = "";
             }
-            AppState.canvas-tool = "pan";
         }
     }
 
@@ -2601,13 +2654,13 @@ export component InfiniteCanvasPage {
                 in-out property <length> start-pointer-y: 0px;
                 width: parent.width;
                 height: parent.height;
-                mouse-cursor: root.space-pan-active ? move : crosshair;
+                mouse-cursor: root.space-pan-active || root.workflow-hand-mode() ? move : default;
                 pointer-event(event) => {
                     if event.kind == PointerEventKind.down && (event.button == PointerEventButton.left || event.button == PointerEventButton.middle) {
                         root.appearance-open = false;
                         root.image-insert-open = false;
                         canvas-keyboard.focus();
-                        if event.button == PointerEventButton.middle || root.space-pan-active {
+                        if event.button == PointerEventButton.middle || root.space-pan-active || root.workflow-hand-mode() {
                             root.temporary-pan-active = true;
                             self.start-pan-x = root.pan-x;
                             self.start-pan-y = root.pan-y;
@@ -2798,6 +2851,46 @@ export component InfiniteCanvasPage {
                 reconnect-started(target-id, start-x, start-y) => { root.begin-reconnect(target-id, start-x, start-y); }
                 reconnect-finished(target-id, end-x, end-y) => { root.finish-reconnect(target-id, end-x, end-y); }
                 selection-focused => { canvas-keyboard.focus(); }
+            }
+
+            if root.workflow-hand-mode(): hand-pan-overlay := TouchArea {
+                in-out property <length> start-pan-x: 0px;
+                in-out property <length> start-pan-y: 0px;
+                in-out property <length> start-pointer-x: 0px;
+                in-out property <length> start-pointer-y: 0px;
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: move;
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down
+                        && (event.button == PointerEventButton.left || event.button == PointerEventButton.middle) {
+                        root.appearance-open = false;
+                        root.image-insert-open = false;
+                        canvas-keyboard.focus();
+                        self.start-pan-x = root.pan-x;
+                        self.start-pan-y = root.pan-y;
+                        self.start-pointer-x = self.mouse-x;
+                        self.start-pointer-y = self.mouse-y;
+                    }
+                }
+                moved => {
+                    if self.pressed {
+                        root.pan-x = self.start-pan-x + self.mouse-x - self.start-pointer-x;
+                        root.pan-y = self.start-pan-y + self.mouse-y - self.start-pointer-y;
+                    }
+                }
+                scroll-event(event) => {
+                    if event.modifiers.control && event.delta-y != 0 {
+                        root.set-zoom(root.zoom-percent + (event.delta-y > 0 ? 10 : -10), self.mouse-x, self.mouse-y);
+                        return accept;
+                    }
+                    if event.delta-x != 0 || event.delta-y != 0 {
+                        root.pan-x += event.delta-x;
+                        root.pan-y += event.delta-y;
+                        return accept;
+                    }
+                    return reject;
+                }
             }
 
             processing-feedback := Rectangle {
@@ -3575,8 +3668,36 @@ export component InfiniteCanvasPage {
                 }
             }
 
+            preset-tool-strip := Rectangle {
+                visible: !AppState.canvas-node-info-open && AppState.canvas-workflow-id != "";
+                x: 16px;
+                y: max(16px, (parent.height - self.height) / 2);
+                width: 44px;
+                height: 84px;
+                background: AppTheme.panel.with-alpha(0.98);
+                border-radius: 22px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+                VerticalLayout {
+                    padding: 5px;
+                    spacing: 6px;
+                    CanvasModeButton {
+                        icon: @image-url("../../assets/icons/select.svg");
+                        label: AppState.en ? "Select" : "选择";
+                        selected: AppState.canvas-tool == "select";
+                        clicked => { AppState.canvas-tool = "select"; }
+                    }
+                    CanvasModeButton {
+                        icon: @image-url("../../assets/icons/hand.svg");
+                        label: AppState.en ? "Hand" : "抓手";
+                        selected: AppState.canvas-tool == "hand";
+                        clicked => { AppState.canvas-tool = "hand"; }
+                    }
+                }
+            }
+
             toolbar := Rectangle {
-                visible: !AppState.canvas-node-info-open;
+                visible: !AppState.canvas-node-info-open && AppState.canvas-workflow-id == "";
                 x: 16px;
                 y: max(16px, (parent.height - self.height) / 2);
                 width: 44px;

@@ -3595,10 +3595,11 @@ mod tests {
         ] {
             assert!(page.contains(interaction), "missing {interaction}");
         }
-        assert!(page.contains("AppState.canvas-tool == \"pan\""));
+        assert!(page.contains("root.workflow-hand-mode()"));
         assert!(include_str!("../../ui/app-state.slint")
             .contains("in-out property <string> canvas-tool: \"pan\""));
-        assert!(!page.contains("label: AppState.en ? \"Select\" : \"选择\""));
+        assert!(page.contains("label: AppState.en ? \"Select\" : \"选择\""));
+        assert!(page.contains("label: AppState.en ? \"Hand\" : \"抓手\""));
         assert!(page.contains("AppState.select-canvas-node(root.note.id, event.modifiers.shift);"));
         assert!(page.contains("root.marquee-additive = event.modifiers.shift;"));
         assert!(canvas_pointer.contains(
@@ -3611,7 +3612,7 @@ mod tests {
         assert!(page.contains("if event.text == Key.Space"));
         assert!(page.contains("root.space-pan-active = true"));
         assert!(page.contains("root.space-pan-active = false"));
-        assert!(!canvas_pointer.contains("AppState.canvas-tool == \"pan\""));
+        assert!(canvas_pointer.contains("root.workflow-hand-mode()"));
         assert!(
             !page.contains("AppState.select-canvas-node(root.note.id, event.modifiers.control);")
         );
@@ -4547,6 +4548,7 @@ mod tests {
             "AppState.page != \"video-generation\" && AppState.page != \"canvas\": Sidebar"
         ));
         assert!(toolbar.contains("x: 16px"));
+        assert!(toolbar.contains("visible: !AppState.canvas-node-info-open && AppState.canvas-workflow-id == \"\""));
         assert!(toolbar.contains("y: max(16px, (parent.height - self.height) / 2)"));
         assert!(toolbar.contains("width: 44px"));
         assert!(toolbar.contains("height: 310px"));
@@ -4555,6 +4557,41 @@ mod tests {
         assert!(page.contains("x: toolbar.x + toolbar.width + 10px"));
         assert!(page.contains("toolbar.y + image-button.y"));
         assert!(page.contains("toolbar.y + appearance-button.y"));
+    }
+
+    #[test]
+    fn preset_canvas_uses_two_circular_select_and_hand_modes() {
+        let launcher = include_str!("../../ui/pages/free-canvas-page.slint");
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let mode_button = page
+            .split("component CanvasModeButton")
+            .nth(1)
+            .and_then(|value| value.split("component CanvasImageInsertChoice").next())
+            .expect("preset canvas mode button");
+        let preset_toolbar = page
+            .split("preset-tool-strip := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("toolbar := Rectangle").next())
+            .expect("preset canvas toolbar");
+        let workflow_generation = page
+            .split("function generate-workflow()")
+            .nth(1)
+            .and_then(|value| value.split("function begin-connection").next())
+            .expect("workflow generation function");
+
+        assert!(launcher.contains("AppState.canvas-tool = \"select\""));
+        assert!(launcher.contains("AppState.canvas-tool = \"pan\""));
+        assert!(mode_button.contains("border-radius: self.width / 2"));
+        assert!(preset_toolbar.contains("visible: !AppState.canvas-node-info-open && AppState.canvas-workflow-id != \"\""));
+        assert!(preset_toolbar.contains("height: 84px"));
+        assert!(preset_toolbar.contains("select.svg"));
+        assert!(preset_toolbar.contains("hand.svg"));
+        assert!(preset_toolbar.contains("selected: AppState.canvas-tool == \"select\""));
+        assert!(preset_toolbar.contains("selected: AppState.canvas-tool == \"hand\""));
+        assert!(preset_toolbar.contains("AppState.canvas-tool = \"select\""));
+        assert!(preset_toolbar.contains("AppState.canvas-tool = \"hand\""));
+        assert!(page.contains("if root.workflow-hand-mode(): hand-pan-overlay := TouchArea"));
+        assert!(!workflow_generation.contains("AppState.canvas-tool = \"pan\""));
     }
 
     #[test]
