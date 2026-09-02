@@ -3612,6 +3612,13 @@ mod tests {
         assert!(page.contains("if event.text == Key.Space"));
         assert!(page.contains("root.space-pan-active = true"));
         assert!(page.contains("root.space-pan-active = false"));
+        assert!(canvas_pointer.contains(
+            "root.temporary-pan-active ? grabbing : (root.space-pan-active || root.workflow-hand-mode() ? grab : default)"
+        ));
+        assert!(page.contains(
+            "if root.space-pan-active || root.workflow-hand-mode(): hand-pan-overlay := TouchArea"
+        ));
+        assert!(page.contains("mouse-cursor: self.pressed ? grabbing : grab"));
         assert!(canvas_pointer.contains("root.workflow-hand-mode()"));
         assert!(
             !page.contains("AppState.select-canvas-node(root.note.id, event.modifiers.control);")
@@ -4590,7 +4597,9 @@ mod tests {
         assert!(preset_toolbar.contains("selected: AppState.canvas-tool == \"hand\""));
         assert!(preset_toolbar.contains("AppState.canvas-tool = \"select\""));
         assert!(preset_toolbar.contains("AppState.canvas-tool = \"hand\""));
-        assert!(page.contains("if root.workflow-hand-mode(): hand-pan-overlay := TouchArea"));
+        assert!(page.contains(
+            "if root.space-pan-active || root.workflow-hand-mode(): hand-pan-overlay := TouchArea"
+        ));
         assert!(!workflow_generation.contains("AppState.canvas-tool = \"pan\""));
     }
 

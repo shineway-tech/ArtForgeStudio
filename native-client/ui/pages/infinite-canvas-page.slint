@@ -2654,7 +2654,7 @@ export component InfiniteCanvasPage {
                 in-out property <length> start-pointer-y: 0px;
                 width: parent.width;
                 height: parent.height;
-                mouse-cursor: root.space-pan-active || root.workflow-hand-mode() ? move : default;
+                mouse-cursor: root.temporary-pan-active ? grabbing : (root.space-pan-active || root.workflow-hand-mode() ? grab : default);
                 pointer-event(event) => {
                     if event.kind == PointerEventKind.down && (event.button == PointerEventButton.left || event.button == PointerEventButton.middle) {
                         root.appearance-open = false;
@@ -2853,14 +2853,14 @@ export component InfiniteCanvasPage {
                 selection-focused => { canvas-keyboard.focus(); }
             }
 
-            if root.workflow-hand-mode(): hand-pan-overlay := TouchArea {
+            if root.space-pan-active || root.workflow-hand-mode(): hand-pan-overlay := TouchArea {
                 in-out property <length> start-pan-x: 0px;
                 in-out property <length> start-pan-y: 0px;
                 in-out property <length> start-pointer-x: 0px;
                 in-out property <length> start-pointer-y: 0px;
                 width: parent.width;
                 height: parent.height;
-                mouse-cursor: move;
+                mouse-cursor: self.pressed ? grabbing : grab;
                 pointer-event(event) => {
                     if event.kind == PointerEventKind.down
                         && (event.button == PointerEventButton.left || event.button == PointerEventButton.middle) {
