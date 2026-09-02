@@ -555,7 +555,7 @@ export component ViewerOverlay {
                 height: parent.height - 16px;
                 spacing: 2px;
                 if AppState.viewer-category == "character": ViewerContextMenuItem {
-                    text: AppState.en ? "Character Age Progression" : "角色年龄变化";
+                    text: AppState.en ? "Import Age Progression" : "导入角色年龄变化";
                     clicked => {
                         root.context-menu-open = false;
                         AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-age.png");
@@ -572,7 +572,7 @@ export component ViewerOverlay {
                     }
                 }
                 if AppState.viewer-category == "character": ViewerContextMenuItem {
-                    text: AppState.en ? "Character Outfit Swap" : "角色换装";
+                    text: AppState.en ? "Import Outfit Swap" : "导入角色换装";
                     clicked => {
                         root.context-menu-open = false;
                         AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-outfit.png");
@@ -589,7 +589,7 @@ export component ViewerOverlay {
                     }
                 }
                 if AppState.viewer-category == "character": ViewerContextMenuItem {
-                    text: AppState.en ? "Character Body Variations" : "角色体型修改";
+                    text: AppState.en ? "Import Body Variations" : "导入角色体型修改";
                     clicked => {
                         root.context-menu-open = false;
                         AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-body.png");

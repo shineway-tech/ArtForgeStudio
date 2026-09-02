@@ -5353,9 +5353,9 @@ mod tests {
             .expect("viewer image touch area");
 
         for (label, expected_id) in [
-            ("角色年龄变化", "character-age"),
-            ("角色换装", "character-outfit"),
-            ("角色体型修改", "character-body"),
+            ("导入角色年龄变化", "character-age"),
+            ("导入角色换装", "character-outfit"),
+            ("导入角色体型修改", "character-body"),
         ] {
             image_touch.mock_single_click(PointerEventButton::Right);
             ElementHandle::find_by_accessible_label(&app, label)
@@ -5370,7 +5370,7 @@ mod tests {
 
         state.set_viewer_category("scene".into());
         image_touch.mock_single_click(PointerEventButton::Right);
-        for label in ["角色年龄变化", "角色换装", "角色体型修改"] {
+        for label in ["导入角色年龄变化", "导入角色换装", "导入角色体型修改"] {
             assert!(
                 ElementHandle::find_by_accessible_label(&app, label)
                     .next()
