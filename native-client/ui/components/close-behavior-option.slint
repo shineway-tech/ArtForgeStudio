@@ -1,0 +1,66 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component CloseBehaviorOption {
+    in property <string> id;
+    in property <string> label;
+    in property <string> description;
+    height: 54px;
+
+    Rectangle {
+        width: root.width;
+        height: root.height;
+        background: AppState.close-behavior == root.id ? AppTheme.panel-soft : AppTheme.panel;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: AppState.close-behavior == root.id ? AppTheme.accent : AppTheme.border;
+
+        Rectangle {
+            x: 14px;
+            y: 19px;
+            width: 16px;
+            height: 16px;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppState.close-behavior == root.id ? AppTheme.accent : AppTheme.weak;
+            background: transparent;
+            if AppState.close-behavior == root.id: Rectangle {
+                x: 4px;
+                y: 4px;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: AppTheme.accent;
+            }
+        }
+
+        Text {
+            x: 40px;
+            y: 8px;
+            width: parent.width - 52px;
+            text: root.label;
+            color: AppTheme.text;
+            font-size: 13px;
+            font-weight: 500;
+            overflow: elide;
+        }
+        Text {
+            x: 40px;
+            y: 29px;
+            width: parent.width - 52px;
+            text: root.description;
+            color: AppTheme.muted;
+            font-size: 11px;
+            overflow: elide;
+        }
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            accessible-role: radio-button;
+            accessible-label: root.label;
+            accessible-checked: AppState.close-behavior == root.id;
+            clicked => { AppState.set-close-behavior(root.id); }
+        }
+    }
+}

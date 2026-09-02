@@ -130,6 +130,7 @@ fn apply_user_profile(app: &AppWindow, profile: UserProfileData) {
         let category = resolve_category(&profile.asset_type, "");
         state.set_asset_type(category.into());
     }
+    state.set_close_behavior(normalize_close_behavior(&profile.close_behavior).into());
     state.set_generation_gallery_layout(
         normalize_gallery_layout(&profile.ui_preferences.generation_gallery_layout).into(),
     );
@@ -168,6 +169,8 @@ fn user_profile_data(app: &AppWindow) -> UserProfileData {
         },
         language: state.get_language().to_string(),
         asset_type: resolve_category(&state.get_asset_type().to_string(), ""),
+        close_behavior: normalize_close_behavior(&state.get_close_behavior().to_string())
+            .to_string(),
         ui_preferences: UiPreferencesData {
             generation_gallery_layout: normalize_gallery_layout(
                 &state.get_generation_gallery_layout().to_string(),
@@ -724,6 +727,14 @@ pub(super) fn references_for_category_mut<'a>(
         "ui" => &mut references.ui,
         "effect" => &mut references.effect,
         _ => &mut references.character,
+    }
+}
+
+pub(super) fn normalize_close_behavior(value: &str) -> &'static str {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "exit" => "exit",
+        "tray" => "tray",
+        _ => "ask",
     }
 }
 

@@ -634,6 +634,8 @@ export global AppState {
     in-out property <int> settings-font-size: 12;
     in-out property <string> settings-section: "basic";
     in-out property <string> card-style: "rounded";
+    in-out property <string> close-behavior: "ask";
+    in-out property <bool> close-choice-open: false;
     in-out property <[string]> font-list: [];
     in-out property <string> input-dir: ".\\data\\input";
     in-out property <string> output-dir: ".\\data\\out";
@@ -714,6 +716,8 @@ export global AppState {
     callback back();
     callback set-theme(string);
     callback set-card-style(string);
+    callback set-close-behavior(string);
+    callback confirm-close-behavior(string);
     callback set-language(string);
     callback save-gallery-layout(string, string);
     callback select-workspace-category(string);

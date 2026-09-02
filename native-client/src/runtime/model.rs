@@ -688,6 +688,8 @@ struct UserProfileData {
     #[serde(default)]
     asset_type: String,
     #[serde(default)]
+    close_behavior: String,
+    #[serde(default)]
     ui_preferences: UiPreferencesData,
 }
 

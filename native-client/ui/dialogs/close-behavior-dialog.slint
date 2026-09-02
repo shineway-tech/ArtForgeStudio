@@ -1,0 +1,77 @@
+import { AppState } from "../app-state.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { AppTheme } from "../theme.slint";
+
+export component CloseBehaviorDialog {
+    if AppState.close-choice-open: Rectangle {
+        background: #00000066;
+        TouchArea { width: parent.width; height: parent.height; }
+
+        dialog := Rectangle {
+            width: min(460px, root.width - 32px);
+            height: min(238px, root.height - 40px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            background: AppTheme.panel;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            drop-shadow-blur: 28px;
+            drop-shadow-color: #00000044;
+            drop-shadow-offset-y: 10px;
+
+            Text {
+                x: 24px;
+                y: 24px;
+                width: parent.width - 48px;
+                text: AppState.en ? "Choose what happens when you close the window" : "关闭窗口时执行什么操作？";
+                color: AppTheme.text;
+                font-size: 19px;
+                font-weight: 600;
+                horizontal-alignment: center;
+            }
+            Text {
+                x: 28px;
+                y: 62px;
+                width: parent.width - 56px;
+                height: 52px;
+                text: AppState.en
+                    ? "You can change this later in Settings > Basic Settings."
+                    : "后续可在“设置 → 基础设置”中修改。";
+                color: AppTheme.muted;
+                font-size: 13px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                x: 24px;
+                y: 142px;
+                width: parent.width - 48px;
+                height: 48px;
+                spacing: 12px;
+                PillButton {
+                    horizontal-stretch: 1;
+                    text: AppState.en ? "Exit application" : "退出程序";
+                    danger: true;
+                    clicked => { AppState.confirm-close-behavior("exit"); }
+                }
+                PillButton {
+                    horizontal-stretch: 1;
+                    text: AppState.en ? "Minimize to system tray" : "最小化到系统托盘";
+                    primary: true;
+                    clicked => { AppState.confirm-close-behavior("tray"); }
+                }
+            }
+            Text {
+                x: 24px;
+                y: 202px;
+                width: parent.width - 48px;
+                text: AppState.en ? "Your choice will be remembered." : "本次选择会被记住。";
+                color: AppTheme.weak;
+                font-size: 11px;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}

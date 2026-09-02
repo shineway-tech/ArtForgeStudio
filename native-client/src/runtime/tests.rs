@@ -2035,6 +2035,60 @@ mod tests {
     }
 
     #[test]
+    fn close_behavior_preferences_are_backward_compatible_and_normalized() {
+        let legacy: UserProfileData =
+            serde_json::from_str("{}").expect("deserialize legacy user profile");
+        assert_eq!(normalize_close_behavior(&legacy.close_behavior), "ask");
+        assert_eq!(normalize_close_behavior(" EXIT "), "exit");
+        assert_eq!(normalize_close_behavior("tray"), "tray");
+        assert_eq!(normalize_close_behavior("unsupported"), "ask");
+
+        let saved = UserProfileData {
+            close_behavior: "tray".to_string(),
+            ..UserProfileData::default()
+        };
+        let serialized = serde_json::to_string(&saved).expect("serialize user profile");
+        let restored: UserProfileData =
+            serde_json::from_str(&serialized).expect("restore user profile");
+        assert_eq!(restored.close_behavior, "tray");
+    }
+
+    #[test]
+    fn close_behavior_ui_and_system_tray_are_wired() {
+        let app = include_str!("../../ui/app.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let settings = include_str!("../../ui/pages/settings-page.slint");
+        let dialog = include_str!("../../ui/dialogs/close-behavior-dialog.slint");
+        let option = include_str!("../../ui/components/close-behavior-option.slint");
+        let runtime = include_str!("app.rs");
+        let profile = include_str!("storage/local_store.rs");
+
+        assert!(state.contains("in-out property <string> close-behavior: \"ask\""));
+        assert!(state.contains("in-out property <bool> close-choice-open: false"));
+        assert!(state.contains("callback set-close-behavior(string)"));
+        assert!(state.contains("callback confirm-close-behavior(string)"));
+        assert!(dialog.contains("退出程序"));
+        assert!(dialog.contains("最小化到系统托盘"));
+        assert!(settings.contains("CloseBehaviorOption"));
+        assert!(settings.contains("AppState.en ? \"When closing the window\" : \"关闭窗口时\""));
+        assert!(option.contains("AppState.set-close-behavior(root.id)"));
+
+        assert!(app.contains("export component AppTray inherits SystemTrayIcon"));
+        assert!(app.contains("clicked => { root.restore(); }"));
+        assert!(app.contains("title: root.open-text"));
+        assert!(app.contains("title: root.quit-text"));
+        assert!(runtime.contains("wire_close_behavior(&app, &tray)"));
+        assert!(runtime.contains("on_close_requested"));
+        assert!(runtime.contains("CloseRequestResponse::KeepWindowShown"));
+        assert!(runtime.contains("state.set_close_choice_open(true)"));
+        assert!(runtime.contains("app.window().hide()"));
+        assert!(runtime.contains("app.window().show()"));
+        assert!(runtime.contains("slint::quit_event_loop()"));
+        assert!(profile.contains("state.set_close_behavior"));
+        assert!(profile.contains("close_behavior: normalize_close_behavior"));
+    }
+
+    #[test]
     fn application_brand_and_release_artifacts_are_elunvi_canvas() {
         let app = include_str!("../../ui/app.slint");
         let sidebar = include_str!("../../ui/components/sidebar.slint");

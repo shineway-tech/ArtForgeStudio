@@ -7,6 +7,7 @@ import { PromptExpandedEditor } from "components/prompt-expanded-editor.slint";
 import { AlipayPaymentDialog } from "dialogs/alipay-payment-dialog.slint";
 import { AuthDialog } from "dialogs/auth-dialog.slint";
 import { CreditInsufficientDialog } from "dialogs/credit-insufficient-dialog.slint";
+import { CloseBehaviorDialog } from "dialogs/close-behavior-dialog.slint";
 import { ContactPopup } from "dialogs/contact-popup.slint";
 import { CanvasGroupNameDialog } from "dialogs/canvas-group-name-dialog.slint";
 import { DeleteConfirm } from "dialogs/delete-confirm.slint";
@@ -45,6 +46,30 @@ import { ToolboxCropPage } from "pages/toolbox-crop-page.slint";
 import { WelcomePage } from "pages/welcome-page.slint";
 
 export { AppState, AppTheme, AccountSession, ModelGroup, ModelOption, AssetItem, AssetGroup, BrushPoint, CanvasNote, CompressionImageItem, ConversationItem, NotificationItem, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, InvoiceOrderView, PromptTextEdit, ReferenceItem }
+
+export component AppTray inherits SystemTrayIcon {
+    in property <string> open-text: "打开主界面 / Open";
+    in property <string> quit-text: "退出程序 / Exit";
+    icon: @image-url("../assets/logo.png");
+    tooltip: "Elunvi Canvas";
+    title: "";
+
+    callback restore();
+    callback quit();
+    clicked => { root.restore(); }
+
+    Menu {
+        MenuItem {
+            title: root.open-text;
+            activated => { root.restore(); }
+        }
+        MenuSeparator { }
+        MenuItem {
+            title: root.quit-text;
+            activated => { root.quit(); }
+        }
+    }
+}
 
 export component AppWindow inherits Window {
     title: "Elunvi Canvas";
@@ -142,6 +167,7 @@ export component AppWindow inherits Window {
     DeepPromptOptimizationDrawer { width: root.width; height: root.height; }
     PromptExpandedEditor { width: root.width; height: root.height; }
     if AppState.directory-migration-open: DirectoryMigrationDialog { width: root.width; height: root.height; }
+    CloseBehaviorDialog { width: root.width; height: root.height; }
     if AppState.contact-copy-toast-visible: Rectangle {
         width: 132px;
         height: 46px;

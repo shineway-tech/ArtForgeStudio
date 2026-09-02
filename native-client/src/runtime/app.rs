@@ -5,8 +5,8 @@ pub(super) fn run() -> Result<()> {
     // The local Store, SQLite index and preview cache are shared process resources. Keeping a
     // second process out avoids cross-process reference rebuilds and cache/write races.
     let instance_name = native_client_instance_name();
-    let instance = single_instance::SingleInstance::new(&instance_name)
-        .context("无法创建客户端单实例锁")?;
+    let instance =
+        single_instance::SingleInstance::new(&instance_name).context("无法创建客户端单实例锁")?;
     if !instance.is_single() {
         anyhow::bail!("客户端已在运行");
     }
@@ -30,6 +30,7 @@ pub(super) fn run() -> Result<()> {
     cleanup_stale_toolbox_files();
     load_user_profile(&app);
     load_showcase_images(&app);
+    let tray = AppTray::new()?;
 
     let context = AppContext {
         backend: Some(Arc::new(BackendRuntime::new(&app_data_dir())?)),
@@ -45,9 +46,11 @@ pub(super) fn run() -> Result<()> {
     push_startup_state(&app, &store.borrow());
 
     wire_callbacks(&app, context.clone());
+    wire_close_behavior(&app, &tray);
     restore_update_installation_result(&app);
     begin_update_check(&app, false);
     initialize_auth(&app, context.clone());
+    tray.show()?;
     app.run()?;
     store_current_prompt_draft(
         &app,
@@ -64,6 +67,96 @@ pub(super) fn run() -> Result<()> {
         let _ = save_local_store_checked(&app, &store.borrow());
     }
     Ok(())
+}
+
+fn wire_close_behavior(app: &AppWindow, tray: &AppTray) {
+    {
+        let app_weak = app.as_weak();
+        tray.on_restore(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            app.window().set_minimized(false);
+            if let Err(error) = app.window().show() {
+                eprintln!("failed to restore main window from tray: {error}");
+            }
+        });
+    }
+
+    tray.on_quit(|| {
+        if let Err(error) = slint::quit_event_loop() {
+            eprintln!("failed to quit from system tray: {error}");
+        }
+    });
+
+    {
+        let app_weak = app.as_weak();
+        app.window().on_close_requested(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return slint::CloseRequestResponse::HideWindow;
+            };
+            let state = app.global::<AppState>();
+            match normalize_close_behavior(&state.get_close_behavior().to_string()) {
+                "exit" => {
+                    if let Err(error) = slint::quit_event_loop() {
+                        eprintln!("failed to quit after close request: {error}");
+                    }
+                }
+                "tray" => {
+                    if let Err(error) = app.window().hide() {
+                        eprintln!("failed to hide main window to tray: {error}");
+                    }
+                }
+                _ => state.set_close_choice_open(true),
+            }
+            slint::CloseRequestResponse::KeepWindowShown
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        app.global::<AppState>()
+            .on_set_close_behavior(move |behavior| {
+                let Some(app) = app_weak.upgrade() else {
+                    return;
+                };
+                let behavior = normalize_close_behavior(&behavior).to_string();
+                if behavior == "ask" {
+                    return;
+                }
+                app.global::<AppState>().set_close_behavior(behavior.into());
+                if let Err(error) = save_user_profile_checked(&app) {
+                    eprintln!("failed to save close behavior: {error}");
+                }
+            });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        app.global::<AppState>()
+            .on_confirm_close_behavior(move |behavior| {
+                let Some(app) = app_weak.upgrade() else {
+                    return;
+                };
+                let behavior = normalize_close_behavior(&behavior);
+                if behavior == "ask" {
+                    return;
+                }
+                let state = app.global::<AppState>();
+                state.set_close_behavior(behavior.into());
+                state.set_close_choice_open(false);
+                if let Err(error) = save_user_profile_checked(&app) {
+                    eprintln!("failed to save confirmed close behavior: {error}");
+                }
+                if behavior == "tray" {
+                    if let Err(error) = app.window().hide() {
+                        eprintln!("failed to hide main window to tray: {error}");
+                    }
+                } else if let Err(error) = slint::quit_event_loop() {
+                    eprintln!("failed to quit after close behavior choice: {error}");
+                }
+            });
+    }
 }
 
 fn native_client_instance_name() -> String {
