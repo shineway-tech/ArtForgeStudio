@@ -186,6 +186,7 @@ dependencies = [
  "chrono",
  "fontdb",
  "i-slint-backend-testing",
+ "i-slint-core",
  "image",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",

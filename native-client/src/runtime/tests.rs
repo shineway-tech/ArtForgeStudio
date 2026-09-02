@@ -3613,12 +3613,12 @@ mod tests {
         assert!(page.contains("root.space-pan-active = true"));
         assert!(page.contains("root.space-pan-active = false"));
         assert!(canvas_pointer.contains(
-            "root.temporary-pan-active ? grabbing : (root.space-pan-active || root.workflow-hand-mode() ? grab : default)"
+            "root.temporary-pan-active || root.space-pan-active || root.workflow-hand-mode() ? pointer : default"
         ));
         assert!(page.contains(
             "if root.space-pan-active || root.workflow-hand-mode(): hand-pan-overlay := TouchArea"
         ));
-        assert!(page.contains("mouse-cursor: self.pressed ? grabbing : grab"));
+        assert!(page.contains("mouse-cursor: pointer"));
         assert!(canvas_pointer.contains("root.workflow-hand-mode()"));
         assert!(
             !page.contains("AppState.select-canvas-node(root.note.id, event.modifiers.control);")
@@ -4539,6 +4539,62 @@ mod tests {
         assert!(zoom_panel.contains("x: zoom-track.thumb-center-x - 7px"));
         assert!(!zoom_panel.contains("parent.width * (root.zoom-percent - 5) / 495"));
         assert!(!zoom_panel.contains("background: AppTheme.accent"));
+    }
+
+    #[test]
+    fn pressing_space_uses_the_windows_hand_cursor_on_the_canvas() {
+        use i_slint_backend_testing::{ElementHandle, TestingBackend, TestingBackendOptions};
+        use slint::platform::{Key, PointerEventButton, WindowEvent};
+
+        slint::platform::set_platform(Box::new(TestingBackend::new(TestingBackendOptions {
+            mock_time: true,
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        })))
+        .unwrap();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_page("canvas".into());
+        state.set_contact_popup_open(false);
+        app.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
+        app.show().expect("show app window");
+
+        let canvas = ElementHandle::find_by_element_id(
+            &app,
+            "InfiniteCanvasPage::canvas-touch",
+        )
+        .next()
+        .expect("canvas touch area");
+        canvas.mock_single_click(PointerEventButton::Left);
+        let position = slint::LogicalPosition::new(
+            canvas.absolute_position().x + canvas.size().width / 2.0,
+            canvas.absolute_position().y + canvas.size().height / 2.0,
+        );
+        app.window()
+            .dispatch_event(WindowEvent::PointerMoved { position });
+        app.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Space.into(),
+        });
+        app.window()
+            .dispatch_event(WindowEvent::PointerMoved { position });
+
+        let adapter =
+            slint::private_unstable_api::re_exports::WindowInner::from_pub(app.window())
+                .window_adapter();
+        let cursor = adapter
+            .internal(i_slint_core::InternalToken)
+            .and_then(|internal| {
+                (internal as &dyn std::any::Any).downcast_ref::<
+                    i_slint_backend_testing::testing_backend::TestingWindow,
+                >()
+            })
+            .map(|window| format!("{:?}", window.mouse_cursor()))
+            .expect("testing window adapter");
+        assert_eq!(
+            cursor, "Pointer",
+            "Windows renders Slint's Pointer cursor as IDC_HAND; Grab maps to IDC_SIZEALL"
+        );
     }
 
     #[test]

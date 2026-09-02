@@ -2654,7 +2654,7 @@ export component InfiniteCanvasPage {
                 in-out property <length> start-pointer-y: 0px;
                 width: parent.width;
                 height: parent.height;
-                mouse-cursor: root.temporary-pan-active ? grabbing : (root.space-pan-active || root.workflow-hand-mode() ? grab : default);
+                mouse-cursor: root.temporary-pan-active || root.space-pan-active || root.workflow-hand-mode() ? pointer : default;
                 pointer-event(event) => {
                     if event.kind == PointerEventKind.down && (event.button == PointerEventButton.left || event.button == PointerEventButton.middle) {
                         root.appearance-open = false;
@@ -2860,7 +2860,7 @@ export component InfiniteCanvasPage {
                 in-out property <length> start-pointer-y: 0px;
                 width: parent.width;
                 height: parent.height;
-                mouse-cursor: self.pressed ? grabbing : grab;
+                mouse-cursor: pointer;
                 pointer-event(event) => {
                     if event.kind == PointerEventKind.down
                         && (event.button == PointerEventButton.left || event.button == PointerEventButton.middle) {
