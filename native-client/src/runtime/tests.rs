@@ -1288,6 +1288,14 @@ mod tests {
     }
 
     #[test]
+    fn image_generation_defaults_to_2k_quality() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+
+        assert_eq!(app.global::<AppState>().get_quality().as_str(), "2K");
+    }
+
+    #[test]
     fn populated_custom_prompt_popup_exposes_low_emphasis_create_and_manage_actions() {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
         let popup = composer

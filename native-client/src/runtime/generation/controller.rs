@@ -246,7 +246,8 @@ mod deep_prompt_tests {
         assert_eq!(notes[0].image_path, "generated.png");
         assert_eq!(notes[0].content, "");
         assert!((notes[0].width / notes[0].height - 2.0).abs() < 0.001);
-        assert!((notes[0].width * notes[0].height - 340.0 * 340.0).abs() < 1.0);
+        assert!((notes[0].width - 680.0).abs() < 0.001);
+        assert!((notes[0].height - 340.0).abs() < 0.001);
         assert!((notes[0].x + notes[0].width / 2.0 - 270.0).abs() < 0.001);
         assert!((notes[0].y + notes[0].height / 2.0 - 325.0).abs() < 0.001);
         assert!(!notes[0].selected);

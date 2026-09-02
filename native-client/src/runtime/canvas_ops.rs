@@ -659,9 +659,11 @@ pub(super) fn fit_image_node_to_intrinsic_aspect(
         return false;
     }
 
-    let base_edge = note.width.max(note.height).max(MIN_IMAGE_NODE_EDGE);
-    let aspect_scale = (image_width / image_height).sqrt();
-    let (mut width, mut height) = (base_edge * aspect_scale, base_edge / aspect_scale);
+    let base_height = note.width.max(note.height).max(MIN_IMAGE_NODE_EDGE);
+    let (mut width, mut height) = (
+        base_height * image_width / image_height,
+        base_height,
+    );
     if width < MIN_IMAGE_NODE_EDGE {
         let scale = MIN_IMAGE_NODE_EDGE / width;
         width *= scale;
@@ -697,7 +699,7 @@ pub(super) fn migrate_legacy_auto_sized_image_node(
         return false;
     }
 
-    let (mut legacy_width, mut legacy_height) = if image_width >= image_height {
+    let (mut longest_edge_width, mut longest_edge_height) = if image_width >= image_height {
         (
             LEGACY_DEFAULT_IMAGE_LONGEST_EDGE,
             LEGACY_DEFAULT_IMAGE_LONGEST_EDGE * image_height / image_width,
@@ -708,21 +710,58 @@ pub(super) fn migrate_legacy_auto_sized_image_node(
             LEGACY_DEFAULT_IMAGE_LONGEST_EDGE,
         )
     };
-    if legacy_width < MIN_IMAGE_NODE_EDGE {
-        let scale = MIN_IMAGE_NODE_EDGE / legacy_width;
-        legacy_width *= scale;
-        legacy_height *= scale;
+    if longest_edge_width < MIN_IMAGE_NODE_EDGE {
+        let scale = MIN_IMAGE_NODE_EDGE / longest_edge_width;
+        longest_edge_width *= scale;
+        longest_edge_height *= scale;
     }
-    if legacy_height < MIN_IMAGE_NODE_EDGE {
-        let scale = MIN_IMAGE_NODE_EDGE / legacy_height;
-        legacy_width *= scale;
-        legacy_height *= scale;
+    if longest_edge_height < MIN_IMAGE_NODE_EDGE {
+        let scale = MIN_IMAGE_NODE_EDGE / longest_edge_height;
+        longest_edge_width *= scale;
+        longest_edge_height *= scale;
     }
 
-    if (note.width - legacy_width).abs() > 0.5 || (note.height - legacy_height).abs() > 0.5 {
+    let aspect_scale = (image_width / image_height).sqrt();
+    let mut area_width = LEGACY_DEFAULT_IMAGE_LONGEST_EDGE * aspect_scale;
+    let mut area_height = LEGACY_DEFAULT_IMAGE_LONGEST_EDGE / aspect_scale;
+    if area_width < MIN_IMAGE_NODE_EDGE {
+        let scale = MIN_IMAGE_NODE_EDGE / area_width;
+        area_width *= scale;
+        area_height *= scale;
+    }
+    if area_height < MIN_IMAGE_NODE_EDGE {
+        let scale = MIN_IMAGE_NODE_EDGE / area_height;
+        area_width *= scale;
+        area_height *= scale;
+    }
+
+    let matches_longest_edge = (note.width - longest_edge_width).abs() <= 0.5
+        && (note.height - longest_edge_height).abs() <= 0.5;
+    let matches_equal_area =
+        (note.width - area_width).abs() <= 0.5 && (note.height - area_height).abs() <= 0.5;
+    if !matches_longest_edge && !matches_equal_area {
         return false;
     }
-    fit_image_node_to_intrinsic_aspect(note, image_width, image_height)
+
+    let center_x = note.x + note.width / 2.0;
+    let center_y = note.y + note.height / 2.0;
+    let mut width = LEGACY_DEFAULT_IMAGE_LONGEST_EDGE * image_width / image_height;
+    let mut height = LEGACY_DEFAULT_IMAGE_LONGEST_EDGE;
+    if width < MIN_IMAGE_NODE_EDGE {
+        let scale = MIN_IMAGE_NODE_EDGE / width;
+        width *= scale;
+        height *= scale;
+    }
+    if (note.width - width).abs() < f32::EPSILON
+        && (note.height - height).abs() < f32::EPSILON
+    {
+        return false;
+    }
+    note.width = width;
+    note.height = height;
+    note.x = center_x - width / 2.0;
+    note.y = center_y - height / 2.0;
+    true
 }
 
 pub(super) fn resize_image_node_proportionally(
@@ -1186,14 +1225,14 @@ mod tests {
             &mut image, 1000.0, 2000.0
         ));
 
-        assert!((image.width / image.height - 0.5).abs() < 0.001);
-        assert!((image.width * image.height - 340.0 * 340.0).abs() < 1.0);
+        assert!((image.width - 170.0).abs() < 0.001);
+        assert!((image.height - 340.0).abs() < 0.001);
         assert!((image.x + image.width / 2.0 - 170.0).abs() < 0.001);
         assert!((image.y + image.height / 2.0 - 125.0).abs() < 0.001);
     }
 
     #[test]
-    fn landscape_canvas_image_keeps_the_same_visual_area_as_a_square() {
+    fn landscape_canvas_image_expands_width_without_reducing_height() {
         let mut square = CanvasNoteData {
             width: 340.0,
             height: 250.0,
@@ -1214,8 +1253,10 @@ mod tests {
             1080.0,
         ));
 
-        assert!(landscape.width > square.width);
-        assert!((landscape.width * landscape.height - square.width * square.height).abs() < 1.0);
+        assert!((square.width - 340.0).abs() < 0.001);
+        assert!((square.height - 340.0).abs() < 0.001);
+        assert!((landscape.width - 604.444_46).abs() < 0.001);
+        assert!((landscape.height - square.height).abs() < 0.001);
     }
 
     #[test]
@@ -1236,10 +1277,25 @@ mod tests {
             1920.0,
             1080.0,
         ));
-        assert!(legacy.width > 340.0);
-        assert!((legacy.width * legacy.height - 340.0 * 340.0).abs() < 1.0);
+        assert!((legacy.width - 604.444_46).abs() < 0.001);
+        assert!((legacy.height - 340.0).abs() < 0.001);
         assert!((legacy.x + legacy.width / 2.0 - legacy_center.0).abs() < 0.001);
         assert!((legacy.y + legacy.height / 2.0 - legacy_center.1).abs() < 0.001);
+
+        let mut area_preserved = CanvasNoteData {
+            x: 20.0,
+            y: 30.0,
+            width: 453.333_34,
+            height: 255.0,
+            ..note("area-preserved", "image", 20.0, 30.0)
+        };
+        assert!(migrate_legacy_auto_sized_image_node(
+            &mut area_preserved,
+            1920.0,
+            1080.0,
+        ));
+        assert!((area_preserved.width - 604.444_46).abs() < 0.001);
+        assert!((area_preserved.height - 340.0).abs() < 0.001);
 
         let mut manually_resized = CanvasNoteData {
             width: 680.0,
