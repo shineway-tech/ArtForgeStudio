@@ -4899,6 +4899,56 @@ mod tests {
     }
 
     #[test]
+    fn membership_cards_disclose_expiring_grants_only_for_paid_plans() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+
+        state.set_logged_in(true);
+        state.set_page("credits".into());
+        state.set_credits_tab("membership".into());
+        state.set_membership_plans(slint::ModelRc::new(slint::VecModel::from(vec![
+            MembershipPlanView {
+                code: "free".into(),
+                name: "免费版".into(),
+                price: "¥0".into(),
+                grant_credits: "0".into(),
+                period_days: 0,
+                tier_rank: 0,
+            },
+            MembershipPlanView {
+                code: "basic".into(),
+                name: "基础版".into(),
+                price: "¥29".into(),
+                grant_credits: "2000".into(),
+                period_days: 30,
+                tier_rank: 1,
+            },
+        ])));
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().expect("show app window");
+
+        assert_eq!(
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                &app,
+                "随本期会员有效期到期",
+            )
+            .count(),
+            1,
+        );
+
+        state.set_language("en".into());
+        assert_eq!(
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                &app,
+                "Expires with this membership period",
+            )
+            .count(),
+            1,
+        );
+    }
+
+    #[test]
     fn dynamic_pages_and_dialogs_keep_content_inside_visible_bounds() {
         let profile = include_str!("../../ui/dialogs/profile-dialog.slint");
         let auth = include_str!("../../ui/dialogs/auth-dialog.slint");
