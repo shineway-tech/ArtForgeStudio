@@ -511,6 +511,7 @@ export global AppState {
 
     in-out property <bool> viewer-open: false;
     in-out property <string> viewer-source: "";
+    in-out property <string> viewer-category: "";
     in-out property <string> viewer-id: "";
     in-out property <string> viewer-source-path: "";
     in-out property <image> viewer-image;
@@ -891,6 +892,7 @@ export global AppState {
     callback viewer-use-same();
     callback viewer-use-reference();
     callback viewer-import-to-canvas();
+    callback viewer-open-character-workflow(string, string, string, string);
     callback viewer-copy-image();
     callback viewer-download-image();
     callback viewer-open-image();

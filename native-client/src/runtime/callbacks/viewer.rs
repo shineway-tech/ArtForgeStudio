@@ -27,6 +27,7 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
                 state.set_viewer_message("".into());
                 state.set_viewer_open(false);
                 state.set_viewer_image(Image::default());
+                state.set_viewer_category("".into());
                 state.set_viewer_source_path("".into());
             }
         });
@@ -580,6 +581,87 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         let store = store.clone();
+        let canvas_history = canvas_history.clone();
+        state.on_viewer_open_character_workflow(move |workflow_id, title, template, hint| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let state = app.global::<AppState>();
+            if state.get_viewer_category().as_str() != "character"
+                || !matches!(
+                    workflow_id.as_str(),
+                    "character-age" | "character-outfit" | "character-body"
+                )
+            {
+                state.set_viewer_message(
+                    if state.get_language().as_str() == "en" {
+                        "This shortcut is only available for character images"
+                    } else {
+                        "该快捷入口仅适用于角色图片"
+                    }
+                    .into(),
+                );
+                return;
+            }
+            let source_path = match current_viewer_source_path(&state) {
+                Ok(path) => path,
+                Err(_) => {
+                    state.set_viewer_message(
+                        if state.get_language().as_str() == "en" {
+                            "Unable to read the current image"
+                        } else {
+                            "无法读取当前图片"
+                        }
+                        .into(),
+                    );
+                    return;
+                }
+            };
+
+            let canvas_prompt = {
+                let mut store_mut = store.borrow_mut();
+                match add_viewer_reference_to_character_workspace(
+                    &mut store_mut,
+                    state.get_canvas_workflow_prompt().as_str(),
+                    workflow_id.as_str(),
+                    &source_path,
+                ) {
+                    Ok(prompt) => prompt,
+                    Err(error) => {
+                        state.set_viewer_message(error.to_string().into());
+                        return;
+                    }
+                }
+            };
+
+            state.set_asset_type("character".into());
+            state.set_canvas_tool("select".into());
+            state.set_canvas_grid_style("dot".into());
+            state.set_canvas_dark_background(true);
+            state.set_canvas_workflow_id(workflow_id);
+            state.set_canvas_workflow_title(title);
+            state.set_canvas_workflow_template(template);
+            state.set_canvas_workflow_hint(hint);
+            state.set_canvas_workflow_prompt(canvas_prompt.into());
+            state.set_viewer_message("".into());
+            state.set_viewer_open(false);
+            state.set_viewer_image(Image::default());
+            state.set_viewer_category("".into());
+            state.set_viewer_source_path("".into());
+            *canvas_history.borrow_mut() = CanvasController::default();
+            state.set_canvas_can_undo(false);
+            state.set_canvas_can_redo(false);
+            state.set_canvas_workspace_switch_request(
+                state.get_canvas_workspace_switch_request().saturating_add(1),
+            );
+            save_local_store(&app, &store.borrow());
+            navigate_to_with_store(&app, &store.borrow(), "canvas");
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
         state.on_request_delete_asset(move |id| {
             if let Some(app) = app_weak.upgrade() {
                 let state = app.global::<AppState>();
@@ -942,6 +1024,35 @@ fn current_viewer_source_path(state: &AppState) -> Result<PathBuf> {
         return Ok(source_path);
     }
     persist_slint_reference(&state.get_viewer_image())
+}
+
+fn add_viewer_reference_to_character_workspace(
+    store: &mut Store,
+    current_prompt: &str,
+    workflow_id: &str,
+    source_path: &Path,
+) -> Result<String> {
+    let target_workspace_id = normalize_canvas_workspace_id(workflow_id);
+    let active_workspace_id = normalize_canvas_workspace_id(&store.active_canvas_workspace_id);
+    let target_reference_count = if active_workspace_id == target_workspace_id {
+        store.canvas_references.len()
+    } else {
+        store
+            .canvas_workspaces
+            .get(&target_workspace_id)
+            .map(|workspace| workspace.references.len())
+            .unwrap_or(0)
+    };
+    if target_reference_count >= MAX_REFERENCE_IMAGES {
+        return Err(anyhow!(reference_limit_message(MAX_REFERENCE_IMAGES)));
+    }
+
+    let prompt = switch_canvas_workspace(store, current_prompt, &target_workspace_id);
+    store.canvas_references.push(ReferenceData {
+        id: Uuid::new_v4().to_string(),
+        source_path: source_path.display().to_string(),
+    });
+    Ok(prompt)
 }
 
 fn prepare_image_edit_inputs(app: &AppWindow, points: &[BrushPoint]) -> Result<(PathBuf, PathBuf)> {

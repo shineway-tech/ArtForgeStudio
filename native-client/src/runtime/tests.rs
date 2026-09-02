@@ -5326,6 +5326,143 @@ mod tests {
     }
 
     #[test]
+    fn character_viewer_right_click_exposes_the_three_character_workflows() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_viewer_source("asset".into());
+        state.set_viewer_category("character".into());
+        state.set_viewer_width(1024);
+        state.set_viewer_height(1024);
+        state.set_viewer_open(true);
+        let selected_workflows = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed_workflows = selected_workflows.clone();
+        state.on_viewer_open_character_workflow(move |id, _, _, _| {
+            observed_workflows.borrow_mut().push(id.to_string());
+        });
+        app.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
+        app.show().expect("show app window");
+
+        let image_touch = ElementHandle::find_by_element_id(&app, "ViewerOverlay::image-touch")
+            .next()
+            .expect("viewer image touch area");
+
+        for (label, expected_id) in [
+            ("角色年龄变化", "character-age"),
+            ("角色换装", "character-outfit"),
+            ("角色体型修改", "character-body"),
+        ] {
+            image_touch.mock_single_click(PointerEventButton::Right);
+            ElementHandle::find_by_accessible_label(&app, label)
+                .next()
+                .unwrap_or_else(|| panic!("character context menu should expose {label}"))
+                .mock_single_click(PointerEventButton::Left);
+            assert_eq!(
+                selected_workflows.borrow().last().map(String::as_str),
+                Some(expected_id)
+            );
+        }
+
+        state.set_viewer_category("scene".into());
+        image_touch.mock_single_click(PointerEventButton::Right);
+        for label in ["角色年龄变化", "角色换装", "角色体型修改"] {
+            assert!(
+                ElementHandle::find_by_accessible_label(&app, label)
+                    .next()
+                    .is_none(),
+                "non-character context menu must hide {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn character_viewer_workflow_opens_its_independent_canvas_with_the_image_as_reference() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let context = AppContext::default();
+        wire_viewer_callbacks(&app, context.clone());
+        let state = app.global::<AppState>();
+        let source_path = std::env::temp_dir().join(format!(
+            "elunvi-character-workflow-reference-{}.png",
+            Uuid::new_v4()
+        ));
+        fs::write(&source_path, b"test image reference").expect("write reference fixture");
+
+        state.set_logged_in(true);
+        state.set_page("assets".into());
+        state.set_viewer_open(true);
+        state.set_viewer_category("character".into());
+        state.set_viewer_source_path(source_path.display().to_string().into());
+        state.set_canvas_workflow_prompt("prompt in the previous workspace".into());
+
+        state.invoke_viewer_open_character_workflow(
+            "character-age".into(),
+            "角色年龄变化".into(),
+            "age template {count}".into(),
+            "describe the character".into(),
+        );
+
+        assert_eq!(state.get_page(), "canvas");
+        assert_eq!(state.get_canvas_workflow_id(), "character-age");
+        assert_eq!(state.get_canvas_workflow_title(), "角色年龄变化");
+        assert_eq!(state.get_canvas_workflow_template(), "age template {count}");
+        assert_eq!(state.get_canvas_workflow_hint(), "describe the character");
+        assert!(!state.get_viewer_open());
+        let store = context.store.borrow();
+        assert_eq!(store.active_canvas_workspace_id, "character-age");
+        assert_eq!(store.canvas_references.len(), 1);
+        assert_eq!(
+            store.canvas_references[0].source_path,
+            source_path.display().to_string()
+        );
+        assert_eq!(
+            store
+                .canvas_workspaces
+                .get(DEFAULT_CANVAS_WORKSPACE_ID)
+                .expect("previous workspace saved")
+                .prompt,
+            "prompt in the previous workspace"
+        );
+        drop(store);
+        context.store.borrow_mut().canvas_workspaces.insert(
+            "character-body".to_string(),
+            CanvasWorkspaceData {
+                references: (0..MAX_REFERENCE_IMAGES)
+                    .map(|index| ReferenceData {
+                        id: format!("reference-{index}"),
+                        source_path: format!("existing-{index}.png"),
+                    })
+                    .collect(),
+                ..CanvasWorkspaceData::default()
+            },
+        );
+        state.set_page("assets".into());
+        state.set_viewer_open(true);
+        state.set_viewer_category("character".into());
+        state.set_viewer_source_path(source_path.display().to_string().into());
+        state.invoke_viewer_open_character_workflow(
+            "character-body".into(),
+            "角色体型修改器".into(),
+            "body template {count}".into(),
+            "describe the body".into(),
+        );
+
+        assert_eq!(state.get_page(), "assets");
+        assert!(state.get_viewer_open());
+        assert!(!state.get_viewer_message().is_empty());
+        assert_eq!(
+            context.store.borrow().active_canvas_workspace_id,
+            "character-age"
+        );
+        let _ = fs::remove_file(source_path);
+    }
+
+    #[test]
     fn viewer_edit_opens_the_brush_image_editor() {
         let app = include_str!("../../ui/app.slint");
         let state = include_str!("../../ui/app-state.slint");

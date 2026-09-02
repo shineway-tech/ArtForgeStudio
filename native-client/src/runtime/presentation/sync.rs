@@ -127,6 +127,7 @@ pub(super) fn open_viewer(app: &AppWindow, store: &Store, id: &str, source: &str
     state.set_viewer_message("".into());
     state.set_viewer_id(item.id.clone().into());
     state.set_viewer_source(source.into());
+    state.set_viewer_category(item.category.clone().into());
     state.set_viewer_source_path(item.source_path.clone().into());
     state.set_viewer_image(viewer_placeholder_image(&state, id, source));
     state.set_viewer_title(item.title.clone().into());

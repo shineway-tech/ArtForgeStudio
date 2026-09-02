@@ -113,8 +113,8 @@ export component ViewerOverlay {
     property <bool> context-menu-open: false;
     property <length> context-menu-x: 0px;
     property <length> context-menu-y: 0px;
-    property <length> context-menu-width: 148px;
-    property <length> context-menu-height: 214px;
+    property <length> context-menu-width: 188px;
+    property <length> context-menu-height: AppState.viewer-category == "character" ? 334px : 214px;
     property <bool> image-drag-armed: false;
     property <bool> image-system-drag-started: false;
     property <length> image-pressed-x: 0px;
@@ -554,6 +554,57 @@ export component ViewerOverlay {
                 width: parent.width - 16px;
                 height: parent.height - 16px;
                 spacing: 2px;
+                if AppState.viewer-category == "character": ViewerContextMenuItem {
+                    text: AppState.en ? "Character Age Progression" : "角色年龄变化";
+                    clicked => {
+                        root.context-menu-open = false;
+                        AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-age.png");
+                        AppState.viewer-open-character-workflow(
+                            "character-age",
+                            AppState.en ? "Character Age Progression" : "角色年龄变化",
+                            AppState.en
+                                ? "Create exactly {count} consecutive age stages of the reference character from infancy to old age, distributed evenly across the lifespan. Preserve identity cues, outfit theme, palette, and art style while changing face, height, body proportions, and posture appropriately. Arrange all {count} full characters evenly in one horizontal character sheet."
+                                : "根据参考角色生成从婴儿到老年的{count}个连续年龄阶段，并按所选数量均匀分布人生阶段。保持角色身份特征、服装主题、配色和绘制风格连贯，让面部、身高、体型和姿态符合年龄变化。将{count}个完整角色均匀排列在同一张横向设定图中。",
+                            AppState.en
+                                ? "Describe the character cue, e.g. blue-robed mage, keep the blue magic"
+                                : "简单描述角色特征，例如：蓝袍法师，始终保留蓝色魔法"
+                        );
+                    }
+                }
+                if AppState.viewer-category == "character": ViewerContextMenuItem {
+                    text: AppState.en ? "Character Outfit Swap" : "角色换装";
+                    clicked => {
+                        root.context-menu-open = false;
+                        AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-outfit.png");
+                        AppState.viewer-open-character-workflow(
+                            "character-outfit",
+                            AppState.en ? "Character Outfit Swap" : "角色换装",
+                            AppState.en
+                                ? "Create exactly {count} outfit variations for the reference character. Preserve identity, face, hair, body shape, pose, camera, and rendering style; change only clothing, footwear, and accessories. Arrange all {count} full-body designs evenly in one clean horizontal character sheet."
+                                : "根据参考角色生成{count}套不同服装造型。保持角色身份、面部、发型、体型、姿势、视角和绘制风格一致，只改变服装、鞋履和配饰。将{count}套完整造型均匀排列在同一张横向角色设定图中，背景干净。",
+                            AppState.en
+                                ? "Describe the character and outfit direction, e.g. swordswoman, formal and battle outfits"
+                                : "简单描述角色和换装方向，例如：女剑士，礼服与战斗服"
+                        );
+                    }
+                }
+                if AppState.viewer-category == "character": ViewerContextMenuItem {
+                    text: AppState.en ? "Character Body Variations" : "角色体型修改";
+                    clicked => {
+                        root.context-menu-open = false;
+                        AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-body.png");
+                        AppState.viewer-open-character-workflow(
+                            "character-body",
+                            AppState.en ? "Character Body Variations" : "角色体型修改器",
+                            AppState.en
+                                ? "Create exactly {count} clearly different body-shape variations of the reference character in a deliberate progression. Preserve identity, face, hair, outfit theme, weapon, and art style; change only height, shoulder width, muscle mass, body-fat distribution, and silhouette. Arrange all {count} full characters evenly in one horizontal character sheet."
+                                : "根据参考角色生成{count}种明显不同且变化有序的体型。保持角色身份、面部、发型、服装主题、武器和绘制风格一致，只改变身高、肩宽、肌肉量、脂肪比例和身体轮廓。将{count}个完整角色均匀排列在同一张横向设定图中。",
+                            AppState.en
+                                ? "Describe the character cue, e.g. green orc warrior, lean to massive"
+                                : "简单描述角色特征，例如：绿色兽人战士，从瘦小到魁梧"
+                        );
+                    }
+                }
                 ViewerContextMenuItem {
                     text: AppState.en ? "Open Folder" : "打开文件夹位置";
                     clicked => {
