@@ -193,7 +193,7 @@ component FreeCanvasCard {
 
 export component FreeCanvasPage {
     function cards-width() -> length {
-        return min(916px, root.width - 48px);
+        return min(1238px, root.width - 48px);
     }
 
     function card-gap() -> length {
@@ -201,7 +201,7 @@ export component FreeCanvasPage {
     }
 
     function card-width() -> length {
-        return (root.cards-width() - root.card-gap() * 2) / 3;
+        return (root.cards-width() - root.card-gap() * 3) / 4;
     }
 
     function card-height() -> length {
@@ -283,6 +283,21 @@ export component FreeCanvasPage {
                 prompt-en: "Use the reference shape, material, and motif to create exactly {count} monster designs from the same world. Preserve recognizable visual DNA while varying body mass, silhouette, anatomy, and details. Arrange all {count} complete monsters evenly in one clean horizontal concept sheet with a consistent camera and art style.";
                 hint-zh: "简单描述原型和气质，例如：石雕图腾，厚重但可爱";
                 hint-en: "Describe the motif and mood, e.g. stone idol, massive but cute";
+            }
+            FreeCanvasCard {
+                x: (root.card-width() + root.card-gap()) * 3;
+                y: 0px;
+                width: root.card-width();
+                height: root.card-height();
+                card-id: "upgrade-evolution";
+                title: AppState.en ? "Upgrade Evolution" : "升级进化";
+                description: AppState.en ? "Evolve one subject from basic to ultimate" : "生成主体从低级到顶级的连续进化";
+                category: "scene";
+                artwork: @image-url("../../assets/free-canvas/upgrade-evolution.png");
+                prompt-zh: "根据上传的参考图，以图中主体为唯一核心，生成保持同一主体的{count}个连续升级进化阶段，从低级、基础、弱小形态逐步进化到顶级、终极、最强形态。主体的类别、核心轮廓、主色、基础材质、标志性结构和识别特征必须贯穿全部阶段；根据主体自身特点，逐步增强体量、结构复杂度、材质品质、功能部件、装备装甲或能量效果，让每一步变化均匀、清晰且可追溯，不得突然变成不同主体。将{count}个完整形态按从低级到顶级的顺序均匀排列，使用单一纯色背景，不得出现任何文字、字母、数字、编号、标签、标题、说明或水印。";
+                prompt-en: "Using the uploaded reference image, create exactly {count} consecutive upgrade-evolution stages of the same subject, progressing from a low-level, basic, weak form to a top-tier, ultimate, strongest form. Preserve the same subject category, core silhouette, main colors, base materials, signature structure, and recognizable identity across every stage. Based on the subject itself, gradually increase scale, structural complexity, material quality, functional parts, equipment, armor, or energy effects. Make every step even, clear, and traceable; never replace it with a different subject. Arrange all {count} complete forms evenly from lowest to highest on one solid-color background. Do not include any words, letters, numbers, numbering, labels, titles, captions, explanations, or watermarks.";
+                hint-zh: "上传主体图片，可补充升级方向，例如：石头巨兽，逐步增加水晶装甲与魔法能量";
+                hint-en: "Upload the subject and optionally describe its upgrade direction";
             }
             FreeCanvasCard {
                 x: 0px;

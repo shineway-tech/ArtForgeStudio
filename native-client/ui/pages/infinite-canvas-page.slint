@@ -2450,7 +2450,12 @@ export component InfiniteCanvasPage {
             AppState.stop-generation();
             return;
         }
-        if AppState.canvas-workflow-prompt == "" {
+        let reference-driven-upgrade = AppState.canvas-workflow-id == "upgrade-evolution";
+        if reference-driven-upgrade && AppState.references.length == 0 {
+            AppState.generation-status = AppState.en ? "Upload a subject reference image first" : "请先上传主体参考图";
+            return;
+        }
+        if AppState.canvas-workflow-prompt == "" && !reference-driven-upgrade {
             AppState.generation-status = AppState.en ? "Enter a prompt first" : "请先输入提示词";
             return;
         }
@@ -2466,8 +2471,11 @@ export component InfiniteCanvasPage {
         );
         let world-x = (canvas.width / 2 - root.pan-x) * 100 / root.zoom-percent;
         let world-y = ((canvas.height - (canvas-workflow-dock.height - 23px)) / 2 - root.pan-y) * 100 / root.zoom-percent;
+        let source-prompt = AppState.canvas-workflow-prompt == ""
+            ? AppState.canvas-workflow-title
+            : AppState.canvas-workflow-prompt;
         let source-id = AppState.create-canvas-generation-source(
-            AppState.canvas-workflow-prompt,
+            source-prompt,
             world-x / 1px,
             world-y / 1px,
         );
@@ -3518,7 +3526,9 @@ export component InfiniteCanvasPage {
                     width: 72px;
                     height: 32px;
                     property <bool> disabled: !AppState.generating
-                        && (AppState.canvas-workflow-prompt == "" || AppState.image-model == "");
+                        && (AppState.image-model == ""
+                            || (AppState.canvas-workflow-id != "upgrade-evolution"
+                                && AppState.canvas-workflow-prompt == ""));
                     opacity: self.disabled ? 0.46 : 1;
                     background: self.disabled
                         ? #4c4b50

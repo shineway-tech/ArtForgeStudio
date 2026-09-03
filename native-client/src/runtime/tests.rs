@@ -2208,7 +2208,7 @@ mod tests {
     }
 
     #[test]
-    fn free_canvas_entry_opens_a_six_choice_launcher_before_the_infinite_canvas() {
+    fn ai_creation_entry_opens_a_seven_choice_launcher_before_the_infinite_canvas() {
         let app = include_str!("../../ui/app.slint");
         let sidebar = include_str!("../../ui/components/sidebar.slint");
         let page = include_str!("../../ui/pages/free-canvas-page.slint");
@@ -2216,7 +2216,7 @@ mod tests {
         let viewer = include_str!("callbacks/viewer.rs");
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
 
-        assert!(sidebar.contains("label: AppState.en ? \"Free Canvas\" : \"自由画布\""));
+        assert!(sidebar.contains("label: AppState.en ? \"AI Creation\" : \"AI创作\""));
         assert!(sidebar.contains("page: \"free-canvas\""));
         assert!(sidebar.contains(
             "active: AppState.page == \"free-canvas\" || AppState.page == \"canvas\""
@@ -2224,11 +2224,12 @@ mod tests {
         assert!(app.contains("import { FreeCanvasPage }"));
         assert!(app.contains("AppState.page == \"free-canvas\": FreeCanvasPage"));
         assert!(app.contains("AppState.page == \"canvas\": InfiniteCanvasPage"));
-        assert_eq!(page.matches("card-id: \"").count(), 6);
+        assert_eq!(page.matches("card-id: \"").count(), 7);
         for (card_id, title) in [
             ("plant-growth", "植物生成器"),
             ("character-outfit", "角色换装"),
             ("monster-generator", "怪物生成器"),
+            ("upgrade-evolution", "升级进化"),
             ("character-age", "角色年龄变化"),
             ("character-body", "角色体型修改器"),
             ("infinite-canvas", "无限画布"),
@@ -2236,8 +2237,8 @@ mod tests {
             assert!(page.contains(&format!("card-id: \"{card_id}\"")));
             assert!(page.contains(title));
         }
-        assert_eq!(page.matches("prompt-zh:").count(), 6);
-        assert_eq!(page.matches("prompt-en:").count(), 6);
+        assert_eq!(page.matches("prompt-zh:").count(), 7);
+        assert_eq!(page.matches("prompt-en:").count(), 7);
         assert!(!page.contains("AppState.navigate(\"generation\")"));
         assert!(page.contains("AppState.navigate(\"canvas\")"));
         assert!(page.contains("opens-canvas: true"));
@@ -2250,11 +2251,139 @@ mod tests {
             "plant-growth.png",
             "character-outfit.png",
             "monster-generator.png",
+            "upgrade-evolution.png",
             "character-age.png",
             "character-body.png",
         ] {
             assert!(manifest.join("assets/free-canvas").join(image).is_file());
         }
+    }
+
+    #[test]
+    fn upgrade_evolution_card_opens_a_reference_driven_canvas_with_strict_output_rules() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("free-canvas".into());
+
+        let opened_workspaces = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed_workspaces = opened_workspaces.clone();
+        state.on_open_canvas_workspace(move |id| {
+            observed_workspaces.borrow_mut().push(id.to_string());
+        });
+        let routes = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed_routes = routes.clone();
+        state.on_navigate(move |page| {
+            observed_routes.borrow_mut().push(page.to_string());
+        });
+
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().expect("show app window");
+
+        let page = ElementHandle::find_by_element_type_name(&app, "FreeCanvasPage")
+            .next()
+            .expect("AI creation launcher");
+        let card = ElementHandle::find_by_accessible_label(&app, "升级进化")
+            .next()
+            .expect("upgrade evolution card");
+        assert!(card.absolute_position().y >= page.absolute_position().y);
+        assert!(
+            card.absolute_position().y + card.size().height
+                <= page.absolute_position().y + page.size().height + 1.0,
+            "upgrade evolution card must be visible without leaving the launcher viewport"
+        );
+
+        card.mock_single_click(PointerEventButton::Left);
+
+        assert_eq!(
+            opened_workspaces.borrow().last().map(String::as_str),
+            Some("upgrade-evolution")
+        );
+        assert_eq!(routes.borrow().last().map(String::as_str), Some("canvas"));
+        assert_eq!(state.get_canvas_workflow_id(), "upgrade-evolution");
+        assert_eq!(state.get_canvas_workflow_title(), "升级进化");
+        assert_eq!(state.get_asset_type(), "scene");
+
+        let template = state.get_canvas_workflow_template().to_string();
+        assert!(template.contains("{count}个连续升级进化阶段"));
+        assert!(template.contains("从低级、基础、弱小形态逐步进化到顶级、终极、最强形态"));
+        assert!(template.contains("保持同一主体"));
+        let submitted = compose_canvas_workflow_prompt(&template, "参考图中的主体", 5, false);
+        assert!(submitted.contains("必须使用单一纯色背景"));
+        assert!(submitted.contains("不得出现编号、序号、文字标签、标题、说明文字或水印"));
+    }
+
+    #[test]
+    fn upgrade_evolution_requires_a_reference_but_not_an_extra_description() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("canvas".into());
+        state.set_canvas_workflow_id("upgrade-evolution".into());
+        state.set_canvas_workflow_title("升级进化".into());
+        state.set_canvas_workflow_template("生成{count}个连续升级进化阶段。".into());
+        state.set_canvas_workflow_prompt("".into());
+        state.set_image_model("test-image-model".into());
+        state.on_compose_canvas_workflow_prompt(|template, prompt, step_count, english| {
+            compose_canvas_workflow_prompt(
+                template.as_str(),
+                prompt.as_str(),
+                step_count,
+                english,
+            )
+            .into()
+        });
+
+        let source_prompts = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed_source_prompts = source_prompts.clone();
+        state.on_create_canvas_generation_source(move |prompt, _, _| {
+            observed_source_prompts
+                .borrow_mut()
+                .push(prompt.to_string());
+            "upgrade-source".into()
+        });
+        let submitted_prompts = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed_submitted_prompts = submitted_prompts.clone();
+        state.on_generate_canvas_node(move |_, prompt| {
+            observed_submitted_prompts
+                .borrow_mut()
+                .push(prompt.to_string());
+        });
+
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().expect("show app window");
+        let generate = ElementHandle::find_by_element_id(
+            &app,
+            "InfiniteCanvasPage::workflow-generate-button",
+        )
+        .next()
+        .expect("workflow generate button");
+
+        generate.mock_single_click(PointerEventButton::Left);
+        assert!(source_prompts.borrow().is_empty());
+        assert_eq!(state.get_generation_status(), "请先上传主体参考图");
+
+        state.set_references(ModelRc::new(VecModel::from(vec![ReferenceItem {
+            id: "subject-reference".into(),
+            image: slint::Image::default(),
+            source_path: "subject.png".into(),
+        }])));
+        generate.mock_single_click(PointerEventButton::Left);
+
+        assert_eq!(source_prompts.borrow().as_slice(), ["升级进化"]);
+        assert_eq!(submitted_prompts.borrow().len(), 1);
+        assert!(submitted_prompts.borrow()[0].contains("生成5个连续升级进化阶段"));
+        assert!(submitted_prompts.borrow()[0].contains("必须使用单一纯色背景"));
     }
 
     #[test]
