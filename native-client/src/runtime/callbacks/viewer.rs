@@ -582,16 +582,19 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
         let app_weak = app.as_weak();
         let store = store.clone();
         let canvas_history = canvas_history.clone();
-        state.on_viewer_open_character_workflow(move |workflow_id, title, template, hint| {
+        state.on_viewer_open_creation_workflow(move |workflow_id, title, template, hint| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             let state = app.global::<AppState>();
-            if state.get_viewer_category().as_str() != "character"
-                || !matches!(
-                    workflow_id.as_str(),
-                    "character-age" | "character-outfit" | "character-body"
-                )
+            let is_upgrade_evolution = workflow_id.as_str() == "upgrade-evolution";
+            let is_character_workflow = matches!(
+                workflow_id.as_str(),
+                "character-age" | "character-outfit" | "character-body"
+            );
+            if !is_upgrade_evolution
+                && (state.get_viewer_category().as_str() != "character"
+                    || !is_character_workflow)
             {
                 state.set_viewer_message(
                     if state.get_language().as_str() == "en" {
@@ -620,7 +623,7 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
 
             let canvas_prompt = {
                 let mut store_mut = store.borrow_mut();
-                match add_viewer_reference_to_character_workspace(
+                match add_viewer_reference_to_creation_workspace(
                     &mut store_mut,
                     state.get_canvas_workflow_prompt().as_str(),
                     workflow_id.as_str(),
@@ -634,7 +637,14 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
                 }
             };
 
-            state.set_asset_type("character".into());
+            state.set_asset_type(
+                if is_upgrade_evolution {
+                    "scene"
+                } else {
+                    "character"
+                }
+                .into(),
+            );
             state.set_canvas_tool("select".into());
             state.set_canvas_grid_style("dot".into());
             state.set_canvas_dark_background(true);
@@ -1026,7 +1036,7 @@ fn current_viewer_source_path(state: &AppState) -> Result<PathBuf> {
     persist_slint_reference(&state.get_viewer_image())
 }
 
-fn add_viewer_reference_to_character_workspace(
+fn add_viewer_reference_to_creation_workspace(
     store: &mut Store,
     current_prompt: &str,
     workflow_id: &str,

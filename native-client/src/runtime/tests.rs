@@ -5455,7 +5455,7 @@ mod tests {
     }
 
     #[test]
-    fn character_viewer_right_click_exposes_the_three_character_workflows() {
+    fn viewer_right_click_exposes_the_relevant_creation_workflows() {
         use i_slint_backend_testing::ElementHandle;
         use slint::platform::PointerEventButton;
 
@@ -5471,7 +5471,7 @@ mod tests {
         state.set_viewer_open(true);
         let selected_workflows = Rc::new(RefCell::new(Vec::<String>::new()));
         let observed_workflows = selected_workflows.clone();
-        state.on_viewer_open_character_workflow(move |id, _, _, _| {
+        state.on_viewer_open_creation_workflow(move |id, _, _, _| {
             observed_workflows.borrow_mut().push(id.to_string());
         });
         app.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
@@ -5485,6 +5485,7 @@ mod tests {
             ("导入角色年龄变化", "character-age"),
             ("导入角色换装", "character-outfit"),
             ("导入角色体型修改", "character-body"),
+            ("导入升级进化", "upgrade-evolution"),
         ] {
             image_touch.mock_single_click(PointerEventButton::Right);
             ElementHandle::find_by_accessible_label(&app, label)
@@ -5507,6 +5508,14 @@ mod tests {
                 "non-character context menu must hide {label}"
             );
         }
+        ElementHandle::find_by_accessible_label(&app, "导入升级进化")
+            .next()
+            .expect("upgrade evolution must be available for every image category")
+            .mock_single_click(PointerEventButton::Left);
+        assert_eq!(
+            selected_workflows.borrow().last().map(String::as_str),
+            Some("upgrade-evolution")
+        );
     }
 
     #[test]
@@ -5529,7 +5538,7 @@ mod tests {
         state.set_viewer_source_path(source_path.display().to_string().into());
         state.set_canvas_workflow_prompt("prompt in the previous workspace".into());
 
-        state.invoke_viewer_open_character_workflow(
+        state.invoke_viewer_open_creation_workflow(
             "character-age".into(),
             "角色年龄变化".into(),
             "age template {count}".into(),
@@ -5574,7 +5583,7 @@ mod tests {
         state.set_viewer_open(true);
         state.set_viewer_category("character".into());
         state.set_viewer_source_path(source_path.display().to_string().into());
-        state.invoke_viewer_open_character_workflow(
+        state.invoke_viewer_open_creation_workflow(
             "character-body".into(),
             "角色体型修改器".into(),
             "body template {count}".into(),
@@ -5588,6 +5597,47 @@ mod tests {
             context.store.borrow().active_canvas_workspace_id,
             "character-age"
         );
+        let _ = fs::remove_file(source_path);
+    }
+
+    #[test]
+    fn viewer_upgrade_evolution_opens_with_the_current_image_as_reference() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let context = AppContext::default();
+        wire_viewer_callbacks(&app, context.clone());
+        let state = app.global::<AppState>();
+        let source_path = std::env::temp_dir().join(format!(
+            "elunvi-upgrade-evolution-reference-{}.png",
+            Uuid::new_v4()
+        ));
+        fs::write(&source_path, b"test image reference").expect("write reference fixture");
+
+        state.set_logged_in(true);
+        state.set_page("assets".into());
+        state.set_viewer_open(true);
+        state.set_viewer_category("scene".into());
+        state.set_viewer_source_path(source_path.display().to_string().into());
+        state.invoke_viewer_open_creation_workflow(
+            "upgrade-evolution".into(),
+            "升级进化".into(),
+            "生成{count}个连续升级进化阶段，使用单一纯色背景，不得出现文字和数字。".into(),
+            "可补充升级方向".into(),
+        );
+
+        assert_eq!(state.get_page(), "canvas");
+        assert_eq!(state.get_canvas_workflow_id(), "upgrade-evolution");
+        assert_eq!(state.get_canvas_workflow_title(), "升级进化");
+        assert_eq!(state.get_asset_type(), "scene");
+        assert!(!state.get_viewer_open());
+        let store = context.store.borrow();
+        assert_eq!(store.active_canvas_workspace_id, "upgrade-evolution");
+        assert_eq!(store.canvas_references.len(), 1);
+        assert_eq!(
+            store.canvas_references[0].source_path,
+            source_path.display().to_string()
+        );
+        drop(store);
         let _ = fs::remove_file(source_path);
     }
 

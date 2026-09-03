@@ -114,7 +114,7 @@ export component ViewerOverlay {
     property <length> context-menu-x: 0px;
     property <length> context-menu-y: 0px;
     property <length> context-menu-width: 188px;
-    property <length> context-menu-height: AppState.viewer-category == "character" ? 334px : 214px;
+    property <length> context-menu-height: AppState.viewer-category == "character" ? 374px : 254px;
     property <bool> image-drag-armed: false;
     property <bool> image-system-drag-started: false;
     property <length> image-pressed-x: 0px;
@@ -559,7 +559,7 @@ export component ViewerOverlay {
                     clicked => {
                         root.context-menu-open = false;
                         AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-age.png");
-                        AppState.viewer-open-character-workflow(
+                        AppState.viewer-open-creation-workflow(
                             "character-age",
                             AppState.en ? "Character Age Progression" : "角色年龄变化",
                             AppState.en
@@ -576,7 +576,7 @@ export component ViewerOverlay {
                     clicked => {
                         root.context-menu-open = false;
                         AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-outfit.png");
-                        AppState.viewer-open-character-workflow(
+                        AppState.viewer-open-creation-workflow(
                             "character-outfit",
                             AppState.en ? "Character Outfit Swap" : "角色换装",
                             AppState.en
@@ -593,7 +593,7 @@ export component ViewerOverlay {
                     clicked => {
                         root.context-menu-open = false;
                         AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-body.png");
-                        AppState.viewer-open-character-workflow(
+                        AppState.viewer-open-creation-workflow(
                             "character-body",
                             AppState.en ? "Character Body Variations" : "角色体型修改器",
                             AppState.en
@@ -602,6 +602,23 @@ export component ViewerOverlay {
                             AppState.en
                                 ? "Describe the character cue, e.g. green orc warrior, lean to massive"
                                 : "简单描述角色特征，例如：绿色兽人战士，从瘦小到魁梧"
+                        );
+                    }
+                }
+                ViewerContextMenuItem {
+                    text: AppState.en ? "Import Upgrade Evolution" : "导入升级进化";
+                    clicked => {
+                        root.context-menu-open = false;
+                        AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/upgrade-evolution.png");
+                        AppState.viewer-open-creation-workflow(
+                            "upgrade-evolution",
+                            AppState.en ? "Upgrade Evolution" : "升级进化",
+                            AppState.en
+                                ? "Using the uploaded reference image, create exactly {count} consecutive upgrade-evolution stages of the same subject, progressing from a low-level, basic, weak form to a top-tier, ultimate, strongest form. Preserve the same subject category, core silhouette, main colors, base materials, signature structure, and recognizable identity across every stage. Based on the subject itself, gradually increase scale, structural complexity, material quality, functional parts, equipment, armor, or energy effects. Make every step even, clear, and traceable; never replace it with a different subject. Arrange all {count} complete forms evenly from lowest to highest on one solid-color background. Do not include any words, letters, numbers, numbering, labels, titles, captions, explanations, or watermarks."
+                                : "根据上传的参考图，以图中主体为唯一核心，生成保持同一主体的{count}个连续升级进化阶段，从低级、基础、弱小形态逐步进化到顶级、终极、最强形态。主体的类别、核心轮廓、主色、基础材质、标志性结构和识别特征必须贯穿全部阶段；根据主体自身特点，逐步增强体量、结构复杂度、材质品质、功能部件、装备装甲或能量效果，让每一步变化均匀、清晰且可追溯，不得突然变成不同主体。将{count}个完整形态按从低级到顶级的顺序均匀排列，使用单一纯色背景，不得出现任何文字、字母、数字、编号、标签、标题、说明或水印。",
+                            AppState.en
+                                ? "Optionally describe the upgrade direction"
+                                : "可补充升级方向，例如：逐步增加水晶装甲与魔法能量"
                         );
                     }
                 }
