@@ -833,6 +833,7 @@ export global AppState {
     callback load-more-inspiration();
     callback update-gallery-viewport(string, float, float, float, string, float, int);
     callback add-reference();
+    callback add-reference-from-asset(string) -> bool;
     callback add-reference-from-transfer(data-transfer) -> bool;
     callback clear-references();
     callback start-thumbnail-drag-preview(string) -> bool;

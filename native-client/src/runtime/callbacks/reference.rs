@@ -38,6 +38,25 @@ pub(super) fn wire_reference_callbacks(app: &AppWindow, store: Rc<RefCell<Store>
     {
         let app_weak = app.as_weak();
         let store = store.clone();
+        state.on_add_reference_from_asset(move |id| {
+            let Some(app) = app_weak.upgrade() else {
+                return false;
+            };
+            let source_path = store
+                .borrow()
+                .assets
+                .iter()
+                .find(|asset| asset.id == id.as_str())
+                .map(|asset| PathBuf::from(&asset.source_path));
+            source_path
+                .as_deref()
+                .is_some_and(|path| add_reference_from_path(&app, &store, path))
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
         state.on_paste_reference(move || {
             let Some(app) = app_weak.upgrade() else {
                 return false;

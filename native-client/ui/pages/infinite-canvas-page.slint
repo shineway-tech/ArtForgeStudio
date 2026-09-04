@@ -147,6 +147,46 @@ component CanvasImageInsertChoice {
     }
 }
 
+component CanvasReferenceSourceOption {
+    in property <image> icon;
+    in property <string> text;
+    callback clicked();
+    height: 46px;
+
+    Rectangle {
+        background: option-touch.has-hover ? #302e38 : transparent;
+        border-radius: 7px;
+        accessible-role: button;
+        accessible-label: root.text;
+        accessible-action-default => { root.clicked(); }
+        Image {
+            x: 12px;
+            y: 13px;
+            width: 20px;
+            height: 20px;
+            source: root.icon;
+            colorize: option-touch.has-hover ? #a99fff : #c3c0ca;
+            image-fit: contain;
+        }
+        Text {
+            x: 44px;
+            width: parent.width - 56px;
+            height: parent.height;
+            text: root.text;
+            color: option-touch.has-hover ? #f5f2fa : #d9d6df;
+            font-size: 13px;
+            font-weight: 400;
+            vertical-alignment: center;
+        }
+        option-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
 component CanvasWorkflowQuickCard {
     in property <string> workflow-id;
     in property <string> title;
@@ -3477,7 +3517,7 @@ export component InfiniteCanvasPage {
                         width: parent.width;
                         height: parent.height;
                         mouse-cursor: pointer;
-                        clicked => { AppState.add-reference(); }
+                        clicked => { workflow-reference-source-popup.show(); }
                     }
                 }
 
@@ -4256,6 +4296,174 @@ export component InfiniteCanvasPage {
                 artwork: @image-url("../../assets/free-canvas/character-body.png");
                 selected: AppState.canvas-workflow-id == self.workflow-id;
                 clicked => { root.switch-workflow("character-body"); workflow-switch-popup.close(); }
+            }
+        }
+    }
+
+    workflow-reference-source-popup := PopupWindow {
+        x: canvas.x + canvas-workflow-dock.x + 14px;
+        y: max(12px, canvas.y + canvas-workflow-dock.y + 110px - self.height);
+        width: 220px;
+        height: 108px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: #211f26;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #514d5c;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #00000088;
+            drop-shadow-offset-y: 6px;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 0px;
+                CanvasReferenceSourceOption {
+                    text: AppState.en ? "Local upload" : "本地上传";
+                    icon: @image-url("../../assets/icons/upload.svg");
+                    clicked => {
+                        workflow-reference-source-popup.close();
+                        AppState.add-reference();
+                    }
+                }
+                CanvasReferenceSourceOption {
+                    text: AppState.en ? "Choose from My Assets" : "从我的资产选择";
+                    icon: @image-url("../../assets/icons/assets.svg");
+                    clicked => {
+                        workflow-reference-source-popup.close();
+                        AppState.asset-category-filter = "all";
+                        AppState.refresh-assets();
+                        workflow-reference-assets-popup.show();
+                    }
+                }
+            }
+        }
+    }
+
+    workflow-reference-assets-popup := PopupWindow {
+        x: max(18px, (root.width - self.width) / 2);
+        y: max(18px, (root.height - self.height) / 2);
+        width: min(820px, root.width - 36px);
+        height: min(610px, root.height - 36px);
+        close-policy: close-on-click-outside;
+
+        asset-picker-card := Rectangle {
+            background: #211f26;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: #514d5c;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000099;
+            drop-shadow-offset-y: 8px;
+            accessible-role: text;
+            accessible-label: AppState.en ? "Choose from My Assets" : "选择我的资产";
+
+            Text {
+                x: 22px;
+                y: 16px;
+                width: parent.width - 86px;
+                height: 30px;
+                text: AppState.en ? "Choose from My Assets" : "选择我的资产";
+                color: #f3f0f7;
+                font-size: 19px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            Text {
+                x: 22px;
+                y: 48px;
+                width: parent.width - 44px;
+                height: 22px;
+                text: AppState.en ? "Select an image to add it as a reference" : "选择一张图片作为当前创作的参考图";
+                color: #aaa6b2;
+                font-size: 12px;
+                font-weight: 400;
+            }
+            DialogCloseButton {
+                x: parent.width - 50px;
+                y: 14px;
+                clicked => { workflow-reference-assets-popup.close(); }
+            }
+
+            if AppState.assets.length > 0: asset-picker-scroll := Flickable {
+                x: 22px;
+                y: 84px;
+                width: parent.width - 44px;
+                height: parent.height - 106px;
+                viewport-width: self.width;
+                property <int> columns: max(2, floor((self.width + 14px) / 176px));
+                property <length> card-width: (self.width - (self.columns - 1) * 14px) / self.columns;
+                property <length> row-height: self.card-width + 40px;
+                viewport-height: max(self.height, ceil(AppState.assets.length / self.columns) * self.row-height);
+
+                for asset[index] in AppState.assets: asset-choice := Rectangle {
+                    x: Math.mod(index, asset-picker-scroll.columns) * (asset-picker-scroll.card-width + 14px);
+                    y: floor(index / asset-picker-scroll.columns) * asset-picker-scroll.row-height;
+                    width: asset-picker-scroll.card-width;
+                    height: asset-picker-scroll.row-height - 14px;
+                    background: asset-choice-touch.has-hover ? #302e38 : #29272f;
+                    border-radius: 10px;
+                    border-width: 1px;
+                    border-color: asset-choice-touch.has-hover ? #8175ff : #46434d;
+                    clip: true;
+                    accessible-role: button;
+                    accessible-label: (AppState.en ? "Choose asset " : "选择资产 ") + asset.title;
+                    accessible-action-default => {
+                        if AppState.add-reference-from-asset(asset.id) {
+                            workflow-reference-assets-popup.close();
+                        }
+                    }
+                    Rectangle {
+                        x: 7px;
+                        y: 7px;
+                        width: parent.width - 14px;
+                        height: parent.width - 14px;
+                        background: #17161b;
+                        border-radius: 7px;
+                        clip: true;
+                        Image {
+                            width: parent.width;
+                            height: parent.height;
+                            source: asset.image;
+                            image-fit: contain;
+                        }
+                    }
+                    Text {
+                        x: 10px;
+                        y: parent.width + 2px;
+                        width: parent.width - 20px;
+                        height: 24px;
+                        text: asset.title;
+                        color: #ddd9e2;
+                        font-size: 12px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    asset-choice-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if AppState.add-reference-from-asset(asset.id) {
+                                workflow-reference-assets-popup.close();
+                            }
+                        }
+                    }
+                }
+            }
+            if AppState.assets.length == 0: Text {
+                x: 30px;
+                y: 110px;
+                width: parent.width - 60px;
+                height: parent.height - 160px;
+                text: AppState.en ? "No saved images yet. Try local upload." : "我的资产中暂无可用图片，请使用本地上传";
+                color: #aaa6b2;
+                font-size: 14px;
+                font-weight: 400;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
             }
         }
     }

@@ -2604,6 +2604,123 @@ mod tests {
     }
 
     #[test]
+    fn canvas_reference_addition_asks_for_a_source_before_opening_a_picker() {
+        use i_slint_backend_testing::{ElementHandle, TestingBackend, TestingBackendOptions};
+        use slint::platform::PointerEventButton;
+
+        slint::platform::set_platform(Box::new(TestingBackend::new(TestingBackendOptions {
+            mock_time: true,
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        })))
+        .unwrap();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("canvas".into());
+        state.set_canvas_workflow_id("upgrade-evolution".into());
+        state.set_assets(ModelRc::new(VecModel::from(vec![AssetItem {
+            id: "asset-1".into(),
+            title: "测试资产".into(),
+            source_path: "asset-1.png".into(),
+            ..Default::default()
+        }])));
+        state.on_refresh_assets(|| {});
+        let local_picker_calls = Rc::new(Cell::new(0));
+        let local_picker_calls_for_callback = local_picker_calls.clone();
+        state.on_add_reference(move || {
+            local_picker_calls_for_callback.set(local_picker_calls_for_callback.get() + 1);
+        });
+        app.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        app.show().expect("show app window");
+
+        let add = ElementHandle::find_by_element_id(
+            &app,
+            "InfiniteCanvasPage::upload-reference-touch",
+        )
+        .next()
+        .expect("reference add tile");
+        add.mock_single_click(PointerEventButton::Left);
+
+        assert_eq!(local_picker_calls.get(), 0, "opening the tile must not choose a source yet");
+        let local = ElementHandle::find_by_accessible_label(&app, "本地上传")
+            .next()
+            .expect("local upload source option");
+        assert!(ElementHandle::find_by_accessible_label(&app, "从我的资产选择")
+            .next()
+            .is_some());
+        local.invoke_accessible_default_action();
+        assert_eq!(local_picker_calls.get(), 1);
+
+        add.mock_single_click(PointerEventButton::Left);
+        ElementHandle::find_by_accessible_label(&app, "从我的资产选择")
+            .next()
+            .expect("my assets source option")
+            .invoke_accessible_default_action();
+        assert!(ElementHandle::find_by_accessible_label(&app, "选择我的资产")
+            .next()
+            .is_some());
+        let selected_asset_id = Rc::new(RefCell::new(String::new()));
+        let selected_asset_id_for_callback = selected_asset_id.clone();
+        state.on_add_reference_from_asset(move |id| {
+            *selected_asset_id_for_callback.borrow_mut() = id.to_string();
+            true
+        });
+        ElementHandle::find_by_accessible_label(&app, "选择资产 测试资产")
+            .next()
+            .expect("asset choice")
+            .invoke_accessible_default_action();
+        assert_eq!(selected_asset_id.borrow().as_str(), "asset-1");
+    }
+
+    #[test]
+    fn stopping_a_canvas_generation_preserves_its_prompt_and_reference_images() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_page("canvas".into());
+        state.set_asset_type("scene".into());
+        state.set_canvas_workflow_prompt("石头巨兽，逐步增加水晶装甲".into());
+        state.set_references(ModelRc::new(VecModel::from(vec![ReferenceItem {
+            id: "canvas-subject".into(),
+            image: slint::Image::default(),
+            source_path: "".into(),
+        }])));
+
+        let context = AppContext::default();
+        context.store.borrow_mut().canvas_references.push(ReferenceData {
+            id: "canvas-subject".to_string(),
+            source_path: String::new(),
+        });
+        insert_active_generation(
+            &context,
+            ActiveGeneration {
+                task_id: "canvas-task".to_string(),
+                category: "scene".to_string(),
+                prompt: "submitted workflow prompt".to_string(),
+                destination: GenerationDestination::Canvas {
+                    source_node_id: "loading-node".to_string(),
+                },
+                ..ActiveGeneration::default()
+            },
+        );
+
+        stop_generation(&app, &context);
+
+        assert_eq!(
+            state.get_canvas_workflow_prompt(),
+            "石头巨兽，逐步增加水晶装甲"
+        );
+        assert_eq!(state.get_references().row_count(), 1);
+        assert_eq!(
+            state.get_references().row_data(0).expect("canvas reference").id,
+            "canvas-subject"
+        );
+    }
+
+    #[test]
     fn reference_picker_does_not_block_the_slint_event_loop() {
         let callbacks = include_str!("callbacks/reference.rs");
         let add_reference = callbacks

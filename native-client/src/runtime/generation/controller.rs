@@ -432,7 +432,10 @@ pub(super) fn stop_generation(app: &AppWindow, context: &AppContext) {
         }
         finish_conversation_placeholder(&state, &task.conversation_id, None);
     }
-    push_references(app, &store.borrow());
+    match task.destination {
+        GenerationDestination::Canvas { .. } => push_canvas_references(app, &store.borrow()),
+        GenerationDestination::Gallery => push_references(app, &store.borrow()),
+    }
     if let Some(client_request_id) = task.client_request_id.as_ref() {
         if let Ok(mut cancellations) = context.cancelled_generation_requests.lock() {
             cancellations.insert(client_request_id.clone());
