@@ -3,16 +3,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn quality_pixel_size_uses_longest_edge_limits() {
+    fn quality_pixel_size_uses_standard_2k_and_4k_dimensions() {
         assert_eq!(pixel_dimensions_for("9:16", "1K"), (576, 1024));
         assert_eq!(pixel_dimensions_for("16:9", "1K"), (1024, 576));
-        assert_eq!(pixel_dimensions_for("9:16", "2K"), (1152, 2048));
-        assert_eq!(pixel_dimensions_for("16:9", "4K"), (4096, 2304));
+        assert_eq!(pixel_dimensions_for("16:9", "2K"), (2560, 1440));
+        assert_eq!(pixel_dimensions_for("9:16", "2K"), (1440, 2560));
+        assert_eq!(pixel_dimensions_for("16:9", "4K"), (3840, 2160));
+        assert_eq!(pixel_dimensions_for("9:16", "4K"), (2160, 3840));
 
         assert_eq!(quality_from_actual_dimensions(1023, 1537), "2K");
         assert_eq!(quality_from_actual_dimensions(1024, 1024), "1K");
         assert_eq!(quality_from_actual_dimensions(2048, 1152), "2K");
-        assert_eq!(quality_from_actual_dimensions(4096, 2304), "4K");
+        assert_eq!(quality_from_actual_dimensions(2560, 1440), "2K");
+        assert_eq!(quality_from_actual_dimensions(3840, 2160), "4K");
     }
 
     #[test]
@@ -2211,12 +2214,20 @@ mod tests {
     fn ai_creation_entry_opens_a_seven_choice_launcher_before_the_infinite_canvas() {
         let app = include_str!("../../ui/app.slint");
         let sidebar = include_str!("../../ui/components/sidebar.slint");
+        let nav_glyph = include_str!("../../ui/components/nav-glyph.slint");
         let page = include_str!("../../ui/pages/free-canvas-page.slint");
         let runtime = include_str!("app.rs");
         let viewer = include_str!("callbacks/viewer.rs");
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
 
         assert!(sidebar.contains("label: AppState.en ? \"AI Creation\" : \"AI创作\""));
+        assert!(sidebar.contains("icon: \"ai-creation\""));
+        assert!(nav_glyph.contains("root.kind == \"ai-creation\""));
+        assert!(nav_glyph.contains("../../assets/icons/ai-creation.svg"));
+        let ai_icon = std::fs::read_to_string(manifest.join("assets/icons/ai-creation.svg"))
+            .expect("AI creation navigation icon");
+        assert!(ai_icon.contains("viewBox=\"0 0 1024 1024\""));
+        assert!(ai_icon.contains("M442.688 163.84l-288 720"));
         assert!(sidebar.contains("page: \"free-canvas\""));
         assert!(sidebar.contains(
             "active: AppState.page == \"free-canvas\" || AppState.page == \"canvas\""
@@ -2321,6 +2332,12 @@ mod tests {
         assert!(submitted.contains("若主体是怪物、机械生物或其他生物"));
         assert!(submitted.contains("允许随等级逐步改变体型、身体比例、轮廓和形态"));
         assert!(submitted.contains("若主体是武器、道具、载具、植物或建筑"));
+        assert!(submitted.contains("白、绿、蓝、紫、橙、红"));
+        assert!(submitted.contains("等级色只能作为局部品质标识"));
+        assert!(submitted.contains("不得给整个主体统一染色"));
+        assert!(submitted.contains("绿光、蓝光、紫光、金光、红光"));
+        assert!(submitted.contains("不得跨越主体之间的纯色背景间距"));
+        assert!(submitted.contains("除工作流明确要求且严格限制在单个主体后方的局部柔和光晕外"));
         assert!(submitted.contains("必须使用单一纯色背景"));
         assert!(submitted.contains("不得出现编号、序号、文字标签、标题、说明文字或水印"));
     }
@@ -2422,6 +2439,12 @@ mod tests {
         assert!(template.contains("若主体是人类或类人角色"));
         assert!(template.contains("若主体是怪物、机械生物或其他生物"));
         assert!(template.contains("若主体是武器、道具、载具、植物或建筑"));
+        let submitted = compose_canvas_workflow_prompt(&template, "", 8, false);
+        assert!(submitted.contains("白、绿、蓝、紫、橙、红"));
+        assert!(submitted.contains("等级色只能作为局部品质标识"));
+        assert!(submitted.contains("不得给整个主体统一染色"));
+        assert!(submitted.contains("绿光、蓝光、紫光、金光、红光"));
+        assert!(submitted.contains("不得跨越主体之间的纯色背景间距"));
         assert!(template.contains("使用单一纯色背景"));
         assert!(template.contains("不得出现任何文字、字母、数字"));
     }
@@ -2647,7 +2670,7 @@ mod tests {
                 8,
                 true,
             ),
-            "Create exactly 8 stages with 8 separate subjects.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Arrange all 8 subjects in one row in progression order.\n\nUser description: tomato"
+            "Create exactly 8 stages with 8 separate subjects.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Keep a clear, continuous solid-background gap between every pair of subjects. No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect. If space is insufficient, uniformly scale down all subjects within the image; keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged. Prefer more empty space over compressed gaps so that each subject can be cleanly extracted on its own. Arrange all 8 subjects in one row in progression order.\n\nUser description: tomato"
         );
     }
 
@@ -2655,11 +2678,11 @@ mod tests {
     fn canvas_workflow_step_count_is_clamped_between_four_and_twelve() {
         assert_eq!(
             compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 1, false),
-            "制作4个步骤。\n\n强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。将全部4个对象按演变顺序排列在同一行。\n\n用户描述：番茄"
+            "制作4个步骤。\n\n强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。任意两个主体之间必须保留清晰、连续的纯色背景间距，主体的轮廓、服装、武器、装备、特效和阴影均不得互相接触、重叠或连接。空间不足时必须统一缩小所有主体在画面中的占比，保持所选画布比例及正常2K或4K输出尺寸不变，宁可增加留白也不得压缩间距，确保每个主体都能被单独完整抠图。将全部4个对象按演变顺序排列在同一行。\n\n用户描述：番茄"
         );
         assert_eq!(
             compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 99, false),
-            "制作12个步骤。\n\n强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。将全部12个对象分成上下两行，按从左到右、从上到下的顺序排列。\n\n用户描述：番茄"
+            "制作12个步骤。\n\n强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。任意两个主体之间必须保留清晰、连续的纯色背景间距，主体的轮廓、服装、武器、装备、特效和阴影均不得互相接触、重叠或连接。空间不足时必须统一缩小所有主体在画面中的占比，保持所选画布比例及正常2K或4K输出尺寸不变，宁可增加留白也不得压缩间距，确保每个主体都能被单独完整抠图。将全部12个对象分成上下两行，按从左到右、从上到下的顺序排列。\n\n用户描述：番茄"
         );
     }
 
@@ -2667,15 +2690,38 @@ mod tests {
     fn canvas_workflow_prompt_requires_a_solid_background_and_no_labels() {
         assert_eq!(
             compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 5, false),
-            "制作5个步骤。\n\n强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。将全部5个对象按演变顺序排列在同一行。\n\n用户描述：番茄"
+            "制作5个步骤。\n\n强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。任意两个主体之间必须保留清晰、连续的纯色背景间距，主体的轮廓、服装、武器、装备、特效和阴影均不得互相接触、重叠或连接。空间不足时必须统一缩小所有主体在画面中的占比，保持所选画布比例及正常2K或4K输出尺寸不变，宁可增加留白也不得压缩间距，确保每个主体都能被单独完整抠图。将全部5个对象按演变顺序排列在同一行。\n\n用户描述：番茄"
         );
+    }
+
+    #[test]
+    fn canvas_workflow_prompt_forces_cutout_safe_gaps_between_every_subject() {
+        let chinese =
+            compose_canvas_workflow_prompt("制作{count}个升级阶段。", "仙侠角色", 6, false);
+        assert!(chinese.contains("任意两个主体之间必须保留清晰、连续的纯色背景间距"));
+        assert!(chinese.contains("主体的轮廓、服装、武器、装备、特效和阴影均不得互相接触、重叠或连接"));
+        assert!(chinese.contains("空间不足时必须统一缩小所有主体"));
+        assert!(chinese.contains("保持所选画布比例及正常2K或4K输出尺寸不变"));
+        assert!(chinese.contains("确保每个主体都能被单独完整抠图"));
+
+        let english =
+            compose_canvas_workflow_prompt("Create {count} upgrade stages.", "wuxia hero", 6, true);
+        assert!(english.contains(
+            "Keep a clear, continuous solid-background gap between every pair of subjects"
+        ));
+        assert!(english.contains(
+            "No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect"
+        ));
+        assert!(english.contains("uniformly scale down all subjects"));
+        assert!(english.contains("keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged"));
+        assert!(english.contains("each subject can be cleanly extracted on its own"));
     }
 
     #[test]
     fn canvas_workflow_prompt_keeps_eight_subjects_in_one_row() {
         assert_eq!(
             compose_canvas_workflow_prompt("Create {count} stages.", "tomato", 8, true),
-            "Create 8 stages.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Arrange all 8 subjects in one row in progression order.\n\nUser description: tomato"
+            "Create 8 stages.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Keep a clear, continuous solid-background gap between every pair of subjects. No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect. If space is insufficient, uniformly scale down all subjects within the image; keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged. Prefer more empty space over compressed gaps so that each subject can be cleanly extracted on its own. Arrange all 8 subjects in one row in progression order.\n\nUser description: tomato"
         );
     }
 
@@ -2683,7 +2729,7 @@ mod tests {
     fn canvas_workflow_prompt_splits_more_than_eight_subjects_into_two_rows() {
         assert_eq!(
             compose_canvas_workflow_prompt("Create {count} stages.", "tomato", 9, true),
-            "Create 9 stages.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Arrange all 9 subjects in two rows, ordered left to right and then top to bottom.\n\nUser description: tomato"
+            "Create 9 stages.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Keep a clear, continuous solid-background gap between every pair of subjects. No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect. If space is insufficient, uniformly scale down all subjects within the image; keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged. Prefer more empty space over compressed gaps so that each subject can be cleanly extracted on its own. Arrange all 9 subjects in two rows, ordered left to right and then top to bottom.\n\nUser description: tomato"
         );
     }
 
@@ -5819,6 +5865,12 @@ mod tests {
         assert!(template.contains("若主体是怪物、机械生物或其他生物"));
         assert!(template.contains("允许随等级逐步改变体型、身体比例、轮廓和形态"));
         assert!(template.contains("若主体是武器、道具、载具、植物或建筑"));
+        let submitted = compose_canvas_workflow_prompt(&template, "", 8, false);
+        assert!(submitted.contains("白、绿、蓝、紫、橙、红"));
+        assert!(submitted.contains("等级色只能作为局部品质标识"));
+        assert!(submitted.contains("不得给整个主体统一染色"));
+        assert!(submitted.contains("绿光、蓝光、紫光、金光、红光"));
+        assert!(submitted.contains("不得跨越主体之间的纯色背景间距"));
         assert!(!state.get_viewer_open());
         let store = context.store.borrow();
         assert_eq!(store.active_canvas_workspace_id, "upgrade-evolution");

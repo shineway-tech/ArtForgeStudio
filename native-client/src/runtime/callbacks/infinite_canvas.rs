@@ -864,7 +864,25 @@ pub(super) fn compose_canvas_workflow_prompt(
     let template = template
         .trim()
         .replace("{count}", &step_count.to_string());
+    let is_upgrade_evolution = if english {
+        template.contains("consecutive upgrade-evolution stages")
+    } else {
+        template.contains("连续升级进化阶段")
+    };
+    let workflow_visual_rules = if is_upgrade_evolution && english {
+        "Mandatory upgrade-tier visuals: automatically map the actual stages from low to high through the universal rarity order white, green, blue, purple, orange, and red. The lowest stage must begin with white-quality details and the highest base stage must reach red-quality details; when there are fewer than six stages, sample this sequence evenly while preserving its order. Tier colors are localized quality accents only, applied to accessories, weapons, armor trim, gems, emblems, functional parts, mechanical modules, crystals, or energy lines. Never tint the whole subject or change its original skin tone, hair color, outfit main color, core palette, base material, or identity. Beyond the six base tiers, add soft localized back glows in this order: green, blue, purple, gold, and red. Confine each subject's back glow and every other effect to its own isolated area; they must not cross the solid-background gap between subjects or touch or connect to neighboring effects. Keep the base background uniform outside each glow."
+    } else if is_upgrade_evolution {
+        "强制升级视觉等级：根据实际阶段数量，从低到高自动映射白、绿、蓝、紫、橙、红的通用稀有度顺序。最低阶必须从白色品质细节开始，最高基础阶必须达到红色品质细节；不足六阶时按顺序均匀取样。等级色只能作为局部品质标识，用于配饰、武器、护甲镶边、宝石、纹章、功能部件、机械模块、晶体或能量纹路等，不得给整个主体统一染色，不得改变主体原有肤色、发色、服装主色、核心配色、基础材质和身份特征。超过基础六阶后，依次增加绿光、蓝光、紫光、金光、红光的柔和局部背光。每个主体的背光和其他光效必须限制在自己的独立区域内，不得跨越主体之间的纯色背景间距，不得与相邻主体的光效接触或相连；光晕区域之外的基础背景必须保持均匀纯色。"
+    } else {
+        ""
+    };
+    let permits_localized_glow = is_upgrade_evolution;
     let composition_rules = if english {
+        let background_rule = if permits_localized_glow {
+            "Outside any workflow-requested soft localized back glow strictly confined behind one subject, do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements."
+        } else {
+            "Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements."
+        };
         let layout = if step_count > 8 {
             format!(
                 "Arrange all {step_count} subjects in two rows, ordered left to right and then top to bottom."
@@ -873,9 +891,14 @@ pub(super) fn compose_canvas_workflow_prompt(
             format!("Arrange all {step_count} subjects in one row in progression order.")
         };
         format!(
-            "Mandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. {layout}"
+            "Mandatory composition rules: use one solid-color background only. {background_rule} Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Keep a clear, continuous solid-background gap between every pair of subjects. No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect. If space is insufficient, uniformly scale down all subjects within the image; keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged. Prefer more empty space over compressed gaps so that each subject can be cleanly extracted on its own. {layout}"
         )
     } else {
+        let background_rule = if permits_localized_glow {
+            "除工作流明确要求且严格限制在单个主体后方的局部柔和光晕外，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。"
+        } else {
+            "不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。"
+        };
         let layout = if step_count > 8 {
             format!(
                 "将全部{step_count}个对象分成上下两行，按从左到右、从上到下的顺序排列。"
@@ -884,7 +907,7 @@ pub(super) fn compose_canvas_workflow_prompt(
             format!("将全部{step_count}个对象按演变顺序排列在同一行。")
         };
         format!(
-            "强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。{layout}"
+            "强制画面规范：必须使用单一纯色背景，{background_rule}画面中不得出现编号、序号、文字标签、标题、说明文字或水印。任意两个主体之间必须保留清晰、连续的纯色背景间距，主体的轮廓、服装、武器、装备、特效和阴影均不得互相接触、重叠或连接。空间不足时必须统一缩小所有主体在画面中的占比，保持所选画布比例及正常2K或4K输出尺寸不变，宁可增加留白也不得压缩间距，确保每个主体都能被单独完整抠图。{layout}"
         )
     };
     let label = if english {
@@ -892,7 +915,13 @@ pub(super) fn compose_canvas_workflow_prompt(
     } else {
         "用户描述："
     };
-    format!("{template}\n\n{composition_rules}\n\n{label}{user_description}")
+    if workflow_visual_rules.is_empty() {
+        format!("{template}\n\n{composition_rules}\n\n{label}{user_description}")
+    } else {
+        format!(
+            "{template}\n\n{workflow_visual_rules}\n\n{composition_rules}\n\n{label}{user_description}"
+        )
+    }
 }
 
 pub(super) fn normalize_canvas_workspace_prompts(
