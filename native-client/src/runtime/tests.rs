@@ -2311,11 +2311,119 @@ mod tests {
 
         let template = state.get_canvas_workflow_template().to_string();
         assert!(template.contains("{count}个连续升级进化阶段"));
-        assert!(template.contains("从低级、基础、弱小形态逐步进化到顶级、终极、最强形态"));
+        assert!(template.contains("从低级、基础形态逐步进化到顶级、终极形态"));
         assert!(template.contains("保持同一主体"));
         let submitted = compose_canvas_workflow_prompt(&template, "参考图中的主体", 5, false);
+        assert!(submitted.contains("不得把所有主体统一处理为从小到大"));
+        assert!(submitted.contains("若主体是人类或类人角色"));
+        assert!(submitted.contains("保持年龄、身高、体型、身体比例、面部和身份特征稳定"));
+        assert!(submitted.contains("主要通过服装等级、武器、装备、护甲"));
+        assert!(submitted.contains("若主体是怪物、机械生物或其他生物"));
+        assert!(submitted.contains("允许随等级逐步改变体型、身体比例、轮廓和形态"));
+        assert!(submitted.contains("若主体是武器、道具、载具、植物或建筑"));
         assert!(submitted.contains("必须使用单一纯色背景"));
         assert!(submitted.contains("不得出现编号、序号、文字标签、标题、说明文字或水印"));
+    }
+
+    #[test]
+    fn workflow_thumbnail_opens_a_quick_switcher_and_switches_workspaces() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("canvas".into());
+        state.set_canvas_workflow_id("upgrade-evolution".into());
+        state.set_canvas_workflow_title("升级进化".into());
+
+        let opened_workspaces = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed_workspaces = opened_workspaces.clone();
+        state.on_open_canvas_workspace(move |id| {
+            observed_workspaces.borrow_mut().push(id.to_string());
+        });
+
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().expect("show app window");
+
+        assert!(
+            ElementHandle::find_by_accessible_label(&app, "切换到植物生成器")
+                .next()
+                .is_none(),
+            "quick switch cards should stay hidden until the workflow thumbnail is clicked"
+        );
+        let switcher = ElementHandle::find_by_accessible_label(&app, "切换创作模板")
+            .next()
+            .expect("workflow thumbnail switcher");
+        switcher.mock_single_click(PointerEventButton::Left);
+
+        let plant = ElementHandle::find_by_accessible_label(&app, "切换到植物生成器")
+            .next()
+            .expect("plant generator quick switch card");
+        plant.invoke_accessible_default_action();
+
+        assert_eq!(
+            opened_workspaces.borrow().last().map(String::as_str),
+            Some("plant-growth")
+        );
+        assert_eq!(state.get_canvas_workflow_id(), "plant-growth");
+        assert_eq!(state.get_canvas_workflow_title(), "植物生成器");
+        assert_eq!(state.get_asset_type(), "scene");
+        assert!(
+            state
+                .get_canvas_workflow_template()
+                .to_string()
+                .contains("完整生命周期")
+        );
+
+        let switcher = ElementHandle::find_by_accessible_label(&app, "切换创作模板")
+            .next()
+            .expect("workflow thumbnail switcher after first switch");
+        switcher.mock_single_click(PointerEventButton::Left);
+        let outfit = ElementHandle::find_by_accessible_label(&app, "切换到角色换装")
+            .next()
+            .expect("character outfit quick switch card");
+        outfit.invoke_accessible_default_action();
+
+        assert_eq!(
+            opened_workspaces.borrow().last().map(String::as_str),
+            Some("character-outfit")
+        );
+        assert_eq!(state.get_canvas_workflow_id(), "character-outfit");
+        assert_eq!(state.get_canvas_workflow_title(), "角色换装");
+        assert_eq!(state.get_asset_type(), "character");
+        assert!(
+            state
+                .get_canvas_workflow_template()
+                .to_string()
+                .contains("只改变服装、鞋履和配饰")
+        );
+
+        let switcher = ElementHandle::find_by_accessible_label(&app, "切换创作模板")
+            .next()
+            .expect("workflow thumbnail switcher after second switch");
+        switcher.mock_single_click(PointerEventButton::Left);
+        let evolution = ElementHandle::find_by_accessible_label(&app, "切换到升级进化")
+            .next()
+            .expect("upgrade evolution quick switch card");
+        evolution.invoke_accessible_default_action();
+
+        assert_eq!(
+            opened_workspaces.borrow().last().map(String::as_str),
+            Some("upgrade-evolution")
+        );
+        assert_eq!(state.get_canvas_workflow_id(), "upgrade-evolution");
+        assert_eq!(state.get_canvas_workflow_title(), "升级进化");
+        assert_eq!(state.get_asset_type(), "scene");
+        let template = state.get_canvas_workflow_template().to_string();
+        assert!(template.contains("先自动识别参考图中的主体类型"));
+        assert!(template.contains("若主体是人类或类人角色"));
+        assert!(template.contains("若主体是怪物、机械生物或其他生物"));
+        assert!(template.contains("若主体是武器、道具、载具、植物或建筑"));
+        assert!(template.contains("使用单一纯色背景"));
+        assert!(template.contains("不得出现任何文字、字母、数字"));
     }
 
     #[test]
@@ -4133,6 +4241,70 @@ mod tests {
     }
 
     #[test]
+    fn generated_canvas_image_reveals_a_hover_detail_action_that_opens_the_viewer() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::{PointerEventButton, WindowEvent};
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let context = AppContext::default();
+        wire_viewer_callbacks(&app, context.clone());
+        let source_path = std::env::temp_dir().join(format!(
+            "elunvi-canvas-detail-{}.png",
+            Uuid::new_v4()
+        ));
+        fs::write(&source_path, b"canvas image fixture").expect("write canvas image fixture");
+        context.store.borrow_mut().canvas_notes.push(CanvasNoteData {
+            id: "generated-image".into(),
+            kind: "image".into(),
+            content: "机械生物逐级进化".into(),
+            x: 120.0,
+            y: 100.0,
+            width: 420.0,
+            height: 280.0,
+            image_path: source_path.display().to_string(),
+            ..CanvasNoteData::default()
+        });
+
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("canvas".into());
+        state.set_canvas_workflow_id("upgrade-evolution".into());
+        state.set_canvas_workflow_title("升级进化".into());
+        push_canvas_notes(&app, &context.store.borrow());
+        app.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
+        app.show().expect("show app window");
+
+        assert!(
+            ElementHandle::find_by_accessible_label(&app, "查看详情")
+                .next()
+                .is_none(),
+            "detail action must stay hidden until the generated image is hovered"
+        );
+        let node = ElementHandle::find_by_element_type_name(&app, "CanvasNodeCard")
+            .next()
+            .expect("generated canvas image node");
+        let position = slint::LogicalPosition::new(
+            node.absolute_position().x + node.size().width / 2.0,
+            node.absolute_position().y + node.size().height / 2.0,
+        );
+        app.window()
+            .dispatch_event(WindowEvent::PointerMoved { position });
+        ElementHandle::find_by_accessible_label(&app, "查看详情")
+            .next()
+            .expect("hovered generated image detail action")
+            .mock_single_click(PointerEventButton::Left);
+
+        assert!(state.get_viewer_open());
+        assert_eq!(state.get_viewer_source(), "canvas");
+        assert_eq!(state.get_viewer_source_path(), source_path.display().to_string());
+        assert_eq!(state.get_viewer_prompt(), "机械生物逐级进化");
+        assert_eq!(state.get_viewer_title(), "升级进化");
+        let _ = fs::remove_file(source_path);
+    }
+
+    #[test]
     fn infinite_canvas_image_tool_separates_plain_uploads_from_generation_nodes() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
         let state = include_str!("../../ui/app-state.slint");
@@ -5602,6 +5774,9 @@ mod tests {
 
     #[test]
     fn viewer_upgrade_evolution_opens_with_the_current_image_as_reference() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
         i_slint_backend_testing::init_no_event_loop();
         let app = AppWindow::new().expect("create app window");
         let context = AppContext::default();
@@ -5615,20 +5790,35 @@ mod tests {
 
         state.set_logged_in(true);
         state.set_page("assets".into());
+        state.set_viewer_source("asset".into());
         state.set_viewer_open(true);
         state.set_viewer_category("scene".into());
+        state.set_viewer_width(1024);
+        state.set_viewer_height(1024);
         state.set_viewer_source_path(source_path.display().to_string().into());
-        state.invoke_viewer_open_creation_workflow(
-            "upgrade-evolution".into(),
-            "升级进化".into(),
-            "生成{count}个连续升级进化阶段，使用单一纯色背景，不得出现文字和数字。".into(),
-            "可补充升级方向".into(),
-        );
+        app.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
+        app.show().expect("show app window");
+
+        ElementHandle::find_by_element_id(&app, "ViewerOverlay::image-touch")
+            .next()
+            .expect("viewer image touch area")
+            .mock_single_click(PointerEventButton::Right);
+        ElementHandle::find_by_accessible_label(&app, "导入升级进化")
+            .next()
+            .expect("upgrade evolution context menu item")
+            .mock_single_click(PointerEventButton::Left);
 
         assert_eq!(state.get_page(), "canvas");
         assert_eq!(state.get_canvas_workflow_id(), "upgrade-evolution");
         assert_eq!(state.get_canvas_workflow_title(), "升级进化");
         assert_eq!(state.get_asset_type(), "scene");
+        let template = state.get_canvas_workflow_template().to_string();
+        assert!(template.contains("不得把所有主体统一处理为从小到大"));
+        assert!(template.contains("若主体是人类或类人角色"));
+        assert!(template.contains("主要通过服装等级、武器、装备、护甲"));
+        assert!(template.contains("若主体是怪物、机械生物或其他生物"));
+        assert!(template.contains("允许随等级逐步改变体型、身体比例、轮廓和形态"));
+        assert!(template.contains("若主体是武器、道具、载具、植物或建筑"));
         assert!(!state.get_viewer_open());
         let store = context.store.borrow();
         assert_eq!(store.active_canvas_workspace_id, "upgrade-evolution");

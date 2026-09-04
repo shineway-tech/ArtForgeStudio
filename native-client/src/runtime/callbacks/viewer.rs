@@ -580,6 +580,52 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
+        state.on_open_canvas_image_detail(
+            move |id, source_path, image, prompt, width, height| {
+                let Some(app) = app_weak.upgrade() else {
+                    return;
+                };
+                if source_path.trim().is_empty() {
+                    return;
+                }
+                let state = app.global::<AppState>();
+                let prompt = prompt.to_string();
+                state.set_viewer_message("".into());
+                state.set_viewer_id(id);
+                state.set_viewer_source("canvas".into());
+                state.set_viewer_category(state.get_asset_type());
+                state.set_viewer_source_path(source_path);
+                state.set_viewer_image(image);
+                state.set_viewer_title(
+                    if state.get_canvas_workflow_title().is_empty() {
+                        if state.get_language().as_str() == "en" {
+                            "Canvas Image".into()
+                        } else {
+                            "画布图片".into()
+                        }
+                    } else {
+                        state.get_canvas_workflow_title()
+                    },
+                );
+                state.set_viewer_prompt(prompt.clone().into());
+                state.set_viewer_prompt_lines(estimated_prompt_lines(&prompt));
+                state.set_viewer_time("".into());
+                state.set_viewer_ratio(state.get_ratio());
+                state.set_viewer_quality(state.get_quality());
+                state.set_viewer_model(state.get_image_model_name());
+                state.set_viewer_repeat_enabled(false);
+                state.set_viewer_cutout_done(false);
+                state.set_viewer_remove_black_done(false);
+                state.set_viewer_upscale_done(false);
+                state.set_viewer_width(width.round().max(1.0) as i32);
+                state.set_viewer_height(height.round().max(1.0) as i32);
+                state.set_viewer_open(true);
+            },
+        );
+    }
+
+    {
+        let app_weak = app.as_weak();
         let store = store.clone();
         let canvas_history = canvas_history.clone();
         state.on_viewer_open_creation_workflow(move |workflow_id, title, template, hint| {
