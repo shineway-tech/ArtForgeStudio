@@ -1,10 +1,55 @@
 //! Owner-bound user namespaces and their capability-only filesystem boundary.
 #![allow(dead_code)]
 
-use anyhow::{anyhow, ensure, Context, Result};
+#[cfg(not(windows))]
+use anyhow::anyhow;
+#[cfg(unix)]
+use anyhow::Context;
+use anyhow::{ensure, Result};
+#[cfg(unix)]
 use std::ffi::{OsStr, OsString};
 use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
+
+#[cfg(windows)]
+#[path = "user_namespace_windows.rs"]
+mod windows;
+#[cfg(windows)]
+#[allow(unused_imports)] // Public handoff types need not all be used by each exact-module harness.
+pub(crate) use windows::{
+    DataRootCapability, ManagedDirectoryCapability, ManagedFileCapability,
+    ManagedNamespaceDirectories, NamespaceFs,
+};
+
+// Kept platform independent so Windows name-policy tests execute on every host.
+#[cfg(any(windows, test))]
+fn validate_windows_relative_name(value: &str) -> Result<()> {
+    ensure!(!value.is_empty(), "empty Windows relative name");
+    for component in value.split(['/', '\\']) {
+        ensure!(
+            !component.is_empty() && component != "." && component != "..",
+            "invalid Windows path component"
+        );
+        ensure!(
+            !component.ends_with(['.', ' ']),
+            "ambiguous Windows path component"
+        );
+        ensure!(
+            !component.chars().any(|c| c <= '\u{1f}' || "<>:\"|?*".contains(c)),
+            "invalid Windows filename character"
+        );
+        let stem = component.split('.').next().unwrap().trim_end_matches(' ').to_uppercase();
+        let numbered_device = stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT"))
+            .is_some_and(|suffix| matches!(suffix,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"));
+        ensure!(
+            !matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+                && !numbered_device,
+            "reserved Windows device name"
+        );
+    }
+    Ok(())
+}
 
 #[cfg(unix)]
 use std::os::fd::OwnedFd;
@@ -129,6 +174,8 @@ impl TryFrom<&str> for ManagedRelativeName {
     type Error = anyhow::Error;
 
     fn try_from(value: &str) -> Result<Self> {
+        #[cfg(windows)]
+        validate_windows_relative_name(value)?;
         let path = Path::new(value);
         ensure!(!value.is_empty() && !path.is_absolute());
         ensure!(!value.as_bytes().contains(&0));
@@ -154,7 +201,7 @@ pub(crate) struct DataRootCapability {
     display_root: PathBuf,
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub(crate) struct DataRootCapability {
     _unsupported: (),
 }
@@ -176,7 +223,7 @@ pub(crate) struct ManagedNamespaceDirectories {
     managed: Vec<RetainedManagedDirectory>,
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub(crate) struct ManagedNamespaceDirectories {
     _unsupported: (),
 }
@@ -191,7 +238,7 @@ pub(crate) struct ManagedDirectoryCapability {
     identity: ObjectIdentity,
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub(crate) struct ManagedDirectoryCapability {
     _unsupported: (),
 }
@@ -206,7 +253,7 @@ pub(crate) struct ManagedFileCapability {
     identity: ObjectIdentity,
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub(crate) struct ManagedFileCapability {
     _unsupported: (),
 }
@@ -219,7 +266,7 @@ pub(crate) struct NamespaceFs {
     binding_id: u64,
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub(crate) struct NamespaceFs {
     _unsupported: (),
 }
@@ -822,7 +869,7 @@ fn open_regular_at(parent: &OwnedFd, leaf: &OsStr) -> Result<OwnedFd> {
     Ok(descriptor)
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl NamespaceFs {
     pub(crate) fn open_data_root(_data_root: &Path) -> Result<DataRootCapability> {
         unsupported_namespace_capabilities()
@@ -890,7 +937,7 @@ impl NamespaceFs {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn unsupported_namespace_capabilities<T>() -> Result<T> {
     Err(anyhow!(
         "managed namespace capabilities are unavailable without audited handle-relative support"
@@ -913,6 +960,28 @@ mod tests {
     }
 
     const USER_A: &str = "11111111-1111-4111-8111-111111111111";
+
+    #[test]
+    fn windows_names_reject_streams_devices_and_ambiguous_components() {
+        for rejected in [
+            "", ".", "..", "a/../b", "a/./b", "a//b", "a/", "a\\", "\\a", "C:a",
+            "C:\\a", "a:stream", "NUL", "con.txt", "COM1", "LPT9.log", "COM¹.txt",
+            "aux ", "a.", "a ", "a\0b", "a<b", "a?b", "a|b", "a\u{1}b",
+        ] {
+            assert!(
+                validate_windows_relative_name(rejected).is_err(),
+                "{rejected:?}"
+            );
+        }
+        for accepted in [
+            "file.bin", "nested/file.bin", "nested\\file.bin", "LPT10.txt", "控制/结果.png",
+        ] {
+            assert!(
+                validate_windows_relative_name(accepted).is_ok(),
+                "{accepted:?}"
+            );
+        }
+    }
 
     #[test]
     fn namespace_accepts_only_a_canonical_server_uuid() {
@@ -1296,7 +1365,7 @@ mod tests {
         );
     }
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     #[test]
     fn namespace_filesystem_fails_closed_without_audited_handle_relative_support() {
         let root = temporary_directory();
