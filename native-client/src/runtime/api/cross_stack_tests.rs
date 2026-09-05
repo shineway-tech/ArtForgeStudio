@@ -465,7 +465,7 @@ fn cross_stack_session_device_binding_and_refresh_replay() {
     );
     wrong_device
         .session()
-        .install_tokens(&login.tokens)
+        .install_tokens_for_user(&login.tokens, &login.user.id)
         .expect("install tokens on wrong test device");
     assert_http_error(
         wrong_device.authenticated_json::<Value>(Method::GET, "/v1/account", None, None),
@@ -1682,7 +1682,7 @@ fn cross_stack_refresh_required_fields_and_authenticated_client_version() {
     let invalid_version = new_client_with(client.device().id.clone(), "1.0");
     invalid_version
         .session()
-        .install_tokens(&login.tokens)
+        .install_tokens_for_user(&login.tokens, &login.user.id)
         .expect("install tokens for malformed version test");
     assert_http_error(
         invalid_version.authenticated_json::<Value>(Method::GET, "/v1/account", None, None),
@@ -1692,7 +1692,7 @@ fn cross_stack_refresh_required_fields_and_authenticated_client_version() {
     let dev_minimum = new_client_with(client.device().id.clone(), "0.0.0");
     dev_minimum
         .session()
-        .install_tokens(&login.tokens)
+        .install_tokens_for_user(&login.tokens, &login.user.id)
         .expect("install tokens for dev minimum version test");
     assert!(!dev_minimum
         .authenticated_json::<Value>(Method::GET, "/v1/account", None, None)
@@ -2459,7 +2459,7 @@ fn cross_stack_session_self_revoke_and_logout_all_are_terminal() {
     );
     copied_session
         .session()
-        .install_tokens(&logout_all_login.tokens)
+        .install_tokens_for_user(&logout_all_login.tokens, &logout_all_login.user.id)
         .expect("copy session before logout all");
     AuthApi::new(logout_all_client.clone())
         .logout(true)

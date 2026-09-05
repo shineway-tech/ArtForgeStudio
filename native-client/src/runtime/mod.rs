@@ -180,6 +180,10 @@ use ui_component_extraction::*;
 #[path = "storage/local_store.rs"]
 mod local_store;
 use local_store::*;
+#[path = "storage/user_namespace.rs"]
+mod user_namespace;
+#[allow(unused_imports)]
+use user_namespace::*;
 #[path = "storage/client_state.rs"]
 mod client_state;
 use client_state::*;

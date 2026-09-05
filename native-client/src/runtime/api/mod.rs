@@ -32,6 +32,7 @@ pub(crate) use membership::*;
 pub(crate) use notifications::*;
 pub(crate) use payment::*;
 pub(crate) use prompt_optimization::*;
+// Session exports are owner-bound; no API may persist a refresh token without its user.
 pub(crate) use session::*;
 // Team, owner-admin, finance-summary, and reauthentication routes are identity scoped.
 #[allow(unused_imports)]

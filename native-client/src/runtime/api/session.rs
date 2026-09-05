@@ -1,4 +1,5 @@
 use super::{ApiError, TokenSet};
+use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
@@ -9,12 +10,19 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 const SESSION_DIR: &str = "session";
-const REFRESH_TOKEN_FILE: &str = "refresh-token";
+const REFRESH_SESSION_FILE: &str = "refresh-session.json";
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PersistedRefreshSession {
+    pub(crate) owner_user_id: String,
+    pub(crate) refresh_token: String,
+}
+
 pub(crate) trait RefreshTokenStore: Send + Sync {
-    fn load(&self) -> Result<Option<String>, ApiError>;
-    fn save(&self, token: &str) -> Result<(), ApiError>;
+    fn load(&self) -> Result<Option<PersistedRefreshSession>, ApiError>;
+    fn save(&self, session: &PersistedRefreshSession) -> Result<(), ApiError>;
     fn clear(&self) -> Result<(), ApiError>;
 }
 
@@ -25,7 +33,7 @@ pub(crate) struct FileRefreshTokenStore {
 impl FileRefreshTokenStore {
     pub(crate) fn new(data_dir: &Path) -> Self {
         Self {
-            path: data_dir.join(SESSION_DIR).join(REFRESH_TOKEN_FILE),
+            path: data_dir.join(SESSION_DIR).join(REFRESH_SESSION_FILE),
         }
     }
 
@@ -40,7 +48,7 @@ impl FileRefreshTokenStore {
     fn temporary_path(&self) -> PathBuf {
         let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         self.path.with_file_name(format!(
-            ".{REFRESH_TOKEN_FILE}.{}.{}.tmp",
+            ".{REFRESH_SESSION_FILE}.{}.{}.tmp",
             std::process::id(),
             sequence
         ))
@@ -48,27 +56,32 @@ impl FileRefreshTokenStore {
 }
 
 impl RefreshTokenStore for FileRefreshTokenStore {
-    fn load(&self) -> Result<Option<String>, ApiError> {
+    fn load(&self) -> Result<Option<PersistedRefreshSession>, ApiError> {
         let value = match fs::read_to_string(&self.path) {
             Ok(value) => value,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(local_state_error("读取刷新令牌", error)),
+            Err(error) => return Err(local_state_error("读取刷新会话", error)),
         };
         restrict_file(&self.path)?;
-        let value = value.trim();
-        if value.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(value.to_string()))
+        let session: PersistedRefreshSession =
+            serde_json::from_str(&value).map_err(|_| protocol_error("本地刷新会话格式无效"))?;
+        let canonical_owner = canonical_owner_user_id(&session.owner_user_id)?;
+        if canonical_owner != session.owner_user_id || session.refresh_token.trim().is_empty() {
+            return Err(protocol_error("本地刷新会话格式无效"));
         }
+        Ok(Some(session))
     }
 
-    fn save(&self, token: &str) -> Result<(), ApiError> {
-        if token.trim().is_empty() {
+    fn save(&self, session: &PersistedRefreshSession) -> Result<(), ApiError> {
+        let canonical_owner = canonical_owner_user_id(&session.owner_user_id)?;
+        if canonical_owner != session.owner_user_id || session.refresh_token.trim().is_empty() {
             return Err(ApiError::LocalState {
-                message: "拒绝保存空的刷新令牌".to_string(),
+                message: "拒绝保存无效的刷新会话".to_string(),
             });
         }
+        let serialized = serde_json::to_vec(session).map_err(|_| ApiError::LocalState {
+            message: "序列化刷新会话失败".to_string(),
+        })?;
         self.prepare_parent()?;
         let temporary = self.temporary_path();
         let result = (|| {
@@ -78,21 +91,15 @@ impl RefreshTokenStore for FileRefreshTokenStore {
             options.mode(0o600);
             let mut file = options
                 .open(&temporary)
-                .map_err(|error| local_state_error("创建刷新令牌临时文件", error))?;
-            file.write_all(token.as_bytes())
-                .map_err(|error| local_state_error("写入刷新令牌", error))?;
+                .map_err(|error| local_state_error("创建刷新会话临时文件", error))?;
+            file.write_all(&serialized)
+                .map_err(|error| local_state_error("写入刷新会话", error))?;
             file.sync_all()
-                .map_err(|error| local_state_error("同步刷新令牌", error))?;
+                .map_err(|error| local_state_error("同步刷新会话", error))?;
             drop(file);
 
-            #[cfg(windows)]
-            if let Err(error) = fs::remove_file(&self.path) {
-                if error.kind() != ErrorKind::NotFound {
-                    return Err(local_state_error("替换旧刷新令牌", error));
-                }
-            }
-            fs::rename(&temporary, &self.path)
-                .map_err(|error| local_state_error("保存刷新令牌", error))?;
+            atomic_replace(&temporary, &self.path)
+                .map_err(|error| local_state_error("保存刷新会话", error))?;
             restrict_file(&self.path)
         })();
         if result.is_err() {
@@ -105,8 +112,53 @@ impl RefreshTokenStore for FileRefreshTokenStore {
         match fs::remove_file(&self.path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(local_state_error("删除刷新令牌", error)),
+            Err(error) => Err(local_state_error("删除刷新会话", error)),
         }
+    }
+}
+
+fn canonical_owner_user_id(owner_user_id: &str) -> Result<String, ApiError> {
+    uuid::Uuid::parse_str(owner_user_id)
+        .map(|owner| owner.to_string())
+        .map_err(|_| protocol_error("本地刷新会话所有者无效"))
+}
+
+fn protocol_error(message: &str) -> ApiError {
+    ApiError::Protocol {
+        message: message.to_string(),
+        request_id: None,
+    }
+}
+
+#[cfg(not(windows))]
+fn atomic_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::rename(source, destination)
+}
+
+#[cfg(windows)]
+fn atomic_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let result = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
     }
 }
 
@@ -142,6 +194,7 @@ fn restrict_file(_path: &Path) -> Result<(), ApiError> {
 struct SessionState {
     access_token: Option<String>,
     owner_user_id: Option<String>,
+    scope_published: bool,
     auth_epoch: u64,
     refreshing: bool,
     refresh_epoch: u64,
@@ -168,9 +221,17 @@ pub(crate) struct SessionManager {
 
 impl SessionManager {
     pub(crate) fn new(store: Arc<dyn RefreshTokenStore>) -> Self {
+        let owner_user_id = store
+            .load()
+            .ok()
+            .flatten()
+            .map(|session| session.owner_user_id);
         Self {
             store,
-            state: Mutex::new(SessionState::default()),
+            state: Mutex::new(SessionState {
+                owner_user_id,
+                ..SessionState::default()
+            }),
             refresh_finished: Condvar::new(),
         }
     }
@@ -197,7 +258,7 @@ impl SessionManager {
 
     pub(crate) fn access_token_for_epoch(&self, auth_epoch: u64) -> Result<String, ApiError> {
         let mut state = self.lock_state();
-        if state.auth_epoch != auth_epoch {
+        if state.auth_epoch != auth_epoch || !state.scope_published {
             return Err(ApiError::AuthenticationRequired);
         }
         if let Some(access_token) = state.access_token.as_ref() {
@@ -216,7 +277,7 @@ impl SessionManager {
                 .wait(state)
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
         }
-        if state.auth_epoch != auth_epoch {
+        if state.auth_epoch != auth_epoch || !state.scope_published {
             return Err(ApiError::AuthenticationRequired);
         }
         if let Some(access_token) = state.access_token.as_ref() {
@@ -232,8 +293,8 @@ impl SessionManager {
         Ok(self.store.load()?.is_some())
     }
 
-    pub(crate) fn install_tokens(&self, tokens: &TokenSet) -> Result<(), ApiError> {
-        self.install_tokens_with_owner(tokens, None)
+    pub(crate) fn persisted_owner_user_id(&self) -> Option<String> {
+        self.lock_state().owner_user_id.clone()
     }
 
     pub(crate) fn install_tokens_for_user(
@@ -241,26 +302,107 @@ impl SessionManager {
         tokens: &TokenSet,
         owner_user_id: &str,
     ) -> Result<SessionScope, ApiError> {
-        self.install_tokens_with_owner(tokens, Some(owner_user_id.to_string()))?;
-        self.scope_for_user(owner_user_id)
-            .ok_or(ApiError::AuthenticationRequired)
-    }
-
-    fn install_tokens_with_owner(
-        &self,
-        tokens: &TokenSet,
-        owner_user_id: Option<String>,
-    ) -> Result<(), ApiError> {
         let mut state = self.lock_state();
-        self.store.save(&tokens.refresh_token)?;
+        self.store.save(&PersistedRefreshSession {
+            owner_user_id: owner_user_id.to_string(),
+            refresh_token: tokens.refresh_token.clone(),
+        })?;
         state.auth_epoch = state.auth_epoch.wrapping_add(1);
         state.access_token = Some(tokens.access_token.clone());
-        state.owner_user_id = owner_user_id;
+        state.owner_user_id = Some(owner_user_id.to_string());
+        state.scope_published = true;
         state.refreshing = false;
         state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
         state.last_refresh_result = Some(Ok(tokens.access_token.clone()));
         self.refresh_finished.notify_all();
-        Ok(())
+        Ok(SessionScope {
+            owner_user_id: owner_user_id.to_string(),
+            auth_epoch: state.auth_epoch,
+        })
+    }
+
+    pub(crate) fn refresh_persisted_owner<F>(
+        &self,
+        owner_user_id: &str,
+        refresh: F,
+    ) -> Result<SessionScope, ApiError>
+    where
+        F: FnOnce(&str) -> Result<TokenSet, ApiError>,
+    {
+        let canonical_owner = canonical_owner_user_id(owner_user_id)
+            .ok()
+            .filter(|canonical| canonical == owner_user_id)
+            .ok_or(ApiError::AuthenticationRequired)?;
+        let (auth_epoch, refresh_session) = {
+            let mut state = self.lock_state();
+            if state.owner_user_id.as_deref() != Some(canonical_owner.as_str())
+                || state.scope_published
+                || state.access_token.is_some()
+                || state.refreshing
+            {
+                return Err(ApiError::AuthenticationRequired);
+            }
+            let refresh_session = self
+                .store
+                .load()?
+                .filter(|record| record.owner_user_id == canonical_owner)
+                .ok_or(ApiError::AuthenticationRequired)?;
+            state.refreshing = true;
+            state.last_refresh_result = None;
+            (state.auth_epoch, refresh_session)
+        };
+
+        let refreshed = refresh(&refresh_session.refresh_token);
+        match refreshed {
+            Ok(tokens) => {
+                let mut state = self.lock_state();
+                if state.auth_epoch != auth_epoch
+                    || state.owner_user_id.as_deref() != Some(canonical_owner.as_str())
+                    || state.scope_published
+                    || !state.refreshing
+                {
+                    return Err(ApiError::AuthenticationRequired);
+                }
+                if let Err(error) = self.store.save(&PersistedRefreshSession {
+                    owner_user_id: canonical_owner.clone(),
+                    refresh_token: tokens.refresh_token.clone(),
+                }) {
+                    state.refreshing = false;
+                    state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
+                    state.last_refresh_result = Some(Err(error.clone()));
+                    self.refresh_finished.notify_all();
+                    return Err(error);
+                }
+                state.auth_epoch = state.auth_epoch.wrapping_add(1);
+                state.access_token = Some(tokens.access_token.clone());
+                state.owner_user_id = Some(canonical_owner.clone());
+                state.scope_published = true;
+                state.refreshing = false;
+                state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
+                state.last_refresh_result = Some(Ok(tokens.access_token));
+                self.refresh_finished.notify_all();
+                Ok(SessionScope {
+                    owner_user_id: canonical_owner,
+                    auth_epoch: state.auth_epoch,
+                })
+            }
+            Err(error) => {
+                let mut state = self.lock_state();
+                if state.auth_epoch == auth_epoch
+                    && state.owner_user_id.as_deref() == Some(canonical_owner.as_str())
+                    && !state.scope_published
+                    && state.refreshing
+                {
+                    state.refreshing = false;
+                    state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
+                    state.last_refresh_result = Some(Err(error.clone()));
+                    self.refresh_finished.notify_all();
+                    Err(error)
+                } else {
+                    Err(ApiError::AuthenticationRequired)
+                }
+            }
+        }
     }
 
     pub(crate) fn clear(&self) -> Result<(), ApiError> {
@@ -276,18 +418,13 @@ impl SessionManager {
     }
 
     pub(crate) fn bind_user(&self, owner_user_id: &str) -> Result<SessionScope, ApiError> {
-        let mut state = self.lock_state();
-        if state.access_token.is_none() || owner_user_id.trim().is_empty() {
-            return Err(ApiError::AuthenticationRequired);
-        }
-        if state
-            .owner_user_id
-            .as_deref()
-            .is_some_and(|owner| owner != owner_user_id)
+        let state = self.lock_state();
+        if state.access_token.is_none()
+            || !state.scope_published
+            || state.owner_user_id.as_deref() != Some(owner_user_id)
         {
             return Err(ApiError::AuthenticationRequired);
         }
-        state.owner_user_id = Some(owner_user_id.to_string());
         Ok(SessionScope {
             owner_user_id: owner_user_id.to_string(),
             auth_epoch: state.auth_epoch,
@@ -296,9 +433,11 @@ impl SessionManager {
 
     pub(crate) fn scope_for_user(&self, owner_user_id: &str) -> Option<SessionScope> {
         let state = self.lock_state();
-        (state.owner_user_id.as_deref() == Some(owner_user_id)).then(|| SessionScope {
-            owner_user_id: owner_user_id.to_string(),
-            auth_epoch: state.auth_epoch,
+        (state.scope_published && state.owner_user_id.as_deref() == Some(owner_user_id)).then(|| {
+            SessionScope {
+                owner_user_id: owner_user_id.to_string(),
+                auth_epoch: state.auth_epoch,
+            }
         })
     }
 
@@ -378,58 +517,20 @@ impl SessionManager {
     where
         F: FnOnce(&str) -> Result<TokenSet, ApiError>,
     {
-        let (auth_epoch, refresh_token) = {
-            let mut state = self.lock_state();
-            if let (Some(rejected), Some(current)) =
-                (rejected_access_token, state.access_token.as_deref())
-            {
-                if current != rejected {
-                    return Ok(current.to_string());
-                }
+        let scope = {
+            let state = self.lock_state();
+            if !state.scope_published {
+                return Err(ApiError::AuthenticationRequired);
             }
-
-            if state.refreshing {
-                let observed_epoch = state.refresh_epoch;
-                while state.refreshing && state.refresh_epoch == observed_epoch {
-                    state = self
-                        .refresh_finished
-                        .wait(state)
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
-                }
-                return state
-                    .last_refresh_result
+            SessionScope {
+                owner_user_id: state
+                    .owner_user_id
                     .clone()
-                    .unwrap_or(Err(ApiError::AuthenticationRequired));
+                    .ok_or(ApiError::AuthenticationRequired)?,
+                auth_epoch: state.auth_epoch,
             }
-
-            let refresh_token = self
-                .store
-                .load()?
-                .ok_or(ApiError::AuthenticationRequired)?;
-            state.refreshing = true;
-            state.access_token = None;
-            state.last_refresh_result = None;
-            (state.auth_epoch, refresh_token)
         };
-
-        let refreshed = refresh(&refresh_token);
-        let mut state = self.lock_state();
-        if state.auth_epoch != auth_epoch {
-            return Err(ApiError::AuthenticationRequired);
-        }
-        let result = match refreshed {
-            Ok(tokens) => self
-                .store
-                .save(&tokens.refresh_token)
-                .map(|()| tokens.access_token),
-            Err(error) => Err(error),
-        };
-        state.refreshing = false;
-        state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
-        state.access_token = result.clone().ok();
-        state.last_refresh_result = Some(result.clone());
-        self.refresh_finished.notify_all();
-        result
+        self.refresh_scope(&scope, rejected_access_token, refresh)
     }
 
     pub(crate) fn refresh_scope<F>(
@@ -441,7 +542,7 @@ impl SessionManager {
     where
         F: FnOnce(&str) -> Result<TokenSet, ApiError>,
     {
-        let refresh_token = {
+        let refresh_session = {
             let mut state = self.lock_state();
             if !scope_matches(&state, scope) {
                 return Err(ApiError::AuthenticationRequired);
@@ -474,34 +575,21 @@ impl SessionManager {
                     .unwrap_or(Err(ApiError::AuthenticationRequired));
             }
 
-            let refresh_token = self
+            let refresh_session = self
                 .store
                 .load()?
+                .filter(|record| record.owner_user_id == scope.owner_user_id)
                 .ok_or(ApiError::AuthenticationRequired)?;
             state.refreshing = true;
             state.access_token = None;
             state.last_refresh_result = None;
-            refresh_token
+            refresh_session
         };
 
-        let refreshed = refresh(&refresh_token);
-        let mut state = self.lock_state();
-        if !scope_matches(&state, scope) {
-            return Err(ApiError::AuthenticationRequired);
+        match refresh(&refresh_session.refresh_token) {
+            Ok(tokens) => self.persist_refreshed_tokens(scope, &tokens),
+            Err(error) => self.finish_refresh(scope, Err(error)),
         }
-        let result = match refreshed {
-            Ok(tokens) => self
-                .store
-                .save(&tokens.refresh_token)
-                .map(|()| tokens.access_token),
-            Err(error) => Err(error),
-        };
-        state.refreshing = false;
-        state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
-        state.access_token = result.clone().ok();
-        state.last_refresh_result = Some(result.clone());
-        self.refresh_finished.notify_all();
-        result
     }
 
     pub(crate) fn refresh_epoch<F>(
@@ -513,67 +601,99 @@ impl SessionManager {
     where
         F: FnOnce(&str) -> Result<TokenSet, ApiError>,
     {
-        let refresh_token = {
-            let mut state = self.lock_state();
-            if state.auth_epoch != auth_epoch {
+        let scope = {
+            let state = self.lock_state();
+            if state.auth_epoch != auth_epoch || !state.scope_published {
                 return Err(ApiError::AuthenticationRequired);
             }
-            if let (Some(rejected), Some(current)) =
-                (rejected_access_token, state.access_token.as_deref())
-            {
-                if current != rejected {
-                    return Ok(current.to_string());
-                }
-            }
-
-            if state.refreshing {
-                let observed_refresh_epoch = state.refresh_epoch;
-                while state.refreshing
-                    && state.refresh_epoch == observed_refresh_epoch
-                    && state.auth_epoch == auth_epoch
-                {
-                    state = self
-                        .refresh_finished
-                        .wait(state)
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
-                }
-                if state.auth_epoch != auth_epoch {
-                    return Err(ApiError::AuthenticationRequired);
-                }
-                return state
-                    .last_refresh_result
+            SessionScope {
+                owner_user_id: state
+                    .owner_user_id
                     .clone()
-                    .unwrap_or(Err(ApiError::AuthenticationRequired));
+                    .ok_or(ApiError::AuthenticationRequired)?,
+                auth_epoch,
             }
-
-            let refresh_token = self
-                .store
-                .load()?
-                .ok_or(ApiError::AuthenticationRequired)?;
-            state.refreshing = true;
-            state.access_token = None;
-            state.last_refresh_result = None;
-            refresh_token
         };
+        self.refresh_scope(&scope, rejected_access_token, refresh)
+    }
 
-        let refreshed = refresh(&refresh_token);
+    pub(crate) fn persist_refreshed_tokens(
+        &self,
+        scope: &SessionScope,
+        tokens: &TokenSet,
+    ) -> Result<String, ApiError> {
         let mut state = self.lock_state();
-        if state.auth_epoch != auth_epoch {
+        if !scope_matches(&state, scope) {
             return Err(ApiError::AuthenticationRequired);
         }
-        let result = match refreshed {
-            Ok(tokens) => self
-                .store
-                .save(&tokens.refresh_token)
-                .map(|()| tokens.access_token),
-            Err(error) => Err(error),
+        let stored_owner_matches = match self.store.load() {
+            Ok(record) => record.is_some_and(|record| record.owner_user_id == scope.owner_user_id),
+            Err(error) => {
+                if state.refreshing {
+                    state.refreshing = false;
+                    state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
+                    state.last_refresh_result = Some(Err(error.clone()));
+                    self.refresh_finished.notify_all();
+                }
+                return Err(error);
+            }
         };
+        if !stored_owner_matches {
+            let error = ApiError::AuthenticationRequired;
+            if state.refreshing {
+                state.refreshing = false;
+                state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
+                state.last_refresh_result = Some(Err(error.clone()));
+                self.refresh_finished.notify_all();
+            }
+            return Err(error);
+        }
+        let save_result = self.store.save(&PersistedRefreshSession {
+            owner_user_id: scope.owner_user_id.clone(),
+            refresh_token: tokens.refresh_token.clone(),
+        });
+        if let Err(error) = save_result {
+            if state.refreshing {
+                state.refreshing = false;
+                state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
+                state.last_refresh_result = Some(Err(error.clone()));
+                self.refresh_finished.notify_all();
+            }
+            return Err(error);
+        }
+        state.refreshing = false;
+        state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
+        state.access_token = Some(tokens.access_token.clone());
+        state.last_refresh_result = Some(Ok(tokens.access_token.clone()));
+        self.refresh_finished.notify_all();
+        Ok(tokens.access_token.clone())
+    }
+
+    fn finish_refresh(
+        &self,
+        scope: &SessionScope,
+        result: Result<String, ApiError>,
+    ) -> Result<String, ApiError> {
+        let mut state = self.lock_state();
+        if !scope_matches(&state, scope) {
+            return Err(ApiError::AuthenticationRequired);
+        }
         state.refreshing = false;
         state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
         state.access_token = result.clone().ok();
         state.last_refresh_result = Some(result.clone());
         self.refresh_finished.notify_all();
         result
+    }
+
+    #[cfg(test)]
+    fn persisted_refresh_token_for_test(&self) -> String {
+        self.store
+            .load()
+            .ok()
+            .flatten()
+            .map(|session| session.refresh_token)
+            .unwrap_or_default()
     }
 
     fn lock_state(&self) -> std::sync::MutexGuard<'_, SessionState> {
@@ -584,7 +704,8 @@ impl SessionManager {
 }
 
 fn scope_matches(state: &SessionState, scope: &SessionScope) -> bool {
-    state.auth_epoch == scope.auth_epoch
+    state.scope_published
+        && state.auth_epoch == scope.auth_epoch
         && state.owner_user_id.as_deref() == Some(scope.owner_user_id.as_str())
 }
 
@@ -592,6 +713,7 @@ fn invalidate_session_lease(state: &mut SessionState) {
     state.auth_epoch = state.auth_epoch.wrapping_add(1);
     state.access_token = None;
     state.owner_user_id = None;
+    state.scope_published = false;
     state.refreshing = false;
     state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
     state.last_refresh_result = None;
@@ -601,6 +723,7 @@ fn cleared_lease_matches_epoch(state: &SessionState, cleared_auth_epoch: u64) ->
     state.auth_epoch == cleared_auth_epoch.wrapping_add(1)
         && state.access_token.is_none()
         && state.owner_user_id.is_none()
+        && !state.scope_published
 }
 
 #[cfg(test)]
@@ -609,19 +732,22 @@ pub(crate) mod test_support {
 
     #[derive(Default)]
     pub(crate) struct MemoryRefreshTokenStore {
-        value: Mutex<Option<String>>,
+        value: Mutex<Option<PersistedRefreshSession>>,
     }
 
     impl MemoryRefreshTokenStore {
-        pub(crate) fn new(value: Option<&str>) -> Self {
+        pub(crate) fn with_session(owner_user_id: &str, refresh_token: &str) -> Self {
             Self {
-                value: Mutex::new(value.map(str::to_string)),
+                value: Mutex::new(Some(PersistedRefreshSession {
+                    owner_user_id: owner_user_id.to_string(),
+                    refresh_token: refresh_token.to_string(),
+                })),
             }
         }
     }
 
     impl RefreshTokenStore for MemoryRefreshTokenStore {
-        fn load(&self) -> Result<Option<String>, ApiError> {
+        fn load(&self) -> Result<Option<PersistedRefreshSession>, ApiError> {
             Ok(self
                 .value
                 .lock()
@@ -629,11 +755,11 @@ pub(crate) mod test_support {
                 .clone())
         }
 
-        fn save(&self, token: &str) -> Result<(), ApiError> {
+        fn save(&self, session: &PersistedRefreshSession) -> Result<(), ApiError> {
             *self
                 .value
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(token.to_string());
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(session.clone());
             Ok(())
         }
 
@@ -655,6 +781,9 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    const USER_A: &str = "11111111-1111-4111-8111-111111111111";
+    const USER_B: &str = "22222222-2222-4222-8222-222222222222";
+
     fn tokens(access: &str, refresh: &str) -> TokenSet {
         TokenSet {
             access_token: access.to_string(),
@@ -665,13 +794,256 @@ mod tests {
         }
     }
 
+    fn stored_refresh(store: &dyn RefreshTokenStore) -> Option<String> {
+        store
+            .load()
+            .unwrap()
+            .map(|session| session.refresh_token)
+    }
+
+    fn session_manager_with_owner(owner_user_id: &str, refresh_token: &str) -> SessionManager {
+        let manager = SessionManager::new(Arc::new(MemoryRefreshTokenStore::default()));
+        manager
+            .install_tokens_for_user(&tokens("access", refresh_token), owner_user_id)
+            .unwrap();
+        manager
+    }
+
+    #[test]
+    fn refresh_record_round_trips_with_owner_without_debugging_token() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = FileRefreshTokenStore::new(directory.path());
+        store
+            .save(&PersistedRefreshSession {
+                owner_user_id: "11111111-1111-4111-8111-111111111111".to_string(),
+                refresh_token: "refresh-secret".to_string(),
+            })
+            .unwrap();
+        let restored = store.load().unwrap().unwrap();
+        assert_eq!(
+            restored.owner_user_id,
+            "11111111-1111-4111-8111-111111111111"
+        );
+        assert_eq!(restored.refresh_token, "refresh-secret");
+    }
+
+    #[test]
+    fn ownerless_legacy_refresh_token_is_never_installed() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("session")).unwrap();
+        fs::write(
+            directory.path().join("session/refresh-token"),
+            "legacy-secret",
+        )
+        .unwrap();
+
+        let manager = SessionManager::with_file_store(directory.path());
+
+        assert!(manager.persisted_owner_user_id().is_none());
+        assert!(manager.access().is_none());
+        assert_eq!(
+            fs::read_to_string(directory.path().join("session/refresh-token")).unwrap(),
+            "legacy-secret"
+        );
+    }
+
+    #[test]
+    fn startup_loads_only_the_owner_bound_record_without_publishing_a_scope() {
+        let directory = tempfile::tempdir().unwrap();
+        FileRefreshTokenStore::new(directory.path())
+            .save(&PersistedRefreshSession {
+                owner_user_id: USER_A.to_string(),
+                refresh_token: "refresh-a".to_string(),
+            })
+            .unwrap();
+
+        let manager = SessionManager::with_file_store(directory.path());
+
+        assert_eq!(manager.persisted_owner_user_id().as_deref(), Some(USER_A));
+        assert!(manager.access().is_none());
+        assert!(manager.scope_for_user(USER_A).is_none());
+    }
+
+    #[test]
+    fn invalid_persisted_owner_is_a_protocol_error_without_token_disclosure() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("session")).unwrap();
+        fs::write(
+            directory.path().join("session/refresh-session.json"),
+            r#"{"owner_user_id":"not-a-uuid","refresh_token":"never-disclose-this"}"#,
+        )
+        .unwrap();
+
+        let error = FileRefreshTokenStore::new(directory.path())
+            .load()
+            .err()
+            .unwrap();
+
+        assert!(matches!(error, ApiError::Protocol { .. }));
+        assert!(!error.to_string().contains("never-disclose-this"));
+    }
+
+    #[test]
+    fn persisted_owner_refresh_requires_the_same_canonical_owner() {
+        let store = Arc::new(MemoryRefreshTokenStore::with_session(USER_A, "refresh-a"));
+        let manager = SessionManager::new(store);
+        let calls = AtomicUsize::new(0);
+
+        let result = manager.refresh_persisted_owner(USER_B, |_| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(tokens("unexpected", "unexpected"))
+        });
+
+        assert!(matches!(result, Err(ApiError::AuthenticationRequired)));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(manager.access().is_none());
+        assert!(manager.scope_for_user(USER_A).is_none());
+    }
+
+    #[test]
+    fn failed_persisted_owner_refresh_does_not_publish_access_or_replace_record() {
+        let store = Arc::new(MemoryRefreshTokenStore::with_session(USER_A, "refresh-a"));
+        let manager = SessionManager::new(store.clone());
+
+        let result = manager.refresh_persisted_owner(USER_A, |refresh_token| {
+            assert_eq!(refresh_token, "refresh-a");
+            Err(ApiError::Network {
+                message: "offline".to_string(),
+                timeout: false,
+            })
+        });
+
+        assert!(matches!(result, Err(ApiError::Network { .. })));
+        assert!(manager.access().is_none());
+        assert!(manager.scope_for_user(USER_A).is_none());
+        assert_eq!(stored_refresh(store.as_ref()).as_deref(), Some("refresh-a"));
+    }
+
+    #[test]
+    fn persisted_owner_refresh_installs_only_the_matching_owner() {
+        let store = Arc::new(MemoryRefreshTokenStore::with_session(USER_A, "refresh-a"));
+        let manager = SessionManager::new(store.clone());
+
+        let scope = manager
+            .refresh_persisted_owner(USER_A, |refresh_token| {
+                assert_eq!(refresh_token, "refresh-a");
+                Ok(tokens("access-a", "refresh-a-rotated"))
+            })
+            .unwrap();
+
+        assert_eq!(scope.owner_user_id, USER_A);
+        assert_eq!(manager.scope_for_user(USER_A), Some(scope.clone()));
+        assert_eq!(manager.access_token_for_scope(&scope).unwrap(), "access-a");
+        assert_eq!(
+            stored_refresh(store.as_ref()).as_deref(),
+            Some("refresh-a-rotated")
+        );
+    }
+
+    #[test]
+    fn stale_refresh_for_user_a_cannot_replace_user_b_record() {
+        let manager = session_manager_with_owner(USER_A, "refresh-a");
+        let scope_a = manager.scope_for_user(USER_A).unwrap();
+        manager
+            .install_tokens_for_user(&tokens("access-b", "refresh-b"), USER_B)
+            .unwrap();
+
+        let result = manager.persist_refreshed_tokens(
+            &scope_a,
+            &tokens("access-a-rotated", "rotated-a"),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(manager.persisted_owner_user_id().as_deref(), Some(USER_B));
+        assert_eq!(manager.persisted_refresh_token_for_test(), "refresh-b");
+    }
+
+    #[test]
+    fn stored_record_owner_mismatch_is_rejected_before_scoped_refresh_network_call() {
+        let store = Arc::new(MemoryRefreshTokenStore::default());
+        let manager = SessionManager::new(store.clone());
+        let scope_a = manager
+            .install_tokens_for_user(&tokens("access-a", "refresh-a"), USER_A)
+            .unwrap();
+        store
+            .save(&PersistedRefreshSession {
+                owner_user_id: USER_B.to_string(),
+                refresh_token: "refresh-b".to_string(),
+            })
+            .unwrap();
+        let calls = AtomicUsize::new(0);
+
+        let result = manager.refresh_scope(&scope_a, Some("access-a"), |_| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(tokens("unexpected", "unexpected"))
+        });
+
+        assert!(matches!(result, Err(ApiError::AuthenticationRequired)));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(stored_refresh(store.as_ref()).as_deref(), Some("refresh-b"));
+    }
+
+    #[test]
+    fn stored_record_owner_mismatch_is_rejected_before_epoch_refresh_network_call() {
+        let store = Arc::new(MemoryRefreshTokenStore::default());
+        let manager = SessionManager::new(store.clone());
+        let access = manager
+            .install_tokens_for_user(&tokens("access-a", "refresh-a"), USER_A)
+            .map(|_| manager.access().unwrap())
+            .unwrap();
+        store
+            .save(&PersistedRefreshSession {
+                owner_user_id: USER_B.to_string(),
+                refresh_token: "refresh-b".to_string(),
+            })
+            .unwrap();
+        let calls = AtomicUsize::new(0);
+
+        let result = manager.refresh_epoch(
+            access.auth_epoch,
+            Some(&access.access_token),
+            |_| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(tokens("unexpected", "unexpected"))
+            },
+        );
+
+        assert!(matches!(result, Err(ApiError::AuthenticationRequired)));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(stored_refresh(store.as_ref()).as_deref(), Some("refresh-b"));
+    }
+
+    #[test]
+    fn same_owner_rotation_keeps_owner_bound_to_the_new_refresh_token() {
+        let store = Arc::new(MemoryRefreshTokenStore::default());
+        let manager = SessionManager::new(store.clone());
+        let scope = manager
+            .install_tokens_for_user(&tokens("access-a", "refresh-a"), USER_A)
+            .unwrap();
+
+        manager
+            .persist_refreshed_tokens(
+                &scope,
+                &tokens("access-a-rotated", "refresh-a-rotated"),
+            )
+            .unwrap();
+
+        let record = store.load().unwrap().unwrap();
+        assert_eq!(record.owner_user_id, USER_A);
+        assert_eq!(record.refresh_token, "refresh-a-rotated");
+        assert_eq!(
+            manager.access_token_for_scope(&scope).unwrap(),
+            "access-a-rotated"
+        );
+    }
+
     #[derive(Default)]
     struct FailingClearStore {
-        value: Mutex<Option<String>>,
+        value: Mutex<Option<PersistedRefreshSession>>,
     }
 
     impl RefreshTokenStore for FailingClearStore {
-        fn load(&self) -> Result<Option<String>, ApiError> {
+        fn load(&self) -> Result<Option<PersistedRefreshSession>, ApiError> {
             Ok(self
                 .value
                 .lock()
@@ -679,11 +1051,11 @@ mod tests {
                 .clone())
         }
 
-        fn save(&self, token: &str) -> Result<(), ApiError> {
+        fn save(&self, session: &PersistedRefreshSession) -> Result<(), ApiError> {
             *self
                 .value
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(token.to_string());
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(session.clone());
             Ok(())
         }
 
@@ -699,11 +1071,11 @@ mod tests {
         let store = Arc::new(MemoryRefreshTokenStore::default());
         let manager = SessionManager::new(store.clone());
         manager
-            .install_tokens(&tokens("access-1", "refresh-1"))
+            .install_tokens_for_user(&tokens("access-1", "refresh-1"), "user-a")
             .unwrap();
 
         assert_eq!(manager.access_token().as_deref(), Some("access-1"));
-        assert_eq!(store.load().unwrap().as_deref(), Some("refresh-1"));
+        assert_eq!(stored_refresh(store.as_ref()).as_deref(), Some("refresh-1"));
     }
 
     #[test]
@@ -748,7 +1120,7 @@ mod tests {
             manager.access_token_for_scope(&scope),
             Err(ApiError::AuthenticationRequired)
         ));
-        assert_eq!(store.load().unwrap().as_deref(), Some("refresh-a"));
+        assert_eq!(stored_refresh(store.as_ref()).as_deref(), Some("refresh-a"));
     }
 
     #[test]
@@ -888,7 +1260,7 @@ mod tests {
             manager.access_token_for_scope(&scope_b).unwrap(),
             "access-b"
         );
-        assert_eq!(store.load().unwrap().as_deref(), Some("refresh-b"));
+        assert_eq!(stored_refresh(store.as_ref()).as_deref(), Some("refresh-b"));
     }
 
     #[test]
@@ -909,7 +1281,7 @@ mod tests {
         assert!(matches!(first, Err(ApiError::Network { .. })));
         assert!(manager.is_scope_current(&scope));
         assert!(manager.access().is_none());
-        assert_eq!(store.load().unwrap().as_deref(), Some("refresh-a"));
+        assert_eq!(stored_refresh(store.as_ref()).as_deref(), Some("refresh-a"));
 
         let recovered = manager
             .refresh_scope(&scope, None, |refresh_token| {
@@ -924,7 +1296,7 @@ mod tests {
             "access-a-recovered"
         );
         assert_eq!(
-            store.load().unwrap().as_deref(),
+            stored_refresh(store.as_ref()).as_deref(),
             Some("refresh-a-rotated")
         );
     }
@@ -934,21 +1306,23 @@ mod tests {
         let store = Arc::new(MemoryRefreshTokenStore::default());
         let first = SessionManager::new(store.clone());
         first
-            .install_tokens(&tokens("access-1", "refresh-1"))
+            .install_tokens_for_user(&tokens("access-1", "refresh-1"), USER_A)
             .unwrap();
         drop(first);
 
         let second = SessionManager::new(store.clone());
         assert!(second.has_refresh_token().unwrap());
-        let access = second
-            .refresh(None, |refresh| {
+        assert_eq!(second.persisted_owner_user_id().as_deref(), Some(USER_A));
+        assert!(second.scope_for_user(USER_A).is_none());
+        let scope = second
+            .refresh_persisted_owner(USER_A, |refresh| {
                 assert_eq!(refresh, "refresh-1");
                 Ok(tokens("access-2", "refresh-2"))
             })
             .unwrap();
 
-        assert_eq!(access, "access-2");
-        assert_eq!(store.load().unwrap().as_deref(), Some("refresh-2"));
+        assert_eq!(second.access_token_for_scope(&scope).unwrap(), "access-2");
+        assert_eq!(stored_refresh(store.as_ref()).as_deref(), Some("refresh-2"));
     }
 
     #[test]
@@ -956,14 +1330,24 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("artforge-session-test-{}", uuid::Uuid::new_v4()));
         let first = FileRefreshTokenStore::new(&dir);
-        first.save("refresh-1").unwrap();
-        assert_eq!(first.load().unwrap().as_deref(), Some("refresh-1"));
+        first
+            .save(&PersistedRefreshSession {
+                owner_user_id: USER_A.to_string(),
+                refresh_token: "refresh-1".to_string(),
+            })
+            .unwrap();
+        assert_eq!(stored_refresh(&first).as_deref(), Some("refresh-1"));
 
         let second = FileRefreshTokenStore::new(&dir);
-        second.save("refresh-2").unwrap();
-        assert_eq!(second.load().unwrap().as_deref(), Some("refresh-2"));
+        second
+            .save(&PersistedRefreshSession {
+                owner_user_id: USER_A.to_string(),
+                refresh_token: "refresh-2".to_string(),
+            })
+            .unwrap();
+        assert_eq!(stored_refresh(&second).as_deref(), Some("refresh-2"));
         second.clear().unwrap();
-        assert_eq!(second.load().unwrap(), None);
+        assert!(second.load().unwrap().is_none());
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -975,7 +1359,12 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         let store = FileRefreshTokenStore::new(&dir);
-        store.save("refresh-secret").unwrap();
+        store
+            .save(&PersistedRefreshSession {
+                owner_user_id: USER_A.to_string(),
+                refresh_token: "refresh-secret".to_string(),
+            })
+            .unwrap();
 
         let file_mode = fs::metadata(&store.path).unwrap().permissions().mode() & 0o777;
         let directory_mode = fs::metadata(store.path.parent().unwrap())
@@ -990,17 +1379,21 @@ mod tests {
 
     #[test]
     fn concurrent_refresh_is_single_flight() {
-        let store = Arc::new(MemoryRefreshTokenStore::new(Some("refresh-old")));
+        let store = Arc::new(MemoryRefreshTokenStore::default());
         let manager = Arc::new(SessionManager::new(store.clone()));
+        let scope = manager
+            .install_tokens_for_user(&tokens("access-old", "refresh-old"), "user-a")
+            .unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
         let mut handles = Vec::new();
 
         for _ in 0..6 {
             let manager = manager.clone();
             let calls = calls.clone();
+            let scope = scope.clone();
             handles.push(thread::spawn(move || {
                 manager
-                    .refresh(None, |refresh| {
+                    .refresh_scope(&scope, Some("access-old"), |refresh| {
                         assert_eq!(refresh, "refresh-old");
                         calls.fetch_add(1, Ordering::SeqCst);
                         thread::sleep(Duration::from_millis(30));
@@ -1014,15 +1407,15 @@ mod tests {
             assert_eq!(handle.join().unwrap(), "access-new");
         }
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(store.load().unwrap().as_deref(), Some("refresh-new"));
+        assert_eq!(stored_refresh(store.as_ref()).as_deref(), Some("refresh-new"));
     }
 
     #[test]
     fn rotated_access_token_prevents_a_second_refresh() {
-        let store = Arc::new(MemoryRefreshTokenStore::new(Some("refresh-new")));
+        let store = Arc::new(MemoryRefreshTokenStore::with_session("user-a", "refresh-new"));
         let manager = SessionManager::new(store);
         manager
-            .install_tokens(&tokens("access-new", "refresh-new"))
+            .install_tokens_for_user(&tokens("access-new", "refresh-new"), "user-a")
             .unwrap();
         let value = manager
             .refresh(Some("access-old"), |_| panic!("refresh must not run"))
