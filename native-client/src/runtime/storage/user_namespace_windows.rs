@@ -2,8 +2,9 @@
 
 use super::{
     validate_export_leaf, validate_export_volume_root_name, validate_windows_relative_name,
-    ManagedRelativeName, ManagedUserArea, UserNamespace,
-    MANAGED_USER_AREAS,
+    ManagedFileCheck, ManagedFileKey, ManagedFileMetadata, ManagedPublication,
+    ManagedPublicationConflict, ManagedRelativeName, ManagedUserArea, ManagedWriteState,
+    StableFileIdentity, UserNamespace, MANAGED_USER_AREAS,
 };
 use anyhow::{anyhow, ensure, Context, Result};
 use std::ffi::{c_void, OsStr, OsString};
@@ -23,6 +24,8 @@ const SHARE_LOCK: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE;
 // Do not require write or directory-listing rights on C:\ or its ancestors.
 const TRAVERSE_ACCESS: u32 = FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
 const MANAGED_ACCESS: u32 = TRAVERSE_ACCESS | FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY;
+// Enumeration rights are requested only for private managed traversal.
+const CHECKED_MANAGED_ACCESS: u32 = MANAGED_ACCESS | FILE_LIST_DIRECTORY;
 const REGULAR_ACCESS: u32 =
     FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | DELETE | SYNCHRONIZE;
 const NT_OPEN: u32 = 1;
@@ -116,6 +119,7 @@ pub(crate) struct ManagedFileCapability {
     area: ManagedUserArea,
     relative_name: String,
     parent_identity: Identity,
+    write_state: ManagedWriteState,
 }
 pub(crate) struct NamespaceFs {
     root: OwnedHandle,
@@ -407,6 +411,323 @@ fn reject_private_chain(chain: &[OwnedHandle], private: Identity) -> Result<()> 
 }
 
 impl NamespaceFs {
+    pub(crate) fn open_optional_regular(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        name: &ManagedRelativeName,
+    ) -> Result<Option<ManagedFileCapability>> {
+        let _guard = self.lock_mutations()?;
+        let mut chain = self.checked_directory_chain(directory)?;
+        let leaf = checked_relative_chain(&mut chain, directory.area, name)?;
+        let parent = chain.last().unwrap();
+        let Some(handle) = optional_checked_regular(parent, &leaf)? else {
+            let mut current = self.checked_directory_chain(directory)?;
+            checked_relative_chain(&mut current, directory.area, name)?;
+            ensure!(
+                identify(current.last().unwrap(), true)? == identify(parent, true)?,
+                "missing leaf parent detached"
+            );
+            return Ok(None);
+        };
+        let identity = identify(&handle, false)?;
+        let file = ManagedFileCapability {
+            handle,
+            identity,
+            binding: self.binding,
+            area: directory.area,
+            relative_name: name.0.clone(),
+            parent_identity: identify(parent, true)?,
+            write_state: ManagedWriteState::Existing,
+        };
+        self.checked_file_chain(directory, &file)?;
+        Ok(Some(file))
+    }
+
+    /// Streams must not reenter this namespace or perform network/UI work.
+    /// Failed sinks retain partial effects and must be discarded by callers.
+    pub(crate) fn read_regular_to(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        file: &mut ManagedFileCapability,
+        sink: &mut dyn std::io::Write,
+    ) -> Result<u64> {
+        use std::io::{Seek, SeekFrom};
+        let _guard = self.lock_mutations()?;
+        let _chain = self.checked_file_chain(directory, file)?;
+        let mut stream = std::fs::File::from(file.handle.try_clone()?);
+        stream.seek(SeekFrom::Start(0))?;
+        let copied = std::io::copy(&mut stream, sink)?;
+        self.checked_file_chain(directory, file)?;
+        Ok(copied)
+    }
+
+    pub(crate) fn write_new_regular_from(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        file: &mut ManagedFileCapability,
+        source: &mut dyn std::io::Read,
+    ) -> Result<u64> {
+        use std::io::{Seek, SeekFrom};
+        let _guard = self.lock_mutations()?;
+        let _chain = self.checked_file_chain(directory, file)?;
+        ensure!(
+            file.write_state == ManagedWriteState::New,
+            "only an owned unwritten temporary can be written"
+        );
+        file.write_state = ManagedWriteState::Poisoned;
+        let mut stream = std::fs::File::from(file.handle.try_clone()?);
+        stream.seek(SeekFrom::Start(0))?;
+        let copied = std::io::copy(source, &mut stream)?;
+        self.checked_file_chain(directory, file)?;
+        file.write_state = ManagedWriteState::Written;
+        Ok(copied)
+    }
+
+    pub(crate) fn sync_regular(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        file: &mut ManagedFileCapability,
+    ) -> Result<()> {
+        self.sync_regular_with(directory, file, |handle| {
+            Ok(std::fs::File::from(handle.try_clone()?).sync_all()?)
+        })
+    }
+
+    fn sync_regular_with(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        file: &mut ManagedFileCapability,
+        sync: impl FnOnce(&OwnedHandle) -> Result<()>,
+    ) -> Result<()> {
+        let _guard = self.lock_mutations()?;
+        let _chain = self.checked_file_chain(directory, file)?;
+        ensure!(
+            file.write_state != ManagedWriteState::Poisoned,
+            "failed write cannot be synced for publication"
+        );
+        let owned = matches!(
+            file.write_state,
+            ManagedWriteState::Written | ManagedWriteState::Synced
+        );
+        if owned {
+            file.write_state = ManagedWriteState::Poisoned;
+        }
+        sync(&file.handle)?;
+        self.checked_file_chain(directory, file)?;
+        if owned {
+            file.write_state = ManagedWriteState::Synced;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn inspect_regular(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        file: &ManagedFileCapability,
+    ) -> Result<ManagedFileMetadata> {
+        let _guard = self.lock_mutations()?;
+        let _chain = self.checked_file_chain(directory, file)?;
+        managed_metadata(&file.handle)
+    }
+
+    pub(crate) fn enumerate_regular_names(
+        &self,
+        directory: &ManagedDirectoryCapability,
+    ) -> Result<Vec<ManagedRelativeName>> {
+        let _guard = self.lock_mutations()?;
+        let chain = self.checked_directory_chain(directory)?;
+        let mut result = Vec::new();
+        enumerate_managed(chain.last().unwrap(), directory.area, "", &mut result)?;
+        self.checked_directory_chain(directory)?;
+        result.sort_by(|a, b| a.0.cmp(&b.0));
+        ensure!(
+            result.windows(2).all(|pair| pair[0] != pair[1]),
+            "duplicate managed entries"
+        );
+        Ok(result)
+    }
+
+    /// Acquire before SQLite; callback is scalar/SQL-only and commits before
+    /// returning. No namespace/recovery reentry, streams, network or UI work.
+    pub(crate) fn with_current_regular_files<T>(
+        &self,
+        files: &[ManagedFileCheck<'_>],
+        operation: impl FnOnce(&[ManagedFileMetadata]) -> Result<T>,
+    ) -> Result<T> {
+        ensure!(!files.is_empty(), "empty managed file validation set");
+        let _guard = self.lock_mutations()?;
+        let mut chains = Vec::with_capacity(files.len());
+        let mut metadata = Vec::with_capacity(files.len());
+        for check in files {
+            chains.push(self.checked_file_chain(check.directory, check.file)?);
+            let info = managed_metadata(&check.file.handle)?;
+            ensure!(
+                check
+                    .expected
+                    .is_none_or(|expected| expected == info.identity),
+                "persisted file identity mismatch"
+            );
+            metadata.push(info);
+        }
+        operation(&metadata)
+    }
+
+    pub(crate) fn publish_regular(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        source: &mut ManagedFileCapability,
+        destination: ManagedPublication<'_>,
+    ) -> Result<()> {
+        self.publish_regular_with_current_identity(directory, source, destination, |handle| {
+            identify(handle, false)
+        })
+    }
+
+    fn publish_regular_with_current_identity(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        source: &mut ManagedFileCapability,
+        destination: ManagedPublication<'_>,
+        inspect_current: impl FnOnce(&OwnedHandle) -> Result<Identity>,
+    ) -> Result<()> {
+        let _guard = self.lock_mutations()?;
+        let _source_chain = self.checked_file_chain(directory, source)?;
+        ensure!(
+            source.write_state == ManagedWriteState::Synced,
+            "publication requires a written and synced owned temporary"
+        );
+        let mut target_chain = self.checked_directory_chain(directory)?;
+        let target_name = match destination {
+            ManagedPublication::Absent(name) => name.clone(),
+            ManagedPublication::Replace(file) => {
+                ensure!(
+                    file.binding == self.binding && file.area == directory.area,
+                    "replacement belongs to another authority"
+                );
+                ensure!(
+                    identify_with_links(&file.handle, false, false)? == file.identity
+                        && file.identity != source.identity,
+                    "invalid retained replacement identity"
+                );
+                ensure!(
+                    file_link_count(&file.handle)? <= 1,
+                    "hardlinked replacement"
+                );
+                ManagedRelativeName::try_from(file.relative_name.as_str())?
+            }
+        };
+        let leaf = checked_relative_chain(&mut target_chain, directory.area, &target_name)?;
+        let parent = target_chain.last().unwrap();
+        let parent_identity = identify(parent, true)?;
+        if let ManagedPublication::Replace(file) = destination {
+            ensure!(
+                parent_identity == file.parent_identity,
+                "replacement parent changed"
+            );
+        }
+        let current = optional_checked_regular(parent, &leaf)?;
+        match destination {
+            ManagedPublication::Absent(_) => {
+                if current.is_some() {
+                    return Err(ManagedPublicationConflict::DestinationAppeared.into());
+                }
+                if let Err(error) = rename_handle(&source.handle, parent, &leaf, false) {
+                    if is_win_error(&error, &[80, 183]) {
+                        self.checked_file_chain(directory, source)?;
+                        self.checked_directory_chain(directory)?;
+                        if optional_checked_regular(parent, &leaf)?.is_some() {
+                            return Err(ManagedPublicationConflict::DestinationAppeared.into());
+                        }
+                    }
+                    return Err(error);
+                }
+            }
+            ManagedPublication::Replace(file) => {
+                let current_identity = current.as_ref().map(inspect_current).transpose()?;
+                if current_identity != Some(file.identity) {
+                    return Err(ManagedPublicationConflict::DestinationChanged.into());
+                }
+                rename_handle(&source.handle, parent, &leaf, true)?;
+            }
+        }
+        // The retained source changes state at kernel commit; no fallible reopen.
+        source.relative_name = target_name.0;
+        source.parent_identity = parent_identity;
+        source.write_state = ManagedWriteState::Published;
+        Ok(())
+    }
+
+    fn checked_directory_chain(
+        &self,
+        directory: &ManagedDirectoryCapability,
+    ) -> Result<Vec<OwnedHandle>> {
+        self.validate_root()?;
+        ensure!(
+            directory.binding == self.binding,
+            "foreign managed directory authority"
+        );
+        ensure!(
+            identify(&directory.handle, true)? == directory.identity,
+            "retained directory changed"
+        );
+        let mut chain = vec![self.root.try_clone()?];
+        for (name, expected) in [
+            ("accounts", directory.accounts_identity),
+            (self.user.as_str(), directory.namespace_identity),
+        ] {
+            let child = checked_directory_at(chain.last().unwrap(), OsStr::new(name))?;
+            ensure!(
+                identify(&child, true)? == expected,
+                "namespace ancestor detached"
+            );
+            chain.push(child);
+        }
+        for name in directory.area.relative_path().split('/') {
+            chain.push(checked_directory_at(
+                chain.last().unwrap(),
+                OsStr::new(name),
+            )?);
+        }
+        ensure!(
+            identify(chain.last().unwrap(), true)? == directory.identity,
+            "managed area detached"
+        );
+        Ok(chain)
+    }
+
+    fn checked_file_chain(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        file: &ManagedFileCapability,
+    ) -> Result<Vec<OwnedHandle>> {
+        ensure!(
+            file.binding == self.binding && file.area == directory.area,
+            "foreign managed file authority"
+        );
+        ensure!(
+            identify(&file.handle, false)? == file.identity,
+            "retained identity changed"
+        );
+        let mut chain = self.checked_directory_chain(directory)?;
+        let leaf = checked_relative_chain(
+            &mut chain,
+            directory.area,
+            &ManagedRelativeName::try_from(file.relative_name.as_str())?,
+        )?;
+        let parent = chain.last().unwrap();
+        ensure!(
+            identify(parent, true)? == file.parent_identity,
+            "managed parent changed"
+        );
+        let current = optional_checked_regular(parent, &leaf)?
+            .ok_or_else(|| anyhow!("managed file disappeared"))?;
+        ensure!(
+            identify(&current, false)? == file.identity,
+            "managed current identity changed"
+        );
+        Ok(chain)
+    }
+
     pub(crate) fn open_data_root(path: &Path) -> Result<DataRootCapability> {
         let handle = open_absolute_directory(path)?;
         let identity = identify(&handle, true)?;
@@ -539,8 +860,9 @@ impl NamespaceFs {
         create: bool,
     ) -> Result<ManagedFileCapability> {
         let _guard = self.lock_mutations()?;
-        self.validate_directory(directory)?;
-        let (parent, leaf) = relative_parent(&directory.handle, name)?;
+        let mut chain = self.checked_directory_chain(directory)?;
+        let leaf = checked_relative_chain(&mut chain, directory.area, name)?;
+        let parent = chain.last().unwrap().try_clone()?;
         self.open_file_at(directory, name, parent, &leaf, create)
     }
 
@@ -552,9 +874,19 @@ impl NamespaceFs {
         leaf: &OsStr,
         create: bool,
     ) -> Result<ManagedFileCapability> {
+        ManagedFileKey::new(directory.area, name.as_str())?;
         let parent_identity = identify(&parent, true)?;
         let handle = open_regular(&parent, leaf, if create { NT_CREATE } else { NT_OPEN })?;
         let identity = identify(&handle, false)?;
+        if let Err(error) = prove_entry_spelling(&parent, leaf, identity) {
+            if create {
+                // Delete only this exclusively created handle, never its name.
+                if let Err(cleanup) = unlink_handle(&handle) {
+                    return Err(error.context(format!("owned temporary cleanup failed: {cleanup}")));
+                }
+            }
+            return Err(error);
+        }
         Ok(ManagedFileCapability {
             handle,
             identity,
@@ -562,6 +894,11 @@ impl NamespaceFs {
             area: directory.area,
             relative_name: name.0.clone(),
             parent_identity,
+            write_state: if create {
+                ManagedWriteState::New
+            } else {
+                ManagedWriteState::Existing
+            },
         })
     }
 
@@ -581,6 +918,7 @@ impl NamespaceFs {
         // Kernel rename is the commit point: no fallible reopen or validation.
         source.relative_name = relative_name;
         source.parent_identity = parent_identity;
+        source.write_state = ManagedWriteState::Published;
         Ok(source)
     }
 
@@ -603,6 +941,7 @@ impl NamespaceFs {
         rename_handle(&source.handle, &parent, &leaf, true)?;
         source.relative_name = destination.relative_name;
         source.parent_identity = destination.parent_identity;
+        source.write_state = ManagedWriteState::Published;
         Ok(source)
     }
 
@@ -719,6 +1058,256 @@ impl NamespaceFs {
 struct MutationLock {
     handle: OwnedHandle,
 }
+
+fn is_win_error(error: &anyhow::Error, codes: &[i32]) -> bool {
+    error
+        .downcast_ref::<std::io::Error>()
+        .and_then(std::io::Error::raw_os_error)
+        .is_some_and(|code| codes.contains(&code))
+}
+
+fn file_link_count(handle: &OwnedHandle) -> Result<u64> {
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    check_bool(unsafe { GetFileInformationByHandle(handle.as_raw_handle(), &mut info) })?;
+    Ok(u64::from(info.nNumberOfLinks))
+}
+
+fn managed_metadata(handle: &OwnedHandle) -> Result<ManagedFileMetadata> {
+    let identity = identify(handle, false)?;
+    let metadata = std::fs::File::from(handle.try_clone()?).metadata()?;
+    Ok(ManagedFileMetadata {
+        identity: StableFileIdentity::Windows {
+            volume: identity.volume,
+            file_id: identity.file,
+        },
+        byte_size: metadata.len(),
+        modified_at: metadata.modified()?,
+        link_count: file_link_count(handle)?,
+    })
+}
+
+struct ManagedEntry {
+    name: OsString,
+    file_id: [u8; 16],
+    attributes: u32,
+    reparse_tag: u32,
+}
+
+// This API supplies the actual long entry name and all 128 file-ID bits. A
+// provider without extended directory IDs fails closed; 8.3 names are not used.
+fn managed_entries(parent: &OwnedHandle) -> Result<Vec<ManagedEntry>> {
+    let mut result = Vec::new();
+    let mut buffer = vec![0u64; 8192];
+    let capacity = buffer.len() * size_of::<u64>();
+    let mut class = FileIdExtdDirectoryRestartInfo;
+    loop {
+        buffer.fill(0);
+        let success = unsafe {
+            GetFileInformationByHandleEx(
+                parent.as_raw_handle(),
+                class,
+                buffer.as_mut_ptr().cast(),
+                capacity as u32,
+            )
+        };
+        if success == 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(18) {
+                break;
+            } // ERROR_NO_MORE_FILES
+            return Err(error).context("enumerate retained managed directory with full file IDs");
+        }
+        class = FileIdExtdDirectoryInfo;
+        let mut offset = 0usize;
+        loop {
+            let name_offset = offset_of!(FILE_ID_EXTD_DIR_INFO, FileName);
+            ensure!(
+                offset + size_of::<FILE_ID_EXTD_DIR_INFO>() <= capacity,
+                "malformed directory enumeration header"
+            );
+            let entry = unsafe {
+                buffer
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(offset)
+                    .cast::<FILE_ID_EXTD_DIR_INFO>()
+                    .read_unaligned()
+            };
+            let name_bytes = entry.FileNameLength as usize;
+            ensure!(
+                name_bytes > 0
+                    && name_bytes % 2 == 0
+                    && offset + name_offset + name_bytes <= capacity,
+                "malformed directory entry name"
+            );
+            let mut wide = Vec::with_capacity(name_bytes / 2);
+            for index in 0..name_bytes / 2 {
+                wide.push(unsafe {
+                    buffer
+                        .as_ptr()
+                        .cast::<u8>()
+                        .add(offset + name_offset + index * 2)
+                        .cast::<u16>()
+                        .read_unaligned()
+                });
+            }
+            let name = String::from_utf16(&wide).context("undecodable managed directory entry")?;
+            if name != "." && name != ".." {
+                result.push(ManagedEntry {
+                    name: OsString::from(name),
+                    file_id: entry.FileId.Identifier,
+                    attributes: entry.FileAttributes,
+                    reparse_tag: entry.ReparsePointTag,
+                });
+            }
+            if entry.NextEntryOffset == 0 {
+                break;
+            }
+            let next = entry.NextEntryOffset as usize;
+            ensure!(
+                next >= name_offset + name_bytes && offset + next < capacity,
+                "malformed directory entry offset"
+            );
+            offset += next;
+        }
+    }
+    Ok(result)
+}
+
+fn prove_entry_spelling(parent: &OwnedHandle, name: &OsStr, identity: Identity) -> Result<()> {
+    let entries = managed_entries(parent)?;
+    let matching = entries
+        .iter()
+        .filter(|entry| entry.name == name)
+        .collect::<Vec<_>>();
+    ensure!(
+        matching.len() == 1,
+        "exact stored long-name spelling is unproven"
+    );
+    ensure!(
+        matching[0].file_id == identity.file
+            && identity.file != [0; 16]
+            && identify(parent, true)?.volume == identity.volume,
+        "stored entry identity changed or unsupported"
+    );
+    ensure!(
+        matching[0].attributes & FILE_ATTRIBUTE_REPARSE_POINT == 0 && matching[0].reparse_tag == 0,
+        "managed entry is a reparse point"
+    );
+    Ok(())
+}
+
+fn checked_directory_at(parent: &OwnedHandle, name: &OsStr) -> Result<OwnedHandle> {
+    let child = open_directory(parent, name, false)?;
+    prove_entry_spelling(parent, name, identify(&child, true)?)?;
+    Ok(child)
+}
+
+fn checked_relative_chain(
+    chain: &mut Vec<OwnedHandle>,
+    area: ManagedUserArea,
+    name: &ManagedRelativeName,
+) -> Result<OsString> {
+    ManagedFileKey::new(area, name.as_str())?;
+    let mut parts = name.as_str().split('/').peekable();
+    while let Some(part) = parts.next() {
+        if parts.peek().is_none() {
+            return Ok(OsString::from(part));
+        }
+        chain.push(checked_directory_at(
+            chain.last().unwrap(),
+            OsStr::new(part),
+        )?);
+    }
+    anyhow::bail!("missing managed leaf")
+}
+
+fn optional_checked_regular(parent: &OwnedHandle, leaf: &OsStr) -> Result<Option<OwnedHandle>> {
+    let handle = match open_regular(parent, leaf, NT_OPEN) {
+        Ok(handle) => handle,
+        Err(error) if is_win_error(&error, &[2]) => return Ok(None), // only FILE_NOT_FOUND, never PATH_NOT_FOUND
+        Err(error) => return Err(error),
+    };
+    prove_entry_spelling(parent, leaf, identify(&handle, false)?)?;
+    Ok(Some(handle))
+}
+
+fn enumerate_managed(
+    parent: &OwnedHandle,
+    area: ManagedUserArea,
+    prefix: &str,
+    output: &mut Vec<ManagedRelativeName>,
+) -> Result<()> {
+    let parent_identity = identify(parent, true)?;
+    for entry in managed_entries(parent)? {
+        if entry.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 || entry.reparse_tag != 0 {
+            continue;
+        }
+        if entry.attributes & FILE_ATTRIBUTE_DEVICE != 0 {
+            continue;
+        }
+        let leaf = entry
+            .name
+            .to_str()
+            .ok_or_else(|| anyhow!("undecodable managed entry"))?;
+        let relative = if prefix.is_empty() {
+            leaf.to_owned()
+        } else {
+            format!("{prefix}/{leaf}")
+        };
+        let canonical = ManagedRelativeName::try_from(relative.as_str())?;
+        let is_directory = entry.attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+        let identity = Identity {
+            volume: parent_identity.volume,
+            file: entry.file_id,
+        };
+        if ManagedFileKey::new(area, &relative).is_err() {
+            ensure!(is_directory, "reserved subarea is not a directory");
+            checked_directory_at(parent, &entry.name)?;
+            continue;
+        }
+        if is_directory {
+            let child = checked_directory_at(parent, &entry.name)?;
+            ensure!(
+                identify(&child, true)? == identity,
+                "enumerated directory changed"
+            );
+            enumerate_managed(&child, area, &relative, output)?;
+            let current = checked_directory_at(parent, &entry.name)?;
+            ensure!(
+                identify(&current, true)? == identity,
+                "enumerated directory detached"
+            );
+        } else {
+            let file = optional_checked_regular(parent, &entry.name)?
+                .ok_or_else(|| anyhow!("enumerated file disappeared"))?;
+            ensure!(
+                identify(&file, false)? == identity,
+                "enumerated file changed"
+            );
+            output.push(canonical);
+        }
+    }
+    ensure!(
+        identify(parent, true)? == parent_identity,
+        "enumerated parent changed"
+    );
+    Ok(())
+}
+
+fn unlink_handle(handle: &OwnedHandle) -> Result<()> {
+    let disposition = FILE_DISPOSITION_INFO_EX {
+        Flags: FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+    };
+    check_bool(unsafe {
+        SetFileInformationByHandle(
+            handle.as_raw_handle(),
+            FileDispositionInfoEx,
+            &disposition as *const _ as *const c_void,
+            size_of::<FILE_DISPOSITION_INFO_EX>() as u32,
+        )
+    })
+}
 impl MutationLock {
     fn acquire(handle: OwnedHandle, nonblocking: bool) -> Result<Self> {
         let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
@@ -767,6 +1356,14 @@ fn check_bool(value: i32) -> Result<()> {
 }
 
 fn identify(handle: &OwnedHandle, directory: bool) -> Result<Identity> {
+    identify_with_links(handle, directory, true)
+}
+
+fn identify_with_links(
+    handle: &OwnedHandle,
+    directory: bool,
+    require_one_link: bool,
+) -> Result<Identity> {
     let mut tag: FILE_ATTRIBUTE_TAG_INFO = unsafe { std::mem::zeroed() };
     check_bool(unsafe {
         GetFileInformationByHandleEx(
@@ -788,7 +1385,7 @@ fn identify(handle: &OwnedHandle, directory: bool) -> Result<Identity> {
         unsafe { GetFileType(handle.as_raw_handle()) } == FILE_TYPE_DISK,
         "managed object is not disk storage"
     );
-    if !directory {
+    if !directory && require_one_link {
         let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
         check_bool(unsafe { GetFileInformationByHandle(handle.as_raw_handle(), &mut info) })?;
         ensure!(
@@ -894,14 +1491,16 @@ fn nt_open(
 }
 
 fn open_directory(parent: &OwnedHandle, name: &OsStr, create: bool) -> Result<OwnedHandle> {
-    nt_open(
+    let handle = nt_open(
         parent,
         name,
-        MANAGED_ACCESS,
+        CHECKED_MANAGED_ACCESS,
         SHARE_ALL,
         if create { NT_OPEN_IF } else { NT_OPEN },
         true,
-    )
+    )?;
+    prove_entry_spelling(parent, name, identify(&handle, true)?)?;
+    Ok(handle)
 }
 fn open_regular(parent: &OwnedHandle, name: &OsStr, disposition: u32) -> Result<OwnedHandle> {
     nt_open(parent, name, REGULAR_ACCESS, SHARE_ALL, disposition, false)
@@ -953,13 +1552,21 @@ fn open_absolute_directory(path: &Path) -> Result<OwnedHandle> {
         .collect::<Result<Vec<_>>>()?;
     let mut anchor = PathBuf::from(prefix.as_os_str());
     anchor.push("\\");
-    let mut handle = open_absolute_anchor(&anchor, if names.is_empty() { MANAGED_ACCESS } else { TRAVERSE_ACCESS }, SHARE_ALL)?;
+    let mut handle = open_absolute_anchor(
+        &anchor,
+        if names.is_empty() {
+            CHECKED_MANAGED_ACCESS
+        } else {
+            TRAVERSE_ACCESS
+        },
+        SHARE_ALL,
+    )?;
     for (index, name) in names.iter().enumerate() {
         handle = nt_open(
             &handle,
             name,
             if index + 1 == names.len() {
-                MANAGED_ACCESS
+                CHECKED_MANAGED_ACCESS
             } else {
                 TRAVERSE_ACCESS
             },
@@ -1066,6 +1673,146 @@ mod tests {
     use std::os::windows::fs::{symlink_dir, symlink_file};
 
     const USER: &str = "11111111-1111-4111-8111-111111111111";
+
+    #[test]
+    fn managed_metadata_preserves_platform_identity_and_rejects_hardlinks() {
+        let (_root, ns, fs, out) = fixture();
+        let mut file = fs.create_new_regular(&out, &name("metadata")).unwrap();
+        fs.write_new_regular_from(&out, &mut file, &mut &b"content"[..])
+            .unwrap();
+        let metadata = fs.inspect_regular(&out, &file).unwrap();
+        let identity = identify(&file.handle, false).unwrap();
+        assert_eq!(
+            metadata.identity,
+            StableFileIdentity::Windows {
+                volume: identity.volume,
+                file_id: identity.file
+            }
+        );
+        assert_eq!(metadata.byte_size, 7);
+        assert_eq!(metadata.link_count, 1);
+        assert_eq!(
+            metadata.modified_at,
+            fs::metadata(ns.output_dir().join("metadata"))
+                .unwrap()
+                .modified()
+                .unwrap()
+        );
+        fs::hard_link(
+            ns.output_dir().join("metadata"),
+            ns.output_dir().join("hardlink"),
+        )
+        .unwrap();
+        assert!(fs.inspect_regular(&out, &file).is_err());
+        assert!(fs.open_optional_regular(&out, &name("hardlink")).is_err());
+        assert!(fs.enumerate_regular_names(&out).is_err());
+    }
+
+    #[test]
+    fn managed_entry_spelling_rejects_short_name_aliases_when_available() {
+        use std::os::windows::ffi::OsStrExt;
+        let (_root, ns, fs, out) = fixture();
+        let long = "Long managed filename.txt";
+        fs::write(ns.output_dir().join(long), b"bytes").unwrap();
+        fs.open_existing_regular(&out, &name(long)).unwrap();
+        let wide: Vec<u16> = ns
+            .output_dir()
+            .join(long)
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        let mut output = vec![0u16; 32768];
+        let size = unsafe {
+            windows_sys::Win32::Storage::FileSystem::GetShortPathNameW(
+                wide.as_ptr(),
+                output.as_mut_ptr(),
+                output.len() as u32,
+            )
+        } as usize;
+        assert!(size > 0 && size < output.len());
+        let short_path = String::from_utf16(&output[..size]).unwrap();
+        let short = Path::new(&short_path)
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        if short != long {
+            assert!(fs.open_optional_regular(&out, &name(short)).is_err());
+        } else {
+            eprintln!("fixture volume does not expose a separate short filename");
+        }
+        assert_eq!(fs::read(ns.output_dir().join(long)).unwrap(), b"bytes");
+    }
+
+    #[test]
+    fn managed_injected_sync_failure_poisons_publication_and_retains_cleanup() {
+        let (_root, ns, fs, out) = fixture();
+        let mut file = fs.create_new_regular(&out, &name("temp")).unwrap();
+        fs.write_new_regular_from(&out, &mut file, &mut &b"bytes"[..])
+            .unwrap();
+        assert!(fs
+            .sync_regular_with(&out, &mut file, |_| Err(std::io::Error::other(
+                "injected sync failure"
+            )
+            .into()))
+            .is_err());
+        let error = fs
+            .publish_regular(
+                &out,
+                &mut file,
+                ManagedPublication::Absent(&name("document")),
+            )
+            .unwrap_err();
+        assert!(error.downcast_ref::<ManagedPublicationConflict>().is_none());
+        assert!(fs.sync_regular(&out, &mut file).is_err());
+        fs.unlink_within(&out, file).unwrap();
+        assert!(!ns.output_dir().join("temp").exists());
+        assert!(!ns.output_dir().join("document").exists());
+    }
+
+    #[test]
+    fn managed_replacement_identity_failure_is_not_a_conflict() {
+        let (_root, ns, fs, out) = fixture();
+        let mut source = fs.create_new_regular(&out, &name("temp")).unwrap();
+        fs.write_new_regular_from(&out, &mut source, &mut &b"new"[..])
+            .unwrap();
+        fs.sync_regular(&out, &mut source).unwrap();
+        fs::write(ns.output_dir().join("document"), b"old").unwrap();
+        let destination = fs.open_existing_regular(&out, &name("document")).unwrap();
+        let error = fs
+            .publish_regular_with_current_identity(
+                &out,
+                &mut source,
+                ManagedPublication::Replace(&destination),
+                |_| Err(std::io::Error::from_raw_os_error(5).into()),
+            )
+            .unwrap_err();
+        assert!(error.downcast_ref::<ManagedPublicationConflict>().is_none());
+        assert_eq!(
+            error
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(5)
+        );
+        assert_eq!(fs::read(ns.output_dir().join("document")).unwrap(), b"old");
+        fs::rename(
+            ns.output_dir().join("document"),
+            ns.output_dir().join("held"),
+        )
+        .unwrap();
+        let missing = fs
+            .publish_regular(&out, &mut source, ManagedPublication::Replace(&destination))
+            .unwrap_err();
+        assert_eq!(
+            missing.downcast_ref::<ManagedPublicationConflict>(),
+            Some(&ManagedPublicationConflict::DestinationChanged)
+        );
+        fs.unlink_within(&out, source).unwrap();
+        assert_eq!(fs::read(ns.output_dir().join("held")).unwrap(), b"old");
+        assert!(!ns.output_dir().join("temp").exists());
+    }
 
     #[test]
     fn windows_external_export_accepts_ordinary_and_verbatim_local_drive_paths() {

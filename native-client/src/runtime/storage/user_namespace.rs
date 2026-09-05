@@ -22,7 +22,6 @@ pub(crate) use windows::{
 };
 
 // Kept platform independent so Windows name-policy tests execute on every host.
-#[cfg(any(windows, test))]
 fn validate_windows_relative_name(value: &str) -> Result<()> {
     ensure!(!value.is_empty(), "empty Windows relative name");
     for component in value.split(['/', '\\']) {
@@ -38,10 +37,21 @@ fn validate_windows_relative_name(value: &str) -> Result<()> {
             !component.chars().any(|c| c <= '\u{1f}' || "<>:\"|?*".contains(c)),
             "invalid Windows filename character"
         );
-        let stem = component.split('.').next().unwrap().trim_end_matches(' ').to_uppercase();
-        let numbered_device = stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT"))
-            .is_some_and(|suffix| matches!(suffix,
-                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"));
+        let stem = component
+            .split('.')
+            .next()
+            .unwrap()
+            .trim_end_matches(' ')
+            .to_uppercase();
+        let numbered_device = stem
+            .strip_prefix("COM")
+            .or_else(|| stem.strip_prefix("LPT"))
+            .is_some_and(|suffix| {
+                matches!(
+                    suffix,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            });
         ensure!(
             !matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
                 && !numbered_device,
@@ -79,6 +89,36 @@ pub(crate) enum ManagedUserArea {
 }
 
 impl ManagedUserArea {
+    pub(crate) fn storage_name(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Output => "output",
+            Self::Prompt => "prompt",
+            Self::Canvas => "canvas",
+            Self::CanvasUploads => "canvas-uploads",
+            Self::CanvasExports => "canvas-exports",
+            Self::References => "references",
+            Self::ReferencesLibrary => "references-library",
+            Self::ReferencesImports => "references-imports",
+            Self::Previews => "previews",
+            Self::Recovery => "recovery",
+            Self::DeliveryStaging => "delivery-staging",
+            Self::Videos => "videos",
+            Self::ToolboxCompressionInputs => "toolbox-compression-inputs",
+            Self::ToolboxCompressionResults => "toolbox-compression-results",
+            Self::ToolboxConversionInputs => "toolbox-conversion-inputs",
+            Self::ToolboxConversionResults => "toolbox-conversion-results",
+            Self::ToolboxCropInputs => "toolbox-crop-inputs",
+        }
+    }
+
+    pub(crate) fn from_storage_name(value: &str) -> Result<Self> {
+        MANAGED_USER_AREAS
+            .into_iter()
+            .find(|area| area.storage_name() == value)
+            .ok_or_else(|| anyhow::anyhow!("unknown managed area"))
+    }
+
     fn relative_path(self) -> &'static str {
         match self {
             Self::Input => "input",
@@ -168,13 +208,135 @@ pub(crate) struct NamespaceLease {
     pub(crate) namespace_epoch: u64,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ManagedRelativeName(String);
+
+impl ManagedRelativeName {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ManagedFileKey {
+    area: ManagedUserArea,
+    relative_name: ManagedRelativeName,
+}
+
+impl ManagedFileKey {
+    pub(crate) fn new(area: ManagedUserArea, relative_name: &str) -> Result<Self> {
+        let physical = format!("{}/{}", area.relative_path(), relative_name);
+        ensure!(
+            !MANAGED_USER_AREAS.into_iter().any(|other| other != area
+                && (physical == other.relative_path()
+                    || physical.starts_with(&format!("{}/", other.relative_path())))
+                && other
+                    .relative_path()
+                    .starts_with(&format!("{}/", area.relative_path()))),
+            "name belongs to a more specific managed area"
+        );
+        Ok(Self {
+            area,
+            relative_name: ManagedRelativeName::try_from(relative_name)?,
+        })
+    }
+    pub(crate) fn area(&self) -> ManagedUserArea {
+        self.area
+    }
+    pub(crate) fn relative_name(&self) -> &ManagedRelativeName {
+        &self.relative_name
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum StableFileIdentity {
+    Unix { device: u64, inode: u64 },
+    Windows { volume: u64, file_id: [u8; 16] },
+}
+
+impl StableFileIdentity {
+    pub(crate) fn to_storage_bytes(self) -> Vec<u8> {
+        match self {
+            Self::Unix { device, inode } => [
+                vec![1],
+                device.to_be_bytes().to_vec(),
+                inode.to_be_bytes().to_vec(),
+            ]
+            .concat(),
+            Self::Windows { volume, file_id } => {
+                [vec![2], volume.to_be_bytes().to_vec(), file_id.to_vec()].concat()
+            }
+        }
+    }
+    pub(crate) fn from_storage_bytes(bytes: &[u8]) -> Result<Self> {
+        match bytes.first() {
+            Some(1) if bytes.len() == 17 => Ok(Self::Unix {
+                device: u64::from_be_bytes(bytes[1..9].try_into()?),
+                inode: u64::from_be_bytes(bytes[9..17].try_into()?),
+            }),
+            Some(2) if bytes.len() == 25 => Ok(Self::Windows {
+                volume: u64::from_be_bytes(bytes[1..9].try_into()?),
+                file_id: bytes[9..25].try_into()?,
+            }),
+            _ => anyhow::bail!("invalid tagged file identity encoding"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ManagedFileMetadata {
+    pub(crate) identity: StableFileIdentity,
+    pub(crate) byte_size: u64,
+    pub(crate) modified_at: std::time::SystemTime,
+    pub(crate) link_count: u64,
+}
+
+pub(crate) struct ManagedFileCheck<'a> {
+    pub(crate) directory: &'a ManagedDirectoryCapability,
+    pub(crate) file: &'a ManagedFileCapability,
+    pub(crate) expected: Option<StableFileIdentity>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ManagedPublication<'a> {
+    Absent(&'a ManagedRelativeName),
+    Replace(&'a ManagedFileCapability),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ManagedPublicationConflict {
+    DestinationAppeared,
+    DestinationChanged,
+}
+
+impl std::fmt::Display for ManagedPublicationConflict {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::DestinationAppeared => "managed destination appeared",
+            Self::DestinationChanged => "managed destination changed",
+        })
+    }
+}
+impl std::error::Error for ManagedPublicationConflict {}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ManagedWriteState {
+    Existing,
+    New,
+    Poisoned,
+    Written,
+    Synced,
+    Published,
+}
 
 impl TryFrom<&str> for ManagedRelativeName {
     type Error = anyhow::Error;
 
     fn try_from(value: &str) -> Result<Self> {
-        #[cfg(windows)]
+        ensure!(
+            !value.contains('\\'),
+            "backslash is not a managed separator"
+        );
         validate_windows_relative_name(value)?;
         let path = Path::new(value);
         ensure!(!value.is_empty() && !path.is_absolute());
@@ -506,6 +668,7 @@ pub(crate) struct ManagedFileCapability {
     relative_name: String,
     parent_identity: ObjectIdentity,
     identity: ObjectIdentity,
+    write_state: ManagedWriteState,
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -552,6 +715,336 @@ const MANAGED_USER_AREAS: [ManagedUserArea; 18] = [
 
 #[cfg(unix)]
 impl NamespaceFs {
+    pub(crate) fn open_optional_regular(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        name: &ManagedRelativeName,
+    ) -> Result<Option<ManagedFileCapability>> {
+        let _lock = self.lock_mutations()?;
+        let mut chain = self.checked_directory_chain(directory)?;
+        let leaf = checked_relative_chain(&mut chain, directory.area, name)?;
+        let parent = chain.last().unwrap();
+        let Some(descriptor) = optional_checked_regular(parent, &leaf)? else {
+            let mut current = self.checked_directory_chain(directory)?;
+            checked_relative_chain(&mut current, directory.area, name)?;
+            ensure!(
+                directory_identity(current.last().unwrap())? == directory_identity(parent)?,
+                "missing leaf parent detached"
+            );
+            return Ok(None);
+        };
+        let identity = regular_file_identity(&descriptor)?;
+        let file = ManagedFileCapability {
+            descriptor,
+            binding_id: self.binding_id,
+            area: directory.area,
+            relative_name: name.0.clone(),
+            parent_identity: directory_identity(parent)?,
+            identity,
+            write_state: ManagedWriteState::Existing,
+        };
+        self.checked_file_chain(directory, &file)?;
+        Ok(Some(file))
+    }
+
+    /// Streams must not reenter this namespace or perform UI/network work.
+    /// A failed sink may contain partial bytes; callers must discard it.
+    pub(crate) fn read_regular_to(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        file: &mut ManagedFileCapability,
+        sink: &mut dyn std::io::Write,
+    ) -> Result<u64> {
+        use std::io::{Seek, SeekFrom};
+        let _lock = self.lock_mutations()?;
+        let _chain = self.checked_file_chain(directory, file)?;
+        let mut stream = std::fs::File::from(duplicate_descriptor(&file.descriptor)?);
+        stream.seek(SeekFrom::Start(0))?;
+        let copied = std::io::copy(&mut stream, sink)?;
+        self.checked_file_chain(directory, file)?;
+        Ok(copied)
+    }
+
+    /// One attempt only. Failure poisons publication, including partial writes.
+    pub(crate) fn write_new_regular_from(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        file: &mut ManagedFileCapability,
+        source: &mut dyn std::io::Read,
+    ) -> Result<u64> {
+        use std::io::{Seek, SeekFrom};
+        let _lock = self.lock_mutations()?;
+        let _chain = self.checked_file_chain(directory, file)?;
+        ensure!(
+            file.write_state == ManagedWriteState::New,
+            "only an owned unwritten temporary can be written"
+        );
+        file.write_state = ManagedWriteState::Poisoned;
+        let mut stream = std::fs::File::from(duplicate_descriptor(&file.descriptor)?);
+        stream.seek(SeekFrom::Start(0))?;
+        let copied = std::io::copy(source, &mut stream)?;
+        self.checked_file_chain(directory, file)?;
+        file.write_state = ManagedWriteState::Written;
+        Ok(copied)
+    }
+
+    pub(crate) fn sync_regular(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        file: &mut ManagedFileCapability,
+    ) -> Result<()> {
+        self.sync_regular_with(directory, file, |descriptor| {
+            Ok(rustix::fs::fsync(descriptor)?)
+        })
+    }
+
+    fn sync_regular_with(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        file: &mut ManagedFileCapability,
+        sync: impl FnOnce(&OwnedFd) -> Result<()>,
+    ) -> Result<()> {
+        let _lock = self.lock_mutations()?;
+        let _chain = self.checked_file_chain(directory, file)?;
+        ensure!(
+            file.write_state != ManagedWriteState::Poisoned,
+            "failed write cannot be synced for publication"
+        );
+        let owned = matches!(
+            file.write_state,
+            ManagedWriteState::Written | ManagedWriteState::Synced
+        );
+        if owned {
+            file.write_state = ManagedWriteState::Poisoned;
+        }
+        sync(&file.descriptor)?;
+        self.checked_file_chain(directory, file)?;
+        if owned {
+            file.write_state = ManagedWriteState::Synced;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn inspect_regular(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        file: &ManagedFileCapability,
+    ) -> Result<ManagedFileMetadata> {
+        let _lock = self.lock_mutations()?;
+        let _chain = self.checked_file_chain(directory, file)?;
+        managed_metadata(&file.descriptor)
+    }
+
+    pub(crate) fn enumerate_regular_names(
+        &self,
+        directory: &ManagedDirectoryCapability,
+    ) -> Result<Vec<ManagedRelativeName>> {
+        let _lock = self.lock_mutations()?;
+        let chain = self.checked_directory_chain(directory)?;
+        let mut result = Vec::new();
+        enumerate_managed(chain.last().unwrap(), directory.area, "", &mut result)?;
+        self.checked_directory_chain(directory)?;
+        result.sort_by(|a, b| a.0.cmp(&b.0));
+        ensure!(
+            result.windows(2).all(|pair| pair[0] != pair[1]),
+            "duplicate managed entries"
+        );
+        Ok(result)
+    }
+
+    /// Lock order: namespace, then SQLite. Callback is SQL/scalar-only; it must
+    /// commit before returning and must never reenter filesystem/recovery APIs.
+    pub(crate) fn with_current_regular_files<T>(
+        &self,
+        files: &[ManagedFileCheck<'_>],
+        operation: impl FnOnce(&[ManagedFileMetadata]) -> Result<T>,
+    ) -> Result<T> {
+        ensure!(!files.is_empty(), "empty managed file validation set");
+        let _lock = self.lock_mutations()?;
+        let mut chains = Vec::with_capacity(files.len());
+        let mut metadata = Vec::with_capacity(files.len());
+        for check in files {
+            chains.push(self.checked_file_chain(check.directory, check.file)?);
+            let info = managed_metadata(&check.file.descriptor)?;
+            ensure!(
+                check
+                    .expected
+                    .is_none_or(|expected| expected == info.identity),
+                "persisted file identity mismatch"
+            );
+            metadata.push(info);
+        }
+        operation(&metadata)
+    }
+
+    pub(crate) fn publish_regular(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        source: &mut ManagedFileCapability,
+        destination: ManagedPublication<'_>,
+    ) -> Result<()> {
+        self.publish_regular_with_current_identity(
+            directory,
+            source,
+            destination,
+            regular_file_identity,
+        )
+    }
+
+    fn publish_regular_with_current_identity(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        source: &mut ManagedFileCapability,
+        destination: ManagedPublication<'_>,
+        inspect_current: impl FnOnce(&OwnedFd) -> Result<ObjectIdentity>,
+    ) -> Result<()> {
+        let _lock = self.lock_mutations()?;
+        let source_chain = self.checked_file_chain(directory, source)?;
+        ensure!(
+            source.write_state == ManagedWriteState::Synced,
+            "publication requires a written and synced owned temporary"
+        );
+        let source_parent = source_chain.last().unwrap();
+        let source_leaf = OsStr::new(source.relative_name.rsplit('/').next().unwrap());
+        let mut target_chain = self.checked_directory_chain(directory)?;
+        let target_name = match destination {
+            ManagedPublication::Absent(name) => name.clone(),
+            ManagedPublication::Replace(file) => {
+                ensure!(
+                    file.binding_id == self.binding_id && file.area == directory.area,
+                    "replacement belongs to another authority"
+                );
+                ensure!(
+                    regular_file_identity(&file.descriptor)? == file.identity
+                        && file.identity != source.identity,
+                    "invalid retained replacement identity"
+                );
+                ensure!(
+                    rustix::fs::fstat(&file.descriptor)?.st_nlink <= 1,
+                    "hardlinked replacement"
+                );
+                ManagedRelativeName::try_from(file.relative_name.as_str())?
+            }
+        };
+        let leaf = checked_relative_chain(&mut target_chain, directory.area, &target_name)?;
+        let parent = target_chain.last().unwrap();
+        let parent_identity = directory_identity(parent)?;
+        if let ManagedPublication::Replace(file) = destination {
+            ensure!(
+                parent_identity == file.parent_identity,
+                "replacement parent changed"
+            );
+        }
+        let current = optional_checked_regular(parent, &leaf)?;
+        match destination {
+            ManagedPublication::Absent(_) => {
+                if current.is_some() {
+                    return Err(ManagedPublicationConflict::DestinationAppeared.into());
+                }
+                match rename_without_replacement(source_parent, source_leaf, parent, &leaf) {
+                    Ok(()) => {}
+                    Err(rustix::io::Errno::EXIST) => {
+                        self.checked_file_chain(directory, source)?;
+                        self.checked_directory_chain(directory)?;
+                        if optional_checked_regular(parent, &leaf)?.is_some() {
+                            return Err(ManagedPublicationConflict::DestinationAppeared.into());
+                        }
+                        return Err(rustix::io::Errno::EXIST.into());
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            ManagedPublication::Replace(file) => {
+                let current_identity = current.as_ref().map(inspect_current).transpose()?;
+                if current_identity != Some(file.identity) {
+                    return Err(ManagedPublicationConflict::DestinationChanged.into());
+                }
+                rustix::fs::renameat(source_parent, source_leaf, parent, &leaf)?;
+            }
+        }
+        // Kernel commit is final. Nothing below may fail or reopen a pathname.
+        source.relative_name = target_name.0;
+        source.parent_identity = parent_identity;
+        source.write_state = ManagedWriteState::Published;
+        Ok(())
+    }
+
+    fn checked_directory_chain(
+        &self,
+        directory: &ManagedDirectoryCapability,
+    ) -> Result<Vec<OwnedFd>> {
+        self.validate_root_descriptor()?;
+        ensure!(
+            directory.binding_id == self.binding_id,
+            "foreign managed directory authority"
+        );
+        ensure!(
+            directory_identity(&directory.descriptor)? == directory.identity,
+            "retained directory changed"
+        );
+        let mut chain = vec![duplicate_descriptor(&self.root_descriptor)?];
+        for (name, expected) in [
+            ("accounts", directory.accounts_identity),
+            (self.user_public_id.as_str(), directory.namespace_identity),
+        ] {
+            let child = checked_directory_at(chain.last().unwrap(), OsStr::new(name))?;
+            ensure!(
+                directory_identity(&child)? == expected,
+                "namespace ancestor detached"
+            );
+            chain.push(child);
+        }
+        for name in directory.area.relative_path().split('/') {
+            chain.push(checked_directory_at(
+                chain.last().unwrap(),
+                OsStr::new(name),
+            )?);
+        }
+        ensure!(
+            directory_identity(chain.last().unwrap())? == directory.identity,
+            "managed area detached"
+        );
+        Ok(chain)
+    }
+
+    fn checked_file_chain(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        file: &ManagedFileCapability,
+    ) -> Result<Vec<OwnedFd>> {
+        ensure!(
+            file.binding_id == self.binding_id && file.area == directory.area,
+            "foreign managed file authority"
+        );
+        let info = managed_metadata(&file.descriptor)?;
+        ensure!(
+            info.identity
+                == StableFileIdentity::Unix {
+                    device: file.identity.device,
+                    inode: file.identity.inode
+                },
+            "retained identity changed"
+        );
+        let mut chain = self.checked_directory_chain(directory)?;
+        let leaf = checked_relative_chain(
+            &mut chain,
+            directory.area,
+            &ManagedRelativeName::try_from(file.relative_name.as_str())?,
+        )?;
+        let parent = chain.last().unwrap();
+        ensure!(
+            directory_identity(parent)? == file.parent_identity,
+            "managed parent changed"
+        );
+        let current = optional_checked_regular(parent, &leaf)?
+            .ok_or_else(|| anyhow!("managed file disappeared"))?;
+        ensure!(
+            regular_file_identity(&current)? == file.identity,
+            "managed current identity changed"
+        );
+        Ok(chain)
+    }
+
     pub(crate) fn open_data_root(data_root: &Path) -> Result<DataRootCapability> {
         let descriptor = open_absolute_directory(data_root)?;
         let identity = directory_identity(&descriptor)?;
@@ -699,10 +1192,12 @@ impl NamespaceFs {
         name: &ManagedRelativeName,
     ) -> Result<ManagedFileCapability> {
         let _mutation_lock = self.lock_mutations()?;
-        self.validate_managed_directory(directory)?;
-        let (parent, leaf) = open_relative_parent(&directory.descriptor, name)?;
+        let mut chain = self.checked_directory_chain(directory)?;
+        let leaf = checked_relative_chain(&mut chain, directory.area, name)?;
+        let parent = chain.last().unwrap();
         let parent_identity = directory_identity(&parent)?;
-        let descriptor = open_regular_at(&parent, &leaf)?;
+        let descriptor = optional_checked_regular(parent, &leaf)?
+            .ok_or_else(|| anyhow!("managed file missing"))?;
         let identity = regular_file_identity(&descriptor)?;
         Ok(ManagedFileCapability {
             descriptor,
@@ -711,6 +1206,7 @@ impl NamespaceFs {
             relative_name: name.0.clone(),
             parent_identity,
             identity,
+            write_state: ManagedWriteState::Existing,
         })
     }
 
@@ -729,8 +1225,9 @@ impl NamespaceFs {
         after_validation: impl FnOnce(),
     ) -> Result<ManagedFileCapability> {
         let _mutation_lock = self.lock_mutations()?;
-        self.validate_managed_directory(directory)?;
-        let (parent, leaf) = open_relative_parent(&directory.descriptor, name)?;
+        let mut chain = self.checked_directory_chain(directory)?;
+        let leaf = checked_relative_chain(&mut chain, directory.area, name)?;
+        let parent = chain.last().unwrap();
         let parent_identity = directory_identity(&parent)?;
         after_validation();
         let descriptor = rustix::fs::openat(
@@ -746,11 +1243,22 @@ impl NamespaceFs {
         )
         .context("create a new regular file relative to a retained directory")?;
         let identity = regular_file_identity(&descriptor)?;
-        rustix::fs::fchmod(
-            &descriptor,
-            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
-        )
-        .context("restrict managed file permissions")?;
+        let initialization = (|| {
+            rustix::fs::fchmod(&descriptor, rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR)
+                .context("restrict managed file permissions")?;
+            managed_metadata(&descriptor)?;
+            prove_entry_spelling(&parent, &leaf, identity)?;
+            Ok::<_, anyhow::Error>(())
+        })();
+        if let Err(error) = initialization {
+            return Err(cleanup_failed_managed_creation(
+                parent,
+                &leaf,
+                identity,
+                error,
+                regular_file_identity,
+            ));
+        }
         Ok(ManagedFileCapability {
             descriptor,
             binding_id: self.binding_id,
@@ -758,6 +1266,7 @@ impl NamespaceFs {
             relative_name: name.0.clone(),
             parent_identity,
             identity,
+            write_state: ManagedWriteState::New,
         })
     }
 
@@ -801,6 +1310,7 @@ impl NamespaceFs {
             relative_name: destination.0.clone(),
             parent_identity: destination_parent_identity,
             identity: source.identity,
+            write_state: ManagedWriteState::Published,
         })
     }
 
@@ -815,9 +1325,17 @@ impl NamespaceFs {
         let (source_parent, source_leaf) = self.validate_managed_file(directory, &source)?;
         let (destination_parent, destination_leaf) =
             self.validate_managed_file(directory, &destination)?;
-        ensure!(source.identity != destination.identity, "cannot replace a file with itself");
-        rustix::fs::renameat(&source_parent, &source_leaf, &destination_parent, &destination_leaf)
-            .context("replace the expected managed file under the mutation lock")?;
+        ensure!(
+            source.identity != destination.identity,
+            "cannot replace a file with itself"
+        );
+        rustix::fs::renameat(
+            &source_parent,
+            &source_leaf,
+            &destination_parent,
+            &destination_leaf,
+        )
+        .context("replace the expected managed file under the mutation lock")?;
         Ok(ManagedFileCapability {
             descriptor: source.descriptor,
             binding_id: self.binding_id,
@@ -825,6 +1343,7 @@ impl NamespaceFs {
             relative_name: destination.relative_name,
             parent_identity: destination.parent_identity,
             identity: source.identity,
+            write_state: ManagedWriteState::Published,
         })
     }
 
@@ -866,13 +1385,12 @@ impl NamespaceFs {
         namespace_identity: ObjectIdentity,
     ) -> Result<OwnedFd> {
         self.validate_root_descriptor()?;
-        let accounts = open_directory_at(&self.root_descriptor, OsStr::new("accounts"))?;
+        let accounts = checked_directory_at(&self.root_descriptor, OsStr::new("accounts"))?;
         ensure!(
             directory_identity(&accounts)? == accounts_identity,
             "accounts ancestor is no longer attached to this data root"
         );
-        let namespace =
-            open_directory_at(&accounts, OsStr::new(self.user_public_id.as_str()))?;
+        let namespace = checked_directory_at(&accounts, OsStr::new(self.user_public_id.as_str()))?;
         ensure!(
             directory_identity(&namespace)? == namespace_identity,
             "user namespace is no longer attached to its accounts ancestor"
@@ -880,10 +1398,7 @@ impl NamespaceFs {
         Ok(namespace)
     }
 
-    fn validate_managed_directory(
-        &self,
-        directory: &ManagedDirectoryCapability,
-    ) -> Result<()> {
+    fn validate_managed_directory(&self, directory: &ManagedDirectoryCapability) -> Result<()> {
         ensure!(
             directory.binding_id == self.binding_id,
             "managed directory belongs to another namespace authority"
@@ -892,10 +1407,8 @@ impl NamespaceFs {
             directory_identity(&directory.descriptor)? == directory.identity,
             "retained managed directory identity changed"
         );
-        let namespace = self.reopen_namespace(
-            directory.accounts_identity,
-            directory.namespace_identity,
-        )?;
+        let namespace =
+            self.reopen_namespace(directory.accounts_identity, directory.namespace_identity)?;
         let current = walk_fixed_directories(
             &namespace,
             directory.area.relative_path(),
@@ -944,6 +1457,185 @@ enum DirectoryWalk {
 }
 
 #[cfg(unix)]
+fn cleanup_failed_managed_creation(
+    parent: &OwnedFd,
+    leaf: &OsStr,
+    identity: ObjectIdentity,
+    error: anyhow::Error,
+    inspect_current: impl FnOnce(&OwnedFd) -> Result<ObjectIdentity>,
+) -> anyhow::Error {
+    if identity.inode != 0
+        && open_regular_at(parent, leaf)
+            .is_ok_and(|current| inspect_current(&current).is_ok_and(|id| id == identity))
+    {
+        if let Err(cleanup) = rustix::fs::unlinkat(parent, leaf, rustix::fs::AtFlags::empty()) {
+            return error.context(format!("owned temporary cleanup failed: {cleanup}"));
+        }
+    }
+    error
+}
+
+#[cfg(unix)]
+fn managed_metadata(descriptor: &OwnedFd) -> Result<ManagedFileMetadata> {
+    use std::os::unix::fs::MetadataExt;
+    let file = std::fs::File::from(duplicate_descriptor(descriptor)?);
+    let metadata = file.metadata()?;
+    ensure!(
+        metadata.is_file() && metadata.nlink() == 1,
+        "managed file must be regular with one link"
+    );
+    Ok(ManagedFileMetadata {
+        identity: StableFileIdentity::Unix {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        },
+        byte_size: metadata.len(),
+        modified_at: metadata.modified()?,
+        link_count: metadata.nlink(),
+    })
+}
+
+#[cfg(unix)]
+fn prove_entry_spelling(parent: &OwnedFd, name: &OsStr, identity: ObjectIdentity) -> Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut entries = rustix::fs::Dir::read_from(parent)?;
+    let mut exact = false;
+    for entry in &mut entries {
+        let entry = entry?;
+        if entry.file_name().to_bytes() == name.as_bytes() {
+            ensure!(
+                !exact && entry.ino() == identity.inode && identity.inode != 0,
+                "ambiguous directory entry identity"
+            );
+            let stat = rustix::fs::statat(parent, name, rustix::fs::AtFlags::SYMLINK_NOFOLLOW)?;
+            ensure!(
+                stat.st_dev as u64 == identity.device && stat.st_ino as u64 == identity.inode,
+                "directory entry changed"
+            );
+            exact = true;
+        }
+    }
+    ensure!(exact, "exact stored directory-entry spelling is unproven");
+    Ok(())
+}
+
+#[cfg(unix)]
+fn checked_directory_at(parent: &OwnedFd, name: &OsStr) -> Result<OwnedFd> {
+    let child = open_directory_at(parent, name)?;
+    prove_entry_spelling(parent, name, directory_identity(&child)?)?;
+    Ok(child)
+}
+
+#[cfg(unix)]
+fn checked_relative_chain(
+    chain: &mut Vec<OwnedFd>,
+    area: ManagedUserArea,
+    name: &ManagedRelativeName,
+) -> Result<OsString> {
+    ManagedFileKey::new(area, name.as_str())?;
+    let components = normal_name_components(name)?;
+    let (leaf, parents) = components
+        .split_last()
+        .ok_or_else(|| anyhow!("missing managed leaf"))?;
+    for component in parents {
+        chain.push(checked_directory_at(chain.last().unwrap(), component)?);
+    }
+    Ok(leaf.clone())
+}
+
+#[cfg(unix)]
+fn optional_checked_regular(parent: &OwnedFd, leaf: &OsStr) -> Result<Option<OwnedFd>> {
+    let descriptor = match rustix::fs::openat(
+        parent,
+        leaf,
+        rustix::fs::OFlags::RDONLY
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC
+            | rustix::fs::OFlags::NONBLOCK,
+        rustix::fs::Mode::empty(),
+    ) {
+        Ok(descriptor) => descriptor,
+        Err(rustix::io::Errno::NOENT) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    managed_metadata(&descriptor)?;
+    prove_entry_spelling(parent, leaf, regular_file_identity(&descriptor)?)?;
+    Ok(Some(descriptor))
+}
+
+#[cfg(unix)]
+fn enumerate_managed(
+    parent: &OwnedFd,
+    area: ManagedUserArea,
+    prefix: &str,
+    output: &mut Vec<ManagedRelativeName>,
+) -> Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let parent_identity = directory_identity(parent)?;
+    let mut entries = rustix::fs::Dir::read_from(parent)?;
+    for entry in &mut entries {
+        let entry = entry?;
+        let bytes = entry.file_name().to_bytes();
+        if bytes == b"." || bytes == b".." {
+            continue;
+        }
+        let leaf = OsStr::from_bytes(bytes);
+        let name = std::str::from_utf8(bytes)?;
+        let stat = rustix::fs::statat(parent, leaf, rustix::fs::AtFlags::SYMLINK_NOFOLLOW)?;
+        let kind = rustix::fs::FileType::from_raw_mode(stat.st_mode);
+        if !kind.is_file() && !kind.is_dir() {
+            continue;
+        }
+        let relative = if prefix.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        let canonical = ManagedRelativeName::try_from(relative.as_str())?;
+        let identity = ObjectIdentity {
+            device: stat.st_dev as u64,
+            inode: stat.st_ino as u64,
+        };
+        ensure!(
+            entry.ino() == identity.inode && identity.inode != 0,
+            "enumeration identity is unprovable"
+        );
+        if ManagedFileKey::new(area, &relative).is_err() {
+            // The excluded fixed subarea must still be a canonical directory.
+            ensure!(kind.is_dir(), "reserved managed subarea is not a directory");
+            checked_directory_at(parent, leaf)?;
+            continue;
+        }
+        if kind.is_dir() {
+            let child = checked_directory_at(parent, leaf)?;
+            ensure!(
+                directory_identity(&child)? == identity,
+                "enumerated directory changed"
+            );
+            enumerate_managed(&child, area, &relative, output)?;
+            let current = checked_directory_at(parent, leaf)?;
+            ensure!(
+                directory_identity(&current)? == identity,
+                "enumerated directory detached"
+            );
+        } else {
+            let file = optional_checked_regular(parent, leaf)?
+                .ok_or_else(|| anyhow!("enumerated file disappeared"))?;
+            ensure!(
+                regular_file_identity(&file)? == identity,
+                "enumerated file changed"
+            );
+            output.push(canonical);
+        }
+    }
+    ensure!(
+        directory_identity(parent)? == parent_identity,
+        "enumerated parent changed"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
 fn duplicate_descriptor(descriptor: &OwnedFd) -> Result<OwnedFd> {
     rustix::io::fcntl_dupfd_cloexec(descriptor, 0)
         .context("duplicate a retained filesystem capability")
@@ -956,7 +1648,12 @@ fn rename_without_replacement(
     destination_parent: &OwnedFd,
     destination_leaf: &OsStr,
 ) -> rustix::io::Result<()> {
-    #[cfg(any(target_vendor = "apple", target_os = "linux", target_os = "android", target_os = "redox"))]
+    #[cfg(any(
+        target_vendor = "apple",
+        target_os = "linux",
+        target_os = "android",
+        target_os = "redox"
+    ))]
     {
         rustix::fs::renameat_with(
             source_parent,
@@ -966,9 +1663,19 @@ fn rename_without_replacement(
             rustix::fs::RenameFlags::NOREPLACE,
         )
     }
-    #[cfg(not(any(target_vendor = "apple", target_os = "linux", target_os = "android", target_os = "redox")))]
+    #[cfg(not(any(
+        target_vendor = "apple",
+        target_os = "linux",
+        target_os = "android",
+        target_os = "redox"
+    )))]
     {
-        let _ = (source_parent, source_leaf, destination_parent, destination_leaf);
+        let _ = (
+            source_parent,
+            source_leaf,
+            destination_parent,
+            destination_leaf,
+        );
         Err(rustix::io::Errno::NOTSUP)
     }
 }
@@ -988,7 +1695,10 @@ fn object_identity(descriptor: &OwnedFd) -> Result<(ObjectIdentity, rustix::fs::
 #[cfg(unix)]
 fn directory_identity(descriptor: &OwnedFd) -> Result<ObjectIdentity> {
     let (identity, file_type) = object_identity(descriptor)?;
-    ensure!(file_type.is_dir(), "filesystem capability is not a directory");
+    ensure!(
+        file_type.is_dir(),
+        "filesystem capability is not a directory"
+    );
     Ok(identity)
 }
 
@@ -1032,7 +1742,11 @@ fn open_absolute_directory(path: &Path) -> Result<OwnedFd> {
         match component {
             Component::RootDir => {}
             Component::Normal(name) => descriptor = open_directory_at(&descriptor, name)?,
-            _ => return Err(anyhow!("application data root contains a non-normal component")),
+            _ => {
+                return Err(anyhow!(
+                    "application data root contains a non-normal component"
+                ))
+            }
         }
     }
     Ok(descriptor)
@@ -1057,6 +1771,7 @@ fn ensure_directory_at(parent: &OwnedFd, component: &OsStr) -> Result<OwnedFd> {
             })?
         }
     };
+    prove_entry_spelling(parent, component, directory_identity(&descriptor)?)?;
     rustix::fs::fchmod(&descriptor, rustix::fs::Mode::RWXU)
         .context("restrict managed directory permissions")?;
     Ok(descriptor)
@@ -1072,10 +1787,8 @@ fn walk_fixed_directories(
     for component in relative_path.split('/') {
         ensure!(!component.is_empty(), "fixed managed path is invalid");
         current = match walk {
-            DirectoryWalk::ExistingOnly =>
-                open_directory_at(&current, OsStr::new(component))?,
-            DirectoryWalk::CreateMissing =>
-                ensure_directory_at(&current, OsStr::new(component))?,
+            DirectoryWalk::ExistingOnly => checked_directory_at(&current, OsStr::new(component))?,
+            DirectoryWalk::CreateMissing => ensure_directory_at(&current, OsStr::new(component))?,
         };
     }
     Ok(current)
@@ -1093,10 +1806,7 @@ fn normal_name_components(name: &ManagedRelativeName) -> Result<Vec<OsString>> {
 }
 
 #[cfg(unix)]
-fn open_relative_parent(
-    base: &OwnedFd,
-    name: &ManagedRelativeName,
-) -> Result<(OwnedFd, OsString)> {
+fn open_relative_parent(base: &OwnedFd, name: &ManagedRelativeName) -> Result<(OwnedFd, OsString)> {
     let components = normal_name_components(name)?;
     let (leaf, parents) = components
         .split_last()
@@ -1126,6 +1836,65 @@ fn open_regular_at(parent: &OwnedFd, leaf: &OsStr) -> Result<OwnedFd> {
 
 #[cfg(not(any(unix, windows)))]
 impl NamespaceFs {
+    pub(crate) fn open_optional_regular(
+        &self,
+        _directory: &ManagedDirectoryCapability,
+        _name: &ManagedRelativeName,
+    ) -> Result<Option<ManagedFileCapability>> {
+        unsupported_namespace_capabilities()
+    }
+    pub(crate) fn read_regular_to(
+        &self,
+        _directory: &ManagedDirectoryCapability,
+        _file: &mut ManagedFileCapability,
+        _sink: &mut dyn std::io::Write,
+    ) -> Result<u64> {
+        unsupported_namespace_capabilities()
+    }
+    pub(crate) fn write_new_regular_from(
+        &self,
+        _directory: &ManagedDirectoryCapability,
+        _file: &mut ManagedFileCapability,
+        _source: &mut dyn std::io::Read,
+    ) -> Result<u64> {
+        unsupported_namespace_capabilities()
+    }
+    pub(crate) fn sync_regular(
+        &self,
+        _directory: &ManagedDirectoryCapability,
+        _file: &mut ManagedFileCapability,
+    ) -> Result<()> {
+        unsupported_namespace_capabilities()
+    }
+    pub(crate) fn inspect_regular(
+        &self,
+        _directory: &ManagedDirectoryCapability,
+        _file: &ManagedFileCapability,
+    ) -> Result<ManagedFileMetadata> {
+        unsupported_namespace_capabilities()
+    }
+    pub(crate) fn enumerate_regular_names(
+        &self,
+        _directory: &ManagedDirectoryCapability,
+    ) -> Result<Vec<ManagedRelativeName>> {
+        unsupported_namespace_capabilities()
+    }
+    pub(crate) fn with_current_regular_files<T>(
+        &self,
+        _files: &[ManagedFileCheck<'_>],
+        _operation: impl FnOnce(&[ManagedFileMetadata]) -> Result<T>,
+    ) -> Result<T> {
+        unsupported_namespace_capabilities()
+    }
+    pub(crate) fn publish_regular(
+        &self,
+        _directory: &ManagedDirectoryCapability,
+        _source: &mut ManagedFileCapability,
+        _destination: ManagedPublication<'_>,
+    ) -> Result<()> {
+        unsupported_namespace_capabilities()
+    }
+
     pub(crate) fn open_data_root(_data_root: &Path) -> Result<DataRootCapability> {
         unsupported_namespace_capabilities()
     }
@@ -1215,6 +1984,718 @@ mod tests {
     }
 
     const USER_A: &str = "11111111-1111-4111-8111-111111111111";
+
+    #[cfg(any(unix, windows))]
+    fn managed_fixture(
+        area: ManagedUserArea,
+    ) -> (
+        tempfile::TempDir,
+        UserNamespace,
+        NamespaceFs,
+        ManagedDirectoryCapability,
+    ) {
+        let root = temporary_directory();
+        let ns = UserNamespace::new(root.path(), USER_A).unwrap();
+        let fs =
+            NamespaceFs::for_namespace(&NamespaceFs::open_data_root(root.path()).unwrap(), &ns)
+                .unwrap();
+        let dirs = fs.ensure_managed_dirs().unwrap();
+        let dir = fs.open_managed_dir(&dirs, area).unwrap();
+        (root, ns, fs, dir)
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_entry_spelling_is_exact_without_case_folding() {
+        let (_root, ns, fs, dir) = managed_fixture(ManagedUserArea::Output);
+        fs::write(ns.output_dir().join("Photo.png"), b"original").unwrap();
+        let exact = ManagedRelativeName::try_from("Photo.png").unwrap();
+        let file = fs.open_existing_regular(&dir, &exact).unwrap();
+        assert!(fs.inspect_regular(&dir, &file).is_ok());
+        let alias = ManagedRelativeName::try_from("photo.png").unwrap();
+        if ns.output_dir().join("photo.png").exists() {
+            assert!(fs.open_existing_regular(&dir, &alias).is_err());
+            assert!(fs.open_optional_regular(&dir, &alias).is_err());
+        } else {
+            fs::write(ns.output_dir().join("photo.png"), b"distinct").unwrap();
+            let other = fs.open_existing_regular(&dir, &alias).unwrap();
+            assert_ne!(
+                fs.inspect_regular(&dir, &file).unwrap().identity,
+                fs.inspect_regular(&dir, &other).unwrap().identity
+            );
+        }
+        assert_eq!(
+            fs::read(ns.output_dir().join("Photo.png")).unwrap(),
+            b"original"
+        );
+        fs::create_dir(ns.output_dir().join("Nested")).unwrap();
+        fs::write(ns.output_dir().join("Nested/file"), b"nested").unwrap();
+        if ns.output_dir().join("nested").exists() {
+            assert!(fs
+                .open_optional_regular(&dir, &ManagedRelativeName::try_from("nested/file").unwrap())
+                .is_err());
+            assert!(fs
+                .create_new_regular(&dir, &ManagedRelativeName::try_from("nested/new").unwrap())
+                .is_err());
+        }
+        fs::write(ns.output_dir().join("caf\u{e9}"), b"unicode").unwrap();
+        let listed = fs::read_dir(ns.output_dir())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .find(|n| n.starts_with("caf"))
+            .unwrap();
+        fs.open_existing_regular(
+            &dir,
+            &ManagedRelativeName::try_from(listed.as_str()).unwrap(),
+        )
+        .unwrap();
+        let alternate = if listed == "caf\u{e9}" {
+            "cafe\u{301}"
+        } else {
+            "caf\u{e9}"
+        };
+        if ns.output_dir().join(alternate).exists() {
+            assert!(fs
+                .open_optional_regular(&dir, &ManagedRelativeName::try_from(alternate).unwrap())
+                .is_err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_area_alias_is_rejected_before_directory_preparation() {
+        let (_root, ns, fs, _dir) = managed_fixture(ManagedUserArea::Output);
+        fs::rename(ns.output_dir(), ns.root().join("OUT")).unwrap();
+        if ns.output_dir().exists() {
+            assert!(fs.ensure_managed_dirs().is_err());
+        }
+        assert!(ns.root().join("OUT").is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_metadata_preserves_platform_identity() {
+        use std::os::unix::fs::MetadataExt;
+        let (_root, ns, fs, dir) = managed_fixture(ManagedUserArea::Output);
+        let path = ns.output_dir().join("file");
+        fs::write(&path, b"metadata").unwrap();
+        let file = fs
+            .open_existing_regular(&dir, &ManagedRelativeName::try_from("file").unwrap())
+            .unwrap();
+        let actual = fs::metadata(&path).unwrap();
+        let info = fs.inspect_regular(&dir, &file).unwrap();
+        assert_eq!(
+            info.identity,
+            StableFileIdentity::Unix {
+                device: actual.dev(),
+                inode: actual.ino()
+            }
+        );
+        assert_eq!(info.byte_size, 8);
+        assert_eq!(info.modified_at, actual.modified().unwrap());
+        assert_eq!(info.link_count, 1);
+        fs::hard_link(&path, ns.output_dir().join("link")).unwrap();
+        assert!(fs.inspect_regular(&dir, &file).is_err());
+        assert!(fs
+            .open_optional_regular(&dir, &ManagedRelativeName::try_from("link").unwrap())
+            .is_err());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_streams_require_owned_new_file_and_sync_before_publication() {
+        let (_root, ns, fs, dir) = managed_fixture(ManagedUserArea::Recovery);
+        let name = ManagedRelativeName::try_from("temporary").unwrap();
+        let target = ManagedRelativeName::try_from("document").unwrap();
+        assert!(fs.open_optional_regular(&dir, &target).unwrap().is_none());
+        let mut file = fs.create_new_regular(&dir, &name).unwrap();
+        assert!(fs
+            .publish_regular(&dir, &mut file, ManagedPublication::Absent(&target))
+            .is_err());
+        assert_eq!(
+            fs.write_new_regular_from(&dir, &mut file, &mut &b"content"[..])
+                .unwrap(),
+            7
+        );
+        assert!(fs
+            .publish_regular(&dir, &mut file, ManagedPublication::Absent(&target))
+            .is_err());
+        fs.sync_regular(&dir, &mut file).unwrap();
+        fs.publish_regular(&dir, &mut file, ManagedPublication::Absent(&target))
+            .unwrap();
+        assert!(fs
+            .write_new_regular_from(&dir, &mut file, &mut &b"overwrite"[..])
+            .is_err());
+        for _ in 0..2 {
+            let mut bytes = Vec::new();
+            assert_eq!(fs.read_regular_to(&dir, &mut file, &mut bytes).unwrap(), 7);
+            assert_eq!(bytes, b"content");
+        }
+        let mut existing = fs.open_existing_regular(&dir, &target).unwrap();
+        assert!(fs
+            .write_new_regular_from(&dir, &mut existing, &mut &b"overwrite"[..])
+            .is_err());
+        struct ShortSink(Vec<u8>);
+        impl std::io::Write for ShortSink {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.push(bytes[0]);
+                Ok(1)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut short = ShortSink(Vec::new());
+        assert_eq!(
+            fs.read_regular_to(&dir, &mut existing, &mut short).unwrap(),
+            7
+        );
+        assert_eq!(short.0, b"content");
+        struct FailedSink(Vec<u8>);
+        impl std::io::Write for FailedSink {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if self.0.is_empty() {
+                    self.0.push(bytes[0]);
+                    Ok(1)
+                } else {
+                    Err(std::io::Error::other("sink failed"))
+                }
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut failed = FailedSink(Vec::new());
+        assert!(fs
+            .read_regular_to(&dir, &mut existing, &mut failed)
+            .is_err());
+        assert_eq!(failed.0, b"c");
+        let mut reread = Vec::new();
+        fs.read_regular_to(&dir, &mut existing, &mut reread)
+            .unwrap();
+        assert_eq!(reread, b"content");
+        let mut poisoned = fs.create_new_regular(&dir, &name).unwrap();
+        struct Fails(bool);
+        impl std::io::Read for Fails {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.0 {
+                    Err(std::io::Error::other("source failed"))
+                } else {
+                    self.0 = true;
+                    buf[0] = 1;
+                    Ok(1)
+                }
+            }
+        }
+        assert!(fs
+            .write_new_regular_from(&dir, &mut poisoned, &mut Fails(false))
+            .is_err());
+        assert!(fs.sync_regular(&dir, &mut poisoned).is_err());
+        assert!(fs
+            .publish_regular(&dir, &mut poisoned, ManagedPublication::Replace(&existing))
+            .is_err());
+        fs.unlink_within(&dir, poisoned).unwrap();
+        assert_eq!(
+            fs::read(ns.recovery_dir().join("document")).unwrap(),
+            b"content"
+        );
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_enumeration_stays_in_canonical_area() {
+        let (_root, ns, fs, dir) = managed_fixture(ManagedUserArea::Canvas);
+        fs::create_dir(ns.canvas_dir().join("nested")).unwrap();
+        fs::write(ns.canvas_dir().join("nested/b"), b"b").unwrap();
+        fs::write(ns.canvas_dir().join("a"), b"a").unwrap();
+        fs::write(ns.canvas_dir().join("uploads/private"), b"excluded").unwrap();
+        #[cfg(unix)]
+        symlink(ns.canvas_dir().join("nested"), ns.canvas_dir().join("link")).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(
+            ns.canvas_dir().join("nested"),
+            ns.canvas_dir().join("link"),
+        )
+        .unwrap();
+        let names = fs.enumerate_regular_names(&dir).unwrap();
+        assert_eq!(
+            names.iter().map(|n| n.as_str()).collect::<Vec<_>>(),
+            ["a", "nested/b"]
+        );
+        for name in names {
+            fs.open_optional_regular(&dir, &name).unwrap().unwrap();
+        }
+        #[cfg(unix)]
+        {
+            fs::write(ns.canvas_dir().join("bad."), b"untouched").unwrap();
+            assert!(fs.enumerate_regular_names(&dir).is_err());
+            assert_eq!(
+                fs::read(ns.canvas_dir().join("bad.")).unwrap(),
+                b"untouched"
+            );
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_validation_holds_all_opened_bindings_through_callback() {
+        let (_root, _ns, fs, dir) = managed_fixture(ManagedUserArea::Output);
+        let one = fs
+            .create_new_regular(&dir, &ManagedRelativeName::try_from("one").unwrap())
+            .unwrap();
+        let two = fs
+            .create_new_regular(&dir, &ManagedRelativeName::try_from("two").unwrap())
+            .unwrap();
+        let checks = [
+            ManagedFileCheck {
+                directory: &dir,
+                file: &one,
+                expected: None,
+            },
+            ManagedFileCheck {
+                directory: &dir,
+                file: &two,
+                expected: None,
+            },
+        ];
+        assert_eq!(
+            fs.with_current_regular_files(&checks, |info| {
+                assert_eq!(info.len(), 2);
+                assert_ne!(info[0].identity, info[1].identity);
+                Ok(17)
+            })
+            .unwrap(),
+            17
+        );
+        assert!(fs.with_current_regular_files(&[], |_| Ok(())).is_err());
+        let wrong = [ManagedFileCheck {
+            directory: &dir,
+            file: &one,
+            expected: Some(StableFileIdentity::Windows {
+                volume: 0,
+                file_id: [0; 16],
+            }),
+        }];
+        assert!(fs
+            .with_current_regular_files::<()>(&wrong, |_| panic!("invalid identity callback"))
+            .is_err());
+        let one_id = fs.inspect_regular(&dir, &one).unwrap().identity;
+        assert!(fs
+            .with_current_regular_files::<()>(
+                &[ManagedFileCheck {
+                    directory: &dir,
+                    file: &two,
+                    expected: Some(one_id)
+                }],
+                |_| panic!("wrong same-area file callback")
+            )
+            .is_err());
+        let operation_error = fs
+            .with_current_regular_files::<()>(&checks, |_| {
+                Err(std::io::Error::other("SQL failure").into())
+            })
+            .unwrap_err();
+        assert!(operation_error.downcast_ref::<std::io::Error>().is_some());
+        assert!(operation_error
+            .downcast_ref::<ManagedPublicationConflict>()
+            .is_none());
+        use std::sync::mpsc;
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            fs.with_current_regular_files(&checks, |_| {
+                scope.spawn(|| {
+                    started_tx.send(()).unwrap();
+                    fs.create_new_regular(&dir, &ManagedRelativeName::try_from("mutator").unwrap())
+                        .unwrap();
+                    done_tx.send(()).unwrap();
+                });
+                started_rx.recv().unwrap();
+                assert!(done_rx
+                    .recv_timeout(std::time::Duration::from_millis(100))
+                    .is_err());
+                Ok(())
+            })
+            .unwrap();
+            done_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+        });
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_publication_conflicts_preserve_owned_temporary() {
+        let (_root, ns, fs, dir) = managed_fixture(ManagedUserArea::Recovery);
+        let name = ManagedRelativeName::try_from("temp").unwrap();
+        let target = ManagedRelativeName::try_from("document").unwrap();
+        let mut source = fs.create_new_regular(&dir, &name).unwrap();
+        fs.write_new_regular_from(&dir, &mut source, &mut &b"new"[..])
+            .unwrap();
+        fs.sync_regular(&dir, &mut source).unwrap();
+        fs::write(ns.recovery_dir().join("document"), b"winner").unwrap();
+        let error = fs
+            .publish_regular(&dir, &mut source, ManagedPublication::Absent(&target))
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<ManagedPublicationConflict>(),
+            Some(&ManagedPublicationConflict::DestinationAppeared)
+        );
+        let stale = fs.open_existing_regular(&dir, &target).unwrap();
+        fs::rename(
+            ns.recovery_dir().join("document"),
+            ns.recovery_dir().join("old"),
+        )
+        .unwrap();
+        fs::write(ns.recovery_dir().join("document"), b"new winner").unwrap();
+        let error = fs
+            .publish_regular(&dir, &mut source, ManagedPublication::Replace(&stale))
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<ManagedPublicationConflict>(),
+            Some(&ManagedPublicationConflict::DestinationChanged)
+        );
+        fs.unlink_within(&dir, source).unwrap();
+        assert_eq!(
+            fs::read(ns.recovery_dir().join("document")).unwrap(),
+            b"new winner"
+        );
+        assert!(!ns.recovery_dir().join("temp").exists());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_publication_rejects_invalid_targets_and_source_without_conflict() {
+        let (_root, ns, fs, dir) = managed_fixture(ManagedUserArea::Recovery);
+        let temp = ManagedRelativeName::try_from("temporary").unwrap();
+        let target = ManagedRelativeName::try_from("document").unwrap();
+        let mut source = fs.create_new_regular(&dir, &temp).unwrap();
+        fs.write_new_regular_from(&dir, &mut source, &mut &b"new"[..])
+            .unwrap();
+        fs.sync_regular(&dir, &mut source).unwrap();
+        fs::create_dir(ns.recovery_dir().join("document")).unwrap();
+        let error = fs
+            .publish_regular(&dir, &mut source, ManagedPublication::Absent(&target))
+            .unwrap_err();
+        assert!(error.downcast_ref::<ManagedPublicationConflict>().is_none());
+        fs::remove_dir(ns.recovery_dir().join("document")).unwrap();
+        fs::write(ns.recovery_dir().join("document"), b"old").unwrap();
+        let destination = fs.open_existing_regular(&dir, &target).unwrap();
+        fs.publish_regular(&dir, &mut source, ManagedPublication::Replace(&destination))
+            .unwrap();
+        assert_eq!(
+            fs::read(ns.recovery_dir().join("document")).unwrap(),
+            b"new"
+        );
+        assert!(fs
+            .write_new_regular_from(&dir, &mut source, &mut &b"bad"[..])
+            .is_err());
+        fs.unlink_within(&dir, source).unwrap();
+        let mut source = fs.create_new_regular(&dir, &temp).unwrap();
+        fs.write_new_regular_from(&dir, &mut source, &mut &b"new"[..])
+            .unwrap();
+        fs.sync_regular(&dir, &mut source).unwrap();
+        fs::rename(
+            ns.recovery_dir().join("temporary"),
+            ns.recovery_dir().join("moved"),
+        )
+        .unwrap();
+        fs::write(ns.recovery_dir().join("temporary"), b"foreign").unwrap();
+        let error = fs
+            .publish_regular(&dir, &mut source, ManagedPublication::Absent(&target))
+            .unwrap_err();
+        assert!(error.downcast_ref::<ManagedPublicationConflict>().is_none());
+        assert!(fs.unlink_within(&dir, source).is_err());
+        assert_eq!(
+            fs::read(ns.recovery_dir().join("temporary")).unwrap(),
+            b"foreign"
+        );
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_checks_reject_foreign_authority_missing_parent_and_detached_area() {
+        let (root, ns, fs, dir) = managed_fixture(ManagedUserArea::Recovery);
+        let name = ManagedRelativeName::try_from("file").unwrap();
+        let file = fs.create_new_regular(&dir, &name).unwrap();
+        let foreign =
+            NamespaceFs::for_namespace(&NamespaceFs::open_data_root(root.path()).unwrap(), &ns)
+                .unwrap();
+        assert!(foreign.inspect_regular(&dir, &file).is_err());
+        assert!(foreign
+            .with_current_regular_files::<()>(
+                &[ManagedFileCheck {
+                    directory: &dir,
+                    file: &file,
+                    expected: None
+                }],
+                |_| panic!("foreign callback")
+            )
+            .is_err());
+        assert!(fs
+            .open_optional_regular(
+                &dir,
+                &ManagedRelativeName::try_from("missing/leaf").unwrap()
+            )
+            .is_err());
+        fs::rename(ns.recovery_dir(), ns.root().join("detached")).unwrap();
+        fs::create_dir(ns.recovery_dir()).unwrap();
+        assert!(fs.open_optional_regular(&dir, &name).is_err());
+        assert!(fs.enumerate_regular_names(&dir).is_err());
+        assert!(fs
+            .with_current_regular_files::<()>(
+                &[ManagedFileCheck {
+                    directory: &dir,
+                    file: &file,
+                    expected: None
+                }],
+                |_| panic!("detached callback")
+            )
+            .is_err());
+        assert!(fs.unlink_within(&dir, file).is_err());
+        assert!(ns.root().join("detached/file").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_enumeration_rejects_undecodable_entries_and_hardlinks() {
+        use std::os::unix::ffi::OsStringExt;
+        let (_root, ns, fs, dir) = managed_fixture(ManagedUserArea::Output);
+        fs::write(ns.output_dir().join("first"), b"bytes").unwrap();
+        let invalid = ns.output_dir().join(OsString::from_vec(vec![255]));
+        match fs::write(&invalid, b"untouched") {
+            Ok(()) => {
+                assert!(fs.enumerate_regular_names(&dir).is_err());
+                fs::remove_file(&invalid).unwrap();
+            }
+            Err(error) => {
+                assert_eq!(
+                    error.raw_os_error(),
+                    Some(rustix::io::Errno::ILSEQ.raw_os_error())
+                );
+                eprintln!("fixture filesystem rejects undecodable filenames: {error}");
+            }
+        }
+        fs::hard_link(
+            ns.output_dir().join("first"),
+            ns.output_dir().join("second"),
+        )
+        .unwrap();
+        assert!(fs.enumerate_regular_names(&dir).is_err());
+        assert_eq!(fs::read(ns.output_dir().join("first")).unwrap(), b"bytes");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_injected_sync_failure_poisons_publication_and_retains_cleanup() {
+        let (_root, ns, fs, dir) = managed_fixture(ManagedUserArea::Recovery);
+        let mut file = fs
+            .create_new_regular(&dir, &ManagedRelativeName::try_from("temp").unwrap())
+            .unwrap();
+        fs.write_new_regular_from(&dir, &mut file, &mut &b"bytes"[..])
+            .unwrap();
+        assert!(fs
+            .sync_regular_with(&dir, &mut file, |_| Err(std::io::Error::other(
+                "injected fsync error"
+            )
+            .into()))
+            .is_err());
+        let error = fs
+            .publish_regular(
+                &dir,
+                &mut file,
+                ManagedPublication::Absent(&ManagedRelativeName::try_from("document").unwrap()),
+            )
+            .unwrap_err();
+        assert!(error.downcast_ref::<ManagedPublicationConflict>().is_none());
+        assert!(fs.sync_regular(&dir, &mut file).is_err());
+        fs.unlink_within(&dir, file).unwrap();
+        assert!(!ns.recovery_dir().join("temp").exists());
+        assert!(!ns.recovery_dir().join("document").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_replacement_identity_failure_is_not_a_conflict() {
+        let (_root, ns, fs, dir) = managed_fixture(ManagedUserArea::Recovery);
+        let mut source = fs
+            .create_new_regular(&dir, &ManagedRelativeName::try_from("temp").unwrap())
+            .unwrap();
+        fs.write_new_regular_from(&dir, &mut source, &mut &b"new"[..])
+            .unwrap();
+        fs.sync_regular(&dir, &mut source).unwrap();
+        fs::write(ns.recovery_dir().join("document"), b"old").unwrap();
+        let destination = fs
+            .open_existing_regular(&dir, &ManagedRelativeName::try_from("document").unwrap())
+            .unwrap();
+        let error = fs
+            .publish_regular_with_current_identity(
+                &dir,
+                &mut source,
+                ManagedPublication::Replace(&destination),
+                |_| Err(std::io::Error::from_raw_os_error(5).into()),
+            )
+            .unwrap_err();
+        assert!(error.downcast_ref::<ManagedPublicationConflict>().is_none());
+        assert_eq!(
+            error
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(5)
+        );
+        assert_eq!(
+            fs::read(ns.recovery_dir().join("document")).unwrap(),
+            b"old"
+        );
+        fs::rename(
+            ns.recovery_dir().join("document"),
+            ns.recovery_dir().join("held"),
+        )
+        .unwrap();
+        let missing = fs
+            .publish_regular(&dir, &mut source, ManagedPublication::Replace(&destination))
+            .unwrap_err();
+        assert_eq!(
+            missing.downcast_ref::<ManagedPublicationConflict>(),
+            Some(&ManagedPublicationConflict::DestinationChanged)
+        );
+        fs.unlink_within(&dir, source).unwrap();
+        assert_eq!(fs::read(ns.recovery_dir().join("held")).unwrap(), b"old");
+        assert!(!ns.recovery_dir().join("temp").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_failed_creation_zero_inode_cannot_authorize_unlink() {
+        let (_root, ns, fs, dir) = managed_fixture(ManagedUserArea::Recovery);
+        let mut file = fs
+            .create_new_regular(&dir, &ManagedRelativeName::try_from("temp").unwrap())
+            .unwrap();
+        fs.write_new_regular_from(&dir, &mut file, &mut &b"owned"[..])
+            .unwrap();
+        let _lock = fs.lock_mutations().unwrap();
+        let zero = ObjectIdentity {
+            device: file.identity.device,
+            inode: 0,
+        };
+        let error = cleanup_failed_managed_creation(
+            &dir.descriptor,
+            OsStr::new("temp"),
+            zero,
+            std::io::Error::from_raw_os_error(5).into(),
+            |_| Ok(zero),
+        );
+        assert_eq!(
+            error
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(5)
+        );
+        assert_eq!(fs::read(ns.recovery_dir().join("temp")).unwrap(), b"owned");
+        let error = cleanup_failed_managed_creation(
+            &dir.descriptor,
+            OsStr::new("temp"),
+            file.identity,
+            std::io::Error::from_raw_os_error(5).into(),
+            regular_file_identity,
+        );
+        assert_eq!(
+            error
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(5)
+        );
+        assert!(!ns.recovery_dir().join("temp").exists());
+    }
+
+    #[test]
+    fn managed_names_reject_lexical_and_overlapping_area_aliases() {
+        for name in [
+            "a//b", "a/", "a/./b", "a\\b", "CON", "aux.txt", "a:stream", "a.", "a ", "", "/a",
+            "../a", "a\0b",
+        ] {
+            assert!(
+                ManagedRelativeName::try_from(name).is_err(),
+                "admitted {name:?}"
+            );
+        }
+        for (area, name) in [
+            (ManagedUserArea::Canvas, "uploads/a"),
+            (ManagedUserArea::Canvas, "exports"),
+            (ManagedUserArea::References, "library/a"),
+            (ManagedUserArea::References, "imports/a"),
+        ] {
+            assert!(ManagedFileKey::new(area, name).is_err());
+        }
+        assert!(ManagedFileKey::new(ManagedUserArea::CanvasUploads, "a").is_ok());
+        assert!(ManagedFileKey::new(ManagedUserArea::ReferencesLibrary, "a").is_ok());
+        assert!(ManagedFileKey::new(ManagedUserArea::Canvas, "arbitrary/a").is_ok());
+        for area in MANAGED_USER_AREAS {
+            assert_eq!(
+                ManagedUserArea::from_storage_name(area.storage_name()).unwrap(),
+                area
+            );
+        }
+        assert!(ManagedUserArea::from_storage_name("out").is_err());
+    }
+
+    #[test]
+    fn managed_metadata_preserves_platform_identity_codec() {
+        let unix = StableFileIdentity::Unix {
+            device: u64::MAX,
+            inode: 0x8000_0000_0000_0001,
+        };
+        assert_eq!(
+            unix.to_storage_bytes(),
+            vec![1, 255, 255, 255, 255, 255, 255, 255, 255, 128, 0, 0, 0, 0, 0, 0, 1]
+        );
+        let windows = StableFileIdentity::Windows {
+            volume: u64::MAX,
+            file_id: [128; 16],
+        };
+        assert_eq!(
+            windows.to_storage_bytes(),
+            vec![
+                2, 255, 255, 255, 255, 255, 255, 255, 255, 128, 128, 128, 128, 128, 128, 128, 128,
+                128, 128, 128, 128, 128, 128, 128, 128
+            ]
+        );
+        for id in [
+            unix,
+            windows,
+            StableFileIdentity::Windows {
+                volume: u64::MAX,
+                file_id: [129; 16],
+            },
+        ] {
+            assert_eq!(
+                StableFileIdentity::from_storage_bytes(&id.to_storage_bytes()).unwrap(),
+                id
+            );
+        }
+        assert_ne!(
+            windows,
+            StableFileIdentity::Windows {
+                volume: u64::MAX,
+                file_id: [
+                    128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 129
+                ]
+            }
+        );
+        for bad in [
+            vec![],
+            vec![0; 17],
+            vec![1; 16],
+            vec![1; 18],
+            vec![2; 24],
+            vec![2; 26],
+        ] {
+            assert!(StableFileIdentity::from_storage_bytes(&bad).is_err());
+        }
+    }
 
     #[test]
     fn external_export_volume_anchor_proof_rejects_hidden_subtrees_and_shares() {
@@ -1741,11 +3222,7 @@ mod tests {
             .is_err());
 
         let external = tempfile::NamedTempFile::new().unwrap();
-        symlink(
-            external.path(),
-            namespace.output_dir().join("linked-file"),
-        )
-        .unwrap();
+        symlink(external.path(), namespace.output_dir().join("linked-file")).unwrap();
         let linked_name = ManagedRelativeName::try_from("linked-file").unwrap();
         assert!(namespace_fs
             .open_existing_regular(&output, &linked_name)
@@ -1811,10 +3288,16 @@ mod tests {
         let source = namespace_fs.create_new_regular(&output, &name).unwrap();
         fs::write(namespace.output_dir().join("source.bin"), b"private").unwrap();
         let destination = ManagedRelativeName::try_from("destination.bin").unwrap();
-        let result = namespace_fs.rename_within_after_commit(&output, source, &destination, || {
-            fs::remove_file(namespace.output_dir().join("destination.bin")).unwrap();
-            symlink(external.path(), namespace.output_dir().join("destination.bin")).unwrap();
-        }).unwrap();
+        let result = namespace_fs
+            .rename_within_after_commit(&output, source, &destination, || {
+                fs::remove_file(namespace.output_dir().join("destination.bin")).unwrap();
+                symlink(
+                    external.path(),
+                    namespace.output_dir().join("destination.bin"),
+                )
+                .unwrap();
+            })
+            .unwrap();
         let mut retained = fs::File::from(duplicate_descriptor(&result.descriptor).unwrap());
         let mut bytes = Vec::new();
         retained.read_to_end(&mut bytes).unwrap();
