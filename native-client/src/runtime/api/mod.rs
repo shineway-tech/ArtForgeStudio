@@ -4,6 +4,7 @@
 
 mod account;
 mod auth;
+mod billing_context;
 mod client;
 mod device;
 mod error;
@@ -13,6 +14,7 @@ mod notifications;
 mod payment;
 mod prompt_optimization;
 mod session;
+mod team;
 mod types;
 
 #[cfg(test)]
@@ -20,6 +22,7 @@ mod cross_stack_tests;
 
 pub(crate) use account::*;
 pub(crate) use auth::*;
+pub(crate) use billing_context::*;
 pub(crate) use client::*;
 pub(crate) use device::*;
 pub(crate) use error::*;
@@ -29,6 +32,8 @@ pub(crate) use notifications::*;
 pub(crate) use payment::*;
 pub(crate) use prompt_optimization::*;
 pub(crate) use session::*;
+#[allow(unused_imports)]
+pub(crate) use team::*;
 pub(crate) use types::*;
 
 use std::path::Path;
