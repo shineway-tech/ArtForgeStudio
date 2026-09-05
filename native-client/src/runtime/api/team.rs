@@ -978,7 +978,7 @@ mod tests {
     use super::*;
     use crate::runtime::api::session::test_support::MemoryRefreshTokenStore;
     use crate::runtime::api::{
-        ApiClient, ApiClientConfig, DeviceIdentity, SessionManager, SessionScope,
+        ApiClient, ApiClientConfig, ApiMeta, DeviceIdentity, SessionManager, SessionScope,
     };
     use reqwest::Url;
     use serde::de::DeserializeOwned;
@@ -1927,6 +1927,62 @@ mod tests {
             .list_pending_invitations(None, &test_session())
             .is_err());
         assert_eq!(missing_meta.finish().len(), 1);
+
+        let missing_cursor = CapturedRequests::serve_json(
+            1,
+            json!({
+                "request_id": "missing-cursor-test",
+                "data": { "items": [] },
+                "error": null,
+                "meta": {}
+            }),
+        );
+        let api = TeamApi::new(authenticated_test_client(missing_cursor.base_url()));
+        assert!(
+            api.list_pending_invitations(None, &test_session())
+                .is_err(),
+            "team page accepted meta without required next_cursor"
+        );
+        assert_eq!(missing_cursor.finish().len(), 1);
+
+        let unknown_meta = CapturedRequests::serve_json(
+            1,
+            json!({
+                "request_id": "unknown-meta-test",
+                "data": { "items": [] },
+                "error": null,
+                "meta": { "next_cursor": null, "unexpected": true }
+            }),
+        );
+        let api = TeamApi::new(authenticated_test_client(unknown_meta.base_url()));
+        assert!(
+            api.list_pending_invitations(None, &test_session())
+                .is_err(),
+            "team page accepted unknown metadata field"
+        );
+        assert_eq!(unknown_meta.finish().len(), 1);
+
+        let wrong_cursor = CapturedRequests::serve_json(
+            1,
+            json!({
+                "request_id": "wrong-cursor-test",
+                "data": { "items": [] },
+                "error": null,
+                "meta": { "next_cursor": 7 }
+            }),
+        );
+        let api = TeamApi::new(authenticated_test_client(wrong_cursor.base_url()));
+        assert!(
+            api.list_pending_invitations(None, &test_session())
+                .is_err(),
+            "team page accepted a non-string, non-null cursor"
+        );
+        assert_eq!(wrong_cursor.finish().len(), 1);
+
+        assert!(serde_json::from_str::<ApiMeta>(
+            r#"{"next_cursor":null,"next_cursor":"duplicate"}"#
+        )
+        .is_err());
 
         let oversized = CapturedRequests::serve_json(
             1,

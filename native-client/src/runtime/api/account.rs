@@ -44,10 +44,22 @@ pub(crate) struct MembershipPlan {
 #[serde(deny_unknown_fields)]
 pub(crate) struct AccountMembership {
     pub(crate) revision: String,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     pub(crate) period_id: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     pub(crate) starts_at: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     pub(crate) ends_at: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     pub(crate) plan: Option<MembershipPlanSummary>,
+}
+
+fn deserialize_required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1237,6 +1249,60 @@ mod tests {
         assert_eq!(result.account.lifetime_granted, "9007199254741493");
         assert_eq!(result.account.lifetime_spent, "480");
         assert_eq!(result.account.version, "42");
+    }
+
+    #[test]
+    fn account_membership_requires_nullable_keys_to_be_present() {
+        let exact = serde_json::json!({
+            "revision": "3",
+            "period_id": null,
+            "starts_at": null,
+            "ends_at": null,
+            "plan": null
+        });
+        let membership: AccountMembership = serde_json::from_value(exact.clone())
+            .expect("explicit null membership fields are valid");
+        assert_eq!(membership.period_id, None);
+        assert_eq!(membership.starts_at, None);
+        assert_eq!(membership.ends_at, None);
+        assert!(membership.plan.is_none());
+
+        for field in ["period_id", "starts_at", "ends_at", "plan"] {
+            let mut missing = exact.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(
+                serde_json::from_value::<AccountMembership>(missing).is_err(),
+                "membership accepted missing nullable field {field}"
+            );
+        }
+
+        let mut unknown = exact.clone();
+        unknown
+            .as_object_mut()
+            .unwrap()
+            .insert("unexpected".to_string(), serde_json::json!(true));
+        assert!(serde_json::from_value::<AccountMembership>(unknown).is_err());
+
+        for (field, wrong) in [
+            ("period_id", serde_json::json!(3)),
+            ("starts_at", serde_json::json!(false)),
+            ("ends_at", serde_json::json!({})),
+            ("plan", serde_json::json!("pro")),
+        ] {
+            let mut mismatched = exact.clone();
+            mismatched
+                .as_object_mut()
+                .unwrap()
+                .insert(field.to_string(), wrong);
+            assert!(
+                serde_json::from_value::<AccountMembership>(mismatched).is_err(),
+                "membership accepted wrong type for {field}"
+            );
+        }
+
+        let raw = serde_json::to_string(&exact).unwrap();
+        let duplicate = format!("{{\"period_id\":\"duplicate\",{}", &raw[1..]);
+        assert!(serde_json::from_str::<AccountMembership>(&duplicate).is_err());
     }
 
     #[test]
