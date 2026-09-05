@@ -1806,6 +1806,30 @@ fn poll_backend_snapshot(
     });
 }
 
+struct BackendSnapshotProjection<'a> {
+    membership: Option<&'a AccountMembership>,
+    credits: Option<&'a CreditAccount>,
+    plans: Option<&'a [MembershipPlan]>,
+    packs: Option<&'a [CreditPack]>,
+    models: Option<&'a [ModelCatalogItem]>,
+    ledger: Option<&'a [CreditLedgerItem]>,
+    orders: Option<&'a TeamPage<OrderDetail>>,
+    owner_billing: Option<&'a BillingSummary>,
+}
+
+fn project_backend_snapshot(snapshot: &BackendSnapshot) -> BackendSnapshotProjection<'_> {
+    BackendSnapshotProjection {
+        membership: snapshot.account.membership.as_ref(),
+        credits: snapshot.account.credits.as_ref(),
+        plans: snapshot.plans.as_deref(),
+        packs: snapshot.packs.as_deref(),
+        models: snapshot.models.as_deref(),
+        ledger: snapshot.ledger.as_deref(),
+        orders: snapshot.orders.as_ref(),
+        owner_billing: snapshot.owner_billing.as_ref(),
+    }
+}
+
 pub(super) fn apply_backend_snapshot(
     app: &AppWindow,
     context: &AppContext,
@@ -1838,6 +1862,10 @@ pub(super) fn apply_backend_snapshot(
         changed
     };
     let state = app.global::<AppState>();
+    let projection = project_backend_snapshot(&snapshot);
+    // Account-center wiring lands in Task 10; reading these explicit optional sections here
+    // prevents the current callback from ever substituting synthetic finance data for absence.
+    let _account_center_finance = (projection.orders, projection.owner_billing);
     if account_changed {
         clear_password_management_state(&state);
         clear_credit_redemption_state(app);
@@ -1896,24 +1924,25 @@ pub(super) fn apply_backend_snapshot(
             .unwrap_or_default()
             .into(),
     );
-    if let Some(plan) = snapshot.account.membership.plan.as_ref() {
+    if let Some(plan) = projection
+        .membership
+        .and_then(|membership| membership.plan.as_ref())
+    {
         state.set_membership_plan_code(plan.code.clone().into());
         state.set_membership_plan_name(plan.name.clone().into());
         state.set_membership_tier_rank(plan.tier_rank);
     } else {
-        state.set_membership_plan_code("free".into());
-        state.set_membership_plan_name("免费版".into());
+        state.set_membership_plan_code("".into());
+        state.set_membership_plan_name("".into());
         state.set_membership_tier_rank(0);
     }
-    let membership_ends_at = snapshot
-        .account
+    let membership_ends_at = projection
         .membership
-        .ends_at
-        .clone()
+        .and_then(|membership| membership.ends_at.clone())
         .unwrap_or_default();
     state.set_membership_ends_at(format_membership_ends_at(&membership_ends_at).into());
     state.set_membership_expiry_message(membership_expiry_message(&membership_ends_at).into());
-    let credit_snapshot_applied = if let Some(credits) = snapshot.account.credits.as_ref() {
+    let credit_snapshot_applied = if let Some(credits) = projection.credits {
         apply_credit_account_balance_if_fresh(
             app,
             &context.store,
@@ -1924,12 +1953,12 @@ pub(super) fn apply_backend_snapshot(
         )
     } else {
         invalidate_credit_account_view(&context.store);
-        state.set_credit_balance("0".into());
-        state.set_credit_reserved("0".into());
+        state.set_credit_balance("".into());
+        state.set_credit_reserved("".into());
         true
     };
-    let packs = snapshot
-        .packs
+    let available_packs = projection.packs.unwrap_or(&[]);
+    let packs = available_packs
         .iter()
         .map(|pack| CreditPackView {
             code: pack.code.clone().into(),
@@ -1941,11 +1970,10 @@ pub(super) fn apply_backend_snapshot(
         })
         .collect::<Vec<_>>();
     let selected_code = state.get_selected_credit_pack_code().to_string();
-    if let Some(selected) = snapshot
-        .packs
+    if let Some(selected) = available_packs
         .iter()
         .find(|pack| pack.code == selected_code)
-        .or_else(|| snapshot.packs.first())
+        .or_else(|| available_packs.first())
     {
         state.set_selected_credit_pack_code(selected.code.clone().into());
         state.set_selected_credit_amount(selected.credits.clone().into());
@@ -1956,9 +1984,9 @@ pub(super) fn apply_backend_snapshot(
         state.set_selected_credit_price("".into());
     }
     state.set_credit_packs(ModelRc::new(VecModel::from(packs)));
+    let available_plans = projection.plans.unwrap_or(&[]);
     state.set_membership_plans(ModelRc::new(VecModel::from(
-        snapshot
-            .plans
+        available_plans
             .iter()
             .map(|plan| MembershipPlanView {
                 code: plan.code.clone().into(),
@@ -1970,8 +1998,8 @@ pub(super) fn apply_backend_snapshot(
             })
             .collect::<Vec<_>>(),
     )));
-    let catalog_models = snapshot
-        .models
+    let available_models = projection.models.unwrap_or(&[]);
+    let catalog_models = available_models
         .iter()
         .map(|model| CatalogModelView {
             code: model.code.clone().into(),
@@ -2013,12 +2041,15 @@ pub(super) fn apply_backend_snapshot(
     let credit_snapshot_is_current =
         credit_sync_epoch_is_current(&context.store.borrow(), credit_sync_epoch);
     if credit_snapshot_applied && credit_snapshot_is_current {
-        reset_credit_ledger(
-            app,
-            &context.store,
-            &snapshot.ledger,
-            snapshot.ledger_next_cursor.clone(),
-        );
+        match projection.ledger {
+            Some(ledger) => reset_credit_ledger(
+                app,
+                &context.store,
+                ledger,
+                snapshot.ledger_next_cursor.clone(),
+            ),
+            None => reset_credit_ledger(app, &context.store, &[], None),
+        }
     }
     state.set_account_sessions(ModelRc::new(VecModel::from(
         snapshot
@@ -2035,8 +2066,7 @@ pub(super) fn apply_backend_snapshot(
             .collect::<Vec<_>>(),
     )));
 
-    let image_models = snapshot
-        .models
+    let image_models = available_models
         .iter()
         .filter(|item| item.purpose == "image_generation")
         .map(|item| ModelOptionData {
@@ -2044,8 +2074,7 @@ pub(super) fn apply_backend_snapshot(
             name: model_display_name(item),
         })
         .collect::<Vec<_>>();
-    let prompt_models = snapshot
-        .models
+    let prompt_models = available_models
         .iter()
         .filter(|item| item.purpose == "prompt_processing")
         .map(|item| ModelOptionData {
@@ -2054,41 +2083,35 @@ pub(super) fn apply_backend_snapshot(
         })
         .collect::<Vec<_>>();
     let selected_image_code = state.get_image_model().to_string();
-    let selected_image = snapshot
-        .models
+    let selected_image = available_models
         .iter()
         .find(|item| item.purpose == "image_generation" && item.code == selected_image_code)
         .or_else(|| {
-            snapshot
-                .models
+            available_models
                 .iter()
                 .find(|item| item.code == "openai_image")
         })
         .or_else(|| {
-            snapshot
-                .models
+            available_models
                 .iter()
                 .find(|item| item.purpose == "image_generation")
         });
     let selected_prompt_code = state.get_reasoning_model().to_string();
-    let selected_prompt = snapshot
-        .models
+    let selected_prompt = available_models
         .iter()
         .find(|item| item.purpose == "prompt_processing" && item.code == selected_prompt_code)
         .or_else(|| {
-            snapshot
-                .models
+            available_models
                 .iter()
                 .find(|item| item.code == "openai_prompt")
         })
         .or_else(|| {
-            snapshot
-                .models
+            available_models
                 .iter()
                 .find(|item| item.purpose == "prompt_processing")
         });
     let selected_video_code = state.get_video_model().to_string();
-    let selected_video = select_video_catalog_model(&snapshot.models, &selected_video_code);
+    let selected_video = select_video_catalog_model(available_models, &selected_video_code);
     let mut model_groups = Vec::new();
     if !image_models.is_empty() {
         model_groups.push(model_group(
@@ -2620,6 +2643,75 @@ fn valid_email(email: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn unavailable_finance_snapshot(role: &str, read_only: bool) -> BackendSnapshot {
+        BackendSnapshot {
+            account: AccountSnapshot {
+                user: AccountUser {
+                    id: "11111111-1111-4111-8111-111111111111".to_string(),
+                    email_masked: "u***@example.com".to_string(),
+                    nickname: None,
+                    status: "active".to_string(),
+                    registered_at: "2026-09-05T00:00:00Z".to_string(),
+                    invitation_code_submitted: false,
+                },
+                auth_methods: AccountAuthMethods::default(),
+                membership: None,
+                billing_group: AccountGroupChoice {
+                    group_id: "22222222-2222-4222-8222-222222222222".to_string(),
+                    name: "Studio".to_string(),
+                    group_status: if read_only { "frozen" } else { "active" }.to_string(),
+                    role: role.to_string(),
+                    member_id: (role == "member")
+                        .then(|| "33333333-3333-4333-8333-333333333333".to_string()),
+                    relationship_status: (role == "member").then(|| "active".to_string()),
+                    readable_context: true,
+                    selectable: !read_only,
+                    group_version: "4".to_string(),
+                    membership_version: (role == "member").then(|| "8".to_string()),
+                    capabilities: Vec::new(),
+                    quota: None,
+                },
+                read_only,
+                entitlement: Value::Null,
+                capabilities: Vec::new(),
+                credits: None,
+                quota: None,
+            },
+            models: None,
+            plans: None,
+            packs: None,
+            ledger: None,
+            ledger_next_cursor: None,
+            orders: None,
+            owner_billing: None,
+            sessions: Vec::new(),
+            invitation: None,
+        }
+    }
+
+    #[test]
+    fn member_and_frozen_snapshot_projection_keeps_finance_unavailable() {
+        for snapshot in [
+            unavailable_finance_snapshot("member", false),
+            unavailable_finance_snapshot("owner", true),
+        ] {
+            let projection = project_backend_snapshot(&snapshot);
+            let wallet_balance = projection.credits.map(|credits| credits.available.as_str());
+            let wallet_reserved = projection.credits.map(|credits| credits.reserved.as_str());
+            assert_eq!(wallet_balance, None);
+            assert_eq!(wallet_reserved, None);
+            assert_ne!(wallet_balance, Some("0"));
+            assert_ne!(wallet_reserved, Some("0"));
+            assert!(projection.membership.is_none());
+            assert!(projection.plans.is_none());
+            assert!(projection.packs.is_none());
+            assert!(projection.models.is_none());
+            assert!(projection.ledger.is_none());
+            assert!(projection.orders.is_none());
+            assert!(projection.owner_billing.is_none());
+        }
+    }
 
     #[test]
     fn signing_out_removes_credentials_from_the_previous_account() {

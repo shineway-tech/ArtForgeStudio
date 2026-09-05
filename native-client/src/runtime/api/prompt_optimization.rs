@@ -1,4 +1,4 @@
-use super::{ApiClient, ApiError, SessionScope};
+use super::{ApiClient, ApiError, BillingScope, SessionScope};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -73,6 +73,7 @@ pub(crate) struct PromptOptimizationRound {
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct PromptOptimizationDetail {
     pub(crate) id: String,
+    pub(crate) billing_account_group_id: String,
     #[serde(default)]
     pub(crate) status: String,
     #[serde(default)]
@@ -130,6 +131,7 @@ pub(crate) struct PromptOptimizationDetail {
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct PromptOptimizationSummary {
     pub(crate) id: String,
+    pub(crate) billing_account_group_id: String,
     #[serde(default)]
     pub(crate) status: String,
 }
@@ -170,6 +172,7 @@ impl PromptOptimizationApi {
         Self { client }
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_scoped(
         &self,
         request: &CreatePromptOptimization,
@@ -187,13 +190,30 @@ impl PromptOptimizationApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn create_billing(
+        &self,
+        request: &CreatePromptOptimization,
+        scope: &BillingScope,
+    ) -> Result<PromptOptimizationDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .billing_json_scoped::<PromptOptimizationDetail>(
+                Method::POST,
+                "/v1/prompt-optimizations",
+                Some(body),
+                Some(&request.client_request_id),
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
     pub(crate) fn get_scoped(
         &self,
         id: &str,
         scope: &SessionScope,
     ) -> Result<PromptOptimizationDetail, ApiError> {
         self.client
-            .authenticated_json_scoped::<PromptOptimizationDetail>(
+            .identity_json_scoped::<PromptOptimizationDetail>(
                 Method::GET,
                 &format!("/v1/prompt-optimizations/{id}"),
                 None,
@@ -208,7 +228,7 @@ impl PromptOptimizationApi {
         scope: &SessionScope,
     ) -> Result<Vec<PromptOptimizationSummary>, ApiError> {
         self.client
-            .authenticated_json_scoped::<PromptOptimizationList>(
+            .identity_json_scoped::<PromptOptimizationList>(
                 Method::GET,
                 "/v1/prompt-optimizations?limit=1&status=active",
                 None,
@@ -225,7 +245,7 @@ impl PromptOptimizationApi {
         scope: &SessionScope,
     ) -> Result<PromptOptimizationDetail, ApiError> {
         self.client
-            .authenticated_json_scoped::<PromptOptimizationDetail>(
+            .identity_json_scoped::<PromptOptimizationDetail>(
                 Method::POST,
                 &format!("/v1/prompt-optimizations/{id}/{action}"),
                 None,
@@ -259,12 +279,29 @@ impl PromptOptimizationApi {
         self.action_scoped(id, "cancel", scope)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn retry_scoped(
         &self,
         id: &str,
         scope: &SessionScope,
     ) -> Result<PromptOptimizationDetail, ApiError> {
         self.action_scoped(id, "retry", scope)
+    }
+
+    pub(crate) fn retry_billing(
+        &self,
+        id: &str,
+        scope: &BillingScope,
+    ) -> Result<PromptOptimizationDetail, ApiError> {
+        self.client
+            .billing_json_scoped::<PromptOptimizationDetail>(
+                Method::POST,
+                &format!("/v1/prompt-optimizations/{id}/retry"),
+                None,
+                None,
+                scope,
+            )
+            .map(|response| response.data)
     }
 
     pub(crate) fn review_scoped(
@@ -284,7 +321,7 @@ impl PromptOptimizationApi {
         })
         .map_err(protocol_error)?;
         self.client
-            .authenticated_json_scoped::<PromptOptimizationDetail>(
+            .identity_json_scoped::<PromptOptimizationDetail>(
                 Method::POST,
                 &format!("/v1/prompt-optimizations/{id}/review-decision"),
                 Some(body),
@@ -315,8 +352,27 @@ mod tests {
     use std::time::Duration;
     use uuid::Uuid;
 
-    const DETAIL_RESPONSE: &str = r#"{"request_id":"detail","data":{"id":"job-a","status":"paused","phase":"paused","run_mode":"automatic","focus_mode":"balanced","max_rounds":2,"current_round":1,"completed_rounds":0,"target_score":90,"baseline_score":null,"best_score":null,"best_round_no":null,"progress_percent":10,"result_score":null,"result_round_no":null},"error":null,"meta":null}"#;
+    const DETAIL_RESPONSE: &str = r#"{"request_id":"detail","data":{"id":"job-a","billing_account_group_id":"11111111-1111-4111-8111-111111111111","status":"paused","phase":"paused","run_mode":"automatic","focus_mode":"balanced","max_rounds":2,"current_round":1,"completed_rounds":0,"target_score":90,"baseline_score":null,"best_score":null,"best_round_no":null,"progress_percent":10,"result_score":null,"result_round_no":null},"error":null,"meta":null}"#;
     const TERMINAL_RESPONSE: &str = r#"{"request_id":"terminal","data":null,"error":{"code":"session_invalid","message":"revoked","details":null},"meta":null}"#;
+
+    #[test]
+    fn prompt_projections_require_billing_account_group_id() {
+        let detail = serde_json::json!({
+            "id": "job-1", "max_rounds": 2, "current_round": 0,
+            "completed_rounds": 0, "target_score": 90,
+            "baseline_score": null, "best_score": null, "best_round_no": null,
+            "progress_percent": 0, "result_score": null, "result_round_no": null
+        });
+        let summary = serde_json::json!({"id": "job-1"});
+        assert!(serde_json::from_value::<PromptOptimizationDetail>(detail.clone()).is_err());
+        assert!(serde_json::from_value::<PromptOptimizationSummary>(summary.clone()).is_err());
+        let mut detail_null = detail;
+        detail_null["billing_account_group_id"] = serde_json::Value::Null;
+        let mut summary_null = summary;
+        summary_null["billing_account_group_id"] = serde_json::Value::Null;
+        assert!(serde_json::from_value::<PromptOptimizationDetail>(detail_null).is_err());
+        assert!(serde_json::from_value::<PromptOptimizationSummary>(summary_null).is_err());
+    }
 
     fn tokens(access: &str, refresh: &str) -> TokenSet {
         TokenSet {

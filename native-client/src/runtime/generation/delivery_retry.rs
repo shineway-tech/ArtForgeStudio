@@ -597,6 +597,7 @@ mod tests {
     fn completed_task_with_two_files() -> GenerationTaskDetail {
         GenerationTaskDetail {
             id: "task-1".to_string(),
+            billing_account_group_id: "11111111-1111-4111-8111-111111111111".to_string(),
             status: "completed".to_string(),
             progress_percent: 100,
             success_count: 2,

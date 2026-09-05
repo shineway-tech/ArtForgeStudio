@@ -103,6 +103,7 @@ impl ApiClient {
         self.send_once(method, path, body, None, None)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn authenticated_json<T: DeserializeOwned>(
         &self,
         method: Method,
@@ -141,6 +142,7 @@ impl ApiClient {
         }
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn authenticated_json_scoped<T: DeserializeOwned>(
         &self,
         method: Method,
@@ -225,6 +227,7 @@ impl ApiClient {
         }
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn authenticated_json_epoch<T: DeserializeOwned>(
         &self,
         method: Method,
@@ -477,39 +480,66 @@ impl ApiClient {
 mod tests {
     use super::*;
     use crate::runtime::api::session::test_support::MemoryRefreshTokenStore;
-    use crate::runtime::api::{BillingScope, GroupRequestScope};
+    use crate::runtime::api::{
+        AccountApi, BillingScope, CreateGenerationTask, CreateImageColorization, CreateImageCutout,
+        CreateImageEditTask, CreateImageEnhancement, CreatePromptOptimization,
+        CreateUpscaleGenerationTask, CreateVideoGenerationTask, CreateVideoQuote,
+        CreateWatermarkRemoval, CreditAccount, CreditLedgerPage, CreditPack,
+        CreditRedemptionResult, GenerationApi, GenerationTaskDetail, GroupRequestScope,
+        MembershipApi, OrderDetail, PaymentApi, PromptOptimizationApi, PromptOptimizationDetail,
+        SessionScope, TeamPage, UpgradeQuote, VideoQuote,
+    };
     use std::collections::HashMap;
     use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
     use std::sync::Mutex;
     use std::thread::{self, JoinHandle};
 
     const TEST_USER_ID: &str = "11111111-1111-4111-8111-111111111111";
     const TEST_GROUP_ID: &str = "22222222-2222-4222-8222-222222222222";
+    const TEST_TASK_ID: &str = "task-matrix";
+    const TEST_PROMPT_ID: &str = "prompt-matrix";
+    const TEST_ORDER_ID: &str = "order-matrix";
+    const TEST_QUOTE_ID: &str = "quote-matrix";
 
     #[derive(Debug)]
     struct CapturedRequest {
+        method: String,
+        target: String,
         path: String,
         headers: HashMap<String, String>,
+        body: Option<Value>,
     }
 
     impl CapturedRequest {
         fn parse(raw: &[u8]) -> Self {
-            let request = String::from_utf8_lossy(raw);
+            let header_end = raw
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .unwrap_or(raw.len());
+            let request = String::from_utf8_lossy(&raw[..header_end]);
             let mut lines = request.lines();
-            let path = lines
-                .next()
-                .and_then(|line| line.split_whitespace().nth(1))
-                .unwrap_or_default()
-                .to_string();
+            let mut request_line = lines.next().unwrap_or_default().split_whitespace();
+            let method = request_line.next().unwrap_or_default().to_string();
+            let target = request_line.next().unwrap_or_default().to_string();
             let headers = lines
                 .take_while(|line| !line.is_empty())
                 .filter_map(|line| line.split_once(':'))
-                .map(|(name, value)| {
-                    (name.trim().to_ascii_lowercase(), value.trim().to_string())
-                })
+                .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_string()))
                 .collect();
-            Self { path, headers }
+            let body_start = header_end.saturating_add(4).min(raw.len());
+            let body = if body_start == raw.len() {
+                None
+            } else {
+                Some(serde_json::from_slice(&raw[body_start..]).unwrap())
+            };
+            Self {
+                method,
+                path: target.clone(),
+                target,
+                headers,
+                body,
+            }
         }
 
         fn header(&self, name: &str) -> Option<&str> {
@@ -517,6 +547,41 @@ mod tests {
                 .get(&name.to_ascii_lowercase())
                 .map(String::as_str)
         }
+
+        fn json_body(&self) -> Option<&Value> {
+            self.body.as_ref()
+        }
+    }
+
+    fn read_http_request(stream: &mut TcpStream) -> Vec<u8> {
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        let mut expected_len = None;
+        loop {
+            let received = stream.read(&mut chunk).unwrap();
+            if received == 0 {
+                break;
+            }
+            request.extend_from_slice(&chunk[..received]);
+            if expected_len.is_none() {
+                if let Some(header_end) =
+                    request.windows(4).position(|window| window == b"\r\n\r\n")
+                {
+                    let headers = String::from_utf8_lossy(&request[..header_end]);
+                    let content_len = headers
+                        .lines()
+                        .filter_map(|line| line.split_once(':'))
+                        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                        .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    expected_len = Some(header_end + 4 + content_len);
+                }
+            }
+            if expected_len.is_some_and(|length| request.len() >= length) {
+                break;
+            }
+        }
+        request
     }
 
     struct CapturedRequests {
@@ -531,6 +596,35 @@ mod tests {
         }
 
         fn serve_sequence(responses: Vec<(&'static str, &'static str)>) -> Self {
+            Self::serve_owned_sequence(
+                responses
+                    .into_iter()
+                    .map(|(status, body)| (status.to_string(), body.to_string()))
+                    .collect(),
+            )
+        }
+
+        fn serve_json_values(values: Vec<Value>) -> Self {
+            Self::serve_owned_sequence(
+                values
+                    .into_iter()
+                    .map(|data| {
+                        (
+                            "200 OK".to_string(),
+                            serde_json::json!({
+                                "request_id": "task4-matrix",
+                                "data": data,
+                                "error": null,
+                                "meta": null
+                            })
+                            .to_string(),
+                        )
+                    })
+                    .collect(),
+            )
+        }
+
+        fn serve_owned_sequence(responses: Vec<(String, String)>) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let address = listener.local_addr().unwrap();
             let requests = Arc::new(Mutex::new(Vec::with_capacity(responses.len())));
@@ -538,12 +632,11 @@ mod tests {
             let worker = thread::spawn(move || {
                 for (status, body) in responses {
                     let (mut stream, _) = listener.accept().unwrap();
-                    let mut request = [0_u8; 16 * 1024];
-                    let received = stream.read(&mut request).unwrap();
+                    let request = read_http_request(&mut stream);
                     captured
                         .lock()
                         .unwrap()
-                        .push(CapturedRequest::parse(&request[..received]));
+                        .push(CapturedRequest::parse(&request));
                     let response = format!(
                         "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                         body.len(),
@@ -657,6 +750,709 @@ mod tests {
 
     fn refresh_success_envelope() -> &'static str {
         r#"{"request_id":"refresh","data":{"access_token":"access-new","access_expires_in_seconds":1800,"refresh_token":"refresh-new","refresh_expires_at":"2099-01-01T00:00:00Z","token_type":"X-Token"},"error":null,"meta":null}"#
+    }
+
+    #[derive(Debug)]
+    struct ExpectedRequest {
+        method: &'static str,
+        target: String,
+        account_group_id: Option<&'static str>,
+        idempotency_key: Option<&'static str>,
+        body: Option<Value>,
+    }
+
+    fn expected(
+        method: &'static str,
+        target: &str,
+        account_group_id: Option<&'static str>,
+        idempotency_key: Option<&'static str>,
+        body: Option<Value>,
+    ) -> ExpectedRequest {
+        ExpectedRequest {
+            method,
+            target: target.to_string(),
+            account_group_id,
+            idempotency_key,
+            body,
+        }
+    }
+
+    fn image_generation_request() -> CreateGenerationTask {
+        CreateGenerationTask {
+            client_request_id: "generation-key".to_string(),
+            task_type: "image_generation".to_string(),
+            model_code: "image-model".to_string(),
+            prompt: "draw a lighthouse".to_string(),
+            quality: Some("2K".to_string()),
+            count: Some(2),
+            aspect_ratio: Some("16:9".to_string()),
+            reference_file_ids: Some(vec!["reference-a".to_string()]),
+            target_language: Some("zh".to_string()),
+        }
+    }
+
+    fn image_generation_body(client_request_id: &str) -> Value {
+        serde_json::json!({
+            "client_request_id": client_request_id,
+            "task_type": "image_generation",
+            "model_code": "image-model",
+            "prompt": "draw a lighthouse",
+            "quality": "2K",
+            "count": 2,
+            "aspect_ratio": "16:9",
+            "reference_file_ids": ["reference-a"],
+            "target_language": "zh"
+        })
+    }
+
+    fn prompt_creation_request() -> CreatePromptOptimization {
+        CreatePromptOptimization {
+            client_request_id: "prompt-key".to_string(),
+            prompt: "make this cinematic".to_string(),
+            run_mode: "automatic".to_string(),
+            focus_mode: "balanced".to_string(),
+            max_rounds: 3,
+            target_score: 92,
+        }
+    }
+
+    fn prompt_creation_body(client_request_id: &str) -> Value {
+        serde_json::json!({
+            "client_request_id": client_request_id,
+            "prompt": "make this cinematic",
+            "run_mode": "automatic",
+            "focus_mode": "balanced",
+            "max_rounds": 3,
+            "target_score": 92
+        })
+    }
+
+    fn video_quote_request() -> CreateVideoQuote {
+        CreateVideoQuote {
+            model_code: "video-model".to_string(),
+            source_file_id: "source-video".to_string(),
+            aspect_ratio: "16:9".to_string(),
+            resolution: "720P".to_string(),
+            duration_secs: 8,
+        }
+    }
+
+    fn video_quote_body() -> Value {
+        serde_json::json!({
+            "model_code": "video-model",
+            "source_file_id": "source-video",
+            "aspect_ratio": "16:9",
+            "resolution": "720P",
+            "duration_secs": 8
+        })
+    }
+
+    fn video_generation_request() -> CreateVideoGenerationTask {
+        CreateVideoGenerationTask {
+            client_request_id: "video-key".to_string(),
+            task_type: "image_to_video".to_string(),
+            model_code: "video-model".to_string(),
+            prompt: "slow camera move".to_string(),
+            source_file_id: "source-video".to_string(),
+            aspect_ratio: "16:9".to_string(),
+            resolution: "720P".to_string(),
+            duration_secs: 8,
+            quote_id: TEST_QUOTE_ID.to_string(),
+        }
+    }
+
+    fn video_generation_body(client_request_id: &str) -> Value {
+        serde_json::json!({
+            "client_request_id": client_request_id,
+            "task_type": "image_to_video",
+            "model_code": "video-model",
+            "prompt": "slow camera move",
+            "source_file_id": "source-video",
+            "aspect_ratio": "16:9",
+            "resolution": "720P",
+            "duration_secs": 8,
+            "quote_id": TEST_QUOTE_ID
+        })
+    }
+
+    fn upscale_request() -> CreateUpscaleGenerationTask {
+        CreateUpscaleGenerationTask {
+            client_request_id: "upscale-key".to_string(),
+            task_type: "image_upscale".to_string(),
+            model_code: "upscale-model".to_string(),
+            prompt: "preserve detail".to_string(),
+            quality: "4K".to_string(),
+            reference_file_ids: vec!["upscale-source".to_string()],
+            target_width: 4096,
+            target_height: 2304,
+        }
+    }
+
+    fn upscale_body(client_request_id: &str) -> Value {
+        serde_json::json!({
+            "client_request_id": client_request_id,
+            "task_type": "image_upscale",
+            "model_code": "upscale-model",
+            "prompt": "preserve detail",
+            "quality": "4K",
+            "reference_file_ids": ["upscale-source"],
+            "target_width": 4096,
+            "target_height": 2304
+        })
+    }
+
+    fn image_edit_request() -> CreateImageEditTask {
+        CreateImageEditTask {
+            client_request_id: "image-edit-key".to_string(),
+            task_type: "image_edit".to_string(),
+            model_code: "edit-model".to_string(),
+            prompt: "replace the sky".to_string(),
+            quality: "2K".to_string(),
+            aspect_ratio: "16:9".to_string(),
+            source_file_id: "edit-source".to_string(),
+            mask_file_id: "edit-mask".to_string(),
+        }
+    }
+
+    fn image_edit_body(client_request_id: &str) -> Value {
+        serde_json::json!({
+            "client_request_id": client_request_id,
+            "task_type": "image_edit",
+            "model_code": "edit-model",
+            "prompt": "replace the sky",
+            "quality": "2K",
+            "aspect_ratio": "16:9",
+            "source_file_id": "edit-source",
+            "mask_file_id": "edit-mask"
+        })
+    }
+
+    fn watermark_body(client_request_id: &str) -> Value {
+        serde_json::json!({
+            "client_request_id": client_request_id,
+            "reference_file_id": "watermark-source"
+        })
+    }
+
+    fn colorization_body(client_request_id: &str) -> Value {
+        serde_json::json!({
+            "client_request_id": client_request_id,
+            "reference_file_id": "colorize-source"
+        })
+    }
+
+    fn enhancement_body(client_request_id: &str) -> Value {
+        serde_json::json!({
+            "client_request_id": client_request_id,
+            "reference_file_id": "enhance-source",
+            "target_quality": "4K"
+        })
+    }
+
+    fn cutout_body(client_request_id: &str) -> Value {
+        serde_json::json!({
+            "client_request_id": client_request_id,
+            "reference_file_id": "cutout-source",
+            "subject_type": "person"
+        })
+    }
+
+    fn generation_detail_json() -> Value {
+        serde_json::json!({
+            "id": TEST_TASK_ID,
+            "billing_account_group_id": TEST_GROUP_ID,
+            "status": "queued",
+            "progress_percent": 0,
+            "success_count": 0,
+            "failure_count": 0,
+            "failure": null,
+            "prompt": null,
+            "result_prompt": null,
+            "items": []
+        })
+    }
+
+    fn prompt_detail_json() -> Value {
+        serde_json::json!({
+            "id": TEST_PROMPT_ID,
+            "billing_account_group_id": TEST_GROUP_ID,
+            "max_rounds": 3,
+            "current_round": 0,
+            "completed_rounds": 0,
+            "target_score": 92,
+            "baseline_score": null,
+            "best_score": null,
+            "best_round_no": null,
+            "progress_percent": 0,
+            "result_score": null,
+            "result_round_no": null
+        })
+    }
+
+    fn order_detail_json() -> Value {
+        serde_json::json!({
+            "id": TEST_ORDER_ID,
+            "billing_account_group_id": TEST_GROUP_ID,
+            "status": "pending",
+            "fulfillment_status": "pending",
+            "payable_amount_cents": "100",
+            "payment": null
+        })
+    }
+
+    fn capture_task4_route_matrix() -> Vec<CapturedRequest> {
+        let generation = generation_detail_json();
+        let prompt = prompt_detail_json();
+        let order = order_detail_json();
+        let capture = CapturedRequests::serve_json_values(vec![
+            generation.clone(),
+            generation.clone(),
+            prompt.clone(),
+            prompt,
+            order.clone(),
+            serde_json::json!({"items": [order.clone()]}),
+            serde_json::json!({
+                "available": "1000", "reserved": "10", "lifetime_granted": "1200",
+                "lifetime_spent": "190", "version": "8"
+            }),
+            serde_json::json!([]),
+            serde_json::json!({
+                "redemption_id": "redemption-1", "credits_granted": "500",
+                "redeemed_at": "2026-09-05T00:00:00Z", "credit_expires_at": null,
+                "account": {
+                    "available": "1500", "reserved": "10", "lifetime_granted": "1700",
+                    "lifetime_spent": "190", "version": "9"
+                }
+            }),
+            serde_json::json!({
+                "quote_id": TEST_QUOTE_ID, "credit_cost": "30",
+                "expires_at": "2026-09-05T00:05:00Z", "aspect_ratio": "16:9",
+                "resolution": "720P", "duration_secs": 8
+            }),
+            generation.clone(),
+            generation.clone(),
+            generation.clone(),
+            generation.clone(),
+            generation.clone(),
+            generation.clone(),
+            generation,
+            serde_json::json!([]),
+            order.clone(),
+            order.clone(),
+            serde_json::json!({
+                "id": TEST_QUOTE_ID, "target_plan_code": "pro",
+                "payable_amount_cents": "100", "credit_delta": "500",
+                "expires_at": "2026-09-05T00:05:00Z"
+            }),
+            order,
+        ]);
+        let client = authenticated_test_client(capture.base_url());
+        let session = client.session().scope_for_user(TEST_USER_ID).unwrap();
+        let scope = BillingScope {
+            request: GroupRequestScope {
+                session: session.clone(),
+                account_group_id: TEST_GROUP_ID.to_string(),
+            },
+            context_epoch: 4,
+        };
+        let generation_api = GenerationApi::new(client.clone());
+        let prompt_api = PromptOptimizationApi::new(client.clone());
+        let payment_api = PaymentApi::new(client.clone());
+        let account_api = AccountApi::new(client.clone());
+        let membership_api = MembershipApi::new(client);
+
+        generation_api
+            .create_task_billing(&image_generation_request(), &scope)
+            .unwrap();
+        generation_api.task_scoped(TEST_TASK_ID, &session).unwrap();
+        prompt_api
+            .create_billing(&prompt_creation_request(), &scope)
+            .unwrap();
+        prompt_api.retry_billing(TEST_PROMPT_ID, &scope).unwrap();
+        payment_api.order_scoped(TEST_ORDER_ID, &session).unwrap();
+        payment_api.orders_billing(None, &scope).unwrap();
+        account_api.credit_account_billing(&scope).unwrap();
+        account_api.ledger_page_billing(None, 50, &scope).unwrap();
+        account_api
+            .redeem_credit_code_billing("REDEEM-CODE", "redeem-key", &scope)
+            .unwrap();
+        generation_api
+            .quote_video_billing(&video_quote_request(), &scope)
+            .unwrap();
+        generation_api
+            .create_video_task_billing(&video_generation_request(), &scope)
+            .unwrap();
+        generation_api
+            .create_upscale_task_billing(&upscale_request(), &scope)
+            .unwrap();
+        generation_api
+            .create_image_edit_task_billing(&image_edit_request(), &scope)
+            .unwrap();
+        generation_api
+            .create_watermark_removal_billing(
+                &CreateWatermarkRemoval {
+                    client_request_id: "watermark-key".to_string(),
+                    reference_file_id: "watermark-source".to_string(),
+                },
+                &scope,
+            )
+            .unwrap();
+        generation_api
+            .create_image_colorization_billing(
+                &CreateImageColorization {
+                    client_request_id: "colorize-key".to_string(),
+                    reference_file_id: "colorize-source".to_string(),
+                },
+                &scope,
+            )
+            .unwrap();
+        generation_api
+            .create_image_enhancement_billing(
+                &CreateImageEnhancement {
+                    client_request_id: "enhance-key".to_string(),
+                    reference_file_id: "enhance-source".to_string(),
+                    target_quality: "4K".to_string(),
+                },
+                &scope,
+            )
+            .unwrap();
+        generation_api
+            .create_image_cutout_billing(
+                &CreateImageCutout {
+                    client_request_id: "cutout-key".to_string(),
+                    reference_file_id: "cutout-source".to_string(),
+                    subject_type: "person".to_string(),
+                },
+                &scope,
+            )
+            .unwrap();
+        payment_api.packs_billing(&scope).unwrap();
+        payment_api
+            .create_credit_order_billing("pack_1000", "credit-order-key", &scope)
+            .unwrap();
+        membership_api
+            .create_order_billing("pro", "membership-order-key", &scope)
+            .unwrap();
+        membership_api
+            .create_upgrade_quote_billing("pro", &scope)
+            .unwrap();
+        membership_api
+            .create_upgrade_order_billing(TEST_QUOTE_ID, "upgrade-order-key", &scope)
+            .unwrap();
+
+        capture.finish()
+    }
+
+    #[test]
+    fn route_methods_require_the_intended_scope_type() {
+        let _: fn(
+            &GenerationApi,
+            &CreateGenerationTask,
+            &BillingScope,
+        ) -> Result<GenerationTaskDetail, ApiError> = GenerationApi::create_task_billing;
+        let _: fn(&GenerationApi, &str, &SessionScope) -> Result<GenerationTaskDetail, ApiError> =
+            GenerationApi::task_scoped;
+        let _: fn(
+            &PromptOptimizationApi,
+            &CreatePromptOptimization,
+            &BillingScope,
+        ) -> Result<PromptOptimizationDetail, ApiError> = PromptOptimizationApi::create_billing;
+        let _: fn(
+            &PromptOptimizationApi,
+            &str,
+            &BillingScope,
+        ) -> Result<PromptOptimizationDetail, ApiError> = PromptOptimizationApi::retry_billing;
+        let _: fn(&PaymentApi, &str, &SessionScope) -> Result<OrderDetail, ApiError> =
+            PaymentApi::order_scoped;
+        let _: fn(
+            &PaymentApi,
+            Option<&str>,
+            &BillingScope,
+        ) -> Result<TeamPage<OrderDetail>, ApiError> = PaymentApi::orders_billing;
+        let _: fn(&AccountApi, &BillingScope) -> Result<CreditAccount, ApiError> =
+            AccountApi::credit_account_billing;
+        let _: fn(
+            &AccountApi,
+            Option<&str>,
+            usize,
+            &BillingScope,
+        ) -> Result<CreditLedgerPage, ApiError> = AccountApi::ledger_page_billing;
+        let _: fn(
+            &AccountApi,
+            &str,
+            &str,
+            &BillingScope,
+        ) -> Result<CreditRedemptionResult, ApiError> = AccountApi::redeem_credit_code_billing;
+        let _: fn(
+            &GenerationApi,
+            &CreateVideoQuote,
+            &BillingScope,
+        ) -> Result<VideoQuote, ApiError> = GenerationApi::quote_video_billing;
+        let _: fn(
+            &GenerationApi,
+            &CreateVideoGenerationTask,
+            &BillingScope,
+        ) -> Result<GenerationTaskDetail, ApiError> = GenerationApi::create_video_task_billing;
+        let _: fn(
+            &GenerationApi,
+            &CreateUpscaleGenerationTask,
+            &BillingScope,
+        ) -> Result<GenerationTaskDetail, ApiError> = GenerationApi::create_upscale_task_billing;
+        let _: fn(
+            &GenerationApi,
+            &CreateImageEditTask,
+            &BillingScope,
+        ) -> Result<GenerationTaskDetail, ApiError> = GenerationApi::create_image_edit_task_billing;
+        let _: fn(
+            &GenerationApi,
+            &CreateWatermarkRemoval,
+            &BillingScope,
+        ) -> Result<GenerationTaskDetail, ApiError> =
+            GenerationApi::create_watermark_removal_billing;
+        let _: fn(
+            &GenerationApi,
+            &CreateImageColorization,
+            &BillingScope,
+        ) -> Result<GenerationTaskDetail, ApiError> =
+            GenerationApi::create_image_colorization_billing;
+        let _: fn(
+            &GenerationApi,
+            &CreateImageEnhancement,
+            &BillingScope,
+        ) -> Result<GenerationTaskDetail, ApiError> =
+            GenerationApi::create_image_enhancement_billing;
+        let _: fn(
+            &GenerationApi,
+            &CreateImageCutout,
+            &BillingScope,
+        ) -> Result<GenerationTaskDetail, ApiError> = GenerationApi::create_image_cutout_billing;
+        let _: fn(&PaymentApi, &BillingScope) -> Result<Vec<CreditPack>, ApiError> =
+            PaymentApi::packs_billing;
+        let _: fn(&PaymentApi, &str, &str, &BillingScope) -> Result<OrderDetail, ApiError> =
+            PaymentApi::create_credit_order_billing;
+        let _: fn(&MembershipApi, &str, &str, &BillingScope) -> Result<OrderDetail, ApiError> =
+            MembershipApi::create_order_billing;
+        let _: fn(&MembershipApi, &str, &BillingScope) -> Result<UpgradeQuote, ApiError> =
+            MembershipApi::create_upgrade_quote_billing;
+        let _: fn(&MembershipApi, &str, &str, &BillingScope) -> Result<OrderDetail, ApiError> =
+            MembershipApi::create_upgrade_order_billing;
+    }
+
+    #[test]
+    fn every_task4_route_sends_exact_authority_and_idempotency_policy() {
+        let requests = capture_task4_route_matrix();
+        let expected = [
+            expected(
+                "POST",
+                "/v1/generation/tasks",
+                Some(TEST_GROUP_ID),
+                Some("generation-key"),
+                Some(image_generation_body("generation-key")),
+            ),
+            expected(
+                "GET",
+                &format!("/v1/generation/tasks/{TEST_TASK_ID}"),
+                None,
+                None,
+                None,
+            ),
+            expected(
+                "POST",
+                "/v1/prompt-optimizations",
+                Some(TEST_GROUP_ID),
+                Some("prompt-key"),
+                Some(prompt_creation_body("prompt-key")),
+            ),
+            expected(
+                "POST",
+                &format!("/v1/prompt-optimizations/{TEST_PROMPT_ID}/retry"),
+                Some(TEST_GROUP_ID),
+                None,
+                None,
+            ),
+            expected(
+                "GET",
+                &format!("/v1/orders/{TEST_ORDER_ID}"),
+                None,
+                None,
+                None,
+            ),
+            expected(
+                "GET",
+                "/v1/orders?page_size=50",
+                Some(TEST_GROUP_ID),
+                None,
+                None,
+            ),
+            expected(
+                "GET",
+                "/v1/credits/account",
+                Some(TEST_GROUP_ID),
+                None,
+                None,
+            ),
+            expected(
+                "GET",
+                "/v1/credits/ledger?limit=50",
+                Some(TEST_GROUP_ID),
+                None,
+                None,
+            ),
+            expected(
+                "POST",
+                "/v1/credits/redemptions",
+                Some(TEST_GROUP_ID),
+                Some("redeem-key"),
+                Some(serde_json::json!({
+                    "code": "REDEEM-CODE", "client_request_id": "redeem-key"
+                })),
+            ),
+            expected(
+                "POST",
+                "/v1/generation/video-quotes",
+                Some(TEST_GROUP_ID),
+                None,
+                Some(video_quote_body()),
+            ),
+            expected(
+                "POST",
+                "/v1/generation/tasks",
+                Some(TEST_GROUP_ID),
+                Some("video-key"),
+                Some(video_generation_body("video-key")),
+            ),
+            expected(
+                "POST",
+                "/v1/generation/tasks",
+                Some(TEST_GROUP_ID),
+                Some("upscale-key"),
+                Some(upscale_body("upscale-key")),
+            ),
+            expected(
+                "POST",
+                "/v1/generation/tasks",
+                Some(TEST_GROUP_ID),
+                Some("image-edit-key"),
+                Some(image_edit_body("image-edit-key")),
+            ),
+            expected(
+                "POST",
+                "/v1/toolbox/watermark-removals",
+                Some(TEST_GROUP_ID),
+                Some("watermark-key"),
+                Some(watermark_body("watermark-key")),
+            ),
+            expected(
+                "POST",
+                "/v1/toolbox/image-colorizations",
+                Some(TEST_GROUP_ID),
+                Some("colorize-key"),
+                Some(colorization_body("colorize-key")),
+            ),
+            expected(
+                "POST",
+                "/v1/toolbox/image-enhancements",
+                Some(TEST_GROUP_ID),
+                Some("enhance-key"),
+                Some(enhancement_body("enhance-key")),
+            ),
+            expected(
+                "POST",
+                "/v1/toolbox/image-cutouts",
+                Some(TEST_GROUP_ID),
+                Some("cutout-key"),
+                Some(cutout_body("cutout-key")),
+            ),
+            expected("GET", "/v1/credits/packs", Some(TEST_GROUP_ID), None, None),
+            expected(
+                "POST",
+                "/v1/credits/orders",
+                Some(TEST_GROUP_ID),
+                Some("credit-order-key"),
+                Some(serde_json::json!({
+                    "pack_code": "pack_1000", "client_request_id": "credit-order-key"
+                })),
+            ),
+            expected(
+                "POST",
+                "/v1/membership/orders",
+                Some(TEST_GROUP_ID),
+                Some("membership-order-key"),
+                Some(serde_json::json!({
+                    "plan_code": "pro", "client_request_id": "membership-order-key"
+                })),
+            ),
+            expected(
+                "POST",
+                "/v1/membership/upgrade-quotes",
+                Some(TEST_GROUP_ID),
+                None,
+                Some(serde_json::json!({"target_plan_code": "pro"})),
+            ),
+            expected(
+                "POST",
+                "/v1/membership/upgrade-orders",
+                Some(TEST_GROUP_ID),
+                Some("upgrade-order-key"),
+                Some(serde_json::json!({
+                    "quote_id": TEST_QUOTE_ID, "client_request_id": "upgrade-order-key"
+                })),
+            ),
+        ];
+
+        assert_eq!(requests.len(), expected.len());
+        for (request, expected) in requests.iter().zip(expected.iter()) {
+            assert_eq!(request.method, expected.method);
+            assert_eq!(request.target, expected.target);
+            assert_eq!(
+                request.header("x-account-group-id"),
+                expected.account_group_id
+            );
+            assert_eq!(request.header("idempotency-key"), expected.idempotency_key);
+            assert_eq!(request.json_body(), expected.body.as_ref());
+        }
+    }
+
+    #[test]
+    fn selected_wallet_reads_and_redemption_require_the_billing_scope() {
+        let capture = CapturedRequests::serve_json_values(vec![
+            serde_json::json!({
+                "available": "1000", "reserved": "10", "lifetime_granted": "1200",
+                "lifetime_spent": "190", "version": "8"
+            }),
+            serde_json::json!([]),
+            serde_json::json!({
+                "redemption_id": "redemption-1", "credits_granted": "500",
+                "redeemed_at": "2026-09-05T00:00:00Z", "credit_expires_at": null,
+                "account": {
+                    "available": "1500", "reserved": "10", "lifetime_granted": "1700",
+                    "lifetime_spent": "190", "version": "9"
+                }
+            }),
+        ]);
+        let client = authenticated_test_client(capture.base_url());
+        let session = client.session().scope_for_user(TEST_USER_ID).unwrap();
+        let scope = BillingScope {
+            request: GroupRequestScope {
+                session,
+                account_group_id: TEST_GROUP_ID.to_string(),
+            },
+            context_epoch: 4,
+        };
+        let api = AccountApi::new(client);
+        api.credit_account_billing(&scope).unwrap();
+        api.ledger_page_billing(Some("next/+ page"), 50, &scope)
+            .unwrap();
+        api.redeem_credit_code_billing("REDEEM-CODE", "redeem-key", &scope)
+            .unwrap();
+        let requests = capture.finish();
+        assert_eq!(
+            requests[1].target,
+            "/v1/credits/ledger?limit=50&cursor=next%2F%2B+page"
+        );
+        assert!(requests
+            .iter()
+            .all(|request| { request.header("x-account-group-id") == Some(TEST_GROUP_ID) }));
     }
 
     #[test]

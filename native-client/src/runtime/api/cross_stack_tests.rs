@@ -235,12 +235,12 @@ fn cross_stack_happy_path_and_dto_contract() {
             .map(|value| value.available.as_str()),
         Some(login.registration_credit_granted.as_str())
     );
-    assert!(snapshot.plans.iter().any(|plan| plan.code == "basic"));
-    assert!(snapshot.packs.iter().any(|pack| pack.code == "pack_1000"));
-    assert!(snapshot
-        .models
-        .iter()
-        .any(|model| model.code == "openai_prompt"));
+    let plans = snapshot.plans.as_deref().expect("owner plans");
+    let packs = snapshot.packs.as_deref().expect("owner credit packs");
+    let models = snapshot.models.as_deref().expect("owner model catalog");
+    assert!(plans.iter().any(|plan| plan.code == "basic"));
+    assert!(packs.iter().any(|pack| pack.code == "pack_1000"));
+    assert!(models.iter().any(|model| model.code == "openai_prompt"));
     assert_eq!(snapshot.sessions.len(), 1);
 
     let auth = AuthApi::new(client.clone());
@@ -486,11 +486,14 @@ fn cross_stack_account_catalog_and_pagination_parameters() {
     let snapshot = AccountApi::new(client.clone())
         .snapshot()
         .expect("load full account snapshot");
-    assert!(snapshot.plans.len() >= 4);
-    assert!(snapshot.packs.len() >= 4);
-    assert!(snapshot.models.len() >= 2);
-    assert!(snapshot
-        .ledger
+    let plans = snapshot.plans.as_deref().expect("owner plans");
+    let packs = snapshot.packs.as_deref().expect("owner credit packs");
+    let models = snapshot.models.as_deref().expect("owner model catalog");
+    let ledger = snapshot.ledger.as_deref().expect("owner credit ledger");
+    assert!(plans.len() >= 4);
+    assert!(packs.len() >= 4);
+    assert!(models.len() >= 2);
+    assert!(ledger
         .iter()
         .any(|entry| entry.available_delta == login.registration_credit_granted));
 
@@ -2894,8 +2897,13 @@ fn cross_stack_catalog_and_account_dto_invariants() {
     assert_eq!(snapshot.account.user.id, login.user.id);
     assert_eq!(snapshot.account.user.status, "active");
     assert!(snapshot.account.user.registered_at.contains('T'));
-    assert!(snapshot.account.membership.revision.parse::<u64>().is_ok());
-    if let Some(plan) = snapshot.account.membership.plan.as_ref() {
+    let membership = snapshot
+        .account
+        .membership
+        .as_ref()
+        .expect("owner account snapshot includes membership");
+    assert!(membership.revision.parse::<u64>().is_ok());
+    if let Some(plan) = membership.plan.as_ref() {
         assert!(!plan.max_quality.is_empty());
     }
     let credits = snapshot.account.credits.as_ref().expect("credit account");
@@ -2911,13 +2919,13 @@ fn cross_stack_catalog_and_account_dto_invariants() {
         );
     }
 
-    let plan_codes: HashSet<_> = snapshot
-        .plans
-        .iter()
-        .map(|plan| plan.code.as_str())
-        .collect();
-    assert_eq!(plan_codes.len(), snapshot.plans.len());
-    for plan in &snapshot.plans {
+    let plans = snapshot.plans.as_deref().expect("owner plans");
+    let packs = snapshot.packs.as_deref().expect("owner credit packs");
+    let models = snapshot.models.as_deref().expect("owner model catalog");
+    let ledger = snapshot.ledger.as_deref().expect("owner credit ledger");
+    let plan_codes: HashSet<_> = plans.iter().map(|plan| plan.code.as_str()).collect();
+    assert_eq!(plan_codes.len(), plans.len());
+    for plan in plans {
         assert!(!plan.name.is_empty());
         assert!(plan.version > 0);
         assert!(plan.tier_rank >= 0);
@@ -2927,24 +2935,16 @@ fn cross_stack_catalog_and_account_dto_invariants() {
         assert!((0..=10_000).contains(&plan.recharge_discount_bps));
         assert!(plan.entitlements.is_object());
     }
-    let pack_codes: HashSet<_> = snapshot
-        .packs
-        .iter()
-        .map(|pack| pack.code.as_str())
-        .collect();
-    assert_eq!(pack_codes.len(), snapshot.packs.len());
-    for pack in &snapshot.packs {
+    let pack_codes: HashSet<_> = packs.iter().map(|pack| pack.code.as_str()).collect();
+    assert_eq!(pack_codes.len(), packs.len());
+    for pack in packs {
         assert!(!pack.name.is_empty());
         assert!(pack.price_cents.parse::<u64>().expect("pack price") > 0);
         assert!(pack.credits.parse::<u64>().expect("pack credits") > 0);
     }
-    let model_codes: HashSet<_> = snapshot
-        .models
-        .iter()
-        .map(|model| model.code.as_str())
-        .collect();
-    assert_eq!(model_codes.len(), snapshot.models.len());
-    for model in &snapshot.models {
+    let model_codes: HashSet<_> = models.iter().map(|model| model.code.as_str()).collect();
+    assert_eq!(model_codes.len(), models.len());
+    for model in models {
         assert!(model.version > 0);
         assert!(!model.name.is_empty());
         assert!(["image_generation", "prompt_processing"].contains(&model.purpose.as_str()));
@@ -2972,7 +2972,7 @@ fn cross_stack_catalog_and_account_dto_invariants() {
         assert_eq!(session.app_version.split('.').count(), 3);
         assert!(session.last_seen_at.contains('T'));
     }
-    for entry in &snapshot.ledger {
+    for entry in ledger {
         assert!(!entry.entry_type.is_empty());
         assert!(entry.available_delta.parse::<i128>().is_ok());
         assert!(entry.reserved_delta.parse::<i128>().is_ok());

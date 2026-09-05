@@ -2411,6 +2411,7 @@ mod prompt_diff_tests {
     #[test]
     fn best_result_diff_uses_the_previous_accepted_version() {
         let detail = PromptOptimizationDetail {
+            billing_account_group_id: "11111111-1111-4111-8111-111111111111".into(),
             original_prompt: Some("最初提示词".into()),
             result: Some(PromptOptimizationResult {
                 chinese_prompt: "第二版提示词".into(),
@@ -2447,6 +2448,7 @@ mod prompt_diff_tests {
     #[test]
     fn rejected_only_job_does_not_describe_candidate_changes() {
         let detail = PromptOptimizationDetail {
+            billing_account_group_id: "11111111-1111-4111-8111-111111111111".into(),
             original_prompt: Some("保留的原提示词".into()),
             result: None,
             best_round_no: None,
@@ -2469,6 +2471,7 @@ mod prompt_diff_tests {
     #[test]
     fn low_score_reviewable_candidate_describes_its_actual_changes() {
         let detail = PromptOptimizationDetail {
+            billing_account_group_id: "11111111-1111-4111-8111-111111111111".into(),
             original_prompt: Some("一位古风美女".into()),
             result: Some(PromptOptimizationResult {
                 chinese_prompt: "一位古风美女，青色织锦长裙，园林晨雾".into(),
@@ -2503,6 +2506,7 @@ mod prompt_diff_tests {
     #[test]
     fn headline_score_keeps_the_server_best_when_a_reviewable_candidate_is_lower() {
         let detail = PromptOptimizationDetail {
+            billing_account_group_id: "11111111-1111-4111-8111-111111111111".into(),
             baseline_score: Some(100),
             best_score: Some(100),
             result_score: Some(40),
@@ -2516,6 +2520,7 @@ mod prompt_diff_tests {
     #[test]
     fn baseline_target_summary_does_not_claim_that_a_round_was_needed() {
         let detail = PromptOptimizationDetail {
+            billing_account_group_id: "11111111-1111-4111-8111-111111111111".into(),
             completed_rounds: 0,
             stop_reason: Some("target_reached".into()),
             ..Default::default()

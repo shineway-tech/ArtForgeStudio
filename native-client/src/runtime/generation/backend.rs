@@ -3251,6 +3251,7 @@ mod tests {
     fn failed_generation_task(code: &str, message: &str) -> GenerationTaskDetail {
         GenerationTaskDetail {
             id: "failed-task".to_string(),
+            billing_account_group_id: "11111111-1111-4111-8111-111111111111".to_string(),
             status: "failed".to_string(),
             progress_percent: 100,
             success_count: 0,
@@ -3273,6 +3274,7 @@ mod tests {
     fn completed_task_with_available_file(file_id: &str) -> GenerationTaskDetail {
         GenerationTaskDetail {
             id: "completed-task".to_string(),
+            billing_account_group_id: "11111111-1111-4111-8111-111111111111".to_string(),
             status: "completed".to_string(),
             progress_percent: 100,
             success_count: 1,

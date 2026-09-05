@@ -3,7 +3,7 @@ use super::super::{
 };
 use super::{
     generation_content_policy_message, is_generation_content_policy_blocked, ApiClient, ApiError,
-    SessionScope,
+    BillingScope, SessionScope,
 };
 use reqwest::blocking::multipart::{Form, Part};
 use reqwest::Method;
@@ -68,6 +68,7 @@ pub(crate) struct GenerationTaskItem {
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct GenerationTaskDetail {
     pub(crate) id: String,
+    pub(crate) billing_account_group_id: String,
     pub(crate) status: String,
     pub(crate) progress_percent: i32,
     pub(crate) success_count: i32,
@@ -98,6 +99,7 @@ pub(crate) struct TaskModel {
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct GenerationTaskSummary {
     pub(crate) id: String,
+    pub(crate) billing_account_group_id: String,
     #[serde(rename = "type")]
     pub(crate) task_type: String,
 }
@@ -372,15 +374,13 @@ impl GenerationApi {
         })
         .map_err(protocol_error)?;
         let prepared = match scope {
-            Some(scope) => self
-                .client
-                .authenticated_json_scoped::<PrepareUploadResponse>(
-                    Method::POST,
-                    "/v1/uploads/references",
-                    Some(body.clone()),
-                    None,
-                    scope,
-                ),
+            Some(scope) => self.client.identity_json_scoped::<PrepareUploadResponse>(
+                Method::POST,
+                "/v1/uploads/references",
+                Some(body.clone()),
+                None,
+                scope,
+            ),
             None => self.client.authenticated_json::<PrepareUploadResponse>(
                 Method::POST,
                 "/v1/uploads/references",
@@ -426,7 +426,7 @@ impl GenerationApi {
         }
         let complete_path = format!("/v1/uploads/references/{}/complete", prepared.file.id);
         match scope {
-            Some(scope) => self.client.authenticated_json_scoped::<serde_json::Value>(
+            Some(scope) => self.client.identity_json_scoped::<serde_json::Value>(
                 Method::POST,
                 &complete_path,
                 None,
@@ -457,7 +457,7 @@ impl GenerationApi {
         file_id: &str,
         scope: &SessionScope,
     ) -> Result<(), ApiError> {
-        self.client.authenticated_json_scoped::<serde_json::Value>(
+        self.client.identity_json_scoped::<serde_json::Value>(
             Method::DELETE,
             &format!("/v1/uploads/references/{file_id}"),
             None,
@@ -467,6 +467,7 @@ impl GenerationApi {
         Ok(())
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_task(
         &self,
         request: &CreateGenerationTask,
@@ -475,6 +476,7 @@ impl GenerationApi {
         self.create_task_body(&request.client_request_id, body)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_task_scoped(
         &self,
         request: &CreateGenerationTask,
@@ -492,10 +494,17 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
-    pub(crate) fn quote_video(
+    pub(crate) fn create_task_billing(
         &self,
-        request: &CreateVideoQuote,
-    ) -> Result<VideoQuote, ApiError> {
+        request: &CreateGenerationTask,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.create_task_body_billing(&request.client_request_id, body, scope)
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
+    pub(crate) fn quote_video(&self, request: &CreateVideoQuote) -> Result<VideoQuote, ApiError> {
         request.validate()?;
         let body = serde_json::to_value(request).map_err(protocol_error)?;
         self.client
@@ -508,6 +517,7 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn quote_video_scoped(
         &self,
         request: &CreateVideoQuote,
@@ -526,6 +536,25 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn quote_video_billing(
+        &self,
+        request: &CreateVideoQuote,
+        scope: &BillingScope,
+    ) -> Result<VideoQuote, ApiError> {
+        request.validate()?;
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .billing_json_scoped::<VideoQuote>(
+                Method::POST,
+                "/v1/generation/video-quotes",
+                Some(body),
+                None,
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_video_task(
         &self,
         request: &CreateVideoGenerationTask,
@@ -535,6 +564,7 @@ impl GenerationApi {
         self.create_task_body(&request.client_request_id, body)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_video_task_scoped(
         &self,
         request: &CreateVideoGenerationTask,
@@ -545,6 +575,17 @@ impl GenerationApi {
         self.create_task_body_scoped(&request.client_request_id, body, scope)
     }
 
+    pub(crate) fn create_video_task_billing(
+        &self,
+        request: &CreateVideoGenerationTask,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        request.validate()?;
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.create_task_body_billing(&request.client_request_id, body, scope)
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_upscale_task(
         &self,
         request: &CreateUpscaleGenerationTask,
@@ -553,6 +594,7 @@ impl GenerationApi {
         self.create_task_body(&request.client_request_id, body)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_upscale_task_scoped(
         &self,
         request: &CreateUpscaleGenerationTask,
@@ -562,6 +604,16 @@ impl GenerationApi {
         self.create_task_body_scoped(&request.client_request_id, body, scope)
     }
 
+    pub(crate) fn create_upscale_task_billing(
+        &self,
+        request: &CreateUpscaleGenerationTask,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.create_task_body_billing(&request.client_request_id, body, scope)
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_image_edit_task(
         &self,
         request: &CreateImageEditTask,
@@ -570,6 +622,7 @@ impl GenerationApi {
         self.create_task_body(&request.client_request_id, body)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_image_edit_task_scoped(
         &self,
         request: &CreateImageEditTask,
@@ -579,6 +632,16 @@ impl GenerationApi {
         self.create_task_body_scoped(&request.client_request_id, body, scope)
     }
 
+    pub(crate) fn create_image_edit_task_billing(
+        &self,
+        request: &CreateImageEditTask,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.create_task_body_billing(&request.client_request_id, body, scope)
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_watermark_removal(
         &self,
         request: &CreateWatermarkRemoval,
@@ -594,6 +657,7 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_watermark_removal_scoped(
         &self,
         request: &CreateWatermarkRemoval,
@@ -611,6 +675,24 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn create_watermark_removal_billing(
+        &self,
+        request: &CreateWatermarkRemoval,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .billing_json_scoped::<GenerationTaskDetail>(
+                Method::POST,
+                "/v1/toolbox/watermark-removals",
+                Some(body),
+                Some(&request.client_request_id),
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_image_colorization(
         &self,
         request: &CreateImageColorization,
@@ -626,6 +708,7 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_image_colorization_scoped(
         &self,
         request: &CreateImageColorization,
@@ -643,6 +726,24 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn create_image_colorization_billing(
+        &self,
+        request: &CreateImageColorization,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .billing_json_scoped::<GenerationTaskDetail>(
+                Method::POST,
+                "/v1/toolbox/image-colorizations",
+                Some(body),
+                Some(&request.client_request_id),
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_image_enhancement(
         &self,
         request: &CreateImageEnhancement,
@@ -658,6 +759,7 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_image_enhancement_scoped(
         &self,
         request: &CreateImageEnhancement,
@@ -675,6 +777,24 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn create_image_enhancement_billing(
+        &self,
+        request: &CreateImageEnhancement,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .billing_json_scoped::<GenerationTaskDetail>(
+                Method::POST,
+                "/v1/toolbox/image-enhancements",
+                Some(body),
+                Some(&request.client_request_id),
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_image_cutout(
         &self,
         request: &CreateImageCutout,
@@ -690,6 +810,7 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_image_cutout_scoped(
         &self,
         request: &CreateImageCutout,
@@ -707,6 +828,24 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn create_image_cutout_billing(
+        &self,
+        request: &CreateImageCutout,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .billing_json_scoped::<GenerationTaskDetail>(
+                Method::POST,
+                "/v1/toolbox/image-cutouts",
+                Some(body),
+                Some(&request.client_request_id),
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     fn create_task_body(
         &self,
         client_request_id: &str,
@@ -722,6 +861,7 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     fn create_task_body_scoped(
         &self,
         client_request_id: &str,
@@ -730,6 +870,23 @@ impl GenerationApi {
     ) -> Result<GenerationTaskDetail, ApiError> {
         self.client
             .authenticated_json_scoped::<GenerationTaskDetail>(
+                Method::POST,
+                "/v1/generation/tasks",
+                Some(body),
+                Some(client_request_id),
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
+    fn create_task_body_billing(
+        &self,
+        client_request_id: &str,
+        body: serde_json::Value,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        self.client
+            .billing_json_scoped::<GenerationTaskDetail>(
                 Method::POST,
                 "/v1/generation/tasks",
                 Some(body),
@@ -756,7 +913,7 @@ impl GenerationApi {
         scope: &SessionScope,
     ) -> Result<GenerationTaskDetail, ApiError> {
         self.client
-            .authenticated_json_scoped::<GenerationTaskDetail>(
+            .identity_json_scoped::<GenerationTaskDetail>(
                 Method::GET,
                 &format!("/v1/generation/tasks/{task_id}"),
                 None,
@@ -783,7 +940,7 @@ impl GenerationApi {
         scope: &SessionScope,
     ) -> Result<Vec<GenerationTaskSummary>, ApiError> {
         self.client
-            .authenticated_json_scoped::<GenerationTaskList>(
+            .identity_json_scoped::<GenerationTaskList>(
                 Method::GET,
                 &format!("/v1/generation/tasks?limit=20&status={status}"),
                 None,
@@ -809,7 +966,7 @@ impl GenerationApi {
         scope: &SessionScope,
     ) -> Result<(), ApiError> {
         self.client
-            .authenticated_json_scoped::<GenerationTaskDetail>(
+            .identity_json_scoped::<GenerationTaskDetail>(
                 Method::POST,
                 &format!("/v1/generation/tasks/{task_id}/cancel"),
                 None,
@@ -972,7 +1129,7 @@ impl GenerationApi {
     ) -> Result<(), ApiError> {
         let body =
             serde_json::to_value(DeliveryAck { sha256, size_bytes }).map_err(protocol_error)?;
-        self.client.authenticated_json_scoped::<serde_json::Value>(
+        self.client.identity_json_scoped::<serde_json::Value>(
             Method::POST,
             &format!("/v1/generation/tasks/{task_id}/deliveries/{file_id}/ack"),
             Some(body),
@@ -1044,9 +1201,30 @@ fn verify_downloaded_bytes(
 mod tests {
     use super::*;
 
+    #[test]
+    fn generation_projections_require_billing_account_group_id() {
+        let detail = serde_json::json!({
+            "id": "task-1", "status": "queued", "progress_percent": 0,
+            "success_count": 0, "failure_count": 0, "failure": null,
+            "prompt": null, "result_prompt": null, "items": []
+        });
+        let summary = serde_json::json!({
+            "id": "task-1", "type": "image_generation"
+        });
+        assert!(serde_json::from_value::<GenerationTaskDetail>(detail.clone()).is_err());
+        assert!(serde_json::from_value::<GenerationTaskSummary>(summary.clone()).is_err());
+        let mut detail_null = detail;
+        detail_null["billing_account_group_id"] = serde_json::Value::Null;
+        let mut summary_null = summary;
+        summary_null["billing_account_group_id"] = serde_json::Value::Null;
+        assert!(serde_json::from_value::<GenerationTaskDetail>(detail_null).is_err());
+        assert!(serde_json::from_value::<GenerationTaskSummary>(summary_null).is_err());
+    }
+
     fn task(status: &str) -> GenerationTaskDetail {
         GenerationTaskDetail {
             id: "task-1".to_string(),
+            billing_account_group_id: "11111111-1111-4111-8111-111111111111".to_string(),
             status: status.to_string(),
             progress_percent: 0,
             success_count: 0,

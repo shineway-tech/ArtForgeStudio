@@ -1232,6 +1232,7 @@ mod tests {
     fn order(status: &str, fulfillment_status: &str) -> OrderDetail {
         OrderDetail {
             id: "order-1".to_string(),
+            billing_account_group_id: "11111111-1111-4111-8111-111111111111".to_string(),
             status: status.to_string(),
             fulfillment_status: fulfillment_status.to_string(),
             payable_amount_cents: "100".to_string(),

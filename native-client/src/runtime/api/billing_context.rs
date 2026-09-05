@@ -49,10 +49,24 @@ where
     String::deserialize(deserializer).map(SecretString::new)
 }
 
+// Task 8's durable recovery-row read/write path must call this boundary before resuming work.
+pub(crate) fn require_saved_group(expected: &str, actual: &str) -> Result<(), super::ApiError> {
+    if !expected.is_empty() && expected == actual {
+        return Ok(());
+    }
+    Err(super::ApiError::Protocol {
+        message: "服务端资源的计费账号与本地恢复记录不一致".to_string(),
+        request_id: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::runtime::api::SessionScope;
+
+    const TEST_GROUP_ID: &str = "11111111-1111-4111-8111-111111111111";
+    const OTHER_GROUP_ID: &str = "22222222-2222-4222-8222-222222222222";
 
     #[test]
     fn secret_string_exposes_only_explicitly_and_redacts_debug() {
@@ -76,5 +90,12 @@ mod tests {
         };
         assert_eq!(scope.request.session.auth_epoch, 7);
         assert_eq!(scope.context_epoch, 9);
+    }
+
+    #[test]
+    fn saved_payer_rejects_empty_and_mismatched_server_groups() {
+        assert!(require_saved_group(TEST_GROUP_ID, "").is_err());
+        assert!(require_saved_group(TEST_GROUP_ID, OTHER_GROUP_ID).is_err());
+        assert!(require_saved_group(TEST_GROUP_ID, TEST_GROUP_ID).is_ok());
     }
 }
