@@ -1,7 +1,8 @@
 //! Windows retained-handle namespace implementation.
 
 use super::{
-    validate_windows_relative_name, ManagedRelativeName, ManagedUserArea, UserNamespace,
+    validate_export_leaf, validate_export_volume_root_name, validate_windows_relative_name,
+    ManagedRelativeName, ManagedUserArea, UserNamespace,
     MANAGED_USER_AREAS,
 };
 use anyhow::{anyhow, ensure, Context, Result};
@@ -123,6 +124,286 @@ pub(crate) struct NamespaceFs {
     lock_identity: Identity,
     user: String,
     binding: u64,
+}
+
+/// A pinned chain from a proven volume root to the external directory. Keeping
+/// every parent open without delete sharing preserves the ancestry proof;
+/// native NT relative names have no supported general-purpose `..` traversal.
+pub(crate) struct ExternalExportDestination {
+    chain: Vec<OwnedHandle>,
+    private_root: OwnedHandle,
+    display_path: PathBuf,
+}
+
+impl ExternalExportDestination {
+    pub(crate) fn open(data_root: &DataRootCapability, candidate: &Path) -> Result<Self> {
+        ensure!(
+            candidate.is_absolute(),
+            "export destination must be absolute"
+        );
+        let mut components = candidate.components();
+        let prefix = match components.next() {
+            Some(Component::Prefix(prefix))
+                if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)) =>
+            {
+                prefix
+            }
+            _ => {
+                return Err(anyhow!(
+                    "export requires a provable local drive root; UNC is unsupported"
+                ))
+            }
+        };
+        ensure!(
+            matches!(components.next(), Some(Component::RootDir)),
+            "missing export drive root"
+        );
+        let mut anchor = PathBuf::from(prefix.as_os_str());
+        anchor.push("\\");
+        let names = components
+            .map(|part| match part {
+                Component::Normal(name) => {
+                    leaf_wide(name)?;
+                    Ok(name.to_os_string())
+                }
+                _ => Err(anyhow!("unclean export path")),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        // components() normalizes dots and repeated separators in DOS paths;
+        // inspect the original suffix as well so no unclean input is accepted.
+        let text = candidate
+            .to_str()
+            .ok_or_else(|| anyhow!("invalid export Unicode"))?;
+        let prefix_text = prefix
+            .as_os_str()
+            .to_str()
+            .ok_or_else(|| anyhow!("invalid export prefix"))?;
+        let suffix = &text[prefix_text.len() + 1..];
+        if !suffix.is_empty() {
+            validate_windows_relative_name(suffix)?;
+        }
+        ensure!(
+            identify(&data_root.handle, true)? == data_root.identity,
+            "private root identity changed"
+        );
+        let root = open_absolute_anchor(&anchor, TRAVERSE_ACCESS, SHARE_LOCK)?;
+        prove_external_volume_root(&root)?;
+        let mut chain = vec![root];
+        let mut missing = names.len();
+        for (index, name) in names.iter().enumerate() {
+            match nt_open(
+                chain.last().unwrap(),
+                name,
+                TRAVERSE_ACCESS,
+                SHARE_LOCK,
+                NT_OPEN,
+                true,
+            ) {
+                Ok(next) => chain.push(next),
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+                {
+                    missing = index;
+                    break;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        reject_private_chain(&chain, data_root.identity)?;
+        // Upgrade only the closest existing parent. Ancestors need traversal
+        // rights, not write/list access. Reopen via its pinned parent, never via
+        // the display path, and require the identical object.
+        let current = chain.last().unwrap();
+        let writable = if chain.len() == 1 {
+            let raw = unsafe {
+                ReOpenFile(
+                    current.as_raw_handle(),
+                    MANAGED_ACCESS,
+                    SHARE_LOCK,
+                    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                )
+            };
+            ensure!(
+                raw != INVALID_HANDLE_VALUE,
+                "cannot acquire external root write authority: {}",
+                std::io::Error::last_os_error()
+            );
+            unsafe { OwnedHandle::from_raw_handle(raw) }
+        } else {
+            nt_open(
+                &chain[chain.len() - 2],
+                &names[chain.len() - 2],
+                MANAGED_ACCESS,
+                SHARE_LOCK,
+                NT_OPEN,
+                true,
+            )?
+        };
+        ensure!(
+            identify(current, true)? == identify(&writable, true)?,
+            "external parent identity changed"
+        );
+        *chain.last_mut().unwrap() = writable;
+        for name in &names[missing..] {
+            reject_private_chain(&chain, data_root.identity)?;
+            let next = nt_open(
+                chain.last().unwrap(),
+                name,
+                MANAGED_ACCESS,
+                SHARE_LOCK,
+                NT_CREATE,
+                true,
+            )?;
+            chain.push(next);
+        }
+        reject_private_chain(&chain, data_root.identity)?;
+        let display_path = names.iter().fold(anchor, |path, name| path.join(name));
+        Ok(Self {
+            chain,
+            private_root: data_root.handle.try_clone()?,
+            display_path,
+        })
+    }
+
+    /// Display/serialization metadata only; all I/O uses the retained chain.
+    pub(crate) fn normalized_display_path(&self) -> &Path {
+        &self.display_path
+    }
+
+    pub(crate) fn create_new_directory(&self, name: &str) -> Result<Self> {
+        validate_export_leaf(name)?;
+        self.validate()?;
+        let mut chain = self
+            .chain
+            .iter()
+            .map(OwnedHandle::try_clone)
+            .collect::<std::io::Result<Vec<_>>>()?;
+        let next = nt_open(
+            chain.last().unwrap(),
+            OsStr::new(name),
+            MANAGED_ACCESS,
+            SHARE_LOCK,
+            NT_CREATE,
+            true,
+        )?;
+        chain.push(next);
+        Ok(Self {
+            chain,
+            private_root: self.private_root.try_clone()?,
+            display_path: self.display_path.join(name),
+        })
+    }
+
+    /// Sync the completed stream before a handle-based no-replace rename.
+    /// Success returns bytes, not a pathname granting further I/O authority.
+    pub(crate) fn write_new_file(
+        &self,
+        name: &str,
+        stream: &mut impl std::io::Read,
+    ) -> Result<u64> {
+        self.write_new_file_with_temp(
+            name,
+            stream,
+            &format!(".export-{}.tmp", uuid::Uuid::new_v4()),
+        )
+    }
+
+    fn write_new_file_with_temp(
+        &self,
+        name: &str,
+        stream: &mut impl std::io::Read,
+        temporary: &str,
+    ) -> Result<u64> {
+        validate_export_leaf(name)?;
+        validate_export_leaf(temporary)?;
+        ensure!(
+            !name.eq_ignore_ascii_case(temporary),
+            "temporary name equals destination"
+        );
+        self.validate()?;
+        let parent = self.chain.last().unwrap();
+        // NT_CREATE failure owns no object and triggers no deletion. Denying
+        // write/delete sharing protects our new temporary until publication.
+        let handle = nt_open(
+            parent,
+            OsStr::new(temporary),
+            REGULAR_ACCESS,
+            FILE_SHARE_READ,
+            NT_CREATE,
+            false,
+        )?;
+        let result = (|| {
+            let mut file = std::fs::File::from(handle.try_clone()?);
+            let bytes = std::io::copy(stream, &mut file)?;
+            file.sync_all()?;
+            self.validate()?;
+            identify(&handle, false)?;
+            rename_handle(&handle, parent, OsStr::new(name), false)?;
+            Ok(bytes)
+        })();
+        if result.is_err() {
+            // Delete only the object we opened, never a name-based substitute.
+            let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+            check_bool(unsafe {
+                SetFileInformationByHandle(
+                    handle.as_raw_handle(),
+                    FileDispositionInfo,
+                    &disposition as *const _ as *const c_void,
+                    size_of::<FILE_DISPOSITION_INFO>() as u32,
+                )
+            })
+            .context("failed export temporary could not be removed")?;
+        }
+        result
+    }
+
+    fn validate(&self) -> Result<()> {
+        reject_private_chain(&self.chain, identify(&self.private_root, true)?)
+    }
+}
+
+fn prove_external_volume_root(handle: &OwnedHandle) -> Result<()> {
+    let mut buffer = vec![0u16; 128];
+    let length = unsafe {
+        GetFinalPathNameByHandleW(
+            handle.as_raw_handle(),
+            buffer.as_mut_ptr(),
+            buffer.len() as u32,
+            FILE_NAME_NORMALIZED | VOLUME_NAME_GUID,
+        )
+    };
+    ensure!(
+        length != 0 && (length as usize) < buffer.len(),
+        "external anchor ancestry cannot be proven"
+    );
+    let name = String::from_utf16(&buffer[..length as usize])?;
+    // SUBST to a private descendant reports a suffix after the volume GUID;
+    // shares/unsupported providers cannot supply the required local root proof.
+    validate_export_volume_root_name(&name)
+}
+
+fn reject_private_chain(chain: &[OwnedHandle], private: Identity) -> Result<()> {
+    let volume = identify(
+        chain
+            .first()
+            .ok_or_else(|| anyhow!("missing external anchor"))?,
+        true,
+    )?
+    .volume;
+    for handle in chain.iter().rev() {
+        let identity = identify(handle, true)?;
+        ensure!(
+            identity != private,
+            "export destination is inside private app storage"
+        );
+        ensure!(
+            identity.volume == volume,
+            "external export cannot cross a mount boundary"
+        );
+    }
+    Ok(())
 }
 
 impl NamespaceFs {
@@ -672,35 +953,7 @@ fn open_absolute_directory(path: &Path) -> Result<OwnedHandle> {
         .collect::<Result<Vec<_>>>()?;
     let mut anchor = PathBuf::from(prefix.as_os_str());
     anchor.push("\\");
-    let wide: Vec<u16> = anchor.as_os_str().encode_wide().chain(Some(0)).collect();
-    ensure!(
-        !wide[..wide.len() - 1].contains(&0),
-        "NUL in Windows anchor"
-    );
-    // The sole path-based open targets only the drive/share anchor. All remaining
-    // names are opened one component at a time relative to a retained handle.
-    let raw = unsafe {
-        CreateFileW(
-            wide.as_ptr(),
-            if names.is_empty() {
-                MANAGED_ACCESS
-            } else {
-                TRAVERSE_ACCESS
-            },
-            SHARE_ALL,
-            null(),
-            OPEN_EXISTING,
-            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-            null_mut(),
-        )
-    };
-    ensure!(
-        raw != INVALID_HANDLE_VALUE,
-        "open Windows anchor: {}",
-        std::io::Error::last_os_error()
-    );
-    let mut handle = unsafe { OwnedHandle::from_raw_handle(raw) };
-    identify(&handle, true)?;
+    let mut handle = open_absolute_anchor(&anchor, if names.is_empty() { MANAGED_ACCESS } else { TRAVERSE_ACCESS }, SHARE_ALL)?;
     for (index, name) in names.iter().enumerate() {
         handle = nt_open(
             &handle,
@@ -715,6 +968,35 @@ fn open_absolute_directory(path: &Path) -> Result<OwnedHandle> {
             true,
         )?;
     }
+    Ok(handle)
+}
+
+fn open_absolute_anchor(anchor: &Path, access: u32, share: u32) -> Result<OwnedHandle> {
+    let wide: Vec<u16> = anchor.as_os_str().encode_wide().chain(Some(0)).collect();
+    ensure!(
+        !wide[..wide.len() - 1].contains(&0),
+        "NUL in Windows anchor"
+    );
+    // The sole path-based open targets only the drive/share anchor. All remaining
+    // names are opened one component at a time relative to a retained handle.
+    let raw = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            access,
+            share,
+            null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            null_mut(),
+        )
+    };
+    ensure!(
+        raw != INVALID_HANDLE_VALUE,
+        "open Windows anchor: {}",
+        std::io::Error::last_os_error()
+    );
+    let handle = unsafe { OwnedHandle::from_raw_handle(raw) };
+    identify(&handle, true)?;
     Ok(handle)
 }
 
@@ -784,6 +1066,91 @@ mod tests {
     use std::os::windows::fs::{symlink_dir, symlink_file};
 
     const USER: &str = "11111111-1111-4111-8111-111111111111";
+
+    #[test]
+    fn windows_external_export_accepts_ordinary_and_verbatim_local_drive_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let root_path = fs::canonicalize(root.path()).unwrap();
+        let external_path = fs::canonicalize(external.path()).unwrap();
+        let data_root = NamespaceFs::open_data_root(&root_path).unwrap();
+        let ordinary = Path::new(
+            external_path
+                .to_str()
+                .unwrap()
+                .strip_prefix(r"\\?\")
+                .unwrap(),
+        );
+        let first = ExternalExportDestination::open(&data_root, ordinary).unwrap();
+        first
+            .write_new_file("ordinary.bin", &mut &b"ordinary"[..])
+            .unwrap();
+        let second = ExternalExportDestination::open(&data_root, &external_path).unwrap();
+        second
+            .write_new_file("verbatim.bin", &mut &b"verbatim"[..])
+            .unwrap();
+        assert_eq!(
+            fs::read(external_path.join("ordinary.bin")).unwrap(),
+            b"ordinary"
+        );
+        assert_eq!(
+            fs::read(external_path.join("verbatim.bin")).unwrap(),
+            b"verbatim"
+        );
+    }
+
+    #[test]
+    fn windows_external_export_reparse_aliases_fail_without_creation() {
+        let root = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let root_path = fs::canonicalize(root.path()).unwrap();
+        let external_path = fs::canonicalize(external.path()).unwrap();
+        let data_root = NamespaceFs::open_data_root(&root_path).unwrap();
+        symlink_dir(&root_path, external_path.join("alias")).unwrap();
+        assert!(ExternalExportDestination::open(
+            &data_root,
+            &external_path.join("alias").join("absent")
+        )
+        .is_err());
+        assert!(!root_path.join("absent").exists());
+        assert!(ExternalExportDestination::open(
+            &data_root,
+            Path::new(r"\\localhost\C$\absent-export")
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn windows_external_export_pins_ancestors_and_preserves_temporary_collision() {
+        let root = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let root_path = fs::canonicalize(root.path()).unwrap();
+        let external_path = fs::canonicalize(external.path()).unwrap();
+        let data_root = NamespaceFs::open_data_root(&root_path).unwrap();
+        fs::create_dir(external_path.join("selected")).unwrap();
+        let destination =
+            ExternalExportDestination::open(&data_root, &external_path.join("selected")).unwrap();
+        assert!(fs::rename(external_path.join("selected"), external_path.join("moved")).is_err());
+        fs::write(
+            external_path.join("selected").join("collision.tmp"),
+            b"keep",
+        )
+        .unwrap();
+        assert!(destination
+            .write_new_file_with_temp("result.bin", &mut &b"bad"[..], "collision.tmp")
+            .is_err());
+        assert_eq!(
+            fs::read(external_path.join("selected").join("collision.tmp")).unwrap(),
+            b"keep"
+        );
+        destination
+            .write_new_file("result.bin", &mut &b"good"[..])
+            .unwrap();
+        assert_eq!(
+            fs::read(external_path.join("selected").join("result.bin")).unwrap(),
+            b"good"
+        );
+    }
 
     fn fixture() -> (
         tempfile::TempDir,

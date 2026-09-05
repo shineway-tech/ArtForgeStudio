@@ -17,7 +17,7 @@ mod windows;
 #[cfg(windows)]
 #[allow(unused_imports)] // Public handoff types need not all be used by each exact-module harness.
 pub(crate) use windows::{
-    DataRootCapability, ManagedDirectoryCapability, ManagedFileCapability,
+    DataRootCapability, ExternalExportDestination, ManagedDirectoryCapability, ManagedFileCapability,
     ManagedNamespaceDirectories, NamespaceFs,
 };
 
@@ -192,6 +192,261 @@ impl TryFrom<&str> for ManagedRelativeName {
 struct ObjectIdentity {
     device: u64,
     inode: u64,
+}
+
+#[cfg(unix)]
+pub(crate) struct ExternalExportDestination {
+    descriptor: OwnedFd,
+    display_path: PathBuf,
+    private_root: OwnedFd,
+}
+
+#[cfg(not(any(unix, windows)))]
+pub(crate) struct ExternalExportDestination {
+    display_path: PathBuf,
+}
+
+#[cfg(not(any(unix, windows)))]
+impl ExternalExportDestination {
+    pub(crate) fn open(_: &DataRootCapability, _: &Path) -> Result<Self> {
+        unsupported_namespace_capabilities()
+    }
+    pub(crate) fn normalized_display_path(&self) -> &Path {
+        &self.display_path
+    }
+    pub(crate) fn create_new_directory(&self, _: &str) -> Result<Self> {
+        unsupported_namespace_capabilities()
+    }
+    pub(crate) fn write_new_file(&self, _: &str, _: &mut impl std::io::Read) -> Result<u64> {
+        unsupported_namespace_capabilities()
+    }
+}
+
+#[cfg(unix)]
+impl ExternalExportDestination {
+    pub(crate) fn open(data_root: &DataRootCapability, candidate: &Path) -> Result<Self> {
+        use std::os::unix::ffi::OsStrExt;
+        ensure!(
+            candidate.is_absolute(),
+            "export destination must be absolute"
+        );
+        let raw = candidate.as_os_str().as_bytes();
+        ensure!(!raw.contains(&0), "NUL in export path");
+        ensure!(
+            raw == b"/"
+                || raw[1..]
+                    .split(|b| *b == b'/')
+                    .all(|part| !part.is_empty() && part != b"." && part != b".."),
+            "export path must have clean components"
+        );
+        ensure!(
+            directory_identity(&data_root.descriptor)? == data_root.identity,
+            "private root identity changed"
+        );
+        let names: Vec<_> = candidate
+            .components()
+            .filter_map(|part| match part {
+                Component::Normal(name) => Some(name),
+                _ => None,
+            })
+            .collect();
+        let mut descriptor = open_absolute_directory(Path::new("/"))?;
+        let mut missing = names.len();
+        for (index, name) in names.iter().enumerate() {
+            match open_external_directory_at(&descriptor, name) {
+                Ok(next) => descriptor = next,
+                Err(error)
+                    if error.downcast_ref::<rustix::io::Errno>()
+                        == Some(&rustix::io::Errno::NOENT) =>
+                {
+                    missing = index;
+                    break;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        // Check the closest existing parent before the first mkdir. Identity,
+        // not the display spelling, determines whether it is private.
+        reject_private_ancestry(&descriptor, data_root.identity)?;
+        for name in &names[missing..] {
+            reject_private_ancestry(&descriptor, data_root.identity)?;
+            rustix::fs::mkdirat(&descriptor, *name, rustix::fs::Mode::RWXU)
+                .context("create a missing external directory without adopting a collision")?;
+            descriptor = open_external_directory_at(&descriptor, name)?;
+            reject_private_ancestry(&descriptor, data_root.identity)?;
+        }
+        Ok(Self {
+            descriptor,
+            display_path: candidate.to_owned(),
+            private_root: duplicate_descriptor(&data_root.descriptor)?,
+        })
+    }
+
+    pub(crate) fn normalized_display_path(&self) -> &Path {
+        &self.display_path
+    }
+
+    pub(crate) fn create_new_directory(&self, name: &str) -> Result<Self> {
+        validate_export_leaf(name)?;
+        let _lock = self.lock_directory()?;
+        let private_identity = directory_identity(&self.private_root)?;
+        reject_private_ancestry(&self.descriptor, private_identity)?;
+        rustix::fs::mkdirat(&self.descriptor, name, rustix::fs::Mode::RWXU)?;
+        let descriptor = open_external_directory_at(&self.descriptor, OsStr::new(name))?;
+        reject_private_ancestry(&descriptor, private_identity)?;
+        Ok(Self {
+            descriptor,
+            display_path: self.display_path.join(name),
+            private_root: duplicate_descriptor(&self.private_root)?,
+        })
+    }
+
+    /// Writes and syncs a private temporary file, then publishes without replace.
+    /// The successful rename is the commit point; the result grants no path I/O.
+    pub(crate) fn write_new_file(
+        &self,
+        name: &str,
+        stream: &mut impl std::io::Read,
+    ) -> Result<u64> {
+        self.write_new_file_with_temp(name, stream, &format!(".export-{}.tmp", Uuid::new_v4()))
+    }
+
+    fn write_new_file_with_temp(
+        &self,
+        name: &str,
+        stream: &mut impl std::io::Read,
+        temporary: &str,
+    ) -> Result<u64> {
+        validate_export_leaf(name)?;
+        validate_export_leaf(temporary)?;
+        ensure!(name != temporary, "temporary name equals destination");
+        let _lock = self.lock_directory()?;
+        reject_private_ancestry(&self.descriptor, directory_identity(&self.private_root)?)?;
+        // A failed create owns nothing. In particular, never clean up a name
+        // that already existed when O_EXCL failed.
+        let descriptor = rustix::fs::openat(
+            &self.descriptor,
+            temporary,
+            rustix::fs::OFlags::WRONLY
+                | rustix::fs::OFlags::CREATE
+                | rustix::fs::OFlags::EXCL
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        )?;
+        let identity = regular_file_identity(&descriptor)?;
+        let mut file = std::fs::File::from(descriptor);
+        let result = (|| {
+            let bytes = std::io::copy(stream, &mut file)?;
+            file.sync_all()?;
+            reject_private_ancestry(&self.descriptor, directory_identity(&self.private_root)?)?;
+            let current = open_regular_at(&self.descriptor, OsStr::new(temporary))?;
+            ensure!(
+                regular_file_identity(&current)? == identity,
+                "export temporary identity changed"
+            );
+            rename_without_replacement(
+                &self.descriptor,
+                OsStr::new(temporary),
+                &self.descriptor,
+                OsStr::new(name),
+            )?;
+            Ok(bytes)
+        })();
+        if result.is_err() {
+            // Advisory locking serializes cooperating app writers. This check
+            // is not inode-CAS against noncooperating same-UID renames.
+            if let Ok(current) = open_regular_at(&self.descriptor, OsStr::new(temporary)) {
+                if regular_file_identity(&current).is_ok_and(|current| current == identity) {
+                    let _ = rustix::fs::unlinkat(
+                        &self.descriptor,
+                        temporary,
+                        rustix::fs::AtFlags::empty(),
+                    );
+                }
+            }
+        }
+        result
+    }
+
+    fn lock_directory(&self) -> Result<OwnedFd> {
+        let lock = open_directory_at(&self.descriptor, OsStr::new("."))?;
+        rustix::fs::flock(&lock, rustix::fs::FlockOperation::LockExclusive)?;
+        Ok(lock)
+    }
+}
+
+fn validate_export_leaf(name: &str) -> Result<()> {
+    ensure!(
+        !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', '\0']),
+        "export operation requires one clean filename"
+    );
+    #[cfg(windows)]
+    validate_windows_relative_name(name)?;
+    Ok(())
+}
+
+#[cfg(any(windows, test))]
+fn validate_export_volume_root_name(name: &str) -> Result<()> {
+    let guid = name
+        .strip_prefix(r"\\?\Volume{")
+        .and_then(|value| value.strip_suffix("}\\"))
+        .ok_or_else(|| anyhow::anyhow!("external anchor is not a proven local volume root"))?;
+    Uuid::parse_str(guid)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn open_external_directory_at(parent: &OwnedFd, name: &OsStr) -> Result<OwnedFd> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let child = rustix::fs::openat2(
+        parent,
+        name,
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::DIRECTORY | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+        rustix::fs::ResolveFlags::NO_SYMLINKS | rustix::fs::ResolveFlags::NO_XDEV,
+    )?;
+    #[cfg(target_vendor = "apple")]
+    let child = open_directory_at(parent, name)?;
+    #[cfg(not(any(target_vendor = "apple", target_os = "linux", target_os = "android")))]
+    let child: OwnedFd = {
+        let _ = (parent, name);
+        anyhow::bail!("unsupported external mount semantics")
+    };
+    ensure!(
+        directory_identity(parent)?.device == directory_identity(&child)?.device,
+        "external export cannot cross a mount boundary"
+    );
+    Ok(child)
+}
+
+#[cfg(unix)]
+fn reject_private_ancestry(directory: &OwnedFd, private: ObjectIdentity) -> Result<()> {
+    let mut current = duplicate_descriptor(directory)?;
+    // A bounded walk also fails closed on abnormal ancestry/cycles. Traversal
+    // follows retained handles, never a resolved display pathname.
+    for _ in 0..1024 {
+        let identity = directory_identity(&current)?;
+        ensure!(
+            identity != private,
+            "export destination is inside private app storage"
+        );
+        ensure!(
+            rustix::fs::fstat(&current)?.st_nlink != 0,
+            "export ancestor was removed"
+        );
+        let parent = open_directory_at(&current, OsStr::new(".."))?;
+        let parent_identity = directory_identity(&parent)?;
+        if parent_identity == identity {
+            return Ok(());
+        }
+        ensure!(
+            identity.device == parent_identity.device,
+            "unproven external mount ancestry"
+        );
+        current = parent;
+    }
+    anyhow::bail!("external ancestry exceeds the supported depth")
 }
 
 #[cfg(unix)]
@@ -960,6 +1215,317 @@ mod tests {
     }
 
     const USER_A: &str = "11111111-1111-4111-8111-111111111111";
+
+    #[test]
+    fn external_export_volume_anchor_proof_rejects_hidden_subtrees_and_shares() {
+        assert!(validate_export_volume_root_name(
+            r"\\?\Volume{11111111-1111-4111-8111-111111111111}\"
+        )
+        .is_ok());
+        for rejected in [
+            r"\\?\Volume{11111111-1111-4111-8111-111111111111}\private\accounts\",
+            r"\\?\UNC\server\share\",
+            r"C:\",
+            r"\\?\Volume{invalid}\",
+        ] {
+            assert!(validate_export_volume_root_name(rejected).is_err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_export_temporary_collision_never_removes_existing_file() {
+        let root = temporary_directory();
+        let external = temporary_directory();
+        let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
+        let destination = ExternalExportDestination::open(&data_root, external.path()).unwrap();
+        fs::write(external.path().join("collision.tmp"), b"keep temporary").unwrap();
+        assert!(destination
+            .write_new_file_with_temp("result.bin", &mut &b"new"[..], "collision.tmp")
+            .is_err());
+        assert_eq!(
+            fs::read(external.path().join("collision.tmp")).unwrap(),
+            b"keep temporary"
+        );
+        assert!(!external.path().join("result.bin").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_export_swapped_temporary_is_neither_published_nor_removed() {
+        struct SwapTemporary(PathBuf);
+        impl std::io::Read for SwapTemporary {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                fs::remove_file(&self.0)?;
+                fs::write(&self.0, b"replacement")?;
+                Ok(0)
+            }
+        }
+        let root = temporary_directory();
+        let external = temporary_directory();
+        let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
+        let destination = ExternalExportDestination::open(&data_root, external.path()).unwrap();
+        let temporary = external.path().join("owned.tmp");
+        assert!(destination
+            .write_new_file_with_temp(
+                "result.bin",
+                &mut SwapTemporary(temporary.clone()),
+                "owned.tmp"
+            )
+            .is_err());
+        assert_eq!(fs::read(temporary).unwrap(), b"replacement");
+        assert!(!external.path().join("result.bin").exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn external_export_macos_data_volume_alias_keeps_the_private_boundary() {
+        // Only alias paths to our own temporary fixtures are inspected. No
+        // fixed mount point or user directory is created by this test.
+        let root = temporary_directory();
+        let external = temporary_directory();
+        let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
+        let root_alias =
+            Path::new("/System/Volumes/Data").join(root.path().strip_prefix("/").unwrap());
+        let external_alias =
+            Path::new("/System/Volumes/Data").join(external.path().strip_prefix("/").unwrap());
+        if !root_alias.is_dir() || !external_alias.is_dir() {
+            return;
+        }
+        assert!(ExternalExportDestination::open(&data_root, &root_alias.join("absent")).is_err());
+        assert!(!root.path().join("absent").exists());
+        match ExternalExportDestination::open(&data_root, &external_alias) {
+            Ok(destination) => {
+                destination
+                    .write_new_file("alias.bin", &mut &b"fixture"[..])
+                    .unwrap();
+                assert_eq!(
+                    fs::read(external.path().join("alias.bin")).unwrap(),
+                    b"fixture"
+                );
+                eprintln!(
+                    "macOS fixture data-volume alias admitted through retained identity checks"
+                );
+            }
+            Err(_) => {
+                assert_eq!(fs::read_dir(external.path()).unwrap().count(), 0);
+                eprintln!("macOS fixture data-volume alias fails closed on this filesystem");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_export_removed_or_relocated_private_parent_fails_closed() {
+        let root = temporary_directory();
+        let external = temporary_directory();
+        let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
+        fs::create_dir(external.path().join("removed")).unwrap();
+        let removed =
+            ExternalExportDestination::open(&data_root, &external.path().join("removed")).unwrap();
+        fs::remove_dir(external.path().join("removed")).unwrap();
+        assert!(removed.create_new_directory("child").is_err());
+        assert!(removed
+            .write_new_file("result.bin", &mut &b"bad"[..])
+            .is_err());
+        fs::create_dir(external.path().join("moved")).unwrap();
+        let moved =
+            ExternalExportDestination::open(&data_root, &external.path().join("moved")).unwrap();
+        fs::rename(external.path().join("moved"), root.path().join("moved")).unwrap();
+        assert!(moved.create_new_directory("child").is_err());
+        assert!(moved
+            .write_new_file("result.bin", &mut &b"bad"[..])
+            .is_err());
+        assert_eq!(fs::read_dir(root.path().join("moved")).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_export_preserves_existing_permissions_and_rejects_wrong_types() {
+        let root = temporary_directory();
+        let external = temporary_directory();
+        fs::set_permissions(external.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
+        let destination = ExternalExportDestination::open(&data_root, external.path()).unwrap();
+        assert_eq!(
+            fs::metadata(external.path()).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        fs::write(external.path().join("file"), b"keep").unwrap();
+        assert!(ExternalExportDestination::open(
+            &data_root,
+            &external.path().join("file").join("child")
+        )
+        .is_err());
+        assert!(destination.create_new_directory("file").is_err());
+        destination.create_new_directory("directory").unwrap();
+        assert!(destination
+            .write_new_file("directory", &mut &b"bad"[..])
+            .is_err());
+        symlink(root.path(), external.path().join("linked")).unwrap();
+        assert!(destination.create_new_directory("linked").is_err());
+        assert!(destination
+            .write_new_file("linked", &mut &b"bad"[..])
+            .is_err());
+        assert!(fs::symlink_metadata(external.path().join("linked"))
+            .unwrap()
+            .is_symlink());
+        assert_eq!(fs::read(external.path().join("file")).unwrap(), b"keep");
+        assert_eq!(fs::read_dir(external.path()).unwrap().count(), 3);
+    }
+
+    // Removing the identity boundary must cause these tests to create private
+    // directories; removing retained-relative I/O must redirect the swap test.
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn external_export_rejects_private_roots_before_creating_missing_suffixes() {
+        let root = temporary_directory();
+        let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
+        assert!(ExternalExportDestination::open(&data_root, root.path()).is_err());
+        for area in [
+            "accounts",
+            "legacy_unassigned",
+            "session",
+            "cache",
+            "updater",
+        ] {
+            let path = root.path().join(area).join("absent").join("export");
+            assert!(ExternalExportDestination::open(&data_root, &path).is_err());
+            assert!(!root.path().join(area).exists());
+        }
+        let namespace = root.path().join("accounts").join(USER_A);
+        fs::create_dir_all(&namespace).unwrap();
+        for area in MANAGED_USER_AREAS {
+            let path = namespace.join(area.relative_path()).join("absent");
+            assert!(ExternalExportDestination::open(&data_root, &path).is_err());
+            assert!(!namespace.join(area.relative_path()).exists());
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn external_export_rejects_unclean_paths_without_creating_entries() {
+        let root = temporary_directory();
+        let external = temporary_directory();
+        let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
+        for path in [
+            PathBuf::from("relative"),
+            external.path().join("../escape"),
+            external.path().join("./escape"),
+            external.path().join("missing//escape"),
+        ] {
+            assert!(
+                ExternalExportDestination::open(&data_root, &path).is_err(),
+                "{path:?}"
+            );
+        }
+        assert_eq!(fs::read_dir(external.path()).unwrap().count(), 0);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn external_export_creates_suffix_and_publishes_stream_without_overwrite() {
+        let root = temporary_directory();
+        let external = temporary_directory();
+        let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
+        let path = external.path().join("missing").join("exports");
+        let destination = ExternalExportDestination::open(&data_root, &path).unwrap();
+        assert_eq!(destination.normalized_display_path(), path);
+        let archive = destination.create_new_directory("archive").unwrap();
+        let bytes = b"\0export bytes\xff\n";
+        assert_eq!(
+            archive
+                .write_new_file("result.bin", &mut &bytes[..])
+                .unwrap(),
+            15
+        );
+        assert_eq!(
+            fs::read(path.join("archive").join("result.bin")).unwrap(),
+            bytes
+        );
+        assert!(archive
+            .write_new_file("result.bin", &mut &b"overwrite"[..])
+            .is_err());
+        assert_eq!(
+            fs::read(path.join("archive").join("result.bin")).unwrap(),
+            bytes
+        );
+        assert!(destination.create_new_directory("archive").is_err());
+        assert_eq!(fs::read_dir(path.join("archive")).unwrap().count(), 1);
+        for invalid in ["", ".", "..", "nested/file", "./file", "file/"] {
+            assert!(archive.create_new_directory(invalid).is_err());
+            assert!(archive.write_new_file(invalid, &mut &b"bad"[..]).is_err());
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn external_export_failed_stream_cleans_only_its_own_temporary_file() {
+        struct Broken(bool);
+        impl std::io::Read for Broken {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if !self.0 && !buffer.is_empty() {
+                    self.0 = true;
+                    buffer[0] = b'X';
+                    return Ok(1);
+                }
+                Err(std::io::Error::other("fixture stream failed"))
+            }
+        }
+        let root = temporary_directory();
+        let external = temporary_directory();
+        let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
+        let destination = ExternalExportDestination::open(&data_root, external.path()).unwrap();
+        fs::write(external.path().join("existing.bin"), b"keep").unwrap();
+        assert!(destination
+            .write_new_file("failed.bin", &mut Broken(false))
+            .is_err());
+        assert!(!external.path().join("failed.bin").exists());
+        assert_eq!(
+            fs::read(external.path().join("existing.bin")).unwrap(),
+            b"keep"
+        );
+        assert_eq!(fs::read_dir(external.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_export_rejects_symlink_aliases_and_retains_acquired_directory() {
+        let root = temporary_directory();
+        let external = temporary_directory();
+        let replacement = temporary_directory();
+        let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
+        symlink(root.path(), external.path().join("private-alias")).unwrap();
+        assert!(ExternalExportDestination::open(
+            &data_root,
+            &external.path().join("private-alias/absent")
+        )
+        .is_err());
+        assert!(!root.path().join("absent").exists());
+        fs::create_dir(external.path().join("selected")).unwrap();
+        let destination =
+            ExternalExportDestination::open(&data_root, &external.path().join("selected")).unwrap();
+        fs::rename(
+            external.path().join("selected"),
+            external.path().join("retained"),
+        )
+        .unwrap();
+        symlink(replacement.path(), external.path().join("selected")).unwrap();
+        destination
+            .write_new_file("result.bin", &mut &b"retained"[..])
+            .unwrap();
+        destination.create_new_directory("archive").unwrap();
+        assert_eq!(
+            fs::read(external.path().join("retained/result.bin")).unwrap(),
+            b"retained"
+        );
+        assert!(external.path().join("retained/archive").is_dir());
+        assert_eq!(fs::read_dir(replacement.path()).unwrap().count(), 0);
+        assert!(
+            ExternalExportDestination::open(&data_root, &external.path().join("selected/new"))
+                .is_err()
+        );
+    }
 
     #[test]
     fn windows_names_reject_streams_devices_and_ambiguous_components() {
