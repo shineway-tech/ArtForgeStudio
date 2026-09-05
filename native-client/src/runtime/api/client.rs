@@ -1,6 +1,6 @@
 use super::{
-    ApiEnvelope, ApiError, ApiResponse, DeviceIdentity, RefreshRequest, SessionManager,
-    SessionScope, TokenSet,
+    ApiEnvelope, ApiError, ApiResponse, BillingScope, DeviceIdentity, RefreshRequest,
+    SessionManager, SessionScope, TokenSet,
 };
 use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::{Method, Url};
@@ -100,7 +100,7 @@ impl ApiClient {
         path: &str,
         body: Option<Value>,
     ) -> Result<ApiResponse<T>, ApiError> {
-        self.send_once(method, path, body, None)
+        self.send_once(method, path, body, None, None)
     }
 
     pub(crate) fn authenticated_json<T: DeserializeOwned>(
@@ -133,6 +133,7 @@ impl ApiClient {
                     path,
                     body,
                     Some((&refreshed, idempotency_key)),
+                    None,
                 )
                 .map_err(|error| self.clear_epoch_on_exhausted_auth_error(auth_epoch, error))
             }
@@ -148,6 +149,48 @@ impl ApiClient {
         idempotency_key: Option<&str>,
         scope: &SessionScope,
     ) -> Result<ApiResponse<T>, ApiError> {
+        self.identity_json_scoped(method, path, body, idempotency_key, scope)
+    }
+
+    pub(crate) fn identity_json_scoped<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        idempotency_key: Option<&str>,
+        scope: &SessionScope,
+    ) -> Result<ApiResponse<T>, ApiError> {
+        self.authenticated_json_with_scope(method, path, body, idempotency_key, scope, None)
+    }
+
+    pub(crate) fn billing_json_scoped<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        idempotency_key: Option<&str>,
+        scope: &BillingScope,
+    ) -> Result<ApiResponse<T>, ApiError> {
+        self.authenticated_json_with_scope(
+            method,
+            path,
+            body,
+            idempotency_key,
+            &scope.request.session,
+            Some(&scope.request.account_group_id),
+        )
+    }
+
+    fn authenticated_json_with_scope<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        idempotency_key: Option<&str>,
+        scope: &SessionScope,
+        account_group_id: Option<&str>,
+    ) -> Result<ApiResponse<T>, ApiError> {
+        let account_group_id = account_group_id.map(str::to_owned);
         // Scope validation and token cloning happen under the same session lock. If another
         // account is installed immediately afterwards, this request still carries the old
         // account's cloned token and can never borrow the new account's credentials.
@@ -158,6 +201,7 @@ impl ApiClient {
             body.clone(),
             Some((&access_token, idempotency_key)),
             scope,
+            account_group_id.as_deref(),
         );
         match first {
             Ok(response) => Ok(response),
@@ -173,6 +217,7 @@ impl ApiClient {
                     path,
                     body,
                     Some((&refreshed, idempotency_key)),
+                    account_group_id.as_deref(),
                 )
                 .map_err(|error| self.clear_scope_on_exhausted_auth_error(scope, error))
             }
@@ -210,6 +255,7 @@ impl ApiClient {
                     path,
                     body,
                     Some((&refreshed, idempotency_key)),
+                    None,
                 )
                 .map_err(|error| self.clear_epoch_on_exhausted_auth_error(auth_epoch, error))
             }
@@ -224,7 +270,7 @@ impl ApiClient {
         body: Option<Value>,
         access_token: &str,
     ) -> Result<ApiResponse<T>, ApiError> {
-        self.send_once(method, path, body, Some((access_token, None)))
+        self.send_once(method, path, body, Some((access_token, None)), None)
     }
 
     pub(crate) fn refresh_session(&self) -> Result<String, ApiError> {
@@ -279,7 +325,7 @@ impl ApiClient {
         authentication: Option<(&str, Option<&str>)>,
         auth_epoch: u64,
     ) -> Result<ApiResponse<T>, ApiError> {
-        self.send_once(method, path, body, authentication)
+        self.send_once(method, path, body, authentication, None)
             .map_err(|error| self.clear_epoch_on_terminal_error(auth_epoch, error))
     }
 
@@ -290,8 +336,9 @@ impl ApiClient {
         body: Option<Value>,
         authentication: Option<(&str, Option<&str>)>,
         scope: &SessionScope,
+        account_group_id: Option<&str>,
     ) -> Result<ApiResponse<T>, ApiError> {
-        self.send_once(method, path, body, authentication)
+        self.send_once(method, path, body, authentication, account_group_id)
             .map_err(|error| self.clear_scope_on_terminal_error(scope, error))
     }
 
@@ -347,6 +394,7 @@ impl ApiClient {
         path: &str,
         body: Option<Value>,
         authentication: Option<(&str, Option<&str>)>,
+        account_group_id: Option<&str>,
     ) -> Result<ApiResponse<T>, ApiError> {
         let url = self.endpoint(path)?;
         let request_id = Uuid::new_v4().to_string();
@@ -362,6 +410,9 @@ impl ApiClient {
             if let Some(key) = idempotency_key {
                 request = request.header("Idempotency-Key", key);
             }
+        }
+        if let Some(account_group_id) = account_group_id {
+            request = request.header("X-Account-Group-ID", account_group_id);
         }
         if let Some(value) = body {
             request = request.json(&value);
@@ -426,9 +477,99 @@ impl ApiClient {
 mod tests {
     use super::*;
     use crate::runtime::api::session::test_support::MemoryRefreshTokenStore;
+    use crate::runtime::api::{BillingScope, GroupRequestScope};
+    use std::collections::HashMap;
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::thread;
+    use std::sync::Mutex;
+    use std::thread::{self, JoinHandle};
+
+    const TEST_USER_ID: &str = "11111111-1111-4111-8111-111111111111";
+    const TEST_GROUP_ID: &str = "22222222-2222-4222-8222-222222222222";
+
+    #[derive(Debug)]
+    struct CapturedRequest {
+        path: String,
+        headers: HashMap<String, String>,
+    }
+
+    impl CapturedRequest {
+        fn parse(raw: &[u8]) -> Self {
+            let request = String::from_utf8_lossy(raw);
+            let mut lines = request.lines();
+            let path = lines
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or_default()
+                .to_string();
+            let headers = lines
+                .take_while(|line| !line.is_empty())
+                .filter_map(|line| line.split_once(':'))
+                .map(|(name, value)| {
+                    (name.trim().to_ascii_lowercase(), value.trim().to_string())
+                })
+                .collect();
+            Self { path, headers }
+        }
+
+        fn header(&self, name: &str) -> Option<&str> {
+            self.headers
+                .get(&name.to_ascii_lowercase())
+                .map(String::as_str)
+        }
+    }
+
+    struct CapturedRequests {
+        base_url: String,
+        requests: Arc<Mutex<Vec<CapturedRequest>>>,
+        worker: Option<JoinHandle<()>>,
+    }
+
+    impl CapturedRequests {
+        fn serve_json(count: usize, body: &'static str) -> Self {
+            Self::serve_sequence(vec![("200 OK", body); count])
+        }
+
+        fn serve_sequence(responses: Vec<(&'static str, &'static str)>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let requests = Arc::new(Mutex::new(Vec::with_capacity(responses.len())));
+            let captured = requests.clone();
+            let worker = thread::spawn(move || {
+                for (status, body) in responses {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let mut request = [0_u8; 16 * 1024];
+                    let received = stream.read(&mut request).unwrap();
+                    captured
+                        .lock()
+                        .unwrap()
+                        .push(CapturedRequest::parse(&request[..received]));
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len(),
+                    );
+                    stream.write_all(response.as_bytes()).unwrap();
+                }
+            });
+            Self {
+                base_url: format!("http://{address}/"),
+                requests,
+                worker: Some(worker),
+            }
+        }
+
+        fn base_url(&self) -> String {
+            self.base_url.clone()
+        }
+
+        fn finish(mut self) -> Vec<CapturedRequest> {
+            self.worker.take().unwrap().join().unwrap();
+            Arc::try_unwrap(self.requests)
+                .unwrap()
+                .into_inner()
+                .unwrap()
+        }
+    }
 
     fn client_for(base_url: String, timeout: Duration) -> ApiClient {
         ApiClient::new(
@@ -495,6 +636,111 @@ mod tests {
             refresh_expires_at: "2099-01-01T00:00:00Z".to_string(),
             token_type: "X-Token".to_string(),
         }
+    }
+
+    fn authenticated_test_client(base_url: String) -> ApiClient {
+        let client = client_for(base_url, Duration::from_secs(1));
+        client
+            .session()
+            .install_tokens_for_user(&tokens("access-old", "refresh-old"), TEST_USER_ID)
+            .unwrap();
+        client
+    }
+
+    fn success_envelope() -> &'static str {
+        r#"{"request_id":"success","data":{"ok":true},"error":null,"meta":null}"#
+    }
+
+    fn rejected_access_envelope() -> &'static str {
+        r#"{"request_id":"rejected","data":null,"error":{"code":"access_token_invalid","message":"expired","details":null},"meta":null}"#
+    }
+
+    fn refresh_success_envelope() -> &'static str {
+        r#"{"request_id":"refresh","data":{"access_token":"access-new","access_expires_in_seconds":1800,"refresh_token":"refresh-new","refresh_expires_at":"2099-01-01T00:00:00Z","token_type":"X-Token"},"error":null,"meta":null}"#
+    }
+
+    #[test]
+    fn identity_omits_and_billing_includes_group_header() {
+        let capture = CapturedRequests::serve_json(2, success_envelope());
+        let client = authenticated_test_client(capture.base_url());
+        let session = client.session().scope_for_user(TEST_USER_ID).unwrap();
+        let billing = BillingScope {
+            request: GroupRequestScope {
+                session: session.clone(),
+                account_group_id: TEST_GROUP_ID.to_string(),
+            },
+            context_epoch: 1,
+        };
+        let auth_epoch_before = client.session().auth_epoch();
+
+        client
+            .identity_json_scoped::<Value>(
+                Method::GET,
+                "/v1/account-groups",
+                None,
+                None,
+                &session,
+            )
+            .unwrap();
+        client
+            .billing_json_scoped::<Value>(
+                Method::GET,
+                "/v1/account",
+                None,
+                None,
+                &billing,
+            )
+            .unwrap();
+
+        let requests = capture.finish();
+        assert_eq!(requests[0].header("x-account-group-id"), None);
+        assert_eq!(
+            requests[1].header("x-account-group-id"),
+            Some(TEST_GROUP_ID)
+        );
+        assert_eq!(client.session().auth_epoch(), auth_epoch_before);
+    }
+
+    #[test]
+    fn refreshed_business_retry_keeps_captured_billing_group() {
+        let capture = CapturedRequests::serve_sequence(vec![
+            ("401 Unauthorized", rejected_access_envelope()),
+            ("200 OK", refresh_success_envelope()),
+            ("200 OK", success_envelope()),
+        ]);
+        let client = authenticated_test_client(capture.base_url());
+        let session = client.session().scope_for_user(TEST_USER_ID).unwrap();
+        let scope = BillingScope {
+            request: GroupRequestScope {
+                session,
+                account_group_id: TEST_GROUP_ID.to_string(),
+            },
+            context_epoch: 3,
+        };
+        let auth_epoch_before = client.session().auth_epoch();
+
+        client
+            .billing_json_scoped::<Value>(
+                Method::POST,
+                "/v1/generation/tasks",
+                Some(serde_json::json!({"probe": true})),
+                Some("header-retry-test"),
+                &scope,
+            )
+            .unwrap();
+
+        let requests = capture.finish();
+        assert_eq!(
+            requests[0].header("x-account-group-id"),
+            Some(TEST_GROUP_ID)
+        );
+        assert_eq!(requests[1].path, "/v1/auth/refresh");
+        assert_eq!(requests[1].header("x-account-group-id"), None);
+        assert_eq!(
+            requests[2].header("x-account-group-id"),
+            Some(TEST_GROUP_ID)
+        );
+        assert_eq!(client.session().auth_epoch(), auth_epoch_before);
     }
 
     #[test]

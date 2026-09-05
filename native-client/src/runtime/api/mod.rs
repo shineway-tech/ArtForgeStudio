@@ -23,6 +23,7 @@ mod cross_stack_tests;
 pub(crate) use account::*;
 pub(crate) use auth::*;
 pub(crate) use billing_context::*;
+// Payer selection enters through ApiClient::billing_json_scoped; identity transport never adds it.
 pub(crate) use client::*;
 pub(crate) use device::*;
 pub(crate) use error::*;
