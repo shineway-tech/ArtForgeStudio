@@ -11,6 +11,14 @@ use uuid::Uuid;
 
 const TEAM_PAGE_SIZE: &str = "50";
 
+fn deserialize_required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
 pub(crate) fn page_path(path: &str, cursor: Option<&str>) -> Result<String, ApiError> {
     let mut url = reqwest::Url::parse(&format!("http://desktop.invalid{path}")).map_err(
         |error| ApiError::Protocol {
@@ -94,13 +102,17 @@ pub(crate) struct AccountGroupChoice {
     pub(crate) name: String,
     pub(crate) group_status: String,
     pub(crate) role: String,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     pub(crate) member_id: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     pub(crate) relationship_status: Option<String>,
     pub(crate) readable_context: bool,
     pub(crate) selectable: bool,
     pub(crate) group_version: String,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     pub(crate) membership_version: Option<String>,
     pub(crate) capabilities: Vec<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     pub(crate) quota: Option<QuotaSummary>,
 }
 
@@ -678,6 +690,7 @@ pub(crate) struct TeamRegistrationInvitationSummary {
 struct LoginUserWire {
     id: String,
     email_masked: String,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     nickname: Option<String>,
     status: String,
 }
@@ -765,9 +778,33 @@ impl<'de> Deserialize<'de> for EmailLoginOutcome {
                 pending_invitation_count,
                 selection_state,
             } => {
-                if invitations.len() > 50 {
+                let expected_page_len = pending_invitation_count.min(50) as usize;
+                if pending_invitation_count == 0 || invitations.len() != expected_page_len {
                     return Err(serde::de::Error::custom(
-                        "团队邀请摘要超过客户端单页上限",
+                        "团队邀请摘要与待处理邀请数量不一致",
+                    ));
+                }
+                let selection_matches_count = match selection_state {
+                    TeamRegistrationSelectionState::Unique => pending_invitation_count == 1,
+                    TeamRegistrationSelectionState::Multiple => pending_invitation_count >= 2,
+                };
+                if !selection_matches_count {
+                    return Err(serde::de::Error::custom(
+                        "团队邀请选择状态与待处理邀请数量不一致",
+                    ));
+                }
+                let invitation_ids = invitations
+                    .iter()
+                    .map(|invitation| invitation.invitation_id.as_str())
+                    .collect::<std::collections::HashSet<_>>();
+                let group_ids = invitations
+                    .iter()
+                    .map(|invitation| invitation.group_id.as_str())
+                    .collect::<std::collections::HashSet<_>>();
+                if invitation_ids.len() != invitations.len() || group_ids.len() != invitations.len()
+                {
+                    return Err(serde::de::Error::custom(
+                        "团队邀请摘要包含重复邀请或账号组",
                     ));
                 }
                 Ok(Self::TeamRegistrationRequired {
@@ -847,6 +884,7 @@ struct TeamRegistrationAuthenticatedWire {
     user: LoginUserWire,
     group_choices: Vec<AccountGroupChoice>,
     selection_state: TeamRegistrationSelectionState,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     suggested_account_group_id: Option<String>,
     access_token: String,
     access_expires_in_seconds: u64,
@@ -861,6 +899,7 @@ struct TeamRegistrationLoginRequiredWire {
     user: LoginUserWire,
     group_choices: Vec<AccountGroupChoice>,
     selection_state: TeamRegistrationSelectionState,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     suggested_account_group_id: Option<String>,
     session_login_required: bool,
 }
@@ -880,6 +919,33 @@ fn has_duplicate_group_choices(choices: &[AccountGroupChoice]) -> bool {
     unique.len() != choices.len()
 }
 
+fn validate_registration_selection<E>(
+    choices: &[AccountGroupChoice],
+    selection_state: TeamRegistrationSelectionState,
+    suggested_account_group_id: Option<&str>,
+) -> Result<(), E>
+where
+    E: serde::de::Error,
+{
+    match (selection_state, suggested_account_group_id) {
+        (TeamRegistrationSelectionState::Unique, Some(group_id))
+            if choices.iter().any(|choice| choice.group_id == group_id) =>
+        {
+            Ok(())
+        }
+        (TeamRegistrationSelectionState::Unique, Some(_)) => Err(E::custom(
+            "团队注册建议账号组不在账号组快照中",
+        )),
+        (TeamRegistrationSelectionState::Unique, None) => {
+            Err(E::custom("唯一团队注册结果缺少建议账号组"))
+        }
+        (TeamRegistrationSelectionState::Multiple, None) => Ok(()),
+        (TeamRegistrationSelectionState::Multiple, Some(_)) => {
+            Err(E::custom("多团队注册结果不得包含建议账号组"))
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for TeamRegistrationResult {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -892,6 +958,11 @@ impl<'de> Deserialize<'de> for TeamRegistrationResult {
                         "团队注册响应包含重复账号组",
                     ));
                 }
+                validate_registration_selection::<D::Error>(
+                    &wire.group_choices,
+                    wire.selection_state,
+                    wire.suggested_account_group_id.as_deref(),
+                )?;
                 Ok(Self {
                     user: wire.user.into(),
                     group_choices: wire.group_choices,
@@ -919,6 +990,11 @@ impl<'de> Deserialize<'de> for TeamRegistrationResult {
                         "团队注册响应包含重复账号组",
                     ));
                 }
+                validate_registration_selection::<D::Error>(
+                    &wire.group_choices,
+                    wire.selection_state,
+                    wire.suggested_account_group_id.as_deref(),
+                )?;
                 Ok(Self {
                     user: wire.user.into(),
                     group_choices: wire.group_choices,
@@ -1230,18 +1306,33 @@ mod tests {
         assert_eq!(request.header("x-account-group-id"), None);
     }
 
-    fn invitation_summary_json() -> serde_json::Value {
+    fn invitation_summary_json_at(index: usize) -> serde_json::Value {
+        let ordinal = index + 1;
+        let invitation_suffix = 0x1111_1111_1111_u64 + index as u64;
+        let group_suffix = 0x2222_2222_2222_u64 + index as u64;
         json!({
-            "invitation_id": "11111111-1111-4111-8111-111111111111",
-            "group_id": "22222222-2222-4222-8222-222222222222",
-            "team_name": "Studio Team",
-            "owner_display_name": "Owner",
+            "invitation_id": format!("11111111-1111-4111-8111-{invitation_suffix:012x}"),
+            "group_id": format!("22222222-2222-4222-8222-{group_suffix:012x}"),
+            "team_name": if index == 0 {
+                "Studio Team".to_string()
+            } else {
+                format!("Studio Team {ordinal}")
+            },
+            "owner_display_name": if index == 0 {
+                "Owner".to_string()
+            } else {
+                format!("Owner {ordinal}")
+            },
             "recipient_email_masked": "m***@example.com",
             "monthly_limit": "500",
             "status": "pending",
             "expires_at": "2026-09-11T10:00:00Z",
             "version": "1"
         })
+    }
+
+    fn invitation_summary_json() -> serde_json::Value {
+        invitation_summary_json_at(0)
     }
 
     fn invited_login_json(
@@ -1252,11 +1343,11 @@ mod tests {
             "outcome": "team_registration_required",
             "registration_continuation": "opaque-continuation",
             "continuation_expires_at": "2026-09-04T10:05:00Z",
-            "invitations": (0..invitation_count)
-                .map(|_| invitation_summary_json())
+            "invitations": (0..invitation_count.min(50))
+                .map(invitation_summary_json_at)
                 .collect::<Vec<_>>(),
             "pending_invitation_count": invitation_count,
-            "selection_state": "unique"
+            "selection_state": if invitation_count == 1 { "unique" } else { "multiple" }
         });
         if let Some((key, field_value)) = extra_field {
             value
@@ -1720,8 +1811,79 @@ mod tests {
     fn invited_email_login_rejects_tokens_and_more_than_fifty_summaries() {
         let with_token = invited_login_json(1, Some(("access_token", "secret")));
         assert!(decode_email_value(with_token).is_err());
-        let too_many = invited_login_json(51, None);
+        let mut too_many = invited_login_json(51, None);
+        too_many["invitations"]
+            .as_array_mut()
+            .unwrap()
+            .push(invitation_summary_json_at(50));
         assert!(decode_email_value(too_many).is_err());
+    }
+
+    #[test]
+    fn invited_email_login_contract_requires_nonzero_count_and_complete_page() {
+        for count in [50, 51] {
+            let outcome = decode_email_value(invited_login_json(count, None)).unwrap();
+            let EmailLoginOutcome::TeamRegistrationRequired {
+                invitations,
+                pending_invitation_count,
+                ..
+            } = outcome
+            else {
+                panic!("expected registration-required outcome");
+            };
+            assert_eq!(pending_invitation_count, count as u64);
+            assert_eq!(invitations.len(), count.min(50));
+            assert_eq!(
+                invitations
+                    .iter()
+                    .map(|invitation| invitation.invitation_id.as_str())
+                    .collect::<std::collections::HashSet<_>>()
+                    .len(),
+                count.min(50)
+            );
+            assert_eq!(
+                invitations
+                    .iter()
+                    .map(|invitation| invitation.group_id.as_str())
+                    .collect::<std::collections::HashSet<_>>()
+                    .len(),
+                count.min(50)
+            );
+        }
+
+        assert!(decode_email_value(invited_login_json(0, None)).is_err());
+
+        let mut short_page = invited_login_json(2, None);
+        short_page["invitations"].as_array_mut().unwrap().pop();
+        assert!(decode_email_value(short_page).is_err());
+
+        let mut long_page = invited_login_json(51, None);
+        long_page["invitations"].as_array_mut().unwrap().pop();
+        assert!(decode_email_value(long_page).is_err());
+    }
+
+    #[test]
+    fn invited_email_login_contract_requires_selection_to_match_count() {
+        let mut unique_as_multiple = invited_login_json(1, None);
+        unique_as_multiple["selection_state"] = json!("multiple");
+        assert!(decode_email_value(unique_as_multiple).is_err());
+
+        let mut multiple_as_unique = invited_login_json(2, None);
+        multiple_as_unique["selection_state"] = json!("unique");
+        assert!(decode_email_value(multiple_as_unique).is_err());
+    }
+
+    #[test]
+    fn invited_email_login_contract_rejects_duplicate_summary_ids() {
+        let mut duplicate_invitation = invited_login_json(2, None);
+        duplicate_invitation["invitations"][1]["invitation_id"] =
+            duplicate_invitation["invitations"][0]["invitation_id"].clone();
+        assert!(decode_email_value(duplicate_invitation).is_err());
+
+        let mut duplicate_group = invited_login_json(2, None);
+        duplicate_group["invitations"][1]["group_id"] =
+            duplicate_group["invitations"][0]["group_id"].clone();
+        assert!(decode_email_value(duplicate_group).is_err());
     }
 
     #[test]
@@ -1729,7 +1891,14 @@ mod tests {
         assert!(serde_json::from_value::<EmailLoginOutcome>(authenticated_email_login_json())
             .is_ok());
         assert!(serde_json::from_value::<EmailLoginOutcome>(invited_login_json(50, None)).is_ok());
-        assert!(serde_json::from_value::<EmailLoginOutcome>(invited_login_json(51, None)).is_err());
+        assert!(serde_json::from_value::<EmailLoginOutcome>(invited_login_json(51, None)).is_ok());
+
+        let mut too_many = invited_login_json(51, None);
+        too_many["invitations"]
+            .as_array_mut()
+            .unwrap()
+            .push(invitation_summary_json_at(50));
+        assert!(serde_json::from_value::<EmailLoginOutcome>(too_many).is_err());
 
         let continuation_fields = [
             ("registration_continuation", json!("cross-variant")),
@@ -1865,6 +2034,96 @@ mod tests {
                 .unwrap()
                 .push(duplicate);
             assert!(serde_json::from_value::<TeamRegistrationResult>(duplicate_choice).is_err());
+        }
+    }
+
+    #[test]
+    fn team_registration_wire_contract_requires_nullable_suggestion_key() {
+        for mut value in [first_registration_json(), replay_registration_json()] {
+            value
+                .as_object_mut()
+                .unwrap()
+                .remove("suggested_account_group_id");
+            assert!(
+                decode_registration_value(value).is_err(),
+                "registration accepted a missing suggested_account_group_id"
+            );
+        }
+    }
+
+    #[test]
+    fn team_registration_wire_contract_requires_nullable_user_nickname() {
+        for mut value in [first_registration_json(), replay_registration_json()] {
+            value["user"].as_object_mut().unwrap().remove("nickname");
+            assert!(
+                decode_registration_value(value).is_err(),
+                "registration accepted a missing user.nickname"
+            );
+        }
+
+        for mut value in [first_registration_json(), replay_registration_json()] {
+            value["user"]["nickname"] = serde_json::Value::Null;
+            assert!(decode_registration_value(value).is_ok());
+        }
+    }
+
+    #[test]
+    fn team_registration_wire_contract_requires_nullable_group_choice_fields() {
+        for field in [
+            "member_id",
+            "relationship_status",
+            "membership_version",
+            "quota",
+        ] {
+            for mut value in [first_registration_json(), replay_registration_json()] {
+                value["group_choices"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(field);
+                assert!(
+                    decode_registration_value(value).is_err(),
+                    "registration accepted a missing group_choices[].{field}"
+                );
+            }
+
+            for mut value in [first_registration_json(), replay_registration_json()] {
+                value["group_choices"][0][field] = serde_json::Value::Null;
+                assert!(decode_registration_value(value).is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn team_registration_wire_contract_validates_selection_and_suggestion() {
+        for mut value in [first_registration_json(), replay_registration_json()] {
+            value["suggested_account_group_id"] = serde_json::Value::Null;
+            assert!(
+                decode_registration_value(value).is_err(),
+                "unique registration accepted a null suggestion"
+            );
+        }
+
+        for mut value in [first_registration_json(), replay_registration_json()] {
+            value["suggested_account_group_id"] =
+                json!("99999999-9999-4999-8999-999999999999");
+            assert!(
+                decode_registration_value(value).is_err(),
+                "unique registration accepted a suggestion absent from group_choices"
+            );
+        }
+
+        for mut value in [first_registration_json(), replay_registration_json()] {
+            value["selection_state"] = json!("multiple");
+            assert!(
+                decode_registration_value(value).is_err(),
+                "multiple registration accepted a non-null suggestion"
+            );
+        }
+
+        for mut value in [first_registration_json(), replay_registration_json()] {
+            value["selection_state"] = json!("multiple");
+            value["suggested_account_group_id"] = serde_json::Value::Null;
+            assert!(decode_registration_value(value).is_ok());
         }
     }
 
