@@ -1876,8 +1876,8 @@ mod tests {
         assert!(inspiration.contains("preference-key: \"inspiration\";"));
         assert!(state.contains("callback save-gallery-layout(string, string);"));
         assert!(app.contains("state.on_save_gallery_layout"));
-        assert!(app.contains("save_user_profile(&app);"));
-        assert!(profile.contains("ui_preferences: UiPreferencesData"));
+        assert!(app.contains("save_device_settings(&app);"));
+        assert!(profile.contains("fn device_settings_data"));
         assert!(profile.contains("state.set_generation_gallery_layout"));
         assert!(thumbnail.contains("in property <bool> masonry: false;"));
         assert!(thumbnail.contains("root.item.height / root.item.width"));
@@ -2010,47 +2010,40 @@ mod tests {
 
     #[test]
     fn gallery_layout_preferences_are_backward_compatible_and_normalized() {
-        let legacy: UserProfileData =
+        let legacy: LegacyUserProfileData =
             serde_json::from_str("{}").expect("deserialize legacy user profile");
         assert_eq!(legacy.ui_preferences.generation_gallery_layout, "grid");
         assert_eq!(legacy.ui_preferences.asset_gallery_layout, "grid");
         assert_eq!(legacy.ui_preferences.inspiration_gallery_layout, "grid");
 
-        let saved = UserProfileData {
-            ui_preferences: UiPreferencesData {
-                generation_gallery_layout: "waterfall".to_string(),
-                asset_gallery_layout: "waterfall".to_string(),
-                inspiration_gallery_layout: "waterfall".to_string(),
-            },
-            ..UserProfileData::default()
+        let saved = DeviceSettings {
+            generation_gallery_layout: "waterfall".to_string(),
+            asset_gallery_layout: "waterfall".to_string(),
+            inspiration_gallery_layout: "waterfall".to_string(),
+            ..DeviceSettings::default()
         };
         let serialized = serde_json::to_string(&saved).expect("serialize user profile");
-        let restored: UserProfileData =
-            serde_json::from_str(&serialized).expect("restore user profile");
-        assert_eq!(
-            restored.ui_preferences.generation_gallery_layout,
-            "waterfall"
-        );
+        let restored: DeviceSettings = serde_json::from_str(&serialized).expect("restore user profile");
+        assert_eq!(restored.generation_gallery_layout, "waterfall");
         assert_eq!(normalize_gallery_layout(" WATERFALL "), "waterfall");
         assert_eq!(normalize_gallery_layout("unsupported"), "grid");
     }
 
     #[test]
     fn close_behavior_preferences_are_backward_compatible_and_normalized() {
-        let legacy: UserProfileData =
+        let legacy: LegacyUserProfileData =
             serde_json::from_str("{}").expect("deserialize legacy user profile");
         assert_eq!(normalize_close_behavior(&legacy.close_behavior), "ask");
         assert_eq!(normalize_close_behavior(" EXIT "), "exit");
         assert_eq!(normalize_close_behavior("tray"), "tray");
         assert_eq!(normalize_close_behavior("unsupported"), "ask");
 
-        let saved = UserProfileData {
+        let saved = DeviceSettings {
             close_behavior: "tray".to_string(),
-            ..UserProfileData::default()
+            ..DeviceSettings::default()
         };
         let serialized = serde_json::to_string(&saved).expect("serialize user profile");
-        let restored: UserProfileData =
-            serde_json::from_str(&serialized).expect("restore user profile");
+        let restored: DeviceSettings = serde_json::from_str(&serialized).expect("restore user profile");
         assert_eq!(restored.close_behavior, "tray");
     }
 
@@ -2087,6 +2080,73 @@ mod tests {
         assert!(runtime.contains("slint::quit_event_loop()"));
         assert!(profile.contains("state.set_close_behavior"));
         assert!(profile.contains("close_behavior: normalize_close_behavior"));
+    }
+
+    #[test]
+    fn task7_startup_and_shutdown_leave_private_services_unloaded() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let private = directory.path().join("private-existing");
+        fs::create_dir(&private).unwrap();
+        fs::write(private.join("user-profile.json"), b"preserve-private").unwrap();
+        let state = app.global::<AppState>();
+        state.set_input_dir(private.display().to_string().into());
+        state.set_prompt_dir(private.display().to_string().into());
+        state.set_output_dir(private.display().to_string().into());
+        let context = AppContext::default();
+        super::app::apply_startup_device_state(
+            &app,
+            DeviceSettings {
+                theme_id: "dark".into(),
+                language: "en".into(),
+                ..Default::default()
+            },
+            None,
+        );
+        assert_eq!(state.get_theme_id(), "dark");
+        assert_eq!(state.get_language(), "en");
+        assert!(state.get_input_dir().is_empty());
+        assert!(state.get_prompt_dir().is_empty());
+        assert!(state.get_output_dir().is_empty());
+        assert!(context.store.borrow().assets.is_empty());
+        assert!(context.store.borrow().generations.is_empty());
+        assert!(context.store.borrow().inspiration.is_empty());
+        assert_eq!(
+            fs::read(private.join("user-profile.json")).unwrap(),
+            b"preserve-private"
+        );
+        assert_eq!(fs::read_dir(&private).unwrap().count(), 1);
+        // The whole executable cannot run in a fixture: it owns the process UI,
+        // tray, global repository and session. Keep its wiring assertion beside
+        // the actual isolated startup-presentation behavior above.
+        let run = include_str!("app.rs")
+            .split("pub(super) fn apply_startup_device_state")
+            .next()
+            .unwrap();
+        for private_service in [
+            "init_portable_dirs(",
+            "initialize_storage_index(",
+            "initialize_preview_cache(",
+            "cleanup_stale_reference_imports(",
+            "cleanup_stale_toolbox_files(",
+            "load_showcase_images(",
+            "seed_inspiration(",
+            "load_user_profile(",
+            "load_local_store(",
+            "rebuild_storage_references(",
+            "push_startup_state(",
+            "save_local_store_checked(",
+            "save_user_profile_checked(",
+            "cleanup_orphaned_durable_copies_",
+        ] {
+            assert!(
+                !run.contains(private_service),
+                "private service still starts without a namespace: {private_service}"
+            );
+        }
+        assert!(run.contains("save_device_settings_checked(&app)?"));
+        assert!(run.contains("flush_device()?"));
     }
 
     #[test]

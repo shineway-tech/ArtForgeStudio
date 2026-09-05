@@ -1,112 +1,27 @@
 use super::*;
 use crate::directory_migration::MigrationPlan;
 
-pub(super) fn wire_directory_migration_callbacks(app: &AppWindow, context: AppContext) {
-    let pending: Rc<RefCell<Option<(String, MigrationPlan)>>> = Rc::new(RefCell::new(None));
+pub(super) fn wire_directory_migration_callbacks(app: &AppWindow, _context: AppContext) {
+    // TEMP(team-accounts): Task 10 removes the obsolete relocation flow.
+    // These callbacks reject before opening a dialog, starting a worker or
+    // resolving/copying a private filesystem path.
     let state = app.global::<AppState>();
-    {
-        let weak = app.as_weak();
-        let context = context.clone();
-        let pending = pending.clone();
-        state.on_pick_dir(move |kind| {
-            let Some(app) = weak.upgrade() else {
-                return;
-            };
-            let state = app.global::<AppState>();
-            if state.get_directory_migration_open() {
-                return;
-            }
-            if migration_has_active_work(&app, &context) {
-                show_migration_error(&app, "请等待生成、文件处理或账号恢复完成后再迁移目录。");
-                return;
-            }
-            let config = directory_locations();
-            let Some(source) = config.directory(kind.as_str()) else {
-                return;
-            };
-            let english = state.get_language() == "en";
-            let Some(destination) = rfd::FileDialog::new()
-                .set_title(if english {
-                    "Choose migration destination"
-                } else {
-                    "选择迁移目标文件夹"
-                })
-                .set_directory(&source)
-                .pick_folder()
-            else {
-                return;
-            };
-            let mut protected = vec![app_data_dir()];
-            for other in ["input", "output", "prompt"] {
-                if other != kind.as_str() {
-                    protected.push(config.directory(other).unwrap());
-                }
-            }
-            state.set_directory_migration_kind(kind.clone());
-            state.set_directory_migration_source(display_directory_path(&source).into());
-            state.set_directory_migration_target(display_directory_path(&destination).into());
-            state.set_directory_migration_stage("checking".into());
-            state.set_directory_migration_message("正在检查目录和文件冲突…".into());
-            state.set_directory_migration_open(true);
-            let (sender, receiver) = mpsc::channel();
-            std::thread::spawn(move || {
-                let _ = sender.send(
-                    MigrationPlan::prepare(&source, &destination, &protected)
-                        .map_err(|e| e.to_string()),
-                );
-            });
-            poll_migration_plan(
-                app.as_weak(),
-                kind.to_string(),
-                pending.clone(),
-                Rc::new(receiver),
-            );
-        });
-    }
-    {
-        let weak = app.as_weak();
-        let pending = pending.clone();
-        state.on_close_directory_migration(move || {
-            let Some(app) = weak.upgrade() else {
-                return;
-            };
-            let state = app.global::<AppState>();
-            if state.get_directory_migration_busy() {
-                return;
-            }
-            pending.borrow_mut().take();
-            state.set_directory_migration_open(false);
-        });
-    }
-    {
-        let weak = app.as_weak();
-        let context = context.clone();
-        state.on_confirm_directory_migration(move || {
-            let Some(app) = weak.upgrade() else {
-                return;
-            };
-            if app.global::<AppState>().get_directory_migration_stage() != "confirm" {
-                return;
-            }
-            if migration_has_active_work(&app, &context) {
-                show_migration_error(&app, "仍有文件操作正在运行，请完成后重试。");
-                return;
-            }
-            let Some((kind, plan)) = pending.borrow_mut().take() else {
-                return;
-            };
-            start_directory_migration(&app, context.clone(), kind, plan);
-        });
-    }
     let weak = app.as_weak();
-    app.window().on_close_requested(move || {
-        if weak
-            .upgrade()
-            .is_some_and(|app| app.global::<AppState>().get_directory_migration_busy())
-        {
-            slint::CloseRequestResponse::KeepWindowShown
-        } else {
-            slint::CloseRequestResponse::HideWindow
+    state.on_pick_dir(move |_| {
+        if let Some(app) = weak.upgrade() {
+            show_migration_error(&app, "目录迁移暂不可用");
+        }
+    });
+    let weak = app.as_weak();
+    state.on_confirm_directory_migration(move || {
+        if let Some(app) = weak.upgrade() {
+            show_migration_error(&app, "目录迁移暂不可用");
+        }
+    });
+    let weak = app.as_weak();
+    state.on_close_directory_migration(move || {
+        if let Some(app) = weak.upgrade() {
+            app.global::<AppState>().set_directory_migration_open(false);
         }
     });
 }
@@ -335,37 +250,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn directory_migration_guards_busy_operations_and_requires_confirmation() {
+    fn directory_migration_callbacks_fail_closed_before_io() {
         i_slint_backend_testing::init_no_event_loop();
         let app = AppWindow::new().unwrap();
-        let context = AppContext::default();
-        wire_directory_migration_callbacks(&app, context.clone());
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source");
+        let destination = directory.path().join("destination");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("private.txt"), b"unchanged").unwrap();
+        wire_directory_migration_callbacks(&app, AppContext::default());
         let state = app.global::<AppState>();
-        state.set_generating(true);
-        state.invoke_pick_dir("output".into());
-        assert_eq!(state.get_directory_migration_stage(), "error");
-        assert!(state.get_directory_migration_open());
+        state.set_input_dir(source.display().to_string().into());
+        state.set_directory_migration_source(source.display().to_string().into());
+        state.set_directory_migration_target(destination.display().to_string().into());
+        for kind in ["input", "output", "prompt"] {
+            state.invoke_pick_dir(kind.into());
+            assert_eq!(state.get_directory_migration_stage(), "error");
+            state.set_directory_migration_stage("confirm".into());
+            state.invoke_confirm_directory_migration();
+            assert_eq!(state.get_directory_migration_stage(), "error");
+            assert!(!state.get_directory_migration_busy());
+            assert!(!destination.exists());
+            assert_eq!(fs::read(source.join("private.txt")).unwrap(), b"unchanged");
+        }
         state.invoke_close_directory_migration();
         assert!(!state.get_directory_migration_open());
-        state.set_generating(false);
-        state.set_directory_migration_open(true);
-        state.set_directory_migration_stage("copying".into());
-        assert!(state.get_directory_migration_busy());
-        state.invoke_close_directory_migration();
-        assert!(state.get_directory_migration_open());
-        state.invoke_confirm_directory_migration();
-        assert_eq!(state.get_directory_migration_stage(), "copying");
-        state.set_directory_migration_stage("confirm".into());
-        state.invoke_confirm_directory_migration();
-        assert_eq!(state.get_directory_migration_stage(), "confirm");
-        state.invoke_close_directory_migration();
-        assert!(!state.get_directory_migration_open());
-        context
-            .generations
-            .active
-            .borrow_mut()
-            .insert("background".into(), ActiveGeneration::default());
-        assert!(migration_has_active_work(&app, &context));
     }
 
     #[test]

@@ -20,30 +20,22 @@ pub(super) fn run() -> Result<()> {
     init_version_state(&app);
     cleanup_stale_update_dirs();
     apply_theme(&app, "light");
-    init_portable_dirs(&app)?;
-    initialize_client_state_repository().context("无法初始化本地元数据库")?;
-    set_directory_locations(load_directory_locations().context("无法加载目录设置")?);
-    sync_directory_locations(&app);
-    initialize_storage_index();
-    initialize_preview_cache();
-    cleanup_stale_reference_imports();
-    cleanup_stale_toolbox_files();
-    load_user_profile(&app);
-    load_showcase_images(&app);
+    fs::create_dir_all(app_data_dir())?;
+    let data_root_capability = Arc::new(NamespaceFs::open_data_root(&app_data_dir())?);
+    initialize_client_state_repository(Arc::clone(&data_root_capability))
+        .context("无法初始化本地元数据库")?;
+    apply_startup_device_state(
+        &app,
+        load_device_settings()?.unwrap_or_default(),
+        load_export_directory()?,
+    );
     let tray = AppTray::new()?;
 
     let context = AppContext {
+        data_root_capability: Some(data_root_capability),
         backend: Some(Arc::new(BackendRuntime::new(&app_data_dir())?)),
         ..AppContext::default()
     };
-    let store = context.store.clone();
-    let local_store_loaded = load_local_store(&app, &store);
-    seed_inspiration(&app, &store)?;
-    let reference_index_healthy = rebuild_storage_references(&store.borrow());
-    if local_store_loaded && reference_index_healthy {
-        cleanup_orphaned_durable_copies_at_startup();
-    }
-    push_startup_state(&app, &store.borrow());
 
     wire_callbacks(&app, context.clone());
     wire_close_behavior(&app, &tray);
@@ -52,21 +44,28 @@ pub(super) fn run() -> Result<()> {
     initialize_auth(&app, context.clone());
     tray.show()?;
     app.run()?;
-    store_current_prompt_draft(
-        &app,
-        &store,
-        &resolve_category(&app.global::<AppState>().get_asset_type().to_string(), ""),
-    );
-    let _ = save_user_profile_checked(&app);
-    if local_store_loaded && save_local_store_checked(&app, &store.borrow()).is_ok() {
-        rebuild_storage_references(&store.borrow());
-        cleanup_orphaned_durable_copies_at_shutdown();
-    } else {
-        // Still persist a recovered/new store when possible, but keep durable reference and
-        // canvas copies for the whole session if startup could not prove the JSON was healthy.
-        let _ = save_local_store_checked(&app, &store.borrow());
-    }
+    save_device_settings_checked(&app)?;
+    flush_device()?;
     Ok(())
+}
+
+pub(super) fn apply_startup_device_state(
+    app: &AppWindow,
+    settings: DeviceSettings,
+    export: Option<ExportDirectoryPreference>,
+) {
+    // TEMP(team-accounts): private services start only after Task 10 publishes
+    // a namespace lease. These presentation values confer no filesystem authority.
+    apply_device_settings(app, settings);
+    let state = app.global::<AppState>();
+    state.set_input_dir("".into());
+    state.set_prompt_dir("".into());
+    state.set_output_dir(
+        export
+            .map(|value| display_directory_path(&value.normalized_path))
+            .unwrap_or_default()
+            .into(),
+    );
 }
 
 fn wire_close_behavior(app: &AppWindow, tray: &AppTray) {
@@ -125,7 +124,7 @@ fn wire_close_behavior(app: &AppWindow, tray: &AppTray) {
                     return;
                 }
                 app.global::<AppState>().set_close_behavior(behavior.into());
-                if let Err(error) = save_user_profile_checked(&app) {
+                if let Err(error) = save_device_settings_checked(&app) {
                     eprintln!("failed to save close behavior: {error}");
                 }
             });
@@ -145,7 +144,7 @@ fn wire_close_behavior(app: &AppWindow, tray: &AppTray) {
                 let state = app.global::<AppState>();
                 state.set_close_behavior(behavior.into());
                 state.set_close_choice_open(false);
-                if let Err(error) = save_user_profile_checked(&app) {
+                if let Err(error) = save_device_settings_checked(&app) {
                     eprintln!("failed to save confirmed close behavior: {error}");
                 }
                 if behavior == "tray" {
@@ -342,7 +341,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
                 let state = app.global::<AppState>();
                 state.set_theme_id(theme.clone());
                 apply_theme(&app, &theme);
-                save_user_profile(&app);
+                save_device_settings(&app);
             }
         });
     }
@@ -357,7 +356,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
                     "rounded"
                 };
                 app.global::<AppState>().set_card_style(style.into());
-                save_user_profile(&app);
+                save_device_settings(&app);
             }
         });
     }
@@ -367,7 +366,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
         state.on_set_language(move |lang| {
             if let Some(app) = app_weak.upgrade() {
                 app.global::<AppState>().set_language(lang);
-                save_user_profile(&app);
+                save_device_settings(&app);
             }
         });
     }
@@ -386,7 +385,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
                 "inspiration" => state.set_inspiration_gallery_layout(layout),
                 _ => return,
             }
-            save_user_profile(&app);
+            save_device_settings(&app);
         });
     }
 

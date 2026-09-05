@@ -492,6 +492,7 @@ struct ActivePaymentSession {
 
 #[derive(Clone, Default)]
 struct AppContext {
+    data_root_capability: Option<Arc<DataRootCapability>>,
     store: Rc<RefCell<Store>>,
     canvas_history: Rc<RefCell<CanvasController>>,
     generations: Rc<GenerationRegistry>,
@@ -680,17 +681,97 @@ struct UserProfileData {
     #[serde(default)]
     accepted_privacy_version: String,
     #[serde(default)]
+    asset_type: String,
+}
+
+// Quarantine-only decoder. Never serialize this v1 identity/presentation shape
+// into an assigned user's settings.
+#[derive(Deserialize)]
+struct LegacyUserProfileData {
+    #[serde(default)]
     theme_id: String,
     #[serde(default = "default_card_style")]
     card_style: String,
     #[serde(default)]
     language: String,
     #[serde(default)]
-    asset_type: String,
-    #[serde(default)]
     close_behavior: String,
     #[serde(default)]
     ui_preferences: UiPreferencesData,
+}
+
+impl LegacyUserProfileData {
+    fn device_settings(&self) -> DeviceSettings {
+        DeviceSettings {
+            theme_id: self.theme_id.clone(),
+            card_style: self.card_style.clone(),
+            language: self.language.clone(),
+            close_behavior: self.close_behavior.clone(),
+            generation_gallery_layout: self.ui_preferences.generation_gallery_layout.clone(),
+            asset_gallery_layout: self.ui_preferences.asset_gallery_layout.clone(),
+            inspiration_gallery_layout: self.ui_preferences.inspiration_gallery_layout.clone(),
+        }
+        .normalized()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+struct DeviceSettings {
+    theme_id: String,
+    card_style: String,
+    language: String,
+    close_behavior: String,
+    generation_gallery_layout: String,
+    asset_gallery_layout: String,
+    inspiration_gallery_layout: String,
+}
+
+impl Default for DeviceSettings {
+    fn default() -> Self {
+        Self {
+            theme_id: "light".into(),
+            card_style: default_card_style(),
+            language: "zh".into(),
+            close_behavior: "ask".into(),
+            generation_gallery_layout: default_gallery_layout(),
+            asset_gallery_layout: default_gallery_layout(),
+            inspiration_gallery_layout: default_gallery_layout(),
+        }
+    }
+}
+
+impl DeviceSettings {
+    fn normalized(&self) -> Self {
+        Self {
+            theme_id: if self.theme_id.trim().is_empty() {
+                "light".into()
+            } else {
+                self.theme_id.trim().into()
+            },
+            card_style: if self.card_style == "square" {
+                "square".into()
+            } else {
+                "rounded".into()
+            },
+            language: if self.language.trim().is_empty() {
+                "zh".into()
+            } else {
+                self.language.trim().into()
+            },
+            close_behavior: normalize_close_behavior(&self.close_behavior).into(),
+            generation_gallery_layout: normalize_gallery_layout(&self.generation_gallery_layout)
+                .into(),
+            asset_gallery_layout: normalize_gallery_layout(&self.asset_gallery_layout).into(),
+            inspiration_gallery_layout: normalize_gallery_layout(&self.inspiration_gallery_layout)
+                .into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct ExportDirectoryPreference {
+    normalized_path: PathBuf,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

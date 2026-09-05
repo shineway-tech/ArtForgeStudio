@@ -74,29 +74,8 @@ pub(super) fn user_profile_path() -> PathBuf {
     app_data_dir().join("user-profile.json")
 }
 
-pub(super) fn load_user_profile(app: &AppWindow) {
-    let profile = match load_client_user_profile() {
-        Ok(Some(profile)) => profile,
-        Ok(None) => {
-            let path = user_profile_path();
-            restore_json_backup_if_needed(&path);
-            let Ok(text) = fs::read_to_string(&path) else {
-                return;
-            };
-            let Ok(profile) = serde_json::from_str::<UserProfileData>(&text) else {
-                return;
-            };
-            if persist_client_user_profile_checked(profile.clone()).is_ok() {
-                archive_migrated_json(&path);
-            }
-            profile
-        }
-        Err(error) => {
-            eprintln!("failed to load local user profile: {error}");
-            return;
-        }
-    };
-    apply_user_profile(app, profile);
+pub(super) fn load_user_profile(_app: &AppWindow) {
+    // TEMP(team-accounts): removed in Task 10. No lease grants no private I/O.
 }
 
 fn apply_user_profile(app: &AppWindow, profile: UserProfileData) {
@@ -113,41 +92,19 @@ fn apply_user_profile(app: &AppWindow, profile: UserProfileData) {
     state.set_accepted_user_terms_version(profile.accepted_user_terms_version.into());
     state.set_accepted_privacy_version(profile.accepted_privacy_version.into());
     state.set_nickname(profile.nickname.into());
-    if !profile.language.trim().is_empty() {
-        state.set_language(profile.language.into());
-    }
-    if !profile.theme_id.trim().is_empty() {
-        state.set_theme_id(profile.theme_id.clone().into());
-        apply_theme(app, &profile.theme_id);
-    }
-    let card_style = if profile.card_style == "square" {
-        "square"
-    } else {
-        "rounded"
-    };
-    state.set_card_style(card_style.into());
     if !profile.asset_type.trim().is_empty() {
         let category = resolve_category(&profile.asset_type, "");
         state.set_asset_type(category.into());
     }
-    state.set_close_behavior(normalize_close_behavior(&profile.close_behavior).into());
-    state.set_generation_gallery_layout(
-        normalize_gallery_layout(&profile.ui_preferences.generation_gallery_layout).into(),
-    );
-    state.set_asset_gallery_layout(
-        normalize_gallery_layout(&profile.ui_preferences.asset_gallery_layout).into(),
-    );
-    state.set_inspiration_gallery_layout(
-        normalize_gallery_layout(&profile.ui_preferences.inspiration_gallery_layout).into(),
-    );
 }
 
-pub(super) fn save_user_profile(app: &AppWindow) {
-    let _ = persist_client_user_profile_async(user_profile_data(app));
+pub(super) fn save_user_profile(_app: &AppWindow) {
+    // TEMP(team-accounts): removed in Task 10.
 }
 
-pub(super) fn save_user_profile_checked(app: &AppWindow) -> Result<()> {
-    persist_client_user_profile_checked(user_profile_data(app))
+pub(super) fn save_user_profile_checked(_app: &AppWindow) -> Result<()> {
+    // TEMP(team-accounts): removed in Task 10.
+    anyhow::bail!("用户命名空间尚未激活")
 }
 
 fn user_profile_data(app: &AppWindow) -> UserProfileData {
@@ -161,30 +118,7 @@ fn user_profile_data(app: &AppWindow) -> UserProfileData {
         email_mask: state.get_email_mask().to_string(),
         accepted_user_terms_version: state.get_accepted_user_terms_version().to_string(),
         accepted_privacy_version: state.get_accepted_privacy_version().to_string(),
-        theme_id: state.get_theme_id().to_string(),
-        card_style: if state.get_card_style() == "square" {
-            "square".to_string()
-        } else {
-            "rounded".to_string()
-        },
-        language: state.get_language().to_string(),
         asset_type: resolve_category(&state.get_asset_type().to_string(), ""),
-        close_behavior: normalize_close_behavior(&state.get_close_behavior().to_string())
-            .to_string(),
-        ui_preferences: UiPreferencesData {
-            generation_gallery_layout: normalize_gallery_layout(
-                &state.get_generation_gallery_layout().to_string(),
-            )
-            .to_string(),
-            asset_gallery_layout: normalize_gallery_layout(
-                &state.get_asset_gallery_layout().to_string(),
-            )
-            .to_string(),
-            inspiration_gallery_layout: normalize_gallery_layout(
-                &state.get_inspiration_gallery_layout().to_string(),
-            )
-            .to_string(),
-        },
     };
     profile
 }
@@ -215,33 +149,9 @@ fn archive_migrated_json(path: &Path) {
     }
 }
 
-pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) -> bool {
-    let data = match load_client_state() {
-        Ok(Some(data)) => data,
-        Ok(None) => {
-            let path = local_store_path();
-            restore_json_backup_if_needed(&path);
-            let Ok(text) = fs::read_to_string(&path) else {
-                recover_output_assets(app, store);
-                let _ = save_local_store_checked(app, &store.borrow());
-                return false;
-            };
-            let Ok(data) = serde_json::from_str::<LocalStoreData>(&text) else {
-                recover_output_assets(app, store);
-                let _ = save_local_store_checked(app, &store.borrow());
-                return false;
-            };
-            if persist_client_state_checked(data.clone()).is_ok() {
-                archive_migrated_json(&path);
-            }
-            data
-        }
-        Err(error) => {
-            eprintln!("failed to load local client state: {error}");
-            return false;
-        }
-    };
-    apply_local_store_data(app, store, data)
+pub(super) fn load_local_store(_app: &AppWindow, _store: &Rc<RefCell<Store>>) -> bool {
+    // TEMP(team-accounts): removed in Task 10.
+    false
 }
 
 fn apply_local_store_data(
@@ -844,13 +754,13 @@ pub(super) fn recovered_asset_title(path: &Path) -> String {
     }
 }
 
-pub(super) fn save_local_store(app: &AppWindow, store: &Store) {
-    let data = local_store_data(app, store);
-    let _ = persist_client_state_async(data);
+pub(super) fn save_local_store(_app: &AppWindow, _store: &Store) {
+    // TEMP(team-accounts): removed in Task 10.
 }
 
-pub(super) fn save_local_store_checked(app: &AppWindow, store: &Store) -> Result<()> {
-    persist_client_state_checked(local_store_data(app, store))
+pub(super) fn save_local_store_checked(_app: &AppWindow, _store: &Store) -> Result<()> {
+    // TEMP(team-accounts): removed in Task 10.
+    anyhow::bail!("用户命名空间尚未激活")
 }
 
 fn local_store_data(app: &AppWindow, store: &Store) -> LocalStoreData {
@@ -1354,4 +1264,99 @@ pub(super) fn asset_from_stored(asset: StoredAssetData) -> Option<AssetData> {
         delivery_recoverable: false,
         delivery_downloading: false,
     })
+}
+
+pub(super) fn load_device_settings_into_app(app: &AppWindow) -> Result<()> {
+    apply_device_settings(app, load_device_settings()?.unwrap_or_default());
+    Ok(())
+}
+
+pub(super) fn apply_device_settings(app: &AppWindow, settings: DeviceSettings) {
+    let settings = settings.normalized();
+    let state = app.global::<AppState>();
+    state.set_theme_id(settings.theme_id.clone().into());
+    apply_theme(app, &settings.theme_id);
+    state.set_card_style(settings.card_style.into());
+    state.set_language(settings.language.into());
+    state.set_close_behavior(settings.close_behavior.into());
+    state.set_generation_gallery_layout(settings.generation_gallery_layout.into());
+    state.set_asset_gallery_layout(settings.asset_gallery_layout.into());
+    state.set_inspiration_gallery_layout(settings.inspiration_gallery_layout.into());
+}
+
+fn device_settings_data(app: &AppWindow) -> DeviceSettings {
+    let state = app.global::<AppState>();
+    DeviceSettings {
+        theme_id: state.get_theme_id().to_string(),
+        card_style: state.get_card_style().to_string(),
+        language: state.get_language().to_string(),
+        close_behavior: normalize_close_behavior(&state.get_close_behavior()).into(),
+        generation_gallery_layout: state.get_generation_gallery_layout().to_string(),
+        asset_gallery_layout: state.get_asset_gallery_layout().to_string(),
+        inspiration_gallery_layout: state.get_inspiration_gallery_layout().to_string(),
+    }
+    .normalized()
+}
+
+pub(super) fn save_device_settings(app: &AppWindow) {
+    let _ = persist_device_settings_async(device_settings_data(app));
+}
+
+pub(super) fn save_device_settings_checked(app: &AppWindow) -> Result<()> {
+    persist_device_settings_checked(device_settings_data(app))
+}
+
+#[cfg(test)]
+mod device_profile_isolation_tests {
+    use super::*;
+
+    #[test]
+    fn applying_a_b_a_private_profiles_cannot_overwrite_device_presentation() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let settings = DeviceSettings {
+            theme_id: "dark".into(),
+            card_style: "square".into(),
+            language: "en".into(),
+            close_behavior: "tray".into(),
+            generation_gallery_layout: "waterfall".into(),
+            asset_gallery_layout: "waterfall".into(),
+            inspiration_gallery_layout: "grid".into(),
+        };
+        apply_device_settings(&app, settings.clone());
+        for nickname in ["Alice", "Bob", "Alice"] {
+            apply_user_profile(
+                &app,
+                UserProfileData {
+                    nickname: nickname.into(),
+                    asset_type: "scene".into(),
+                    ..Default::default()
+                },
+            );
+            assert_eq!(app.global::<AppState>().get_nickname(), nickname);
+            assert_eq!(device_settings_data(&app), settings);
+            let profile = serde_json::to_value(user_profile_data(&app)).unwrap();
+            for key in KNOWN_DEVICE_SETTING_KEYS {
+                assert!(profile.get(key).is_none());
+            }
+            assert!(profile.get("ui_preferences").is_none());
+        }
+    }
+
+    #[test]
+    fn no_lease_local_store_entrypoints_are_no_io_and_do_not_apply_private_state() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let store = Rc::new(RefCell::new(Store::default()));
+        app.global::<AppState>().set_nickname("Current".into());
+        store.borrow_mut().custom_prompts = vec!["current private draft".into()];
+        load_user_profile(&app);
+        assert!(!load_local_store(&app, &store));
+        save_user_profile(&app);
+        save_local_store(&app, &store.borrow());
+        assert!(save_user_profile_checked(&app).is_err());
+        assert!(save_local_store_checked(&app, &store.borrow()).is_err());
+        assert_eq!(app.global::<AppState>().get_nickname(), "Current");
+        assert_eq!(store.borrow().custom_prompts, ["current private draft"]);
+    }
 }
