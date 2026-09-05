@@ -153,7 +153,8 @@ mod tests {
             "available": value,
             "reserved": "0",
             "lifetime_granted": value,
-            "lifetime_spent": "1"
+            "lifetime_spent": "1",
+            "version": value
         }))
         .unwrap();
         let meta: ApiMeta = serde_json::from_value(serde_json::json!({
