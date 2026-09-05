@@ -103,6 +103,23 @@ fn agreement_acceptances(auth: &AuthApi) -> Vec<AgreementAcceptance> {
         .collect()
 }
 
+fn login_and_install_authenticated_email(
+    client: &ApiClient,
+    auth: &AuthApi,
+    email: &str,
+    code: &str,
+    acceptances: &[AgreementAcceptance],
+) -> Result<LoginResponse, ApiError> {
+    let outcome = auth.login_response(email, code, acceptances)?;
+    let EmailLoginOutcome::Authenticated { login } = outcome else {
+        panic!("cross-stack authenticated fixture unexpectedly required invited registration");
+    };
+    client
+        .session()
+        .install_tokens_for_user(&login.tokens, &login.user.id)?;
+    Ok(login)
+}
+
 fn login_new_user() -> (ApiClient, LoginResponse) {
     let (client, login, _) = login_new_user_with_email("client-stack");
     (client, login)
@@ -117,8 +134,13 @@ fn login_new_user_with_email(prefix: &str) -> (ApiClient, LoginResponse, String)
         .expect("request Mock email code");
     assert!(delivery.expires_in_seconds > 0);
     assert!(delivery.resend_after_seconds > 0);
-    let login = auth
-        .login(&email, &mock_code(), &agreement_acceptances(&auth))
+    let login = login_and_install_authenticated_email(
+        &client,
+        &auth,
+        &email,
+        &mock_code(),
+        &agreement_acceptances(&auth),
+    )
         .expect("login through backend");
     assert!(login.is_new_user);
     assert!(login
@@ -411,12 +433,23 @@ fn cross_stack_auth_validation_and_error_envelopes() {
     let email = format!("auth-matrix-{}@example.com", Uuid::new_v4());
     auth.request_email_code(&email).expect("request Mock code");
     assert_http_error(
-        auth.login(&email, "000000", &agreement_acceptances(&auth)),
+        login_and_install_authenticated_email(
+            &client,
+            &auth,
+            &email,
+            "000000",
+            &agreement_acceptances(&auth),
+        ),
         400,
         "email_code_invalid",
     );
-    let login = auth
-        .login(&email, &mock_code(), &agreement_acceptances(&auth))
+    let login = login_and_install_authenticated_email(
+        &client,
+        &auth,
+        &email,
+        &mock_code(),
+        &agreement_acceptances(&auth),
+    )
         .expect("correct code remains usable after one failed attempt");
     assert_eq!(login.tokens.token_type, "X-Token");
     auth.logout(false).expect("logout auth validation user");
@@ -992,7 +1025,7 @@ fn cross_stack_login_fields_report_exact_validation_details() {
             Some(field),
         );
     }
-    auth.login(&email, &mock_code(), &[])
+    login_and_install_authenticated_email(&client, &auth, &email, &mock_code(), &[])
         .expect("valid login after validation cases");
     auth.logout(false).expect("logout login field test");
 }
@@ -1544,12 +1577,14 @@ fn cross_stack_auth_required_fields_and_minimum_accepted_boundaries() {
         "windows".to_string(),
         env!("CARGO_PKG_VERSION"),
     );
-    AuthApi::new(min_client.clone())
-        .login(
-            &email,
-            &mock_code(),
-            &agreement_acceptances(&AuthApi::new(min_client.clone())),
-        )
+    let min_auth = AuthApi::new(min_client.clone());
+    login_and_install_authenticated_email(
+        &min_client,
+        &min_auth,
+        &email,
+        &mock_code(),
+        &agreement_acceptances(&min_auth),
+    )
         .expect("minimum device and empty optional name are accepted");
     let raw_sessions = min_client
         .authenticated_json::<Value>(Method::GET, "/v1/account/sessions", None, None)
@@ -1588,12 +1623,13 @@ fn cross_stack_auth_maximum_boundaries_and_email_normalization() {
     max_auth
         .request_email_code(&normalized_email)
         .expect("request normalized email code");
-    max_auth
-        .login(
-            &normalized_email,
-            &mock_code(),
-            &agreement_acceptances(&max_auth),
-        )
+    login_and_install_authenticated_email(
+        &max_client,
+        &max_auth,
+        &normalized_email,
+        &mock_code(),
+        &agreement_acceptances(&max_auth),
+    )
         .expect("maximum device and name lengths are accepted");
     let max_session = AccountApi::new(max_client.clone())
         .snapshot()
@@ -1688,18 +1724,36 @@ fn cross_stack_email_code_cooldown_and_attempt_exhaustion() {
     let agreements = agreement_acceptances(&auth);
     for _ in 0..4 {
         assert_http_error(
-            auth.login(&attempts_email, "000000", &agreements),
+            login_and_install_authenticated_email(
+                &client,
+                &auth,
+                &attempts_email,
+                "000000",
+                &agreements,
+            ),
             400,
             "email_code_invalid",
         );
     }
     assert_http_error(
-        auth.login(&attempts_email, "000000", &agreements),
+        login_and_install_authenticated_email(
+            &client,
+            &auth,
+            &attempts_email,
+            "000000",
+            &agreements,
+        ),
         400,
         "email_code_attempts_exceeded",
     );
     assert_http_error(
-        auth.login(&attempts_email, &mock_code(), &agreements),
+        login_and_install_authenticated_email(
+            &client,
+            &auth,
+            &attempts_email,
+            &mock_code(),
+            &agreements,
+        ),
         400,
         "email_code_invalid",
     );

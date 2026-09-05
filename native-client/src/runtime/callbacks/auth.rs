@@ -8,7 +8,23 @@ struct StartupAuthResult {
     snapshot: Option<std::result::Result<BackendSnapshot, ApiError>>,
 }
 
-type LoginResult = std::result::Result<LoginResponse, ApiError>;
+type LoginResult = std::result::Result<LoginWorkerResponse, ApiError>;
+
+enum LoginWorkerResponse {
+    Email(EmailLoginOutcome),
+    Password(LoginResponse),
+}
+
+// Task 11 projects this Rust-only state into the invited-registration UI. Until then it is
+// intentionally opaque after capture so the continuation can never enter Slint state.
+#[allow(dead_code)]
+struct PendingRegistrationOutcome {
+    registration_continuation: SecretString,
+    continuation_expires_at: String,
+    invitations: Vec<TeamRegistrationInvitationSummary>,
+    pending_invitation_count: u64,
+    selection_state: TeamRegistrationSelectionState,
+}
 
 enum WechatPollOutcome {
     Pending,
@@ -57,6 +73,7 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
         return;
     };
     let state = app.global::<AppState>();
+    let pending_registration = Rc::new(RefCell::new(None::<PendingRegistrationOutcome>));
 
     {
         let app_weak = app.as_weak();
@@ -167,6 +184,7 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
         let app_weak = app.as_weak();
         let backend = backend.clone();
         let context = context.clone();
+        let pending_registration = pending_registration.clone();
         state.on_login_or_register(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -227,6 +245,7 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
                 });
             }
             let auth_operation_epoch = begin_auth_operation(&context);
+            pending_registration.borrow_mut().take();
             state.set_auth_busy(true);
             state.set_session_state("authenticating".into());
             state.set_auth_error("".into());
@@ -237,8 +256,10 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
             std::thread::spawn(move || {
                 let result = if worker_login_mode == "password" {
                     api.password_login_response(&email, &credential, &acceptances)
+                        .map(LoginWorkerResponse::Password)
                 } else {
                     api.login_response(&email, &credential, &acceptances)
+                        .map(LoginWorkerResponse::Email)
                 };
                 let _ = sender.send(result);
             });
@@ -248,6 +269,7 @@ pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
                 auth_operation_epoch,
                 login_mode,
                 Rc::new(RefCell::new(Some(receiver))),
+                pending_registration.clone(),
             );
         });
     }
@@ -1239,6 +1261,7 @@ fn poll_login_result(
     auth_operation_epoch: u64,
     login_mode: String,
     receiver: Rc<RefCell<Option<mpsc::Receiver<LoginResult>>>>,
+    pending_registration: Rc<RefCell<Option<PendingRegistrationOutcome>>>,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
         let result = match poll_receiver(&receiver) {
@@ -1249,6 +1272,7 @@ fn poll_login_result(
                     auth_operation_epoch,
                     login_mode,
                     receiver,
+                    pending_registration,
                 );
                 return;
             }
@@ -1284,37 +1308,78 @@ fn poll_login_result(
         }
         state.set_auth_busy(false);
         match result {
-            Ok(response) => {
-                let Some(backend) = context.backend.as_ref() else {
-                    return;
-                };
-                let current = auth_operation_is_current(&context, auth_operation_epoch)
-                    && state.get_auth_open()
-                    && state.get_auth_method().as_str() == "email"
-                    && state.get_auth_email_mode().as_str() == login_mode.as_str();
-                match install_login_if_current(current, || {
-                    backend
-                        .api
-                        .session()
-                        .install_tokens_for_user(&response.tokens, &response.user.id)
-                }) {
-                    Ok(Some(_)) => {
-                        finish_login(&app, &context, response, None);
-                        refresh_backend_snapshot(&app, context);
-                    }
-                    Ok(None) => {}
-                    Err(error) => {
-                        state.set_session_state("signed_out".into());
-                        apply_auth_error(&app, error);
-                    }
-                }
-            }
+            Ok(response) => handle_login_success(
+                &app,
+                &context,
+                auth_operation_epoch,
+                &login_mode,
+                response,
+                &pending_registration,
+            ),
             Err(error) => {
                 state.set_session_state("signed_out".into());
                 apply_email_login_error(&app, &login_mode, error);
             }
         }
     });
+}
+
+fn handle_login_success(
+    app: &AppWindow,
+    context: &AppContext,
+    auth_operation_epoch: u64,
+    login_mode: &str,
+    response: LoginWorkerResponse,
+    pending_registration: &Rc<RefCell<Option<PendingRegistrationOutcome>>>,
+) {
+    let state = app.global::<AppState>();
+    match response {
+        LoginWorkerResponse::Password(response)
+        | LoginWorkerResponse::Email(EmailLoginOutcome::Authenticated { login: response }) => {
+            pending_registration.borrow_mut().take();
+            let Some(backend) = context.backend.as_ref() else {
+                return;
+            };
+            let current = auth_operation_is_current(context, auth_operation_epoch)
+                && state.get_auth_open()
+                && state.get_auth_method().as_str() == "email"
+                && state.get_auth_email_mode().as_str() == login_mode;
+            match install_login_if_current(current, || {
+                backend
+                    .api
+                    .session()
+                    .install_tokens_for_user(&response.tokens, &response.user.id)
+            }) {
+                Ok(Some(_)) => {
+                    finish_login(app, context, response, None);
+                    refresh_backend_snapshot(app, context.clone());
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    state.set_session_state("signed_out".into());
+                    apply_auth_error(app, error);
+                }
+            }
+        }
+        LoginWorkerResponse::Email(EmailLoginOutcome::TeamRegistrationRequired {
+            registration_continuation,
+            continuation_expires_at,
+            invitations,
+            pending_invitation_count,
+            selection_state,
+        }) => {
+            *pending_registration.borrow_mut() = Some(PendingRegistrationOutcome {
+                registration_continuation,
+                continuation_expires_at,
+                invitations,
+                pending_invitation_count,
+                selection_state,
+            });
+            state.set_session_state("team_registration_required".into());
+            state.set_auth_open(true);
+            state.set_auth_error("请设置密码以完成团队邀请注册".into());
+        }
+    }
 }
 
 pub(super) fn finish_login(
@@ -2667,6 +2732,8 @@ fn valid_email(email: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::test_support::MemoryRefreshTokenStore;
+    use reqwest::Url;
 
     fn unavailable_finance_snapshot(role: &str, read_only: bool) -> BackendSnapshot {
         BackendSnapshot {
@@ -2861,6 +2928,90 @@ mod tests {
 
         assert_eq!(state.get_auth_email().as_str(), "");
         assert_eq!(state.get_auth_password().as_str(), "");
+    }
+
+    #[test]
+    fn registration_continuation_callback_does_not_finish_login() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let api = ApiClient::new(
+            ApiClientConfig {
+                base_url: Url::parse("http://127.0.0.1:9/").unwrap(),
+                app_version: "1.2.3".to_string(),
+                timeout: Duration::from_secs(1),
+            },
+            DeviceIdentity {
+                id: "callback-device".to_string(),
+                name: "callback-test".to_string(),
+                platform: "macos".to_string(),
+            },
+            Arc::new(SessionManager::new(Arc::new(
+                MemoryRefreshTokenStore::default(),
+            ))),
+        )
+        .unwrap();
+        let context = AppContext {
+            backend: Some(Arc::new(BackendRuntime { api: api.clone() })),
+            ..AppContext::default()
+        };
+        let operation_epoch = begin_auth_operation(&context);
+        let state = app.global::<AppState>();
+        state.set_auth_open(true);
+        state.set_auth_method("email".into());
+        state.set_auth_email_mode("code".into());
+        state.set_session_state("authenticating".into());
+        let pending_registration = Rc::new(RefCell::new(None));
+        let session_epoch = api.session().auth_epoch();
+
+        handle_login_success(
+            &app,
+            &context,
+            operation_epoch,
+            "code",
+            LoginWorkerResponse::Email(EmailLoginOutcome::TeamRegistrationRequired {
+                registration_continuation: SecretString::new(
+                    "opaque-continuation".to_string(),
+                ),
+                continuation_expires_at: "2026-09-05T10:05:00Z".to_string(),
+                invitations: vec![TeamRegistrationInvitationSummary {
+                    invitation_id: "11111111-1111-4111-8111-111111111111".to_string(),
+                    group_id: "22222222-2222-4222-8222-222222222222".to_string(),
+                    team_name: "Studio Team".to_string(),
+                    owner_display_name: "Owner".to_string(),
+                    recipient_email_masked: "m***@example.com".to_string(),
+                    monthly_limit: "500".to_string(),
+                    status: "pending".to_string(),
+                    expires_at: "2026-09-11T10:00:00Z".to_string(),
+                    version: "1".to_string(),
+                }],
+                pending_invitation_count: 1,
+                selection_state: TeamRegistrationSelectionState::Unique,
+            }),
+            &pending_registration,
+        );
+
+        assert_eq!(api.session().auth_epoch(), session_epoch);
+        assert!(api.session().access().is_none());
+        assert!(!state.get_logged_in());
+        assert!(context
+            .current_user_id
+            .lock()
+            .unwrap_or_else(|value| value.into_inner())
+            .is_none());
+        assert_eq!(
+            state.get_session_state().as_str(),
+            "team_registration_required"
+        );
+        assert!(state.get_auth_open());
+        assert_eq!(
+            pending_registration
+                .borrow()
+                .as_ref()
+                .expect("pending registration")
+                .registration_continuation
+                .expose(),
+            "opaque-continuation"
+        );
     }
 
     #[test]

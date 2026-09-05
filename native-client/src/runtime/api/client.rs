@@ -100,7 +100,24 @@ impl ApiClient {
         path: &str,
         body: Option<Value>,
     ) -> Result<ApiResponse<T>, ApiError> {
-        self.send_once(method, path, body, None, None)
+        self.send_once(method, path, body, None, None, None)
+    }
+
+    pub(crate) fn public_json_idempotent<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        idempotency_key: &str,
+    ) -> Result<ApiResponse<T>, ApiError> {
+        self.send_once(
+            method,
+            path,
+            body,
+            Some(idempotency_key),
+            None,
+            None,
+        )
     }
 
     // TEMP(team-accounts): remove in Task 10 after atomic caller migration
@@ -117,7 +134,8 @@ impl ApiClient {
             method.clone(),
             path,
             body.clone(),
-            Some((&access_token, idempotency_key)),
+            idempotency_key,
+            Some(&access_token),
             auth_epoch,
         );
         match first {
@@ -133,7 +151,8 @@ impl ApiClient {
                     method,
                     path,
                     body,
-                    Some((&refreshed, idempotency_key)),
+                    idempotency_key,
+                    Some(&refreshed),
                     None,
                 )
                 .map_err(|error| self.clear_epoch_on_exhausted_auth_error(auth_epoch, error))
@@ -201,7 +220,8 @@ impl ApiClient {
             method.clone(),
             path,
             body.clone(),
-            Some((&access_token, idempotency_key)),
+            idempotency_key,
+            Some(&access_token),
             scope,
             account_group_id.as_deref(),
         );
@@ -218,7 +238,8 @@ impl ApiClient {
                     method,
                     path,
                     body,
-                    Some((&refreshed, idempotency_key)),
+                    idempotency_key,
+                    Some(&refreshed),
                     account_group_id.as_deref(),
                 )
                 .map_err(|error| self.clear_scope_on_exhausted_auth_error(scope, error))
@@ -241,7 +262,8 @@ impl ApiClient {
             method.clone(),
             path,
             body.clone(),
-            Some((&access_token, idempotency_key)),
+            idempotency_key,
+            Some(&access_token),
             auth_epoch,
         );
         match first {
@@ -257,7 +279,8 @@ impl ApiClient {
                     method,
                     path,
                     body,
-                    Some((&refreshed, idempotency_key)),
+                    idempotency_key,
+                    Some(&refreshed),
                     None,
                 )
                 .map_err(|error| self.clear_epoch_on_exhausted_auth_error(auth_epoch, error))
@@ -273,7 +296,7 @@ impl ApiClient {
         body: Option<Value>,
         access_token: &str,
     ) -> Result<ApiResponse<T>, ApiError> {
-        self.send_once(method, path, body, Some((access_token, None)), None)
+        self.send_once(method, path, body, None, Some(access_token), None)
     }
 
     pub(crate) fn refresh_session(&self) -> Result<String, ApiError> {
@@ -325,10 +348,11 @@ impl ApiClient {
         method: Method,
         path: &str,
         body: Option<Value>,
-        authentication: Option<(&str, Option<&str>)>,
+        idempotency_key: Option<&str>,
+        access_token: Option<&str>,
         auth_epoch: u64,
     ) -> Result<ApiResponse<T>, ApiError> {
-        self.send_once(method, path, body, authentication, None)
+        self.send_once(method, path, body, idempotency_key, access_token, None)
             .map_err(|error| self.clear_epoch_on_terminal_error(auth_epoch, error))
     }
 
@@ -337,12 +361,20 @@ impl ApiClient {
         method: Method,
         path: &str,
         body: Option<Value>,
-        authentication: Option<(&str, Option<&str>)>,
+        idempotency_key: Option<&str>,
+        access_token: Option<&str>,
         scope: &SessionScope,
         account_group_id: Option<&str>,
     ) -> Result<ApiResponse<T>, ApiError> {
-        self.send_once(method, path, body, authentication, account_group_id)
-            .map_err(|error| self.clear_scope_on_terminal_error(scope, error))
+        self.send_once(
+            method,
+            path,
+            body,
+            idempotency_key,
+            access_token,
+            account_group_id,
+        )
+        .map_err(|error| self.clear_scope_on_terminal_error(scope, error))
     }
 
     fn clear_epoch_on_terminal_error(&self, auth_epoch: u64, error: ApiError) -> ApiError {
@@ -396,23 +428,30 @@ impl ApiClient {
         method: Method,
         path: &str,
         body: Option<Value>,
-        authentication: Option<(&str, Option<&str>)>,
+        idempotency_key: Option<&str>,
+        access_token: Option<&str>,
         account_group_id: Option<&str>,
     ) -> Result<ApiResponse<T>, ApiError> {
+        if account_group_id.is_some() && access_token.is_none() {
+            return Err(ApiError::Protocol {
+                message: "账号组请求头必须绑定已认证会话".to_string(),
+                request_id: None,
+            });
+        }
         let url = self.endpoint(path)?;
         let request_id = Uuid::new_v4().to_string();
         let mut request = self
             .http
             .request(method, url)
             .header("X-Request-ID", &request_id);
-        if let Some((access_token, idempotency_key)) = authentication {
+        if let Some(access_token) = access_token {
             request = request
                 .header("X-Token", access_token)
                 .header("X-Client-Version", &self.config.app_version)
                 .header("X-Device-ID", &self.device.id);
-            if let Some(key) = idempotency_key {
-                request = request.header("Idempotency-Key", key);
-            }
+        }
+        if let Some(key) = idempotency_key {
+            request = request.header("Idempotency-Key", key);
         }
         if let Some(account_group_id) = account_group_id {
             request = request.header("X-Account-Group-ID", account_group_id);
@@ -1507,6 +1546,33 @@ mod tests {
             Some(TEST_GROUP_ID)
         );
         assert_eq!(client.session().auth_epoch(), auth_epoch_before);
+    }
+
+    #[test]
+    fn group_header_without_access_token_is_rejected_before_network() {
+        let client = client_for(
+            "http://127.0.0.1:9/".to_string(),
+            Duration::from_millis(100),
+        );
+
+        let error = client
+            .send_once::<Value>(
+                Method::GET,
+                "/must-not-send",
+                None,
+                Some("independent-key"),
+                None,
+                Some(TEST_GROUP_ID),
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ApiError::Protocol {
+                request_id: None,
+                ..
+            }
+        ));
     }
 
     #[test]

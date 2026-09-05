@@ -1050,6 +1050,19 @@ mod tests {
         }
 
         fn serve_sequence(responses: Vec<serde_json::Value>) -> Self {
+            Self::serve_raw_sequence(
+                responses
+                    .into_iter()
+                    .map(|body| serde_json::to_string(&body).unwrap())
+                    .collect(),
+            )
+        }
+
+        fn serve_raw(body: String) -> Self {
+            Self::serve_raw_sequence(vec![body])
+        }
+
+        fn serve_raw_sequence(responses: Vec<String>) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let address = listener.local_addr().unwrap();
             let requests = Arc::new(Mutex::new(Vec::with_capacity(responses.len())));
@@ -1062,7 +1075,6 @@ mod tests {
                         .lock()
                         .unwrap()
                         .push(CapturedRequest::parse(&request));
-                    let body = serde_json::to_string(&body).unwrap();
                     let response = format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                         body.len(),
@@ -1117,8 +1129,8 @@ mod tests {
         request
     }
 
-    fn authenticated_test_client(base_url: String) -> ApiClient {
-        let client = ApiClient::new(
+    fn test_client(base_url: String) -> ApiClient {
+        ApiClient::new(
             ApiClientConfig {
                 base_url: Url::parse(&base_url).unwrap(),
                 app_version: "1.2.3".to_string(),
@@ -1133,7 +1145,11 @@ mod tests {
                 MemoryRefreshTokenStore::default(),
             ))),
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    fn authenticated_test_client(base_url: String) -> ApiClient {
+        let client = test_client(base_url);
         client
             .session()
             .install_tokens_for_user(
@@ -1163,6 +1179,10 @@ mod tests {
             "data": data,
             "error": null
         })
+    }
+
+    fn raw_api_envelope(data: &str) -> String {
+        format!(r#"{{"request_id":"team-api-test","data":{data},"error":null}}"#)
     }
 
     fn invitation_page_envelope(next_cursor: &str) -> serde_json::Value {
@@ -1526,6 +1546,174 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn authenticated_email_outcome_flattens_existing_login_fields() {
+        let outcome: EmailLoginOutcome = serde_json::from_value(json!({
+            "outcome": "authenticated",
+            "access_token": "access",
+            "access_expires_in_seconds": 900,
+            "refresh_token": "refresh",
+            "refresh_expires_at": "2026-10-04T10:00:00Z",
+            "token_type": "Bearer",
+            "is_new_user": false,
+            "registration_credit_granted": "0",
+            "user": {
+                "id": "11111111-1111-4111-8111-111111111111",
+                "email_masked": "m***@example.com",
+                "nickname": null,
+                "status": "active"
+            }
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            outcome,
+            EmailLoginOutcome::Authenticated { .. }
+        ));
+    }
+
+    #[test]
+    fn email_login_response_stream_rejects_duplicate_security_fields() {
+        let raw_data = prepend_duplicate_field(
+            authenticated_email_login_json(),
+            "outcome",
+            "\"authenticated\"",
+        );
+        let capture = CapturedRequests::serve_raw(raw_api_envelope(&raw_data));
+        let client = test_client(capture.base_url());
+
+        let result = crate::runtime::api::AuthApi::new(client).login_response(
+            "member@example.com",
+            "123456",
+            &[],
+        );
+
+        assert!(result.is_err());
+        assert_eq!(capture.finish().len(), 1);
+    }
+
+    #[test]
+    fn team_registration_uses_continuation_and_idempotency_without_auth() {
+        let capture = CapturedRequests::serve_json(
+            1,
+            api_envelope_with_data(first_registration_json()),
+        );
+        let client = test_client(capture.base_url());
+        let session_epoch = client.session().auth_epoch();
+        let api = crate::runtime::api::AuthApi::new(client.clone());
+
+        api.complete_team_registration(
+            &SecretString::new("opaque-continuation".to_string()),
+            "new-password",
+            &[AgreementAcceptance {
+                agreement_type: "user_terms".to_string(),
+                version: "2026-09-01".to_string(),
+            }],
+            "registration-key",
+        )
+        .unwrap();
+
+        let request = capture.finish().remove(0);
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.path, "/v1/auth/team-registration");
+        assert_eq!(request.header("idempotency-key"), Some("registration-key"));
+        let body = request.body.as_ref().expect("registration JSON body");
+        assert_eq!(
+            body["registration_continuation"],
+            "opaque-continuation"
+        );
+        assert_eq!(
+            body["agreement_acceptances"],
+            json!([{
+                "type": "user_terms",
+                "version": "2026-09-01"
+            }])
+        );
+        assert!(request.header("authorization").is_none());
+        assert!(request.header("x-token").is_none());
+        assert!(request.header("x-account-group-id").is_none());
+        assert_eq!(client.session().auth_epoch(), session_epoch);
+        assert!(client.session().access().is_none());
+    }
+
+    #[test]
+    fn continuation_outcome_does_not_change_the_session() {
+        let capture = CapturedRequests::serve_json(
+            1,
+            api_envelope_with_data(invited_login_json(1, None)),
+        );
+        let client = test_client(capture.base_url());
+        let epoch = client.session().auth_epoch();
+
+        let outcome: EmailLoginOutcome =
+            crate::runtime::api::AuthApi::new(client.clone())
+                .login_response("member@example.com", "123456", &[])
+                .unwrap();
+
+        assert!(matches!(
+            outcome,
+            EmailLoginOutcome::TeamRegistrationRequired { .. }
+        ));
+        assert_eq!(client.session().auth_epoch(), epoch);
+        assert!(client.session().access().is_none());
+        assert_eq!(capture.finish().len(), 1);
+    }
+
+    #[test]
+    fn registration_replay_never_reuses_session_secrets() {
+        let first_value = first_registration_json();
+        assert!(first_value.get("user").is_some());
+        assert!(first_value.get("group_choices").is_some());
+        assert_eq!(first_value["selection_state"], "unique");
+        for obsolete in ["user_id", "owned_account_group_id", "account_groups"] {
+            assert!(first_value.get(obsolete).is_none());
+            let mut drifted = first_registration_json();
+            drifted.as_object_mut().unwrap().insert(
+                obsolete.to_string(),
+                serde_json::Value::String("forbidden".to_string()),
+            );
+            assert!(serde_json::from_value::<TeamRegistrationResult>(drifted).is_err());
+        }
+        let first: TeamRegistrationResult = serde_json::from_value(first_value).unwrap();
+        assert!(matches!(
+            first.session,
+            TeamRegistrationSessionResult::Authenticated { .. }
+        ));
+
+        let replay_value = replay_registration_json();
+        assert_eq!(replay_value["session_login_required"], true);
+        for secret in ["access_token", "refresh_token", "token_type"] {
+            assert!(replay_value.get(secret).is_none());
+        }
+        let replay: TeamRegistrationResult = serde_json::from_value(replay_value).unwrap();
+        assert!(matches!(
+            replay.session,
+            TeamRegistrationSessionResult::LoginRequired {
+                session_login_required: true
+            }
+        ));
+    }
+
+    #[test]
+    fn registration_response_stream_rejects_duplicate_session_fields() {
+        let raw_data = prepend_duplicate_field(
+            replay_registration_json(),
+            "session_login_required",
+            "true",
+        );
+        let capture = CapturedRequests::serve_raw(raw_api_envelope(&raw_data));
+        let client = test_client(capture.base_url());
+        let result = crate::runtime::api::AuthApi::new(client).complete_team_registration(
+            &SecretString::new("opaque-continuation".to_string()),
+            "new-password",
+            &[],
+            "registration-key",
+        );
+
+        assert!(result.is_err());
+        assert_eq!(capture.finish().len(), 1);
     }
 
     #[test]

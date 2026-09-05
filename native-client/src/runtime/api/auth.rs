@@ -1,4 +1,7 @@
-use super::{ApiClient, ApiError, ApiResponse, SessionScope, TokenSet};
+use super::{
+    ApiClient, ApiError, ApiResponse, EmailLoginOutcome, SecretString, SessionScope,
+    TeamRegistrationRequest, TeamRegistrationResult, TokenSet,
+};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
@@ -184,25 +187,12 @@ impl AuthApi {
             .map(|response: ApiResponse<EmailCodeResponse>| response.data)
     }
 
-    pub(crate) fn login(
-        &self,
-        email: &str,
-        code: &str,
-        acceptances: &[AgreementAcceptance],
-    ) -> Result<LoginResponse, ApiError> {
-        let response = self.login_response(email, code, acceptances)?;
-        self.client
-            .session()
-            .install_tokens_for_user(&response.tokens, &response.user.id)?;
-        Ok(response)
-    }
-
     pub(crate) fn login_response(
         &self,
         email: &str,
         code: &str,
         acceptances: &[AgreementAcceptance],
-    ) -> Result<LoginResponse, ApiError> {
+    ) -> Result<EmailLoginOutcome, ApiError> {
         let device = self.client.device();
         let body = serde_json::to_value(LoginRequest {
             email,
@@ -217,10 +207,39 @@ impl AuthApi {
             message: error.to_string(),
             request_id: None,
         })?;
-        let response = self
-            .client
-            .public_json(Method::POST, "/v1/auth/email/login", Some(body))?;
-        let response: ApiResponse<LoginResponse> = response;
+        let response: ApiResponse<EmailLoginOutcome> =
+            self.client
+                .public_json(Method::POST, "/v1/auth/email/login", Some(body))?;
+        Ok(response.data)
+    }
+
+    pub(crate) fn complete_team_registration(
+        &self,
+        continuation: &SecretString,
+        password: &str,
+        agreement_acceptances: &[AgreementAcceptance],
+        idempotency_key: &str,
+    ) -> Result<TeamRegistrationResult, ApiError> {
+        let device = self.client.device();
+        let body = serde_json::to_value(TeamRegistrationRequest {
+            registration_continuation: continuation.expose(),
+            password,
+            agreement_acceptances,
+            device_id: &device.id,
+            device_name: &device.name,
+            platform: &device.platform,
+            app_version: self.client.app_version(),
+        })
+        .map_err(|error| ApiError::Protocol {
+            message: error.to_string(),
+            request_id: None,
+        })?;
+        let response: ApiResponse<TeamRegistrationResult> = self.client.public_json_idempotent(
+            Method::POST,
+            "/v1/auth/team-registration",
+            Some(body),
+            idempotency_key,
+        )?;
         Ok(response.data)
     }
 
