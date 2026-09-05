@@ -9,7 +9,241 @@ use anyhow::{ensure, Result};
 #[cfg(unix)]
 use std::ffi::{OsStr, OsString};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use uuid::Uuid;
+
+pub(crate) struct NamespaceStorageAuthority {
+    data_root: Arc<DataRootCapability>,
+    lease: NamespaceLease,
+    fs: NamespaceFs,
+    directories: ManagedNamespaceDirectories,
+}
+
+pub(crate) struct NamespaceManagedFile {
+    key: ManagedFileKey,
+    capability: ManagedFileCapability,
+}
+
+impl NamespaceManagedFile {
+    pub(crate) fn key(&self) -> &ManagedFileKey {
+        &self.key
+    }
+}
+
+pub(crate) struct NamespaceManagedFileCheck<'a> {
+    pub(crate) file: &'a NamespaceManagedFile,
+    pub(crate) expected: Option<StableFileIdentity>,
+}
+
+impl NamespaceStorageAuthority {
+    pub(crate) fn open(data_root: Arc<DataRootCapability>, lease: &NamespaceLease) -> Result<Self> {
+        let fs = NamespaceFs::for_namespace(data_root.as_ref(), &lease.namespace)?;
+        let directories = fs.ensure_managed_dirs()?;
+        Ok(Self {
+            data_root,
+            lease: lease.clone(),
+            fs,
+            directories,
+        })
+    }
+    pub(crate) fn lease(&self) -> &NamespaceLease {
+        &self.lease
+    }
+    pub(crate) fn user_public_id(&self) -> &str {
+        self.lease.namespace.user_public_id()
+    }
+    pub(crate) fn create_new_regular(&self, key: &ManagedFileKey) -> Result<NamespaceManagedFile> {
+        let directory = self.fs.open_managed_dir(&self.directories, key.area())?;
+        let capability = self
+            .fs
+            .create_new_regular(&directory, key.relative_name())?;
+        Ok(NamespaceManagedFile {
+            key: key.clone(),
+            capability,
+        })
+    }
+    pub(crate) fn open_existing_regular(
+        &self,
+        key: &ManagedFileKey,
+    ) -> Result<NamespaceManagedFile> {
+        let directory = self.fs.open_managed_dir(&self.directories, key.area())?;
+        let capability = self
+            .fs
+            .open_existing_regular(&directory, key.relative_name())?;
+        Ok(NamespaceManagedFile {
+            key: key.clone(),
+            capability,
+        })
+    }
+    pub(crate) fn open_optional_regular(
+        &self,
+        key: &ManagedFileKey,
+    ) -> Result<Option<NamespaceManagedFile>> {
+        let directory = self.fs.open_managed_dir(&self.directories, key.area())?;
+        Ok(self
+            .fs
+            .open_optional_regular(&directory, key.relative_name())?
+            .map(|capability| NamespaceManagedFile {
+                key: key.clone(),
+                capability,
+            }))
+    }
+    pub(crate) fn inspect_regular(
+        &self,
+        file: &NamespaceManagedFile,
+    ) -> Result<ManagedFileMetadata> {
+        let directory = self
+            .fs
+            .open_managed_dir(&self.directories, file.key.area())?;
+        self.fs.inspect_regular(&directory, &file.capability)
+    }
+    pub(crate) fn enumerate_regular_names(
+        &self,
+        area: ManagedUserArea,
+    ) -> Result<Vec<ManagedRelativeName>> {
+        let directory = self.fs.open_managed_dir(&self.directories, area)?;
+        self.fs.enumerate_regular_names(&directory)
+    }
+    /// The callback may perform scalar validation and SQLite work only. Acquire
+    /// SQLite inside it, never while acquiring directories or this file guard.
+    pub(crate) fn with_current_regular_files<T>(
+        &self,
+        files: &[NamespaceManagedFileCheck<'_>],
+        operation: impl FnOnce(&[ManagedFileMetadata]) -> Result<T>,
+    ) -> Result<T> {
+        let directories = files
+            .iter()
+            .map(|check| {
+                self.fs
+                    .open_managed_dir(&self.directories, check.file.key.area())
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let checks = files
+            .iter()
+            .zip(&directories)
+            .map(|(check, directory)| ManagedFileCheck {
+                directory,
+                file: &check.file.capability,
+                expected: check.expected,
+            })
+            .collect::<Vec<_>>();
+        self.fs.with_current_regular_files(&checks, operation)
+    }
+}
+
+#[cfg(test)]
+mod namespace_authority_tests {
+    use super::*;
+    #[test]
+    fn authority_checks_all_files_in_order_and_preserves_callback_errors() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().canonicalize().unwrap();
+        let root = Arc::new(NamespaceFs::open_data_root(&path).unwrap());
+        let lease = NamespaceLease {
+            namespace: UserNamespace::new(&path, "11111111-1111-4111-8111-111111111111").unwrap(),
+            auth_epoch: 1,
+            namespace_epoch: 2,
+        };
+        let authority = NamespaceStorageAuthority::open(Arc::clone(&root), &lease).unwrap();
+        let other = NamespaceStorageAuthority::open(Arc::clone(&root), &lease).unwrap();
+        let first_key = ManagedFileKey::new(ManagedUserArea::Output, "first").unwrap();
+        let second_key = ManagedFileKey::new(ManagedUserArea::Previews, "second").unwrap();
+        assert!(authority
+            .open_optional_regular(&first_key)
+            .unwrap()
+            .is_none());
+        let first = authority.create_new_regular(&first_key).unwrap();
+        let second = authority.create_new_regular(&second_key).unwrap();
+        std::fs::write(lease.namespace.output_dir().join("first"), b"first").unwrap();
+        std::fs::write(lease.namespace.preview_dir().join("second"), b"two").unwrap();
+        let first_info = authority.inspect_regular(&first).unwrap();
+        let second_info = authority.inspect_regular(&second).unwrap();
+        let checks = [
+            NamespaceManagedFileCheck {
+                file: &second,
+                expected: Some(second_info.identity),
+            },
+            NamespaceManagedFileCheck {
+                file: &first,
+                expected: Some(first_info.identity),
+            },
+        ];
+        let ordered = authority
+            .with_current_regular_files(&checks, |metadata| Ok(metadata.to_vec()))
+            .unwrap();
+        assert_eq!(
+            ordered.iter().map(|m| m.byte_size).collect::<Vec<_>>(),
+            vec![3, 5]
+        );
+        assert_eq!(
+            authority
+                .enumerate_regular_names(ManagedUserArea::Output)
+                .unwrap(),
+            vec![ManagedRelativeName::try_from("first").unwrap()]
+        );
+        assert_eq!(
+            authority
+                .inspect_regular(&authority.open_existing_regular(&first_key).unwrap())
+                .unwrap(),
+            first_info
+        );
+        assert!(other
+            .with_current_regular_files(&checks, |_| -> Result<()> {
+                panic!("foreign callback must not run")
+            })
+            .is_err());
+        assert!(authority
+            .with_current_regular_files(
+                &[NamespaceManagedFileCheck {
+                    file: &first,
+                    expected: Some(second_info.identity)
+                }],
+                |_| -> Result<()> { panic!("wrong identity callback must not run") }
+            )
+            .is_err());
+        assert!(authority
+            .with_current_regular_files(&[], |_| -> Result<()> {
+                panic!("empty callback must not run")
+            })
+            .is_err());
+        let error = authority
+            .with_current_regular_files(&checks, |_| -> Result<()> {
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied).into())
+            })
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+        assert!(authority.create_new_regular(&first_key).is_err());
+        assert_eq!(
+            std::fs::read(lease.namespace.output_dir().join("first")).unwrap(),
+            b"first"
+        );
+    }
+    #[test]
+    fn authority_retains_exact_root_lease_and_bound_file_key() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().canonicalize().unwrap();
+        let root = Arc::new(NamespaceFs::open_data_root(&path).unwrap());
+        let lease = NamespaceLease {
+            namespace: UserNamespace::new(&path, "11111111-1111-4111-8111-111111111111").unwrap(),
+            auth_epoch: 42,
+            namespace_epoch: 9,
+        };
+        let authority = NamespaceStorageAuthority::open(Arc::clone(&root), &lease).unwrap();
+        assert!(Arc::ptr_eq(&root, &authority.data_root));
+        assert_eq!(authority.lease(), &lease);
+        let key = ManagedFileKey::new(ManagedUserArea::CanvasUploads, "a.png").unwrap();
+        let file = authority.create_new_regular(&key).unwrap();
+        assert_eq!(file.key(), &key);
+        assert!(lease
+            .namespace
+            .path(ManagedUserArea::CanvasUploads)
+            .join("a.png")
+            .is_file());
+    }
+}
 
 #[cfg(windows)]
 #[path = "user_namespace_windows.rs"]

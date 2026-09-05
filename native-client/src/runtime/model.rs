@@ -508,6 +508,25 @@ struct AppContext {
 }
 
 impl AppContext {
+    // TEMP(team-accounts): Task 10 replaces this explicit-lease bridge with
+    // active-owner/epoch validation. No active namespace is inferred here.
+    fn storage_authority(
+        &self,
+        lease: &NamespaceLease,
+    ) -> std::result::Result<NamespaceStorageAuthority, ApiError> {
+        let root = self
+            .data_root_capability
+            .as_ref()
+            .ok_or_else(|| ApiError::LocalState {
+                message: "retained data-root capability is unavailable".into(),
+            })?;
+        NamespaceStorageAuthority::open(Arc::clone(root), lease).map_err(|error| {
+            ApiError::LocalState {
+                message: format!("cannot open captured namespace storage: {error:#}"),
+            }
+        })
+    }
+
     fn current_account_session_scope(&self) -> Option<SessionScope> {
         let owner_user_id = self
             .current_user_id
@@ -536,6 +555,94 @@ impl AppContext {
             backend.api.session(),
             scope,
         )
+    }
+}
+
+#[cfg(test)]
+mod namespace_storage_authority_bridge_tests {
+    use super::*;
+    fn lease(path: &Path) -> NamespaceLease {
+        NamespaceLease {
+            namespace: UserNamespace::new(path, "11111111-1111-4111-8111-111111111111").unwrap(),
+            auth_epoch: 81,
+            namespace_epoch: 13,
+        }
+    }
+    #[test]
+    fn task8b_bridge_absent_root_fails_before_namespace_creation() {
+        let directory = tempfile::tempdir().unwrap();
+        let lease = lease(&directory.path().canonicalize().unwrap());
+        assert!(matches!(
+            AppContext::default().storage_authority(&lease),
+            Err(ApiError::LocalState { .. })
+        ));
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+    #[test]
+    fn task8b_bridge_retains_explicit_user_and_epochs() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().canonicalize().unwrap();
+        let root = Arc::new(NamespaceFs::open_data_root(&path).unwrap());
+        let context = AppContext {
+            data_root_capability: Some(Arc::clone(&root)),
+            ..AppContext::default()
+        };
+        let lease = lease(&path);
+        let authority = context.storage_authority(&lease).unwrap();
+        assert_eq!(authority.lease(), &lease);
+        assert_eq!(Arc::strong_count(&root), 3);
+        assert!(context.current_user_id.lock().unwrap().is_none());
+        let changed = NamespaceLease {
+            auth_epoch: 99,
+            namespace_epoch: 27,
+            ..lease.clone()
+        };
+        assert_eq!(
+            context.storage_authority(&changed).unwrap().lease(),
+            &changed
+        );
+        authority
+            .create_new_regular(&ManagedFileKey::new(ManagedUserArea::Output, "proof").unwrap())
+            .unwrap();
+        assert!(lease.namespace.output_dir().join("proof").is_file());
+    }
+    #[test]
+    fn task8b_bridge_wrong_root_does_not_reopen_or_create() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        let root =
+            Arc::new(NamespaceFs::open_data_root(&first.path().canonicalize().unwrap()).unwrap());
+        let context = AppContext {
+            data_root_capability: Some(root),
+            ..AppContext::default()
+        };
+        assert!(matches!(
+            context.storage_authority(&lease(&second.path().canonicalize().unwrap())),
+            Err(ApiError::LocalState { .. })
+        ));
+        assert_eq!(fs::read_dir(first.path()).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(second.path()).unwrap().count(), 0);
+    }
+    #[test]
+    fn task8b_bridge_replaced_parent_fails_without_creating_in_replacement() {
+        let directory = tempfile::tempdir().unwrap();
+        let parent = directory.path().canonicalize().unwrap().join("parent");
+        fs::create_dir(&parent).unwrap();
+        let path = parent.join("root");
+        fs::create_dir(&path).unwrap();
+        let context = AppContext {
+            data_root_capability: Some(Arc::new(NamespaceFs::open_data_root(&path).unwrap())),
+            ..AppContext::default()
+        };
+        let lease = lease(&path);
+        fs::rename(&parent, parent.with_file_name("retained")).unwrap();
+        fs::create_dir(&parent).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(matches!(
+            context.storage_authority(&lease),
+            Err(ApiError::LocalState { .. })
+        ));
+        assert_eq!(fs::read_dir(&path).unwrap().count(), 0);
     }
 }
 
