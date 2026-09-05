@@ -251,15 +251,7 @@ const MANAGED_USER_AREAS: [ManagedUserArea; 18] = [
 #[cfg(unix)]
 impl NamespaceFs {
     pub(crate) fn open_data_root(data_root: &Path) -> Result<DataRootCapability> {
-        let descriptor = rustix::fs::open(
-            data_root,
-            rustix::fs::OFlags::RDONLY
-                | rustix::fs::OFlags::DIRECTORY
-                | rustix::fs::OFlags::NOFOLLOW
-                | rustix::fs::OFlags::CLOEXEC,
-            rustix::fs::Mode::empty(),
-        )
-        .context("open application data root without following its final component")?;
+        let descriptor = open_absolute_directory(data_root)?;
         let identity = directory_identity(&descriptor)?;
         Ok(DataRootCapability {
             descriptor,
@@ -284,6 +276,11 @@ impl NamespaceFs {
             directory_identity(&data_root.descriptor)? == data_root.identity,
             "data-root capability identity changed"
         );
+        let current_root = open_absolute_directory(&data_root.display_root)?;
+        ensure!(
+            directory_identity(&current_root)? == data_root.identity,
+            "configured data root no longer names its retained directory"
+        );
         Ok(Self {
             root_descriptor: duplicate_descriptor(&data_root.descriptor)?,
             root_identity: data_root.identity,
@@ -293,6 +290,7 @@ impl NamespaceFs {
     }
 
     pub(crate) fn ensure_managed_dirs(&self) -> Result<ManagedNamespaceDirectories> {
+        let _mutation_lock = self.lock_mutations()?;
         self.validate_root_descriptor()?;
         let accounts_descriptor =
             ensure_directory_at(&self.root_descriptor, OsStr::new("accounts"))?;
@@ -346,6 +344,7 @@ impl NamespaceFs {
         directories: &ManagedNamespaceDirectories,
         area: ManagedUserArea,
     ) -> Result<ManagedDirectoryCapability> {
+        let _mutation_lock = self.lock_mutations()?;
         ensure!(
             directories.binding_id == self.binding_id,
             "directory set belongs to another namespace authority"
@@ -397,6 +396,7 @@ impl NamespaceFs {
         directory: &ManagedDirectoryCapability,
         name: &ManagedRelativeName,
     ) -> Result<ManagedFileCapability> {
+        let _mutation_lock = self.lock_mutations()?;
         self.validate_managed_directory(directory)?;
         let (parent, leaf) = open_relative_parent(&directory.descriptor, name)?;
         let parent_identity = directory_identity(&parent)?;
@@ -417,9 +417,20 @@ impl NamespaceFs {
         directory: &ManagedDirectoryCapability,
         name: &ManagedRelativeName,
     ) -> Result<ManagedFileCapability> {
+        self.create_new_regular_after_validation(directory, name, || {})
+    }
+
+    fn create_new_regular_after_validation(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        name: &ManagedRelativeName,
+        after_validation: impl FnOnce(),
+    ) -> Result<ManagedFileCapability> {
+        let _mutation_lock = self.lock_mutations()?;
         self.validate_managed_directory(directory)?;
         let (parent, leaf) = open_relative_parent(&directory.descriptor, name)?;
         let parent_identity = directory_identity(&parent)?;
+        after_validation();
         let descriptor = rustix::fs::openat(
             &parent,
             &leaf,
@@ -454,24 +465,33 @@ impl NamespaceFs {
         source: ManagedFileCapability,
         destination: &ManagedRelativeName,
     ) -> Result<ManagedFileCapability> {
+        self.rename_within_after_commit(directory, source, destination, || {})
+    }
+
+    fn rename_within_after_commit(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        source: ManagedFileCapability,
+        destination: &ManagedRelativeName,
+        after_commit: impl FnOnce(),
+    ) -> Result<ManagedFileCapability> {
+        let _mutation_lock = self.lock_mutations()?;
         self.validate_managed_directory(directory)?;
         let (source_parent, source_leaf) =
             self.validate_managed_file(directory, &source)?;
         let (destination_parent, destination_leaf) =
             open_relative_parent(&directory.descriptor, destination)?;
         let destination_parent_identity = directory_identity(&destination_parent)?;
-        rustix::fs::renameat(
+        rename_without_replacement(
             &source_parent,
             &source_leaf,
             &destination_parent,
             &destination_leaf,
         )
-        .context("rename a managed file through retained directory capabilities")?;
-        let current = open_regular_at(&destination_parent, &destination_leaf)?;
-        ensure!(
-            regular_file_identity(&current)? == source.identity,
-            "renamed file identity changed"
-        );
+        .context("rename a managed file without replacing an existing destination")?;
+        // The rename syscall is the commit point. Retain the already-open file;
+        // a subsequent name lookup could fail after a successful operation.
+        after_commit();
         Ok(ManagedFileCapability {
             descriptor: source.descriptor,
             binding_id: self.binding_id,
@@ -482,15 +502,52 @@ impl NamespaceFs {
         })
     }
 
+    pub(crate) fn replace_within(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        source: ManagedFileCapability,
+        destination: ManagedFileCapability,
+    ) -> Result<ManagedFileCapability> {
+        let _mutation_lock = self.lock_mutations()?;
+        self.validate_managed_directory(directory)?;
+        let (source_parent, source_leaf) = self.validate_managed_file(directory, &source)?;
+        let (destination_parent, destination_leaf) =
+            self.validate_managed_file(directory, &destination)?;
+        ensure!(source.identity != destination.identity, "cannot replace a file with itself");
+        rustix::fs::renameat(&source_parent, &source_leaf, &destination_parent, &destination_leaf)
+            .context("replace the expected managed file under the mutation lock")?;
+        Ok(ManagedFileCapability {
+            descriptor: source.descriptor,
+            binding_id: self.binding_id,
+            area: directory.area,
+            relative_name: destination.relative_name,
+            parent_identity: destination.parent_identity,
+            identity: source.identity,
+        })
+    }
+
     pub(crate) fn unlink_within(
         &self,
         directory: &ManagedDirectoryCapability,
         file: ManagedFileCapability,
     ) -> Result<()> {
+        let _mutation_lock = self.lock_mutations()?;
         self.validate_managed_directory(directory)?;
         let (parent, leaf) = self.validate_managed_file(directory, &file)?;
         rustix::fs::unlinkat(&parent, &leaf, rustix::fs::AtFlags::empty())
             .context("unlink a managed file through its retained parent capability")
+    }
+
+    fn lock_mutations(&self) -> Result<OwnedFd> {
+        // A fresh open file description is necessary: dup() would share a flock
+        // owner and would not serialize two threads using the same root handle.
+        // Every NamespaceFs instance follows this protocol. Like other advisory
+        // locks, it does not exclude unrelated same-UID processes ignoring it.
+        let descriptor = open_directory_at(&self.root_descriptor, OsStr::new("."))?;
+        ensure!(directory_identity(&descriptor)? == self.root_identity);
+        rustix::fs::flock(&descriptor, rustix::fs::FlockOperation::LockExclusive)
+            .context("lock managed filesystem operations")?;
+        Ok(descriptor)
     }
 
     fn validate_root_descriptor(&self) -> Result<()> {
@@ -591,6 +648,30 @@ fn duplicate_descriptor(descriptor: &OwnedFd) -> Result<OwnedFd> {
 }
 
 #[cfg(unix)]
+fn rename_without_replacement(
+    source_parent: &OwnedFd,
+    source_leaf: &OsStr,
+    destination_parent: &OwnedFd,
+    destination_leaf: &OsStr,
+) -> rustix::io::Result<()> {
+    #[cfg(any(target_vendor = "apple", target_os = "linux", target_os = "android", target_os = "redox"))]
+    {
+        rustix::fs::renameat_with(
+            source_parent,
+            source_leaf,
+            destination_parent,
+            destination_leaf,
+            rustix::fs::RenameFlags::NOREPLACE,
+        )
+    }
+    #[cfg(not(any(target_vendor = "apple", target_os = "linux", target_os = "android", target_os = "redox")))]
+    {
+        let _ = (source_parent, source_leaf, destination_parent, destination_leaf);
+        Err(rustix::io::Errno::NOTSUP)
+    }
+}
+
+#[cfg(unix)]
 fn object_identity(descriptor: &OwnedFd) -> Result<(ObjectIdentity, rustix::fs::FileType)> {
     let stat = rustix::fs::fstat(descriptor).context("inspect a retained filesystem object")?;
     Ok((
@@ -629,6 +710,29 @@ fn open_directory_at(parent: &OwnedFd, component: &OsStr) -> Result<OwnedFd> {
     )
     .context("open a directory component relative to its retained parent")?;
     directory_identity(&descriptor)?;
+    Ok(descriptor)
+}
+
+#[cfg(unix)]
+fn open_absolute_directory(path: &Path) -> Result<OwnedFd> {
+    ensure!(path.is_absolute(), "application data root must be absolute");
+    let mut descriptor = rustix::fs::open(
+        "/",
+        rustix::fs::OFlags::RDONLY
+            | rustix::fs::OFlags::DIRECTORY
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    )
+    .context("open the absolute filesystem anchor")?;
+    directory_identity(&descriptor)?;
+    for component in path.components() {
+        match component {
+            Component::RootDir => {}
+            Component::Normal(name) => descriptor = open_directory_at(&descriptor, name)?,
+            _ => return Err(anyhow!("application data root contains a non-normal component")),
+        }
+    }
     Ok(descriptor)
 }
 
@@ -775,6 +879,15 @@ impl NamespaceFs {
     ) -> Result<()> {
         unsupported_namespace_capabilities()
     }
+
+    pub(crate) fn replace_within(
+        &self,
+        _directory: &ManagedDirectoryCapability,
+        _source: ManagedFileCapability,
+        _destination: ManagedFileCapability,
+    ) -> Result<ManagedFileCapability> {
+        unsupported_namespace_capabilities()
+    }
 }
 
 #[cfg(not(unix))]
@@ -794,11 +907,16 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::net::UnixListener;
 
+    fn temporary_directory() -> tempfile::TempDir {
+        let parent = fs::canonicalize(std::env::temp_dir()).unwrap();
+        tempfile::tempdir_in(parent).unwrap()
+    }
+
     const USER_A: &str = "11111111-1111-4111-8111-111111111111";
 
     #[test]
     fn namespace_accepts_only_a_canonical_server_uuid() {
-        let root = tempfile::tempdir().unwrap();
+        let root = temporary_directory();
         assert!(UserNamespace::new(root.path(), "../../other-user").is_err());
         assert!(UserNamespace::new(root.path(), "11111111111141118111111111111111").is_err());
         assert!(UserNamespace::new(root.path(), "11111111-1111-4111-8111-11111111111A").is_err());
@@ -856,8 +974,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn data_root_capability_rejects_a_symlink() {
-        let parent = tempfile::tempdir().unwrap();
-        let real = tempfile::tempdir().unwrap();
+        let parent = temporary_directory();
+        let real = temporary_directory();
         let linked_root = parent.path().join("linked-root");
         symlink(real.path(), &linked_root).unwrap();
 
@@ -866,9 +984,39 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn data_root_capability_rejects_symlinked_ancestor() {
+        let parent = temporary_directory();
+        let external = temporary_directory();
+        fs::create_dir(external.path().join("data-root")).unwrap();
+        let alias = parent.path().join("alias-parent");
+        symlink(external.path(), &alias).unwrap();
+
+        assert!(NamespaceFs::open_data_root(&alias.join("data-root")).is_err());
+        assert!(!external.path().join("data-root/accounts").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn namespace_rejects_replaced_data_root_before_binding() {
+        let parent = temporary_directory();
+        let root = parent.path().join("data-root");
+        let retained = parent.path().join("retained-root");
+        fs::create_dir(&root).unwrap();
+        let capability = NamespaceFs::open_data_root(&root).unwrap();
+        fs::rename(&root, &retained).unwrap();
+        fs::create_dir(&root).unwrap();
+        let namespace = UserNamespace::new(&root, USER_A).unwrap();
+
+        assert!(NamespaceFs::for_namespace(&capability, &namespace).is_err());
+        assert!(!retained.join("accounts").exists());
+        assert!(!root.join("accounts").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn namespace_rejects_symlinked_account_or_managed_directory() {
-        let root = tempfile::tempdir().unwrap();
-        let external = tempfile::tempdir().unwrap();
+        let root = temporary_directory();
+        let external = temporary_directory();
         create_directory_symlink(
             external.path(),
             &root.path().join("accounts").join(USER_A).join("out"),
@@ -884,8 +1032,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn namespace_rejects_symlinked_accounts_ancestor() {
-        let root = tempfile::tempdir().unwrap();
-        let external = tempfile::tempdir().unwrap();
+        let root = temporary_directory();
+        let external = temporary_directory();
         create_directory_symlink(external.path(), &root.path().join("accounts"));
         let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
         let namespace = UserNamespace::new(root.path(), USER_A).unwrap();
@@ -898,9 +1046,9 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn namespace_io_cannot_escape_when_an_ancestor_is_swapped_after_validation() {
-        let root = tempfile::tempdir().unwrap();
-        let external = tempfile::tempdir().unwrap();
+    fn namespace_rejects_ancestor_swapped_before_operation() {
+        let root = temporary_directory();
+        let external = temporary_directory();
         let (_namespace, _data_root, namespace_fs, directories) =
             prepared_namespace(root.path());
         let output = namespace_fs
@@ -924,7 +1072,7 @@ mod tests {
     fn managed_file_opens_and_creates_only_regular_files() {
         let root = tempfile::Builder::new()
             .prefix("n")
-            .tempdir_in("/tmp")
+            .tempdir_in(fs::canonicalize("/tmp").unwrap())
             .unwrap();
         let (namespace, _data_root, namespace_fs, directories) =
             prepared_namespace(root.path());
@@ -977,8 +1125,116 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn namespace_instances_share_a_mutation_lock() {
+        let root = temporary_directory();
+        let (_, _, first, _) = prepared_namespace(root.path());
+        let (_, _, second, _) = prepared_namespace(root.path());
+        let held = first.lock_mutations().unwrap();
+        let contender = open_directory_at(&second.root_descriptor, OsStr::new(".")).unwrap();
+        assert!(rustix::fs::flock(
+            &contender,
+            rustix::fs::FlockOperation::NonBlockingLockExclusive,
+        ).is_err());
+        drop(held);
+        assert!(rustix::fs::flock(
+            &contender,
+            rustix::fs::FlockOperation::NonBlockingLockExclusive,
+        ).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_after_ancestor_move_stays_in_the_retained_directory() {
+        let root = temporary_directory();
+        let external = temporary_directory();
+        let (namespace, _data_root, namespace_fs, directories) =
+            prepared_namespace(root.path());
+        let output = namespace_fs
+            .open_managed_dir(&directories, ManagedUserArea::Output)
+            .unwrap();
+        let name = ManagedRelativeName::try_from("result.bin").unwrap();
+        let retained = root.path().join("retained-accounts");
+        let file = namespace_fs.create_new_regular_after_validation(&output, &name, || {
+            fs::rename(root.path().join("accounts"), &retained).unwrap();
+            symlink(external.path(), root.path().join("accounts")).unwrap();
+        }).unwrap();
+        assert!(regular_file_identity(&file.descriptor).unwrap() == file.identity);
+        assert!(retained.join(USER_A).join("out/result.bin").is_file());
+        assert!(!namespace.output_dir().join("result.bin").exists());
+        assert!(fs::read_dir(external.path()).unwrap().next().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn committed_rename_keeps_its_open_file_if_name_changes_after_commit() {
+        use std::io::Read;
+        let root = temporary_directory();
+        let external = tempfile::NamedTempFile::new().unwrap();
+        let (namespace, _data_root, namespace_fs, directories) = prepared_namespace(root.path());
+        let output = namespace_fs.open_managed_dir(&directories, ManagedUserArea::Output).unwrap();
+        let name = ManagedRelativeName::try_from("source.bin").unwrap();
+        let source = namespace_fs.create_new_regular(&output, &name).unwrap();
+        fs::write(namespace.output_dir().join("source.bin"), b"private").unwrap();
+        let destination = ManagedRelativeName::try_from("destination.bin").unwrap();
+        let result = namespace_fs.rename_within_after_commit(&output, source, &destination, || {
+            fs::remove_file(namespace.output_dir().join("destination.bin")).unwrap();
+            symlink(external.path(), namespace.output_dir().join("destination.bin")).unwrap();
+        }).unwrap();
+        let mut retained = fs::File::from(duplicate_descriptor(&result.descriptor).unwrap());
+        let mut bytes = Vec::new();
+        retained.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"private");
+        assert!(namespace_fs.unlink_within(&output, result).is_err());
+        assert!(fs::symlink_metadata(namespace.output_dir().join("destination.bin")).unwrap().is_symlink());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacement_requires_the_current_destination_capability() {
+        let root = temporary_directory();
+        let (namespace, _data_root, namespace_fs, directories) = prepared_namespace(root.path());
+        let output = namespace_fs.open_managed_dir(&directories, ManagedUserArea::Output).unwrap();
+        let source_name = ManagedRelativeName::try_from("source.bin").unwrap();
+        let destination_name = ManagedRelativeName::try_from("destination.bin").unwrap();
+        let source = namespace_fs.create_new_regular(&output, &source_name).unwrap();
+        let destination = namespace_fs.create_new_regular(&output, &destination_name).unwrap();
+        fs::write(namespace.output_dir().join("source.bin"), b"new").unwrap();
+        fs::write(namespace.output_dir().join("destination.bin"), b"old").unwrap();
+        let replaced = namespace_fs.replace_within(&output, source, destination).unwrap();
+        assert_eq!(fs::read(namespace.output_dir().join("destination.bin")).unwrap(), b"new");
+        assert!(!namespace.output_dir().join("source.bin").exists());
+        let next = namespace_fs.create_new_regular(&output, &source_name).unwrap();
+        fs::remove_file(namespace.output_dir().join("destination.bin")).unwrap();
+        fs::write(namespace.output_dir().join("destination.bin"), b"changed").unwrap();
+        assert!(namespace_fs.replace_within(&output, next, replaced).is_err());
+        assert_eq!(fs::read(namespace.output_dir().join("destination.bin")).unwrap(), b"changed");
+        assert!(namespace.output_dir().join("source.bin").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rename_collision_preserves_both_existing_files() {
+        let root = temporary_directory();
+        let (namespace, _data_root, namespace_fs, directories) =
+            prepared_namespace(root.path());
+        let output = namespace_fs
+            .open_managed_dir(&directories, ManagedUserArea::Output)
+            .unwrap();
+        let source_name = ManagedRelativeName::try_from("source.bin").unwrap();
+        let source = namespace_fs.create_new_regular(&output, &source_name).unwrap();
+        fs::write(namespace.output_dir().join("source.bin"), b"source").unwrap();
+        fs::write(namespace.output_dir().join("occupied.bin"), b"existing").unwrap();
+        let destination = ManagedRelativeName::try_from("occupied.bin").unwrap();
+
+        assert!(namespace_fs.rename_within(&output, source, &destination).is_err());
+        assert_eq!(fs::read(namespace.output_dir().join("source.bin")).unwrap(), b"source");
+        assert_eq!(fs::read(namespace.output_dir().join("occupied.bin")).unwrap(), b"existing");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn rename_and_unlink_require_matching_retained_file_capabilities() {
-        let root = tempfile::tempdir().unwrap();
+        let root = temporary_directory();
         let (namespace, _data_root, namespace_fs, directories) =
             prepared_namespace(root.path());
         let output = namespace_fs
@@ -1014,7 +1270,7 @@ mod tests {
             .is_err());
         assert!(namespace.output_dir().join("wrong-area.bin").exists());
 
-        let other_root = tempfile::tempdir().unwrap();
+        let other_root = temporary_directory();
         let (_other_namespace, _other_data_root, other_fs, other_directories) =
             prepared_namespace(other_root.path());
         let other_output = other_fs
@@ -1043,7 +1299,7 @@ mod tests {
     #[cfg(not(unix))]
     #[test]
     fn namespace_filesystem_fails_closed_without_audited_handle_relative_support() {
-        let root = tempfile::tempdir().unwrap();
+        let root = temporary_directory();
         assert!(NamespaceFs::open_data_root(root.path()).is_err());
     }
 }
