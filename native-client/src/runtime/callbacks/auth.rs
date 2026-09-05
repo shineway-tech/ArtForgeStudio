@@ -1672,18 +1672,8 @@ pub(super) fn clear_account_snapshot_state(app: &AppWindow, context: &AppContext
     state.set_video_model_options(ModelRc::new(VecModel::from(
         Vec::<CatalogModelView>::new(),
     )));
-    state.set_image_model("".into());
-    state.set_image_model_name("".into());
-    state.set_reasoning_model("".into());
-    state.set_reasoning_model_name("".into());
-    state.set_image_price_1k(0);
-    state.set_image_price_2k(0);
-    state.set_image_price_4k(0);
-    state.set_image_editor_model("".into());
-    state.set_image_editor_model_name("".into());
-    state.set_image_editor_price_1k(0);
-    state.set_image_editor_price_2k(0);
-    state.set_image_editor_price_4k(0);
+    clear_image_model_authority(&state);
+    clear_reasoning_model_authority(&state);
     state.set_video_model("".into());
     state.set_video_model_name("".into());
     state.set_video_model_description("".into());
@@ -1998,7 +1988,48 @@ pub(super) fn apply_backend_snapshot(
             })
             .collect::<Vec<_>>(),
     )));
-    let available_models = projection.models.unwrap_or(&[]);
+    let credit_snapshot_is_current =
+        credit_sync_epoch_is_current(&context.store.borrow(), credit_sync_epoch);
+    if credit_snapshot_applied && credit_snapshot_is_current {
+        match projection.ledger {
+            Some(ledger) => reset_credit_ledger(
+                app,
+                &context.store,
+                ledger,
+                snapshot.ledger_next_cursor.clone(),
+            ),
+            None => reset_credit_ledger(app, &context.store, &[], None),
+        }
+    }
+    state.set_account_sessions(ModelRc::new(VecModel::from(
+        snapshot
+            .sessions
+            .iter()
+            .map(|session| AccountSession {
+                id: session.id.clone().into(),
+                device_name: session.device_name.clone().into(),
+                platform: session.platform.clone().into(),
+                app_version: session.app_version.clone().into(),
+                last_seen_at: session.last_seen_at.clone().into(),
+                is_current: session.is_current,
+            })
+            .collect::<Vec<_>>(),
+    )));
+
+    apply_model_catalog_projection(app, context, projection.models.unwrap_or(&[]));
+    *context
+        .account_snapshot_scope
+        .lock()
+        .unwrap_or_else(|value| value.into_inner()) = Some(snapshot_scope);
+    save_user_profile(app);
+}
+
+fn apply_model_catalog_projection(
+    app: &AppWindow,
+    context: &AppContext,
+    available_models: &[ModelCatalogItem],
+) {
+    let state = app.global::<AppState>();
     let catalog_models = available_models
         .iter()
         .map(|model| CatalogModelView {
@@ -2038,33 +2069,6 @@ pub(super) fn apply_backend_snapshot(
         .collect::<Vec<_>>();
     state.set_catalog_models(ModelRc::new(VecModel::from(catalog_models)));
     state.set_video_model_options(ModelRc::new(VecModel::from(video_model_options)));
-    let credit_snapshot_is_current =
-        credit_sync_epoch_is_current(&context.store.borrow(), credit_sync_epoch);
-    if credit_snapshot_applied && credit_snapshot_is_current {
-        match projection.ledger {
-            Some(ledger) => reset_credit_ledger(
-                app,
-                &context.store,
-                ledger,
-                snapshot.ledger_next_cursor.clone(),
-            ),
-            None => reset_credit_ledger(app, &context.store, &[], None),
-        }
-    }
-    state.set_account_sessions(ModelRc::new(VecModel::from(
-        snapshot
-            .sessions
-            .iter()
-            .map(|session| AccountSession {
-                id: session.id.clone().into(),
-                device_name: session.device_name.clone().into(),
-                platform: session.platform.clone().into(),
-                app_version: session.app_version.clone().into(),
-                last_seen_at: session.last_seen_at.clone().into(),
-                is_current: session.is_current,
-            })
-            .collect::<Vec<_>>(),
-    )));
 
     let image_models = available_models
         .iter()
@@ -2140,10 +2144,14 @@ pub(super) fn apply_backend_snapshot(
     }
     if let Some(model) = selected_image {
         apply_image_model(&state, model);
+    } else {
+        clear_image_model_authority(&state);
     }
     if let Some(model) = selected_prompt {
         state.set_reasoning_model(model.code.clone().into());
         state.set_reasoning_model_name(model.name.clone().into());
+    } else {
+        clear_reasoning_model_authority(&state);
     }
     if let Some(model) = selected_video {
         state.set_video_model(model.code.clone().into());
@@ -2157,11 +2165,9 @@ pub(super) fn apply_backend_snapshot(
         state.set_video_service_available(false);
     }
     sync_style_analysis_selection(&state);
-    *context
-        .account_snapshot_scope
-        .lock()
-        .unwrap_or_else(|value| value.into_inner()) = Some(snapshot_scope);
-    save_user_profile(app);
+    if available_models.is_empty() {
+        state.set_model_catalog_message("".into());
+    }
 }
 
 fn model_group(
@@ -2259,6 +2265,24 @@ fn apply_image_model(state: &AppState, model: &ModelCatalogItem) {
     state.set_image_price_1k(model_price(model, "1K"));
     state.set_image_price_2k(model_price(model, "2K"));
     state.set_image_price_4k(model_price(model, "4K"));
+}
+
+fn clear_image_model_authority(state: &AppState) {
+    state.set_image_model("".into());
+    state.set_image_model_name("".into());
+    state.set_image_price_1k(0);
+    state.set_image_price_2k(0);
+    state.set_image_price_4k(0);
+    state.set_image_editor_model("".into());
+    state.set_image_editor_model_name("".into());
+    state.set_image_editor_price_1k(0);
+    state.set_image_editor_price_2k(0);
+    state.set_image_editor_price_4k(0);
+}
+
+fn clear_reasoning_model_authority(state: &AppState) {
+    state.set_reasoning_model("".into());
+    state.set_reasoning_model_name("".into());
 }
 
 fn model_display_name(model: &ModelCatalogItem) -> String {
@@ -2690,12 +2714,94 @@ mod tests {
         }
     }
 
+    fn owner_catalog_models() -> Vec<ModelCatalogItem> {
+        vec![
+            ModelCatalogItem {
+                code: "openai_image".to_string(),
+                version: 3,
+                purpose: "image_generation".to_string(),
+                name: "OpenAI Image".to_string(),
+                capabilities: serde_json::json!({
+                    "task_types": ["image_generation", "image_edit"],
+                    "supports_masks": true
+                }),
+                prices: vec![
+                    ModelPrice {
+                        quality: "1K".to_string(),
+                        max_long_edge: Some(1024),
+                        credit_cost: "11".to_string(),
+                    },
+                    ModelPrice {
+                        quality: "2K".to_string(),
+                        max_long_edge: Some(2048),
+                        credit_cost: "22".to_string(),
+                    },
+                    ModelPrice {
+                        quality: "4K".to_string(),
+                        max_long_edge: Some(4096),
+                        credit_cost: "33".to_string(),
+                    },
+                ],
+            },
+            ModelCatalogItem {
+                code: "openai_prompt".to_string(),
+                version: 2,
+                purpose: "prompt_processing".to_string(),
+                name: "OpenAI Prompt".to_string(),
+                capabilities: serde_json::json!({
+                    "task_types": ["image_style_analysis"],
+                    "supports_references": true,
+                    "operations": ["analyze_style"]
+                }),
+                prices: vec![ModelPrice {
+                    quality: "standard".to_string(),
+                    max_long_edge: None,
+                    credit_cost: "7".to_string(),
+                }],
+            },
+            ModelCatalogItem {
+                code: "seedance".to_string(),
+                version: 1,
+                purpose: "video_generation".to_string(),
+                name: "Seedance".to_string(),
+                capabilities: serde_json::json!({"summary": "Video model"}),
+                prices: Vec::new(),
+            },
+        ]
+    }
+
     #[test]
     fn member_and_frozen_snapshot_projection_keeps_finance_unavailable() {
+        i_slint_backend_testing::init_no_event_loop();
         for snapshot in [
             unavailable_finance_snapshot("member", false),
             unavailable_finance_snapshot("owner", true),
         ] {
+            let app = AppWindow::new().expect("create app window");
+            let context = AppContext::default();
+            let state = app.global::<AppState>();
+            let mut owner_snapshot = unavailable_finance_snapshot("owner", false);
+            owner_snapshot.models = Some(owner_catalog_models());
+            assert_eq!(owner_snapshot.account.user.id, snapshot.account.user.id);
+            let owner_projection = project_backend_snapshot(&owner_snapshot);
+            apply_model_catalog_projection(
+                &app,
+                &context,
+                owner_projection.models.expect("owner model catalog"),
+            );
+            state.set_image_editor_model("openai_image".into());
+            state.set_image_editor_model_name("OpenAI Image".into());
+            state.set_image_editor_price_1k(11);
+            state.set_image_editor_price_2k(22);
+            state.set_image_editor_price_4k(33);
+            state.set_model_catalog_message("owner catalog loaded".into());
+            assert_eq!(state.get_image_model().as_str(), "openai_image");
+            assert_eq!(state.get_reasoning_model().as_str(), "openai_prompt");
+            assert_eq!(state.get_video_model().as_str(), "seedance");
+            assert!(state.get_style_analysis_available());
+            assert_eq!(state.get_catalog_models().row_count(), 3);
+            assert_eq!(context.store.borrow().model_groups.len(), 2);
+
             let projection = project_backend_snapshot(&snapshot);
             let wallet_balance = projection.credits.map(|credits| credits.available.as_str());
             let wallet_reserved = projection.credits.map(|credits| credits.reserved.as_str());
@@ -2710,6 +2816,36 @@ mod tests {
             assert!(projection.ledger.is_none());
             assert!(projection.orders.is_none());
             assert!(projection.owner_billing.is_none());
+
+            apply_model_catalog_projection(&app, &context, projection.models.unwrap_or(&[]));
+
+            assert_eq!(state.get_image_model().as_str(), "");
+            assert_eq!(state.get_image_model_name().as_str(), "");
+            assert_eq!(state.get_image_price_1k(), 0);
+            assert_eq!(state.get_image_price_2k(), 0);
+            assert_eq!(state.get_image_price_4k(), 0);
+            assert_eq!(state.get_image_editor_model().as_str(), "");
+            assert_eq!(state.get_image_editor_model_name().as_str(), "");
+            assert_eq!(state.get_image_editor_price_1k(), 0);
+            assert_eq!(state.get_image_editor_price_2k(), 0);
+            assert_eq!(state.get_image_editor_price_4k(), 0);
+            assert_eq!(state.get_reasoning_model().as_str(), "");
+            assert_eq!(state.get_reasoning_model_name().as_str(), "");
+            assert_eq!(state.get_video_model().as_str(), "");
+            assert_eq!(state.get_video_model_name().as_str(), "");
+            assert_eq!(state.get_video_model_description().as_str(), "");
+            assert!(!state.get_video_service_available());
+            assert!(!state.get_style_analysis_available());
+            assert_eq!(state.get_style_analysis_model_code().as_str(), "");
+            assert_eq!(state.get_style_analysis_display_name().as_str(), "");
+            assert_eq!(state.get_style_analysis_credit_cost().as_str(), "");
+            assert_eq!(state.get_catalog_models().row_count(), 0);
+            assert_eq!(state.get_video_model_options().row_count(), 0);
+            assert_eq!(state.get_model_groups().row_count(), 0);
+            assert_eq!(state.get_model_image_options().row_count(), 0);
+            assert_eq!(state.get_model_reasoning_options().row_count(), 0);
+            assert!(context.store.borrow().model_groups.is_empty());
+            assert_eq!(state.get_model_catalog_message().as_str(), "");
         }
     }
 

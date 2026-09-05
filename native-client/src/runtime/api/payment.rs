@@ -1,4 +1,6 @@
-use super::{ApiClient, ApiError, BillingScope, SessionScope, TeamItems, TeamPage};
+use super::{
+    ApiClient, ApiError, ApiResponse, BillingScope, SessionScope, TeamItems, TeamPage,
+};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +36,30 @@ pub(crate) struct OrderDetail {
 struct CreditOrderRequest<'a> {
     pack_code: &'a str,
     client_request_id: &'a str,
+}
+
+fn order_page(
+    response: ApiResponse<TeamItems<OrderDetail>>,
+) -> Result<TeamPage<OrderDetail>, ApiError> {
+    let ApiResponse {
+        request_id,
+        data,
+        meta,
+    } = response;
+    let meta = meta.ok_or_else(|| ApiError::Protocol {
+        message: "团队分页响应缺少 meta.next_cursor".to_string(),
+        request_id: Some(request_id.clone()),
+    })?;
+    if data.items.len() > 50 {
+        return Err(ApiError::Protocol {
+            message: "团队分页响应超过请求的 50 条上限".to_string(),
+            request_id: Some(request_id),
+        });
+    }
+    Ok(TeamPage {
+        items: data.items,
+        next_cursor: meta.next_cursor,
+    })
 }
 
 #[derive(Clone)]
@@ -166,10 +192,7 @@ impl PaymentApi {
             None,
             scope,
         )?;
-        Ok(TeamPage {
-            items: response.data.items,
-            next_cursor: response.meta.and_then(|meta| meta.next_cursor),
-        })
+        order_page(response)
     }
 
     pub(crate) fn sync_order(&self, order_id: &str) -> Result<OrderDetail, ApiError> {
@@ -230,6 +253,133 @@ impl PaymentApi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::api::session::test_support::MemoryRefreshTokenStore;
+    use crate::runtime::api::{
+        ApiClientConfig, DeviceIdentity, GroupRequestScope, SessionManager, TokenSet,
+    };
+    use reqwest::Url;
+    use serde_json::{json, Value};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+    use std::thread::{self, JoinHandle};
+    use std::time::Duration;
+
+    const TEST_USER_ID: &str = "11111111-1111-4111-8111-111111111111";
+    const TEST_GROUP_ID: &str = "22222222-2222-4222-8222-222222222222";
+
+    struct OrderServer {
+        base_url: String,
+        targets: Arc<Mutex<Vec<String>>>,
+        worker: Option<JoinHandle<()>>,
+    }
+
+    impl OrderServer {
+        fn serve(responses: Vec<Value>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let targets = Arc::new(Mutex::new(Vec::with_capacity(responses.len())));
+            let captured = targets.clone();
+            let worker = thread::spawn(move || {
+                for response in responses {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let mut request = [0_u8; 4096];
+                    let received = stream.read(&mut request).unwrap();
+                    let request_line = String::from_utf8_lossy(&request[..received])
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .to_string();
+                    captured.lock().unwrap().push(
+                        request_line
+                            .split_whitespace()
+                            .nth(1)
+                            .unwrap_or_default()
+                            .to_string(),
+                    );
+                    let body = response.to_string();
+                    let http = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len(),
+                    );
+                    stream.write_all(http.as_bytes()).unwrap();
+                }
+            });
+            Self {
+                base_url: format!("http://{address}/"),
+                targets,
+                worker: Some(worker),
+            }
+        }
+
+        fn finish(mut self) -> Vec<String> {
+            self.worker.take().unwrap().join().unwrap();
+            Arc::try_unwrap(self.targets)
+                .unwrap()
+                .into_inner()
+                .unwrap()
+        }
+    }
+
+    fn order_json(id: &str) -> Value {
+        json!({
+            "id": id,
+            "billing_account_group_id": TEST_GROUP_ID,
+            "status": "pending",
+            "fulfillment_status": "pending",
+            "payable_amount_cents": "100",
+            "payment": null
+        })
+    }
+
+    fn order_api(base_url: &str) -> (PaymentApi, BillingScope) {
+        let session = Arc::new(SessionManager::new(Arc::new(
+            MemoryRefreshTokenStore::default(),
+        )));
+        let session_scope = session
+            .install_tokens_for_user(
+                &TokenSet {
+                    access_token: "access-token".to_string(),
+                    access_expires_in_seconds: 900,
+                    refresh_token: "refresh-token".to_string(),
+                    refresh_expires_at: "2099-01-01T00:00:00Z".to_string(),
+                    token_type: "X-Token".to_string(),
+                },
+                TEST_USER_ID,
+            )
+            .unwrap();
+        let client = ApiClient::new(
+            ApiClientConfig {
+                base_url: Url::parse(base_url).unwrap(),
+                app_version: "task4-order-page-test".to_string(),
+                timeout: Duration::from_secs(1),
+            },
+            DeviceIdentity {
+                id: "task4-order-page-device".to_string(),
+                name: "Task 4 order page test".to_string(),
+                platform: "test".to_string(),
+            },
+            session,
+        )
+        .unwrap();
+        let scope = BillingScope {
+            request: GroupRequestScope {
+                session: session_scope,
+                account_group_id: TEST_GROUP_ID.to_string(),
+            },
+            context_epoch: 4,
+        };
+        (PaymentApi::new(client), scope)
+    }
+
+    fn assert_protocol_request_id(error: ApiError) {
+        match error {
+            ApiError::Protocol { request_id, .. } => {
+                assert_eq!(request_id.as_deref(), Some("orders-request"));
+            }
+            other => panic!("expected protocol error, got {other:?}"),
+        }
+    }
 
     #[test]
     fn order_detail_requires_billing_account_group_id() {
@@ -242,5 +392,84 @@ mod tests {
         let mut order_null = order;
         order_null["billing_account_group_id"] = serde_json::Value::Null;
         assert!(serde_json::from_value::<OrderDetail>(order_null).is_err());
+    }
+
+    #[test]
+    fn orders_billing_accepts_explicit_null_cursor() {
+        let server = OrderServer::serve(vec![json!({
+            "request_id": "orders-request",
+            "data": {"items": [order_json("order-1")]},
+            "error": null,
+            "meta": {"next_cursor": null}
+        })]);
+        let (api, scope) = order_api(&server.base_url);
+
+        let page = api.orders_billing(None, &scope).unwrap();
+
+        assert_eq!(page.items.len(), 1);
+        assert!(page.next_cursor.is_none());
+        assert_eq!(server.finish(), vec!["/v1/orders?page_size=50"]);
+    }
+
+    #[test]
+    fn orders_billing_percent_encodes_opaque_cursor() {
+        let server = OrderServer::serve(vec![json!({
+            "request_id": "orders-request",
+            "data": {"items": []},
+            "error": null,
+            "meta": {"next_cursor": "after/+ page"}
+        })]);
+        let (api, scope) = order_api(&server.base_url);
+
+        let page = api
+            .orders_billing(Some("before/+ page"), &scope)
+            .unwrap();
+
+        assert_eq!(page.next_cursor.as_deref(), Some("after/+ page"));
+        assert_eq!(
+            server.finish(),
+            vec!["/v1/orders?page_size=50&cursor=before%2F%2B+page"]
+        );
+    }
+
+    #[test]
+    fn orders_billing_rejects_missing_or_null_meta_with_request_id() {
+        let server = OrderServer::serve(vec![
+            json!({
+                "request_id": "orders-request",
+                "data": {"items": []},
+                "error": null
+            }),
+            json!({
+                "request_id": "orders-request",
+                "data": {"items": []},
+                "error": null,
+                "meta": null
+            }),
+        ]);
+        let (api, scope) = order_api(&server.base_url);
+
+        assert_protocol_request_id(api.orders_billing(None, &scope).unwrap_err());
+        assert_protocol_request_id(api.orders_billing(None, &scope).unwrap_err());
+
+        assert_eq!(server.finish().len(), 2);
+    }
+
+    #[test]
+    fn orders_billing_rejects_more_than_fifty_items_with_request_id() {
+        let items = (0..51)
+            .map(|index| order_json(&format!("order-{index}")))
+            .collect::<Vec<_>>();
+        let server = OrderServer::serve(vec![json!({
+            "request_id": "orders-request",
+            "data": {"items": items},
+            "error": null,
+            "meta": {"next_cursor": null}
+        })]);
+        let (api, scope) = order_api(&server.base_url);
+
+        assert_protocol_request_id(api.orders_billing(None, &scope).unwrap_err());
+
+        assert_eq!(server.finish().len(), 1);
     }
 }

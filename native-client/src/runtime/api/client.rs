@@ -605,17 +605,29 @@ mod tests {
         }
 
         fn serve_json_values(values: Vec<Value>) -> Self {
+            Self::serve_json_values_with_page_meta_at(values, None)
+        }
+
+        fn serve_json_values_with_page_meta_at(
+            values: Vec<Value>,
+            page_response_index: Option<usize>,
+        ) -> Self {
             Self::serve_owned_sequence(
                 values
                     .into_iter()
-                    .map(|data| {
+                    .enumerate()
+                    .map(|(index, data)| {
                         (
                             "200 OK".to_string(),
                             serde_json::json!({
                                 "request_id": "task4-matrix",
                                 "data": data,
                                 "error": null,
-                                "meta": null
+                                "meta": if page_response_index == Some(index) {
+                                    serde_json::json!({"next_cursor": null})
+                                } else {
+                                    Value::Null
+                                }
                             })
                             .to_string(),
                         )
@@ -1004,7 +1016,7 @@ mod tests {
         let generation = generation_detail_json();
         let prompt = prompt_detail_json();
         let order = order_detail_json();
-        let capture = CapturedRequests::serve_json_values(vec![
+        let capture = CapturedRequests::serve_json_values_with_page_meta_at(vec![
             generation.clone(),
             generation.clone(),
             prompt.clone(),
@@ -1045,7 +1057,7 @@ mod tests {
                 "expires_at": "2026-09-05T00:05:00Z"
             }),
             order,
-        ]);
+        ], Some(5));
         let client = authenticated_test_client(capture.base_url());
         let session = client.session().scope_for_user(TEST_USER_ID).unwrap();
         let scope = BillingScope {
