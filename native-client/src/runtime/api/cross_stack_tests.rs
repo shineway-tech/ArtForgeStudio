@@ -2895,6 +2895,9 @@ fn cross_stack_catalog_and_account_dto_invariants() {
     assert_eq!(snapshot.account.user.status, "active");
     assert!(snapshot.account.user.registered_at.contains('T'));
     assert!(snapshot.account.membership.revision.parse::<u64>().is_ok());
+    if let Some(plan) = snapshot.account.membership.plan.as_ref() {
+        assert!(!plan.max_quality.is_empty());
+    }
     let credits = snapshot.account.credits.as_ref().expect("credit account");
     for value in [
         &credits.available,
@@ -2982,6 +2985,38 @@ fn cross_stack_catalog_and_account_dto_invariants() {
     AuthApi::new(client)
         .logout(false)
         .expect("logout DTO invariant user");
+}
+
+#[test]
+fn cross_stack_strict_account_finance_fixture_matches_server_projection() {
+    let membership: AccountMembership = serde_json::from_value(json!({
+        "revision": "3",
+        "period_id": "2026-09",
+        "starts_at": "2026-09-01T00:00:00Z",
+        "ends_at": "2026-10-01T00:00:00Z",
+        "plan": {
+            "code": "pro",
+            "name": "Pro",
+            "tier_rank": 2,
+            "recharge_discount_bps": 9000,
+            "max_quality": "4K"
+        }
+    }))
+    .expect("strict membership finance projection");
+    let credits: CreditAccount = serde_json::from_value(json!({
+        "available": "500",
+        "reserved": "12",
+        "lifetime_granted": "900",
+        "lifetime_spent": "400",
+        "version": "8"
+    }))
+    .expect("strict credit finance projection");
+
+    assert_eq!(
+        membership.plan.expect("non-null fixture plan").max_quality,
+        "4K"
+    );
+    assert_eq!(credits.version, "8");
 }
 
 fn setup_cross_stack_password(

@@ -18,11 +18,13 @@ pub(crate) struct AccountUser {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct MembershipPlanSummary {
     pub(crate) code: String,
     pub(crate) name: String,
     pub(crate) tier_rank: i32,
     pub(crate) recharge_discount_bps: i32,
+    pub(crate) max_quality: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -39,6 +41,7 @@ pub(crate) struct MembershipPlan {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct AccountMembership {
     pub(crate) revision: String,
     pub(crate) period_id: Option<String>,
@@ -48,12 +51,12 @@ pub(crate) struct AccountMembership {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CreditAccount {
     pub(crate) available: String,
     pub(crate) reserved: String,
     pub(crate) lifetime_granted: String,
     pub(crate) lifetime_spent: String,
-    #[serde(default)]
     pub(crate) version: String,
 }
 

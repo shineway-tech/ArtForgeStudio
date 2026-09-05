@@ -33,6 +33,7 @@ pub(crate) use notifications::*;
 pub(crate) use payment::*;
 pub(crate) use prompt_optimization::*;
 pub(crate) use session::*;
+// Team, owner-admin, finance-summary, and reauthentication routes are identity scoped.
 #[allow(unused_imports)]
 pub(crate) use team::*;
 pub(crate) use types::*;
