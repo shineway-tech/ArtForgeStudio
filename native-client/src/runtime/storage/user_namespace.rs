@@ -24,6 +24,9 @@ pub(crate) struct NamespaceManagedFile {
     capability: ManagedFileCapability,
 }
 
+pub(crate) trait ManagedReadSeek: std::io::Read + std::io::Seek {}
+impl<T: std::io::Read + std::io::Seek> ManagedReadSeek for T {}
+
 impl NamespaceManagedFile {
     pub(crate) fn key(&self) -> &ManagedFileKey {
         &self.key
@@ -41,6 +44,15 @@ pub(crate) enum NamespaceManagedPublication<'a> {
 }
 
 impl NamespaceStorageAuthority {
+    /// Worker-only local reading/seeking and decode. No network/UI/reentry;
+    /// the returned value is accepted only after retained post-validation.
+    pub(crate) fn with_regular_reader<T>(
+        &self, file: &mut NamespaceManagedFile,
+        operation: impl FnOnce(&mut dyn ManagedReadSeek) -> Result<T>,
+    ) -> Result<T> {
+        let directory = self.fs.open_managed_dir(&self.directories, file.key.area())?;
+        self.fs.with_regular_reader(&directory, &mut file.capability, operation)
+    }
     pub(crate) fn open(data_root: Arc<DataRootCapability>, lease: &NamespaceLease) -> Result<Self> {
         let fs = NamespaceFs::for_namespace(data_root.as_ref(), &lease.namespace)?;
         let directories = fs.ensure_managed_dirs()?;
@@ -246,6 +258,39 @@ mod namespace_authority_tests {
 
     fn candidate_uuid(value: &str) -> Uuid {
         Uuid::parse_str(value).unwrap()
+    }
+
+    #[test]
+    fn namespace_delivery_reader_seeks_revalidates_and_preserves_typed_error() {
+        let (_root, lease, authority) = authority_fixture(AUTHORITY_USER_A);
+        let key = ManagedFileKey::new(ManagedUserArea::Output, "reader").unwrap();
+        let mut file = authority.create_new_regular(&key).unwrap();
+        authority.write_new_regular_from(&mut file, &mut &b"abcdef"[..]).unwrap();
+        let bytes = authority.with_regular_reader(&mut file, |reader| {
+            let mut bytes = [0; 3];
+            reader.seek(std::io::SeekFrom::Start(2))?;
+            reader.read_exact(&mut bytes)?;
+            reader.rewind()?;
+            let mut first = [0; 1];
+            reader.read_exact(&mut first)?;
+            Ok((bytes, first))
+        }).unwrap();
+        assert_eq!(bytes, (*b"cde", *b"a"));
+        let error = authority.with_regular_reader::<()>(&mut file, |_| {
+            Err(std::io::Error::from(std::io::ErrorKind::Interrupted).into())
+        }).unwrap_err();
+        assert_eq!(error.downcast_ref::<std::io::Error>().unwrap().kind(), std::io::ErrorKind::Interrupted);
+        let (_other_root, _, other) = authority_fixture(AUTHORITY_USER_A);
+        let called = std::cell::Cell::new(false);
+        assert!(other.with_regular_reader(&mut file, |_| { called.set(true); Ok(()) }).is_err());
+        assert!(!called.get());
+        let path = lease.namespace.path(ManagedUserArea::Output).join("reader");
+        assert!(authority.with_regular_reader(&mut file, |_| {
+            fs::rename(&path, path.with_file_name("retained-reader"))?;
+            fs::write(&path, b"replacement")?;
+            Ok(())
+        }).is_err());
+        assert_eq!(fs::read(path).unwrap(), b"replacement");
     }
 
     #[cfg(any(unix, windows))]
@@ -1520,14 +1565,25 @@ impl NamespaceFs {
         file: &mut ManagedFileCapability,
         sink: &mut dyn std::io::Write,
     ) -> Result<u64> {
+        self.with_regular_reader(directory, file, |reader| Ok(std::io::copy(reader, sink)?))
+    }
+
+    /// Worker-only bounded local reads/seeks and decoding. No network, UI or
+    /// namespace reentry. Results are accepted only after retained post-validation.
+    pub(crate) fn with_regular_reader<T>(
+        &self,
+        directory: &ManagedDirectoryCapability,
+        file: &mut ManagedFileCapability,
+        operation: impl FnOnce(&mut dyn ManagedReadSeek) -> Result<T>,
+    ) -> Result<T> {
         use std::io::{Seek, SeekFrom};
         let _lock = self.lock_mutations()?;
         let _chain = self.checked_file_chain(directory, file)?;
         let mut stream = std::fs::File::from(duplicate_descriptor(&file.descriptor)?);
         stream.seek(SeekFrom::Start(0))?;
-        let copied = std::io::copy(&mut stream, sink)?;
+        let result = operation(&mut stream)?;
         self.checked_file_chain(directory, file)?;
-        Ok(copied)
+        Ok(result)
     }
 
     /// Source reads run outside the mutation lock. Each bounded write and EOF
@@ -2612,6 +2668,12 @@ fn open_regular_at(parent: &OwnedFd, leaf: &OsStr) -> Result<OwnedFd> {
 
 #[cfg(not(any(unix, windows)))]
 impl NamespaceFs {
+    pub(crate) fn with_regular_reader<T>(
+        &self, _directory: &ManagedDirectoryCapability, _file: &mut ManagedFileCapability,
+        _operation: impl FnOnce(&mut dyn ManagedReadSeek) -> Result<T>,
+    ) -> Result<T> {
+        unsupported_namespace_capabilities()
+    }
     pub(crate) fn open_optional_regular(
         &self,
         _directory: &ManagedDirectoryCapability,

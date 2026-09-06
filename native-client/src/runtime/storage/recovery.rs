@@ -1215,6 +1215,9 @@ pub(super) fn pending_recovery_file_references_for_namespace(
 }
 fn generation_record_complete(record: &PendingGenerationRecord) -> bool {
     record.terminal
+        && record.reference_paths.is_empty()
+        && record.reference_sha256.is_empty()
+        && record.reference_size_bytes.is_empty()
         && record
             .deliveries
             .iter()
@@ -2228,6 +2231,47 @@ mod tests {
         assert!(load_pending_generations_for_namespace(&authority)
             .unwrap()
             .is_empty());
+    }
+    #[test]
+    fn namespace_delivery_settlement_retains_each_required_input_until_explicit_release() {
+        for abandon in [false, true] {
+            for vector in 0..3 {
+                let (_root, authority, scope) = fixture(9);
+                let mut record = pending_record();
+                record.deliveries[0].file_id = "settled-file".into();
+                record.deliveries[0].failed_asset_id = "failed-card".into();
+                record.lineage_reference_paths = vec!["lineage".into()];
+                record.uploaded_file_ids = vec!["uploaded".into()];
+                match vector {
+                    0 => record.reference_paths = vec!["required-input".into()],
+                    1 => record.reference_sha256 = vec!["required-hash".into()],
+                    _ => record.reference_size_bytes = vec![7],
+                }
+                upsert_pending_generation_for_namespace(&authority, &scope, record.clone()).unwrap();
+                let settle = || {
+                    if abandon {
+                        abandon_pending_delivery_for_namespace(&authority, &record.identity(), "failed-card")
+                    } else {
+                        pending_delivery_acknowledged_for_namespace(&authority, &record.identity(), "settled-file")
+                    }
+                };
+                assert!(settle().unwrap());
+                let rows = load_pending_generations_for_namespace(&authority).unwrap();
+                assert_eq!(rows.len(), 1, "settlement must retain required input vector {vector}, abandon={abandon}");
+                assert_eq!(rows[0].reference_paths, record.reference_paths);
+                assert_eq!(rows[0].reference_sha256, record.reference_sha256);
+                assert_eq!(rows[0].reference_size_bytes, record.reference_size_bytes);
+                assert_eq!(rows[0].deliveries[0].acknowledged, !abandon);
+                assert_eq!(rows[0].deliveries[0].abandoned, abandon);
+                apply_generation_patch_for_namespace(&authority, &record.identity(), GenerationRecoveryPatch::ReleaseReferenceInputs).unwrap();
+                let rows = load_pending_generations_for_namespace(&authority).unwrap();
+                assert_eq!(rows.len(), 1, "input release is not an implicit remove");
+                assert_eq!(rows[0].lineage_reference_paths, ["lineage"]);
+                assert_eq!(rows[0].uploaded_file_ids, ["uploaded"]);
+                assert!(settle().unwrap());
+                assert!(load_pending_generations_for_namespace(&authority).unwrap().is_empty());
+            }
+        }
     }
     #[test]
     fn ambiguous_delivery_matches_preserve_bytes_and_asset_queries_fail_closed() {

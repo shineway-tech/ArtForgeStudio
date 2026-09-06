@@ -1,5 +1,430 @@
 use super::*;
 
+macro_rules! ensure_delivery {
+    ($condition:expr, $message:expr) => {
+        if !$condition {
+            return Err(anyhow!($message).into());
+        }
+    };
+}
+
+pub(super) struct PreparedNamespaceDelivery {
+    authority: Arc<NamespaceStorageAuthority>,
+    api: GenerationApi,
+    index: FileIndex,
+    scope: SessionScope,
+    record: PendingGenerationRecord,
+    confirmation: DeliveryConfirmation,
+    file: NamespaceManagedFile,
+    indexed: ManagedFileRecord,
+    preview: PreparedDeliveryPreview,
+    source_path: String,
+    terminal_success_count: Option<usize>,
+}
+
+pub(super) fn prepare_namespace_delivery(
+    api: &GenerationApi,
+    authority: Arc<NamespaceStorageAuthority>,
+    index: FileIndex,
+    expected: &RecoveryRecordIdentity,
+    item_index: usize,
+) -> std::result::Result<PreparedNamespaceDelivery, DeliveryRetryError> {
+    let scope = SessionScope {
+        owner_user_id: authority.user_public_id().to_owned(),
+        auth_epoch: authority.lease().auth_epoch,
+    };
+    api.ensure_scope_active(&scope)?;
+    let record = load_exact_delivery_record(&authority, expected)?;
+    ensure_delivery!(
+        record.auth_epoch == scope.auth_epoch,
+        "delivery session mismatch"
+    );
+    ensure_delivery!(
+        record.count > 0 && item_index < record.count as usize,
+        "invalid delivery item index"
+    );
+    ensure_delivery!(
+        record.canvas_source_node_id.is_empty()
+            && matches!(
+                record.task_type.as_str(),
+                "image_generation" | "image_edit" | "image_upscale"
+            ),
+        "this delivery consumer requires an ordinary image task"
+    );
+    require_delivery_uuid(&record.server_task_id)?;
+    let detail = api.task_scoped(&record.server_task_id, &scope)?;
+    ensure_delivery!(
+        detail.id == record.server_task_id,
+        "delivery task identity mismatch"
+    );
+    api::require_saved_group(
+        &record.billing_account_group_id,
+        &detail.billing_account_group_id,
+    )?;
+    let mut indexes = BTreeSet::new();
+    ensure_delivery!(
+        detail
+            .items
+            .iter()
+            .all(|item| item.index < record.count as usize && indexes.insert(item.index)),
+        "ambiguous delivery item indexes"
+    );
+    let successes = detail
+        .items
+        .iter()
+        .filter(|item| item.status == "succeeded")
+        .count();
+    ensure_delivery!(
+        detail.success_count >= 0
+            && detail.failure_count >= 0
+            && detail.success_count as usize == successes
+            && i64::from(detail.success_count) + i64::from(detail.failure_count)
+                <= i64::from(record.count)
+            && (detail.requested_count == 0 || detail.requested_count == record.count),
+        "inconsistent delivery success count"
+    );
+    let item = detail
+        .items
+        .iter()
+        .find(|item| item.index == item_index)
+        .filter(|item| item.status == "succeeded")
+        .ok_or_else(|| anyhow!("successful delivery item is unavailable"))?;
+    let remote = item
+        .file
+        .as_ref()
+        .filter(|file| file.status == "available")
+        .ok_or(DeliveryRetryError::Expired)?;
+    require_delivery_uuid(&remote.id)?;
+    let size = remote
+        .size_bytes
+        .parse::<u64>()
+        .ok()
+        .filter(|size| *size > 0 && size.to_string() == remote.size_bytes)
+        .ok_or_else(|| anyhow!("invalid delivery size"))?;
+    ensure_delivery!(
+        remote.sha256.len() == 64 && remote.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "invalid delivery hash"
+    );
+    let mut confirmation = DeliveryConfirmation {
+        client_request_id: record.client_request_id.clone(),
+        item_index,
+        task_id: record.server_task_id.clone(),
+        file_id: remote.id.clone(),
+        sha256: remote.sha256.clone(),
+        size_bytes: size,
+        failed_asset_id: None,
+    };
+    if let Some(saved) = exact_saved_delivery(&record, &confirmation)? {
+        confirmation.failed_asset_id =
+            (!saved.failed_asset_id.is_empty()).then(|| saved.failed_asset_id.clone());
+    }
+    let extension = match remote.mime_type.as_str() {
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        _ => "png",
+    };
+    let destination = ManagedFileKey::new(
+        ManagedUserArea::Output,
+        &format!("{}.{extension}", remote.id),
+    )?;
+    let source_path = authority
+        .lease()
+        .namespace
+        .path(ManagedUserArea::Output)
+        .join(destination.relative_name().as_str())
+        .to_string_lossy()
+        .into_owned();
+    if let Some(saved) = exact_saved_delivery(&record, &confirmation)? {
+        ensure_delivery!(
+            saved.local_path.is_empty() || saved.local_path == source_path,
+            "saved delivery output path mismatch"
+        );
+    }
+    let (file, preview) = if let Some(mut file) = authority.open_optional_regular(&destination)? {
+        verify_namespace_delivery_file(&authority, &mut file, &confirmation)?;
+        let preview = prepare_delivery_preview_for_namespace(&authority, &mut file)?;
+        (file, preview)
+    } else {
+        let mut temporary = authority.create_temporary_regular_for(&destination)?;
+        let preparation = (|| -> std::result::Result<_, DeliveryRetryError> {
+            api.download_verified_for_namespace(remote, &scope, &authority, &mut temporary)?;
+            let preview = prepare_delivery_preview_for_namespace(&authority, &mut temporary)?;
+            api.ensure_scope_active(&scope)?;
+            authority.sync_regular(&mut temporary)?;
+            authority.publish_regular(
+                &mut temporary,
+                NamespaceManagedPublication::Absent(&destination),
+            )?;
+            Ok(preview)
+        })();
+        match preparation {
+            Ok(preview) => (temporary, preview),
+            Err(error) => {
+                let appeared = matches!(&error, DeliveryRetryError::Local(error)
+                    if error.downcast_ref::<ManagedPublicationConflict>() == Some(&ManagedPublicationConflict::DestinationAppeared));
+                // Only the owned temporary can be unlinked, even on binding replacement.
+                // Preserve the primary typed failure if cleanup itself cannot validate.
+                let _ = authority.unlink_regular(temporary);
+                if !appeared {
+                    return Err(error);
+                }
+                api.ensure_scope_active(&scope)?;
+                let mut winner = authority.open_existing_regular(&destination)?;
+                verify_namespace_delivery_file(&authority, &mut winner, &confirmation)?;
+                let preview = prepare_delivery_preview_for_namespace(&authority, &mut winner)?;
+                (winner, preview)
+            }
+        }
+    };
+    api.ensure_scope_active(&scope)?;
+    let retained = authority.inspect_regular(&file)?;
+    let registration_file = authority.open_existing_regular(&destination)?;
+    ensure_delivery!(
+        authority.inspect_regular(&registration_file)?.identity == retained.identity,
+        "delivery changed before index registration"
+    );
+    let registration = NamespacedManagedFileRegistration::new(
+        &authority,
+        registration_file,
+        "generation",
+        "durable",
+    )
+    .map_err(anyhow::Error::from)?;
+    let indexed = index
+        .register_file_for_namespace(&authority, &registration)
+        .map_err(anyhow::Error::from)?;
+    let prepared = PreparedNamespaceDelivery {
+        authority,
+        api: api.clone(),
+        index,
+        scope,
+        record,
+        confirmation,
+        file,
+        indexed,
+        preview,
+        source_path,
+        terminal_success_count: detail.terminal().then_some(successes),
+    };
+    prepared.ensure_current()?;
+    Ok(prepared)
+}
+
+pub(super) fn acknowledge_namespace_delivery(
+    committed: CommittedNamespaceDelivery,
+) -> std::result::Result<bool, DeliveryRetryError> {
+    let mut prepared = committed.into_prepared();
+    prepared.ensure_current()?;
+    verify_namespace_delivery_file(
+        &prepared.authority,
+        &mut prepared.file,
+        &prepared.confirmation,
+    )?;
+    prepared.ensure_index_current()?;
+    let identity = prepared.record.identity();
+    let current = load_exact_delivery_record(&prepared.authority, &identity)?;
+    // Delivery rows and terminal progress can advance independently, but the
+    // captured task/prompt/input metadata may not silently change underneath us.
+    let stable = |record: &PendingGenerationRecord| -> Result<serde_json::Value> {
+        let mut record = record.clone();
+        record.deliveries.clear();
+        record.terminal = false;
+        record.expected_success_count = 0;
+        Ok(serde_json::to_value(record)?)
+    };
+    ensure_delivery!(
+        stable(&current)? == stable(&prepared.record)?,
+        "saved delivery record changed"
+    );
+    let saved_delivery = exact_saved_delivery(&current, &prepared.confirmation)?;
+    ensure_delivery!(
+        saved_delivery
+            .map(|delivery| delivery.failed_asset_id.as_str())
+            .filter(|id| !id.is_empty())
+            == prepared.confirmation.failed_asset_id.as_deref(),
+        "saved failed-card identity changed"
+    );
+    if let Some(delivery) = saved_delivery {
+        ensure_delivery!(
+            delivery.local_path.is_empty() || delivery.local_path == prepared.source_path,
+            "saved delivery path changed"
+        );
+    }
+    if let Some(expected) = prepared.terminal_success_count {
+        ensure_delivery!(
+            !current.terminal || current.expected_success_count == expected,
+            "saved terminal success count changed"
+        );
+    }
+    if !pending_delivery_saved_for_namespace(
+        &prepared.authority,
+        &identity,
+        &prepared.confirmation,
+        &prepared.source_path,
+    )? {
+        return Ok(false);
+    }
+    if let Some(expected_success_count) = prepared.terminal_success_count {
+        if !apply_generation_patch_for_namespace(
+            &prepared.authority,
+            &identity,
+            GenerationRecoveryPatch::Terminal {
+                expected_success_count,
+            },
+        )? {
+            return Ok(false);
+        }
+    }
+    prepared.ensure_current()?;
+    prepared.ensure_index_current()?;
+    prepared.api.acknowledge_delivery_scoped(
+        &prepared.confirmation.task_id,
+        &prepared.confirmation.file_id,
+        &prepared.confirmation.sha256,
+        prepared.confirmation.size_bytes,
+        &prepared.scope,
+    )?;
+    prepared.api.ensure_scope_active(&prepared.scope)?;
+    pending_delivery_acknowledged_for_namespace(
+        &prepared.authority,
+        &identity,
+        &prepared.confirmation.file_id,
+    )
+    .map_err(Into::into)
+}
+
+impl PreparedNamespaceDelivery {
+    pub(super) fn record(&self) -> &PendingGenerationRecord {
+        &self.record
+    }
+    pub(super) fn confirmation(&self) -> &DeliveryConfirmation {
+        &self.confirmation
+    }
+    pub(super) fn preview(&self) -> &PreparedDeliveryPreview {
+        &self.preview
+    }
+    pub(super) fn source_path(&self) -> &str {
+        &self.source_path
+    }
+    pub(super) fn lease(&self) -> &NamespaceLease {
+        self.authority.lease()
+    }
+    pub(super) fn ensure_current(&self) -> Result<()> {
+        self.api.ensure_scope_active(&self.scope)?;
+        let retained = self.authority.inspect_regular(&self.file)?;
+        ensure_delivery!(
+            retained.identity == self.indexed.physical_identity
+                && retained.byte_size == self.confirmation.size_bytes,
+            "retained delivery identity changed"
+        );
+        Ok(())
+    }
+    fn ensure_index_current(&self) -> Result<()> {
+        let indexed = self
+            .index
+            .find_file_by_path_for_namespace(
+                &self.authority,
+                self.file.key().area(),
+                self.file.key().relative_name().as_str(),
+            )?
+            .ok_or_else(|| anyhow!("delivery index entry is missing"))?;
+        ensure_delivery!(
+            indexed.id == self.indexed.id
+                && indexed.physical_identity == self.indexed.physical_identity
+                && indexed.byte_size == self.confirmation.size_bytes
+                && indexed.kind == "generation"
+                && indexed.retention_policy == "durable"
+                && !indexed.pending_delete,
+            "delivery index identity changed"
+        );
+        Ok(())
+    }
+}
+
+fn require_delivery_uuid(value: &str) -> Result<()> {
+    ensure_delivery!(
+        api::uuid_path_segment(value).is_ok_and(|canonical| canonical == value),
+        "delivery identity is not a canonical UUID"
+    );
+    Ok(())
+}
+fn load_exact_delivery_record(
+    authority: &NamespaceStorageAuthority,
+    expected: &RecoveryRecordIdentity,
+) -> Result<PendingGenerationRecord> {
+    let mut records = load_pending_generations_for_namespace(authority)?
+        .into_iter()
+        .filter(|record| record.identity() == *expected);
+    let record = records
+        .next()
+        .ok_or_else(|| anyhow!("exact saved delivery record is missing"))?;
+    ensure_delivery!(
+        records.next().is_none(),
+        "saved delivery record is ambiguous"
+    );
+    Ok(record)
+}
+fn exact_saved_delivery<'a>(
+    record: &'a PendingGenerationRecord,
+    confirmation: &DeliveryConfirmation,
+) -> Result<Option<&'a PendingDeliveryRecord>> {
+    let mut matches = record.deliveries.iter().filter(|delivery| {
+        delivery.item_index == confirmation.item_index || delivery.file_id == confirmation.file_id
+    });
+    let saved = matches.next();
+    ensure_delivery!(matches.next().is_none(), "saved delivery is ambiguous");
+    if let Some(saved) = saved {
+        ensure_delivery!(
+            saved.item_index == confirmation.item_index
+                && saved.file_id == confirmation.file_id
+                && saved.size_bytes == confirmation.size_bytes
+                && saved.sha256 == confirmation.sha256
+                && !saved.abandoned
+                && !saved.acknowledged,
+            "saved delivery confirmation mismatch"
+        );
+    }
+    Ok(saved)
+}
+fn verify_namespace_delivery_file(
+    authority: &NamespaceStorageAuthority,
+    file: &mut NamespaceManagedFile,
+    confirmation: &DeliveryConfirmation,
+) -> Result<()> {
+    use sha2::Digest;
+    struct DigestSink {
+        count: u64,
+        expected: u64,
+        hash: sha2::Sha256,
+    }
+    impl std::io::Write for DigestSink {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.count = self
+                .count
+                .checked_add(bytes.len() as u64)
+                .filter(|count| *count <= self.expected)
+                .ok_or_else(|| std::io::Error::other("delivery size mismatch"))?;
+            self.hash.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut sink = DigestSink {
+        count: 0,
+        expected: confirmation.size_bytes,
+        hash: sha2::Sha256::new(),
+    };
+    authority.read_regular_to(file, &mut sink)?;
+    ensure_delivery!(
+        sink.count == confirmation.size_bytes
+            && format!("{:x}", sink.hash.finalize()).eq_ignore_ascii_case(&confirmation.sha256),
+        "delivery integrity mismatch"
+    );
+    Ok(())
+}
+
 #[derive(Debug, thiserror::Error)]
 pub(super) enum DeliveryRetryError {
     #[error("authentication is required")]

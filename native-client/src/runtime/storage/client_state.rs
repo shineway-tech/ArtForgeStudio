@@ -1715,6 +1715,1229 @@ mod tests {
     const USER_B: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     const GROUP_A: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
     const GROUP_B: &str = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const DELIVERY_TASK: &str = "11111111-1111-4111-8111-111111111111";
+    const DELIVERY_FILE: &str = "22222222-2222-4222-8222-222222222222";
+    // Hand-known 1x1 opaque black grayscale+alpha PNG (68 encoded bytes).
+    const DELIVERY_PNG: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 4,
+        0, 0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 100, 248, 15, 0, 1, 5,
+        1, 1, 39, 24, 227, 102, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+    fn run_owned_worker<T: Send>(operation: impl FnOnce() -> T + Send) -> T {
+        std::thread::scope(|scope| scope.spawn(operation).join().unwrap())
+    }
+    struct DeliveryFixture {
+        repo: Fixture,
+        authority: Arc<NamespaceStorageAuthority>,
+        session: Arc<SessionManager>,
+        api: GenerationApi,
+        index: FileIndex,
+        record: PendingGenerationRecord,
+        scope: BillingScope,
+    }
+    impl DeliveryFixture {
+        fn new(url: &str) -> Self {
+            let repo = test_repository_v2();
+            let session = Arc::new(SessionManager::new(Arc::new(
+                crate::runtime::test_support::MemoryRefreshTokenStore::default(),
+            )));
+            let session_scope = session
+                .install_tokens_for_user(
+                    &TokenSet {
+                        access_token: "delivery-fixture-access".into(),
+                        access_expires_in_seconds: 1800,
+                        refresh_token: "delivery-fixture-refresh".into(),
+                        refresh_expires_at: "2099-01-01T00:00:00Z".into(),
+                        token_type: "X-Token".into(),
+                    },
+                    USER_A,
+                )
+                .unwrap();
+            let scope = BillingScope {
+                request: GroupRequestScope {
+                    session: session_scope.clone(),
+                    account_group_id: GROUP_A.into(),
+                },
+                context_epoch: 1,
+            };
+            let lease = repo.lease(USER_A, session_scope.auth_epoch, 1);
+            let authority = Arc::new(
+                NamespaceStorageAuthority::open(repo.data_root_capability_arc(), &lease).unwrap(),
+            );
+            repo.activate(lease).unwrap();
+            let api = GenerationApi::new(
+                ApiClient::new(
+                    ApiClientConfig {
+                        base_url: reqwest::Url::parse(url).unwrap(),
+                        app_version: "fixture".into(),
+                        timeout: Duration::from_secs(3),
+                    },
+                    DeviceIdentity {
+                        id: USER_B.into(),
+                        name: "fixture".into(),
+                        platform: "macos".into(),
+                    },
+                    session.clone(),
+                )
+                .unwrap(),
+            );
+            let index = FileIndex::initialize(repo.directory.path().join("index.sqlite3")).unwrap();
+            let record: PendingGenerationRecord = serde_json::from_value(serde_json::json!({
+                "schema_version":2, "created_at_epoch_ms":1,
+                "client_request_id":"delivery-request", "owner_user_id":USER_A,
+                "billing_account_group_id":GROUP_A, "auth_epoch":session_scope.auth_epoch,
+                "local_task_id":"local-delivery", "server_task_id":DELIVERY_TASK,
+                "raw_prompt":"raw prompt", "generation_prompt":"generated prompt",
+                "task_type":"image_generation", "category":"scene", "mode":"game",
+                "ratio":"1:1", "quality":"1K", "model_code":"image-model",
+                "conversation_id":"delivery-conversation", "count":1,
+                "create_conversation":false, "lineage_reference_paths":["captured/reference.png"]
+            }))
+            .unwrap();
+            upsert_pending_generation_for_namespace(&authority, &scope, record.clone()).unwrap();
+            Self {
+                repo,
+                authority,
+                session,
+                api,
+                index,
+                record,
+                scope,
+            }
+        }
+        fn prepare(&self) -> std::result::Result<PreparedNamespaceDelivery, DeliveryRetryError> {
+            run_owned_worker(|| {
+                prepare_namespace_delivery(
+                    &self.api,
+                    self.authority.clone(),
+                    self.index.clone(),
+                    &self.record.identity(),
+                    0,
+                )
+            })
+        }
+        fn recovery(&self) -> serde_json::Value {
+            serde_json::to_value(load_pending_generations_for_namespace(&self.authority).unwrap())
+                .unwrap()
+        }
+        fn output(&self) -> PathBuf {
+            self.authority
+                .lease()
+                .namespace
+                .path(ManagedUserArea::Output)
+                .join(format!("{DELIVERY_FILE}.png"))
+        }
+    }
+    struct DeliveryServer {
+        stop: Arc<AtomicBool>,
+        worker: Option<std::thread::JoinHandle<Vec<(String, bool)>>>,
+    }
+    impl DeliveryServer {
+        fn start(
+            listener: std::net::TcpListener,
+            base: &str,
+            fixture: &DeliveryFixture,
+            mut detail: serde_json::Value,
+            blob: Vec<u8>,
+            ack_ok: bool,
+        ) -> Self {
+            use std::io::Write;
+            let winner = detail.as_object_mut().unwrap().remove("_fixture_winner");
+            detail["items"][0]["file"]["download_url"] = format!("{base}blob").into();
+            let db = fixture.repo.path.clone();
+            let authority = fixture.authority.clone();
+            let stop = Arc::new(AtomicBool::new(false));
+            let stopped = stop.clone();
+            let worker = std::thread::spawn(move || {
+                listener.set_nonblocking(true).unwrap();
+                let deadline = std::time::Instant::now() + Duration::from_secs(15);
+                let mut requests = Vec::new();
+                let mut ack_attempts = 0;
+                while !stopped.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+                    let mut stream = match listener.accept() {
+                        Ok((stream, _)) => stream,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(2));
+                            continue;
+                        }
+                        Err(e) => panic!("fixture accept failed: {e}"),
+                    };
+                    stream
+                        .set_write_timeout(Some(Duration::from_secs(3)))
+                        .unwrap();
+                    let request = String::from_utf8(
+                        backend_generation::billing_capture_test_support::read_request_bytes(
+                            &mut stream,
+                        ),
+                    )
+                    .unwrap();
+                    let is_blob = request.starts_with("GET /blob ");
+                    let is_ack = request.starts_with("POST ");
+                    if is_ack {
+                        ack_attempts += 1;
+                    }
+                    if is_blob {
+                        if let Some(winner) = &winner {
+                            let key = ManagedFileKey::new(
+                                ManagedUserArea::Output,
+                                &format!("{DELIVERY_FILE}.png"),
+                            )
+                            .unwrap();
+                            let mut file = authority.create_new_regular(&key).unwrap();
+                            let bytes: &[u8] = if winner == "matching" {
+                                DELIVERY_PNG
+                            } else {
+                                b"collision sentinel"
+                            };
+                            authority
+                                .write_new_regular_from(&mut file, &mut &bytes[..])
+                                .unwrap();
+                            authority.sync_regular(&mut file).unwrap();
+                        }
+                    }
+                    let durable = if is_ack {
+                        let connection = open_client_state_connection(&db).unwrap();
+                        let assets: i64 = connection
+                            .query_row(
+                                "SELECT COUNT(*) FROM assets WHERE user_public_id=?1",
+                                [USER_A],
+                                |row| row.get(0),
+                            )
+                            .unwrap();
+                        let notifications: i64 = connection
+                            .query_row(
+                                "SELECT COUNT(*) FROM notifications WHERE user_public_id=?1",
+                                [USER_A],
+                                |row| row.get(0),
+                            )
+                            .unwrap();
+                        let records = load_pending_generations_for_namespace(&authority).unwrap();
+                        assets == 2
+                            && notifications == 1
+                            && records.len() == 1
+                            && records[0].billing_account_group_id == GROUP_A
+                            && records[0].deliveries.len() == 1
+                            && !records[0].deliveries[0].local_path.is_empty()
+                            && !records[0].deliveries[0].acknowledged
+                    } else {
+                        false
+                    };
+                    let body = if is_blob {
+                        blob.clone()
+                    } else {
+                        serde_json::to_vec(&serde_json::json!({
+                            "request_id":"fixture", "data":if is_ack { serde_json::json!({}) } else { detail.clone() },
+                            "error":null, "meta":null
+                        })).unwrap()
+                    };
+                    let status = if is_ack && !ack_ok && ack_attempts == 1 {
+                        "503 Service Unavailable"
+                    } else {
+                        "200 OK"
+                    };
+                    let content_length = if is_blob {
+                        detail["items"][0]["file"]["size_bytes"]
+                            .as_str()
+                            .and_then(|size| size.parse::<usize>().ok())
+                            .unwrap_or(0)
+                            .max(body.len())
+                    } else {
+                        body.len()
+                    };
+                    write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/octet-stream\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n").unwrap();
+                    // An invalidating client may close early; teardown must still join.
+                    let _ = stream.write_all(&body);
+                    requests.push((request, durable));
+                }
+                requests
+            });
+            Self {
+                stop,
+                worker: Some(worker),
+            }
+        }
+        fn finish(mut self) -> Vec<(String, bool)> {
+            self.stop.store(true, Ordering::SeqCst);
+            self.worker.take().unwrap().join().unwrap()
+        }
+    }
+    impl Drop for DeliveryServer {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::SeqCst);
+            if let Some(worker) = self.worker.take() {
+                worker.join().unwrap();
+            }
+        }
+    }
+    fn delivery_detail() -> serde_json::Value {
+        serde_json::json!({
+            "id":DELIVERY_TASK, "billing_account_group_id":GROUP_A, "status":"completed",
+            "progress_percent":100, "success_count":1, "failure_count":0, "failure":null,
+            "prompt":"server prompt", "result_prompt":null, "request":{}, "model":null,
+            "quality":"1K", "requested_count":1, "type":"image_generation",
+            "items":[{"index":0,"status":"succeeded","credit_cost":"1","failure":null,
+                "file":{"id":DELIVERY_FILE,"status":"available","mime_type":"image/png",
+                    "size_bytes":"68","sha256":"431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+                    "width":999,"height":999,"download_url":null}}]
+        })
+    }
+    #[test]
+    fn namespace_delivery_rejects_wrong_saved_payer_or_task_before_blob() {
+        for field in ["billing_account_group_id", "id"] {
+            let (listener, url) = backend_generation::billing_capture_test_support::listener();
+            let f = DeliveryFixture::new(&url);
+            let before = f.recovery();
+            let mut detail = delivery_detail();
+            detail[field] = GROUP_B.into();
+            let server =
+                DeliveryServer::start(listener, &url, &f, detail, DELIVERY_PNG.to_vec(), true);
+            let result = f.prepare();
+            let requests = server.finish();
+            assert!(result.is_err());
+            assert_eq!(requests.len(), 1);
+            assert!(requests[0].0.starts_with("GET /v1/generation/tasks/"));
+            assert_eq!(f.recovery(), before);
+            assert!(!f.output().exists());
+            assert!(f
+                .authority
+                .enumerate_regular_names(ManagedUserArea::Output)
+                .unwrap()
+                .is_empty());
+        }
+    }
+    #[test]
+    fn namespace_delivery_bad_downloads_never_publish_or_index() {
+        for case in [
+            "zero",
+            "leading-zero",
+            "hash-format",
+            "truncated",
+            "oversized",
+            "wrong-hash",
+            "invalid-image",
+            "large-image",
+            "collision",
+        ] {
+            let (listener, url) = backend_generation::billing_capture_test_support::listener();
+            let f = DeliveryFixture::new(&url);
+            let before = f.recovery();
+            let mut detail = delivery_detail();
+            let mut blob = DELIVERY_PNG.to_vec();
+            match case {
+                "zero" => detail["items"][0]["file"]["size_bytes"] = "0".into(),
+                "leading-zero" => detail["items"][0]["file"]["size_bytes"] = "068".into(),
+                "hash-format" => detail["items"][0]["file"]["sha256"] = "not-a-hash".into(),
+                "truncated" => {
+                    blob.pop();
+                }
+                "oversized" => blob.push(0),
+                "wrong-hash" => detail["items"][0]["file"]["sha256"] = "0".repeat(64).into(),
+                "invalid-image" => {
+                    use sha2::Digest;
+                    blob = b"verified but not an image".to_vec();
+                    detail["items"][0]["file"]["size_bytes"] = blob.len().to_string().into();
+                    detail["items"][0]["file"]["sha256"] =
+                        format!("{:x}", sha2::Sha256::digest(&blob)).into();
+                }
+                "large-image" => {
+                    // Header-only 100001 x 100001 BMP; a valid hash cannot bypass
+                    // the decoder's source-pixel/allocation policy.
+                    use sha2::Digest;
+                    blob = vec![0; 54];
+                    blob[0..2].copy_from_slice(b"BM");
+                    blob[2..6].copy_from_slice(&54u32.to_le_bytes());
+                    blob[10..14].copy_from_slice(&54u32.to_le_bytes());
+                    blob[14..18].copy_from_slice(&40u32.to_le_bytes());
+                    blob[18..22].copy_from_slice(&100001u32.to_le_bytes());
+                    blob[22..26].copy_from_slice(&100001u32.to_le_bytes());
+                    blob[26..28].copy_from_slice(&1u16.to_le_bytes());
+                    blob[28..30].copy_from_slice(&24u16.to_le_bytes());
+                    detail["items"][0]["file"]["size_bytes"] = "54".into();
+                    detail["items"][0]["file"]["sha256"] =
+                        format!("{:x}", sha2::Sha256::digest(&blob)).into();
+                }
+                "collision" => {
+                    std::fs::write(f.output(), b"sentinel").unwrap();
+                }
+                _ => unreachable!(),
+            }
+            let server = DeliveryServer::start(listener, &url, &f, detail, blob, true);
+            let result = f.prepare();
+            let requests = server.finish();
+            assert!(result.is_err(), "{case}");
+            assert!(!requests.iter().any(|r| r.0.starts_with("POST ")), "{case}");
+            assert_eq!(f.recovery(), before, "{case}");
+            let names = f
+                .authority
+                .enumerate_regular_names(ManagedUserArea::Output)
+                .unwrap();
+            if case == "collision" {
+                assert_eq!(std::fs::read(f.output()).unwrap(), b"sentinel");
+                assert_eq!(names.len(), 1);
+            } else {
+                assert!(names.is_empty(), "{case}");
+            }
+            assert!(f
+                .index
+                .find_file_by_path_for_namespace(
+                    &f.authority,
+                    ManagedUserArea::Output,
+                    &format!("{DELIVERY_FILE}.png")
+                )
+                .unwrap()
+                .is_none());
+            assert!(durable_json(&f.repo, f.authority.lease()).is_none());
+            assert!(f
+                .authority
+                .enumerate_regular_names(ManagedUserArea::Previews)
+                .unwrap()
+                .is_empty());
+        }
+    }
+    #[test]
+    fn namespace_delivery_invalid_record_and_session_make_no_requests() {
+        for case in [
+            "stale-session",
+            "foreign-owner",
+            "foreign-auth",
+            "missing",
+            "mismatched",
+            "missing-task",
+            "video",
+            "canvas",
+            "invalid-index",
+        ] {
+            let (listener, url) = backend_generation::billing_capture_test_support::listener();
+            let mut f = DeliveryFixture::new(&url);
+            let mut expected = f.record.identity();
+            let mut item_index = 0;
+            match case {
+                "stale-session" => f.session.clear().unwrap(),
+                "foreign-owner" => {
+                    let mut row = f.record.clone();
+                    row.owner_user_id = USER_B.into();
+                    expected = row.identity();
+                }
+                "foreign-auth" => {
+                    let mut row = f.record.clone();
+                    row.auth_epoch += 1;
+                    expected = row.identity();
+                }
+                "missing" => {
+                    remove_pending_generation_for_namespace(&f.authority, &expected).unwrap();
+                }
+                "mismatched" => {
+                    let mut row = f.record.clone();
+                    row.billing_account_group_id = GROUP_B.into();
+                    expected = row.identity();
+                }
+                "missing-task" => f.record.server_task_id.clear(),
+                "video" => f.record.task_type = "video_generation".into(),
+                "canvas" => f.record.canvas_source_node_id = "node".into(),
+                "invalid-index" => item_index = 1,
+                _ => unreachable!(),
+            }
+            if matches!(case, "missing-task" | "video" | "canvas") {
+                upsert_pending_generation_for_namespace(&f.authority, &f.scope, f.record.clone())
+                    .unwrap();
+            }
+            let before = f.recovery();
+            let server = DeliveryServer::start(
+                listener,
+                &url,
+                &f,
+                delivery_detail(),
+                DELIVERY_PNG.to_vec(),
+                true,
+            );
+            let result = run_owned_worker(|| {
+                prepare_namespace_delivery(
+                    &f.api,
+                    f.authority.clone(),
+                    f.index.clone(),
+                    &expected,
+                    item_index,
+                )
+            });
+            let requests = server.finish();
+            assert!(result.is_err(), "{case}");
+            assert!(requests.is_empty(), "{case}");
+            assert_eq!(f.recovery(), before);
+            assert!(f
+                .authority
+                .enumerate_regular_names(ManagedUserArea::Output)
+                .unwrap()
+                .is_empty());
+        }
+    }
+    #[test]
+    fn namespace_delivery_failed_card_keeps_identity_and_refuses_ambiguity() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        for case in ["success", "missing", "ambiguous", "mismatched"] {
+            let (listener, url) = backend_generation::billing_capture_test_support::listener();
+            let mut f = DeliveryFixture::new(&url);
+            f.record.deliveries = vec![PendingDeliveryRecord {
+                item_index: 0,
+                file_id: DELIVERY_FILE.into(),
+                sha256: delivery_detail()["items"][0]["file"]["sha256"]
+                    .as_str()
+                    .unwrap()
+                    .into(),
+                size_bytes: 68,
+                failed_asset_id: "failed-card".into(),
+                ..Default::default()
+            }];
+            upsert_pending_generation_for_namespace(&f.authority, &f.scope, f.record.clone())
+                .unwrap();
+            let mut card = checked_asset("failed-card", "failed", "user edited failed prompt");
+            card.conversation_id = "delivery-conversation".into();
+            card.quality = "user edited quality".into();
+            card.model = "image-model".into();
+            card.reference_paths = vec!["user/edited/reference.png".into()];
+            card.delivery_recoverable = true;
+            card.delivery_downloading = true;
+            let original = serde_json::to_value(stored_asset_from(&card)).unwrap();
+            let mut store = Store::default();
+            if case != "missing" {
+                store.generations.push(card.clone());
+            }
+            if case == "ambiguous" {
+                store.generations.push(card.clone());
+            }
+            if case == "mismatched" {
+                store.generations[0].conversation_id = "other-conversation".into();
+            }
+            let before = replacement_memory_snapshot(&store);
+            let server = DeliveryServer::start(
+                listener,
+                &url,
+                &f,
+                delivery_detail(),
+                DELIVERY_PNG.to_vec(),
+                true,
+            );
+            let result = (|| -> Result<_> {
+                let prepared = f.prepare()?;
+                let (_, id, committed) = persist_namespace_delivery(
+                    &app,
+                    &mut store,
+                    &f.repo.writer,
+                    prepared,
+                    "fixture",
+                )?;
+                if case == "success" {
+                    // A duplicate callback after replacement still uses the recorded failed-card ID.
+                    drop(committed);
+                    let (_, again, receipt) = persist_namespace_delivery(
+                        &app,
+                        &mut store,
+                        &f.repo.writer,
+                        f.prepare()?,
+                        "retry",
+                    )?;
+                    run_owned_worker(|| acknowledge_namespace_delivery(receipt))?;
+                    return Ok((id, Some(again)));
+                }
+                Ok((id, None))
+            })();
+            let requests = server.finish();
+            if case == "success" {
+                assert_eq!(
+                    result.unwrap(),
+                    ("failed-card".into(), Some("failed-card".into()))
+                );
+                assert_eq!(
+                    (
+                        store.assets.len(),
+                        store.generations.len(),
+                        store.notifications.len()
+                    ),
+                    (1, 1, 1)
+                );
+                let completed =
+                    serde_json::to_value(stored_asset_from(&store.generations[0])).unwrap();
+                for field in [
+                    "id",
+                    "prompt",
+                    "conversation_id",
+                    "reference_paths",
+                    "cutout_done",
+                    "remove_black_done",
+                    "upscale_done",
+                    "title",
+                    "category",
+                    "kind",
+                    "quality",
+                    "model",
+                    "origin",
+                ] {
+                    assert_eq!(completed[field], original[field], "{field}");
+                }
+                assert!(
+                    !store.generations[0].delivery_recoverable
+                        && !store.generations[0].delivery_downloading
+                );
+            } else {
+                assert!(result.is_err(), "{case}");
+                assert_eq!(replacement_memory_snapshot(&store), before);
+                assert!(!requests.iter().any(|r| r.0.starts_with("POST ")));
+            }
+        }
+    }
+    #[test]
+    fn namespace_delivery_sql_failure_retries_output_without_duplicate_metadata() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let (listener, url) = backend_generation::billing_capture_test_support::listener();
+        let f = DeliveryFixture::new(&url);
+        let before = f.recovery();
+        let server = DeliveryServer::start(
+            listener,
+            &url,
+            &f,
+            delivery_detail(),
+            DELIVERY_PNG.to_vec(),
+            true,
+        );
+        let mut store = Store::default();
+        reject_notification_inserts(&f.repo);
+        let result = (|| -> Result<_> {
+            let prepared = f.prepare()?;
+            let rejected =
+                persist_namespace_delivery(&app, &mut store, &f.repo.writer, prepared, "first");
+            let rolled_back = rejected.is_err()
+                && store.assets.is_empty()
+                && store.generations.is_empty()
+                && store.notifications.is_empty();
+            let recovery_after_failure = f.recovery();
+            let published_after_failure = std::fs::read(f.output())?;
+            f.repo
+                .connection()
+                .execute_batch("DROP TRIGGER reject_fixture_notification")?;
+            let prepared = f.prepare()?;
+            let (_, _, first) =
+                persist_namespace_delivery(&app, &mut store, &f.repo.writer, prepared, "retry")?;
+            store.assets[0].title = "user edit".into();
+            store.notifications[0].read = true;
+            let prepared = f.prepare()?;
+            let (_, _, second) = persist_namespace_delivery(
+                &app,
+                &mut store,
+                &f.repo.writer,
+                prepared,
+                "duplicate",
+            )?;
+            drop(first);
+            run_owned_worker(|| acknowledge_namespace_delivery(second))?;
+            Ok((rolled_back, recovery_after_failure, published_after_failure))
+        })();
+        let requests = server.finish();
+        let (rolled_back, recovery_after_failure, published_after_failure) =
+            result.expect("SQL rollback must leave verified output reusable");
+        assert!(rolled_back);
+        assert_eq!(recovery_after_failure, before);
+        assert_eq!(published_after_failure, DELIVERY_PNG);
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|r| r.0.starts_with("GET /blob "))
+                .count(),
+            1
+        );
+        assert_eq!(
+            requests.iter().filter(|r| r.0.starts_with("POST ")).count(),
+            1
+        );
+        assert_eq!(
+            (
+                store.assets.len(),
+                store.generations.len(),
+                store.notifications.len()
+            ),
+            (1, 1, 1)
+        );
+        assert_eq!(store.assets[0].title, "user edit");
+        assert!(store.notifications[0].read);
+    }
+    #[test]
+    fn namespace_delivery_http_ack_retains_required_inputs() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let (listener, url) = backend_generation::billing_capture_test_support::listener();
+        let mut f = DeliveryFixture::new(&url);
+        f.record.reference_paths = vec!["required-input".into()];
+        f.record.reference_sha256 = vec!["input-hash".into()];
+        f.record.reference_size_bytes = vec![7];
+        upsert_pending_generation_for_namespace(&f.authority, &f.scope, f.record.clone()).unwrap();
+        let server = DeliveryServer::start(
+            listener,
+            &url,
+            &f,
+            delivery_detail(),
+            DELIVERY_PNG.to_vec(),
+            true,
+        );
+        let mut store = Store::default();
+        let result = (|| -> Result<_> {
+            let (_, _, receipt) = persist_namespace_delivery(
+                &app,
+                &mut store,
+                &f.repo.writer,
+                f.prepare()?,
+                "fixture",
+            )?;
+            Ok(run_owned_worker(|| {
+                acknowledge_namespace_delivery(receipt)
+            })?)
+        })();
+        let requests = server.finish();
+        assert!(result.expect("input retention must not suppress HTTP ack"));
+        assert_eq!(
+            requests.iter().filter(|r| r.0.starts_with("POST ")).count(),
+            1
+        );
+        let records = load_pending_generations_for_namespace(&f.authority).unwrap();
+        assert_eq!(records.len(), 1);
+        assert!(records[0].terminal && records[0].deliveries[0].acknowledged);
+        assert_eq!(records[0].reference_paths, ["required-input"]);
+        assert_eq!(records[0].reference_sha256, ["input-hash"]);
+        assert_eq!(records[0].reference_size_bytes, [7]);
+        assert_eq!(
+            records[0].lineage_reference_paths,
+            ["captured/reference.png"]
+        );
+    }
+    #[test]
+    fn namespace_delivery_ack_failure_and_partial_success_retain_saved_row() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        for partial in [false, true] {
+            let (listener, url) = backend_generation::billing_capture_test_support::listener();
+            let mut f = DeliveryFixture::new(&url);
+            let mut detail = delivery_detail();
+            if partial {
+                f.record.count = 2;
+                upsert_pending_generation_for_namespace(&f.authority, &f.scope, f.record.clone())
+                    .unwrap();
+                detail["success_count"] = 2.into();
+                detail["requested_count"] = 2.into();
+                let mut second = detail["items"][0].clone();
+                second["index"] = 1.into();
+                second["file"]["id"] = "33333333-3333-4333-8333-333333333333".into();
+                detail["items"].as_array_mut().unwrap().push(second);
+            }
+            let server =
+                DeliveryServer::start(listener, &url, &f, detail, DELIVERY_PNG.to_vec(), partial);
+            let mut store = Store::default();
+            let result = (|| -> Result<_> {
+                let (_, _, receipt) = persist_namespace_delivery(
+                    &app,
+                    &mut store,
+                    &f.repo.writer,
+                    f.prepare()?,
+                    "fixture",
+                )?;
+                Ok(run_owned_worker(|| acknowledge_namespace_delivery(receipt)))
+            })();
+            let requests = server.finish();
+            let ack = result.expect("preparation and metadata must succeed before ack outcome");
+            if partial {
+                assert!(ack.unwrap());
+            } else {
+                assert!(ack.is_err());
+            }
+            assert_eq!(
+                requests.iter().filter(|r| r.0.starts_with("POST ")).count(),
+                1
+            );
+            let records = load_pending_generations_for_namespace(&f.authority).unwrap();
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].deliveries[0].acknowledged, partial);
+            assert_eq!(
+                records[0].deliveries[0].local_path,
+                f.output().to_string_lossy()
+            );
+            assert_eq!(store.assets.len(), 1);
+        }
+    }
+    #[test]
+    fn namespace_delivery_ack_failure_retry_reuses_output_and_metadata() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let (listener, url) = backend_generation::billing_capture_test_support::listener();
+        let f = DeliveryFixture::new(&url);
+        let server = DeliveryServer::start(
+            listener,
+            &url,
+            &f,
+            delivery_detail(),
+            DELIVERY_PNG.to_vec(),
+            false,
+        );
+        let mut store = Store::default();
+        let result = (|| -> Result<_> {
+            let (_, first_id, receipt) = persist_namespace_delivery(
+                &app,
+                &mut store,
+                &f.repo.writer,
+                f.prepare()?,
+                "first",
+            )?;
+            let first = run_owned_worker(|| acknowledge_namespace_delivery(receipt));
+            let after_failure = f.recovery();
+            let (_, second_id, receipt) = persist_namespace_delivery(
+                &app,
+                &mut store,
+                &f.repo.writer,
+                f.prepare()?,
+                "retry",
+            )?;
+            let second = run_owned_worker(|| acknowledge_namespace_delivery(receipt));
+            Ok((first_id, second_id, first, second, after_failure))
+        })();
+        let requests = server.finish();
+        let (first_id, second_id, first, second, after_failure) = result.unwrap();
+        assert!(first.is_err() && second.unwrap());
+        assert_eq!(first_id, second_id);
+        assert_eq!(after_failure[0]["deliveries"][0]["acknowledged"], false);
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|r| r.0.starts_with("GET /blob "))
+                .count(),
+            1
+        );
+        assert_eq!(
+            requests.iter().filter(|r| r.0.starts_with("POST ")).count(),
+            2
+        );
+        assert_eq!(
+            (
+                store.assets.len(),
+                store.generations.len(),
+                store.notifications.len()
+            ),
+            (1, 1, 1)
+        );
+        assert_eq!(f.recovery(), serde_json::json!([]));
+    }
+    #[test]
+    fn namespace_delivery_publication_race_revalidates_one_winner_without_overwrite() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        for winner in ["matching", "conflicting"] {
+            let (listener, url) = backend_generation::billing_capture_test_support::listener();
+            let f = DeliveryFixture::new(&url);
+            let mut detail = delivery_detail();
+            detail["_fixture_winner"] = winner.into();
+            let server =
+                DeliveryServer::start(listener, &url, &f, detail, DELIVERY_PNG.to_vec(), true);
+            let mut store = Store::default();
+            let result = (|| -> Result<_> {
+                let prepared = f.prepare()?;
+                let (_, _, receipt) = persist_namespace_delivery(
+                    &app,
+                    &mut store,
+                    &f.repo.writer,
+                    prepared,
+                    "fixture",
+                )?;
+                Ok(run_owned_worker(|| {
+                    acknowledge_namespace_delivery(receipt)
+                })?)
+            })();
+            let requests = server.finish();
+            assert_eq!(
+                f.authority
+                    .enumerate_regular_names(ManagedUserArea::Output)
+                    .unwrap()
+                    .len(),
+                1
+            );
+            if winner == "matching" {
+                assert!(result.unwrap());
+                assert_eq!(std::fs::read(f.output()).unwrap(), DELIVERY_PNG);
+                assert_eq!(store.assets.len(), 1);
+            } else {
+                assert!(result.is_err());
+                assert_eq!(std::fs::read(f.output()).unwrap(), b"collision sentinel");
+                assert!(store.assets.is_empty());
+                assert!(!requests.iter().any(|r| r.0.starts_with("POST ")));
+            }
+        }
+    }
+    #[test]
+    fn namespace_delivery_saved_confirmation_and_terminal_counts_must_match() {
+        for case in [
+            "size",
+            "hash",
+            "index",
+            "file",
+            "ambiguous",
+            "abandoned",
+            "acknowledged",
+            "negative",
+            "impossible",
+            "duplicate-item",
+        ] {
+            let (listener, url) = backend_generation::billing_capture_test_support::listener();
+            let mut f = DeliveryFixture::new(&url);
+            let mut detail = delivery_detail();
+            let mut delivery = PendingDeliveryRecord {
+                item_index: 0,
+                file_id: DELIVERY_FILE.into(),
+                size_bytes: 68,
+                sha256: detail["items"][0]["file"]["sha256"]
+                    .as_str()
+                    .unwrap()
+                    .into(),
+                ..Default::default()
+            };
+            match case {
+                "size" => delivery.size_bytes = 7,
+                "hash" => delivery.sha256 = "0".repeat(64),
+                "index" => delivery.item_index = 1,
+                "file" => delivery.file_id = USER_B.into(),
+                "abandoned" => delivery.abandoned = true,
+                "acknowledged" => delivery.acknowledged = true,
+                "negative" => detail["success_count"] = (-1).into(),
+                "impossible" => detail["success_count"] = 2.into(),
+                "duplicate-item" => {
+                    let first = detail["items"][0].clone();
+                    detail["items"].as_array_mut().unwrap().push(first);
+                }
+                _ => {}
+            }
+            f.record.deliveries.push(delivery.clone());
+            if case == "ambiguous" {
+                f.record.deliveries.push(delivery);
+            }
+            upsert_pending_generation_for_namespace(&f.authority, &f.scope, f.record.clone())
+                .unwrap();
+            let before = f.recovery();
+            let server =
+                DeliveryServer::start(listener, &url, &f, detail, DELIVERY_PNG.to_vec(), true);
+            let result = f.prepare();
+            let requests = server.finish();
+            assert!(result.is_err(), "{case}");
+            assert_eq!(requests.len(), 1, "{case}");
+            assert_eq!(f.recovery(), before);
+            assert!(f
+                .authority
+                .enumerate_regular_names(ManagedUserArea::Output)
+                .unwrap()
+                .is_empty());
+        }
+    }
+    #[test]
+    fn namespace_delivery_retained_replacement_stale_writer_and_recovery_change_refuse_ack() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        for case in [
+            "leaf-before-ui",
+            "ancestor-before-ui",
+            "stale-writer",
+            "leaf-before-ack",
+            "ancestor-before-ack",
+            "missing-recovery",
+            "recovery-save-failure",
+            "changed-recovery",
+        ] {
+            let (listener, url) = backend_generation::billing_capture_test_support::listener();
+            let f = DeliveryFixture::new(&url);
+            let server = DeliveryServer::start(
+                listener,
+                &url,
+                &f,
+                delivery_detail(),
+                DELIVERY_PNG.to_vec(),
+                true,
+            );
+            let mut store = Store::default();
+            let result = (|| -> Result<bool> {
+                let prepared = f.prepare()?;
+                let replace = || -> Result<()> {
+                    if case.starts_with("leaf") {
+                        std::fs::rename(f.output(), f.output().with_extension("retained"))?;
+                        std::fs::write(f.output(), b"replacement")?;
+                    } else {
+                        let output = f.output().parent().unwrap().to_owned();
+                        std::fs::rename(&output, output.with_file_name("retained-output"))?;
+                        std::fs::create_dir(&output)?;
+                        std::fs::write(f.output(), b"replacement")?;
+                    }
+                    Ok(())
+                };
+                if case.ends_with("before-ui") {
+                    replace()?;
+                }
+                if case == "stale-writer" {
+                    f.repo.activate(f.repo.lease(USER_B, 7, 2))?;
+                }
+                let (_, _, receipt) = persist_namespace_delivery(
+                    &app,
+                    &mut store,
+                    &f.repo.writer,
+                    prepared,
+                    "fixture",
+                )?;
+                if case.ends_with("before-ack") {
+                    replace()?;
+                }
+                if case == "missing-recovery" {
+                    remove_pending_generation_for_namespace(&f.authority, &f.record.identity())?;
+                }
+                if case == "changed-recovery" {
+                    let mut changed = f.record.clone();
+                    changed.server_task_id = USER_B.into();
+                    upsert_pending_generation_for_namespace(&f.authority, &f.scope, changed)?;
+                }
+                if case == "recovery-save-failure" {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let recovery = f
+                            .authority
+                            .lease()
+                            .namespace
+                            .path(ManagedUserArea::Recovery);
+                        std::fs::set_permissions(recovery, std::fs::Permissions::from_mode(0o555))?;
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        remove_pending_generation_for_namespace(
+                            &f.authority,
+                            &f.record.identity(),
+                        )?;
+                    }
+                }
+                Ok(run_owned_worker(|| {
+                    acknowledge_namespace_delivery(receipt)
+                })?)
+            })();
+            let requests = server.finish();
+            if case == "recovery-save-failure" {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(
+                        f.authority
+                            .lease()
+                            .namespace
+                            .path(ManagedUserArea::Recovery),
+                        std::fs::Permissions::from_mode(0o755),
+                    )
+                    .unwrap();
+                }
+            }
+            assert!(!matches!(result, Ok(true)), "{case}");
+            assert!(!requests.iter().any(|r| r.0.starts_with("POST ")), "{case}");
+            if case.ends_with("before-ui") || case == "stale-writer" {
+                assert!(store.assets.is_empty(), "{case}");
+            } else {
+                assert_eq!(store.assets.len(), 1, "{case}");
+            }
+            if case.starts_with("leaf") || case.starts_with("ancestor") {
+                assert_eq!(std::fs::read(f.output()).unwrap(), b"replacement");
+            }
+        }
+    }
+    #[test]
+    fn namespace_delivery_session_invalidation_during_blob_read_stops_publication() {
+        use std::io::Write;
+        let (listener, url) = backend_generation::billing_capture_test_support::listener();
+        let f = DeliveryFixture::new(&url);
+        let session = f.session.clone();
+        let (blocked_tx, blocked_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(8);
+            let mut requests = Vec::new();
+            while requests.len() < 2 && std::time::Instant::now() < deadline {
+                let mut stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(2));
+                        continue;
+                    }
+                    Err(e) => panic!("{e}"),
+                };
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let request = String::from_utf8(
+                    backend_generation::billing_capture_test_support::read_request_bytes(
+                        &mut stream,
+                    ),
+                )
+                .unwrap();
+                if request.starts_with("GET /blob ") {
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: 68\r\nConnection: close\r\n\r\n"
+                    )
+                    .unwrap();
+                    stream.write_all(&DELIVERY_PNG[..20]).unwrap();
+                    blocked_tx.send(()).unwrap();
+                    release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+                    let _ = stream.write_all(&DELIVERY_PNG[20..]);
+                } else {
+                    let mut detail = delivery_detail();
+                    detail["items"][0]["file"]["download_url"] = format!("{url}blob").into();
+                    let body = serde_json::to_vec(&serde_json::json!({"request_id":"fixture","data":detail,"error":null,"meta":null})).unwrap();
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                    .unwrap();
+                    stream.write_all(&body).unwrap();
+                }
+                requests.push(request);
+            }
+            requests
+        });
+        let (observed, result) = std::thread::scope(|scope| {
+            let worker = scope.spawn(|| f.prepare());
+            let observed = blocked_rx.recv_timeout(Duration::from_secs(5)).is_ok();
+            session.clear().unwrap();
+            let _ = release_tx.send(());
+            (observed, worker.join().unwrap())
+        });
+        let requests = server.join().unwrap();
+        assert!(observed, "real response must reach the blocked read");
+        assert!(result.is_err());
+        assert_eq!(requests.len(), 2);
+        assert!(f
+            .authority
+            .enumerate_regular_names(ManagedUserArea::Output)
+            .unwrap()
+            .is_empty());
+    }
+    #[test]
+    fn namespace_delivery_task_created_in_group_a_delivers_after_switch_to_group_b() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let (listener, url) = backend_generation::billing_capture_test_support::listener();
+        let f = DeliveryFixture::new(&url);
+        let b = f.repo.lease(USER_B, 7, 2);
+        f.repo.activate(b.clone()).unwrap();
+        f.repo
+            .persist_client_state_checked_for_namespace(&b, store_with_asset("sentinel"))
+            .unwrap();
+        let before_b = durable_json(&f.repo, &b);
+        let other = NamespaceStorageAuthority::open(f.repo.data_root_capability_arc(), &b).unwrap();
+        let key = ManagedFileKey::new(ManagedUserArea::Output, "sentinel").unwrap();
+        let mut sentinel = other.create_new_regular(&key).unwrap();
+        other
+            .write_new_regular_from(&mut sentinel, &mut &b"untouched"[..])
+            .unwrap();
+        f.repo.activate(f.authority.lease().clone()).unwrap();
+        f.repo
+            .save_selected_group(USER_A, "device", GROUP_A)
+            .unwrap();
+        f.repo
+            .save_selected_group(USER_A, "device", GROUP_B)
+            .unwrap();
+        let server = DeliveryServer::start(
+            listener,
+            &url,
+            &f,
+            delivery_detail(),
+            DELIVERY_PNG.to_vec(),
+            true,
+        );
+        let mut store = Store::default();
+        let result = (|| -> Result<_> {
+            let prepared = f.prepare()?;
+            let (image, id, committed) = persist_namespace_delivery(
+                &app,
+                &mut store,
+                &f.repo.writer,
+                prepared,
+                "fixture-time",
+            )?;
+            let ack = run_owned_worker(|| acknowledge_namespace_delivery(committed))?;
+            Ok((image, id, ack))
+        })();
+        let requests = server.finish();
+        let (image, id, acknowledged) = result.expect("real namespace delivery must complete");
+        assert!(acknowledged);
+        assert_eq!(id, DELIVERY_FILE);
+        assert_eq!((image.size().width, image.size().height), (1, 1));
+        assert_eq!(image.to_rgba8().unwrap().as_bytes(), &[0, 0, 0, 255]);
+        assert_eq!(std::fs::read(f.output()).unwrap(), DELIVERY_PNG);
+        assert_eq!(f.recovery(), serde_json::json!([]));
+        let saved = f
+            .repo
+            .load_client_state_for_namespace(f.authority.lease())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                saved.assets.len(),
+                saved.generations.len(),
+                saved.notifications.len()
+            ),
+            (1, 1, 1)
+        );
+        assert_eq!((saved.assets[0].width, saved.assets[0].height), (1, 1));
+        assert_eq!(saved.assets[0].prompt, "generated prompt");
+        assert!(f
+            .index
+            .find_file_by_path_for_namespace(
+                &f.authority,
+                ManagedUserArea::Output,
+                &format!("{DELIVERY_FILE}.png")
+            )
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            f.repo
+                .load_selected_group(USER_A, "device")
+                .unwrap()
+                .as_deref(),
+            Some(GROUP_B)
+        );
+        assert_eq!(durable_json(&f.repo, &b), before_b);
+        let mut bytes = Vec::new();
+        other.read_regular_to(&mut sentinel, &mut bytes).unwrap();
+        assert_eq!(bytes, b"untouched");
+        assert!(!UserNamespace::new(f.repo.directory.path(), GROUP_B)
+            .unwrap()
+            .root()
+            .exists());
+        assert_eq!(requests.len(), 3);
+        for (request, durable) in &requests {
+            let headers = request.split("\r\n\r\n").next().unwrap().to_lowercase();
+            assert!(!headers.contains("x-account-group-id"));
+            if request.starts_with("GET /blob ") {
+                assert!(!headers.contains("x-token"));
+                assert!(!headers.contains("authorization"));
+                assert!(!headers.contains("x-device"));
+            } else {
+                assert!(headers.contains("x-token: delivery-fixture-access"));
+            }
+            if request.starts_with("POST ") {
+                assert!(
+                    *durable,
+                    "HTTP ack must observe durable metadata and unacknowledged recovery"
+                );
+                assert!(request.starts_with(&format!(
+                    "POST /v1/generation/tasks/{DELIVERY_TASK}/deliveries/{DELIVERY_FILE}/ack "
+                )));
+                let body: serde_json::Value =
+                    serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+                assert_eq!(body["size_bytes"], 68);
+                assert_eq!(
+                    body["sha256"],
+                    delivery_detail()["items"][0]["file"]["sha256"]
+                );
+            }
+        }
+    }
     const V1_SCHEMA: &str = r#"CREATE TABLE IF NOT EXISTS client_meta (
             key TEXT PRIMARY KEY NOT NULL,
             value TEXT NOT NULL
@@ -1809,7 +3032,9 @@ mod tests {
     }
     impl Fixture {
         fn new(paused: bool, private_paused: bool) -> Self {
-            let directory = tempfile::tempdir().unwrap();
+            let directory =
+                tempfile::tempdir_in(std::fs::canonicalize(std::env::temp_dir()).unwrap())
+                    .unwrap();
             let root = Arc::new(
                 NamespaceFs::open_data_root(&directory.path().canonicalize().unwrap()).unwrap(),
             );

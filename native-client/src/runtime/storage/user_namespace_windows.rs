@@ -3,7 +3,7 @@
 use super::{
     validate_export_leaf, validate_export_volume_root_name, validate_windows_relative_name,
     ManagedFileCheck, ManagedFileKey, ManagedFileMetadata, ManagedPublication,
-    ManagedPublicationConflict, ManagedRelativeName, ManagedUserArea, ManagedWriteState,
+    ManagedPublicationConflict, ManagedReadSeek, ManagedRelativeName, ManagedUserArea, ManagedWriteState,
     StableFileIdentity, UserNamespace, MANAGED_USER_AREAS,
 };
 use anyhow::{anyhow, ensure, Context, Result};
@@ -451,14 +451,23 @@ impl NamespaceFs {
         file: &mut ManagedFileCapability,
         sink: &mut dyn std::io::Write,
     ) -> Result<u64> {
+        self.with_regular_reader(directory, file, |reader| Ok(std::io::copy(reader, sink)?))
+    }
+
+    /// Worker-only bounded local reads/seeks and decode; no network/UI/reentry.
+    /// A result is accepted only after the retained chain is post-validated.
+    pub(crate) fn with_regular_reader<T>(
+        &self, directory: &ManagedDirectoryCapability, file: &mut ManagedFileCapability,
+        operation: impl FnOnce(&mut dyn ManagedReadSeek) -> Result<T>,
+    ) -> Result<T> {
         use std::io::{Seek, SeekFrom};
         let _guard = self.lock_mutations()?;
         let _chain = self.checked_file_chain(directory, file)?;
         let mut stream = std::fs::File::from(file.handle.try_clone()?);
         stream.seek(SeekFrom::Start(0))?;
-        let copied = std::io::copy(&mut stream, sink)?;
+        let result = operation(&mut stream)?;
         self.checked_file_chain(directory, file)?;
-        Ok(copied)
+        Ok(result)
     }
 
     /// Source reads run outside the mutation lock. Each bounded write and EOF

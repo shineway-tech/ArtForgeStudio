@@ -980,6 +980,64 @@ impl GenerationApi {
         self.download_verified_inner(file, None)
     }
 
+    /// Streams into the caller's exclusive temporary. Publication and cleanup
+    /// remain the caller's responsibility; no identity headers reach the blob host.
+    pub(crate) fn download_verified_for_namespace(
+        &self,
+        file: &TaskOutputFile,
+        scope: &SessionScope,
+        authority: &super::super::NamespaceStorageAuthority,
+        temporary: &mut super::super::NamespaceManagedFile,
+    ) -> Result<(), ApiError> {
+        self.ensure_scope_active(scope)?;
+        if authority.user_public_id() != scope.owner_user_id
+            || authority.lease().auth_epoch != scope.auth_epoch
+        {
+            return Err(ApiError::AuthenticationRequired);
+        }
+        let expected = file
+            .size_bytes
+            .parse::<u64>()
+            .ok()
+            .filter(|size| *size > 0 && size.to_string() == file.size_bytes)
+            .ok_or_else(capability_integrity_error)?;
+        if file.sha256.len() != 64 || !file.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(capability_integrity_error());
+        }
+        authority
+            .inspect_regular(temporary)
+            .map_err(capability_download_error)?;
+        let url = file
+            .download_url
+            .as_deref()
+            .filter(|url| !url.is_empty())
+            .ok_or_else(capability_integrity_error)?;
+        let response = self
+            .download
+            .get(url)
+            .send()
+            .and_then(|response| response.error_for_status())
+            .map_err(|_| capability_transfer_error())?;
+        self.ensure_scope_active(scope)?;
+        let mut verified = NamespaceVerifiedReader {
+            api: self,
+            scope,
+            response,
+            expected,
+            sha256: &file.sha256,
+            total: 0,
+            hasher: Sha256::new(),
+            api_error: None,
+        };
+        match authority.write_new_regular_from(temporary, &mut verified) {
+            Ok(_) => Ok(()),
+            Err(error) => Err(verified
+                .api_error
+                .take()
+                .unwrap_or_else(|| capability_download_error(error))),
+        }
+    }
+
     pub(crate) fn download_verified_scoped(
         &self,
         file: &TaskOutputFile,
@@ -1139,12 +1197,81 @@ impl GenerationApi {
         Ok(())
     }
 
-    fn ensure_scope_active(&self, scope: &SessionScope) -> Result<(), ApiError> {
+    pub(crate) fn ensure_scope_active(&self, scope: &SessionScope) -> Result<(), ApiError> {
         if self.client.session().is_scope_current(scope) {
             Ok(())
         } else {
             Err(ApiError::AuthenticationRequired)
         }
+    }
+}
+
+fn capability_integrity_error() -> ApiError {
+    ApiError::Protocol {
+        message: "生成文件完整性校验失败".into(),
+        request_id: None,
+    }
+}
+fn capability_transfer_error() -> ApiError {
+    ApiError::Protocol {
+        message: "生成文件下载失败".into(),
+        request_id: None,
+    }
+}
+fn capability_download_error(_error: anyhow::Error) -> ApiError {
+    ApiError::LocalState {
+        message: "生成文件无法安全写入本地".into(),
+    }
+}
+struct NamespaceVerifiedReader<'a> {
+    api: &'a GenerationApi,
+    scope: &'a SessionScope,
+    response: reqwest::blocking::Response,
+    expected: u64,
+    sha256: &'a str,
+    total: u64,
+    hasher: Sha256,
+    api_error: Option<ApiError>,
+}
+impl NamespaceVerifiedReader<'_> {
+    fn fail(&mut self, error: ApiError) -> std::io::Error {
+        self.api_error = Some(error);
+        std::io::Error::other("verified namespace download failed")
+    }
+}
+impl Read for NamespaceVerifiedReader<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if let Err(error) = self.api.ensure_scope_active(self.scope) {
+            return Err(self.fail(error));
+        }
+        let result = self.response.read(buffer);
+        if let Err(error) = self.api.ensure_scope_active(self.scope) {
+            return Err(self.fail(error));
+        }
+        let count = match result {
+            Ok(count) => count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => return Err(error),
+            Err(_) => return Err(self.fail(capability_transfer_error())),
+        };
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        if count == 0 {
+            if self.total != self.expected
+                || !format!("{:x}", self.hasher.clone().finalize())
+                    .eq_ignore_ascii_case(self.sha256)
+            {
+                return Err(self.fail(capability_integrity_error()));
+            }
+        } else {
+            self.total = self
+                .total
+                .checked_add(count as u64)
+                .filter(|total| *total <= self.expected)
+                .ok_or_else(|| self.fail(capability_integrity_error()))?;
+            self.hasher.update(&buffer[..count]);
+        }
+        Ok(count)
     }
 }
 

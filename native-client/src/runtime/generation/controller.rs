@@ -1,5 +1,187 @@
 use super::*;
 
+pub(super) struct CommittedNamespaceDelivery {
+    prepared: PreparedNamespaceDelivery,
+}
+
+impl CommittedNamespaceDelivery {
+    pub(super) fn into_prepared(self) -> PreparedNamespaceDelivery {
+        self.prepared
+    }
+}
+
+pub(super) fn persist_namespace_delivery(
+    app: &AppWindow,
+    store: &mut Store,
+    writer: &ClientStateWriter,
+    prepared: PreparedNamespaceDelivery,
+    time: &str,
+) -> Result<(Image, String, CommittedNamespaceDelivery)> {
+    prepared.ensure_current()?;
+    let record = prepared.record();
+    let confirmation = prepared.confirmation();
+    let id = confirmation
+        .failed_asset_id
+        .as_deref()
+        .unwrap_or(&confirmation.file_id)
+        .to_owned();
+    let source_path = prepared.source_path();
+    let notification_id = format!("delivery-{}", confirmation.file_id);
+    let assets = store
+        .assets
+        .iter()
+        .filter(|asset| asset.id == id)
+        .collect::<Vec<_>>();
+    let generations = store
+        .generations
+        .iter()
+        .filter(|asset| asset.id == id)
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        assets.len() <= 1 && generations.len() <= 1,
+        "delivery metadata is ambiguous"
+    );
+    anyhow::ensure!(
+        !store
+            .assets
+            .iter()
+            .chain(&store.generations)
+            .any(|asset| asset.source_path == source_path && asset.id != id),
+        "delivery path belongs to conflicting metadata"
+    );
+    let notifications = store
+        .notifications
+        .iter()
+        .filter(|item| item.id == notification_id)
+        .collect::<Vec<_>>();
+    if let ([asset], [generation]) = (assets.as_slice(), generations.as_slice()) {
+        anyhow::ensure!(
+            asset.source_path == source_path
+                && generation.source_path == source_path
+                && !asset.delivery_recoverable
+                && !generation.delivery_recoverable
+                && !asset.delivery_downloading
+                && !generation.delivery_downloading,
+            "successful delivery metadata conflicts"
+        );
+        anyhow::ensure!(
+            notifications.len() == 1 && notifications[0].success,
+            "delivery success notification is missing or conflicting"
+        );
+        // Preserve user edits and notification read state while requiring the
+        // actual complete projection to commit successfully for every receipt.
+        save_local_store_checked_for_namespace(app, store, writer, prepared.lease())?;
+    } else {
+        anyhow::ensure!(
+            notifications.is_empty(),
+            "delivery notification identity conflicts"
+        );
+        let (width, height) = prepared.preview().dimensions();
+        let notification = NotificationData {
+            id: notification_id,
+            title: format!(
+                "Generation succeeded: {}",
+                short_text(&record.raw_prompt, 24)
+            ),
+            model: record.model_code.clone(),
+            time: time.to_owned(),
+            reason: String::new(),
+            success: true,
+            read: false,
+        };
+        if confirmation.failed_asset_id.is_some() {
+            let [failed] = generations.as_slice() else {
+                anyhow::bail!("failed delivery card is missing or ambiguous");
+            };
+            anyhow::ensure!(
+                assets.is_empty()
+                    && failed.source_path == "failed"
+                    && failed.delivery_recoverable
+                    && failed.conversation_id == record.conversation_id
+                    && failed.category == record.category
+                    && failed.kind == record.mode
+                    && failed.model == record.model_code,
+                "failed delivery card identity mismatch"
+            );
+            let mut completed = (*failed).clone();
+            completed.source_path = source_path.to_owned();
+            completed.width = width as i32;
+            completed.height = height as i32;
+            completed.ratio = ratio_from_actual_dimensions(width as i32, height as i32);
+            completed.time = time.to_owned();
+            completed.is_new = true;
+            completed.delivery_recoverable = false;
+            completed.delivery_downloading = false;
+            let notification = NotificationData {
+                title: format!("图片下载完成：{}", short_text(&completed.prompt, 24)),
+                ..notification
+            };
+            local_store::replace_failed_delivery_asset_checked_for_namespace(
+                app,
+                store,
+                writer,
+                prepared.lease(),
+                &id,
+                completed,
+                notification,
+            )?;
+        } else {
+            anyhow::ensure!(
+                assets.is_empty() && generations.is_empty(),
+                "delivery asset identity conflicts"
+            );
+            let item = AssetData {
+                id: id.clone(),
+                conversation_id: record.conversation_id.clone(),
+                title: short_text(&record.raw_prompt, 18),
+                category: record.category.clone(),
+                kind: record.mode.clone(),
+                time: time.to_owned(),
+                prompt: display_generation_prompt(&record.generation_prompt),
+                ratio: ratio_from_actual_dimensions(width as i32, height as i32),
+                quality: record.quality.clone(),
+                model: record.model_code.clone(),
+                origin: if record.task_type == "image_edit" {
+                    "image_edit"
+                } else {
+                    "generation"
+                }
+                .into(),
+                width: width as i32,
+                height: height as i32,
+                source_path: source_path.to_owned(),
+                reference_paths: if !record.lineage_reference_paths.is_empty() {
+                    record.lineage_reference_paths.clone()
+                } else if matches!(record.task_type.as_str(), "image_edit" | "image_upscale") {
+                    Vec::new()
+                } else {
+                    record.reference_paths.clone()
+                },
+                cutout_done: false,
+                remove_black_done: false,
+                upscale_done: record.task_type == "image_upscale",
+                is_new: true,
+                delivery_recoverable: false,
+                delivery_downloading: false,
+            };
+            let history_prompt = item.prompt.clone();
+            persist_generated_asset_checked_for_namespace(
+                app,
+                store,
+                writer,
+                prepared.lease(),
+                item,
+                notification,
+                true,
+                Some(&history_prompt),
+            )?;
+        }
+    }
+    prepared.ensure_current()?;
+    let image = materialize_delivery_preview(prepared.preview());
+    Ok((image, id, CommittedNamespaceDelivery { prepared }))
+}
+
 pub(super) fn start_generation(
     app: &AppWindow,
     context: AppContext,
