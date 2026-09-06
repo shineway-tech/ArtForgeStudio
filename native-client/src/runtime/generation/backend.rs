@@ -309,9 +309,31 @@ fn commit_retry_generation_recovery_with(
     Ok(())
 }
 
+// TEMP(team-accounts): remove in Task 10 after namespace admission is wired.
 pub(super) fn start_backend_generation(
     app: &AppWindow,
+    _context: AppContext,
+    _raw_prompt: String,
+    _create_conversation: bool,
+    _retry_failed_id: Option<String>,
+    _forced_count: Option<i32>,
+    _existing_generation_policy: ExistingGenerationPolicy,
+    _destination: GenerationDestination,
+) {
+    app.global::<AppState>().set_generation_status(
+        ApiError::LocalState {
+            message: "任务准备失败，请重试".to_owned(),
+        }
+        .user_message()
+        .into(),
+    );
+}
+
+pub(super) fn start_backend_generation_with_billing_scope(
+    app: &AppWindow,
     context: AppContext,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: &BillingScope,
     raw_prompt: String,
     create_conversation: bool,
     retry_failed_id: Option<String>,
@@ -319,12 +341,21 @@ pub(super) fn start_backend_generation(
     existing_generation_policy: ExistingGenerationPolicy,
     destination: GenerationDestination,
 ) {
-    let Some(backend) = context.backend.clone() else {
-        return;
+    let billing_scope = match capture_billing_scope_for_submission(
+        context.backend.as_deref(),
+        &authority,
+        billing_scope,
+    ) {
+        Ok(scope) => scope,
+        Err(error) => {
+            app.global::<AppState>()
+                .set_generation_status(error.user_message().into());
+            return;
+        }
     };
-    let Some(session_scope) = current_generation_session_scope(&context) else {
-        app.global::<AppState>()
-            .set_generation_status("登录状态已变化，请重新发起生成".into());
+    let session_scope = billing_scope.request.session.clone();
+
+    let Some(backend) = context.backend.clone() else {
         return;
     };
     let store = context.store.clone();
@@ -468,10 +499,11 @@ pub(super) fn start_backend_generation(
     let local_task_id = Uuid::new_v4().to_string();
     let request_id = Uuid::new_v4().simple().to_string();
     let recovery_record = PendingGenerationRecord {
-        schema_version: 1,
+        schema_version: 2,
         created_at_epoch_ms: Local::now().timestamp_millis(),
         client_request_id: request_id.clone(),
         owner_user_id: session_scope.owner_user_id.clone(),
+        billing_account_group_id: billing_scope.request.account_group_id.clone(),
         auth_epoch: session_scope.auth_epoch,
         local_task_id: local_task_id.clone(),
         server_task_id: String::new(),
@@ -502,30 +534,29 @@ pub(super) fn start_backend_generation(
         },
         canvas_ui_extraction: false,
     };
+    let recovery_identity = recovery_record.identity();
     let recovery_commit = commit_retry_generation_recovery_with(
         retry_failed_id.as_deref(),
         recoverable_delivery_id,
         || {
-            upsert_pending_generation_scoped(
+            upsert_pending_generation_for_namespace(
+                &authority,
+                &billing_scope,
                 recovery_record.clone(),
-                &session_scope.owner_user_id,
-                session_scope.auth_epoch,
             )
         },
         |failed_asset_id| {
-            abandon_pending_delivery(
-                &session_scope.owner_user_id,
-                session_scope.auth_epoch,
-                failed_asset_id,
-            )
+            recoverable_delivery_for_failed_asset_for_namespace(&authority, failed_asset_id)
+                .and_then(|candidate| match candidate {
+                    Some((old, _)) => abandon_pending_delivery_for_namespace(
+                        &authority,
+                        &old.identity(),
+                        failed_asset_id,
+                    ),
+                    None => Ok(false),
+                })
         },
-        || {
-            remove_pending_generation_scoped(
-                &session_scope.owner_user_id,
-                session_scope.auth_epoch,
-                &request_id,
-            )
-        },
+        || remove_pending_generation_for_namespace(&authority, &recovery_identity),
         |retry_failed_id| {
             let mut store = store.borrow_mut();
             store.generations.retain(|item| item.id != retry_failed_id);
@@ -628,11 +659,7 @@ pub(super) fn start_backend_generation(
                     for file_id in &uploaded {
                         let _ = api.delete_reference_scoped(file_id, &worker_scope);
                     }
-                    let _ = remove_pending_generation_scoped(
-                        &worker_scope.owner_user_id,
-                        worker_scope.auth_epoch,
-                        &request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &recovery_identity);
                     let _ = sender.send(GenerationOutcome::Failure {
                         reason: error.generation_message(),
                         time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
@@ -642,11 +669,10 @@ pub(super) fn start_backend_generation(
             }
             let uploaded_snapshot = uploaded.clone();
             if !matches!(
-                update_pending_generation_scoped(
-                    &worker_scope.owner_user_id,
-                    worker_scope.auth_epoch,
-                    &request_id,
-                    |record| record.uploaded_file_ids = uploaded_snapshot,
+                apply_generation_patch_for_namespace(
+                    &authority,
+                    &recovery_identity,
+                    GenerationRecoveryPatch::UploadedFileIds(uploaded_snapshot)
                 ),
                 Ok(true)
             ) {
@@ -691,7 +717,7 @@ pub(super) fn start_backend_generation(
             reference_file_ids: Some(uploaded.clone()),
             target_language: None,
         };
-        let mut detail = match api.create_task_scoped(&request, &worker_scope) {
+        let mut detail = match api.create_task_billing(&request, &billing_scope) {
             Ok(detail) => detail,
             Err(error) => {
                 if !backend_generation_scope_active(&backend, &worker_scope) {
@@ -701,11 +727,7 @@ pub(super) fn start_backend_generation(
                     for file_id in &uploaded {
                         let _ = api.delete_reference_scoped(file_id, &worker_scope);
                     }
-                    let _ = remove_pending_generation_scoped(
-                        &worker_scope.owner_user_id,
-                        worker_scope.auth_epoch,
-                        &request.client_request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &recovery_identity);
                     let _ = sender.send(GenerationOutcome::CreditInsufficient {
                         message: "积分不足以支持本次生图，请前往充值".to_string(),
                     });
@@ -715,11 +737,7 @@ pub(super) fn start_backend_generation(
                     for file_id in &uploaded {
                         let _ = api.delete_reference_scoped(file_id, &worker_scope);
                     }
-                    let _ = remove_pending_generation_scoped(
-                        &worker_scope.owner_user_id,
-                        worker_scope.auth_epoch,
-                        &request.client_request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &recovery_identity);
                 }
                 let _ = sender.send(GenerationOutcome::Failure {
                     reason: error.generation_message(),
@@ -743,14 +761,14 @@ pub(super) fn start_backend_generation(
         }
         let task_id_for_record = task_id.clone();
         if !matches!(
-            update_pending_generation_scoped(
-                &worker_scope.owner_user_id,
-                worker_scope.auth_epoch,
-                &request.client_request_id,
-                |record| {
-                    record.server_task_id = task_id_for_record;
-                    record.uploaded_file_ids = uploaded.clone();
-                },
+            apply_generation_patch_for_namespace(
+                &authority,
+                &recovery_identity,
+                GenerationRecoveryPatch::Accepted {
+                    server_task_id: task_id_for_record,
+                    uploaded_file_ids: uploaded.clone(),
+                    clear_reference_inputs: false
+                }
             ),
             Ok(true)
         ) {
@@ -867,14 +885,12 @@ pub(super) fn start_backend_generation(
                 );
                 let expected_success_count = detail.success_count.max(0) as usize;
                 if !matches!(
-                    update_pending_generation_scoped(
-                        &worker_scope.owner_user_id,
-                        worker_scope.auth_epoch,
-                        &request.client_request_id,
-                        |record| {
-                            record.terminal = true;
-                            record.expected_success_count = expected_success_count;
-                        },
+                    apply_generation_patch_for_namespace(
+                        &authority,
+                        &recovery_identity,
+                        GenerationRecoveryPatch::Terminal {
+                            expected_success_count
+                        }
                     ),
                     Ok(true)
                 ) {
@@ -923,28 +939,56 @@ pub(super) fn start_backend_generation(
     );
 }
 
+// TEMP(team-accounts): remove in Task 10 after namespace admission is wired.
 pub(super) fn start_backend_image_edit(
     app: &AppWindow,
+    _context: AppContext,
+    _source_path: PathBuf,
+    _mask_path: PathBuf,
+    _prompt: String,
+    _model_code: String,
+    _quality: String,
+) {
+    app.global::<AppState>().set_image_editor_status(
+        ApiError::LocalState {
+            message: "图片编辑任务准备失败，请重试".to_owned(),
+        }
+        .user_message()
+        .into(),
+    );
+}
+
+pub(super) fn start_backend_image_edit_with_billing_scope(
+    app: &AppWindow,
     context: AppContext,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: &BillingScope,
     source_path: PathBuf,
     mask_path: PathBuf,
     prompt: String,
     model_code: String,
     quality: String,
 ) {
+    let billing_scope = match capture_billing_scope_for_submission(
+        context.backend.as_deref(),
+        &authority,
+        billing_scope,
+    ) {
+        Ok(scope) => scope,
+        Err(error) => {
+            app.global::<AppState>()
+                .set_image_editor_status(error.user_message().into());
+            return;
+        }
+    };
+    let session_scope = billing_scope.request.session.clone();
+
     let state = app.global::<AppState>();
     let Some(backend) = context.backend.clone() else {
         cleanup_image_edit_input_path(&source_path);
         cleanup_image_edit_input_path(&mask_path);
         state.set_image_editor_generating(false);
         state.set_image_editor_status("服务端尚未初始化，请重启客户端后重试".into());
-        return;
-    };
-    let Some(session_scope) = current_generation_session_scope(&context) else {
-        cleanup_image_edit_input_path(&source_path);
-        cleanup_image_edit_input_path(&mask_path);
-        state.set_image_editor_generating(false);
-        state.set_image_editor_status("登录状态已变化，请重新发起编辑".into());
         return;
     };
     let viewer_id = state.get_viewer_id().to_string();
@@ -1010,10 +1054,11 @@ pub(super) fn start_backend_image_edit(
             }
         };
     let record = PendingGenerationRecord {
-        schema_version: 1,
+        schema_version: 2,
         created_at_epoch_ms: Local::now().timestamp_millis(),
         client_request_id: request_id.clone(),
         owner_user_id: session_scope.owner_user_id.clone(),
+        billing_account_group_id: billing_scope.request.account_group_id.clone(),
         auth_epoch: session_scope.auth_epoch,
         local_task_id: local_task_id.clone(),
         server_task_id: String::new(),
@@ -1041,12 +1086,7 @@ pub(super) fn start_backend_image_edit(
         canvas_source_node_id: String::new(),
         canvas_ui_extraction: false,
     };
-    if upsert_pending_generation_scoped(
-        record.clone(),
-        &session_scope.owner_user_id,
-        session_scope.auth_epoch,
-    )
-    .is_err()
+    if upsert_pending_generation_for_namespace(&authority, &billing_scope, record.clone()).is_err()
     {
         cleanup_image_edit_record_inputs(&record);
         state.set_image_editor_generating(false);
@@ -1086,7 +1126,15 @@ pub(super) fn start_backend_image_edit(
     let cancellations = context.cancelled_generation_requests.clone();
     let worker_scope = session_scope.clone();
     std::thread::spawn(move || {
-        run_recovered_generation_worker(backend, worker_scope, record, sender, cancellations)
+        run_generation_with_billing_scope(
+            backend,
+            authority,
+            billing_scope,
+            worker_scope,
+            record,
+            sender,
+            cancellations,
+        )
     });
     poll_generation_stream(
         app.as_weak(),
@@ -1119,215 +1167,77 @@ pub(super) fn start_backend_image_edit(
     );
 }
 
+// TEMP(team-accounts): remove in Task 10 after namespace admission is wired.
 pub(super) fn start_backend_upscale(
     app: &AppWindow,
-    context: AppContext,
-    scale: u32,
-    quality: String,
+    _context: AppContext,
+    _scale: u32,
+    _quality: String,
 ) {
-    let state = app.global::<AppState>();
-    if state.get_viewer_processing() {
-        return;
-    }
-    if state.get_viewer_upscale_done() {
-        state.set_viewer_message(
-            processing_done_message(
-                app,
-                ProcessImageMode::Upscale {
-                    scale: 2,
-                    target_long_edge: 2048,
-                },
-            )
-            .into(),
-        );
-        return;
-    }
-    if !require_online_operation(app, "清晰放大") {
-        return;
-    }
-    let Some(backend) = context.backend.clone() else {
-        state.set_viewer_message("服务端尚未初始化，请重启客户端后重试".into());
-        return;
-    };
-    let Some(session_scope) = current_generation_session_scope(&context) else {
-        state.set_viewer_message("登录状态已变化，请重新发起放大".into());
-        return;
-    };
-    let model_code = state.get_image_model().to_string();
-    if model_code.trim().is_empty() {
-        state.set_viewer_message("服务端没有可用的图像模型".into());
-        return;
-    }
-
-    let source = {
-        let store = context.store.borrow();
-        upscale_source_for_viewer(app, &store)
-    };
-    let Some(source) = source else {
-        state.set_viewer_message("未找到要放大的图片".into());
-        return;
-    };
-    if category_is_generating(&context, &source.category) {
-        state.set_viewer_message("当前分类已有生成任务，请稍后再放大".into());
-        return;
-    }
-    let Some((source_width, source_height)) = viewer_source_dimensions(&state, &source) else {
-        state.set_viewer_message("图片尺寸不可用，无法放大".into());
-        return;
-    };
-    let selected_quality = if quality.eq_ignore_ascii_case("4K") {
-        "4K"
-    } else {
-        "2K"
-    }
-    .to_string();
-    let target_long_edge = upscale_quality_long_edge(&selected_quality);
-    if source_width.max(source_height) > target_long_edge {
-        let message = if target_long_edge >= 4096 {
-            "当前图片尺寸已超过 4K，暂不支持继续放大"
-        } else {
-            "当前图片已超过 2K，请选择 4K 放大"
-        };
-        state.set_viewer_message(message.into());
-        return;
-    }
-    let (target_width, target_height) = upscale_dimensions(
-        source_width,
-        source_height,
-        scale.clamp(2, 4),
-        target_long_edge,
-    );
-    let billing_quality = quality_for_target_dimensions(target_width, target_height);
-    let upload_path = match upscale_upload_path(app, &state, &source) {
-        Ok(path) => path,
-        Err(error) => {
-            state.set_viewer_message(format!("放大任务准备失败：{error}").into());
-            return;
+    app.global::<AppState>().set_viewer_message(
+        ApiError::LocalState {
+            message: "放大任务准备失败，请重试".to_owned(),
         }
-    };
+        .user_message()
+        .into(),
+    );
+}
 
-    let request_id = Uuid::new_v4().simple().to_string();
-    let local_task_id = Uuid::new_v4().to_string();
-    let conversation_id = source.conversation_id.clone();
-    let display_prompt = if source.prompt.trim().is_empty() {
-        source.title.clone()
-    } else {
-        source.prompt.clone()
-    };
-    let raw_prompt = format!(
-        "{} 清晰放大{}X",
-        if source.title.trim().is_empty() {
-            "图片"
-        } else {
-            source.title.trim()
-        },
-        scale.clamp(2, 4),
-    );
-    let generation_prompt = build_upscale_prompt(
-        &display_prompt,
-        target_width,
-        target_height,
-        scale.clamp(2, 4),
-        &billing_quality,
-    );
-    let ratio = ratio_from_actual_dimensions(target_width as i32, target_height as i32);
-    let reference_path = upload_path.display().to_string();
-    let (reference_sha256, reference_size_bytes) =
-        match reference_fingerprints(std::slice::from_ref(&upload_path)) {
-            Ok(fingerprints) => fingerprints,
-            Err(error) => {
-                cleanup_upscale_input_path(&upload_path);
-                state.set_viewer_message(format!("放大输入校验失败：{error}").into());
-                return;
-            }
-        };
-    let recovery_record = PendingGenerationRecord {
-        schema_version: 1,
-        created_at_epoch_ms: Local::now().timestamp_millis(),
-        client_request_id: request_id.clone(),
-        owner_user_id: session_scope.owner_user_id.clone(),
-        auth_epoch: session_scope.auth_epoch,
-        local_task_id: local_task_id.clone(),
-        server_task_id: String::new(),
-        raw_prompt: raw_prompt.clone(),
-        generation_prompt: generation_prompt.clone(),
-        task_type: "image_upscale".to_string(),
-        category: source.category.clone(),
-        mode: source.kind.clone(),
-        ratio: ratio.clone(),
-        quality: billing_quality.clone(),
-        model_code: model_code.clone(),
-        conversation_id: conversation_id.clone(),
-        count: 1,
-        target_width,
-        target_height,
-        create_conversation: false,
-        reference_paths: vec![reference_path.clone()],
-        reference_sha256,
-        reference_size_bytes,
-        lineage_reference_paths: source.reference_paths.clone(),
-        uploaded_file_ids: vec![],
-        deliveries: vec![],
-        terminal: false,
-        expected_success_count: 0,
-        canvas_source_node_id: String::new(),
-        canvas_ui_extraction: false,
-    };
-    if upsert_pending_generation_scoped(
-        recovery_record.clone(),
-        &session_scope.owner_user_id,
-        session_scope.auth_epoch,
-    )
-    .is_err()
-    {
-        cleanup_upscale_input_path(&upload_path);
-        state.set_viewer_message("放大任务准备失败，请重试".into());
-        return;
+struct PreparedUpscaleSubmission {
+    backend: Arc<BackendRuntime>,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: BillingScope,
+    record: PendingGenerationRecord,
+}
+
+impl PreparedUpscaleSubmission {
+    // Admission persists the exact captured identity before a worker can upload or bill.
+    fn new(
+        backend: Arc<BackendRuntime>,
+        authority: Arc<NamespaceStorageAuthority>,
+        billing_scope: &BillingScope,
+        record: PendingGenerationRecord,
+    ) -> std::result::Result<Self, ApiError> {
+        let billing_scope =
+            capture_billing_scope_for_submission(Some(&backend), &authority, billing_scope)?;
+        if record.task_type != "image_upscale" || record.reference_paths.len() != 1 {
+            return Err(ApiError::LocalState {
+                message: "放大任务输入不完整，请重新发起任务".into(),
+            });
+        }
+        upsert_pending_generation_for_namespace(&authority, &billing_scope, record.clone())
+            .map_err(|error| ApiError::LocalState {
+                message: format!("无法保存放大任务恢复记录：{error}"),
+            })?;
+        Ok(Self {
+            backend,
+            authority,
+            billing_scope,
+            record,
+        })
     }
 
-    insert_active_generation(
-        &context,
-        ActiveGeneration {
-            task_id: local_task_id.clone(),
-            client_request_id: Some(request_id.clone()),
-            server_task_id: None,
-            category: source.category.clone(),
-            conversation_id: conversation_id.clone(),
-            prompt: raw_prompt.clone(),
-            credit_cost: 0,
-            total_count: 1,
-            loading_count: 1,
-            completed_count: 0,
-            success_count: 0,
-            failed_count: 0,
-            last_failure_reason: None,
-            progress: 1,
-            eta: 0,
-            latest_success_id: None,
-            session_scope: session_scope.clone(),
-            destination: GenerationDestination::Gallery,
-            delivery_download_reservations: Vec::new(),
-        },
-    );
-    state.set_viewer_processing(true);
-    state.set_viewer_processing_progress(0);
-    state.set_viewer_processing_label("正在提交放大任务".into());
-    state.set_upscale_open(false);
-    state.set_viewer_open(false);
-    state.set_viewer_processing(false);
-    state.set_viewer_processing_progress(0);
-    set_generation_status_for_category(&context, app, &source.category, "正在上传原图...");
-    sync_generation_state_for_current_category(&context, app);
-    navigate_to_with_store(app, &context.store.borrow(), "generation");
-
-    let (sender, receiver) = mpsc::channel::<GenerationOutcome>();
-    let cancellations = context.cancelled_generation_requests.clone();
-    let source_prompt_for_result = display_prompt.clone();
-    let source_category = source.category.clone();
-    let source_reference_paths = source.reference_paths.clone();
-    let quality_for_worker = billing_quality.clone();
-    let worker_scope = session_scope.clone();
-    std::thread::spawn(move || {
+    fn run(
+        self,
+        sender: mpsc::Sender<GenerationOutcome>,
+        cancellations: Arc<Mutex<BTreeSet<String>>>,
+        source_prompt_for_result: String,
+    ) {
+        let Self {
+            backend,
+            authority,
+            billing_scope,
+            record: recovery_record,
+        } = self;
+        let worker_scope = billing_scope.request.session.clone();
+        let recovery_identity = recovery_record.identity();
+        let request_id = recovery_record.client_request_id.clone();
+        let reference_path = recovery_record.reference_paths[0].clone();
+        let model_code = recovery_record.model_code.clone();
+        let generation_prompt = recovery_record.generation_prompt.clone();
+        let quality_for_worker = recovery_record.quality.clone();
+        let target_width = recovery_record.target_width;
+        let target_height = recovery_record.target_height;
         let api = GenerationApi::new(backend.api.clone());
         if !backend_generation_scope_active(&backend, &worker_scope)
             || !generation_references_match(&recovery_record)
@@ -1342,11 +1252,7 @@ pub(super) fn start_backend_upscale(
                     return;
                 }
                 if matches!(
-                    remove_pending_generation_scoped(
-                        &worker_scope.owner_user_id,
-                        worker_scope.auth_epoch,
-                        &request_id,
-                    ),
+                    remove_pending_generation_for_namespace(&authority, &recovery_identity),
                     Ok(true)
                 ) {
                     cleanup_upscale_input_path(Path::new(&reference_path));
@@ -1360,16 +1266,10 @@ pub(super) fn start_backend_upscale(
         }
         let uploaded_snapshot = uploaded.clone();
         if !matches!(
-            update_pending_generation_scoped(
-                &worker_scope.owner_user_id,
-                worker_scope.auth_epoch,
-                &request_id,
-                |record| {
-                    record.uploaded_file_ids = uploaded_snapshot;
-                    record.reference_paths.clear();
-                    record.reference_sha256.clear();
-                    record.reference_size_bytes.clear();
-                },
+            apply_generation_patch_for_namespace(
+                &authority,
+                &recovery_identity,
+                GenerationRecoveryPatch::UploadedAndReleaseInputs(uploaded_snapshot)
             ),
             Ok(true)
         ) {
@@ -1403,7 +1303,7 @@ pub(super) fn start_backend_upscale(
             target_width,
             target_height,
         };
-        let mut detail = match api.create_upscale_task_scoped(&request, &worker_scope) {
+        let mut detail = match api.create_upscale_task_billing(&request, &billing_scope) {
             Ok(detail) => detail,
             Err(error) => {
                 if !backend_generation_scope_active(&backend, &worker_scope) {
@@ -1413,11 +1313,7 @@ pub(super) fn start_backend_upscale(
                     for file_id in &uploaded {
                         let _ = api.delete_reference_scoped(file_id, &worker_scope);
                     }
-                    let _ = remove_pending_generation_scoped(
-                        &worker_scope.owner_user_id,
-                        worker_scope.auth_epoch,
-                        &request.client_request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &recovery_identity);
                     let _ = sender.send(GenerationOutcome::CreditInsufficient {
                         message: "积分不足以支持本次放大，请前往充值".to_string(),
                     });
@@ -1427,11 +1323,7 @@ pub(super) fn start_backend_upscale(
                     for file_id in &uploaded {
                         let _ = api.delete_reference_scoped(file_id, &worker_scope);
                     }
-                    let _ = remove_pending_generation_scoped(
-                        &worker_scope.owner_user_id,
-                        worker_scope.auth_epoch,
-                        &request.client_request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &recovery_identity);
                 }
                 let _ = sender.send(GenerationOutcome::Failure {
                     reason: error.generation_message(),
@@ -1456,14 +1348,14 @@ pub(super) fn start_backend_upscale(
         let task_id_for_record = task_id.clone();
         let uploaded_for_record = uploaded.clone();
         if !matches!(
-            update_pending_generation_scoped(
-                &worker_scope.owner_user_id,
-                worker_scope.auth_epoch,
-                &request.client_request_id,
-                |record| {
-                    record.server_task_id = task_id_for_record;
-                    record.uploaded_file_ids = uploaded_for_record;
-                },
+            apply_generation_patch_for_namespace(
+                &authority,
+                &recovery_identity,
+                GenerationRecoveryPatch::Accepted {
+                    server_task_id: task_id_for_record,
+                    uploaded_file_ids: uploaded_for_record,
+                    clear_reference_inputs: false
+                }
             ),
             Ok(true)
         ) {
@@ -1580,14 +1472,12 @@ pub(super) fn start_backend_upscale(
                 );
                 let expected_success_count = detail.success_count.max(0) as usize;
                 if !matches!(
-                    update_pending_generation_scoped(
-                        &worker_scope.owner_user_id,
-                        worker_scope.auth_epoch,
-                        &request.client_request_id,
-                        |record| {
-                            record.terminal = true;
-                            record.expected_success_count = expected_success_count;
-                        },
+                    apply_generation_patch_for_namespace(
+                        &authority,
+                        &recovery_identity,
+                        GenerationRecoveryPatch::Terminal {
+                            expected_success_count
+                        }
                     ),
                     Ok(true)
                 ) {
@@ -1611,6 +1501,232 @@ pub(super) fn start_backend_upscale(
                 }
             };
         }
+    }
+}
+
+pub(super) fn start_backend_upscale_with_billing_scope(
+    app: &AppWindow,
+    context: AppContext,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: &BillingScope,
+    scale: u32,
+    quality: String,
+) {
+    let billing_scope = match capture_billing_scope_for_submission(
+        context.backend.as_deref(),
+        &authority,
+        billing_scope,
+    ) {
+        Ok(scope) => scope,
+        Err(error) => {
+            app.global::<AppState>()
+                .set_viewer_message(error.user_message().into());
+            return;
+        }
+    };
+    let session_scope = billing_scope.request.session.clone();
+
+    let state = app.global::<AppState>();
+    if state.get_viewer_processing() {
+        return;
+    }
+    if state.get_viewer_upscale_done() {
+        state.set_viewer_message(
+            processing_done_message(
+                app,
+                ProcessImageMode::Upscale {
+                    scale: 2,
+                    target_long_edge: 2048,
+                },
+            )
+            .into(),
+        );
+        return;
+    }
+    if !require_online_operation(app, "清晰放大") {
+        return;
+    }
+    let Some(backend) = context.backend.clone() else {
+        state.set_viewer_message("服务端尚未初始化，请重启客户端后重试".into());
+        return;
+    };
+    let model_code = state.get_image_model().to_string();
+    if model_code.trim().is_empty() {
+        state.set_viewer_message("服务端没有可用的图像模型".into());
+        return;
+    }
+
+    let source = {
+        let store = context.store.borrow();
+        upscale_source_for_viewer(app, &store)
+    };
+    let Some(source) = source else {
+        state.set_viewer_message("未找到要放大的图片".into());
+        return;
+    };
+    if category_is_generating(&context, &source.category) {
+        state.set_viewer_message("当前分类已有生成任务，请稍后再放大".into());
+        return;
+    }
+    let Some((source_width, source_height)) = viewer_source_dimensions(&state, &source) else {
+        state.set_viewer_message("图片尺寸不可用，无法放大".into());
+        return;
+    };
+    let selected_quality = if quality.eq_ignore_ascii_case("4K") {
+        "4K"
+    } else {
+        "2K"
+    }
+    .to_string();
+    let target_long_edge = upscale_quality_long_edge(&selected_quality);
+    if source_width.max(source_height) > target_long_edge {
+        let message = if target_long_edge >= 4096 {
+            "当前图片尺寸已超过 4K，暂不支持继续放大"
+        } else {
+            "当前图片已超过 2K，请选择 4K 放大"
+        };
+        state.set_viewer_message(message.into());
+        return;
+    }
+    let (target_width, target_height) = upscale_dimensions(
+        source_width,
+        source_height,
+        scale.clamp(2, 4),
+        target_long_edge,
+    );
+    let billing_quality = quality_for_target_dimensions(target_width, target_height);
+    let upload_path = match upscale_upload_path(app, &state, &source) {
+        Ok(path) => path,
+        Err(error) => {
+            state.set_viewer_message(format!("放大任务准备失败：{error}").into());
+            return;
+        }
+    };
+
+    let request_id = Uuid::new_v4().simple().to_string();
+    let local_task_id = Uuid::new_v4().to_string();
+    let conversation_id = source.conversation_id.clone();
+    let display_prompt = if source.prompt.trim().is_empty() {
+        source.title.clone()
+    } else {
+        source.prompt.clone()
+    };
+    let raw_prompt = format!(
+        "{} 清晰放大{}X",
+        if source.title.trim().is_empty() {
+            "图片"
+        } else {
+            source.title.trim()
+        },
+        scale.clamp(2, 4),
+    );
+    let generation_prompt = build_upscale_prompt(
+        &display_prompt,
+        target_width,
+        target_height,
+        scale.clamp(2, 4),
+        &billing_quality,
+    );
+    let ratio = ratio_from_actual_dimensions(target_width as i32, target_height as i32);
+    let reference_path = upload_path.display().to_string();
+    let (reference_sha256, reference_size_bytes) =
+        match reference_fingerprints(std::slice::from_ref(&upload_path)) {
+            Ok(fingerprints) => fingerprints,
+            Err(error) => {
+                cleanup_upscale_input_path(&upload_path);
+                state.set_viewer_message(format!("放大输入校验失败：{error}").into());
+                return;
+            }
+        };
+    let recovery_record = PendingGenerationRecord {
+        schema_version: 2,
+        created_at_epoch_ms: Local::now().timestamp_millis(),
+        client_request_id: request_id.clone(),
+        owner_user_id: session_scope.owner_user_id.clone(),
+        billing_account_group_id: billing_scope.request.account_group_id.clone(),
+        auth_epoch: session_scope.auth_epoch,
+        local_task_id: local_task_id.clone(),
+        server_task_id: String::new(),
+        raw_prompt: raw_prompt.clone(),
+        generation_prompt: generation_prompt.clone(),
+        task_type: "image_upscale".to_string(),
+        category: source.category.clone(),
+        mode: source.kind.clone(),
+        ratio: ratio.clone(),
+        quality: billing_quality.clone(),
+        model_code: model_code.clone(),
+        conversation_id: conversation_id.clone(),
+        count: 1,
+        target_width,
+        target_height,
+        create_conversation: false,
+        reference_paths: vec![reference_path.clone()],
+        reference_sha256,
+        reference_size_bytes,
+        lineage_reference_paths: source.reference_paths.clone(),
+        uploaded_file_ids: vec![],
+        deliveries: vec![],
+        terminal: false,
+        expected_success_count: 0,
+        canvas_source_node_id: String::new(),
+        canvas_ui_extraction: false,
+    };
+    let submission = match PreparedUpscaleSubmission::new(
+        backend,
+        authority,
+        &billing_scope,
+        recovery_record,
+    ) {
+        Ok(submission) => submission,
+        Err(error) => {
+            cleanup_upscale_input_path(&upload_path);
+            state.set_viewer_message(error.user_message().into());
+            return;
+        }
+    };
+
+    insert_active_generation(
+        &context,
+        ActiveGeneration {
+            task_id: local_task_id.clone(),
+            client_request_id: Some(request_id.clone()),
+            server_task_id: None,
+            category: source.category.clone(),
+            conversation_id: conversation_id.clone(),
+            prompt: raw_prompt.clone(),
+            credit_cost: 0,
+            total_count: 1,
+            loading_count: 1,
+            completed_count: 0,
+            success_count: 0,
+            failed_count: 0,
+            last_failure_reason: None,
+            progress: 1,
+            eta: 0,
+            latest_success_id: None,
+            session_scope: session_scope.clone(),
+            destination: GenerationDestination::Gallery,
+            delivery_download_reservations: Vec::new(),
+        },
+    );
+    state.set_viewer_processing(true);
+    state.set_viewer_processing_progress(0);
+    state.set_viewer_processing_label("正在提交放大任务".into());
+    state.set_upscale_open(false);
+    state.set_viewer_open(false);
+    state.set_viewer_processing(false);
+    state.set_viewer_processing_progress(0);
+    set_generation_status_for_category(&context, app, &source.category, "正在上传原图...");
+    sync_generation_state_for_current_category(&context, app);
+    navigate_to_with_store(app, &context.store.borrow(), "generation");
+
+    let (sender, receiver) = mpsc::channel::<GenerationOutcome>();
+    let cancellations = context.cancelled_generation_requests.clone();
+    let source_prompt_for_result = display_prompt.clone();
+    let source_category = source.category.clone();
+    let source_reference_paths = source.reference_paths.clone();
+    std::thread::spawn(move || {
+        submission.run(sender, cancellations, source_prompt_for_result);
     });
 
     poll_generation_stream(
@@ -1899,23 +2015,18 @@ fn cleanup_generation_record_inputs(record: &PendingGenerationRecord) {
     cleanup_upscale_record_inputs(record);
 }
 
-fn release_recovered_upscale_inputs(
+fn release_recovered_upscale_inputs_for_namespace(
     record: &mut PendingGenerationRecord,
-    session_scope: &SessionScope,
+    authority: &NamespaceStorageAuthority,
 ) -> bool {
     if record.task_type != "image_upscale" || record.reference_paths.is_empty() {
         return true;
     }
     if !matches!(
-        update_pending_generation_scoped(
-            &session_scope.owner_user_id,
-            session_scope.auth_epoch,
-            &record.client_request_id,
-            |stored| {
-                stored.reference_paths.clear();
-                stored.reference_sha256.clear();
-                stored.reference_size_bytes.clear();
-            },
+        apply_generation_patch_for_namespace(
+            authority,
+            &record.identity(),
+            GenerationRecoveryPatch::ReleaseReferenceInputs
         ),
         Ok(true)
     ) {
@@ -1928,102 +2039,15 @@ fn release_recovered_upscale_inputs(
     true
 }
 
-pub(super) fn recover_pending_generations(app: &AppWindow, context: AppContext) {
-    let state = app.global::<AppState>();
-    if state.get_directory_migration_open() {
-        let weak = app.as_weak();
-        slint::Timer::single_shot(Duration::from_secs(1), move || {
-            if let Some(app) = weak.upgrade() { recover_pending_generations(&app, context); }
-        });
-        return;
-    }
-    if state.get_session_state().as_str() != "online" {
-        return;
-    }
-    let Some(session_scope) = current_generation_session_scope(&context) else {
-        return;
-    };
-    let Some(backend) = context.backend.clone() else {
-        return;
-    };
-    let api = GenerationApi::new(backend.api.clone());
-    let recovery_candidates = match load_generation_recovery_candidates_checked(
-        &session_scope.owner_user_id,
-        session_scope.auth_epoch,
-    ) {
-        Ok(records) => records,
-        Err(error) => {
-            state.set_generation_status(
-                format!(
-                    "生图任务恢复文件无法读取，原文件已保留；请勿重复提交付费任务并联系客服：{error}"
-                )
-                .into(),
-            );
-            return;
+// TEMP(team-accounts): remove in Task 10 after namespace admission is wired.
+pub(super) fn recover_pending_generations(app: &AppWindow, _context: AppContext) {
+    app.global::<AppState>().set_generation_status(
+        ApiError::LocalState {
+            message: "任务恢复暂不可用，请稍后重试".to_owned(),
         }
-    };
-    let known_server_ids = recovery_candidates
-        .iter()
-        .filter(|record| !record.server_task_id.is_empty())
-        .map(|record| record.server_task_id.clone())
-        .collect::<BTreeSet<_>>();
-    let mut local_records = Vec::new();
-    for record in recovery_candidates {
-        let candidate = match bind_generation_recovery_candidate(&api, &session_scope, record) {
-            Ok(candidate) => candidate,
-            Err(error) => {
-                if !generation_scope_allows_polling(&app.as_weak(), &context, &session_scope) {
-                    return;
-                }
-                state.set_generation_status(
-                    format!(
-                        "暂时无法核实一条历史生图任务，恢复记录已保留且不会重复提交：{}",
-                        error.user_message()
-                    )
-                    .into(),
-                );
-                continue;
-            }
-        };
-        if !generation_scope_allows_polling(&app.as_weak(), &context, &session_scope) {
-            return;
-        }
-        if let Some(record) = candidate {
-            local_records.push(record);
-        }
-    }
-    if !reconcile_recoverable_delivery_cards(app, &context, &session_scope) {
-        return;
-    }
-    for record in local_records {
-        if record.schema_version != 1 || record.client_request_id.trim().is_empty() {
-            continue;
-        }
-        // A create response can be lost after the server has already reserved credits. Always
-        // resume with the persisted client_request_id; server idempotency can return the original
-        // task. Time alone is never proof that this paid recovery record is safe to delete.
-        if record.task_type == "image_watermark_removal" {
-            resume_pending_watermark_removal(app, context.clone(), record);
-            continue;
-        }
-        if record.task_type == "image_enhancement" {
-            resume_pending_image_enhancement(app, context.clone(), record);
-            continue;
-        }
-        if record.task_type == "image_cutout" {
-            resume_pending_image_cutout(app, context.clone(), record);
-            continue;
-        }
-        if record.task_type == "image_colorization" {
-            resume_pending_image_colorization(app, context.clone(), record);
-            continue;
-        }
-        if category_is_generating(&context, &record.category) {
-            continue;
-        }
-        resume_pending_generation(app, context.clone(), record);
-    }
-    recover_server_generation_tasks(app, context, session_scope, known_server_ids);
+        .user_message()
+        .into(),
+    );
 }
 
 fn reconcile_recoverable_delivery_cards(
@@ -2114,18 +2138,8 @@ struct GenerationCleanupSnapshot {
 }
 
 fn load_generation_cleanup_snapshot() -> Result<Vec<PendingGenerationRecord>> {
-    let path = generation_recovery_path();
-    restore_json_backup_if_needed(&path);
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Vec::new());
-        }
-        Err(error) => return Err(error.into()),
-    };
-    Ok(serde_json::from_str::<GenerationCleanupSnapshot>(&text)
-        .context("pending generation cleanup snapshot is invalid")?
-        .generations)
+    // TEMP(team-accounts): no global bytes confer recovery authority.
+    Err(RecoveryError::NamespaceRequired.into())
 }
 
 fn cleanup_path_identity(path: &Path) -> PathBuf {
@@ -2237,178 +2251,19 @@ pub(super) fn cleanup_generation_transients_at_startup(app: &AppWindow) {
     cleanup_orphaned_upscale_inputs(&records);
 }
 
+// TEMP(team-accounts): remove in Task 10 after namespace admission is wired.
 fn recover_server_generation_tasks(
     app: &AppWindow,
-    context: AppContext,
-    session_scope: SessionScope,
-    known_server_ids: BTreeSet<String>,
+    _context: AppContext,
+    _session_scope: SessionScope,
+    _known_server_ids: BTreeSet<String>,
 ) {
-    let Some(backend) = context.backend.clone() else {
-        return;
-    };
-    let (sender, receiver) =
-        mpsc::channel::<std::result::Result<Vec<PendingGenerationRecord>, ()>>();
-    let worker_scope = session_scope.clone();
-    std::thread::spawn(move || {
-        let api = GenerationApi::new(backend.api.clone());
-        let mut recovered = Vec::new();
-        for status in ["queued", "processing", "completed", "partially_completed"] {
-            let summaries = match api.list_tasks_scoped(status, &worker_scope) {
-                Ok(summaries) => summaries,
-                Err(_) if !backend_generation_scope_active(&backend, &worker_scope) => {
-                    let _ = sender.send(Err(()));
-                    return;
-                }
-                Err(_) => continue,
-            };
-            for summary in summaries {
-                if !matches!(
-                    summary.task_type.as_str(),
-                    "image_generation"
-                        | "image_upscale"
-                        | "image_edit"
-                        | "image_watermark_removal"
-                        | "image_cutout"
-                        | "image_colorization"
-                ) || known_server_ids.contains(&summary.id)
-                {
-                    continue;
-                }
-                let detail = match api.task_scoped(&summary.id, &worker_scope) {
-                    Ok(detail) => detail,
-                    Err(_) if !backend_generation_scope_active(&backend, &worker_scope) => {
-                        let _ = sender.send(Err(()));
-                        return;
-                    }
-                    Err(_) => continue,
-                };
-                if detail.terminal()
-                    && !detail.items.iter().any(|item| {
-                        item.file
-                            .as_ref()
-                            .and_then(|file| file.download_url.as_ref())
-                            .is_some()
-                    })
-                {
-                    continue;
-                }
-                let toolbox_enhancement = summary.task_type == "image_upscale"
-                    && detail
-                        .model
-                        .as_ref()
-                        .is_some_and(|model| model.code == "aliyun_super_resolution");
-                let toolbox_colorization = summary.task_type == "image_colorization"
-                    && detail
-                        .model
-                        .as_ref()
-                        .is_some_and(|model| model.code == "aliyun_image_colorization");
-                let recovered_task_type = if toolbox_enhancement {
-                    "image_enhancement".to_string()
-                } else if toolbox_colorization {
-                    "image_colorization".to_string()
-                } else {
-                    summary.task_type.clone()
-                };
-                let recovered_quality = if toolbox_enhancement {
-                    let target_long_edge = detail
-                        .request
-                        .get("target_width")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0)
-                        .max(
-                            detail
-                                .request
-                                .get("target_height")
-                                .and_then(Value::as_u64)
-                                .unwrap_or(0),
-                        );
-                    if target_long_edge > 2048 { "4K" } else { "2K" }.to_string()
-                } else if summary.task_type == "image_cutout" {
-                    detail
-                        .request
-                        .get("subject_type")
-                        .and_then(Value::as_str)
-                        .unwrap_or("general")
-                        .to_string()
-                } else {
-                    detail.quality.clone()
-                };
-                let prompt = detail
-                    .prompt
-                    .clone()
-                    .unwrap_or_else(|| "恢复的生成任务".to_string());
-                let ratio = detail
-                    .request
-                    .get("aspect_ratio")
-                    .and_then(Value::as_str)
-                    .map(client_ratio_from_api)
-                    .unwrap_or_else(|| "1:1".to_string());
-                recovered.push(PendingGenerationRecord {
-                    schema_version: 1,
-                    created_at_epoch_ms: Local::now().timestamp_millis(),
-                    client_request_id: format!("recovered_{}", Uuid::new_v4().simple()),
-                    owner_user_id: worker_scope.owner_user_id.clone(),
-                    auth_epoch: worker_scope.auth_epoch,
-                    local_task_id: Uuid::new_v4().to_string(),
-                    server_task_id: detail.id.clone(),
-                    raw_prompt: prompt.clone(),
-                    generation_prompt: prompt,
-                    task_type: recovered_task_type,
-                    category: if summary.task_type == "image_watermark_removal"
-                        || summary.task_type == "image_cutout"
-                        || summary.task_type == "image_edit"
-                        || toolbox_enhancement
-                        || toolbox_colorization
-                    {
-                        "other".to_string()
-                    } else {
-                        "character".to_string()
-                    },
-                    mode: "game".to_string(),
-                    ratio,
-                    quality: recovered_quality,
-                    model_code: detail
-                        .model
-                        .as_ref()
-                        .map(|model| model.code.clone())
-                        .unwrap_or_default(),
-                    conversation_id: Uuid::new_v4().to_string(),
-                    count: detail.requested_count.max(1),
-                    target_width: detail
-                        .request
-                        .get("target_width")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0) as u32,
-                    target_height: detail
-                        .request
-                        .get("target_height")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0) as u32,
-                    create_conversation: summary.task_type != "image_watermark_removal"
-                        && summary.task_type != "image_cutout"
-                        && summary.task_type != "image_edit"
-                        && !toolbox_enhancement
-                        && !toolbox_colorization,
-                    reference_paths: vec![],
-                    reference_sha256: vec![],
-                    reference_size_bytes: vec![],
-                    lineage_reference_paths: vec![],
-                    uploaded_file_ids: vec![],
-                    deliveries: vec![],
-                    terminal: detail.terminal(),
-                    expected_success_count: detail.success_count.max(0) as usize,
-                    canvas_source_node_id: String::new(),
-                    canvas_ui_extraction: false,
-                });
-            }
+    app.global::<AppState>().set_generation_status(
+        ApiError::LocalState {
+            message: "任务恢复暂不可用，请稍后重试".to_owned(),
         }
-        let _ = sender.send(Ok(recovered));
-    });
-    poll_server_generation_recovery(
-        app.as_weak(),
-        context,
-        session_scope,
-        Rc::new(RefCell::new(Some(receiver))),
+        .user_message()
+        .into(),
     );
 }
 
@@ -2625,14 +2480,28 @@ fn resume_pending_generation(
     );
 }
 
+// TEMP(team-accounts): saved-payer admission is required before recovery replay.
 fn run_recovered_generation_worker(
+    _backend: Arc<BackendRuntime>,
+    _session_scope: SessionScope,
+    _record: PendingGenerationRecord,
+    _sender: mpsc::Sender<GenerationOutcome>,
+    _cancellations: Arc<Mutex<BTreeSet<String>>>,
+) {
+}
+
+fn run_generation_with_billing_scope(
     backend: Arc<BackendRuntime>,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: BillingScope,
     session_scope: SessionScope,
     mut record: PendingGenerationRecord,
     sender: mpsc::Sender<GenerationOutcome>,
     cancellations: Arc<Mutex<BTreeSet<String>>>,
 ) {
-    if record.owner_user_id != session_scope.owner_user_id
+    if capture_billing_scope_for_submission(Some(&backend), &authority, &billing_scope).is_err()
+        || record.billing_account_group_id != billing_scope.request.account_group_id
+        || record.owner_user_id != session_scope.owner_user_id
         || record.auth_epoch != session_scope.auth_epoch
         || !backend_generation_scope_active(&backend, &session_scope)
     {
@@ -2649,11 +2518,10 @@ fn run_recovered_generation_worker(
     }
     if record.task_type == "image_edit" && !record.server_task_id.is_empty() {
         if !matches!(
-            update_pending_generation_scoped(
-                &session_scope.owner_user_id,
-                session_scope.auth_epoch,
-                &record.client_request_id,
-                |item| item.reference_paths.clear(),
+            apply_generation_patch_for_namespace(
+                &authority,
+                &record.identity(),
+                GenerationRecoveryPatch::ReleaseReferenceInputs
             ),
             Ok(true)
         ) {
@@ -2661,12 +2529,14 @@ fn run_recovered_generation_worker(
         }
         cleanup_image_edit_record_inputs(&record);
         record.reference_paths.clear();
+        record.reference_sha256.clear();
+        record.reference_size_bytes.clear();
     }
     if record.task_type == "image_upscale"
         && (!record.server_task_id.is_empty()
             || (!record.reference_paths.is_empty()
                 && uploaded.len() >= record.reference_paths.len()))
-        && !release_recovered_upscale_inputs(&mut record, &session_scope)
+        && !release_recovered_upscale_inputs_for_namespace(&mut record, &authority)
     {
         return;
     }
@@ -2681,11 +2551,10 @@ fn run_recovered_generation_worker(
                 uploaded.push(file_id);
                 let snapshot = uploaded.clone();
                 if !matches!(
-                    update_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                        |item| item.uploaded_file_ids = snapshot,
+                    apply_generation_patch_for_namespace(
+                        &authority,
+                        &record.identity(),
+                        GenerationRecoveryPatch::UploadedFileIds(snapshot)
                     ),
                     Ok(true)
                 ) {
@@ -2724,7 +2593,7 @@ fn run_recovered_generation_worker(
     if record.task_type == "image_upscale"
         && !record.reference_paths.is_empty()
         && uploaded.len() >= record.reference_paths.len()
-        && !release_recovered_upscale_inputs(&mut record, &session_scope)
+        && !release_recovered_upscale_inputs_for_namespace(&mut record, &authority)
     {
         return;
     }
@@ -2760,15 +2629,11 @@ fn run_recovered_generation_worker(
                 target_width: record.target_width,
                 target_height: record.target_height,
             };
-            api.create_upscale_task_scoped(&request, &session_scope)
+            api.create_upscale_task_billing(&request, &billing_scope)
         } else if task_type == "image_edit" {
             if uploaded.len() != 2 {
                 if !matches!(
-                    remove_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                    ),
+                    remove_pending_generation_for_namespace(&authority, &record.identity()),
                     Ok(true)
                 ) {
                     return;
@@ -2793,7 +2658,7 @@ fn run_recovered_generation_worker(
                 source_file_id: uploaded[0].clone(),
                 mask_file_id: uploaded[1].clone(),
             };
-            api.create_image_edit_task_scoped(&request, &session_scope)
+            api.create_image_edit_task_billing(&request, &billing_scope)
         } else {
             let request = CreateGenerationTask {
                 client_request_id: record.client_request_id.clone(),
@@ -2806,7 +2671,7 @@ fn run_recovered_generation_worker(
                 reference_file_ids: Some(uploaded.clone()),
                 target_language: None,
             };
-            api.create_task_scoped(&request, &session_scope)
+            api.create_task_billing(&request, &billing_scope)
         };
         match created {
             Ok(detail) => detail,
@@ -2816,11 +2681,7 @@ fn run_recovered_generation_worker(
                 }
                 if error.is_insufficient_credits() {
                     if !matches!(
-                        remove_pending_generation_scoped(
-                            &session_scope.owner_user_id,
-                            session_scope.auth_epoch,
-                            &record.client_request_id,
-                        ),
+                        remove_pending_generation_for_namespace(&authority, &record.identity()),
                         Ok(true)
                     ) {
                         return;
@@ -2836,11 +2697,7 @@ fn run_recovered_generation_worker(
                 }
                 if !error.should_preserve_generation_recovery() {
                     if !matches!(
-                        remove_pending_generation_scoped(
-                            &session_scope.owner_user_id,
-                            session_scope.auth_epoch,
-                            &record.client_request_id,
-                        ),
+                        remove_pending_generation_for_namespace(&authority, &record.identity()),
                         Ok(true)
                     ) {
                         return;
@@ -2891,17 +2748,14 @@ fn run_recovered_generation_worker(
     let uploaded_snapshot = uploaded.clone();
     let server_id_snapshot = server_task_id.clone();
     if !matches!(
-        update_pending_generation_scoped(
-            &session_scope.owner_user_id,
-            session_scope.auth_epoch,
-            &record.client_request_id,
-            |item| {
-                item.server_task_id = server_id_snapshot;
-                item.uploaded_file_ids = uploaded_snapshot;
-                if item.task_type == "image_edit" {
-                    item.reference_paths.clear();
-                }
-            },
+        apply_generation_patch_for_namespace(
+            &authority,
+            &record.identity(),
+            GenerationRecoveryPatch::Accepted {
+                server_task_id: server_id_snapshot,
+                uploaded_file_ids: uploaded_snapshot,
+                clear_reference_inputs: record.task_type == "image_edit"
+            }
         ),
         Ok(true)
     ) {
@@ -2909,6 +2763,8 @@ fn run_recovered_generation_worker(
     }
     cleanup_generation_record_inputs(&record);
     record.reference_paths.clear();
+    record.reference_sha256.clear();
+    record.reference_size_bytes.clear();
     let _ = sender.send(GenerationOutcome::Accepted {
         task_id: server_task_id.clone(),
     });
@@ -3058,14 +2914,12 @@ fn run_recovered_generation_worker(
             );
             let expected = detail.success_count.max(0) as usize;
             if !matches!(
-                update_pending_generation_scoped(
-                    &session_scope.owner_user_id,
-                    session_scope.auth_epoch,
-                    &record.client_request_id,
-                    |item| {
-                        item.terminal = true;
-                        item.expected_success_count = expected;
-                    },
+                apply_generation_patch_for_namespace(
+                    &authority,
+                    &record.identity(),
+                    GenerationRecoveryPatch::Terminal {
+                        expected_success_count: expected
+                    }
                 ),
                 Ok(true)
             ) {
@@ -3375,10 +3229,11 @@ mod tests {
 
     fn recovery_record(deliveries: Vec<PendingDeliveryRecord>) -> PendingGenerationRecord {
         PendingGenerationRecord {
-            schema_version: 1,
+            schema_version: 2,
             created_at_epoch_ms: Local::now().timestamp_millis(),
             client_request_id: "delivery_test_request".to_string(),
             owner_user_id: "delivery-test-user".to_string(),
+            billing_account_group_id: "22222222-2222-4222-8222-222222222222".to_owned(),
             auth_epoch: 7,
             local_task_id: "local-task".to_string(),
             server_task_id: "server-task".to_string(),
@@ -3627,5 +3482,702 @@ mod tests {
             assert!(callback.contains("recovered_delivery_path_matches("));
             assert!(callback.contains("clear_recovered_delivery_local_path("));
         }
+    }
+}
+
+/// Captures one admitted payer lease before file preparation or worker creation.
+/// Current selection is deliberately absent from this boundary.
+pub(super) fn capture_billing_scope_for_submission(
+    backend: Option<&BackendRuntime>,
+    authority: &NamespaceStorageAuthority,
+    billing_scope: &BillingScope,
+) -> std::result::Result<BillingScope, ApiError> {
+    let session = &billing_scope.request.session;
+    let canonical_owner =
+        api::uuid_path_segment(&session.owner_user_id).is_ok_and(|id| id == session.owner_user_id);
+    let canonical_payer = api::uuid_path_segment(&billing_scope.request.account_group_id)
+        .is_ok_and(|id| id == billing_scope.request.account_group_id);
+    if !canonical_owner
+        || !canonical_payer
+        || authority.user_public_id() != session.owner_user_id
+        || authority.lease().auth_epoch != session.auth_epoch
+        || !backend.is_some_and(|backend| backend.api.session().is_scope_current(session))
+    {
+        return Err(ApiError::LocalState {
+            message: "登录状态已变化，请重新发起任务".to_owned(),
+        });
+    }
+    Ok(billing_scope.clone())
+}
+
+#[cfg(test)]
+pub(in crate::runtime) mod billing_capture_test_support {
+    use super::*;
+    use crate::runtime::test_support::MemoryRefreshTokenStore;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    pub(in crate::runtime) const OWNER: &str = "11111111-1111-4111-8111-111111111111";
+    pub(in crate::runtime) const PAYER: &str = "22222222-2222-4222-8222-222222222222";
+    pub(in crate::runtime) const OTHER: &str = "33333333-3333-4333-8333-333333333333";
+    pub(in crate::runtime) struct Fixture {
+        pub(in crate::runtime) root: tempfile::TempDir,
+        pub(in crate::runtime) authority: Arc<NamespaceStorageAuthority>,
+        pub(in crate::runtime) scope: BillingScope,
+        pub(in crate::runtime) backend: Arc<BackendRuntime>,
+        pub(in crate::runtime) context: AppContext,
+    }
+    pub(in crate::runtime) fn fixture(base_url: &str) -> Fixture {
+        let root =
+            tempfile::tempdir_in(std::fs::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+        let session = Arc::new(SessionManager::new(Arc::new(
+            MemoryRefreshTokenStore::default(),
+        )));
+        let session_scope = session
+            .install_tokens_for_user(
+                &TokenSet {
+                    access_token: "capture-access".into(),
+                    access_expires_in_seconds: 1800,
+                    refresh_token: "capture-refresh".into(),
+                    refresh_expires_at: "2099-01-01T00:00:00Z".into(),
+                    token_type: "X-Token".into(),
+                },
+                OWNER,
+            )
+            .unwrap();
+        let scope = BillingScope {
+            request: GroupRequestScope {
+                session: session_scope.clone(),
+                account_group_id: PAYER.into(),
+            },
+            context_epoch: 17,
+        };
+        let root_capability = Arc::new(NamespaceFs::open_data_root(root.path()).unwrap());
+        let lease = NamespaceLease {
+            namespace: UserNamespace::new(root.path(), OWNER).unwrap(),
+            auth_epoch: session_scope.auth_epoch,
+            namespace_epoch: 1,
+        };
+        let authority =
+            Arc::new(NamespaceStorageAuthority::open(root_capability.clone(), &lease).unwrap());
+        let backend = Arc::new(BackendRuntime {
+            api: ApiClient::new(
+                ApiClientConfig {
+                    base_url: reqwest::Url::parse(base_url).unwrap(),
+                    app_version: "fixture".into(),
+                    timeout: Duration::from_secs(2),
+                },
+                DeviceIdentity {
+                    id: OTHER.into(),
+                    name: "fixture".into(),
+                    platform: "macos".into(),
+                },
+                session,
+            )
+            .unwrap(),
+        });
+        let context = AppContext {
+            data_root_capability: Some(root_capability),
+            backend: Some(backend.clone()),
+            current_user_id: Arc::new(Mutex::new(Some(OWNER.into()))),
+            account_snapshot_scope: Arc::new(Mutex::new(Some(session_scope))),
+            ..Default::default()
+        };
+        Fixture {
+            root,
+            authority,
+            scope,
+            backend,
+            context,
+        }
+    }
+    pub(in crate::runtime) fn listener() -> (TcpListener, String) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        (listener, url)
+    }
+    pub(in crate::runtime) struct Captured {
+        pub(in crate::runtime) request: String,
+        pub(in crate::runtime) document: Value,
+    }
+    pub(in crate::runtime) fn read_request(stream: &mut TcpStream) -> String {
+        String::from_utf8(read_request_bytes(stream)).unwrap()
+    }
+    pub(in crate::runtime) fn read_request_bytes(stream: &mut TcpStream) -> Vec<u8> {
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut bytes = Vec::new();
+        loop {
+            let mut chunk = [0u8; 4096];
+            let count = stream.read(&mut chunk).unwrap();
+            assert!(count > 0, "request ended before headers/body");
+            bytes.extend_from_slice(&chunk[..count]);
+            if let Some(end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                let headers = String::from_utf8_lossy(&bytes[..end]).to_lowercase();
+                let length = headers
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .map(|length| length.trim().parse::<usize>().unwrap())
+                    .unwrap_or(0);
+                if bytes.len() >= end + 4 + length {
+                    return bytes;
+                }
+            }
+        }
+    }
+    pub(in crate::runtime) fn capture(
+        listener: TcpListener,
+        authority: Arc<NamespaceStorageAuthority>,
+        filename: &'static str,
+    ) -> (mpsc::Sender<()>, std::thread::JoinHandle<Captured>) {
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(2))
+                    }
+                    Err(error) => {
+                        panic!("billable dispatch did not reach recording transport: {error}")
+                    }
+                }
+            };
+            let request = read_request(&mut stream);
+            let key = ManagedFileKey::new(ManagedUserArea::Recovery, filename).unwrap();
+            let mut file = authority.open_existing_regular(&key).unwrap();
+            let mut bytes = Vec::new();
+            authority.read_regular_to(&mut file, &mut bytes).unwrap();
+            let document = serde_json::from_slice(&bytes).unwrap();
+            let body = r#"{"request_id":"capture-rejected","data":null,"error":{"code":"invalid_parameter","message":"fixture-stop","details":null},"meta":null}"#;
+            write!(stream,"HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+            Captured { request, document }
+        });
+        (release_tx, worker)
+    }
+    pub(in crate::runtime) fn assert_capture(captured: &Captured, vector: &str) {
+        let headers = captured
+            .request
+            .split("\r\n\r\n")
+            .next()
+            .unwrap()
+            .to_lowercase();
+        assert!(headers.contains(&format!("x-account-group-id: {PAYER}")));
+        assert!(headers.contains("x-token: capture-access"));
+        let body: Value =
+            serde_json::from_str(captured.request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        let row = &captured.document[vector][0];
+        assert_eq!(captured.document["schema_version"], 2);
+        assert_eq!(row["schema_version"], 2);
+        assert_eq!(row["owner_user_id"], OWNER);
+        assert_eq!(row["billing_account_group_id"], PAYER);
+        assert_eq!(row["client_request_id"], body["client_request_id"]);
+        assert!(!row["client_request_id"].as_str().unwrap().is_empty());
+    }
+    pub(in crate::runtime) fn corrupt(authority: &NamespaceStorageAuthority, filename: &str) {
+        let key = ManagedFileKey::new(ManagedUserArea::Recovery, filename).unwrap();
+        let mut file = authority.create_new_regular(&key).unwrap();
+        authority
+            .write_new_regular_from(&mut file, &mut &b"invalid-owned-fixture"[..])
+            .unwrap();
+        authority.sync_regular(&mut file).unwrap();
+    }
+    pub(in crate::runtime) fn assert_no_request(listener: &TcpListener) {
+        listener.set_nonblocking(true).unwrap();
+        let deadline = Instant::now() + Duration::from_millis(150);
+        while Instant::now() < deadline {
+            assert!(
+                matches!(listener.accept(),Err(error) if error.kind()==std::io::ErrorKind::WouldBlock),
+                "unexpected dispatch"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    pub(in crate::runtime) fn generation_record(
+        scope: &BillingScope,
+        task_type: &str,
+    ) -> PendingGenerationRecord {
+        PendingGenerationRecord {
+            schema_version: 2,
+            created_at_epoch_ms: 1,
+            client_request_id: "0123456789abcdef0123456789abcdef".into(),
+            owner_user_id: scope.request.session.owner_user_id.clone(),
+            billing_account_group_id: scope.request.account_group_id.clone(),
+            auth_epoch: scope.request.session.auth_epoch,
+            local_task_id: "local".into(),
+            server_task_id: String::new(),
+            raw_prompt: "fixture prompt".into(),
+            generation_prompt: "fixture prompt".into(),
+            task_type: task_type.into(),
+            category: "other".into(),
+            mode: "game".into(),
+            ratio: "1:1".into(),
+            quality: "2K".into(),
+            model_code: "fixture-model".into(),
+            conversation_id: OTHER.into(),
+            count: 1,
+            target_width: 2048,
+            target_height: 2048,
+            create_conversation: false,
+            reference_paths: Vec::new(),
+            reference_sha256: Vec::new(),
+            reference_size_bytes: Vec::new(),
+            lineage_reference_paths: Vec::new(),
+            uploaded_file_ids: if task_type == "image_edit" {
+                vec![OTHER.into(), OWNER.into()]
+            } else {
+                vec![OTHER.into()]
+            },
+            deliveries: Vec::new(),
+            terminal: false,
+            expected_success_count: 0,
+            canvas_source_node_id: String::new(),
+            canvas_ui_extraction: false,
+        }
+    }
+    pub(in crate::runtime) fn assert_generation_worker<T: Send + 'static>(
+        task_type: &str,
+        run: impl FnOnce(
+                Arc<BackendRuntime>,
+                Arc<NamespaceStorageAuthority>,
+                BillingScope,
+                SessionScope,
+                PendingGenerationRecord,
+                mpsc::Sender<T>,
+            ) + Send
+            + 'static,
+    ) {
+        let (listener, url) = listener();
+        let mut fixture = fixture(&url);
+        let captured_scope = capture_billing_scope_for_submission(
+            Some(&fixture.backend),
+            &fixture.authority,
+            &fixture.scope,
+        )
+        .unwrap();
+        let record = generation_record(&captured_scope, task_type);
+        upsert_pending_generation_for_namespace(
+            &fixture.authority,
+            &captured_scope,
+            record.clone(),
+        )
+        .unwrap();
+        let (release, transport) = capture(
+            listener,
+            fixture.authority.clone(),
+            "pending-generations.json",
+        );
+        fixture.scope.request.account_group_id = OTHER.into();
+        fixture.scope.context_epoch += 1;
+        let (sender, _receiver) = mpsc::channel();
+        let backend = fixture.backend.clone();
+        let authority = fixture.authority.clone();
+        let session = captured_scope.request.session.clone();
+        let worker = std::thread::spawn(move || {
+            run(backend, authority, captured_scope, session, record, sender)
+        });
+        release.send(()).unwrap();
+        let observed = transport.join().unwrap();
+        assert_capture(&observed, "generations");
+        worker.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod billing_capture_tests {
+    use super::billing_capture_test_support::*;
+    use super::*;
+    #[test]
+    fn billing_capture_recorder_waits_for_delayed_fragmented_request() {
+        use std::io::Write;
+        use std::net::TcpStream;
+
+        let (listener, _url) = listener();
+        listener.set_nonblocking(true).unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client.set_write_timeout(Some(Duration::from_secs(3))).unwrap();
+        let (mut accepted, _) = listener.accept().unwrap();
+        // Exercise the inherited macOS mode explicitly on every host.
+        accepted.set_nonblocking(true).unwrap();
+        let writer = std::thread::spawn(move || -> std::io::Result<()> {
+            // Controlled network delay: the reader must survive both a missing
+            // first byte and a body that has not arrived in its entirety yet.
+            std::thread::sleep(Duration::from_millis(150));
+            client.write_all(b"POST /fixture HTTP/1.1\r\nContent-Length: 4\r\n\r\nA\0")?;
+            std::thread::sleep(Duration::from_millis(50));
+            client.write_all(b"\xffB")
+        });
+        let observed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            read_request_bytes(&mut accepted)
+        }));
+        // Keep the accepted socket alive and join the writer before asserting,
+        // including when the old reader panics during the required RED run.
+        let writer_result = writer.join();
+        drop(accepted);
+        drop(listener);
+        writer_result.expect("socket writer must settle").unwrap();
+        assert_eq!(
+            observed.expect("recorder must wait for delayed request bytes"),
+            b"POST /fixture HTTP/1.1\r\nContent-Length: 4\r\n\r\nA\0\xffB"
+        );
+    }
+
+    fn upscale_input_record(fixture: &Fixture) -> PendingGenerationRecord {
+        let path = fixture.root.path().join("upscale-source.png");
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([20, 40, 60, 255]))
+            .save(&path)
+            .unwrap();
+        let (sha256, sizes) = reference_fingerprints(std::slice::from_ref(&path)).unwrap();
+        let mut record = generation_record(&fixture.scope, "image_upscale");
+        record.reference_paths = vec![path.display().to_string()];
+        record.reference_sha256 = sha256;
+        record.reference_size_bytes = sizes;
+        record.lineage_reference_paths = vec!["retained-lineage".into()];
+        record.uploaded_file_ids.clear();
+        record.generation_prompt = "actual upscale generation prompt".into();
+        record
+    }
+
+    fn upscale_document(authority: &NamespaceStorageAuthority) -> Value {
+        let key =
+            ManagedFileKey::new(ManagedUserArea::Recovery, "pending-generations.json").unwrap();
+        let mut file = authority.open_existing_regular(&key).unwrap();
+        let mut bytes = Vec::new();
+        authority.read_regular_to(&mut file, &mut bytes).unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[test]
+    fn billing_capture_actual_upscale_submission_persists_before_upload_and_billing() {
+        use std::io::Write;
+        let (listener, url) = listener();
+        let mut fixture = fixture(&url);
+        let record = upscale_input_record(&fixture);
+        let original = serde_json::to_value(&record).unwrap();
+        let submission = PreparedUpscaleSubmission::new(
+            fixture.backend.clone(),
+            fixture.authority.clone(),
+            &fixture.scope,
+            record,
+        )
+        .unwrap();
+        assert_eq!(
+            upscale_document(&fixture.authority)["generations"][0],
+            original
+        );
+        fixture.scope.request.account_group_id = OTHER.into();
+        fixture.scope.context_epoch += 1;
+        let authority = fixture.authority.clone();
+        let transport = std::thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let mut billed = None;
+            for step in 0..5 {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error)
+                            if error.kind() == std::io::ErrorKind::WouldBlock
+                                && Instant::now() < deadline =>
+                        {
+                            std::thread::sleep(Duration::from_millis(2))
+                        }
+                        Err(error) => panic!("actual upscale request {step} missing: {error}"),
+                    }
+                };
+                let bytes = read_request_bytes(&mut stream);
+                let request = String::from_utf8_lossy(&bytes);
+                let success = serde_json::json!({"request_id":"fixture", "data":{}, "error":null, "meta":null});
+                let (status, response) = match step {
+                    0 => {
+                        assert!(request.starts_with("POST /v1/uploads/references HTTP/"));
+                        assert!(request.to_lowercase().contains("x-token: capture-access"));
+                        assert!(!request.to_lowercase().contains("x-account-group-id:"));
+                        assert_eq!(upscale_document(&authority)["generations"][0], original, "initial identity and inputs must be durable before the first network request");
+                        (
+                            "200 OK",
+                            serde_json::json!({"request_id":"fixture", "data":{"file":{"id":OTHER}, "upload":{"method":"POST", "url":format!("{url}fixture-upload"), "fields":{}, "file_field":"file"}}, "error":null, "meta":null}),
+                        )
+                    }
+                    1 => {
+                        assert!(request.starts_with("POST /fixture-upload HTTP/"));
+                        assert!(request.contains("multipart/form-data"));
+                        assert!(bytes
+                            .windows(8)
+                            .any(|window| window == b"\x89PNG\r\n\x1a\n"));
+                        ("200 OK", success)
+                    }
+                    2 => {
+                        assert!(request.starts_with(&format!(
+                            "POST /v1/uploads/references/{OTHER}/complete HTTP/"
+                        )));
+                        ("200 OK", success)
+                    }
+                    3 => {
+                        assert!(request.starts_with("POST /v1/generation/tasks HTTP/"));
+                        let document = upscale_document(&authority);
+                        let row = &document["generations"][0];
+                        assert_eq!(row["reference_paths"], serde_json::json!([]));
+                        assert_eq!(row["reference_sha256"], serde_json::json!([]));
+                        assert_eq!(row["reference_size_bytes"], serde_json::json!([]));
+                        assert_eq!(
+                            row["lineage_reference_paths"],
+                            original["lineage_reference_paths"]
+                        );
+                        assert_eq!(row["uploaded_file_ids"], serde_json::json!([OTHER]));
+                        let captured = Captured {
+                            request: String::from_utf8(bytes).unwrap(),
+                            document,
+                        };
+                        assert_capture(&captured, "generations");
+                        let body: Value = serde_json::from_str(
+                            captured.request.split("\r\n\r\n").nth(1).unwrap(),
+                        )
+                        .unwrap();
+                        assert_eq!(body["task_type"], "image_upscale");
+                        assert_eq!(body["prompt"], original["generation_prompt"]);
+                        assert_eq!(body["model_code"], original["model_code"]);
+                        assert_eq!(body["quality"], original["quality"]);
+                        assert_eq!(body["target_width"], original["target_width"]);
+                        assert_eq!(body["target_height"], original["target_height"]);
+                        assert_eq!(body["reference_file_ids"], serde_json::json!([OTHER]));
+                        billed = Some(captured);
+                        (
+                            "400 Bad Request",
+                            serde_json::json!({"request_id":"fixture-stop", "data":null, "error":{"code":"invalid_parameter", "message":"fixture-stop", "details":null}, "meta":null}),
+                        )
+                    }
+                    4 => {
+                        assert!(request
+                            .starts_with(&format!("DELETE /v1/uploads/references/{OTHER} HTTP/")));
+                        ("200 OK", success)
+                    }
+                    _ => unreachable!(),
+                };
+                let body = response.to_string();
+                write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+            billed.expect("actual billable upscale request must have been observed")
+        });
+        let (sender, receiver) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            submission.run(
+                sender,
+                Arc::new(Mutex::new(BTreeSet::new())),
+                "display prompt".into(),
+            )
+        });
+        let _observed = transport.join().unwrap();
+        worker.join().unwrap();
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_secs(1)).unwrap(),
+            GenerationOutcome::Failure { .. }
+        ));
+        assert!(load_pending_generations_for_namespace(&fixture.authority)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn billing_capture_actual_upscale_storage_failure_prevents_dispatch() {
+        let (listener, url) = listener();
+        let fixture = fixture(&url);
+        let record = upscale_input_record(&fixture);
+        corrupt(&fixture.authority, "pending-generations.json");
+        assert!(matches!(
+            PreparedUpscaleSubmission::new(
+                fixture.backend.clone(),
+                fixture.authority.clone(),
+                &fixture.scope,
+                record
+            ),
+            Err(ApiError::LocalState { .. })
+        ));
+        assert_no_request(&listener);
+    }
+
+    #[test]
+    fn billing_capture_actual_upscale_scope_failure_prevents_dispatch() {
+        let (listener, url) = listener();
+        let fixture = fixture(&url);
+        let record = upscale_input_record(&fixture);
+        let mut wrong_scope = fixture.scope.clone();
+        wrong_scope.request.session.auth_epoch += 1;
+        assert!(matches!(
+            PreparedUpscaleSubmission::new(
+                fixture.backend.clone(),
+                fixture.authority.clone(),
+                &wrong_scope,
+                record
+            ),
+            Err(ApiError::LocalState { .. })
+        ));
+        assert!(load_pending_generations_for_namespace(&fixture.authority)
+            .unwrap()
+            .is_empty());
+        assert_no_request(&listener);
+    }
+
+    #[test]
+    fn billing_capture_actual_upscale_expired_worker_preserves_record_without_dispatch() {
+        let (listener, url) = listener();
+        let fixture = fixture(&url);
+        let submission = PreparedUpscaleSubmission::new(
+            fixture.backend.clone(),
+            fixture.authority.clone(),
+            &fixture.scope,
+            upscale_input_record(&fixture),
+        )
+        .unwrap();
+        let before = upscale_document(&fixture.authority);
+        fixture.backend.api.session().clear().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        submission.run(
+            sender,
+            Arc::new(Mutex::new(BTreeSet::new())),
+            "display prompt".into(),
+        );
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
+        assert_eq!(upscale_document(&fixture.authority), before);
+        assert_no_request(&listener);
+    }
+
+    #[test]
+    fn billing_capture_actual_upscale_invalid_input_prevents_dispatch() {
+        let (listener, url) = listener();
+        let fixture = fixture(&url);
+        let mut record = upscale_input_record(&fixture);
+        record.reference_paths.clear();
+        assert!(matches!(
+            PreparedUpscaleSubmission::new(
+                fixture.backend.clone(),
+                fixture.authority.clone(),
+                &fixture.scope,
+                record
+            ),
+            Err(ApiError::LocalState { .. })
+        ));
+        assert!(load_pending_generations_for_namespace(&fixture.authority)
+            .unwrap()
+            .is_empty());
+        assert_no_request(&listener);
+    }
+
+    fn app() -> AppWindow {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        app.global::<AppState>().set_session_state("online".into());
+        app.global::<AppState>()
+            .set_image_model("fixture-model".into());
+        app.global::<AppState>().set_quality("1K".into());
+        app
+    }
+    #[test]
+    fn billing_capture_generation_start_persists_identity_before_real_dispatch() {
+        let app = app();
+        let (listener, url) = listener();
+        let mut fixture = fixture(&url);
+        let (release, transport) = capture(
+            listener,
+            fixture.authority.clone(),
+            "pending-generations.json",
+        );
+        start_backend_generation_with_billing_scope(
+            &app,
+            fixture.context.clone(),
+            fixture.authority.clone(),
+            &fixture.scope,
+            "fixture prompt".into(),
+            false,
+            None,
+            Some(1),
+            ExistingGenerationPolicy::KeepExisting,
+            GenerationDestination::Gallery,
+        );
+        fixture.scope.request.account_group_id = OTHER.into();
+        fixture.scope.context_epoch += 1;
+        release.send(()).unwrap();
+        let observed = transport.join().unwrap();
+        assert_capture(&observed, "generations");
+    }
+    #[test]
+    fn billing_capture_generation_storage_and_scope_failure_prevent_dispatch() {
+        let app = app();
+        let (listener, url) = listener();
+        let fixture = fixture(&url);
+        corrupt(&fixture.authority, "pending-generations.json");
+        start_backend_generation_with_billing_scope(
+            &app,
+            fixture.context.clone(),
+            fixture.authority.clone(),
+            &fixture.scope,
+            "fixture prompt".into(),
+            false,
+            None,
+            Some(1),
+            ExistingGenerationPolicy::KeepExisting,
+            GenerationDestination::Gallery,
+        );
+        assert!(fixture.context.generations.active.borrow().is_empty());
+        let mut wrong = fixture.scope.clone();
+        wrong.request.session.auth_epoch += 1;
+        start_backend_generation_with_billing_scope(
+            &app,
+            fixture.context.clone(),
+            fixture.authority.clone(),
+            &wrong,
+            "fixture prompt".into(),
+            false,
+            None,
+            Some(1),
+            ExistingGenerationPolicy::KeepExisting,
+            GenerationDestination::Gallery,
+        );
+        assert!(fixture.context.generations.active.borrow().is_empty());
+        assert_no_request(&listener);
+    }
+    #[test]
+    fn billing_capture_image_edit_worker_keeps_persisted_payer() {
+        assert_generation_worker(
+            "image_edit",
+            |backend, authority, scope, session, record, sender| {
+                run_generation_with_billing_scope(
+                    backend,
+                    authority,
+                    scope,
+                    session,
+                    record,
+                    sender,
+                    Arc::new(Mutex::new(BTreeSet::new())),
+                )
+            },
+        );
+    }
+    #[test]
+    fn billing_capture_alternate_upscale_worker_keeps_persisted_payer() {
+        assert_generation_worker(
+            "image_upscale",
+            |backend, authority, scope, session, record, sender| {
+                run_generation_with_billing_scope(
+                    backend,
+                    authority,
+                    scope,
+                    session,
+                    record,
+                    sender,
+                    Arc::new(Mutex::new(BTreeSet::new())),
+                )
+            },
+        );
     }
 }

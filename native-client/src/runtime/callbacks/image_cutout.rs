@@ -230,7 +230,38 @@ fn prepare_current_cutout_source(
     Ok(persisted)
 }
 
-fn start_image_cutout(app: &AppWindow, context: AppContext, subject_type: &str) {
+// TEMP(team-accounts): remove in Task 10 after namespace admission is wired.
+fn start_image_cutout(app: &AppWindow, _context: AppContext, _subject_type: &str) {
+    app.global::<AppState>().set_cutout_message(
+        ApiError::LocalState {
+            message: "任务准备失败，请重试".to_owned(),
+        }
+        .user_message()
+        .into(),
+    );
+}
+
+pub(super) fn start_image_cutout_with_billing_scope(
+    app: &AppWindow,
+    context: AppContext,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: &BillingScope,
+    subject_type: &str,
+) {
+    let billing_scope = match capture_billing_scope_for_submission(
+        context.backend.as_deref(),
+        &authority,
+        billing_scope,
+    ) {
+        Ok(scope) => scope,
+        Err(error) => {
+            app.global::<AppState>()
+                .set_cutout_message(error.user_message().into());
+            return;
+        }
+    };
+    let session_scope = billing_scope.request.session.clone();
+
     let state = app.global::<AppState>();
     if state.get_session_state().as_str() != "online" {
         state.set_auth_open(true);
@@ -247,10 +278,6 @@ fn start_image_cutout(app: &AppWindow, context: AppContext, subject_type: &str) 
     if context.backend.is_none() || state.get_cutout_processing() {
         return;
     }
-    let Some(session_scope) = current_generation_session_scope(&context) else {
-        state.set_cutout_message("登录状态已变化，请重新发起抠图".into());
-        return;
-    };
     let Some(subject_type) = normalized_cutout_type(subject_type) else {
         state.set_cutout_message("请选择有效的抠图类型".into());
         return;
@@ -281,10 +308,11 @@ fn start_image_cutout(app: &AppWindow, context: AppContext, subject_type: &str) 
             }
         };
     let record = PendingGenerationRecord {
-        schema_version: 1,
+        schema_version: 2,
         created_at_epoch_ms: Local::now().timestamp_millis(),
         client_request_id,
         owner_user_id: session_scope.owner_user_id.clone(),
+        billing_account_group_id: billing_scope.request.account_group_id.clone(),
         auth_epoch: session_scope.auth_epoch,
         local_task_id: Uuid::new_v4().to_string(),
         server_task_id: String::new(),
@@ -312,12 +340,7 @@ fn start_image_cutout(app: &AppWindow, context: AppContext, subject_type: &str) 
         canvas_source_node_id: String::new(),
         canvas_ui_extraction: false,
     };
-    if upsert_pending_generation_scoped(
-        record.clone(),
-        &session_scope.owner_user_id,
-        session_scope.auth_epoch,
-    )
-    .is_err()
+    if upsert_pending_generation_for_namespace(&authority, &billing_scope, record.clone()).is_err()
     {
         state.set_cutout_message(
             if state.get_language().as_str() == "en" {
@@ -329,48 +352,29 @@ fn start_image_cutout(app: &AppWindow, context: AppContext, subject_type: &str) 
         );
         return;
     }
-    launch_image_cutout(app, context, record, false);
+    launch_image_cutout_with_billing_scope(app, context, authority, billing_scope, record, false);
 }
 
+// TEMP(team-accounts): remove in Task 10 after namespace admission is wired.
 pub(super) fn resume_pending_image_cutout(
     app: &AppWindow,
-    context: AppContext,
-    record: PendingGenerationRecord,
+    _context: AppContext,
+    _record: PendingGenerationRecord,
 ) {
-    let session_scope = SessionScope {
-        owner_user_id: record.owner_user_id.clone(),
-        auth_epoch: record.auth_epoch,
-    };
-    if !generation_scope_matches_context(&context, &session_scope) {
-        return;
-    }
-    if app.global::<AppState>().get_cutout_processing() {
-        return;
-    }
-    let state = app.global::<AppState>();
-    state.set_viewer_open(false);
-    state.set_cutout_open(true);
-    state.set_viewer_title(record.raw_prompt.clone().into());
-    state.set_cutout_type(
-        normalized_cutout_type(&record.quality)
-            .unwrap_or("general")
-            .into(),
-    );
-    if let Some(source_path) = record.reference_paths.first() {
-        let path = PathBuf::from(source_path);
-        if path.is_file() {
-            state.set_viewer_source_path(path.display().to_string().into());
-            if let Ok(image) = load_preview_image(&path, PreviewPurpose::Canvas) {
-                state.set_viewer_image(image);
-            }
+    app.global::<AppState>().set_cutout_message(
+        ApiError::LocalState {
+            message: "任务准备失败，请重试".to_owned(),
         }
-    }
-    launch_image_cutout(app, context, record, true);
+        .user_message()
+        .into(),
+    );
 }
 
-fn launch_image_cutout(
+fn launch_image_cutout_with_billing_scope(
     app: &AppWindow,
     context: AppContext,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: BillingScope,
     record: PendingGenerationRecord,
     recovering: bool,
 ) {
@@ -418,7 +422,16 @@ fn launch_image_cutout(
         .to_string();
     let (sender, receiver) = mpsc::channel::<ImageCutoutOutcome>();
     let worker_scope = session_scope.clone();
-    std::thread::spawn(move || run_image_cutout_worker(backend, worker_scope, record, sender));
+    std::thread::spawn(move || {
+        run_image_cutout_worker(
+            backend,
+            authority,
+            billing_scope,
+            worker_scope,
+            record,
+            sender,
+        )
+    });
     poll_image_cutout_outcomes(
         app.as_weak(),
         context,
@@ -432,11 +445,15 @@ fn launch_image_cutout(
 
 fn run_image_cutout_worker(
     backend: Arc<BackendRuntime>,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: BillingScope,
     session_scope: SessionScope,
     mut record: PendingGenerationRecord,
     sender: mpsc::Sender<ImageCutoutOutcome>,
 ) {
-    if record.owner_user_id != session_scope.owner_user_id
+    if capture_billing_scope_for_submission(Some(&backend), &authority, &billing_scope).is_err()
+        || record.billing_account_group_id != billing_scope.request.account_group_id
+        || record.owner_user_id != session_scope.owner_user_id
         || record.auth_epoch != session_scope.auth_epoch
         || !backend_generation_scope_active(&backend, &session_scope)
     {
@@ -495,11 +512,10 @@ fn run_image_cutout_worker(
                 uploaded.push(file_id);
                 let snapshot = uploaded.clone();
                 if !matches!(
-                    update_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                        |item| item.uploaded_file_ids = snapshot,
+                    apply_generation_patch_for_namespace(
+                        &authority,
+                        &record.identity(),
+                        GenerationRecoveryPatch::UploadedFileIds(snapshot)
                     ),
                     Ok(true)
                 ) {
@@ -514,11 +530,7 @@ fn run_image_cutout_worker(
                     return;
                 }
                 if !error.should_preserve_generation_recovery() {
-                    let _ = remove_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &record.identity());
                 }
                 let _ = sender.send(ImageCutoutOutcome::Failure {
                     reason: error.generation_message(),
@@ -536,7 +548,7 @@ fn run_image_cutout_worker(
                 .unwrap_or("general")
                 .to_string(),
         };
-        match api.create_image_cutout_scoped(&request, &session_scope) {
+        match api.create_image_cutout_billing(&request, &billing_scope) {
             Ok(detail) => detail,
             Err(error) => {
                 if !backend_generation_scope_active(&backend, &session_scope) {
@@ -546,11 +558,7 @@ fn run_image_cutout_worker(
                     for file_id in &uploaded {
                         let _ = api.delete_reference_scoped(file_id, &session_scope);
                     }
-                    let _ = remove_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &record.identity());
                     let _ = sender.send(ImageCutoutOutcome::CreditInsufficient {
                         message: "本次智能抠图需要 20 积分，请先充值".to_string(),
                     });
@@ -563,11 +571,7 @@ fn run_image_cutout_worker(
                     for file_id in &uploaded {
                         let _ = api.delete_reference_scoped(file_id, &session_scope);
                     }
-                    let _ = remove_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &record.identity());
                 }
                 let _ = sender.send(ImageCutoutOutcome::Failure {
                     reason: error.generation_message(),
@@ -592,14 +596,14 @@ fn run_image_cutout_worker(
     let server_id_snapshot = server_task_id.clone();
     let uploaded_snapshot = uploaded.clone();
     if !matches!(
-        update_pending_generation_scoped(
-            &session_scope.owner_user_id,
-            session_scope.auth_epoch,
-            &record.client_request_id,
-            |item| {
-                item.server_task_id = server_id_snapshot;
-                item.uploaded_file_ids = uploaded_snapshot;
-            },
+        apply_generation_patch_for_namespace(
+            &authority,
+            &record.identity(),
+            GenerationRecoveryPatch::Accepted {
+                server_task_id: server_id_snapshot,
+                uploaded_file_ids: uploaded_snapshot,
+                clear_reference_inputs: false
+            }
         ),
         Ok(true)
     ) {
@@ -621,14 +625,12 @@ fn run_image_cutout_worker(
                 match api.download_verified_scoped(file, &session_scope) {
                     Ok(bytes) => {
                         if !matches!(
-                            update_pending_generation_scoped(
-                                &session_scope.owner_user_id,
-                                session_scope.auth_epoch,
-                                &record.client_request_id,
-                                |pending| {
-                                    pending.terminal = true;
-                                    pending.expected_success_count = 1;
-                                },
+                            apply_generation_patch_for_namespace(
+                                &authority,
+                                &record.identity(),
+                                GenerationRecoveryPatch::Terminal {
+                                    expected_success_count: 1
+                                }
                             ),
                             Ok(true)
                         ) {
@@ -670,14 +672,12 @@ fn run_image_cutout_worker(
                 })
                 .unwrap_or_else(|| "服务端未能完成智能抠图".to_string());
             if !matches!(
-                update_pending_generation_scoped(
-                    &session_scope.owner_user_id,
-                    session_scope.auth_epoch,
-                    &record.client_request_id,
-                    |pending| {
-                        pending.terminal = true;
-                        pending.expected_success_count = 0;
-                    },
+                apply_generation_patch_for_namespace(
+                    &authority,
+                    &record.identity(),
+                    GenerationRecoveryPatch::Terminal {
+                        expected_success_count: 0
+                    }
                 ),
                 Ok(true)
             ) {
@@ -1163,5 +1163,17 @@ mod tests {
 
         assert!(decode_cutout_result(&source_path, "general", &mask_bytes).is_err());
         let _ = fs::remove_file(source_path);
+    }
+}
+
+#[cfg(test)]
+mod billing_capture_tests {
+    use super::*;
+    #[test]
+    fn billing_capture_cutout_worker_keeps_persisted_payer() {
+        backend_generation::billing_capture_test_support::assert_generation_worker(
+            "image_cutout",
+            run_image_cutout_worker,
+        );
     }
 }

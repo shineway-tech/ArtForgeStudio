@@ -157,259 +157,32 @@ pub(super) fn wire_payment_callbacks(app: &AppWindow, context: AppContext) {
         });
     }
     let app_weak = app.as_weak();
-    let credit_context = context.clone();
-    state.on_recharge_credits(move |pack_code| {
+    state.on_recharge_credits(move |_pack_code| {
         let Some(app) = app_weak.upgrade() else {
             return;
         };
-        let state = app.global::<AppState>();
-        if !require_online_operation(&app, "充值积分") {
-            return;
-        }
-        if state.get_payment_active() {
-            state.set_credit_payment_message("当前订单正在等待付款，可继续前往支付宝".into());
-            reopen_payment_checkout(&app, &credit_context, backend.api.base_url());
-            return;
-        }
-        if state.get_credit_payment_busy() {
-            return;
-        }
-        let Some(session_scope) = current_payment_session_scope(&credit_context) else {
-            state.set_credit_payment_message("账号信息尚未同步，请稍后重试".into());
-            return;
-        };
-        if recover_existing_payment_before_new_order(
-            &app,
-            credit_context.clone(),
-            &session_scope,
-            PaymentOrderKind::Credit,
-        ) {
-            return;
-        }
-        let acceptances = match required_purchase_acceptances(&app) {
-            Ok(value) => value,
-            Err(message) => {
-                state.set_credit_payment_message(message.into());
-                return;
+        // TEMP(team-accounts): Task 10 supplies an admitted owned-group billing scope.
+        app.global::<AppState>().set_credit_payment_message(
+            ApiError::LocalState {
+                message: "无法保存订单恢复记录，请稍后重试".to_owned(),
             }
-        };
-        let pack_code = pack_code.trim().to_string();
-        if pack_code.is_empty() {
-            state.set_credit_payment_message("请选择可用积分包".into());
-            return;
-        }
-        let api = PaymentApi::new(backend.api.clone());
-        let agreements_api = AuthApi::new(backend.api.clone());
-        let request_id = Uuid::new_v4().simple().to_string();
-        let payment_request_id = request_id.clone();
-        let presentation = PaymentPresentation::credit(state.get_selected_credit_amount().as_str());
-        begin_payment_session(
-            &state,
-            &credit_context,
-            &request_id,
-            PaymentOrderKind::Credit,
-            &presentation,
-            session_scope.clone(),
-            "正在创建积分充值订单...",
-        );
-        state.set_credit_payment_busy(true);
-        state.set_credit_payment_message("正在创建积分充值订单...".into());
-        let (sender, receiver) = mpsc::channel();
-        let worker_scope = session_scope.clone();
-        let worker_backend = backend.clone();
-        std::thread::spawn(move || {
-            let result = (|| {
-                ensure_payment_scope_active(&worker_backend, &worker_scope)?;
-                upsert_pending_order(PendingOrderRecord {
-                    schema_version: 1,
-                    kind: "credit".to_string(),
-                    client_request_id: request_id.clone(),
-                    owner_user_id: worker_scope.owner_user_id.clone(),
-                    auth_epoch: worker_scope.auth_epoch,
-                    order_id: String::new(),
-                    product_code: pack_code.clone(),
-                    upgrade_quote_id: String::new(),
-                    created_at: Local::now().to_rfc3339(),
-                })
-                .map_err(|error| ApiError::LocalState {
-                    message: format!("无法保存订单恢复记录：{error}"),
-                })?;
-                agreements_api.accept_agreements_scoped(&acceptances, &worker_scope)?;
-                ensure_payment_scope_active(&worker_backend, &worker_scope)?;
-                let order =
-                    api.create_credit_order_scoped(&pack_code, &request_id, &worker_scope)?;
-                ensure_payment_scope_active(&worker_backend, &worker_scope)?;
-                update_pending_order_id(
-                    &worker_scope.owner_user_id,
-                    worker_scope.auth_epoch,
-                    &request_id,
-                    &order.id,
-                )
-                .map_err(|error| ApiError::LocalState {
-                    message: format!("无法保存服务端订单编号：{error}"),
-                })?;
-                Ok::<_, ApiError>(PaymentStarted {
-                    order,
-                    client_request_id: request_id,
-                    kind: PaymentOrderKind::Credit,
-                    presentation,
-                    session_scope: worker_scope,
-                })
-            })();
-            let _ = sender.send(result);
-        });
-        poll_payment_started(
-            app.as_weak(),
-            credit_context.clone(),
-            backend.clone(),
-            Rc::new(RefCell::new(Some(receiver))),
-            payment_request_id,
-            PaymentOrderKind::Credit,
-            session_scope,
+            .user_message()
+            .into(),
         );
     });
 
     let app_weak = app.as_weak();
-    let backend = context.backend.clone().unwrap();
-    state.on_purchase_membership(move |plan_code| {
+    state.on_purchase_membership(move |_plan_code| {
         let Some(app) = app_weak.upgrade() else {
             return;
         };
-        let state = app.global::<AppState>();
-        if !require_online_operation(&app, "购买会员") || state.get_membership_payment_busy() {
-            return;
-        }
-        if state.get_payment_active() {
-            state.set_payment_dialog_open(true);
-            state.set_membership_payment_message("请先完成当前支付订单".into());
-            return;
-        }
-        let Some(session_scope) = current_payment_session_scope(&context) else {
-            state.set_membership_payment_message("账号信息尚未同步，请稍后重试".into());
-            return;
-        };
-        if recover_existing_payment_before_new_order(
-            &app,
-            context.clone(),
-            &session_scope,
-            PaymentOrderKind::Membership,
-        ) {
-            return;
-        }
-        let acceptances = match required_purchase_acceptances(&app) {
-            Ok(value) => value,
-            Err(message) => {
-                state.set_membership_payment_message(message.into());
-                return;
+        // TEMP(team-accounts): Task 10 supplies an admitted owned-group billing scope.
+        app.global::<AppState>().set_membership_payment_message(
+            ApiError::LocalState {
+                message: "无法保存订单恢复记录，请稍后重试".to_owned(),
             }
-        };
-        let plan_code = plan_code.trim().to_string();
-        let Some(target) = state
-            .get_membership_plans()
-            .iter()
-            .find(|plan| plan.code.as_str() == plan_code)
-        else {
-            state.set_membership_payment_message("所选会员套餐已下线，请刷新后重试".into());
-            return;
-        };
-        let is_upgrade = state.get_membership_tier_rank() > 0
-            && target.tier_rank > state.get_membership_tier_rank();
-        let kind = if is_upgrade {
-            "membership_upgrade"
-        } else {
-            "membership"
-        }
-        .to_string();
-        let presentation = PaymentPresentation::membership(target.name.as_str());
-        let request_id = Uuid::new_v4().simple().to_string();
-        let payment_request_id = request_id.clone();
-        state.set_membership_payment_busy(true);
-        state.set_membership_payment_message(if is_upgrade {
-            "正在获取服务端升级报价...".into()
-        } else {
-            "正在创建会员订单...".into()
-        });
-        begin_payment_session(
-            &state,
-            &context,
-            &request_id,
-            PaymentOrderKind::Membership,
-            &presentation,
-            session_scope.clone(),
-            if is_upgrade {
-                "正在获取服务端升级报价..."
-            } else {
-                "正在创建会员订单..."
-            },
-        );
-        let api = MembershipApi::new(backend.api.clone());
-        let agreements_api = AuthApi::new(backend.api.clone());
-        let (sender, receiver) = mpsc::channel();
-        let worker_scope = session_scope.clone();
-        let worker_backend = backend.clone();
-        std::thread::spawn(move || {
-            let result = (|| {
-                ensure_payment_scope_active(&worker_backend, &worker_scope)?;
-                upsert_pending_order(PendingOrderRecord {
-                    schema_version: 1,
-                    kind,
-                    client_request_id: request_id.clone(),
-                    owner_user_id: worker_scope.owner_user_id.clone(),
-                    auth_epoch: worker_scope.auth_epoch,
-                    order_id: String::new(),
-                    product_code: plan_code.clone(),
-                    upgrade_quote_id: String::new(),
-                    created_at: Local::now().to_rfc3339(),
-                })
-                .map_err(|error| ApiError::LocalState {
-                    message: format!("无法保存订单恢复记录：{error}"),
-                })?;
-                agreements_api.accept_agreements_scoped(&acceptances, &worker_scope)?;
-                ensure_payment_scope_active(&worker_backend, &worker_scope)?;
-                let order = if is_upgrade {
-                    let quote = api.create_upgrade_quote_scoped(&plan_code, &worker_scope)?;
-                    ensure_payment_scope_active(&worker_backend, &worker_scope)?;
-                    update_pending_order_quote_id(
-                        &worker_scope.owner_user_id,
-                        worker_scope.auth_epoch,
-                        &request_id,
-                        &quote.id,
-                    )
-                    .map_err(|error| ApiError::LocalState {
-                        message: format!("无法保存会员升级报价：{error}"),
-                    })?;
-                    api.create_upgrade_order_scoped(&quote.id, &request_id, &worker_scope)?
-                } else {
-                    api.create_order_scoped(&plan_code, &request_id, &worker_scope)?
-                };
-                ensure_payment_scope_active(&worker_backend, &worker_scope)?;
-                update_pending_order_id(
-                    &worker_scope.owner_user_id,
-                    worker_scope.auth_epoch,
-                    &request_id,
-                    &order.id,
-                )
-                .map_err(|error| ApiError::LocalState {
-                    message: format!("无法保存服务端订单编号：{error}"),
-                })?;
-                Ok::<_, ApiError>(PaymentStarted {
-                    order,
-                    client_request_id: request_id,
-                    kind: PaymentOrderKind::Membership,
-                    presentation,
-                    session_scope: worker_scope,
-                })
-            })();
-            let _ = sender.send(result);
-        });
-        poll_payment_started(
-            app.as_weak(),
-            context.clone(),
-            backend.clone(),
-            Rc::new(RefCell::new(Some(receiver))),
-            payment_request_id,
-            PaymentOrderKind::Membership,
-            session_scope,
+            .user_message()
+            .into(),
         );
     });
 }
@@ -461,12 +234,7 @@ fn poll_payment_started(
         };
         match payment_scope_disposition(&context, &session_scope) {
             PaymentScopeDisposition::CapturedTerminal => {
-                sign_out_locally(
-                    &app,
-                    &context,
-                    true,
-                    Some(session_scope.auth_epoch),
-                );
+                sign_out_locally(&app, &context, true, Some(session_scope.auth_epoch));
                 return;
             }
             PaymentScopeDisposition::Stale => return,
@@ -596,12 +364,7 @@ fn poll_payment_sync_result(
         };
         match payment_scope_disposition(&context, &session_scope) {
             PaymentScopeDisposition::CapturedTerminal => {
-                sign_out_locally(
-                    &app,
-                    &context,
-                    true,
-                    Some(session_scope.auth_epoch),
-                );
+                sign_out_locally(&app, &context, true, Some(session_scope.auth_epoch));
                 return;
             }
             PaymentScopeDisposition::Stale => return,
@@ -672,12 +435,7 @@ fn continue_payment_order(
     let session_scope = started.session_scope.clone();
     match payment_scope_disposition(&context, &session_scope) {
         PaymentScopeDisposition::CapturedTerminal => {
-            sign_out_locally(
-                app,
-                &context,
-                true,
-                Some(session_scope.auth_epoch),
-            );
+            sign_out_locally(app, &context, true, Some(session_scope.auth_epoch));
             return;
         }
         PaymentScopeDisposition::Stale => return,
@@ -1038,7 +796,7 @@ fn pending_order_gate(
         if !valid_pending_order(record) {
             return PendingOrderGate::ManualReview;
         }
-    };
+    }
     if found {
         PendingOrderGate::Recoverable
     } else {
@@ -1242,10 +1000,11 @@ mod tests {
 
     fn pending(owner_user_id: &str, product_code: &str) -> PendingOrderRecord {
         PendingOrderRecord {
-            schema_version: 1,
+            schema_version: 2,
             kind: "credit".to_string(),
             client_request_id: "request-1".to_string(),
             owner_user_id: owner_user_id.to_string(),
+            billing_account_group_id: "22222222-2222-4222-8222-222222222222".to_owned(),
             auth_epoch: 4,
             order_id: "order-1".to_string(),
             product_code: product_code.to_string(),
@@ -1381,117 +1140,14 @@ mod tests {
     }
 }
 
-pub(super) fn recover_pending_orders(app: &AppWindow, context: AppContext) {
-    if app.global::<AppState>().get_session_state().as_str() != "online" {
-        return;
-    }
-    let Some(backend) = context.backend.clone() else {
-        return;
-    };
-    let Some(session_scope) = current_payment_session_scope(&context) else {
-        return;
-    };
-    if context.active_payment.borrow().is_some() {
-        return;
-    }
-
-    let mut records = match load_pending_orders_checked() {
-        Ok(records) => records,
-        Err(error) => {
-            let message = format!(
-                "订单恢复文件无法读取，原文件已保留；为避免重复扣款，请勿再次下单并联系客服：{error}"
-            );
-            let state = app.global::<AppState>();
-            state.set_payment_status_message(message.clone().into());
-            state.set_credit_payment_message(message.clone().into());
-            state.set_membership_payment_message(message.into());
-            return;
-        }
-    };
-    records.sort_by(|left, right| left.created_at.cmp(&right.created_at));
-    let owned_index = records.iter().position(|record| {
-        valid_pending_order(record) && record.owner_user_id == session_scope.owner_user_id
-    });
-    let legacy_index = records.iter().position(|record| {
-        valid_pending_order(record)
-            && record.owner_user_id.is_empty()
-            && !record.order_id.trim().is_empty()
-    });
-    let Some(index) = owned_index.or(legacy_index) else {
-        if records
-            .iter()
-            .any(|record| record.owner_user_id == session_scope.owner_user_id)
-        {
-            let message = "检测到无法自动恢复的历史订单记录；记录已保留，请联系客服处理";
-            let state = app.global::<AppState>();
-            state.set_payment_status_message(message.into());
-            state.set_credit_payment_message(message.into());
-            state.set_membership_payment_message(message.into());
-        }
-        // Legacy records without an order ID cannot be attributed safely. Do not issue any
-        // network request and leave them untouched for an explicit migration/discard flow.
-        return;
-    };
-    let mut record = records.swap_remove(index);
-    let legacy_probe = record.owner_user_id.is_empty();
-    if !payment_scope_matches_context(&context, &session_scope) {
-        return;
-    }
-    if !legacy_probe && record.auth_epoch != session_scope.auth_epoch {
-        let previous_epoch = record.auth_epoch;
-        if claim_pending_order_epoch(
-            &record.owner_user_id,
-            previous_epoch,
-            session_scope.auth_epoch,
-            &record.client_request_id,
-        )
-        .is_err()
-        {
-            return;
-        }
-        record.auth_epoch = session_scope.auth_epoch;
-    }
-    if !payment_scope_matches_context(&context, &session_scope) {
-        return;
-    }
-
-    let recovery_key = recovering_order_key(&session_scope, &record.client_request_id);
-    if !context.recovering_orders.borrow_mut().insert(recovery_key) {
-        return;
-    }
-    let kind = pending_order_kind(&record);
-    let presentation =
-        payment_presentation_for_product(&app.global::<AppState>(), kind, &record.product_code);
-    let request_id = record.client_request_id.clone();
-    let request_id_for_poll = request_id.clone();
-    let worker_scope = session_scope.clone();
-    let worker_backend = backend.clone();
-    let (sender, receiver) = mpsc::channel();
-    std::thread::spawn(move || {
-        let result = recover_pending_order_worker(
-            worker_backend,
-            record,
-            kind,
-            presentation,
-            worker_scope,
-            legacy_probe,
-        );
-        let _ = sender.send(result);
-    });
-    poll_recovered_order(
-        app.as_weak(),
-        context,
-        backend,
-        request_id_for_poll,
-        Rc::new(RefCell::new(Some(receiver))),
-        kind,
-        session_scope,
-        legacy_probe,
-    );
+pub(super) fn recover_pending_orders(app: &AppWindow, _context: AppContext) {
+    // TEMP(team-accounts): no replay before saved-payer admission.
+    app.global::<AppState>()
+        .set_credit_payment_message("订单恢复暂不可用，请稍后重试".into());
 }
 
 fn valid_pending_order(record: &PendingOrderRecord) -> bool {
-    record.schema_version == 1
+    record.schema_version == 2
         && !record.client_request_id.trim().is_empty()
         && !record.product_code.trim().is_empty()
         && matches!(
@@ -1509,112 +1165,16 @@ fn pending_order_kind(record: &PendingOrderRecord) -> PaymentOrderKind {
 }
 
 fn recover_pending_order_worker(
-    backend: Arc<BackendRuntime>,
-    mut record: PendingOrderRecord,
-    kind: PaymentOrderKind,
-    presentation: PaymentPresentation,
-    session_scope: SessionScope,
-    legacy_probe: bool,
+    _backend: Arc<BackendRuntime>,
+    _record: PendingOrderRecord,
+    _kind: PaymentOrderKind,
+    _presentation: PaymentPresentation,
+    _session_scope: SessionScope,
+    _legacy_probe: bool,
 ) -> std::result::Result<PaymentStarted, ApiError> {
-    let payment = PaymentApi::new(backend.api.clone());
-    if legacy_probe {
-        let order = payment.order_scoped(&record.order_id, &session_scope)?;
-        ensure_payment_scope_active(&backend, &session_scope)?;
-        if order.id != record.order_id {
-            return Err(ApiError::Protocol {
-                message: "服务端返回了不匹配的支付订单编号".to_string(),
-                request_id: None,
-            });
-        }
-        claim_legacy_pending_order(
-            &session_scope.owner_user_id,
-            session_scope.auth_epoch,
-            &record.client_request_id,
-            &record.order_id,
-        )
-        .map_err(|error| ApiError::LocalState {
-            message: format!("无法认领旧版订单恢复记录：{error}"),
-        })?;
-        record.owner_user_id = session_scope.owner_user_id.clone();
-        record.auth_epoch = session_scope.auth_epoch;
-        return Ok(PaymentStarted {
-            order,
-            client_request_id: record.client_request_id,
-            kind,
-            presentation,
-            session_scope,
-        });
-    }
-
-    let order = if record.order_id.is_empty() {
-        match record.kind.as_str() {
-            "credit" => payment.create_credit_order_scoped(
-                &record.product_code,
-                &record.client_request_id,
-                &session_scope,
-            )?,
-            "membership" => MembershipApi::new(backend.api.clone()).create_order_scoped(
-                &record.product_code,
-                &record.client_request_id,
-                &session_scope,
-            )?,
-            "membership_upgrade" => {
-                let membership = MembershipApi::new(backend.api.clone());
-                let quote_id = if record.upgrade_quote_id.trim().is_empty() {
-                    let quote = membership
-                        .create_upgrade_quote_scoped(&record.product_code, &session_scope)?;
-                    ensure_payment_scope_active(&backend, &session_scope)?;
-                    update_pending_order_quote_id(
-                        &record.owner_user_id,
-                        record.auth_epoch,
-                        &record.client_request_id,
-                        &quote.id,
-                    )
-                    .map_err(|error| ApiError::LocalState {
-                        message: format!("无法保存会员升级报价：{error}"),
-                    })?;
-                    record.upgrade_quote_id = quote.id;
-                    record.upgrade_quote_id.clone()
-                } else {
-                    record.upgrade_quote_id.clone()
-                };
-                membership.create_upgrade_order_scoped(
-                    &quote_id,
-                    &record.client_request_id,
-                    &session_scope,
-                )?
-            }
-            _ => {
-                return Err(ApiError::LocalState {
-                    message: "未知的待恢复订单类型".to_string(),
-                })
-            }
-        }
-    } else {
-        payment.order_scoped(&record.order_id, &session_scope)?
-    };
-    ensure_payment_scope_active(&backend, &session_scope)?;
-    if !record.order_id.is_empty() && order.id != record.order_id {
-        return Err(ApiError::Protocol {
-            message: "服务端返回了不匹配的支付订单编号".to_string(),
-            request_id: None,
-        });
-    }
-    update_pending_order_id(
-        &record.owner_user_id,
-        record.auth_epoch,
-        &record.client_request_id,
-        &order.id,
-    )
-    .map_err(|error| ApiError::LocalState {
-        message: format!("无法保存服务端订单编号：{error}"),
-    })?;
-    Ok(PaymentStarted {
-        order,
-        client_request_id: record.client_request_id,
-        kind,
-        presentation,
-        session_scope,
+    // TEMP(team-accounts): persisted strings cannot authorize billing or legacy assignment.
+    Err(ApiError::LocalState {
+        message: "订单恢复暂不可用，请稍后重试".to_owned(),
     })
 }
 
@@ -1694,12 +1254,7 @@ fn poll_recovered_order(
         };
         match payment_scope_disposition(&context, &session_scope) {
             PaymentScopeDisposition::CapturedTerminal => {
-                sign_out_locally(
-                    &app,
-                    &context,
-                    true,
-                    Some(session_scope.auth_epoch),
-                );
+                sign_out_locally(&app, &context, true, Some(session_scope.auth_epoch));
                 return;
             }
             PaymentScopeDisposition::Stale => return,
@@ -1735,4 +1290,616 @@ fn poll_recovered_order(
             }
         }
     });
+}
+
+fn require_order_recovery_update(updated: bool) -> Result<()> {
+    if updated {
+        Ok(())
+    } else {
+        Err(RecoveryError::IdentityChanged.into())
+    }
+}
+
+fn create_upgrade_order_with_saved_quote(
+    api: &MembershipApi,
+    backend: &BackendRuntime,
+    authority: &NamespaceStorageAuthority,
+    identity: &RecoveryRecordIdentity,
+    billing_scope: &BillingScope,
+    plan_code: &str,
+    request_id: &str,
+) -> std::result::Result<OrderDetail, ApiError> {
+    let quote = api.create_upgrade_quote_billing(plan_code, billing_scope)?;
+    ensure_payment_scope_active(backend, &billing_scope.request.session)?;
+    update_pending_order_quote_id_for_namespace(authority, identity, &quote.id)
+        .and_then(require_order_recovery_update)
+        .map_err(|error| ApiError::LocalState {
+            message: format!("无法保存会员升级报价：{error}"),
+        })?;
+    api.create_upgrade_order_billing(&quote.id, request_id, billing_scope)
+}
+
+fn unfinished_namespace_order_blocks_new_purchase(
+    app: &AppWindow,
+    authority: &NamespaceStorageAuthority,
+    requested_kind: PaymentOrderKind,
+) -> bool {
+    // Old-epoch rows still represent unfinished purchases. Do not claim, remove, or
+    // replay them here: admission must stop before a fresh idempotency key exists.
+    let message = match load_pending_orders_for_namespace(authority) {
+        Ok(records) if records.is_empty() => return false,
+        Ok(_) => "检测到未完成订单，记录已保留；为避免重复扣款，请勿再次下单并联系客服".to_owned(),
+        Err(error) => format!(
+            "订单恢复文件无法读取，原文件已保留；为避免重复扣款，请勿再次下单并联系客服：{error}"
+        ),
+    };
+    let state = app.global::<AppState>();
+    state.set_payment_status_message(message.clone().into());
+    set_payment_kind_status(&state, requested_kind, false, &message);
+    true
+}
+
+fn start_credit_order_with_billing_scope(
+    app: &AppWindow,
+    context: AppContext,
+    backend: Arc<BackendRuntime>,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: &BillingScope,
+    pack_code: String,
+) {
+    let billing_scope =
+        match capture_billing_scope_for_submission(Some(&backend), &authority, billing_scope) {
+            Ok(scope) => scope,
+            Err(error) => {
+                app.global::<AppState>()
+                    .set_credit_payment_message(error.user_message().into());
+                return;
+            }
+        };
+    let session_scope = billing_scope.request.session.clone();
+
+    let state = app.global::<AppState>();
+    if !require_online_operation(&app, "充值积分") {
+        return;
+    }
+    if state.get_payment_active() {
+        state.set_credit_payment_message("当前订单正在等待付款，可继续前往支付宝".into());
+        reopen_payment_checkout(&app, &context, backend.api.base_url());
+        return;
+    }
+    if state.get_credit_payment_busy() {
+        return;
+    }
+    if unfinished_namespace_order_blocks_new_purchase(app, &authority, PaymentOrderKind::Credit) {
+        return;
+    }
+    let acceptances = match required_purchase_acceptances(&app) {
+        Ok(value) => value,
+        Err(message) => {
+            state.set_credit_payment_message(message.into());
+            return;
+        }
+    };
+    let pack_code = pack_code.trim().to_string();
+    if pack_code.is_empty() {
+        state.set_credit_payment_message("请选择可用积分包".into());
+        return;
+    }
+    let api = PaymentApi::new(backend.api.clone());
+    let agreements_api = AuthApi::new(backend.api.clone());
+    let request_id = Uuid::new_v4().simple().to_string();
+    let payment_request_id = request_id.clone();
+    let presentation = PaymentPresentation::credit(state.get_selected_credit_amount().as_str());
+    begin_payment_session(
+        &state,
+        &context,
+        &request_id,
+        PaymentOrderKind::Credit,
+        &presentation,
+        session_scope.clone(),
+        "正在创建积分充值订单...",
+    );
+    state.set_credit_payment_busy(true);
+    state.set_credit_payment_message("正在创建积分充值订单...".into());
+    let (sender, receiver) = mpsc::channel();
+    let worker_scope = session_scope.clone();
+    let worker_backend = backend.clone();
+    std::thread::spawn(move || {
+        let result = (|| {
+            ensure_payment_scope_active(&worker_backend, &worker_scope)?;
+            let record = PendingOrderRecord {
+                schema_version: 2,
+                kind: "credit".to_string(),
+                client_request_id: request_id.clone(),
+                owner_user_id: worker_scope.owner_user_id.clone(),
+                billing_account_group_id: billing_scope.request.account_group_id.clone(),
+                auth_epoch: worker_scope.auth_epoch,
+                order_id: String::new(),
+                product_code: pack_code.clone(),
+                upgrade_quote_id: String::new(),
+                created_at: Local::now().to_rfc3339(),
+            };
+            let recovery_identity = record.identity();
+            upsert_pending_order_for_namespace(&authority, &billing_scope, record).map_err(
+                |error| ApiError::LocalState {
+                    message: format!("无法保存订单恢复记录：{error}"),
+                },
+            )?;
+            agreements_api.accept_agreements_scoped(&acceptances, &worker_scope)?;
+            ensure_payment_scope_active(&worker_backend, &worker_scope)?;
+            let order = api.create_credit_order_billing(&pack_code, &request_id, &billing_scope)?;
+            ensure_payment_scope_active(&worker_backend, &worker_scope)?;
+            update_pending_order_id_for_namespace(&authority, &recovery_identity, &order.id)
+                .and_then(require_order_recovery_update)
+                .map_err(|error| ApiError::LocalState {
+                    message: format!("无法保存服务端订单编号：{error}"),
+                })?;
+            Ok::<_, ApiError>(PaymentStarted {
+                order,
+                client_request_id: request_id,
+                kind: PaymentOrderKind::Credit,
+                presentation,
+                session_scope: worker_scope,
+            })
+        })();
+        let _ = sender.send(result);
+    });
+    poll_payment_started(
+        app.as_weak(),
+        context.clone(),
+        backend.clone(),
+        Rc::new(RefCell::new(Some(receiver))),
+        payment_request_id,
+        PaymentOrderKind::Credit,
+        session_scope,
+    );
+}
+
+fn start_membership_order_with_billing_scope(
+    app: &AppWindow,
+    context: AppContext,
+    backend: Arc<BackendRuntime>,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: &BillingScope,
+    plan_code: String,
+) {
+    let billing_scope =
+        match capture_billing_scope_for_submission(Some(&backend), &authority, billing_scope) {
+            Ok(scope) => scope,
+            Err(error) => {
+                app.global::<AppState>()
+                    .set_membership_payment_message(error.user_message().into());
+                return;
+            }
+        };
+    let session_scope = billing_scope.request.session.clone();
+
+    let state = app.global::<AppState>();
+    if !require_online_operation(&app, "购买会员") || state.get_membership_payment_busy() {
+        return;
+    }
+    if state.get_payment_active() {
+        state.set_payment_dialog_open(true);
+        state.set_membership_payment_message("请先完成当前支付订单".into());
+        return;
+    }
+    if unfinished_namespace_order_blocks_new_purchase(app, &authority, PaymentOrderKind::Membership) {
+        return;
+    }
+    let acceptances = match required_purchase_acceptances(&app) {
+        Ok(value) => value,
+        Err(message) => {
+            state.set_membership_payment_message(message.into());
+            return;
+        }
+    };
+    let plan_code = plan_code.trim().to_string();
+    let Some(target) = state
+        .get_membership_plans()
+        .iter()
+        .find(|plan| plan.code.as_str() == plan_code)
+    else {
+        state.set_membership_payment_message("所选会员套餐已下线，请刷新后重试".into());
+        return;
+    };
+    let is_upgrade =
+        state.get_membership_tier_rank() > 0 && target.tier_rank > state.get_membership_tier_rank();
+    let kind = if is_upgrade {
+        "membership_upgrade"
+    } else {
+        "membership"
+    }
+    .to_string();
+    let presentation = PaymentPresentation::membership(target.name.as_str());
+    let request_id = Uuid::new_v4().simple().to_string();
+    let payment_request_id = request_id.clone();
+    state.set_membership_payment_busy(true);
+    state.set_membership_payment_message(if is_upgrade {
+        "正在获取服务端升级报价...".into()
+    } else {
+        "正在创建会员订单...".into()
+    });
+    begin_payment_session(
+        &state,
+        &context,
+        &request_id,
+        PaymentOrderKind::Membership,
+        &presentation,
+        session_scope.clone(),
+        if is_upgrade {
+            "正在获取服务端升级报价..."
+        } else {
+            "正在创建会员订单..."
+        },
+    );
+    let api = MembershipApi::new(backend.api.clone());
+    let agreements_api = AuthApi::new(backend.api.clone());
+    let (sender, receiver) = mpsc::channel();
+    let worker_scope = session_scope.clone();
+    let worker_backend = backend.clone();
+    std::thread::spawn(move || {
+        let result = (|| {
+            ensure_payment_scope_active(&worker_backend, &worker_scope)?;
+            let record = PendingOrderRecord {
+                schema_version: 2,
+                kind,
+                client_request_id: request_id.clone(),
+                owner_user_id: worker_scope.owner_user_id.clone(),
+                billing_account_group_id: billing_scope.request.account_group_id.clone(),
+                auth_epoch: worker_scope.auth_epoch,
+                order_id: String::new(),
+                product_code: plan_code.clone(),
+                upgrade_quote_id: String::new(),
+                created_at: Local::now().to_rfc3339(),
+            };
+            let recovery_identity = record.identity();
+            upsert_pending_order_for_namespace(&authority, &billing_scope, record).map_err(
+                |error| ApiError::LocalState {
+                    message: format!("无法保存订单恢复记录：{error}"),
+                },
+            )?;
+            agreements_api.accept_agreements_scoped(&acceptances, &worker_scope)?;
+            ensure_payment_scope_active(&worker_backend, &worker_scope)?;
+            let order = if is_upgrade {
+                create_upgrade_order_with_saved_quote(
+                    &api,
+                    &worker_backend,
+                    &authority,
+                    &recovery_identity,
+                    &billing_scope,
+                    &plan_code,
+                    &request_id,
+                )?
+            } else {
+                api.create_order_billing(&plan_code, &request_id, &billing_scope)?
+            };
+            ensure_payment_scope_active(&worker_backend, &worker_scope)?;
+            update_pending_order_id_for_namespace(&authority, &recovery_identity, &order.id)
+                .and_then(require_order_recovery_update)
+                .map_err(|error| ApiError::LocalState {
+                    message: format!("无法保存服务端订单编号：{error}"),
+                })?;
+            Ok::<_, ApiError>(PaymentStarted {
+                order,
+                client_request_id: request_id,
+                kind: PaymentOrderKind::Membership,
+                presentation,
+                session_scope: worker_scope,
+            })
+        })();
+        let _ = sender.send(result);
+    });
+    poll_payment_started(
+        app.as_weak(),
+        context.clone(),
+        backend.clone(),
+        Rc::new(RefCell::new(Some(receiver))),
+        payment_request_id,
+        PaymentOrderKind::Membership,
+        session_scope,
+    );
+}
+
+#[cfg(test)]
+mod billing_capture_tests {
+    use super::*;
+    use backend_generation::billing_capture_test_support::*;
+    fn assert_unfinished_order_blocks_actual_start(membership: bool, old_epoch: bool) {
+        let app = app();
+        let (listener, url) = listener();
+        let fixture = fixture(&url);
+        let saved_epoch = if old_epoch {
+            fixture.scope.request.session.auth_epoch.saturating_sub(1)
+        } else {
+            fixture.scope.request.session.auth_epoch
+        };
+        assert!(!old_epoch || saved_epoch != fixture.scope.request.session.auth_epoch);
+        let saved_authority = NamespaceStorageAuthority::open(
+            Arc::new(NamespaceFs::open_data_root(fixture.root.path()).unwrap()),
+            &NamespaceLease {
+                namespace: UserNamespace::new(fixture.root.path(), OWNER).unwrap(),
+                auth_epoch: saved_epoch,
+                namespace_epoch: 1,
+            },
+        )
+        .unwrap();
+        let mut saved_scope = fixture.scope.clone();
+        saved_scope.request.session.auth_epoch = saved_epoch;
+        let record = PendingOrderRecord {
+            schema_version: 2,
+            kind: "credit".into(),
+            client_request_id: "unfinished-original-request".into(),
+            owner_user_id: OWNER.into(),
+            billing_account_group_id: PAYER.into(),
+            auth_epoch: saved_epoch,
+            order_id: "unfinished-original-order".into(),
+            product_code: "original-pack".into(),
+            upgrade_quote_id: String::new(),
+            created_at: "fixture".into(),
+        };
+        upsert_pending_order_for_namespace(&saved_authority, &saved_scope, record).unwrap();
+        let read_bytes = || {
+            let key =
+                ManagedFileKey::new(ManagedUserArea::Recovery, "pending-orders.json").unwrap();
+            let mut file = fixture.authority.open_existing_regular(&key).unwrap();
+            let mut bytes = Vec::new();
+            fixture
+                .authority
+                .read_regular_to(&mut file, &mut bytes)
+                .unwrap();
+            bytes
+        };
+        let before = read_bytes();
+        if membership {
+            start_membership_order_with_billing_scope(
+                &app,
+                fixture.context.clone(),
+                fixture.backend.clone(),
+                fixture.authority.clone(),
+                &fixture.scope,
+                "fixture-plan".into(),
+            );
+        } else {
+            start_credit_order_with_billing_scope(
+                &app,
+                fixture.context.clone(),
+                fixture.backend.clone(),
+                fixture.authority.clone(),
+                &fixture.scope,
+                "fixture-pack".into(),
+            );
+        }
+        assert_no_request(&listener);
+        assert_eq!(
+            read_bytes(),
+            before,
+            "unfinished recovery bytes must remain unchanged"
+        );
+        assert!(
+            fixture.context.active_payment.borrow().is_none(),
+            "no new payment may be started"
+        );
+        let message = if membership {
+            app.global::<AppState>().get_membership_payment_message()
+        } else {
+            app.global::<AppState>().get_credit_payment_message()
+        };
+        assert!(
+            message.contains("未完成订单"),
+            "expected local unfinished-order refusal: {message}"
+        );
+    }
+    #[test]
+    fn billing_capture_credit_start_blocks_current_epoch_unfinished_order() {
+        assert_unfinished_order_blocks_actual_start(false, false);
+    }
+    #[test]
+    fn billing_capture_credit_start_blocks_old_epoch_unfinished_order() {
+        assert_unfinished_order_blocks_actual_start(false, true);
+    }
+    #[test]
+    fn billing_capture_membership_start_blocks_current_epoch_unfinished_order() {
+        assert_unfinished_order_blocks_actual_start(true, false);
+    }
+    #[test]
+    fn billing_capture_membership_start_blocks_old_epoch_unfinished_order() {
+        assert_unfinished_order_blocks_actual_start(true, true);
+    }
+    #[test]
+    fn billing_capture_order_update_requires_an_exact_persisted_record() {
+        let fixture = fixture("http://127.0.0.1:9/");
+        let record = PendingOrderRecord {
+            schema_version: 2,
+            kind: "credit".into(),
+            client_request_id: "order-fixture".into(),
+            owner_user_id: OWNER.into(),
+            billing_account_group_id: PAYER.into(),
+            auth_epoch: fixture.scope.request.session.auth_epoch,
+            order_id: String::new(),
+            product_code: "fixture-pack".into(),
+            upgrade_quote_id: String::new(),
+            created_at: "fixture".into(),
+        };
+        let missing =
+            update_pending_order_id_for_namespace(&fixture.authority, &record.identity(), "order")
+                .unwrap();
+        assert!(require_order_recovery_update(missing).is_err());
+        upsert_pending_order_for_namespace(&fixture.authority, &fixture.scope, record.clone())
+            .unwrap();
+        let updated =
+            update_pending_order_id_for_namespace(&fixture.authority, &record.identity(), "order")
+                .unwrap();
+        require_order_recovery_update(updated).unwrap();
+        assert_eq!(
+            load_pending_orders_for_namespace(&fixture.authority).unwrap()[0].order_id,
+            "order"
+        );
+    }
+    #[test]
+    fn billing_capture_missing_quote_record_prevents_upgrade_order_dispatch() {
+        use std::io::Write;
+        let (listener, url) = listener();
+        let fixture = fixture(&url);
+        let record = PendingOrderRecord {
+            schema_version: 2,
+            kind: "membership_upgrade".into(),
+            client_request_id: "upgrade-fixture".into(),
+            owner_user_id: OWNER.into(),
+            billing_account_group_id: PAYER.into(),
+            auth_epoch: fixture.scope.request.session.auth_epoch,
+            order_id: String::new(),
+            product_code: "fixture-plan".into(),
+            upgrade_quote_id: String::new(),
+            created_at: "fixture".into(),
+        };
+        upsert_pending_order_for_namespace(&fixture.authority, &fixture.scope, record.clone())
+            .unwrap();
+        let authority = fixture.authority.clone();
+        let identity = record.identity();
+        let transport = std::thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                    Err(error) => panic!("quote dispatch was not observed: {error}"),
+                }
+            };
+            let request = read_request(&mut stream);
+            assert!(request.starts_with("POST /v1/membership/upgrade-quotes "));
+            assert!(request
+                .to_lowercase()
+                .contains(&format!("x-account-group-id: {PAYER}")));
+            let persisted = load_pending_orders_for_namespace(&authority).unwrap();
+            assert_eq!(persisted[0].identity(), identity);
+            // A separate contender removes the exact persisted row while the real quote request
+            // is paused at the transport boundary. The next billable order must never dispatch.
+            assert!(remove_pending_order_for_namespace(&authority, &identity).unwrap());
+            let body = serde_json::json!({
+                "request_id": "quote-fixture", "error": null, "meta": null,
+                "data": {"id": OTHER, "target_plan_code": "fixture-plan",
+                    "payable_amount_cents": "100", "credit_delta": "10",
+                    "expires_at": "2099-01-01T00:00:00Z"}
+            })
+            .to_string();
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+            listener
+        });
+        let error = create_upgrade_order_with_saved_quote(
+            &MembershipApi::new(fixture.backend.api.clone()),
+            &fixture.backend,
+            &fixture.authority,
+            &record.identity(),
+            &fixture.scope,
+            "fixture-plan",
+            &record.client_request_id,
+        )
+        .unwrap_err();
+        assert!(matches!(error, ApiError::LocalState { .. }));
+        assert_no_request(&transport.join().unwrap());
+        assert!(load_pending_orders_for_namespace(&fixture.authority)
+            .unwrap()
+            .is_empty());
+    }
+    fn app() -> AppWindow {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_session_state("online".into());
+        state.set_purchase_membership_required(false);
+        state.set_purchase_credit_rules_required(false);
+        state.set_membership_plans(ModelRc::new(VecModel::from(vec![MembershipPlanView {
+            code: "fixture-plan".into(),
+            name: "Fixture".into(),
+            price: "100".into(),
+            grant_credits: "10".into(),
+            period_days: 30,
+            tier_rank: 1,
+        }])));
+        app
+    }
+    #[test]
+    fn billing_capture_credit_start_persists_before_real_dispatch() {
+        let app = app();
+        let (listener, url) = listener();
+        let mut fixture = fixture(&url);
+        let (release, transport) =
+            capture(listener, fixture.authority.clone(), "pending-orders.json");
+        start_credit_order_with_billing_scope(
+            &app,
+            fixture.context.clone(),
+            fixture.backend.clone(),
+            fixture.authority.clone(),
+            &fixture.scope,
+            "fixture-pack".into(),
+        );
+        fixture.scope.request.account_group_id = OTHER.into();
+        fixture.scope.context_epoch += 1;
+        release.send(()).unwrap();
+        let observed = transport.join().unwrap();
+        assert_capture(&observed, "orders");
+        assert!(observed.request.starts_with("POST /v1/credits/orders "));
+    }
+    #[test]
+    fn billing_capture_membership_start_persists_owned_group_before_real_dispatch() {
+        let app = app();
+        let (listener, url) = listener();
+        let mut fixture = fixture(&url);
+        let (release, transport) =
+            capture(listener, fixture.authority.clone(), "pending-orders.json");
+        start_membership_order_with_billing_scope(
+            &app,
+            fixture.context.clone(),
+            fixture.backend.clone(),
+            fixture.authority.clone(),
+            &fixture.scope,
+            "fixture-plan".into(),
+        );
+        fixture.scope.request.account_group_id = OTHER.into();
+        fixture.scope.context_epoch += 1;
+        release.send(()).unwrap();
+        let observed = transport.join().unwrap();
+        assert_capture(&observed, "orders");
+        assert!(observed.request.contains("\"plan_code\":\"fixture-plan\""));
+    }
+    #[test]
+    fn billing_capture_payment_storage_and_scope_failure_prevent_dispatch() {
+        let app = app();
+        let (listener, url) = listener();
+        let fixture = fixture(&url);
+        corrupt(&fixture.authority, "pending-orders.json");
+        start_credit_order_with_billing_scope(
+            &app,
+            fixture.context.clone(),
+            fixture.backend.clone(),
+            fixture.authority.clone(),
+            &fixture.scope,
+            "fixture-pack".into(),
+        );
+        let mut wrong = fixture.scope.clone();
+        wrong.request.session.auth_epoch += 1;
+        start_membership_order_with_billing_scope(
+            &app,
+            fixture.context.clone(),
+            fixture.backend.clone(),
+            fixture.authority.clone(),
+            &wrong,
+            "fixture-plan".into(),
+        );
+        assert_no_request(&listener);
+        let key = ManagedFileKey::new(ManagedUserArea::Recovery, "pending-orders.json").unwrap();
+        let mut file = fixture.authority.open_existing_regular(&key).unwrap();
+        let mut bytes = Vec::new();
+        fixture
+            .authority
+            .read_regular_to(&mut file, &mut bytes)
+            .unwrap();
+        assert_eq!(bytes, b"invalid-owned-fixture");
+    }
 }

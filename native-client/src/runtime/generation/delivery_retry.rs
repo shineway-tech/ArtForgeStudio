@@ -649,10 +649,11 @@ mod tests {
 
     fn recoverable_record(scope: &SessionScope) -> PendingGenerationRecord {
         PendingGenerationRecord {
-            schema_version: 1,
+            schema_version: 2,
             created_at_epoch_ms: 0,
             client_request_id: "request-a".to_string(),
             owner_user_id: scope.owner_user_id.clone(),
+            billing_account_group_id: "22222222-2222-4222-8222-222222222222".to_owned(),
             auth_epoch: scope.auth_epoch,
             local_task_id: "local-task".to_string(),
             server_task_id: "server-task".to_string(),

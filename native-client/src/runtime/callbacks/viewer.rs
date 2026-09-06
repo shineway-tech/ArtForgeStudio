@@ -913,7 +913,7 @@ fn confirm_pending_asset_delete(
         if let Some(path) = managed_output_path(&path_text) {
             let protected = shared_in_store
                 || path_has_live_ui_reference(&state, &path)
-                || path_is_referenced_by_pending_recovery(&path)
+                || pending_recovery_may_reference_files()
                 || indexed_reference_count(&path) > 0;
             if !protected {
                 invalidate_previews_for_source(&path);

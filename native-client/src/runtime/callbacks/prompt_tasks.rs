@@ -1,7 +1,7 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
-const PROMPT_TASK_RECOVERY_SCHEMA_VERSION: u32 = 1;
+const PROMPT_TASK_RECOVERY_SCHEMA_VERSION: u32 = 2;
 const PROMPT_TASK_RETRY_MIN_MS: u64 = 1_000;
 const PROMPT_TASK_RETRY_MAX_MS: u64 = 30_000;
 
@@ -100,15 +100,42 @@ pub(super) fn wire_prompt_task_recovery_callbacks(app: &AppWindow, context: AppC
 
 pub(super) fn start_backend_prompt_task(
     app: &AppWindow,
-    context: AppContext,
+    _context: AppContext,
     task: PromptTaskRequest,
 ) {
+    // TEMP(team-accounts): namespace billing admission is required.
+    set_prompt_task_start_failure(
+        app,
+        &task.target,
+        &ApiError::LocalState {
+            message: "无法保存任务恢复信息，请稍后重试".to_owned(),
+        }
+        .user_message(),
+    );
+}
+
+pub(super) fn start_backend_prompt_task_with_billing_scope(
+    app: &AppWindow,
+    context: AppContext,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: &BillingScope,
+    task: PromptTaskRequest,
+) {
+    let billing_scope = match capture_billing_scope_for_submission(
+        context.backend.as_deref(),
+        &authority,
+        billing_scope,
+    ) {
+        Ok(scope) => scope,
+        Err(error) => {
+            set_prompt_task_start_failure(app, &task.target, &error.user_message());
+            return;
+        }
+    };
+    let session_scope = billing_scope.request.session.clone();
+
     let Some(_backend) = context.backend.as_ref() else {
         set_prompt_task_start_failure(app, &task.target, "服务端尚未初始化，请重启客户端后重试");
-        return;
-    };
-    let Some(session_scope) = current_prompt_task_session_scope(&context) else {
-        set_prompt_task_start_failure(app, &task.target, "账号信息尚未同步，请稍后重试");
         return;
     };
     let client_request_id = Uuid::new_v4().simple().to_string();
@@ -133,6 +160,7 @@ pub(super) fn start_backend_prompt_task(
         created_at_epoch_ms: Local::now().timestamp_millis(),
         client_request_id,
         owner_user_id: session_scope.owner_user_id,
+        billing_account_group_id: billing_scope.request.account_group_id.clone(),
         auth_epoch: session_scope.auth_epoch,
         server_task_id: String::new(),
         task_type: task.task_type.to_string(),
@@ -158,97 +186,33 @@ pub(super) fn start_backend_prompt_task(
 
     // This is deliberately the first operation: a fixed request ID and the complete request body
     // must survive before uploads or a billable create request can happen.
-    if let Err(error) = upsert_pending_prompt_task(record.clone()) {
-        set_prompt_task_start_failure(
-            app,
-            &task.target,
-            &format!("无法保存任务恢复信息：{error}"),
-        );
+    if let Err(error) =
+        upsert_pending_prompt_task_for_namespace(&authority, &billing_scope, record.clone())
+    {
+        set_prompt_task_start_failure(app, &task.target, &format!("无法保存任务恢复信息：{error}"));
         return;
     }
-    launch_pending_prompt_task(app, context, record, true);
+    launch_pending_prompt_task_with_billing_scope(
+        app,
+        context,
+        authority,
+        billing_scope,
+        record,
+        true,
+    );
 }
 
-pub(super) fn recover_pending_prompt_tasks(app: &AppWindow, context: AppContext) {
-    if app.global::<AppState>().get_directory_migration_open() {
-        let weak = app.as_weak();
-        slint::Timer::single_shot(Duration::from_secs(1), move || {
-            if let Some(app) = weak.upgrade() { recover_pending_prompt_tasks(&app, context); }
-        });
-        return;
-    }
-    if app.global::<AppState>().get_session_state().as_str() != "online" {
-        return;
-    }
-
-    let Some(session_scope) = current_prompt_task_session_scope(&context) else {
-        return;
-    };
-    let mut records = match load_pending_prompt_tasks_checked() {
-        Ok(records) => records,
-        Err(error) => {
-            app.global::<AppState>().set_generation_status(
-                format!(
-                    "提示词任务恢复文件无法读取，原文件已保留，请勿重复提交付费任务并联系客服：{error}"
-                )
-                .into(),
-            );
-            return;
-        }
-    };
-    records.sort_by_key(|record| (record.created_at_epoch_ms, record.client_request_id.clone()));
-    for mut record in records {
-        if record.owner_user_id != session_scope.owner_user_id {
-            continue;
-        }
-        if !valid_pending_prompt_task(&record) {
-            // An older or partially-written record may already refer to a billed server task.
-            // Preserve it for support/manual discard instead of silently destroying evidence.
-            app.global::<AppState>().set_generation_status(
-                "检测到无法自动恢复的提示词任务记录；记录已保留，请联系客服处理".into(),
-            );
-            continue;
-        }
-        // A terminal record can still have remote references to clean up. Rebind every valid
-        // same-owner record before choosing a terminal/non-terminal recovery path so cleanup and
-        // result delivery never launch under the stale epoch from a previous login session.
-        if !rebind_prompt_task_epoch(&mut record, &session_scope, |old_record, new_auth_epoch| {
-            update_prompt_task_record_scoped(old_record, |pending| {
-                pending.auth_epoch = new_auth_epoch;
-            })
-        })
-        .unwrap_or(false)
-        {
-            continue;
-        }
-        if prompt_task_completed_unclaimed(&record) && !record.uploaded_file_ids.is_empty() {
-            launch_pending_prompt_task(app, context.clone(), record, false);
-            continue;
-        }
-        if prompt_task_completed_unclaimed(&record) {
-            if record.result_committed {
-                let _ = remove_prompt_task_record_scoped(&record);
-                continue;
-            }
-            match apply_prompt_result_if_target_matches(app, &context, &record) {
-                PromptResultApplication::AppliedDurably => {
-                    let _ = remove_prompt_task_record_scoped(&record);
-                }
-                PromptResultApplication::AppliedWithCleanupPending => {}
-                PromptResultApplication::AppliedPendingCustomPromptSave
-                | PromptResultApplication::NotApplied => {}
-            }
-            continue;
-        }
-        let visible = prompt_target_matches(app, &context, &record);
-        launch_pending_prompt_task(app, context.clone(), record, visible);
-    }
-    present_next_recovered_prompt_result(app, &context);
+pub(super) fn recover_pending_prompt_tasks(app: &AppWindow, _context: AppContext) {
+    // TEMP(team-accounts): saved payer admission is required before replay.
+    app.global::<AppState>()
+        .set_generation_status("提示词任务恢复暂不可用，请稍后重试".into());
 }
 
-fn launch_pending_prompt_task(
+fn launch_pending_prompt_task_with_billing_scope(
     app: &AppWindow,
     context: AppContext,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: BillingScope,
     record: PendingPromptTaskRecord,
     visible: bool,
 ) {
@@ -280,7 +244,12 @@ fn launch_pending_prompt_task(
     let (sender, receiver) = mpsc::channel::<PromptTaskOutcome>();
     let worker_record = record.clone();
     std::thread::spawn(move || {
-        let outcome = run_pending_prompt_task(&backend, worker_record);
+        let outcome = run_pending_prompt_task_with_billing_scope(
+            &backend,
+            &authority,
+            &billing_scope,
+            worker_record,
+        );
         active
             .lock()
             .unwrap_or_else(|value| value.into_inner())
@@ -295,21 +264,29 @@ fn launch_pending_prompt_task(
     );
 }
 
-fn run_pending_prompt_task(
+fn run_pending_prompt_task_with_billing_scope(
     backend: &BackendRuntime,
+    authority: &NamespaceStorageAuthority,
+    billing_scope: &BillingScope,
     mut record: PendingPromptTaskRecord,
 ) -> PromptTaskOutcome {
-    let session_scope = SessionScope {
-        owner_user_id: record.owner_user_id.clone(),
-        auth_epoch: record.auth_epoch,
-    };
+    if capture_billing_scope_for_submission(Some(backend), authority, billing_scope).is_err()
+        || record.owner_user_id != billing_scope.request.session.owner_user_id
+        || record.auth_epoch != billing_scope.request.session.auth_epoch
+        || record.billing_account_group_id != billing_scope.request.account_group_id
+    {
+        return prompt_task_scope_suspended(record);
+    }
+    let session_scope = billing_scope.request.session.clone();
     let api = GenerationApi::new(backend.api.clone());
     if prompt_task_completed_unclaimed(&record) {
         match cleanup_prompt_task_references(&api, &record.uploaded_file_ids, &session_scope) {
             Ok(true) => {
-                match update_prompt_task_record_scoped(&record, |pending| {
-                    pending.uploaded_file_ids.clear();
-                }) {
+                match apply_prompt_task_patch_for_namespace(
+                    authority,
+                    &record.identity(),
+                    PromptTaskRecoveryPatch::UploadedFileIds(Vec::new()),
+                ) {
                     Ok(true) => record.uploaded_file_ids.clear(),
                     Ok(false) => return prompt_task_scope_suspended(record),
                     Err(_) => {}
@@ -320,7 +297,8 @@ fn run_pending_prompt_task(
         }
         if record.result_committed {
             if record.uploaded_file_ids.is_empty() {
-                return match remove_prompt_task_record_scoped(&record) {
+                return match remove_pending_prompt_task_for_namespace(authority, &record.identity())
+                {
                     Ok(true) => PromptTaskOutcome::Settled(record),
                     Ok(false) => prompt_task_scope_suspended(record),
                     Err(_) => PromptTaskOutcome::Settled(record),
@@ -334,6 +312,7 @@ fn run_pending_prompt_task(
     }
     if record.uploaded_file_ids.len() > record.reference_paths.len() {
         return fail_prompt_task(
+            authority,
             &api,
             &session_scope,
             record,
@@ -346,6 +325,7 @@ fn run_pending_prompt_task(
         let path = PathBuf::from(&record.reference_paths[reference_index]);
         if !path.is_file() {
             return fail_prompt_task(
+                authority,
                 &api,
                 &session_scope,
                 record,
@@ -354,6 +334,7 @@ fn run_pending_prompt_task(
         }
         if !prompt_reference_file_matches(&record, reference_index) {
             return fail_prompt_task(
+                authority,
                 &api,
                 &session_scope,
                 record,
@@ -372,19 +353,28 @@ fn run_pending_prompt_task(
                     return prompt_task_session_ended(record);
                 }
                 Err(error) => {
-                    return fail_prompt_task(&api, &session_scope, record, error.user_message())
+                    return fail_prompt_task(
+                        authority,
+                        &api,
+                        &session_scope,
+                        record,
+                        error.user_message(),
+                    )
                 }
             }
         };
         record.uploaded_file_ids.push(file_id);
         let uploaded = record.uploaded_file_ids.clone();
-        match update_prompt_task_record_scoped(&record, |pending| {
-            pending.uploaded_file_ids = uploaded;
-        }) {
+        match apply_prompt_task_patch_for_namespace(
+            authority,
+            &record.identity(),
+            PromptTaskRecoveryPatch::UploadedFileIds(uploaded),
+        ) {
             Ok(true) => {}
             Ok(false) => return prompt_task_scope_suspended(record),
             Err(error) => {
                 return fail_prompt_task(
+                    authority,
                     &api,
                     &session_scope,
                     record,
@@ -398,7 +388,7 @@ fn run_pending_prompt_task(
         let request = prompt_task_create_request(&record);
         let mut retry_ms = PROMPT_TASK_RETRY_MIN_MS;
         let detail = loop {
-            match api.create_task_scoped(&request, &session_scope) {
+            match api.create_task_billing(&request, billing_scope) {
                 Ok(detail) => break detail,
                 Err(error) if prompt_task_api_error_is_transient(&error) => {
                     // A timed-out response may still have created and billed the task. Replaying the
@@ -410,15 +400,23 @@ fn run_pending_prompt_task(
                     return prompt_task_session_ended(record);
                 }
                 Err(error) => {
-                    return fail_prompt_task(&api, &session_scope, record, error.user_message())
+                    return fail_prompt_task(
+                        authority,
+                        &api,
+                        &session_scope,
+                        record,
+                        error.user_message(),
+                    )
                 }
             }
         };
         record.server_task_id = detail.id.clone();
         let server_task_id = record.server_task_id.clone();
-        match update_prompt_task_record_scoped(&record, |pending| {
-            pending.server_task_id = server_task_id;
-        }) {
+        match apply_prompt_task_patch_for_namespace(
+            authority,
+            &record.identity(),
+            PromptTaskRecoveryPatch::ServerTaskId(server_task_id),
+        ) {
             Ok(true) => {}
             Ok(false) => return prompt_task_scope_suspended(record),
             Err(error) => {
@@ -444,7 +442,13 @@ fn run_pending_prompt_task(
                     return prompt_task_session_ended(record);
                 }
                 Err(error) => {
-                    return fail_prompt_task(&api, &session_scope, record, error.user_message())
+                    return fail_prompt_task(
+                        authority,
+                        &api,
+                        &session_scope,
+                        record,
+                        error.user_message(),
+                    )
                 }
             }
         }
@@ -464,9 +468,11 @@ fn run_pending_prompt_task(
                         "服务端任务已结束但未返回可用的提示词结果；任务记录已保留，请联系客服处理"
                             .to_string();
                     record.terminal_error = terminal_error.clone();
-                    match update_prompt_task_record_scoped(&record, |pending| {
-                        pending.terminal_error = terminal_error;
-                    }) {
+                    match apply_prompt_task_patch_for_namespace(
+                        authority,
+                        &record.identity(),
+                        PromptTaskRecoveryPatch::TerminalError(terminal_error),
+                    ) {
                         Ok(true) => {}
                         Ok(false) => return prompt_task_scope_suspended(record),
                         Err(error) => {
@@ -482,9 +488,11 @@ fn run_pending_prompt_task(
                         &session_scope,
                     ) {
                         Ok(true) => {
-                            match update_prompt_task_record_scoped(&record, |pending| {
-                                pending.uploaded_file_ids.clear();
-                            }) {
+                            match apply_prompt_task_patch_for_namespace(
+                                authority,
+                                &record.identity(),
+                                PromptTaskRecoveryPatch::UploadedFileIds(Vec::new()),
+                            ) {
                                 Ok(true) => record.uploaded_file_ids.clear(),
                                 Ok(false) => return prompt_task_scope_suspended(record),
                                 Err(_) => {}
@@ -496,9 +504,11 @@ fn run_pending_prompt_task(
                     return PromptTaskOutcome::Ready(record);
                 };
                 record.result_prompt = result_prompt.clone();
-                match update_prompt_task_record_scoped(&record, |pending| {
-                    pending.result_prompt = result_prompt;
-                }) {
+                match apply_prompt_task_patch_for_namespace(
+                    authority,
+                    &record.identity(),
+                    PromptTaskRecoveryPatch::ResultPrompt(result_prompt),
+                ) {
                     Ok(true) => {}
                     Ok(false) => return prompt_task_scope_suspended(record),
                     Err(error) => {
@@ -514,9 +524,11 @@ fn run_pending_prompt_task(
                     &session_scope,
                 ) {
                     Ok(true) => {
-                        match update_prompt_task_record_scoped(&record, |pending| {
-                            pending.uploaded_file_ids.clear();
-                        }) {
+                        match apply_prompt_task_patch_for_namespace(
+                            authority,
+                            &record.identity(),
+                            PromptTaskRecoveryPatch::UploadedFileIds(Vec::new()),
+                        ) {
                             Ok(true) => record.uploaded_file_ids.clear(),
                             Ok(false) => return prompt_task_scope_suspended(record),
                             Err(_) => {}
@@ -531,7 +543,7 @@ fn run_pending_prompt_task(
                 .failure
                 .map(|failure| failure.message)
                 .unwrap_or_else(|| "服务端提示词任务执行失败".to_string());
-            return fail_prompt_task(&api, &session_scope, record, reason);
+            return fail_prompt_task(authority, &api, &session_scope, record, reason);
         }
 
         std::thread::sleep(Duration::from_millis(IMAGE_POLL_INTERVAL_MS));
@@ -548,7 +560,13 @@ fn run_pending_prompt_task(
                 return prompt_task_session_ended(record);
             }
             Err(error) => {
-                return fail_prompt_task(&api, &session_scope, record, error.user_message())
+                return fail_prompt_task(
+                    authority,
+                    &api,
+                    &session_scope,
+                    record,
+                    error.user_message(),
+                )
             }
         }
     }
@@ -721,9 +739,7 @@ fn cleanup_prompt_task_references(
     Ok(true)
 }
 
-fn classify_prompt_reference_cleanup_error(
-    error: ApiError,
-) -> std::result::Result<bool, ApiError> {
+fn classify_prompt_reference_cleanup_error(error: ApiError) -> std::result::Result<bool, ApiError> {
     if prompt_task_api_error_requires_login(&error) {
         Err(error)
     } else {
@@ -780,6 +796,7 @@ fn prompt_task_record_identity_matches(
 }
 
 fn fail_prompt_task(
+    authority: &NamespaceStorageAuthority,
     api: &GenerationApi,
     session_scope: &SessionScope,
     record: PendingPromptTaskRecord,
@@ -790,7 +807,7 @@ fn fail_prompt_task(
         Ok(false) => return prompt_task_scope_suspended(record),
         Err(_) => return prompt_task_session_ended(record),
     }
-    match remove_prompt_task_record_scoped(&record) {
+    match remove_pending_prompt_task_for_namespace(authority, &record.identity()) {
         Ok(true) => PromptTaskOutcome::Failed { record, reason },
         Ok(false) => prompt_task_scope_suspended(record),
         Err(error) => PromptTaskOutcome::Suspended {
@@ -816,11 +833,14 @@ fn valid_pending_prompt_task(record: &PendingPromptTaskRecord) -> bool {
         && (record.target_kind != "video_prompt" || !record.target_id.trim().is_empty())
 }
 
-fn prompt_reference_fingerprints(paths: &[String]) -> std::result::Result<Vec<(String, u64)>, String> {
+fn prompt_reference_fingerprints(
+    paths: &[String],
+) -> std::result::Result<Vec<(String, u64)>, String> {
     paths
         .iter()
         .map(|path| {
-            let bytes = fs::read(path).map_err(|_| "无法读取参考图，请重新选择后提交".to_string())?;
+            let bytes =
+                fs::read(path).map_err(|_| "无法读取参考图，请重新选择后提交".to_string())?;
             Ok((format!("{:x}", Sha256::digest(&bytes)), bytes.len() as u64))
         })
         .collect()
@@ -873,9 +893,10 @@ fn prompt_task_scope_matches_context(
         owner_user_id: record.owner_user_id.clone(),
         auth_epoch: record.auth_epoch,
     };
-    context.backend.as_ref().is_some_and(|backend| {
-        backend.api.session().is_scope_current(&scope)
-    })
+    context
+        .backend
+        .as_ref()
+        .is_some_and(|backend| backend.api.session().is_scope_current(&scope))
 }
 
 fn prompt_task_scope_suspended(record: PendingPromptTaskRecord) -> PromptTaskOutcome {
@@ -1070,12 +1091,16 @@ fn apply_prompt_result_if_target_matches(
                     );
                     save_local_store_checked(app, &context.store.borrow())
                 },
-                || update_prompt_task_record_scoped(record, |pending| {
-                    pending.result_committed = true;
-                }),
+                || {
+                    update_prompt_task_record_scoped(record, |pending| {
+                        pending.result_committed = true;
+                    })
+                },
             );
             if !matches!(committed, Ok(true)) {
-                state.set_video_prompt_status("优化结果已保留，本地保存失败，请在恢复窗口重试".into());
+                state.set_video_prompt_status(
+                    "优化结果已保留，本地保存失败，请在恢复窗口重试".into(),
+                );
                 return PromptResultApplication::NotApplied;
             }
             state.set_video_prompt(record.result_prompt.clone().into());
@@ -1125,9 +1150,7 @@ fn apply_prompt_result_if_target_matches(
             };
             state.set_custom_prompt_input(value.into());
             state.set_custom_prompt_message(prompt_task_success_message(record).into());
-            state.set_custom_prompt_recovered_request_id(
-                record.client_request_id.clone().into(),
-            );
+            state.set_custom_prompt_recovered_request_id(record.client_request_id.clone().into());
             PromptResultApplication::AppliedPendingCustomPromptSave
         }
         "canvas_node" => {
@@ -1241,7 +1264,9 @@ fn set_prompt_task_activity(app: &AppWindow, record: &PendingPromptTaskRecord, a
 fn clear_prompt_task_activity_if_owned(app: &AppWindow, record: &PendingPromptTaskRecord) {
     let state = app.global::<AppState>();
     let owns_activity = match record.activity_kind.as_str() {
-        "video_optimize" => state.get_video_prompt_request_id().as_str() == record.client_request_id,
+        "video_optimize" => {
+            state.get_video_prompt_request_id().as_str() == record.client_request_id
+        }
         "translate" => {
             state.get_translating_prompt_request_id().as_str() == record.client_request_id
         }
@@ -1422,9 +1447,7 @@ fn claim_recovered_prompt_result(app: &AppWindow, context: &AppContext) {
             },
         );
         if !matches!(committed, Ok(true)) {
-            state.set_generation_status(
-                "恢复结果已保留，但本地保存或确认失败，请稍后重试".into(),
-            );
+            state.set_generation_status("恢复结果已保留，但本地保存或确认失败，请稍后重试".into());
             return;
         }
         state.set_generation_status("已使用恢复的提示词结果".into());
@@ -1470,32 +1493,32 @@ fn discard_recovered_prompt_result(app: &AppWindow, context: &AppContext) {
     present_next_recovered_prompt_result(app, context);
 }
 
-pub(super) fn acknowledge_custom_prompt_recovered_result(
-    app: &AppWindow,
-    context: &AppContext,
-) {
+pub(super) fn acknowledge_custom_prompt_recovered_result(app: &AppWindow, context: &AppContext) {
     let state = app.global::<AppState>();
     let request_id = state.get_custom_prompt_recovered_request_id().to_string();
     if request_id.is_empty() {
         return;
     }
-    let acknowledged = load_pending_prompt_tasks().into_iter().find(|record| {
-        record.client_request_id == request_id
-            && current_prompt_task_user_id(context).as_deref()
-                == Some(record.owner_user_id.as_str())
-    }).is_some_and(|record| {
-        if record.uploaded_file_ids.is_empty() {
-            matches!(remove_prompt_task_record_scoped(&record), Ok(true))
-        } else {
-            matches!(
-                update_prompt_task_record_scoped(&record, |pending| {
-                    pending.applied_to_target = false;
-                    pending.result_committed = true;
-                }),
-                Ok(true)
-            )
-        }
-    });
+    let acknowledged = load_pending_prompt_tasks()
+        .into_iter()
+        .find(|record| {
+            record.client_request_id == request_id
+                && current_prompt_task_user_id(context).as_deref()
+                    == Some(record.owner_user_id.as_str())
+        })
+        .is_some_and(|record| {
+            if record.uploaded_file_ids.is_empty() {
+                matches!(remove_prompt_task_record_scoped(&record), Ok(true))
+            } else {
+                matches!(
+                    update_prompt_task_record_scoped(&record, |pending| {
+                        pending.applied_to_target = false;
+                        pending.result_committed = true;
+                    }),
+                    Ok(true)
+                )
+            }
+        });
     if acknowledged {
         state.set_custom_prompt_recovered_request_id("".into());
     } else {
@@ -1505,10 +1528,7 @@ pub(super) fn acknowledge_custom_prompt_recovered_result(
     }
 }
 
-pub(super) fn release_custom_prompt_recovered_result(
-    app: &AppWindow,
-    context: &AppContext,
-) {
+pub(super) fn release_custom_prompt_recovered_result(app: &AppWindow, context: &AppContext) {
     let state = app.global::<AppState>();
     if !state.get_custom_prompt_recovered_request_id().is_empty() {
         state.set_custom_prompt_recovered_request_id("".into());
@@ -1581,10 +1601,11 @@ mod tests {
 
     fn pending_record(target_kind: &str) -> PendingPromptTaskRecord {
         PendingPromptTaskRecord {
-            schema_version: 1,
+            schema_version: 2,
             created_at_epoch_ms: 1,
             client_request_id: "fixed-request-id".to_string(),
             owner_user_id: "user-a".to_string(),
+            billing_account_group_id: "22222222-2222-4222-8222-222222222222".to_owned(),
             auth_epoch: 7,
             server_task_id: String::new(),
             task_type: "image_style_analysis".to_string(),
@@ -1987,5 +2008,97 @@ mod tests {
             .expect("next recovered result");
 
         assert_eq!(selected.client_request_id, "custom-second");
+    }
+}
+
+#[cfg(test)]
+mod billing_capture_tests {
+    use super::*;
+    use backend_generation::billing_capture_test_support::*;
+    fn request() -> PromptTaskRequest {
+        PromptTaskRequest {
+            model_code: "fixture-model".into(),
+            task_type: "prompt_optimize",
+            prompt: "fixture prompt".into(),
+            target_language: None,
+            optimize: true,
+            target: PromptResultTarget::Composer {
+                category: "other".into(),
+                input: "fixture prompt".into(),
+            },
+            reference_paths: Vec::new(),
+        }
+    }
+    #[test]
+    fn billing_capture_prompt_start_persists_before_real_dispatch() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let (listener, url) = listener();
+        let mut fixture = fixture(&url);
+        let (release, transport) = capture(
+            listener,
+            fixture.authority.clone(),
+            "pending-prompt-tasks.json",
+        );
+        start_backend_prompt_task_with_billing_scope(
+            &app,
+            fixture.context.clone(),
+            fixture.authority.clone(),
+            &fixture.scope,
+            request(),
+        );
+        fixture.scope.request.account_group_id = OTHER.into();
+        fixture.scope.context_epoch += 1;
+        release.send(()).unwrap();
+        let observed = transport.join().unwrap();
+        assert_capture(&observed, "prompt_tasks");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !fixture
+            .context
+            .active_prompt_task_requests
+            .lock()
+            .unwrap()
+            .is_empty()
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(fixture
+            .context
+            .active_prompt_task_requests
+            .lock()
+            .unwrap()
+            .is_empty());
+    }
+    #[test]
+    fn billing_capture_prompt_storage_and_scope_failure_prevent_dispatch() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let (listener, url) = listener();
+        let fixture = fixture(&url);
+        corrupt(&fixture.authority, "pending-prompt-tasks.json");
+        start_backend_prompt_task_with_billing_scope(
+            &app,
+            fixture.context.clone(),
+            fixture.authority.clone(),
+            &fixture.scope,
+            request(),
+        );
+        let mut wrong = fixture.scope.clone();
+        wrong.request.session.owner_user_id = OTHER.into();
+        start_backend_prompt_task_with_billing_scope(
+            &app,
+            fixture.context.clone(),
+            fixture.authority.clone(),
+            &wrong,
+            request(),
+        );
+        assert!(fixture
+            .context
+            .active_prompt_task_requests
+            .lock()
+            .unwrap()
+            .is_empty());
+        assert_no_request(&listener);
     }
 }

@@ -124,9 +124,7 @@ fn normalized_enhancement_quality(value: &str) -> Option<&'static str> {
     }
 }
 
-fn validate_enhancement_source(
-    path: &Path,
-) -> std::result::Result<(), EnhancementSourceError> {
+fn validate_enhancement_source(path: &Path) -> std::result::Result<(), EnhancementSourceError> {
     let size = fs::metadata(path)
         .map_err(|_| EnhancementSourceError::Unsupported)?
         .len();
@@ -326,7 +324,38 @@ fn poll_external_enhancement_import(
     });
 }
 
-fn start_image_enhancement(app: &AppWindow, context: AppContext, target_quality: &str) {
+// TEMP(team-accounts): remove in Task 10 after namespace admission is wired.
+fn start_image_enhancement(app: &AppWindow, _context: AppContext, _target_quality: &str) {
+    app.global::<AppState>().set_enhance_message(
+        ApiError::LocalState {
+            message: "任务准备失败，请重试".to_owned(),
+        }
+        .user_message()
+        .into(),
+    );
+}
+
+pub(super) fn start_image_enhancement_with_billing_scope(
+    app: &AppWindow,
+    context: AppContext,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: &BillingScope,
+    target_quality: &str,
+) {
+    let billing_scope = match capture_billing_scope_for_submission(
+        context.backend.as_deref(),
+        &authority,
+        billing_scope,
+    ) {
+        Ok(scope) => scope,
+        Err(error) => {
+            app.global::<AppState>()
+                .set_enhance_message(error.user_message().into());
+            return;
+        }
+    };
+    let session_scope = billing_scope.request.session.clone();
+
     let state = app.global::<AppState>();
     if state.get_session_state().as_str() != "online" {
         state.set_auth_open(true);
@@ -343,10 +372,6 @@ fn start_image_enhancement(app: &AppWindow, context: AppContext, target_quality:
     if context.backend.is_none() || state.get_enhance_processing() {
         return;
     }
-    let Some(session_scope) = current_generation_session_scope(&context) else {
-        state.set_enhance_message("登录状态已变化，请重新发起图片清晰增强".into());
-        return;
-    };
 
     let source = PathBuf::from(state.get_enhance_source_path().to_string());
     let persisted_source = match persist_reference_source(&source) {
@@ -387,10 +412,11 @@ fn start_image_enhancement(app: &AppWindow, context: AppContext, target_quality:
             }
         };
     let record = PendingGenerationRecord {
-        schema_version: 1,
+        schema_version: 2,
         created_at_epoch_ms: Local::now().timestamp_millis(),
         client_request_id,
         owner_user_id: session_scope.owner_user_id.clone(),
+        billing_account_group_id: billing_scope.request.account_group_id.clone(),
         auth_epoch: session_scope.auth_epoch,
         local_task_id: Uuid::new_v4().to_string(),
         server_task_id: String::new(),
@@ -418,12 +444,7 @@ fn start_image_enhancement(app: &AppWindow, context: AppContext, target_quality:
         canvas_source_node_id: String::new(),
         canvas_ui_extraction: false,
     };
-    if upsert_pending_generation_scoped(
-        record.clone(),
-        &session_scope.owner_user_id,
-        session_scope.auth_epoch,
-    )
-    .is_err()
+    if upsert_pending_generation_for_namespace(&authority, &billing_scope, record.clone()).is_err()
     {
         state.set_enhance_message(
             if state.get_language().as_str() == "en" {
@@ -435,46 +456,36 @@ fn start_image_enhancement(app: &AppWindow, context: AppContext, target_quality:
         );
         return;
     }
-    launch_image_enhancement(app, context, record, false);
+    launch_image_enhancement_with_billing_scope(
+        app,
+        context,
+        authority,
+        billing_scope,
+        record,
+        false,
+    );
 }
 
+// TEMP(team-accounts): remove in Task 10 after namespace admission is wired.
 pub(super) fn resume_pending_image_enhancement(
     app: &AppWindow,
-    context: AppContext,
-    record: PendingGenerationRecord,
+    _context: AppContext,
+    _record: PendingGenerationRecord,
 ) {
-    let session_scope = SessionScope {
-        owner_user_id: record.owner_user_id.clone(),
-        auth_epoch: record.auth_epoch,
-    };
-    if !generation_scope_matches_context(&context, &session_scope) {
-        return;
-    }
-    if app.global::<AppState>().get_enhance_processing() {
-        return;
-    }
-    if let Some(source_path) = record.reference_paths.first() {
-        let path = PathBuf::from(source_path);
-        if path.is_file() {
-            let state = app.global::<AppState>();
-            state.set_enhance_source_path(source_path.clone().into());
-            state.set_enhance_source_name(
-                path.file_name()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or_default()
-                    .into(),
-            );
-            if let Ok(image) = load_preview_image(&path, PreviewPurpose::Canvas) {
-                state.set_enhance_source_image(image);
-            }
+    app.global::<AppState>().set_enhance_message(
+        ApiError::LocalState {
+            message: "任务准备失败，请重试".to_owned(),
         }
-    }
-    launch_image_enhancement(app, context, record, true);
+        .user_message()
+        .into(),
+    );
 }
 
-fn launch_image_enhancement(
+fn launch_image_enhancement_with_billing_scope(
     app: &AppWindow,
     context: AppContext,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: BillingScope,
     record: PendingGenerationRecord,
     recovering: bool,
 ) {
@@ -515,7 +526,16 @@ fn launch_image_enhancement(
     let source_path = record.reference_paths.first().cloned().unwrap_or_default();
     let (sender, receiver) = mpsc::channel::<ImageEnhancementOutcome>();
     let worker_scope = session_scope.clone();
-    std::thread::spawn(move || run_image_enhancement_worker(backend, worker_scope, record, sender));
+    std::thread::spawn(move || {
+        run_image_enhancement_worker(
+            backend,
+            authority,
+            billing_scope,
+            worker_scope,
+            record,
+            sender,
+        )
+    });
     poll_image_enhancement_outcomes(
         app.as_weak(),
         context,
@@ -527,11 +547,15 @@ fn launch_image_enhancement(
 
 fn run_image_enhancement_worker(
     backend: Arc<BackendRuntime>,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: BillingScope,
     session_scope: SessionScope,
     mut record: PendingGenerationRecord,
     sender: mpsc::Sender<ImageEnhancementOutcome>,
 ) {
-    if record.owner_user_id != session_scope.owner_user_id
+    if capture_billing_scope_for_submission(Some(&backend), &authority, &billing_scope).is_err()
+        || record.billing_account_group_id != billing_scope.request.account_group_id
+        || record.owner_user_id != session_scope.owner_user_id
         || record.auth_epoch != session_scope.auth_epoch
         || !backend_generation_scope_active(&backend, &session_scope)
     {
@@ -590,11 +614,10 @@ fn run_image_enhancement_worker(
                 uploaded.push(file_id);
                 let snapshot = uploaded.clone();
                 if !matches!(
-                    update_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                        |item| item.uploaded_file_ids = snapshot,
+                    apply_generation_patch_for_namespace(
+                        &authority,
+                        &record.identity(),
+                        GenerationRecoveryPatch::UploadedFileIds(snapshot)
                     ),
                     Ok(true)
                 ) {
@@ -609,11 +632,7 @@ fn run_image_enhancement_worker(
                     return;
                 }
                 if !error.should_preserve_generation_recovery() {
-                    let _ = remove_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &record.identity());
                 }
                 let _ = sender.send(ImageEnhancementOutcome::Failure {
                     reason: error.generation_message(),
@@ -631,7 +650,7 @@ fn run_image_enhancement_worker(
                 .unwrap_or("2K")
                 .to_string(),
         };
-        match api.create_image_enhancement_scoped(&request, &session_scope) {
+        match api.create_image_enhancement_billing(&request, &billing_scope) {
             Ok(detail) => detail,
             Err(error) => {
                 if !backend_generation_scope_active(&backend, &session_scope) {
@@ -641,11 +660,7 @@ fn run_image_enhancement_worker(
                     for file_id in &uploaded {
                         let _ = api.delete_reference_scoped(file_id, &session_scope);
                     }
-                    let _ = remove_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &record.identity());
                     let _ = sender.send(ImageEnhancementOutcome::CreditInsufficient {
                         message: "本次图片清晰增强需要 20 积分，请先充值".to_string(),
                     });
@@ -655,11 +670,7 @@ fn run_image_enhancement_worker(
                     for file_id in &uploaded {
                         let _ = api.delete_reference_scoped(file_id, &session_scope);
                     }
-                    let _ = remove_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &record.identity());
                 }
                 let _ = sender.send(ImageEnhancementOutcome::Failure {
                     reason: error.generation_message(),
@@ -684,14 +695,14 @@ fn run_image_enhancement_worker(
     let server_id_snapshot = server_task_id.clone();
     let uploaded_snapshot = uploaded.clone();
     if !matches!(
-        update_pending_generation_scoped(
-            &session_scope.owner_user_id,
-            session_scope.auth_epoch,
-            &record.client_request_id,
-            |item| {
-                item.server_task_id = server_id_snapshot;
-                item.uploaded_file_ids = uploaded_snapshot;
-            },
+        apply_generation_patch_for_namespace(
+            &authority,
+            &record.identity(),
+            GenerationRecoveryPatch::Accepted {
+                server_task_id: server_id_snapshot,
+                uploaded_file_ids: uploaded_snapshot,
+                clear_reference_inputs: false
+            }
         ),
         Ok(true)
     ) {
@@ -713,14 +724,12 @@ fn run_image_enhancement_worker(
                 match api.download_verified_scoped(file, &session_scope) {
                     Ok(bytes) => {
                         if !matches!(
-                            update_pending_generation_scoped(
-                                &session_scope.owner_user_id,
-                                session_scope.auth_epoch,
-                                &record.client_request_id,
-                                |pending| {
-                                    pending.terminal = true;
-                                    pending.expected_success_count = 1;
-                                },
+                            apply_generation_patch_for_namespace(
+                                &authority,
+                                &record.identity(),
+                                GenerationRecoveryPatch::Terminal {
+                                    expected_success_count: 1
+                                }
                             ),
                             Ok(true)
                         ) {
@@ -762,14 +771,12 @@ fn run_image_enhancement_worker(
                 })
                 .unwrap_or_else(|| "服务端未能完成图片清晰增强".to_string());
             if !matches!(
-                update_pending_generation_scoped(
-                    &session_scope.owner_user_id,
-                    session_scope.auth_epoch,
-                    &record.client_request_id,
-                    |pending| {
-                        pending.terminal = true;
-                        pending.expected_success_count = 0;
-                    },
+                apply_generation_patch_for_namespace(
+                    &authority,
+                    &record.identity(),
+                    GenerationRecoveryPatch::Terminal {
+                        expected_success_count: 0
+                    }
                 ),
                 Ok(true)
             ) {
@@ -1096,4 +1103,16 @@ fn save_image_enhancement_asset(
     persist_generated_asset_checked(app, &mut store, item, notification, false, None)?;
     push_all(app, &store);
     Ok((result_path, image))
+}
+
+#[cfg(test)]
+mod billing_capture_tests {
+    use super::*;
+    #[test]
+    fn billing_capture_enhancement_worker_keeps_persisted_payer() {
+        backend_generation::billing_capture_test_support::assert_generation_worker(
+            "image_enhancement",
+            run_image_enhancement_worker,
+        );
+    }
 }

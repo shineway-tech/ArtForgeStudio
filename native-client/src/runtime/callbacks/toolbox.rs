@@ -35,10 +35,7 @@ const MANAGED_TOOLBOX_DIRECTORIES: [ManagedToolboxDirectory; 5] = [
     ManagedToolboxDirectory::CropInputs,
 ];
 
-fn managed_toolbox_directory(
-    data_directory: &Path,
-    directory: ManagedToolboxDirectory,
-) -> PathBuf {
+fn managed_toolbox_directory(data_directory: &Path, directory: ManagedToolboxDirectory) -> PathBuf {
     data_directory.join("toolbox").join(directory.name())
 }
 
@@ -48,7 +45,11 @@ fn resolve_safe_managed_toolbox_directory(
 ) -> Option<PathBuf> {
     let toolbox_directory = data_directory.join("toolbox");
     let managed_directory = managed_toolbox_directory(data_directory, directory);
-    for candidate in [data_directory, toolbox_directory.as_path(), managed_directory.as_path()] {
+    for candidate in [
+        data_directory,
+        toolbox_directory.as_path(),
+        managed_directory.as_path(),
+    ] {
         let metadata = fs::symlink_metadata(candidate).ok()?;
         if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
             return None;
@@ -2916,7 +2917,37 @@ fn compression_add_message(english: bool, added: usize, skipped: usize, total: u
     }
 }
 
-fn start_watermark_removal(app: &AppWindow, context: AppContext) {
+// TEMP(team-accounts): remove in Task 10 after namespace admission is wired.
+fn start_watermark_removal(app: &AppWindow, _context: AppContext) {
+    app.global::<AppState>().set_watermark_message(
+        ApiError::LocalState {
+            message: "任务准备失败，请重试".to_owned(),
+        }
+        .user_message()
+        .into(),
+    );
+}
+
+pub(super) fn start_watermark_removal_with_billing_scope(
+    app: &AppWindow,
+    context: AppContext,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: &BillingScope,
+) {
+    let billing_scope = match capture_billing_scope_for_submission(
+        context.backend.as_deref(),
+        &authority,
+        billing_scope,
+    ) {
+        Ok(scope) => scope,
+        Err(error) => {
+            app.global::<AppState>()
+                .set_watermark_message(error.user_message().into());
+            return;
+        }
+    };
+    let session_scope = billing_scope.request.session.clone();
+
     let state = app.global::<AppState>();
     if state.get_session_state().as_str() != "online" {
         state.set_auth_open(true);
@@ -2933,10 +2964,6 @@ fn start_watermark_removal(app: &AppWindow, context: AppContext) {
     if context.backend.is_none() || state.get_watermark_processing() {
         return;
     }
-    let Some(session_scope) = current_generation_session_scope(&context) else {
-        state.set_watermark_message("登录状态已变化，请重新发起去水印".into());
-        return;
-    };
 
     let source = PathBuf::from(state.get_watermark_source_path().to_string());
     let persisted_source = match persist_reference_source(&source) {
@@ -2964,10 +2991,11 @@ fn start_watermark_removal(app: &AppWindow, context: AppContext) {
             }
         };
     let record = PendingGenerationRecord {
-        schema_version: 1,
+        schema_version: 2,
         created_at_epoch_ms: Local::now().timestamp_millis(),
         client_request_id,
         owner_user_id: session_scope.owner_user_id.clone(),
+        billing_account_group_id: billing_scope.request.account_group_id.clone(),
         auth_epoch: session_scope.auth_epoch,
         local_task_id: Uuid::new_v4().to_string(),
         server_task_id: String::new(),
@@ -2995,12 +3023,7 @@ fn start_watermark_removal(app: &AppWindow, context: AppContext) {
         canvas_source_node_id: String::new(),
         canvas_ui_extraction: false,
     };
-    if upsert_pending_generation_scoped(
-        record.clone(),
-        &session_scope.owner_user_id,
-        session_scope.auth_epoch,
-    )
-    .is_err()
+    if upsert_pending_generation_for_namespace(&authority, &billing_scope, record.clone()).is_err()
     {
         state.set_watermark_message(
             if state.get_language().as_str() == "en" {
@@ -3012,46 +3035,36 @@ fn start_watermark_removal(app: &AppWindow, context: AppContext) {
         );
         return;
     }
-    launch_watermark_removal(app, context, record, false);
+    launch_watermark_removal_with_billing_scope(
+        app,
+        context,
+        authority,
+        billing_scope,
+        record,
+        false,
+    );
 }
 
+// TEMP(team-accounts): remove in Task 10 after namespace admission is wired.
 pub(super) fn resume_pending_watermark_removal(
     app: &AppWindow,
-    context: AppContext,
-    record: PendingGenerationRecord,
+    _context: AppContext,
+    _record: PendingGenerationRecord,
 ) {
-    let session_scope = SessionScope {
-        owner_user_id: record.owner_user_id.clone(),
-        auth_epoch: record.auth_epoch,
-    };
-    if !generation_scope_matches_context(&context, &session_scope) {
-        return;
-    }
-    if app.global::<AppState>().get_watermark_processing() {
-        return;
-    }
-    if let Some(source_path) = record.reference_paths.first() {
-        let path = PathBuf::from(source_path);
-        if path.is_file() {
-            let state = app.global::<AppState>();
-            state.set_watermark_source_path(source_path.clone().into());
-            state.set_watermark_source_name(
-                path.file_name()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or_default()
-                    .into(),
-            );
-            if let Ok(image) = load_preview_image(&path, PreviewPurpose::Canvas) {
-                state.set_watermark_source_image(image);
-            }
+    app.global::<AppState>().set_watermark_message(
+        ApiError::LocalState {
+            message: "任务准备失败，请重试".to_owned(),
         }
-    }
-    launch_watermark_removal(app, context, record, true);
+        .user_message()
+        .into(),
+    );
 }
 
-fn launch_watermark_removal(
+fn launch_watermark_removal_with_billing_scope(
     app: &AppWindow,
     context: AppContext,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: BillingScope,
     record: PendingGenerationRecord,
     recovering: bool,
 ) {
@@ -3090,7 +3103,16 @@ fn launch_watermark_removal(
     let source_path = record.reference_paths.first().cloned().unwrap_or_default();
     let (sender, receiver) = mpsc::channel::<WatermarkOutcome>();
     let worker_scope = session_scope.clone();
-    std::thread::spawn(move || run_watermark_worker(backend, worker_scope, record, sender));
+    std::thread::spawn(move || {
+        run_watermark_worker(
+            backend,
+            authority,
+            billing_scope,
+            worker_scope,
+            record,
+            sender,
+        )
+    });
     poll_watermark_outcomes(
         app.as_weak(),
         context,
@@ -3102,11 +3124,15 @@ fn launch_watermark_removal(
 
 fn run_watermark_worker(
     backend: Arc<BackendRuntime>,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: BillingScope,
     session_scope: SessionScope,
     mut record: PendingGenerationRecord,
     sender: mpsc::Sender<WatermarkOutcome>,
 ) {
-    if record.owner_user_id != session_scope.owner_user_id
+    if capture_billing_scope_for_submission(Some(&backend), &authority, &billing_scope).is_err()
+        || record.billing_account_group_id != billing_scope.request.account_group_id
+        || record.owner_user_id != session_scope.owner_user_id
         || record.auth_epoch != session_scope.auth_epoch
         || !backend_generation_scope_active(&backend, &session_scope)
     {
@@ -3165,11 +3191,10 @@ fn run_watermark_worker(
                 uploaded.push(file_id);
                 let snapshot = uploaded.clone();
                 if !matches!(
-                    update_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                        |item| item.uploaded_file_ids = snapshot,
+                    apply_generation_patch_for_namespace(
+                        &authority,
+                        &record.identity(),
+                        GenerationRecoveryPatch::UploadedFileIds(snapshot)
                     ),
                     Ok(true)
                 ) {
@@ -3184,11 +3209,7 @@ fn run_watermark_worker(
                     return;
                 }
                 if !error.should_preserve_generation_recovery() {
-                    let _ = remove_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &record.identity());
                 }
                 let _ = sender.send(WatermarkOutcome::Failure {
                     reason: error.generation_message(),
@@ -3203,7 +3224,7 @@ fn run_watermark_worker(
             client_request_id: record.client_request_id.clone(),
             reference_file_id: uploaded[0].clone(),
         };
-        match api.create_watermark_removal_scoped(&request, &session_scope) {
+        match api.create_watermark_removal_billing(&request, &billing_scope) {
             Ok(detail) => detail,
             Err(error) => {
                 if !backend_generation_scope_active(&backend, &session_scope) {
@@ -3213,11 +3234,7 @@ fn run_watermark_worker(
                     for file_id in &uploaded {
                         let _ = api.delete_reference_scoped(file_id, &session_scope);
                     }
-                    let _ = remove_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &record.identity());
                     let _ = sender.send(WatermarkOutcome::CreditInsufficient {
                         message: "本次去水印需要 20 积分，请先充值".to_string(),
                     });
@@ -3227,11 +3244,7 @@ fn run_watermark_worker(
                     for file_id in &uploaded {
                         let _ = api.delete_reference_scoped(file_id, &session_scope);
                     }
-                    let _ = remove_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &record.identity());
                 }
                 let _ = sender.send(WatermarkOutcome::Failure {
                     reason: error.generation_message(),
@@ -3256,14 +3269,14 @@ fn run_watermark_worker(
     let server_id_snapshot = server_task_id.clone();
     let uploaded_snapshot = uploaded.clone();
     if !matches!(
-        update_pending_generation_scoped(
-            &session_scope.owner_user_id,
-            session_scope.auth_epoch,
-            &record.client_request_id,
-            |item| {
-                item.server_task_id = server_id_snapshot;
-                item.uploaded_file_ids = uploaded_snapshot;
-            },
+        apply_generation_patch_for_namespace(
+            &authority,
+            &record.identity(),
+            GenerationRecoveryPatch::Accepted {
+                server_task_id: server_id_snapshot,
+                uploaded_file_ids: uploaded_snapshot,
+                clear_reference_inputs: false
+            }
         ),
         Ok(true)
     ) {
@@ -3285,14 +3298,12 @@ fn run_watermark_worker(
                 match api.download_verified_scoped(file, &session_scope) {
                     Ok(bytes) => {
                         if !matches!(
-                            update_pending_generation_scoped(
-                                &session_scope.owner_user_id,
-                                session_scope.auth_epoch,
-                                &record.client_request_id,
-                                |pending| {
-                                    pending.terminal = true;
-                                    pending.expected_success_count = 1;
-                                },
+                            apply_generation_patch_for_namespace(
+                                &authority,
+                                &record.identity(),
+                                GenerationRecoveryPatch::Terminal {
+                                    expected_success_count: 1
+                                }
                             ),
                             Ok(true)
                         ) {
@@ -3334,14 +3345,12 @@ fn run_watermark_worker(
                 })
                 .unwrap_or_else(|| "服务端未能完成去水印".to_string());
             if !matches!(
-                update_pending_generation_scoped(
-                    &session_scope.owner_user_id,
-                    session_scope.auth_epoch,
-                    &record.client_request_id,
-                    |pending| {
-                        pending.terminal = true;
-                        pending.expected_success_count = 0;
-                    },
+                apply_generation_patch_for_namespace(
+                    &authority,
+                    &record.identity(),
+                    GenerationRecoveryPatch::Terminal {
+                        expected_success_count: 0
+                    }
                 ),
                 Ok(true)
             ) {
@@ -3629,7 +3638,37 @@ fn save_watermark_asset(
     Ok((result_path, image))
 }
 
-fn start_image_colorization(app: &AppWindow, context: AppContext) {
+// TEMP(team-accounts): remove in Task 10 after namespace admission is wired.
+fn start_image_colorization(app: &AppWindow, _context: AppContext) {
+    app.global::<AppState>().set_colorize_message(
+        ApiError::LocalState {
+            message: "任务准备失败，请重试".to_owned(),
+        }
+        .user_message()
+        .into(),
+    );
+}
+
+pub(super) fn start_image_colorization_with_billing_scope(
+    app: &AppWindow,
+    context: AppContext,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: &BillingScope,
+) {
+    let billing_scope = match capture_billing_scope_for_submission(
+        context.backend.as_deref(),
+        &authority,
+        billing_scope,
+    ) {
+        Ok(scope) => scope,
+        Err(error) => {
+            app.global::<AppState>()
+                .set_colorize_message(error.user_message().into());
+            return;
+        }
+    };
+    let session_scope = billing_scope.request.session.clone();
+
     let state = app.global::<AppState>();
     if state.get_session_state().as_str() != "online" {
         state.set_auth_open(true);
@@ -3646,10 +3685,6 @@ fn start_image_colorization(app: &AppWindow, context: AppContext) {
     if context.backend.is_none() || state.get_colorize_processing() {
         return;
     }
-    let Some(session_scope) = current_generation_session_scope(&context) else {
-        state.set_colorize_message("登录状态已变化，请重新发起老照片上色".into());
-        return;
-    };
 
     let source = PathBuf::from(state.get_colorize_source_path().to_string());
     if let Err(error) = set_colorization_source_from_path(app, &source) {
@@ -3681,10 +3716,11 @@ fn start_image_colorization(app: &AppWindow, context: AppContext) {
             }
         };
     let record = PendingGenerationRecord {
-        schema_version: 1,
+        schema_version: 2,
         created_at_epoch_ms: Local::now().timestamp_millis(),
         client_request_id,
         owner_user_id: session_scope.owner_user_id.clone(),
+        billing_account_group_id: billing_scope.request.account_group_id.clone(),
         auth_epoch: session_scope.auth_epoch,
         local_task_id: Uuid::new_v4().to_string(),
         server_task_id: String::new(),
@@ -3712,12 +3748,7 @@ fn start_image_colorization(app: &AppWindow, context: AppContext) {
         canvas_source_node_id: String::new(),
         canvas_ui_extraction: false,
     };
-    if upsert_pending_generation_scoped(
-        record.clone(),
-        &session_scope.owner_user_id,
-        session_scope.auth_epoch,
-    )
-    .is_err()
+    if upsert_pending_generation_for_namespace(&authority, &billing_scope, record.clone()).is_err()
     {
         state.set_colorize_message(
             if state.get_language().as_str() == "en" {
@@ -3729,46 +3760,36 @@ fn start_image_colorization(app: &AppWindow, context: AppContext) {
         );
         return;
     }
-    launch_image_colorization(app, context, record, false);
+    launch_image_colorization_with_billing_scope(
+        app,
+        context,
+        authority,
+        billing_scope,
+        record,
+        false,
+    );
 }
 
+// TEMP(team-accounts): remove in Task 10 after namespace admission is wired.
 pub(super) fn resume_pending_image_colorization(
     app: &AppWindow,
-    context: AppContext,
-    record: PendingGenerationRecord,
+    _context: AppContext,
+    _record: PendingGenerationRecord,
 ) {
-    let session_scope = SessionScope {
-        owner_user_id: record.owner_user_id.clone(),
-        auth_epoch: record.auth_epoch,
-    };
-    if !generation_scope_matches_context(&context, &session_scope) {
-        return;
-    }
-    if app.global::<AppState>().get_colorize_processing() {
-        return;
-    }
-    if let Some(source_path) = record.reference_paths.first() {
-        let path = PathBuf::from(source_path);
-        if path.is_file() {
-            let state = app.global::<AppState>();
-            state.set_colorize_source_path(source_path.clone().into());
-            state.set_colorize_source_name(
-                path.file_name()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or_default()
-                    .into(),
-            );
-            if let Ok(image) = load_preview_image(&path, PreviewPurpose::Canvas) {
-                state.set_colorize_source_image(image);
-            }
+    app.global::<AppState>().set_colorize_message(
+        ApiError::LocalState {
+            message: "任务准备失败，请重试".to_owned(),
         }
-    }
-    launch_image_colorization(app, context, record, true);
+        .user_message()
+        .into(),
+    );
 }
 
-fn launch_image_colorization(
+fn launch_image_colorization_with_billing_scope(
     app: &AppWindow,
     context: AppContext,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: BillingScope,
     record: PendingGenerationRecord,
     recovering: bool,
 ) {
@@ -3808,7 +3829,14 @@ fn launch_image_colorization(
     let (sender, receiver) = mpsc::channel::<ImageColorizationOutcome>();
     let worker_scope = session_scope.clone();
     std::thread::spawn(move || {
-        run_image_colorization_worker(backend, worker_scope, record, sender)
+        run_image_colorization_worker(
+            backend,
+            authority,
+            billing_scope,
+            worker_scope,
+            record,
+            sender,
+        )
     });
     poll_image_colorization_outcomes(
         app.as_weak(),
@@ -3821,11 +3849,15 @@ fn launch_image_colorization(
 
 fn run_image_colorization_worker(
     backend: Arc<BackendRuntime>,
+    authority: Arc<NamespaceStorageAuthority>,
+    billing_scope: BillingScope,
     session_scope: SessionScope,
     mut record: PendingGenerationRecord,
     sender: mpsc::Sender<ImageColorizationOutcome>,
 ) {
-    if record.owner_user_id != session_scope.owner_user_id
+    if capture_billing_scope_for_submission(Some(&backend), &authority, &billing_scope).is_err()
+        || record.billing_account_group_id != billing_scope.request.account_group_id
+        || record.owner_user_id != session_scope.owner_user_id
         || record.auth_epoch != session_scope.auth_epoch
         || !backend_generation_scope_active(&backend, &session_scope)
     {
@@ -3884,11 +3916,10 @@ fn run_image_colorization_worker(
                 uploaded.push(file_id);
                 let snapshot = uploaded.clone();
                 if !matches!(
-                    update_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                        |item| item.uploaded_file_ids = snapshot,
+                    apply_generation_patch_for_namespace(
+                        &authority,
+                        &record.identity(),
+                        GenerationRecoveryPatch::UploadedFileIds(snapshot)
                     ),
                     Ok(true)
                 ) {
@@ -3903,11 +3934,7 @@ fn run_image_colorization_worker(
                     return;
                 }
                 if !error.should_preserve_generation_recovery() {
-                    let _ = remove_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &record.identity());
                 }
                 let _ = sender.send(ImageColorizationOutcome::Failure {
                     reason: error.generation_message(),
@@ -3922,7 +3949,7 @@ fn run_image_colorization_worker(
             client_request_id: record.client_request_id.clone(),
             reference_file_id: uploaded[0].clone(),
         };
-        match api.create_image_colorization_scoped(&request, &session_scope) {
+        match api.create_image_colorization_billing(&request, &billing_scope) {
             Ok(detail) => detail,
             Err(error) => {
                 if !backend_generation_scope_active(&backend, &session_scope) {
@@ -3932,11 +3959,7 @@ fn run_image_colorization_worker(
                     for file_id in &uploaded {
                         let _ = api.delete_reference_scoped(file_id, &session_scope);
                     }
-                    let _ = remove_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &record.identity());
                     let _ = sender.send(ImageColorizationOutcome::CreditInsufficient {
                         message: "本次老照片上色需要 20 积分，请先充值".to_string(),
                     });
@@ -3946,11 +3969,7 @@ fn run_image_colorization_worker(
                     for file_id in &uploaded {
                         let _ = api.delete_reference_scoped(file_id, &session_scope);
                     }
-                    let _ = remove_pending_generation_scoped(
-                        &session_scope.owner_user_id,
-                        session_scope.auth_epoch,
-                        &record.client_request_id,
-                    );
+                    let _ = remove_pending_generation_for_namespace(&authority, &record.identity());
                 }
                 let _ = sender.send(ImageColorizationOutcome::Failure {
                     reason: error.generation_message(),
@@ -3975,14 +3994,14 @@ fn run_image_colorization_worker(
     let server_id_snapshot = server_task_id.clone();
     let uploaded_snapshot = uploaded.clone();
     if !matches!(
-        update_pending_generation_scoped(
-            &session_scope.owner_user_id,
-            session_scope.auth_epoch,
-            &record.client_request_id,
-            |item| {
-                item.server_task_id = server_id_snapshot;
-                item.uploaded_file_ids = uploaded_snapshot;
-            },
+        apply_generation_patch_for_namespace(
+            &authority,
+            &record.identity(),
+            GenerationRecoveryPatch::Accepted {
+                server_task_id: server_id_snapshot,
+                uploaded_file_ids: uploaded_snapshot,
+                clear_reference_inputs: false
+            }
         ),
         Ok(true)
     ) {
@@ -4004,14 +4023,12 @@ fn run_image_colorization_worker(
                 match api.download_verified_scoped(file, &session_scope) {
                     Ok(bytes) => {
                         if !matches!(
-                            update_pending_generation_scoped(
-                                &session_scope.owner_user_id,
-                                session_scope.auth_epoch,
-                                &record.client_request_id,
-                                |pending| {
-                                    pending.terminal = true;
-                                    pending.expected_success_count = 1;
-                                },
+                            apply_generation_patch_for_namespace(
+                                &authority,
+                                &record.identity(),
+                                GenerationRecoveryPatch::Terminal {
+                                    expected_success_count: 1
+                                }
                             ),
                             Ok(true)
                         ) {
@@ -4053,14 +4070,12 @@ fn run_image_colorization_worker(
                 })
                 .unwrap_or_else(|| "服务端未能完成老照片上色".to_string());
             if !matches!(
-                update_pending_generation_scoped(
-                    &session_scope.owner_user_id,
-                    session_scope.auth_epoch,
-                    &record.client_request_id,
-                    |pending| {
-                        pending.terminal = true;
-                        pending.expected_success_count = 0;
-                    },
+                apply_generation_patch_for_namespace(
+                    &authority,
+                    &record.identity(),
+                    GenerationRecoveryPatch::Terminal {
+                        expected_success_count: 0
+                    }
                 ),
                 Ok(true)
             ) {
@@ -4383,14 +4398,10 @@ mod local_image_tests {
     #[test]
     fn managed_toolbox_removal_never_crosses_the_exact_directory_boundary() {
         let test_root = toolbox_test_root("path-safety");
-        let managed_directory = managed_toolbox_directory(
-            &test_root,
-            ManagedToolboxDirectory::CompressionInputs,
-        );
-        let other_managed_directory = managed_toolbox_directory(
-            &test_root,
-            ManagedToolboxDirectory::ConversionInputs,
-        );
+        let managed_directory =
+            managed_toolbox_directory(&test_root, ManagedToolboxDirectory::CompressionInputs);
+        let other_managed_directory =
+            managed_toolbox_directory(&test_root, ManagedToolboxDirectory::ConversionInputs);
         fs::create_dir_all(&managed_directory).expect("create managed directory");
         fs::create_dir_all(&other_managed_directory).expect("create other managed directory");
 
@@ -4459,10 +4470,8 @@ mod local_image_tests {
         fs::create_dir_all(&works_directory).expect("create works directory");
         let work = works_directory.join("generated-work.png");
         fs::write(&work, b"user work").expect("write user work");
-        let linked_directory = managed_toolbox_directory(
-            &test_root,
-            ManagedToolboxDirectory::CompressionInputs,
-        );
+        let linked_directory =
+            managed_toolbox_directory(&test_root, ManagedToolboxDirectory::CompressionInputs);
         symlink(&works_directory, &linked_directory).expect("create directory symlink");
 
         cleanup_stale_toolbox_files_in(
@@ -4485,14 +4494,10 @@ mod local_image_tests {
     #[test]
     fn removing_an_item_cleans_only_its_managed_input_and_result() {
         let test_root = toolbox_test_root("item-cleanup");
-        let input_directory = managed_toolbox_directory(
-            &test_root,
-            ManagedToolboxDirectory::CompressionInputs,
-        );
-        let result_directory = managed_toolbox_directory(
-            &test_root,
-            ManagedToolboxDirectory::CompressionResults,
-        );
+        let input_directory =
+            managed_toolbox_directory(&test_root, ManagedToolboxDirectory::CompressionInputs);
+        let result_directory =
+            managed_toolbox_directory(&test_root, ManagedToolboxDirectory::CompressionResults);
         fs::create_dir_all(&input_directory).expect("create input directory");
         fs::create_dir_all(&result_directory).expect("create result directory");
         let input = input_directory.join("pasted-input.png");
@@ -4528,10 +4533,8 @@ mod local_image_tests {
     #[test]
     fn successful_export_releases_only_a_managed_temporary_result() {
         let test_root = toolbox_test_root("export-cleanup");
-        let result_directory = managed_toolbox_directory(
-            &test_root,
-            ManagedToolboxDirectory::ConversionResults,
-        );
+        let result_directory =
+            managed_toolbox_directory(&test_root, ManagedToolboxDirectory::ConversionResults);
         let export_directory = test_root.join("exports");
         fs::create_dir_all(&result_directory).expect("create result directory");
         fs::create_dir_all(&export_directory).expect("create export directory");
@@ -4594,10 +4597,8 @@ mod local_image_tests {
             fs::write(&file, b"stale").expect("write stale file");
             stale_files.push(file);
         }
-        let compression_inputs = managed_toolbox_directory(
-            &test_root,
-            ManagedToolboxDirectory::CompressionInputs,
-        );
+        let compression_inputs =
+            managed_toolbox_directory(&test_root, ManagedToolboxDirectory::CompressionInputs);
         let nested_directory = compression_inputs.join("nested");
         fs::create_dir_all(&nested_directory).expect("create nested directory");
         let nested_file = nested_directory.join("nested.tmp");
@@ -4783,6 +4784,25 @@ mod local_image_tests {
         assert_eq!(
             normalize_conversion_destination(&directory.join("image.WEBP"), "webp"),
             directory.join("image.WEBP")
+        );
+    }
+}
+
+#[cfg(test)]
+mod billing_capture_tests {
+    use super::*;
+    #[test]
+    fn billing_capture_watermark_worker_keeps_persisted_payer() {
+        backend_generation::billing_capture_test_support::assert_generation_worker(
+            "watermark_removal",
+            run_watermark_worker,
+        );
+    }
+    #[test]
+    fn billing_capture_colorization_worker_keeps_persisted_payer() {
+        backend_generation::billing_capture_test_support::assert_generation_worker(
+            "image_colorization",
+            run_image_colorization_worker,
         );
     }
 }
