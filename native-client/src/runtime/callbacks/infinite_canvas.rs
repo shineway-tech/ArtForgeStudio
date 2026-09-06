@@ -885,9 +885,10 @@ pub(super) fn compose_canvas_workflow_prompt(
         } else {
             "Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements."
         };
-        let layout = if step_count > 8 {
+        let layout = if step_count > 5 {
             format!(
-                "Arrange all {step_count} subjects in two rows, ordered left to right and then top to bottom."
+                "Arrange all {step_count} subjects in two rows, ordered left to right and then top to bottom.{}",
+                if is_building_derivation { " Order buildings by function, not by upgrade level." } else { "" }
             )
         } else if is_building_derivation {
             format!("Arrange all {step_count} buildings in one row by function, not by upgrade level.")
@@ -903,9 +904,10 @@ pub(super) fn compose_canvas_workflow_prompt(
         } else {
             "不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。"
         };
-        let layout = if step_count > 8 {
+        let layout = if step_count > 5 {
             format!(
-                "将全部{step_count}个对象分成上下两行，按从左到右、从上到下的顺序排列。"
+                "将全部{step_count}个对象分成上下两行，按从左到右、从上到下的顺序排列。{}",
+                if is_building_derivation { "建筑按功能顺序排列，不按升级等级排列。" } else { "" }
             )
         } else if is_building_derivation {
             format!("将全部{step_count}座建筑按功能顺序排列在同一行，不按升级等级排列。")

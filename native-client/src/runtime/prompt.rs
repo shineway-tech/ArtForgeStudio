@@ -319,6 +319,27 @@ pub(super) fn build_generation_prompt(
     append_category_generation_instruction(&final_prompt, category, language)
 }
 
+pub(super) fn build_generation_prompt_for_destination(
+    prompt: &str,
+    negative_prompt: &str,
+    controls: &PromptControls,
+    quote: &QuoteContext,
+    category: &str,
+    ratio: &str,
+    quality: &str,
+    language: PromptLanguage,
+    destination: &GenerationDestination,
+) -> String {
+    match destination {
+        GenerationDestination::Canvas { .. } => build_canvas_generation_prompt(
+            prompt, ratio, quality, language == PromptLanguage::English,
+        ),
+        GenerationDestination::Gallery => build_generation_prompt(
+            prompt, negative_prompt, controls, quote, category, ratio, quality, language,
+        ),
+    }
+}
+
 pub(super) fn append_negative_prompt_instruction(
     prompt: &str,
     negative_prompt: &str,

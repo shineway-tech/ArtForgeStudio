@@ -2273,6 +2273,42 @@ mod tests {
     }
 
     #[test]
+    fn canvas_submission_ignores_workbench_controls_and_keeps_cutout_rules_last() {
+        let controls = PromptControls {
+            category: "ui".into(), creation: "ui-hud".into(), style: "dark".into(),
+            view: "first-person".into(), weather: "rainy".into(), time: "night".into(), light: "neon".into(),
+        };
+        let quote = QuoteContext {
+            title: "unrelated workbench reference".into(), prompt: "close-up portrait".into(),
+            ratio: "1:1".into(), quality: "1K".into(), width: 1024, height: 1024,
+        };
+        let requested = compose_canvas_workflow_prompt("Create {count} outfit variations.", "wide capes", 8, true);
+        let submitted = build_generation_prompt_for_destination(
+            &requested, "unrelated negative", &controls, &quote, "ui", "16:9", "4K",
+            PromptLanguage::English, &GenerationDestination::Canvas { source_node_id: "test-node".into() },
+        );
+        assert!(submitted.contains("Create 8 outfit variations."));
+        assert!(submitted.contains("Arrange all 8 subjects in two rows"));
+        assert!(submitted.contains("full body from the top of the head to the soles"));
+        assert!(submitted.contains("70%"));
+        assert!(submitted.contains("16:9"));
+        assert!(submitted.contains("4K"));
+        assert!(!submitted.contains("unrelated"));
+        assert!(!submitted.contains("close-up portrait"));
+        assert!(!submitted.contains("UI component atlas"));
+        assert!(!submitted.contains("Generation controls:"));
+        assert!(submitted.ends_with("Completeness and separation take priority over large subjects, filling the frame or a fixed single row."));
+        let gallery = build_generation_prompt_for_destination(
+            "game interface", "unrelated negative", &controls, &quote, "ui", "1:1", "2K",
+            PromptLanguage::English, &GenerationDestination::Gallery,
+        );
+        assert!(gallery.contains("UI component atlas"));
+        assert!(gallery.contains("unrelated negative"));
+        assert!(gallery.contains("unrelated workbench reference"));
+        assert!(!gallery.contains("final cutout-safe composition rules"));
+    }
+
+    #[test]
     fn upgrade_evolution_card_opens_a_reference_driven_canvas_with_strict_output_rules() {
         use i_slint_backend_testing::ElementHandle;
         use slint::platform::PointerEventButton;
@@ -2880,7 +2916,7 @@ mod tests {
                 8,
                 true,
             ),
-            "Create exactly 8 stages with 8 separate subjects.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Keep a clear, continuous solid-background gap between every pair of subjects. No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect. If space is insufficient, uniformly scale down all subjects within the image; keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged. Prefer more empty space over compressed gaps so that each subject can be cleanly extracted on its own. Arrange all 8 subjects in one row in progression order.\n\nUser description: tomato"
+            "Create exactly 8 stages with 8 separate subjects.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Keep a clear, continuous solid-background gap between every pair of subjects. No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect. If space is insufficient, uniformly scale down all subjects within the image; keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged. Prefer more empty space over compressed gaps so that each subject can be cleanly extracted on its own. Arrange all 8 subjects in two rows, ordered left to right and then top to bottom.\n\nUser description: tomato"
         );
     }
 
@@ -2928,15 +2964,15 @@ mod tests {
     }
 
     #[test]
-    fn canvas_workflow_prompt_keeps_eight_subjects_in_one_row() {
+    fn canvas_workflow_prompt_splits_eight_subjects_into_two_rows() {
         assert_eq!(
             compose_canvas_workflow_prompt("Create {count} stages.", "tomato", 8, true),
-            "Create 8 stages.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Keep a clear, continuous solid-background gap between every pair of subjects. No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect. If space is insufficient, uniformly scale down all subjects within the image; keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged. Prefer more empty space over compressed gaps so that each subject can be cleanly extracted on its own. Arrange all 8 subjects in one row in progression order.\n\nUser description: tomato"
+            "Create 8 stages.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Keep a clear, continuous solid-background gap between every pair of subjects. No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect. If space is insufficient, uniformly scale down all subjects within the image; keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged. Prefer more empty space over compressed gaps so that each subject can be cleanly extracted on its own. Arrange all 8 subjects in two rows, ordered left to right and then top to bottom.\n\nUser description: tomato"
         );
     }
 
     #[test]
-    fn canvas_workflow_prompt_splits_more_than_eight_subjects_into_two_rows() {
+    fn canvas_workflow_prompt_splits_nine_subjects_into_two_rows() {
         assert_eq!(
             compose_canvas_workflow_prompt("Create {count} stages.", "tomato", 9, true),
             "Create 9 stages.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Keep a clear, continuous solid-background gap between every pair of subjects. No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect. If space is insufficient, uniformly scale down all subjects within the image; keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged. Prefer more empty space over compressed gaps so that each subject can be cleanly extracted on its own. Arrange all 9 subjects in two rows, ordered left to right and then top to bottom.\n\nUser description: tomato"

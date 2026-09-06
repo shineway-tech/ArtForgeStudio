@@ -437,7 +437,7 @@ pub(super) fn start_backend_generation(
     } else {
         PromptLanguage::Chinese
     };
-    let generation_prompt = build_generation_prompt(
+    let generation_prompt = build_generation_prompt_for_destination(
         &raw_prompt,
         &state.get_negative_prompt().to_string(),
         &controls,
@@ -446,6 +446,7 @@ pub(super) fn start_backend_generation(
         &ratio,
         &quality,
         language,
+        &destination,
     );
     let recoverable_delivery_id = retry_failed_id.as_deref().filter(|failed_asset_id| {
         store.borrow().generations.iter().any(|item| {
