@@ -262,7 +262,7 @@ impl ClientStateWriter {
             acknowledgement,
         })
     }
-    fn persist_client_state_checked_for_namespace(
+    pub(super) fn persist_client_state_checked_for_namespace(
         &self,
         lease: &NamespaceLease,
         data: LocalStoreData,
@@ -1904,6 +1904,883 @@ mod tests {
     }
     fn store_with_asset(id: &str) -> LocalStoreData {
         serde_json::from_value(serde_json::json!({"assets":[{"id":id,"conversation_id":"conversation","title":id,"category":"scene","kind":"game","time":"time","prompt":"private prompt","ratio":"1:1","quality":"2k","model":"model","source_path":"private/image.png","reference_paths":["private/ref.png"]}],"notifications":[{"id":"same","title":id,"model":"model","time":"time","reason":"private","success":true,"read":false}],"canvas_notes":[{"id":"same","content":id,"x":1.0,"y":2.0}],"canvas_links":[{"id":"same","source_id":id,"target_id":"other"}],"custom_prompts":[id],"image_model":id,"prompt_drafts":{"scene":id}})).unwrap()
+    }
+    fn checked_asset(id: &str, source_path: &str, prompt: &str) -> AssetData {
+        AssetData {
+            id: id.into(),
+            conversation_id: "owned-conversation".into(),
+            title: format!("title-{id}"),
+            category: "scene".into(),
+            kind: "game".into(),
+            time: "2026-09-04 12:00".into(),
+            prompt: prompt.into(),
+            ratio: "16:9".into(),
+            quality: "2K".into(),
+            model: "owned-image-model".into(),
+            origin: "generation".into(),
+            width: 1920,
+            height: 1080,
+            source_path: source_path.into(),
+            reference_paths: vec!["owned/reference.png".into()],
+            cutout_done: true,
+            remove_black_done: false,
+            upscale_done: true,
+            is_new: true,
+            delivery_recoverable: false,
+            delivery_downloading: false,
+        }
+    }
+    fn checked_notification(id: &str, title: &str) -> NotificationData {
+        NotificationData {
+            id: id.into(),
+            title: title.into(),
+            model: "owned-image-model".into(),
+            time: "2026-09-04 12:01".into(),
+            reason: String::new(),
+            success: true,
+            read: false,
+        }
+    }
+    fn durable_json(repo: &Fixture, lease: &NamespaceLease) -> Option<serde_json::Value> {
+        repo.load_client_state_for_namespace(lease)
+            .unwrap()
+            .map(|data| serde_json::to_value(data).unwrap())
+    }
+    fn assert_stale_anyhow(error: anyhow::Error) {
+        assert_eq!(
+            error.downcast_ref::<ClientStateWriteError>(),
+            Some(&ClientStateWriteError::StaleLease)
+        );
+    }
+    fn reject_notification_inserts(repo: &Fixture) {
+        repo.connection()
+            .execute_batch(concat!(
+                "CREATE TRIGGER reject_fixture_notification ",
+                "BEFORE INSERT ON notifications BEGIN ",
+                "SELECT RAISE(ABORT, 'fixture rejected'); END;"
+            ))
+            .unwrap();
+    }
+    struct PauseReleaseGuard {
+        pause: Arc<(Mutex<bool>, Condvar)>,
+    }
+    impl PauseReleaseGuard {
+        fn new(pause: Arc<(Mutex<bool>, Condvar)>) -> Self {
+            Self { pause }
+        }
+    }
+    impl Drop for PauseReleaseGuard {
+        fn drop(&mut self) {
+            let mut paused = self
+                .pause
+                .0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *paused = false;
+            self.pause.1.notify_all();
+        }
+    }
+    struct RaceControllerResult {
+        observation: std::result::Result<bool, ClientStateWriteError>,
+        activation: WriteResult,
+    }
+    fn observe_queue_activate_and_resume(
+        writer: ClientStateWriter,
+        pause: Arc<(Mutex<bool>, Condvar)>,
+        start_sequence: u64,
+        next: NamespaceLease,
+    ) -> RaceControllerResult {
+        let _release = PauseReleaseGuard::new(pause);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let observation = (|| {
+            loop {
+                let pending = writer.pending.lock().map_err(local_error)?;
+                if pending.sequence > start_sequence {
+                    return Ok(true);
+                }
+                drop(pending);
+                if Instant::now() >= deadline {
+                    return Ok(false);
+                }
+                std::thread::yield_now();
+            }
+        })();
+        let activation = writer.activate(next);
+        RaceControllerResult {
+            observation,
+            activation,
+        }
+    }
+    #[derive(Debug, PartialEq, Eq)]
+    struct AssetMemorySnapshot {
+        id: String,
+        conversation_id: String,
+        title: String,
+        category: String,
+        kind: String,
+        time: String,
+        prompt: String,
+        ratio: String,
+        quality: String,
+        model: String,
+        origin: String,
+        width: i32,
+        height: i32,
+        source_path: String,
+        reference_paths: Vec<String>,
+        cutout_done: bool,
+        remove_black_done: bool,
+        upscale_done: bool,
+        is_new: bool,
+        delivery_recoverable: bool,
+        delivery_downloading: bool,
+    }
+    impl From<&AssetData> for AssetMemorySnapshot {
+        fn from(item: &AssetData) -> Self {
+            Self {
+                id: item.id.clone(),
+                conversation_id: item.conversation_id.clone(),
+                title: item.title.clone(),
+                category: item.category.clone(),
+                kind: item.kind.clone(),
+                time: item.time.clone(),
+                prompt: item.prompt.clone(),
+                ratio: item.ratio.clone(),
+                quality: item.quality.clone(),
+                model: item.model.clone(),
+                origin: item.origin.clone(),
+                width: item.width,
+                height: item.height,
+                source_path: item.source_path.clone(),
+                reference_paths: item.reference_paths.clone(),
+                cutout_done: item.cutout_done,
+                remove_black_done: item.remove_black_done,
+                upscale_done: item.upscale_done,
+                is_new: item.is_new,
+                delivery_recoverable: item.delivery_recoverable,
+                delivery_downloading: item.delivery_downloading,
+            }
+        }
+    }
+    #[derive(Debug, PartialEq, Eq)]
+    struct NotificationMemorySnapshot {
+        id: String,
+        title: String,
+        model: String,
+        time: String,
+        reason: String,
+        success: bool,
+        read: bool,
+    }
+    impl From<&NotificationData> for NotificationMemorySnapshot {
+        fn from(item: &NotificationData) -> Self {
+            Self {
+                id: item.id.clone(),
+                title: item.title.clone(),
+                model: item.model.clone(),
+                time: item.time.clone(),
+                reason: item.reason.clone(),
+                success: item.success,
+                read: item.read,
+            }
+        }
+    }
+    #[derive(Debug, PartialEq, Eq)]
+    struct ReplacementMemorySnapshot {
+        generations: Vec<AssetMemorySnapshot>,
+        assets: Vec<AssetMemorySnapshot>,
+        notifications: Vec<NotificationMemorySnapshot>,
+    }
+    fn replacement_memory_snapshot(store: &Store) -> ReplacementMemorySnapshot {
+        ReplacementMemorySnapshot {
+            generations: store
+                .generations
+                .iter()
+                .map(AssetMemorySnapshot::from)
+                .collect(),
+            assets: store
+                .assets
+                .iter()
+                .map(AssetMemorySnapshot::from)
+                .collect(),
+            notifications: store
+                .notifications
+                .iter()
+                .map(NotificationMemorySnapshot::from)
+                .collect(),
+        }
+    }
+    fn failed_delivery_store() -> Store {
+        let mut store = Store::default();
+        store.generations.push(checked_asset(
+            "existing",
+            "owned/existing.png",
+            "existing",
+        ));
+        store
+            .generations
+            .push(checked_asset("failed-1", "failed", "failed prompt"));
+        store
+            .assets
+            .push(checked_asset("prior-asset", "owned/prior.png", "prior"));
+        store
+            .notifications
+            .push(checked_notification("prior-notification", "prior"));
+        store
+    }
+    #[derive(Clone, Copy, Debug)]
+    enum InvalidReplacementCase {
+        EmptyFailedId,
+        WrongCompletedId,
+        EmptyCompletedPath,
+        FailedCompletedPath,
+        MissingCard,
+        AmbiguousCard,
+        NonFailedCard,
+        DuplicateAsset,
+    }
+    fn invalid_replacement_fixture(
+        case: InvalidReplacementCase,
+        completed_path: &str,
+    ) -> (Store, &'static str, AssetData) {
+        let mut store = failed_delivery_store();
+        let mut failed_asset_id = "failed-1";
+        let mut completed = checked_asset("failed-1", completed_path, "completed prompt");
+        match case {
+            InvalidReplacementCase::EmptyFailedId => failed_asset_id = "",
+            InvalidReplacementCase::WrongCompletedId => completed.id = "wrong-id".into(),
+            InvalidReplacementCase::EmptyCompletedPath => completed.source_path = "  ".into(),
+            InvalidReplacementCase::FailedCompletedPath => completed.source_path = "failed".into(),
+            InvalidReplacementCase::MissingCard => {
+                failed_asset_id = "missing";
+                completed.id = "missing".into();
+            }
+            InvalidReplacementCase::AmbiguousCard => {
+                store
+                    .generations
+                    .push(checked_asset("failed-1", "failed", "duplicate failed"));
+            }
+            InvalidReplacementCase::NonFailedCard => {
+                store.generations[1].source_path = "owned/already-complete.png".into();
+            }
+            InvalidReplacementCase::DuplicateAsset => {
+                store.assets.push(checked_asset(
+                    "failed-1",
+                    "owned/duplicate.png",
+                    "duplicate asset",
+                ));
+            }
+        }
+        (store, failed_asset_id, completed)
+    }
+    #[test]
+    fn namespace_checked_store_round_trips_models_and_drafts() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let repo = test_repository_v2();
+        let lease = repo.lease(USER_A, 1, 10);
+        repo.activate(lease.clone()).unwrap();
+        let mut store = Store::default();
+        store.generations.push(checked_asset(
+            "existing-generation",
+            "owned/existing-generation.png",
+            "generation prompt",
+        ));
+        store.assets.push(checked_asset(
+            "existing-asset",
+            "owned/existing-asset.png",
+            "asset prompt",
+        ));
+        store.notifications.push(checked_notification(
+            "existing-notification",
+            "existing title",
+        ));
+        store.prompt_drafts.scene = "owned draft".into();
+        store.prompt_drafts.negative_scene = "owned negative draft".into();
+        store.dismissed_prompt_history.insert("dismissed prompt".into());
+        store.custom_prompts.push("owned custom prompt".into());
+        store.selected_custom_prompts.insert(
+            "scene".into(),
+            BTreeSet::from(["owned custom prompt".into()]),
+        );
+        store
+            .custom_prompt_times
+            .insert("owned custom prompt".into(), "2026-09-04 11:00".into());
+        store.custom_prompt_profiles.insert(
+            "owned custom prompt".into(),
+            CustomPromptProfile {
+                name: "Owned profile".into(),
+                category: "scene".into(),
+                format: "cinematic".into(),
+                negative_prompt: "blur".into(),
+                reference_path: "owned/profile.png".into(),
+                reference_paths: vec!["owned/profile-2.png".into()],
+            },
+        );
+        store.active_canvas_workspace_id = "owned-workspace".into();
+        store.canvas_notes.push(CanvasNoteData {
+            id: "owned-node".into(),
+            content: "owned canvas content".into(),
+            x: 11.0,
+            y: 12.0,
+            ..Default::default()
+        });
+        store.canvas_links.push(CanvasLinkData {
+            id: "owned-link".into(),
+            source_id: "owned-node".into(),
+            target_id: "target-node".into(),
+            flow_reversed: true,
+        });
+        store.canvas_references.push(ReferenceData {
+            id: "owned-reference".into(),
+            source_path: "owned/canvas-reference.png".into(),
+        });
+        store.canvas_workspaces.insert(
+            "existing-workspace".into(),
+            CanvasWorkspaceData {
+                notes: vec![CanvasNoteData {
+                    id: "existing-node".into(),
+                    content: "existing workspace content".into(),
+                    ..Default::default()
+                }],
+                links: Vec::new(),
+                prompt: "existing workspace prompt".into(),
+                references: vec![ReferenceData {
+                    id: "existing-reference".into(),
+                    source_path: "owned/existing-reference.png".into(),
+                }],
+            },
+        );
+        store.legacy_deep_prompt_job_id = "legacy-owned-job".into();
+        store
+            .deep_prompt_jobs_by_owner
+            .insert(USER_A.into(), "owned-job".into());
+        store.deep_prompt_pending_requests_by_owner.insert(
+            USER_A.into(),
+            CreatePromptOptimization {
+                client_request_id: "owned-request-12345678".into(),
+                prompt: "owned pending prompt".into(),
+                run_mode: "auto".into(),
+                focus_mode: "system".into(),
+                max_rounds: 3,
+                target_score: 91,
+            },
+        );
+        store.deep_prompt_bindings.insert(
+            "scene".into(),
+            DeepPromptBinding {
+                chinese: "中文绑定".into(),
+                english: "English binding".into(),
+            },
+        );
+        store.contact_popup_dismissed = true;
+        let state = app.global::<AppState>();
+        state.set_image_model("owned-image-model".into());
+        state.set_reasoning_model("owned-reasoning-model".into());
+        state.set_video_model("owned-video-model".into());
+        state.set_canvas_workflow_prompt("owned\ncanvas prompt".into());
+
+        crate::runtime::local_store::save_local_store_checked_for_namespace(
+            &app,
+            &store,
+            &repo.writer,
+            &lease,
+        )
+        .unwrap();
+
+        let saved = repo
+            .load_client_state_for_namespace(&lease)
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.generations[0].id, "existing-generation");
+        assert_eq!(saved.assets[0].id, "existing-asset");
+        assert_eq!(saved.notifications[0].id, "existing-notification");
+        assert_eq!(saved.image_model, "owned-image-model");
+        assert_eq!(saved.reasoning_model, "owned-reasoning-model");
+        assert_eq!(saved.video_model, "owned-video-model");
+        assert_eq!(saved.prompt_drafts.scene, "owned draft");
+        assert_eq!(saved.prompt_drafts.negative_scene, "owned negative draft");
+        assert!(saved.dismissed_prompt_history.contains("dismissed prompt"));
+        assert_eq!(saved.custom_prompts, ["owned custom prompt"]);
+        assert!(saved.selected_custom_prompts["scene"].contains("owned custom prompt"));
+        assert_eq!(
+            saved.custom_prompt_times["owned custom prompt"],
+            "2026-09-04 11:00"
+        );
+        let saved_profile = &saved.custom_prompt_profiles["owned custom prompt"];
+        assert_eq!(saved_profile.name, "Owned profile");
+        assert_eq!(saved_profile.category, "scene");
+        assert_eq!(saved_profile.format, "cinematic");
+        assert_eq!(saved_profile.negative_prompt, "blur");
+        assert_eq!(saved_profile.reference_path, "owned/profile.png");
+        assert_eq!(saved_profile.reference_paths, ["owned/profile-2.png"]);
+        assert_eq!(saved.active_canvas_workspace_id, "owned-workspace");
+        assert_eq!(saved.canvas_notes[0].content, "owned canvas content");
+        assert!(saved.canvas_links[0].flow_reversed);
+        assert_eq!(
+            saved.canvas_workspaces["owned-workspace"].prompt,
+            "owned canvas prompt"
+        );
+        assert_eq!(
+            saved.canvas_workspaces["owned-workspace"].references[0].id,
+            "owned-reference"
+        );
+        assert_eq!(
+            saved.canvas_workspaces["existing-workspace"].notes[0].id,
+            "existing-node"
+        );
+        assert_eq!(saved.deep_prompt_job_id, "legacy-owned-job");
+        assert_eq!(saved.deep_prompt_jobs_by_owner[USER_A], "owned-job");
+        assert_eq!(
+            saved.deep_prompt_pending_requests_by_owner[USER_A].prompt,
+            "owned pending prompt"
+        );
+        assert_eq!(saved.deep_prompt_bindings["scene"].english, "English binding");
+        assert!(saved.contact_popup_dismissed);
+    }
+    #[test]
+    fn namespace_checked_generated_assets_preserve_user_partition_and_device_preferences() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let repo = test_repository_v2();
+        let a = repo.lease(USER_A, 1, 10);
+        let b = repo.lease(USER_B, 1, 20);
+        repo.activate(b.clone()).unwrap();
+        repo.persist_client_state_checked_for_namespace(&b, store_with_asset("shared-id"))
+            .unwrap();
+        repo.persist_device_settings_checked(settings()).unwrap();
+        repo.save_selected_group(USER_A, "device-owned", GROUP_A)
+            .unwrap();
+        repo.activate(a.clone()).unwrap();
+        let mut store = Store::default();
+        store.dismissed_prompt_history.insert("reveal me".into());
+
+        crate::runtime::local_store::persist_generated_asset_checked_for_namespace(
+            &app,
+            &mut store,
+            &repo.writer,
+            &a,
+            checked_asset("shared-id", "owned/generated.png", "reveal me"),
+            checked_notification("same", "A generated"),
+            true,
+            Some("reveal me"),
+        )
+        .unwrap();
+        repo.save_selected_group(USER_A, "device-owned", GROUP_B)
+            .unwrap();
+        crate::runtime::local_store::persist_generated_asset_checked_for_namespace(
+            &app,
+            &mut store,
+            &repo.writer,
+            &a,
+            checked_asset("asset-only", "owned/asset-only.png", "asset only"),
+            checked_notification("asset-only-notification", "A asset only"),
+            false,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            store
+                .assets
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["asset-only", "shared-id"]
+        );
+        assert_eq!(
+            store
+                .generations
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["shared-id"]
+        );
+        assert!(!store.dismissed_prompt_history.contains("reveal me"));
+        let saved_a = repo.load_client_state_for_namespace(&a).unwrap().unwrap();
+        assert_eq!(
+            saved_a
+                .assets
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["asset-only", "shared-id"]
+        );
+        assert_eq!(
+            saved_a
+                .generations
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["shared-id"]
+        );
+        assert_eq!(saved_a.notifications.len(), 2);
+        let saved_b = repo.load_client_state_for_namespace(&b).unwrap().unwrap();
+        assert_eq!(saved_b.assets[0].id, "shared-id");
+        assert_eq!(saved_b.assets[0].title, "shared-id");
+        assert_eq!(saved_b.notifications[0].title, "shared-id");
+        assert_eq!(repo.load_device_settings().unwrap(), Some(settings()));
+        assert_eq!(
+            repo.load_selected_group(USER_A, "device-owned")
+                .unwrap()
+                .as_deref(),
+            Some(GROUP_B)
+        );
+    }
+    #[test]
+    fn namespace_checked_generated_asset_sql_failure_rolls_back_memory_and_both_users() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let repo = test_repository_v2();
+        let a = repo.lease(USER_A, 1, 10);
+        let b = repo.lease(USER_B, 1, 20);
+        repo.activate(b.clone()).unwrap();
+        repo.persist_client_state_checked_for_namespace(&b, store_with_asset("durable-b"))
+            .unwrap();
+        repo.activate(a.clone()).unwrap();
+        repo.persist_client_state_checked_for_namespace(&a, store_with_asset("durable-a"))
+            .unwrap();
+        let before_a = durable_json(&repo, &a);
+        let before_b = durable_json(&repo, &b);
+        reject_notification_inserts(&repo);
+        let mut store = Store::default();
+        store.assets.push(checked_asset("prior-local", "owned/prior.png", "prior"));
+        store.dismissed_prompt_history.insert("reveal me".into());
+
+        let error = crate::runtime::local_store::persist_generated_asset_checked_for_namespace(
+            &app,
+            &mut store,
+            &repo.writer,
+            &a,
+            checked_asset("rejected", "owned/rejected.png", "reveal me"),
+            checked_notification("rejected-notification", "rejected"),
+            true,
+            Some("reveal me"),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error.downcast_ref::<ClientStateWriteError>(),
+            Some(ClientStateWriteError::LocalState { .. })
+        ));
+        assert_eq!(
+            store
+                .assets
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["prior-local"]
+        );
+        assert!(store.generations.is_empty());
+        assert!(store.notifications.is_empty());
+        assert!(store.dismissed_prompt_history.contains("reveal me"));
+        assert_eq!(durable_json(&repo, &a), before_a);
+        assert_eq!(durable_json(&repo, &b), before_b);
+    }
+    #[test]
+    fn namespace_checked_stale_leases_roll_back_mutation_and_leave_durable_users_unchanged() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let repo = test_repository_v2();
+        let a = repo.lease(USER_A, 1, 10);
+        let b = repo.lease(USER_B, 1, 20);
+        repo.activate(b.clone()).unwrap();
+        repo.persist_client_state_checked_for_namespace(&b, store_with_asset("durable-b"))
+            .unwrap();
+        repo.activate(a.clone()).unwrap();
+        repo.persist_client_state_checked_for_namespace(&a, store_with_asset("durable-a"))
+            .unwrap();
+        let before_a = durable_json(&repo, &a);
+        let before_b = durable_json(&repo, &b);
+        for (index, stale) in [
+            repo.lease(USER_B, 1, 10),
+            repo.lease(USER_A, 2, 10),
+            repo.lease(USER_A, 1, 11),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut store = Store::default();
+            let error = crate::runtime::local_store::persist_generated_asset_checked_for_namespace(
+                &app,
+                &mut store,
+                &repo.writer,
+                &stale,
+                checked_asset(&format!("stale-{index}"), "owned/stale.png", "stale"),
+                checked_notification(&format!("stale-notification-{index}"), "stale"),
+                true,
+                None,
+            )
+            .unwrap_err();
+            assert_stale_anyhow(error);
+            assert!(store.assets.is_empty());
+            assert!(store.generations.is_empty());
+            assert!(store.notifications.is_empty());
+        }
+        repo.deactivate(&a).unwrap();
+        let mut store = Store::default();
+        let error = crate::runtime::local_store::persist_generated_asset_checked_for_namespace(
+            &app,
+            &mut store,
+            &repo.writer,
+            &a,
+            checked_asset("inactive", "owned/inactive.png", "inactive"),
+            checked_notification("inactive-notification", "inactive"),
+            false,
+            None,
+        )
+        .unwrap_err();
+        assert_stale_anyhow(error);
+        assert!(store.assets.is_empty());
+        assert!(store.notifications.is_empty());
+        assert_eq!(durable_json(&repo, &a), before_a);
+        assert_eq!(durable_json(&repo, &b), before_b);
+    }
+    #[test]
+    fn namespace_checked_accepted_command_race_rolls_back_after_activation_changes() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let repo = paused_test_writer();
+        let a = repo.lease(USER_A, 1, 10);
+        let b = repo.lease(USER_B, 2, 20);
+        repo.activate(a.clone()).unwrap();
+        let start_sequence = repo.pending.lock().unwrap().sequence;
+        let writer = repo.writer.clone();
+        let next = b.clone();
+        let pause = Arc::clone(&repo.pause);
+        let control = std::thread::spawn(move || {
+            observe_queue_activate_and_resume(writer, pause, start_sequence, next)
+        });
+        let mut store = Store::default();
+        store.dismissed_prompt_history.insert("race prompt".into());
+
+        let result = crate::runtime::local_store::persist_generated_asset_checked_for_namespace(
+            &app,
+            &mut store,
+            &repo.writer,
+            &a,
+            checked_asset("race", "owned/race.png", "race prompt"),
+            checked_notification("race-notification", "race"),
+            true,
+            Some("race prompt"),
+        );
+        let controller = control.join().unwrap();
+        let error = result.unwrap_err();
+
+        assert_eq!(controller.observation, Ok(true));
+        assert_eq!(controller.activation, Ok(()));
+        assert_stale_anyhow(error);
+        assert!(store.assets.is_empty());
+        assert!(store.generations.is_empty());
+        assert!(store.notifications.is_empty());
+        assert!(store.dismissed_prompt_history.contains("race prompt"));
+        assert!(repo.load_client_state_for_namespace(&a).unwrap().is_none());
+        assert!(repo.load_client_state_for_namespace(&b).unwrap().is_none());
+    }
+    #[test]
+    fn namespace_checked_race_controller_failure_resumes_and_terminates_owned_fixture() {
+        let repo = paused_test_writer();
+        let a = repo.lease(USER_A, 1, 10);
+        let b = repo.lease(USER_B, 2, 20);
+        repo.activate(a).unwrap();
+        let pending = Arc::clone(&repo.pending);
+        assert!(std::thread::spawn(move || {
+            let _guard = pending.lock().unwrap();
+            panic!("poison the fixture pending mutex");
+        })
+        .join()
+        .is_err());
+        let writer = repo.writer.clone();
+        let pause = Arc::clone(&repo.pause);
+        let (outcome_sender, outcome_receiver) = mpsc::channel();
+        let control = std::thread::spawn(move || {
+            let outcome = observe_queue_activate_and_resume(writer, pause, 0, b);
+            let _ = outcome_sender.send(outcome);
+        });
+
+        let controller = outcome_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        control.join().unwrap();
+        assert!(matches!(
+            controller.observation,
+            Err(ClientStateWriteError::LocalState { .. })
+        ));
+        assert!(matches!(
+            controller.activation,
+            Err(ClientStateWriteError::LocalState { .. })
+        ));
+        assert!(!*repo.pause.0.lock().unwrap());
+
+        let (dropped_sender, dropped_receiver) = mpsc::channel();
+        let dropper = std::thread::spawn(move || {
+            drop(repo);
+            let _ = dropped_sender.send(());
+        });
+        dropped_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        dropper.join().unwrap();
+    }
+    #[test]
+    fn namespace_checked_pause_release_guard_recovers_a_poisoned_pause_mutex() {
+        let pause = Arc::new((Mutex::new(true), Condvar::new()));
+        let poison = Arc::clone(&pause);
+        assert!(std::thread::spawn(move || {
+            let _guard = poison.0.lock().unwrap();
+            panic!("poison the pause mutex");
+        })
+        .join()
+        .is_err());
+
+        drop(PauseReleaseGuard::new(Arc::clone(&pause)));
+
+        let paused = pause
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(!*paused);
+    }
+    #[test]
+    fn namespace_checked_failed_delivery_replacement_persists_or_rolls_back_atomically() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let repo = test_repository_v2();
+        let a = repo.lease(USER_A, 1, 10);
+        repo.activate(a.clone()).unwrap();
+        let completed_path = repo.directory.path().join("completed.png");
+        fs::write(&completed_path, b"verified fixture bytes").unwrap();
+        let mut store = failed_delivery_store();
+
+        crate::runtime::local_store::replace_failed_delivery_asset_checked_for_namespace(
+            &app,
+            &mut store,
+            &repo.writer,
+            &a,
+            "failed-1",
+            checked_asset(
+                "failed-1",
+                completed_path.to_str().unwrap(),
+                "completed prompt",
+            ),
+            checked_notification("completed-notification", "completed"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            store.generations[1].source_path,
+            completed_path.to_str().unwrap()
+        );
+        assert_eq!(store.assets[0].id, "failed-1");
+        assert_eq!(store.notifications[0].id, "completed-notification");
+        let saved = repo.load_client_state_for_namespace(&a).unwrap().unwrap();
+        assert_eq!(
+            saved.generations[1].source_path,
+            completed_path.to_str().unwrap()
+        );
+        assert_eq!(saved.assets[0].id, "failed-1");
+        assert_eq!(saved.notifications[0].id, "completed-notification");
+        assert!(completed_path.is_file());
+        let before = durable_json(&repo, &a);
+        store
+            .generations
+            .push(checked_asset("failed-2", "failed", "second failed"));
+        let memory_before_failure = replacement_memory_snapshot(&store);
+        reject_notification_inserts(&repo);
+        let error =
+            crate::runtime::local_store::replace_failed_delivery_asset_checked_for_namespace(
+                &app,
+                &mut store,
+                &repo.writer,
+                &a,
+                "failed-2",
+                checked_asset(
+                    "failed-2",
+                    completed_path.to_str().unwrap(),
+                    "second completed",
+                ),
+                checked_notification("rejected-replacement-notification", "rejected"),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<ClientStateWriteError>(),
+            Some(ClientStateWriteError::LocalState { .. })
+        ));
+        assert_eq!(replacement_memory_snapshot(&store), memory_before_failure);
+        assert_eq!(durable_json(&repo, &a), before);
+        assert!(completed_path.is_file());
+    }
+    #[test]
+    fn namespace_checked_failed_delivery_invalid_inputs_do_not_enqueue_or_mutate() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let repo = test_repository_v2();
+        let a = repo.lease(USER_A, 1, 10);
+        repo.activate(a.clone()).unwrap();
+        repo.persist_client_state_checked_for_namespace(&a, store_with_asset("durable-a"))
+            .unwrap();
+        let durable_before = durable_json(&repo, &a);
+        let completed_path = repo.directory.path().join("completed.png");
+        fs::write(&completed_path, b"verified fixture bytes").unwrap();
+
+        for case in [
+            InvalidReplacementCase::EmptyFailedId,
+            InvalidReplacementCase::WrongCompletedId,
+            InvalidReplacementCase::EmptyCompletedPath,
+            InvalidReplacementCase::FailedCompletedPath,
+            InvalidReplacementCase::MissingCard,
+            InvalidReplacementCase::AmbiguousCard,
+            InvalidReplacementCase::NonFailedCard,
+            InvalidReplacementCase::DuplicateAsset,
+        ] {
+            let (mut store, failed_asset_id, completed) =
+                invalid_replacement_fixture(case, completed_path.to_str().unwrap());
+            let memory_before = replacement_memory_snapshot(&store);
+            let sequence_before = repo.pending.lock().unwrap().sequence;
+            let result =
+                crate::runtime::local_store::replace_failed_delivery_asset_checked_for_namespace(
+                    &app,
+                    &mut store,
+                    &repo.writer,
+                    &a,
+                    failed_asset_id,
+                    completed,
+                    checked_notification("must-not-enqueue", "invalid"),
+                );
+
+            assert!(result.is_err(), "case {case:?}");
+            assert_eq!(
+                replacement_memory_snapshot(&store),
+                memory_before,
+                "case {case:?}"
+            );
+            assert_eq!(
+                repo.pending.lock().unwrap().sequence,
+                sequence_before,
+                "case {case:?}"
+            );
+            assert_eq!(durable_json(&repo, &a), durable_before, "case {case:?}");
+            assert!(completed_path.is_file(), "case {case:?}");
+        }
+    }
+    #[test]
+    fn namespace_checked_old_no_lease_save_remains_closed_with_an_active_fixture_writer() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let repo = test_repository_v2();
+        let a = repo.lease(USER_A, 1, 10);
+        repo.activate(a.clone()).unwrap();
+        let mut store = Store::default();
+        store.assets.push(checked_asset(
+            "must-not-save",
+            "owned/closed.png",
+            "closed",
+        ));
+
+        assert!(
+            crate::runtime::local_store::save_local_store_checked(&app, &store).is_err()
+        );
+        assert!(repo.load_client_state_for_namespace(&a).unwrap().is_none());
     }
     fn settings() -> DeviceSettings {
         DeviceSettings {

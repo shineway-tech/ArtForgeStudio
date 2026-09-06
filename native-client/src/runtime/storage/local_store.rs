@@ -763,6 +763,17 @@ pub(super) fn save_local_store_checked(_app: &AppWindow, _store: &Store) -> Resu
     anyhow::bail!("用户命名空间尚未激活")
 }
 
+pub(super) fn save_local_store_checked_for_namespace(
+    app: &AppWindow,
+    store: &Store,
+    writer: &ClientStateWriter,
+    lease: &NamespaceLease,
+) -> Result<()> {
+    writer
+        .persist_client_state_checked_for_namespace(lease, local_store_data(app, store))
+        .map_err(Into::into)
+}
+
 fn local_store_data(app: &AppWindow, store: &Store) -> LocalStoreData {
     let state = app.global::<AppState>();
     let active_canvas_workspace_id =
@@ -822,6 +833,26 @@ pub(super) fn persist_generated_asset_checked(
         include_in_generations,
         reveal_prompt,
         |store| save_local_store_checked(app, store),
+    )
+}
+
+pub(super) fn persist_generated_asset_checked_for_namespace(
+    app: &AppWindow,
+    store: &mut Store,
+    writer: &ClientStateWriter,
+    lease: &NamespaceLease,
+    item: AssetData,
+    notification: NotificationData,
+    include_in_generations: bool,
+    reveal_prompt: Option<&str>,
+) -> Result<()> {
+    persist_generated_asset_with(
+        store,
+        item,
+        notification,
+        include_in_generations,
+        reveal_prompt,
+        |pending| save_local_store_checked_for_namespace(app, pending, writer, lease),
     )
 }
 
@@ -944,6 +975,24 @@ where
     }
 
     Ok(())
+}
+
+pub(super) fn replace_failed_delivery_asset_checked_for_namespace(
+    app: &AppWindow,
+    store: &mut Store,
+    writer: &ClientStateWriter,
+    lease: &NamespaceLease,
+    failed_asset_id: &str,
+    completed_asset: AssetData,
+    notification: NotificationData,
+) -> Result<()> {
+    replace_failed_delivery_asset_with(
+        store,
+        failed_asset_id,
+        completed_asset,
+        notification,
+        |pending| save_local_store_checked_for_namespace(app, pending, writer, lease),
+    )
 }
 
 #[cfg(test)]
