@@ -101,13 +101,27 @@ pub(super) fn start_asset_regeneration(
     context: AppContext,
     item: AssetData,
 ) -> bool {
+    let is_canvas_result = item.category == "other";
+    if is_canvas_result && category_is_generating(&context, &current_workspace_category(app)) {
+        app.global::<AppState>().set_viewer_message("当前已有生成任务，请等待完成后再试".into());
+        return false;
+    }
     if !restore_asset_regeneration_inputs(app, &context, &item) {
         return false;
     }
     let state = app.global::<AppState>();
+    let destination = if is_canvas_result {
+        let source_node_id = state.invoke_create_canvas_generation_source(item.prompt.clone().into(), 0.0, 0.0);
+        if source_node_id.is_empty() {
+            return false;
+        }
+        GenerationDestination::Canvas { source_node_id: source_node_id.to_string() }
+    } else {
+        GenerationDestination::Gallery
+    };
     state.set_viewer_message("".into());
     state.set_viewer_open(false);
-    start_generation(
+    start_generation_for_destination(
         app,
         context,
         Some(item.prompt),
@@ -115,6 +129,7 @@ pub(super) fn start_asset_regeneration(
         None,
         None,
         ExistingGenerationPolicy::KeepExisting,
+        destination,
     );
     true
 }
@@ -155,7 +170,21 @@ fn restore_asset_regeneration_inputs(
         });
     }
 
-    state.set_asset_type(category.clone().into());
+    // Unclassified AI creations must never fall through to the default character gallery.
+    let is_canvas_result = item.category == "other";
+    if is_canvas_result {
+        state.invoke_open_canvas_workspace(DEFAULT_CANVAS_WORKSPACE_ID.into());
+        state.set_canvas_workflow_id("".into());
+        state.set_canvas_workflow_title("".into());
+        state.set_canvas_workflow_template("".into());
+        state.set_canvas_workflow_hint("".into());
+        state.set_canvas_workflow_artwork(Image::default());
+        state.set_canvas_workflow_prompt(item.prompt.clone().into());
+        state.set_canvas_tool("select".into());
+    } else {
+        state.set_asset_type(category.clone().into());
+        state.set_current_conversation_id(item.conversation_id.clone().into());
+    }
     if !item.ratio.trim().is_empty() {
         state.set_ratio(item.ratio.clone().into());
     }
@@ -165,12 +194,16 @@ fn restore_asset_regeneration_inputs(
     if !item.kind.trim().is_empty() {
         state.set_mode(item.kind.clone().into());
     }
-    state.set_current_conversation_id(item.conversation_id.clone().into());
     {
         let mut store = context.store.borrow_mut();
-        *references_for_category_mut(&mut store.references, &category) = references;
-        push_references(app, &store);
-        push_generations(app, &store);
+        if is_canvas_result {
+            store.canvas_references = references;
+            navigate_to_with_store(app, &store, "canvas");
+        } else {
+            *references_for_category_mut(&mut store.references, &category) = references;
+            push_references(app, &store);
+            push_generations(app, &store);
+        }
     }
     sync_generation_state_for_current_category(context, app);
     true
@@ -334,6 +367,33 @@ mod deep_prompt_tests {
         assert_eq!(asset.source_path, "generated.png");
         assert_eq!(asset.ratio, "16:9");
         assert_eq!(asset.reference_paths, references);
+    }
+
+    #[test]
+    fn regenerating_an_ai_creation_keeps_workbench_inputs_and_uses_canvas() {
+        use super::*;
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let context = AppContext::default();
+        wire_infinite_canvas_callbacks(&app, context.clone());
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_page("assets".into());
+        state.set_asset_type("scene".into());
+        state.set_prompt("workbench draft".into());
+        context.store.borrow_mut().references.character.push(ReferenceData {
+            id: "keep-character-reference".into(), source_path: String::new(),
+        });
+        insert_canvas_generated_asset(&mut context.store.borrow_mut(), "AI result", "AI prompt",
+            "game", "2K", "test-model", "generation", "ai-conversation", "", "result.png",
+            &[], 2560, 1440, false);
+        let item = context.store.borrow().assets[0].clone();
+        assert!(restore_asset_regeneration_inputs(&app, &context, &item));
+        assert_eq!(state.get_page(), "canvas");
+        assert_eq!(state.get_prompt(), "workbench draft");
+        assert_eq!(state.get_canvas_workflow_prompt(), "AI prompt");
+        assert_eq!(context.store.borrow().references.character.len(), 1);
+        assert!(context.store.borrow().generations.is_empty());
     }
 }
 

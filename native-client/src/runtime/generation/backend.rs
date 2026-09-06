@@ -455,7 +455,7 @@ pub(super) fn start_backend_generation(
         })
     });
 
-    let conversation_id = if create_conversation {
+    let conversation_id = if create_conversation || matches!(&destination, GenerationDestination::Canvas { .. }) {
         Uuid::new_v4().to_string()
     } else {
         let current = state.get_current_conversation_id().to_string();

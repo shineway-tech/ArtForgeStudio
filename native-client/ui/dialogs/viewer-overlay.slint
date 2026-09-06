@@ -6,6 +6,8 @@ import { ViewerContextMenuItem } from "../components/viewer-context-menu-item.sl
 import { BuildingDerivationPreset } from "../components/building-derivation-preset.slint";
 import { ViewerNavButton } from "../components/viewer-nav-button.slint";
 import { AppTheme } from "../theme.slint";
+import { FreeCanvasPage } from "../pages/free-canvas-page.slint";
+import { DialogCloseButton } from "../components/dialog-close-button.slint";
 
 component ViewerInfoText inherits Text {
     in property <string> value;
@@ -102,6 +104,7 @@ component ViewerToolActionButton inherits Rectangle {
 }
 
 export component ViewerOverlay {
+    property <bool> import-picker-open: false;
     property <length> viewer-message-width: min(360px, max(220px, root.width - 80px));
     property <bool> detail-collapsed: false;
     property <bool> image-fullscreen: false;
@@ -133,6 +136,10 @@ export component ViewerOverlay {
             focus-on-click: false;
             init => { self.focus(); }
             key-pressed(event) => {
+                if root.import-picker-open {
+                    if event.text == Key.Escape { root.import-picker-open = false; }
+                    return accept;
+                }
                 if event.modifiers.control
                     || event.modifiers.alt
                     || event.modifiers.meta
@@ -375,9 +382,9 @@ export component ViewerOverlay {
                 ViewerFooterActionButton {
                     horizontal-stretch: 1;
                     icon: @image-url("../../assets/icons/canvas.svg");
-                    label: AppState.en ? "Import to Canvas" : "导入无限画布";
+                    label: AppState.en ? "Import" : "导入";
                     foreground: AppTheme.custom-prompt-name-2;
-                    clicked => { AppState.viewer-import-to-canvas(); }
+                    clicked => { root.import-picker-open = true; }
                 }
                 ViewerFooterActionButton {
                     horizontal-stretch: 1;
@@ -658,10 +665,10 @@ export component ViewerOverlay {
                     }
                 }
                 ViewerContextMenuItem {
-                    text: AppState.en ? "Import to Canvas" : "导入无限画布";
+                    text: AppState.en ? "Import" : "导入";
                     clicked => {
                         root.context-menu-open = false;
-                        AppState.viewer-import-to-canvas();
+                        root.import-picker-open = true;
                     }
                 }
                 ViewerContextMenuItem {
@@ -671,6 +678,41 @@ export component ViewerOverlay {
                         root.context-menu-open = false;
                         AppState.request-delete-asset(AppState.viewer-id);
                     }
+                }
+            }
+        }
+        if root.import-picker-open: Rectangle {
+            background: #00000088;
+            TouchArea { clicked => { root.import-picker-open = false; } }
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: min(1180px, parent.width - 48px);
+                height: min(720px, parent.height - 48px);
+                background: AppTheme.bg;
+                border-radius: 16px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+                clip: true;
+                TouchArea {}
+                FreeCanvasPage {
+                    width: parent.width;
+                    height: parent.height;
+                    import-mode: true;
+                    import-workflow(id, title, template, hint, artwork) => {
+                        root.import-picker-open = false;
+                        if id == "infinite-canvas" {
+                            AppState.viewer-import-to-canvas();
+                        } else {
+                            AppState.canvas-workflow-artwork = artwork;
+                            AppState.viewer-open-creation-workflow(id, title, template, hint);
+                        }
+                    }
+                }
+                DialogCloseButton {
+                    x: parent.width - self.width - 20px;
+                    y: 20px;
+                    clicked => { root.import-picker-open = false; }
                 }
             }
         }

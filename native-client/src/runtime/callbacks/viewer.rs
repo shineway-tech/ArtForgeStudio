@@ -635,21 +635,18 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
             let state = app.global::<AppState>();
             let is_scene_workflow = matches!(
                 workflow_id.as_str(),
-                "upgrade-evolution" | "building-derivation"
+                "plant-growth" | "monster-generator" | "upgrade-evolution" | "building-derivation"
             );
             let is_character_workflow = matches!(
                 workflow_id.as_str(),
                 "character-age" | "character-outfit" | "character-body"
             );
-            if !is_scene_workflow
-                && (state.get_viewer_category().as_str() != "character"
-                    || !is_character_workflow)
-            {
+            if !is_scene_workflow && !is_character_workflow {
                 state.set_viewer_message(
                     if state.get_language().as_str() == "en" {
-                        "This shortcut is only available for character images"
+                        "Unsupported import workflow"
                     } else {
-                        "该快捷入口仅适用于角色图片"
+                        "不支持的导入方式"
                     }
                     .into(),
                 );

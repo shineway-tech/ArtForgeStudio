@@ -3,6 +3,8 @@ import { AppTheme } from "../theme.slint";
 import { BuildingDerivationPreset } from "../components/building-derivation-preset.slint";
 
 component FreeCanvasCard {
+    in property <bool> import-mode: false;
+    callback import-workflow(string, string, string, string, image);
     in property <string> card-id;
     in property <string> title;
     in property <string> description;
@@ -167,6 +169,12 @@ component FreeCanvasCard {
             height: parent.height;
             mouse-cursor: pointer;
             clicked => {
+                if root.import-mode {
+                    root.import-workflow(root.card-id, root.title,
+                        AppState.en ? root.prompt-en : root.prompt-zh,
+                        AppState.en ? root.hint-en : root.hint-zh, root.artwork);
+                    return;
+                }
                 AppState.open-canvas-workspace(root.card-id);
                 AppState.canvas-workflow-artwork = root.artwork;
                 if root.opens-canvas {
@@ -193,6 +201,8 @@ component FreeCanvasCard {
 }
 
 export component FreeCanvasPage {
+    in property <bool> import-mode: false;
+    callback import-workflow(string, string, string, string, image);
     function cards-width() -> length {
         return min(1238px, root.width - 48px);
     }
@@ -217,7 +227,7 @@ export component FreeCanvasPage {
             y: 22px;
             width: parent.width - 64px;
             height: 34px;
-            text: AppState.en ? "Free Canvas" : "自由画布";
+            text: root.import-mode ? (AppState.en ? "Import image" : "选择导入方式") : (AppState.en ? "Free Canvas" : "自由画布");
             color: AppTheme.text;
             font-size: 25px;
             font-weight: 600;
@@ -228,7 +238,7 @@ export component FreeCanvasPage {
             y: 59px;
             width: parent.width - 64px;
             height: 22px;
-            text: AppState.en ? "Choose a creative workflow, or open the infinite canvas" : "选择一种创作方式，或进入无限画布自由编排";
+            text: root.import-mode ? (AppState.en ? "Choose a workflow to use this image as a reference, or place it on the infinite canvas" : "选择创作卡片，将当前图片用作参考图；也可以导入无限画布") : (AppState.en ? "Choose a creative workflow, or open the infinite canvas" : "选择一种创作方式，或进入无限画布自由编排");
             color: AppTheme.muted;
             font-size: 13px;
             font-weight: 400;
@@ -248,6 +258,8 @@ export component FreeCanvasPage {
                 width: root.card-width();
                 height: root.card-height();
                 card-id: "plant-growth";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
                 title: AppState.en ? "Plant Growth Generator" : "植物生成器";
                 description: AppState.en ? "Generate adjustable growth stages" : "生成可调数量的植物生长阶段";
                 category: "scene";
@@ -263,6 +275,8 @@ export component FreeCanvasPage {
                 width: root.card-width();
                 height: root.card-height();
                 card-id: "character-outfit";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
                 title: AppState.en ? "Character Outfit Swap" : "角色换装";
                 description: AppState.en ? "Keep the character, vary the outfits" : "保持角色一致并生成可调数量的服装";
                 artwork: @image-url("../../assets/free-canvas/character-outfit.png");
@@ -277,6 +291,8 @@ export component FreeCanvasPage {
                 width: root.card-width();
                 height: root.card-height();
                 card-id: "monster-generator";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
                 title: AppState.en ? "Monster Generator" : "怪物生成器";
                 description: AppState.en ? "Expand one motif into multiple monsters" : "根据原型扩展可调数量的怪物设计";
                 artwork: @image-url("../../assets/free-canvas/monster-generator.png");
@@ -291,6 +307,8 @@ export component FreeCanvasPage {
                 width: root.card-width();
                 height: root.card-height();
                 card-id: "upgrade-evolution";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
                 title: AppState.en ? "Upgrade Evolution" : "升级进化";
                 description: AppState.en ? "Evolve one subject from basic to ultimate" : "生成主体从低级到顶级的连续进化";
                 category: "scene";
@@ -306,6 +324,8 @@ export component FreeCanvasPage {
                 width: root.card-width();
                 height: root.card-height();
                 card-id: "character-age";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
                 title: AppState.en ? "Character Age Progression" : "角色年龄变化";
                 description: AppState.en ? "Generate adjustable life stages" : "生成可调数量的角色年龄阶段";
                 artwork: @image-url("../../assets/free-canvas/character-age.png");
@@ -320,6 +340,8 @@ export component FreeCanvasPage {
                 width: root.card-width();
                 height: root.card-height();
                 card-id: "character-body";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
                 title: AppState.en ? "Character Body Variations" : "角色体型修改器";
                 description: AppState.en ? "Explore adjustable body silhouettes" : "保持角色身份并生成可调数量的体型";
                 artwork: @image-url("../../assets/free-canvas/character-body.png");
@@ -334,6 +356,8 @@ export component FreeCanvasPage {
                 width: root.card-width();
                 height: root.card-height();
                 card-id: "building-derivation";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
                 title: AppState.en ? "Building Derivation" : "建筑衍生器";
                 description: AppState.en ? "Same style, different building functions" : "从一张建筑图衍生同风格的功能建筑";
                 category: "scene";
@@ -349,6 +373,8 @@ export component FreeCanvasPage {
                 width: root.card-width();
                 height: root.card-height();
                 card-id: "infinite-canvas";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
                 title: AppState.en ? "Infinite Canvas" : "无限画布";
                 description: AppState.en ? "Connect images, text and ideas freely" : "自由连接图片、文字与灵感";
                 opens-canvas: true;

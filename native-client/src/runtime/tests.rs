@@ -5867,14 +5867,10 @@ mod tests {
     }
 
     #[test]
-    fn viewer_can_import_the_current_image_to_canvas_from_footer_or_context_menu() {
-        let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+    fn canvas_import_uses_board_image_nodes_and_focuses_selection() {
         let canvas = include_str!("callbacks/infinite_canvas.rs");
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
 
-        assert_eq!(viewer.matches("AppState.viewer-import-to-canvas();").count(), 2);
-        assert_eq!(viewer.matches("Import to Canvas").count(), 2);
-        assert_eq!(viewer.matches("导入无限画布").count(), 2);
         assert!(canvas.contains("pub(super) fn import_viewer_image_to_canvas"));
         assert!(canvas.contains("kind: \"board-image\".into()"));
         assert!(canvas.contains("app_data_dir().join(\"canvas\").join(\"uploads\")"));
@@ -6069,6 +6065,40 @@ mod tests {
         assert_eq!(store.canvas_references[0].source_path, source_path.display().to_string());
         drop(store);
         let _ = fs::remove_file(source_path);
+    }
+
+    #[test]
+    fn viewer_import_picker_accepts_every_workflow_for_unclassified_images() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let context = AppContext::default();
+        wire_viewer_callbacks(&app, context.clone());
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        let source_path = std::env::temp_dir().join(format!("elunvi-import-{}.png", Uuid::new_v4()));
+        image::RgbaImage::new(2, 2).save(&source_path).unwrap();
+        for id in ["character-outfit", "character-age", "character-body", "plant-growth",
+            "monster-generator", "upgrade-evolution", "building-derivation"] {
+            state.set_page("assets".into());
+            state.set_viewer_open(true);
+            state.set_viewer_category("other".into());
+            state.set_viewer_source_path(source_path.display().to_string().into());
+            state.invoke_viewer_open_creation_workflow(id.into(), "title".into(), "template".into(), "hint".into());
+            assert_eq!(state.get_page(), "canvas", "workflow {id}");
+            assert!(!state.get_viewer_open());
+            let store = context.store.borrow();
+            assert_eq!(store.active_canvas_workspace_id, id);
+            assert_eq!(store.canvas_references.len(), 1);
+            assert_eq!(store.canvas_references[0].source_path, source_path.display().to_string());
+        }
+        state.set_page("assets".into());
+        state.set_viewer_open(true);
+        state.set_viewer_source_path(source_path.display().to_string().into());
+        state.invoke_viewer_open_creation_workflow("unknown".into(), "".into(), "".into(), "".into());
+        assert_eq!(state.get_page(), "assets");
+        assert!(state.get_viewer_open());
+        assert_eq!(context.store.borrow().active_canvas_workspace_id, "building-derivation");
+        fs::remove_file(source_path).unwrap();
     }
 
     #[test]
