@@ -3,6 +3,7 @@ import { AppState } from "../app-state.slint";
 import { PillButton } from "../components/pill-button.slint";
 import { ProgressSpinner } from "../components/progress-spinner.slint";
 import { ViewerContextMenuItem } from "../components/viewer-context-menu-item.slint";
+import { BuildingDerivationPreset } from "../components/building-derivation-preset.slint";
 import { ViewerNavButton } from "../components/viewer-nav-button.slint";
 import { AppTheme } from "../theme.slint";
 
@@ -114,7 +115,7 @@ export component ViewerOverlay {
     property <length> context-menu-x: 0px;
     property <length> context-menu-y: 0px;
     property <length> context-menu-width: 188px;
-    property <length> context-menu-height: AppState.viewer-category == "character" ? 374px : 254px;
+    property <length> context-menu-height: AppState.viewer-category == "character" ? 414px : 294px;
     property <bool> image-drag-armed: false;
     property <bool> image-system-drag-started: false;
     property <length> image-pressed-x: 0px;
@@ -619,6 +620,19 @@ export component ViewerOverlay {
                             AppState.en
                                 ? "Optionally describe the upgrade direction"
                                 : "可补充升级方向，例如：逐步增加水晶装甲与魔法能量"
+                        );
+                    }
+                }
+                ViewerContextMenuItem {
+                    text: AppState.en ? "Import Building Derivation" : "导入建筑衍生器";
+                    clicked => {
+                        root.context-menu-open = false;
+                        AppState.canvas-workflow-artwork = BuildingDerivationPreset.artwork;
+                        AppState.viewer-open-creation-workflow(
+                            "building-derivation",
+                            AppState.en ? "Building Derivation" : "建筑衍生器",
+                            AppState.en ? BuildingDerivationPreset.prompt-en : BuildingDerivationPreset.prompt-zh,
+                            AppState.en ? BuildingDerivationPreset.hint-en : BuildingDerivationPreset.hint-zh
                         );
                     }
                 }

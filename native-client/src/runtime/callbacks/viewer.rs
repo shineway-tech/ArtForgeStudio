@@ -633,12 +633,15 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
                 return;
             };
             let state = app.global::<AppState>();
-            let is_upgrade_evolution = workflow_id.as_str() == "upgrade-evolution";
+            let is_scene_workflow = matches!(
+                workflow_id.as_str(),
+                "upgrade-evolution" | "building-derivation"
+            );
             let is_character_workflow = matches!(
                 workflow_id.as_str(),
                 "character-age" | "character-outfit" | "character-body"
             );
-            if !is_upgrade_evolution
+            if !is_scene_workflow
                 && (state.get_viewer_category().as_str() != "character"
                     || !is_character_workflow)
             {
@@ -684,7 +687,7 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
             };
 
             state.set_asset_type(
-                if is_upgrade_evolution {
+                if is_scene_workflow {
                     "scene"
                 } else {
                     "character"

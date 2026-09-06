@@ -3,6 +3,7 @@ import { DialogCloseButton } from "../components/dialog-close-button.slint";
 import { LoadingDots } from "../components/loading-dots.slint";
 import { CanvasLink, CanvasNote } from "../types.slint";
 import { AppTheme } from "../theme.slint";
+import { BuildingDerivationPreset } from "../components/building-derivation-preset.slint";
 
 component CanvasToolButton {
     in property <image> icon;
@@ -2669,6 +2670,12 @@ export component InfiniteCanvasPage {
             AppState.canvas-workflow-hint = AppState.en
                 ? "Describe the motif and mood, e.g. stone idol, massive but cute"
                 : "简单描述原型和气质，例如：石雕图腾，厚重但可爱";
+        } else if workflow-id == "building-derivation" {
+            AppState.asset-type = "scene";
+            AppState.canvas-workflow-title = AppState.en ? "Building Derivation" : "建筑衍生器";
+            AppState.canvas-workflow-artwork = BuildingDerivationPreset.artwork;
+            AppState.canvas-workflow-template = AppState.en ? BuildingDerivationPreset.prompt-en : BuildingDerivationPreset.prompt-zh;
+            AppState.canvas-workflow-hint = AppState.en ? BuildingDerivationPreset.hint-en : BuildingDerivationPreset.hint-zh;
         } else if workflow-id == "upgrade-evolution" {
             AppState.asset-type = "scene";
             AppState.canvas-workflow-title = AppState.en ? "Upgrade Evolution" : "升级进化";
@@ -2707,12 +2714,15 @@ export component InfiniteCanvasPage {
             AppState.stop-generation();
             return;
         }
-        let reference-driven-upgrade = AppState.canvas-workflow-id == "upgrade-evolution";
-        if reference-driven-upgrade && AppState.references.length == 0 {
-            AppState.generation-status = AppState.en ? "Upload a subject reference image first" : "请先上传主体参考图";
+        let reference-driven-workflow = AppState.canvas-workflow-id == "upgrade-evolution"
+            || AppState.canvas-workflow-id == "building-derivation";
+        if reference-driven-workflow && AppState.references.length == 0 {
+            AppState.generation-status = AppState.canvas-workflow-id == "building-derivation"
+                ? (AppState.en ? "Upload a building reference image first" : "请先上传建筑参考图")
+                : (AppState.en ? "Upload a subject reference image first" : "请先上传主体参考图");
             return;
         }
-        if AppState.canvas-workflow-prompt == "" && !reference-driven-upgrade {
+        if AppState.canvas-workflow-prompt == "" && !reference-driven-workflow {
             AppState.generation-status = AppState.en ? "Enter a prompt first" : "请先输入提示词";
             return;
         }
@@ -3465,7 +3475,9 @@ export component InfiniteCanvasPage {
                         y: 0px;
                         width: parent.width - self.x;
                         height: 24px;
-                        text: AppState.en ? "Image editing, enter a prompt" : "图片编辑，请输入提示词";
+                        text: AppState.canvas-workflow-id == "building-derivation"
+                            ? AppState.canvas-workflow-hint
+                            : (AppState.en ? "Image editing, enter a prompt" : "图片编辑，请输入提示词");
                         color: #9895a1;
                         font-size: 13px;
                         font-weight: 400;
@@ -3788,6 +3800,7 @@ export component InfiniteCanvasPage {
                     property <bool> disabled: !AppState.generating
                         && (AppState.image-model == ""
                             || (AppState.canvas-workflow-id != "upgrade-evolution"
+                                && AppState.canvas-workflow-id != "building-derivation"
                                 && AppState.canvas-workflow-prompt == ""));
                     opacity: self.disabled ? 0.46 : 1;
                     background: self.disabled
@@ -4201,7 +4214,7 @@ export component InfiniteCanvasPage {
     workflow-switch-popup := PopupWindow {
         x: max(12px, min(root.width - self.width - 12px, canvas.x + canvas-workflow-dock.x + canvas-workflow-dock.width - self.width));
         y: max(12px, canvas.y + canvas-workflow-dock.y - self.height - 12px);
-        width: 636px;
+        width: 843px;
         height: 326px;
         close-policy: close-on-click-outside;
 
@@ -4268,8 +4281,8 @@ export component InfiniteCanvasPage {
                 clicked => { root.switch-workflow("monster-generator"); workflow-switch-popup.close(); }
             }
             CanvasWorkflowQuickCard {
-                x: 16px;
-                y: 190px;
+                x: 637px;
+                y: 58px;
                 workflow-id: "upgrade-evolution";
                 title: AppState.en ? "Upgrade Evolution" : "升级进化";
                 description: AppState.en ? "Auto-detect and evolve the subject" : "自动识别主体并逐级进化";
@@ -4278,7 +4291,7 @@ export component InfiniteCanvasPage {
                 clicked => { root.switch-workflow("upgrade-evolution"); workflow-switch-popup.close(); }
             }
             CanvasWorkflowQuickCard {
-                x: 223px;
+                x: 16px;
                 y: 190px;
                 workflow-id: "character-age";
                 title: AppState.en ? "Character Age Progression" : "角色年龄变化";
@@ -4288,7 +4301,7 @@ export component InfiniteCanvasPage {
                 clicked => { root.switch-workflow("character-age"); workflow-switch-popup.close(); }
             }
             CanvasWorkflowQuickCard {
-                x: 430px;
+                x: 223px;
                 y: 190px;
                 workflow-id: "character-body";
                 title: AppState.en ? "Character Body Variations" : "角色体型修改器";
@@ -4296,6 +4309,16 @@ export component InfiniteCanvasPage {
                 artwork: @image-url("../../assets/free-canvas/character-body.png");
                 selected: AppState.canvas-workflow-id == self.workflow-id;
                 clicked => { root.switch-workflow("character-body"); workflow-switch-popup.close(); }
+            }
+            CanvasWorkflowQuickCard {
+                x: 430px;
+                y: 190px;
+                workflow-id: "building-derivation";
+                title: AppState.en ? "Building Derivation" : "建筑衍生器";
+                description: AppState.en ? "Same style, different functions" : "同系列风格，不同建筑功能";
+                artwork: BuildingDerivationPreset.artwork;
+                selected: AppState.canvas-workflow-id == self.workflow-id;
+                clicked => { root.switch-workflow("building-derivation"); workflow-switch-popup.close(); }
             }
         }
     }

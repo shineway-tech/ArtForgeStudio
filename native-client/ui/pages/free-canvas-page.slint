@@ -1,5 +1,6 @@
 import { AppState } from "../app-state.slint";
 import { AppTheme } from "../theme.slint";
+import { BuildingDerivationPreset } from "../components/building-derivation-preset.slint";
 
 component FreeCanvasCard {
     in property <string> card-id;
@@ -329,6 +330,21 @@ export component FreeCanvasPage {
             }
             FreeCanvasCard {
                 x: (root.card-width() + root.card-gap()) * 2;
+                y: root.card-height() + root.card-gap();
+                width: root.card-width();
+                height: root.card-height();
+                card-id: "building-derivation";
+                title: AppState.en ? "Building Derivation" : "建筑衍生器";
+                description: AppState.en ? "Same style, different building functions" : "从一张建筑图衍生同风格的功能建筑";
+                category: "scene";
+                artwork: BuildingDerivationPreset.artwork;
+                prompt-zh: BuildingDerivationPreset.prompt-zh;
+                prompt-en: BuildingDerivationPreset.prompt-en;
+                hint-zh: BuildingDerivationPreset.hint-zh;
+                hint-en: BuildingDerivationPreset.hint-en;
+            }
+            FreeCanvasCard {
+                x: (root.card-width() + root.card-gap()) * 3;
                 y: root.card-height() + root.card-gap();
                 width: root.card-width();
                 height: root.card-height();

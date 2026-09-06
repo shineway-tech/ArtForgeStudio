@@ -877,6 +877,8 @@ pub(super) fn compose_canvas_workflow_prompt(
         ""
     };
     let permits_localized_glow = is_upgrade_evolution;
+    let is_building_derivation = template.contains("建筑功能衍生：")
+        || template.contains("Building function derivation:");
     let composition_rules = if english {
         let background_rule = if permits_localized_glow {
             "Outside any workflow-requested soft localized back glow strictly confined behind one subject, do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements."
@@ -887,6 +889,8 @@ pub(super) fn compose_canvas_workflow_prompt(
             format!(
                 "Arrange all {step_count} subjects in two rows, ordered left to right and then top to bottom."
             )
+        } else if is_building_derivation {
+            format!("Arrange all {step_count} buildings in one row by function, not by upgrade level.")
         } else {
             format!("Arrange all {step_count} subjects in one row in progression order.")
         };
@@ -903,6 +907,8 @@ pub(super) fn compose_canvas_workflow_prompt(
             format!(
                 "将全部{step_count}个对象分成上下两行，按从左到右、从上到下的顺序排列。"
             )
+        } else if is_building_derivation {
+            format!("将全部{step_count}座建筑按功能顺序排列在同一行，不按升级等级排列。")
         } else {
             format!("将全部{step_count}个对象按演变顺序排列在同一行。")
         };

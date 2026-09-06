@@ -2211,7 +2211,7 @@ mod tests {
     }
 
     #[test]
-    fn ai_creation_entry_opens_a_seven_choice_launcher_before_the_infinite_canvas() {
+    fn ai_creation_entry_opens_an_eight_choice_launcher_before_the_infinite_canvas() {
         let app = include_str!("../../ui/app.slint");
         let sidebar = include_str!("../../ui/components/sidebar.slint");
         let nav_glyph = include_str!("../../ui/components/nav-glyph.slint");
@@ -2235,7 +2235,7 @@ mod tests {
         assert!(app.contains("import { FreeCanvasPage }"));
         assert!(app.contains("AppState.page == \"free-canvas\": FreeCanvasPage"));
         assert!(app.contains("AppState.page == \"canvas\": InfiniteCanvasPage"));
-        assert_eq!(page.matches("card-id: \"").count(), 7);
+        assert_eq!(page.matches("card-id: \"").count(), 8);
         for (card_id, title) in [
             ("plant-growth", "植物生成器"),
             ("character-outfit", "角色换装"),
@@ -2243,13 +2243,14 @@ mod tests {
             ("upgrade-evolution", "升级进化"),
             ("character-age", "角色年龄变化"),
             ("character-body", "角色体型修改器"),
+            ("building-derivation", "建筑衍生器"),
             ("infinite-canvas", "无限画布"),
         ] {
             assert!(page.contains(&format!("card-id: \"{card_id}\"")));
             assert!(page.contains(title));
         }
-        assert_eq!(page.matches("prompt-zh:").count(), 7);
-        assert_eq!(page.matches("prompt-en:").count(), 7);
+        assert_eq!(page.matches("prompt-zh:").count(), 8);
+        assert_eq!(page.matches("prompt-en:").count(), 8);
         assert!(!page.contains("AppState.navigate(\"generation\")"));
         assert!(page.contains("AppState.navigate(\"canvas\")"));
         assert!(page.contains("opens-canvas: true"));
@@ -2265,6 +2266,7 @@ mod tests {
             "upgrade-evolution.png",
             "character-age.png",
             "character-body.png",
+            "building-derivation.png",
         ] {
             assert!(manifest.join("assets/free-canvas").join(image).is_file());
         }
@@ -2340,6 +2342,86 @@ mod tests {
         assert!(submitted.contains("除工作流明确要求且严格限制在单个主体后方的局部柔和光晕外"));
         assert!(submitted.contains("必须使用单一纯色背景"));
         assert!(submitted.contains("不得出现编号、序号、文字标签、标题、说明文字或水印"));
+    }
+
+    #[test]
+    fn building_derivation_uses_the_uploaded_style_with_optional_function_description() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("free-canvas".into());
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().expect("show app window");
+        ElementHandle::find_by_accessible_label(&app, "建筑衍生器")
+            .next()
+            .expect("building derivation launcher card")
+            .mock_single_click(PointerEventButton::Left);
+        assert_eq!(state.get_canvas_workflow_id(), "building-derivation");
+        assert_eq!(state.get_canvas_workflow_title(), "建筑衍生器");
+        assert_eq!(state.get_asset_type(), "scene");
+        let template = state.get_canvas_workflow_template().to_string();
+        assert!(template.contains("自动识别其世界观"));
+        assert!(template.contains("不同功能的新建筑"));
+        assert!(template.contains("保持原图的2D或3D表现方式和观察角度"));
+        assert!(template.contains("不是同一建筑逐级升级"));
+        let composed = compose_canvas_workflow_prompt(&template, "铁匠铺、酒馆、仓库", 12, false);
+        assert!(composed.contains("12座同风格"));
+        assert!(composed.contains("用户描述：铁匠铺、酒馆、仓库"));
+        assert!(composed.contains("分成上下两行"));
+        assert!(composed.contains("必须统一缩小所有主体"));
+        assert!(composed.contains("必须使用单一纯色背景"));
+        assert!(!composed.contains("白、绿、蓝、紫、橙、红"));
+        assert!(!composed.contains("{count}"));
+
+        state.set_page("canvas".into());
+        state.set_canvas_workflow_prompt("".into());
+        state.set_image_model("test-image-model".into());
+        state.on_compose_canvas_workflow_prompt(|template, prompt, count, english| {
+            compose_canvas_workflow_prompt(template.as_str(), prompt.as_str(), count, english).into()
+        });
+        state.on_create_canvas_generation_source(|_, _, _| "building-source".into());
+        let submitted = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed = submitted.clone();
+        state.on_generate_canvas_node(move |_, prompt| observed.borrow_mut().push(prompt.to_string()));
+        let generate = ElementHandle::find_by_element_id(&app, "InfiniteCanvasPage::workflow-generate-button")
+            .next()
+            .expect("workflow generate button");
+        generate.mock_single_click(PointerEventButton::Left);
+        assert!(submitted.borrow().is_empty());
+        assert_eq!(state.get_generation_status(), "请先上传建筑参考图");
+        state.set_references(ModelRc::new(VecModel::from(vec![ReferenceItem {
+            id: "building-reference".into(),
+            image: slint::Image::default(),
+            source_path: "building.png".into(),
+        }])));
+        generate.mock_single_click(PointerEventButton::Left);
+        assert_eq!(submitted.borrow().len(), 1);
+        assert!(submitted.borrow()[0].contains("5座同风格"));
+        assert!(submitted.borrow()[0].contains("不按升级等级排列"));
+        assert!(state.get_canvas_workflow_prompt().is_empty());
+
+        state.set_canvas_workflow_prompt("铁匠铺、酒馆、仓库".into());
+        generate.mock_single_click(PointerEventButton::Left);
+        assert_eq!(submitted.borrow().len(), 2);
+        assert!(submitted.borrow()[1].contains("用户描述：铁匠铺、酒馆、仓库"));
+
+        state.set_language("en".into());
+        state.set_page("free-canvas".into());
+        ElementHandle::find_by_accessible_label(&app, "Building Derivation")
+            .next().expect("English building derivation card")
+            .mock_single_click(PointerEventButton::Left);
+        let english = compose_canvas_workflow_prompt(
+            state.get_canvas_workflow_template().as_str(), "smithy, tavern", 6, true,
+        );
+        assert!(english.contains("exactly 6 NEW buildings"));
+        assert!(english.contains("by function, not by upgrade level"));
+        assert!(english.contains("User description: smithy, tavern"));
+        assert!(!english.contains("{count}"));
     }
 
     #[test]
@@ -2447,6 +2529,17 @@ mod tests {
         assert!(submitted.contains("不得跨越主体之间的纯色背景间距"));
         assert!(template.contains("使用单一纯色背景"));
         assert!(template.contains("不得出现任何文字、字母、数字"));
+
+        ElementHandle::find_by_accessible_label(&app, "切换创作模板")
+            .next().expect("workflow switcher")
+            .mock_single_click(PointerEventButton::Left);
+        ElementHandle::find_by_accessible_label(&app, "切换到建筑衍生器")
+            .next().expect("building derivation quick switch card")
+            .invoke_accessible_default_action();
+        assert_eq!(opened_workspaces.borrow().last().map(String::as_str), Some("building-derivation"));
+        assert_eq!(state.get_canvas_workflow_id(), "building-derivation");
+        assert!(state.get_canvas_workflow_template().contains("建筑功能衍生："));
+        assert_eq!(state.get_asset_type(), "scene");
     }
 
     #[test]
@@ -5821,6 +5914,7 @@ mod tests {
             ("导入角色换装", "character-outfit"),
             ("导入角色体型修改", "character-body"),
             ("导入升级进化", "upgrade-evolution"),
+            ("导入建筑衍生器", "building-derivation"),
         ] {
             image_touch.mock_single_click(PointerEventButton::Right);
             ElementHandle::find_by_accessible_label(&app, label)
@@ -5932,6 +6026,48 @@ mod tests {
             context.store.borrow().active_canvas_workspace_id,
             "character-age"
         );
+        let _ = fs::remove_file(source_path);
+    }
+
+    #[test]
+    fn viewer_building_derivation_imports_the_current_image_into_its_workspace() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let context = AppContext::default();
+        wire_viewer_callbacks(&app, context.clone());
+        let state = app.global::<AppState>();
+        let source_path = std::env::temp_dir().join(format!("elunvi-building-reference-{}.png", Uuid::new_v4()));
+        fs::write(&source_path, b"test image reference").expect("write reference fixture");
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("assets".into());
+        state.set_viewer_source("asset".into());
+        state.set_viewer_open(true);
+        state.set_viewer_category("scene".into());
+        state.set_viewer_width(1024);
+        state.set_viewer_height(1024);
+        state.set_viewer_source_path(source_path.display().to_string().into());
+        app.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
+        app.show().expect("show app window");
+        ElementHandle::find_by_element_id(&app, "ViewerOverlay::image-touch")
+            .next().expect("viewer image touch area")
+            .mock_single_click(PointerEventButton::Right);
+        ElementHandle::find_by_accessible_label(&app, "导入建筑衍生器")
+            .next().expect("building derivation menu item")
+            .mock_single_click(PointerEventButton::Left);
+        assert_eq!(state.get_page(), "canvas");
+        assert_eq!(state.get_canvas_workflow_id(), "building-derivation");
+        assert_eq!(state.get_asset_type(), "scene");
+        assert!(state.get_canvas_workflow_template().contains("建筑功能衍生："));
+        assert!(!state.get_viewer_open());
+        let store = context.store.borrow();
+        assert_eq!(store.active_canvas_workspace_id, "building-derivation");
+        assert_eq!(store.canvas_references.len(), 1);
+        assert_eq!(store.canvas_references[0].source_path, source_path.display().to_string());
+        drop(store);
         let _ = fs::remove_file(source_path);
     }
 
