@@ -1069,6 +1069,31 @@ enum ManagedWriteState {
     Published,
 }
 
+#[cfg(any(unix, windows))]
+const MANAGED_WRITE_CHUNK_BYTES: usize = 64 * 1024;
+
+#[cfg(any(unix, windows))]
+fn copy_managed_chunks(
+    source: &mut dyn std::io::Read,
+    mut write_chunk: impl FnMut(&[u8]) -> Result<()>,
+) -> Result<u64> {
+    let mut buffer = [0_u8; MANAGED_WRITE_CHUNK_BYTES];
+    let mut copied = 0_u64;
+    loop {
+        let count = match source.read(&mut buffer) {
+            Ok(0) => return Ok(copied),
+            Ok(count) => count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error.into()),
+        };
+        let next = copied
+            .checked_add(count as u64)
+            .ok_or_else(|| anyhow::anyhow!("managed copy size overflow"))?;
+        write_chunk(&buffer[..count])?;
+        copied = next;
+    }
+}
+
 impl TryFrom<&str> for ManagedRelativeName {
     type Error = anyhow::Error;
 
@@ -1505,25 +1530,36 @@ impl NamespaceFs {
         Ok(copied)
     }
 
-    /// One attempt only. Failure poisons publication, including partial writes.
+    /// Source reads run outside the mutation lock. Each bounded write and EOF
+    /// revalidate retained authority; failure or unwind poisons the one attempt.
     pub(crate) fn write_new_regular_from(
         &self,
         directory: &ManagedDirectoryCapability,
         file: &mut ManagedFileCapability,
         source: &mut dyn std::io::Read,
     ) -> Result<u64> {
-        use std::io::{Seek, SeekFrom};
+        use std::io::{Seek, SeekFrom, Write};
+        let mut stream = {
+            let _lock = self.lock_mutations()?;
+            let _chain = self.checked_file_chain(directory, file)?;
+            ensure!(
+                file.write_state == ManagedWriteState::New,
+                "only an owned unwritten temporary can be written"
+            );
+            file.write_state = ManagedWriteState::Poisoned;
+            let mut stream = std::fs::File::from(duplicate_descriptor(&file.descriptor)?);
+            stream.seek(SeekFrom::Start(0))?;
+            stream
+        };
+        let copied = copy_managed_chunks(source, |chunk| {
+            let _lock = self.lock_mutations()?;
+            let _chain = self.checked_file_chain(directory, file)?;
+            stream.write_all(chunk)?;
+            self.checked_file_chain(directory, file)?;
+            Ok(())
+        })?;
         let _lock = self.lock_mutations()?;
         let _chain = self.checked_file_chain(directory, file)?;
-        ensure!(
-            file.write_state == ManagedWriteState::New,
-            "only an owned unwritten temporary can be written"
-        );
-        file.write_state = ManagedWriteState::Poisoned;
-        let mut stream = std::fs::File::from(duplicate_descriptor(&file.descriptor)?);
-        stream.seek(SeekFrom::Start(0))?;
-        let copied = std::io::copy(source, &mut stream)?;
-        self.checked_file_chain(directory, file)?;
         file.write_state = ManagedWriteState::Written;
         Ok(copied)
     }
@@ -2939,6 +2975,483 @@ mod tests {
             fs::read(ns.recovery_dir().join("document")).unwrap(),
             b"content"
         );
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_chunked_source_read_releases_namespace_mutation_lock() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        struct WaitForIndependentOperation {
+            started: Option<mpsc::Sender<()>>,
+            completed: mpsc::Receiver<()>,
+            yielded: bool,
+        }
+        impl std::io::Read for WaitForIndependentOperation {
+            fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+                if self.yielded {
+                    return Ok(0);
+                }
+                self.started
+                    .take()
+                    .unwrap()
+                    .send(())
+                    .map_err(|_| std::io::Error::other("fixture control stopped"))?;
+                self.completed.recv_timeout(Duration::from_secs(3)).map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "namespace lock held during source read",
+                    )
+                })?;
+                bytes[..5].copy_from_slice(b"owned");
+                self.yielded = true;
+                Ok(5)
+            }
+        }
+
+        let (root, ns, fs, dir) = managed_fixture(ManagedUserArea::Recovery);
+        fs::write(ns.recovery_dir().join("sentinel"), b"sentinel").unwrap();
+        let independent =
+            NamespaceFs::for_namespace(&NamespaceFs::open_data_root(root.path()).unwrap(), &ns)
+                .unwrap();
+        let independent_dirs = independent.ensure_managed_dirs().unwrap();
+        let independent_dir = independent
+            .open_managed_dir(&independent_dirs, ManagedUserArea::Recovery)
+            .unwrap();
+        let sentinel = independent
+            .open_existing_regular(
+                &independent_dir,
+                &ManagedRelativeName::try_from("sentinel").unwrap(),
+            )
+            .unwrap();
+        let mut temporary = fs
+            .create_new_regular(
+                &dir,
+                &ManagedRelativeName::try_from("temporary").unwrap(),
+            )
+            .unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (completed_tx, completed_rx) = mpsc::channel();
+
+        let (write_result, control_result) = std::thread::scope(|scope| {
+            let control = scope.spawn(move || -> Result<()> {
+                started_rx.recv_timeout(Duration::from_secs(3)).map_err(|_| {
+                    anyhow::anyhow!("source read did not start before fixture timeout")
+                })?;
+                let metadata = independent.inspect_regular(&independent_dir, &sentinel)?;
+                ensure!(metadata.byte_size == 8, "sentinel metadata changed");
+                completed_tx
+                    .send(())
+                    .map_err(|_| anyhow::anyhow!("source stopped before control completion"))?;
+                Ok(())
+            });
+            let mut source = WaitForIndependentOperation {
+                started: Some(started_tx),
+                completed: completed_rx,
+                yielded: false,
+            };
+            let write_result = fs.write_new_regular_from(&dir, &mut temporary, &mut source);
+            let control_result = control.join().expect("control thread panicked");
+            (write_result, control_result)
+        });
+
+        control_result.unwrap();
+        assert_eq!(write_result.unwrap(), 5);
+        let destination = ManagedRelativeName::try_from("document").unwrap();
+        assert!(fs
+            .publish_regular(
+                &dir,
+                &mut temporary,
+                ManagedPublication::Absent(&destination)
+            )
+            .is_err());
+        fs.sync_regular(&dir, &mut temporary).unwrap();
+        fs.publish_regular(
+            &dir,
+            &mut temporary,
+            ManagedPublication::Absent(&destination),
+        )
+        .unwrap();
+        assert_eq!(fs::read(ns.recovery_dir().join("document")).unwrap(), b"owned");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_chunked_short_reads_and_interrupted_read_copy_exact_bounded_bytes() {
+        struct ChunkedSource {
+            bytes: Vec<u8>,
+            offset: usize,
+            next_size: usize,
+            interrupted: bool,
+            largest_buffer: usize,
+        }
+        impl std::io::Read for ChunkedSource {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                self.largest_buffer = self.largest_buffer.max(buffer.len());
+                if buffer.len() > 64 * 1024 {
+                    return Err(std::io::Error::other("source buffer exceeded 64 KiB"));
+                }
+                if !self.interrupted {
+                    self.interrupted = true;
+                    return Err(std::io::ErrorKind::Interrupted.into());
+                }
+                if self.offset == self.bytes.len() {
+                    return Ok(0);
+                }
+                let sizes = [7, 64 * 1024, 19, 32 * 1024];
+                let count = sizes[self.next_size % sizes.len()]
+                    .min(buffer.len())
+                    .min(self.bytes.len() - self.offset);
+                buffer[..count].copy_from_slice(&self.bytes[self.offset..self.offset + count]);
+                self.offset += count;
+                self.next_size += 1;
+                Ok(count)
+            }
+        }
+        struct NeverRead;
+        impl std::io::Read for NeverRead {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                panic!("successful managed write retried its source")
+            }
+        }
+
+        let (_root, ns, fs, dir) = managed_fixture(ManagedUserArea::Recovery);
+        let expected = (0..(2 * 64 * 1024 + 137))
+            .map(|index| ((index * 37 + 11) % 251) as u8)
+            .collect::<Vec<_>>();
+        let mut source = ChunkedSource {
+            bytes: expected.clone(),
+            offset: 0,
+            next_size: 0,
+            interrupted: false,
+            largest_buffer: 0,
+        };
+        let mut temporary = fs
+            .create_new_regular(
+                &dir,
+                &ManagedRelativeName::try_from("temporary").unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            fs.write_new_regular_from(&dir, &mut temporary, &mut source)
+                .unwrap(),
+            expected.len() as u64
+        );
+        assert!(source.interrupted);
+        assert!(source.next_size >= 4);
+        assert!(source.largest_buffer <= 64 * 1024);
+        assert_eq!(fs::read(ns.recovery_dir().join("temporary")).unwrap(), expected);
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            fs.write_new_regular_from(&dir, &mut temporary, &mut NeverRead)
+        }))
+        .unwrap()
+        .is_err());
+        let destination = ManagedRelativeName::try_from("document").unwrap();
+        assert!(fs
+            .publish_regular(
+                &dir,
+                &mut temporary,
+                ManagedPublication::Absent(&destination)
+            )
+            .is_err());
+        fs.sync_regular(&dir, &mut temporary).unwrap();
+        fs.publish_regular(
+            &dir,
+            &mut temporary,
+            ManagedPublication::Absent(&destination),
+        )
+        .unwrap();
+        assert_eq!(fs::read(ns.recovery_dir().join("document")).unwrap(), expected);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_chunked_source_errors_poison_empty_and_partial_attempts() {
+        struct FailsAfterPrefix {
+            prefix: &'static [u8],
+            delivered: bool,
+        }
+        impl std::io::Read for FailsAfterPrefix {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if !self.delivered && !self.prefix.is_empty() {
+                    buffer[..self.prefix.len()].copy_from_slice(self.prefix);
+                    self.delivered = true;
+                    return Ok(self.prefix.len());
+                }
+                Err(std::io::Error::other("controlled source failure"))
+            }
+        }
+
+        let (_root, ns, fs, dir) = managed_fixture(ManagedUserArea::Recovery);
+        fs::write(ns.recovery_dir().join("document"), b"existing").unwrap();
+        let existing = fs
+            .open_existing_regular(
+                &dir,
+                &ManagedRelativeName::try_from("document").unwrap(),
+            )
+            .unwrap();
+        for (name, prefix) in [("empty-failure", &b""[..]), ("partial-failure", &b"prefix"[..])]
+        {
+            let relative = ManagedRelativeName::try_from(name).unwrap();
+            let mut temporary = fs.create_new_regular(&dir, &relative).unwrap();
+            assert!(fs
+                .write_new_regular_from(
+                    &dir,
+                    &mut temporary,
+                    &mut FailsAfterPrefix {
+                        prefix,
+                        delivered: false,
+                    },
+                )
+                .is_err());
+            assert_eq!(fs::read(ns.recovery_dir().join(name)).unwrap(), prefix);
+            assert!(fs
+                .write_new_regular_from(&dir, &mut temporary, &mut &b"retry"[..])
+                .is_err());
+            assert!(fs.sync_regular(&dir, &mut temporary).is_err());
+            assert!(fs
+                .publish_regular(
+                    &dir,
+                    &mut temporary,
+                    ManagedPublication::Replace(&existing)
+                )
+                .is_err());
+            assert_eq!(fs::read(ns.recovery_dir().join("document")).unwrap(), b"existing");
+            fs.unlink_within(&dir, temporary).unwrap();
+            assert!(!ns.recovery_dir().join(name).exists());
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_chunked_source_panic_after_prefix_poison_attempts() {
+        struct PanicsAfterPrefix(bool);
+        impl std::io::Read for PanicsAfterPrefix {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if !self.0 {
+                    self.0 = true;
+                    buffer[..6].copy_from_slice(b"prefix");
+                    Ok(6)
+                } else {
+                    panic!("controlled source panic")
+                }
+            }
+        }
+
+        let (_root, ns, fs, dir) = managed_fixture(ManagedUserArea::Recovery);
+        let name = ManagedRelativeName::try_from("temporary").unwrap();
+        let mut temporary = fs.create_new_regular(&dir, &name).unwrap();
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            fs.write_new_regular_from(&dir, &mut temporary, &mut PanicsAfterPrefix(false))
+        }));
+        assert!(panic.is_err());
+        assert_eq!(fs::read(ns.recovery_dir().join("temporary")).unwrap(), b"prefix");
+        assert!(fs
+            .write_new_regular_from(&dir, &mut temporary, &mut &b"retry"[..])
+            .is_err());
+        assert!(fs.sync_regular(&dir, &mut temporary).is_err());
+        assert!(fs
+            .publish_regular(
+                &dir,
+                &mut temporary,
+                ManagedPublication::Absent(&ManagedRelativeName::try_from("document").unwrap())
+            )
+            .is_err());
+        fs.unlink_within(&dir, temporary).unwrap();
+        assert!(!ns.recovery_dir().join("temporary").exists());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_chunked_leaf_replacement_between_chunks_stops_before_next_write() {
+        struct ReplacesLeaf {
+            temporary: PathBuf,
+            moved: PathBuf,
+            step: u8,
+        }
+        impl std::io::Read for ReplacesLeaf {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                match self.step {
+                    0 => {
+                        buffer[..6].copy_from_slice(b"prefix");
+                        self.step = 1;
+                        Ok(6)
+                    }
+                    1 => {
+                        fs::rename(&self.temporary, &self.moved)?;
+                        fs::write(&self.temporary, b"replacement")?;
+                        buffer[..6].copy_from_slice(b"suffix");
+                        self.step = 2;
+                        Ok(6)
+                    }
+                    _ => Ok(0),
+                }
+            }
+        }
+
+        let (_root, ns, fs, dir) = managed_fixture(ManagedUserArea::Recovery);
+        let temporary_path = ns.recovery_dir().join("temporary");
+        let moved_path = ns.recovery_dir().join("moved");
+        let mut temporary = fs
+            .create_new_regular(
+                &dir,
+                &ManagedRelativeName::try_from("temporary").unwrap(),
+            )
+            .unwrap();
+        let result = fs.write_new_regular_from(
+            &dir,
+            &mut temporary,
+            &mut ReplacesLeaf {
+                temporary: temporary_path.clone(),
+                moved: moved_path.clone(),
+                step: 0,
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(fs::read(&moved_path).unwrap(), b"prefix");
+        assert_eq!(fs::read(&temporary_path).unwrap(), b"replacement");
+        fs::remove_file(&temporary_path).unwrap();
+        fs::rename(&moved_path, &temporary_path).unwrap();
+        assert!(fs
+            .write_new_regular_from(&dir, &mut temporary, &mut &b"retry"[..])
+            .is_err());
+        assert!(fs.sync_regular(&dir, &mut temporary).is_err());
+        assert!(fs
+            .publish_regular(
+                &dir,
+                &mut temporary,
+                ManagedPublication::Absent(&ManagedRelativeName::try_from("document").unwrap())
+            )
+            .is_err());
+        fs.unlink_within(&dir, temporary).unwrap();
+        assert!(!temporary_path.exists());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_chunked_leaf_replacement_at_eof_refuses_success() {
+        struct ReplacesLeafAtEof {
+            temporary: PathBuf,
+            moved: PathBuf,
+            yielded: bool,
+        }
+        impl std::io::Read for ReplacesLeafAtEof {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if !self.yielded {
+                    buffer[..6].copy_from_slice(b"prefix");
+                    self.yielded = true;
+                    return Ok(6);
+                }
+                fs::rename(&self.temporary, &self.moved)?;
+                fs::write(&self.temporary, b"replacement")?;
+                Ok(0)
+            }
+        }
+
+        let (_root, ns, fs, dir) = managed_fixture(ManagedUserArea::Recovery);
+        let temporary_path = ns.recovery_dir().join("temporary");
+        let moved_path = ns.recovery_dir().join("moved");
+        let mut temporary = fs
+            .create_new_regular(
+                &dir,
+                &ManagedRelativeName::try_from("temporary").unwrap(),
+            )
+            .unwrap();
+        assert!(fs
+            .write_new_regular_from(
+                &dir,
+                &mut temporary,
+                &mut ReplacesLeafAtEof {
+                    temporary: temporary_path.clone(),
+                    moved: moved_path.clone(),
+                    yielded: false,
+                },
+            )
+            .is_err());
+        assert_eq!(fs::read(&moved_path).unwrap(), b"prefix");
+        assert_eq!(fs::read(&temporary_path).unwrap(), b"replacement");
+        fs::remove_file(&temporary_path).unwrap();
+        fs::rename(&moved_path, &temporary_path).unwrap();
+        assert!(fs
+            .write_new_regular_from(&dir, &mut temporary, &mut &b"retry"[..])
+            .is_err());
+        assert!(fs.sync_regular(&dir, &mut temporary).is_err());
+        assert!(fs
+            .publish_regular(
+                &dir,
+                &mut temporary,
+                ManagedPublication::Absent(&ManagedRelativeName::try_from("document").unwrap())
+            )
+            .is_err());
+        fs.unlink_within(&dir, temporary).unwrap();
+        assert!(!temporary_path.exists());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_chunked_ancestor_detachment_between_chunks_stops_before_next_write() {
+        struct DetachesArea {
+            area: PathBuf,
+            detached: PathBuf,
+            step: u8,
+        }
+        impl std::io::Read for DetachesArea {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                match self.step {
+                    0 => {
+                        buffer[..6].copy_from_slice(b"prefix");
+                        self.step = 1;
+                        Ok(6)
+                    }
+                    1 => {
+                        fs::rename(&self.area, &self.detached)?;
+                        fs::create_dir(&self.area)?;
+                        buffer[..6].copy_from_slice(b"suffix");
+                        self.step = 2;
+                        Ok(6)
+                    }
+                    _ => Ok(0),
+                }
+            }
+        }
+
+        let (_root, ns, fs, dir) = managed_fixture(ManagedUserArea::Recovery);
+        let area_path = ns.recovery_dir();
+        let detached_path = ns.root().join("detached-recovery");
+        let mut temporary = fs
+            .create_new_regular(
+                &dir,
+                &ManagedRelativeName::try_from("temporary").unwrap(),
+            )
+            .unwrap();
+        let result = fs.write_new_regular_from(
+            &dir,
+            &mut temporary,
+            &mut DetachesArea {
+                area: area_path.clone(),
+                detached: detached_path.clone(),
+                step: 0,
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(fs::read(detached_path.join("temporary")).unwrap(), b"prefix");
+        assert!(!area_path.join("temporary").exists());
+        fs::remove_dir(&area_path).unwrap();
+        fs::rename(&detached_path, &area_path).unwrap();
+        assert!(fs
+            .write_new_regular_from(&dir, &mut temporary, &mut &b"retry"[..])
+            .is_err());
+        assert!(fs.sync_regular(&dir, &mut temporary).is_err());
+        assert!(fs
+            .publish_regular(
+                &dir,
+                &mut temporary,
+                ManagedPublication::Absent(&ManagedRelativeName::try_from("document").unwrap())
+            )
+            .is_err());
+        fs.unlink_within(&dir, temporary).unwrap();
+        assert!(!area_path.join("temporary").exists());
     }
 
     #[cfg(any(unix, windows))]

@@ -461,24 +461,36 @@ impl NamespaceFs {
         Ok(copied)
     }
 
+    /// Source reads run outside the mutation lock. Each bounded write and EOF
+    /// revalidate retained authority; failure or unwind poisons the one attempt.
     pub(crate) fn write_new_regular_from(
         &self,
         directory: &ManagedDirectoryCapability,
         file: &mut ManagedFileCapability,
         source: &mut dyn std::io::Read,
     ) -> Result<u64> {
-        use std::io::{Seek, SeekFrom};
+        use std::io::{Seek, SeekFrom, Write};
+        let mut stream = {
+            let _guard = self.lock_mutations()?;
+            let _chain = self.checked_file_chain(directory, file)?;
+            ensure!(
+                file.write_state == ManagedWriteState::New,
+                "only an owned unwritten temporary can be written"
+            );
+            file.write_state = ManagedWriteState::Poisoned;
+            let mut stream = std::fs::File::from(file.handle.try_clone()?);
+            stream.seek(SeekFrom::Start(0))?;
+            stream
+        };
+        let copied = super::copy_managed_chunks(source, |chunk| {
+            let _guard = self.lock_mutations()?;
+            let _chain = self.checked_file_chain(directory, file)?;
+            stream.write_all(chunk)?;
+            self.checked_file_chain(directory, file)?;
+            Ok(())
+        })?;
         let _guard = self.lock_mutations()?;
         let _chain = self.checked_file_chain(directory, file)?;
-        ensure!(
-            file.write_state == ManagedWriteState::New,
-            "only an owned unwritten temporary can be written"
-        );
-        file.write_state = ManagedWriteState::Poisoned;
-        let mut stream = std::fs::File::from(file.handle.try_clone()?);
-        stream.seek(SeekFrom::Start(0))?;
-        let copied = std::io::copy(source, &mut stream)?;
-        self.checked_file_chain(directory, file)?;
         file.write_state = ManagedWriteState::Written;
         Ok(copied)
     }
