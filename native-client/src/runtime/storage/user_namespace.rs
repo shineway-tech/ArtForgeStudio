@@ -35,6 +35,11 @@ pub(crate) struct NamespaceManagedFileCheck<'a> {
     pub(crate) expected: Option<StableFileIdentity>,
 }
 
+pub(crate) enum NamespaceManagedPublication<'a> {
+    Absent(&'a ManagedFileKey),
+    Replace(&'a NamespaceManagedFile),
+}
+
 impl NamespaceStorageAuthority {
     pub(crate) fn open(data_root: Arc<DataRootCapability>, lease: &NamespaceLease) -> Result<Self> {
         let fs = NamespaceFs::for_namespace(data_root.as_ref(), &lease.namespace)?;
@@ -129,11 +134,512 @@ impl NamespaceStorageAuthority {
             .collect::<Vec<_>>();
         self.fs.with_current_regular_files(&checks, operation)
     }
+    pub(crate) fn create_temporary_regular_for(
+        &self,
+        destination: &ManagedFileKey,
+    ) -> Result<NamespaceManagedFile> {
+        self.create_temporary_regular_for_uuid(destination, Uuid::new_v4())
+    }
+    fn create_temporary_regular_for_uuid(
+        &self,
+        destination: &ManagedFileKey,
+        candidate: Uuid,
+    ) -> Result<NamespaceManagedFile> {
+        let temporary_leaf = format!(".af-managed-{}.tmp", candidate.simple());
+        let relative_name = destination
+            .relative_name()
+            .as_str()
+            .rsplit_once('/')
+            .map_or_else(
+                || temporary_leaf.clone(),
+                |(parent, _)| format!("{parent}/{temporary_leaf}"),
+            );
+        let temporary_key = ManagedFileKey::new(destination.area(), &relative_name)?;
+        self.create_new_regular(&temporary_key)
+    }
+    pub(crate) fn read_regular_to(
+        &self,
+        file: &mut NamespaceManagedFile,
+        sink: &mut dyn std::io::Write,
+    ) -> Result<u64> {
+        let directory = self
+            .fs
+            .open_managed_dir(&self.directories, file.key.area())?;
+        self.fs
+            .read_regular_to(&directory, &mut file.capability, sink)
+    }
+    pub(crate) fn write_new_regular_from(
+        &self,
+        file: &mut NamespaceManagedFile,
+        source: &mut dyn std::io::Read,
+    ) -> Result<u64> {
+        let directory = self
+            .fs
+            .open_managed_dir(&self.directories, file.key.area())?;
+        self.fs
+            .write_new_regular_from(&directory, &mut file.capability, source)
+    }
+    pub(crate) fn sync_regular(&self, file: &mut NamespaceManagedFile) -> Result<()> {
+        let directory = self
+            .fs
+            .open_managed_dir(&self.directories, file.key.area())?;
+        self.fs.sync_regular(&directory, &mut file.capability)
+    }
+    pub(crate) fn publish_regular(
+        &self,
+        source: &mut NamespaceManagedFile,
+        destination: NamespaceManagedPublication<'_>,
+    ) -> Result<()> {
+        let destination_key = match &destination {
+            NamespaceManagedPublication::Absent(key) => (*key).clone(),
+            NamespaceManagedPublication::Replace(file) => file.key.clone(),
+        };
+        ensure!(
+            source.key.area() == destination_key.area(),
+            "publication must stay within one managed area"
+        );
+        let directory = self
+            .fs
+            .open_managed_dir(&self.directories, source.key.area())?;
+        let publication = match destination {
+            NamespaceManagedPublication::Absent(key) => {
+                ManagedPublication::Absent(key.relative_name())
+            }
+            NamespaceManagedPublication::Replace(file) => {
+                ManagedPublication::Replace(&file.capability)
+            }
+        };
+        self.fs
+            .publish_regular(&directory, &mut source.capability, publication)?;
+        source.key = destination_key;
+        Ok(())
+    }
+    pub(crate) fn unlink_regular(&self, file: NamespaceManagedFile) -> Result<()> {
+        let directory = self
+            .fs
+            .open_managed_dir(&self.directories, file.key.area())?;
+        self.fs.unlink_within(&directory, file.capability)
+    }
 }
 
 #[cfg(test)]
 mod namespace_authority_tests {
     use super::*;
+    use std::fs;
+
+    const AUTHORITY_USER_A: &str = "11111111-1111-4111-8111-111111111111";
+
+    fn authority_fixture(
+        user_public_id: &str,
+    ) -> (tempfile::TempDir, NamespaceLease, NamespaceStorageAuthority) {
+        let temporary_parent = fs::canonicalize(std::env::temp_dir()).unwrap();
+        let root = tempfile::tempdir_in(temporary_parent).unwrap();
+        let lease = NamespaceLease {
+            namespace: UserNamespace::new(root.path(), user_public_id).unwrap(),
+            auth_epoch: 1,
+            namespace_epoch: 2,
+        };
+        let data_root = Arc::new(NamespaceFs::open_data_root(root.path()).unwrap());
+        let authority = NamespaceStorageAuthority::open(data_root, &lease).unwrap();
+        (root, lease, authority)
+    }
+
+    fn candidate_uuid(value: &str) -> Uuid {
+        Uuid::parse_str(value).unwrap()
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn task8c0_authority_forwards_absent_and_replace_lifecycles() {
+        let (_root, lease, authority) = authority_fixture(AUTHORITY_USER_A);
+        let absent_key = ManagedFileKey::new(ManagedUserArea::Recovery, "first.json").unwrap();
+        let mut absent = authority.create_temporary_regular_for(&absent_key).unwrap();
+        assert_eq!(
+            authority
+                .write_new_regular_from(&mut absent, &mut &b"first bytes"[..])
+                .unwrap(),
+            11
+        );
+        authority.sync_regular(&mut absent).unwrap();
+        authority
+            .publish_regular(
+                &mut absent,
+                NamespaceManagedPublication::Absent(&absent_key),
+            )
+            .unwrap();
+        assert_eq!(absent.key(), &absent_key);
+        assert_eq!(authority.inspect_regular(&absent).unwrap().byte_size, 11);
+        assert_eq!(
+            authority
+                .with_current_regular_files(
+                    &[NamespaceManagedFileCheck {
+                        file: &absent,
+                        expected: None,
+                    }],
+                    |metadata| Ok(metadata[0].byte_size),
+                )
+                .unwrap(),
+            11
+        );
+        let mut bytes = Vec::new();
+        assert_eq!(
+            authority.read_regular_to(&mut absent, &mut bytes).unwrap(),
+            11
+        );
+        assert_eq!(bytes, b"first bytes");
+        authority.unlink_regular(absent).unwrap();
+        assert!(!lease.namespace.recovery_dir().join("first.json").exists());
+
+        let replace_key = ManagedFileKey::new(ManagedUserArea::Recovery, "second.json").unwrap();
+        fs::write(
+            lease.namespace.recovery_dir().join("second.json"),
+            b"old bytes",
+        )
+        .unwrap();
+        let destination = authority.open_existing_regular(&replace_key).unwrap();
+        let mut replacement = authority
+            .create_temporary_regular_for(&replace_key)
+            .unwrap();
+        assert_eq!(
+            authority
+                .write_new_regular_from(&mut replacement, &mut &b"replacement"[..])
+                .unwrap(),
+            11
+        );
+        authority.sync_regular(&mut replacement).unwrap();
+        authority
+            .publish_regular(
+                &mut replacement,
+                NamespaceManagedPublication::Replace(&destination),
+            )
+            .unwrap();
+        assert_eq!(replacement.key(), &replace_key);
+        let mut replaced_bytes = Vec::new();
+        assert_eq!(
+            authority
+                .read_regular_to(&mut replacement, &mut replaced_bytes)
+                .unwrap(),
+            11
+        );
+        assert_eq!(replaced_bytes, b"replacement");
+        assert_eq!(
+            authority.inspect_regular(&replacement).unwrap().byte_size,
+            11
+        );
+        authority.unlink_regular(replacement).unwrap();
+        assert!(!lease.namespace.recovery_dir().join("second.json").exists());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn task8c0_temporary_names_are_one_exclusive_same_parent_uuid_candidate() {
+        let (_root, lease, authority) = authority_fixture(AUTHORITY_USER_A);
+        let root_key = ManagedFileKey::new(ManagedUserArea::Recovery, "document.json").unwrap();
+        let root_uuid = candidate_uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        let root_file = authority
+            .create_temporary_regular_for_uuid(&root_key, root_uuid)
+            .unwrap();
+        assert_eq!(
+            root_file.key().relative_name().as_str(),
+            ".af-managed-aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa.tmp"
+        );
+        authority.unlink_regular(root_file).unwrap();
+
+        fs::create_dir(lease.namespace.recovery_dir().join("nested")).unwrap();
+        let nested_key =
+            ManagedFileKey::new(ManagedUserArea::Recovery, "nested/document.json").unwrap();
+        let nested_uuid = candidate_uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        let nested_file = authority
+            .create_temporary_regular_for_uuid(&nested_key, nested_uuid)
+            .unwrap();
+        assert_eq!(
+            nested_file.key().relative_name().as_str(),
+            "nested/.af-managed-bbbbbbbbbbbb4bbb8bbbbbbbbbbbbbbb.tmp"
+        );
+        authority.unlink_regular(nested_file).unwrap();
+
+        let collision_path = lease
+            .namespace
+            .recovery_dir()
+            .join(".af-managed-cccccccccccc4ccc8ccccccccccccccc.tmp");
+        fs::write(&collision_path, b"existing candidate").unwrap();
+        let collision_uuid = candidate_uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+        let collision_error = authority
+            .create_temporary_regular_for_uuid(&root_key, collision_uuid)
+            .err()
+            .expect("exclusive creation must retain the collision error");
+        #[cfg(unix)]
+        assert_eq!(
+            collision_error.downcast_ref::<rustix::io::Errno>(),
+            Some(&rustix::io::Errno::EXIST)
+        );
+        #[cfg(windows)]
+        assert!(collision_error
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists));
+        assert_eq!(fs::read(&collision_path).unwrap(), b"existing candidate");
+        assert_eq!(
+            fs::read_dir(lease.namespace.recovery_dir())
+                .unwrap()
+                .count(),
+            2
+        );
+
+        let missing_parent =
+            ManagedFileKey::new(ManagedUserArea::Recovery, "absent/document.json").unwrap();
+        assert!(authority
+            .create_temporary_regular_for_uuid(
+                &missing_parent,
+                candidate_uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+            )
+            .is_err());
+        assert!(!lease.namespace.recovery_dir().join("absent").exists());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn task8c0_publication_conflicts_preserve_owned_wrapper_and_typed_error() {
+        let (_root, lease, authority) = authority_fixture(AUTHORITY_USER_A);
+        let key = ManagedFileKey::new(ManagedUserArea::Recovery, "document.json").unwrap();
+        let mut absent_source = authority
+            .create_temporary_regular_for_uuid(
+                &key,
+                candidate_uuid("11111111-1111-4111-8111-111111111111"),
+            )
+            .unwrap();
+        let absent_temp_key = absent_source.key().clone();
+        authority
+            .write_new_regular_from(&mut absent_source, &mut &b"owned absent"[..])
+            .unwrap();
+        authority.sync_regular(&mut absent_source).unwrap();
+        fs::write(
+            lease.namespace.recovery_dir().join("document.json"),
+            b"winner",
+        )
+        .unwrap();
+        let appeared = authority
+            .publish_regular(
+                &mut absent_source,
+                NamespaceManagedPublication::Absent(&key),
+            )
+            .unwrap_err();
+        assert_eq!(
+            appeared.downcast_ref::<ManagedPublicationConflict>(),
+            Some(&ManagedPublicationConflict::DestinationAppeared)
+        );
+        assert_eq!(absent_source.key(), &absent_temp_key);
+        let mut owned_absent = Vec::new();
+        authority
+            .read_regular_to(&mut absent_source, &mut owned_absent)
+            .unwrap();
+        assert_eq!(owned_absent, b"owned absent");
+        authority.unlink_regular(absent_source).unwrap();
+        assert_eq!(
+            fs::read(lease.namespace.recovery_dir().join("document.json")).unwrap(),
+            b"winner"
+        );
+
+        let stale = authority.open_existing_regular(&key).unwrap();
+        fs::rename(
+            lease.namespace.recovery_dir().join("document.json"),
+            lease.namespace.recovery_dir().join("old-winner.json"),
+        )
+        .unwrap();
+        fs::write(
+            lease.namespace.recovery_dir().join("document.json"),
+            b"new winner",
+        )
+        .unwrap();
+        let mut replace_source = authority
+            .create_temporary_regular_for_uuid(
+                &key,
+                candidate_uuid("22222222-2222-4222-8222-222222222222"),
+            )
+            .unwrap();
+        let replace_temp_key = replace_source.key().clone();
+        authority
+            .write_new_regular_from(&mut replace_source, &mut &b"owned replace"[..])
+            .unwrap();
+        authority.sync_regular(&mut replace_source).unwrap();
+        let changed = authority
+            .publish_regular(
+                &mut replace_source,
+                NamespaceManagedPublication::Replace(&stale),
+            )
+            .unwrap_err();
+        assert_eq!(
+            changed.downcast_ref::<ManagedPublicationConflict>(),
+            Some(&ManagedPublicationConflict::DestinationChanged)
+        );
+        assert_eq!(replace_source.key(), &replace_temp_key);
+        assert_eq!(
+            authority
+                .inspect_regular(&replace_source)
+                .unwrap()
+                .byte_size,
+            13
+        );
+        authority.unlink_regular(replace_source).unwrap();
+        assert_eq!(
+            fs::read(lease.namespace.recovery_dir().join("document.json")).unwrap(),
+            b"new winner"
+        );
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn task8c0_forwarders_retain_producer_ownership_state_and_stream_checks() {
+        struct PartialFailure(bool);
+        impl std::io::Read for PartialFailure {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.0 {
+                    Err(std::io::Error::other("fixture source failed"))
+                } else {
+                    self.0 = true;
+                    buffer[0] = b'x';
+                    Ok(1)
+                }
+            }
+        }
+
+        let (root, lease, authority) = authority_fixture(AUTHORITY_USER_A);
+        let other_lease = NamespaceLease {
+            namespace: UserNamespace::new(root.path(), "22222222-2222-4222-8222-222222222222")
+                .unwrap(),
+            auth_epoch: 1,
+            namespace_epoch: 2,
+        };
+        let other_root = Arc::new(NamespaceFs::open_data_root(root.path()).unwrap());
+        let other = NamespaceStorageAuthority::open(other_root, &other_lease).unwrap();
+        let key = ManagedFileKey::new(ManagedUserArea::Recovery, "document.json").unwrap();
+        let mut foreign = authority
+            .create_temporary_regular_for_uuid(
+                &key,
+                candidate_uuid("33333333-3333-4333-8333-333333333333"),
+            )
+            .unwrap();
+        let same_user_root = Arc::new(NamespaceFs::open_data_root(root.path()).unwrap());
+        let same_user = NamespaceStorageAuthority::open(same_user_root, &lease).unwrap();
+        let mut foreign_sink = Vec::new();
+        assert!(same_user
+            .read_regular_to(&mut foreign, &mut foreign_sink)
+            .is_err());
+        assert!(foreign_sink.is_empty());
+        assert!(other.sync_regular(&mut foreign).is_err());
+
+        let output_key = ManagedFileKey::new(ManagedUserArea::Output, "document.json").unwrap();
+        assert!(authority
+            .publish_regular(
+                &mut foreign,
+                NamespaceManagedPublication::Absent(&output_key),
+            )
+            .is_err());
+        assert_ne!(foreign.key(), &output_key);
+        assert!(authority
+            .publish_regular(&mut foreign, NamespaceManagedPublication::Absent(&key),)
+            .is_err());
+        authority
+            .write_new_regular_from(&mut foreign, &mut &b"bytes"[..])
+            .unwrap();
+        assert!(authority
+            .publish_regular(&mut foreign, NamespaceManagedPublication::Absent(&key),)
+            .is_err());
+        authority.sync_regular(&mut foreign).unwrap();
+
+        let foreign_key = ManagedFileKey::new(ManagedUserArea::Recovery, "foreign.json").unwrap();
+        fs::write(
+            other_lease.namespace.recovery_dir().join("foreign.json"),
+            b"foreign destination",
+        )
+        .unwrap();
+        let foreign_destination = other.open_existing_regular(&foreign_key).unwrap();
+        let foreign_error = authority
+            .publish_regular(
+                &mut foreign,
+                NamespaceManagedPublication::Replace(&foreign_destination),
+            )
+            .unwrap_err();
+        assert!(foreign_error
+            .downcast_ref::<ManagedPublicationConflict>()
+            .is_none());
+        assert_ne!(foreign.key(), &foreign_key);
+        assert_eq!(
+            fs::read(other_lease.namespace.recovery_dir().join("foreign.json")).unwrap(),
+            b"foreign destination"
+        );
+
+        let hardlink_path = lease.namespace.recovery_dir().join("hardlink");
+        fs::hard_link(
+            lease
+                .namespace
+                .recovery_dir()
+                .join(foreign.key().relative_name().as_str()),
+            &hardlink_path,
+        )
+        .unwrap();
+        assert!(authority.inspect_regular(&foreign).is_err());
+        fs::remove_file(hardlink_path).unwrap();
+        authority.unlink_regular(foreign).unwrap();
+
+        let mut poisoned = authority
+            .create_temporary_regular_for_uuid(
+                &key,
+                candidate_uuid("44444444-4444-4444-8444-444444444444"),
+            )
+            .unwrap();
+        let failure = authority
+            .write_new_regular_from(&mut poisoned, &mut PartialFailure(false))
+            .unwrap_err();
+        assert_eq!(
+            failure.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::Other
+        );
+        assert!(authority.sync_regular(&mut poisoned).is_err());
+        assert!(authority
+            .publish_regular(&mut poisoned, NamespaceManagedPublication::Absent(&key),)
+            .is_err());
+        authority.unlink_regular(poisoned).unwrap();
+
+        fs::create_dir(lease.namespace.recovery_dir().join("Nested")).unwrap();
+        fs::write(lease.namespace.recovery_dir().join("Nested/file"), b"exact").unwrap();
+        if lease.namespace.recovery_dir().join("nested/file").exists() {
+            let alias_key = ManagedFileKey::new(ManagedUserArea::Recovery, "nested/file").unwrap();
+            assert!(authority.open_existing_regular(&alias_key).is_err());
+        }
+
+        fs::create_dir(lease.namespace.recovery_dir().join("stale")).unwrap();
+        let stale_key =
+            ManagedFileKey::new(ManagedUserArea::Recovery, "stale/document.json").unwrap();
+        let mut stale_source = authority
+            .create_temporary_regular_for_uuid(
+                &stale_key,
+                candidate_uuid("55555555-5555-4555-8555-555555555555"),
+            )
+            .unwrap();
+        authority
+            .write_new_regular_from(&mut stale_source, &mut &b"stale"[..])
+            .unwrap();
+        authority.sync_regular(&mut stale_source).unwrap();
+        fs::rename(
+            lease.namespace.recovery_dir().join("stale"),
+            lease.namespace.recovery_dir().join("detached"),
+        )
+        .unwrap();
+        fs::create_dir(lease.namespace.recovery_dir().join("stale")).unwrap();
+        assert!(authority
+            .publish_regular(
+                &mut stale_source,
+                NamespaceManagedPublication::Absent(&stale_key),
+            )
+            .is_err());
+        assert!(authority.unlink_regular(stale_source).is_err());
+        assert!(lease
+            .namespace
+            .recovery_dir()
+            .join("detached/.af-managed-55555555555545558555555555555555.tmp")
+            .is_file());
+    }
+
     #[test]
     fn authority_checks_all_files_in_order_and_preserves_callback_errors() {
         let directory = tempfile::tempdir().unwrap();
