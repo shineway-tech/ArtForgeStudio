@@ -6973,12 +6973,8 @@ mod tests {
             "disabled: AppState.invitation-code-busy || AppState.invitation-code-submitted"
         ));
         assert!(top_bar.contains("AppState.navigate(\"invitation-gift\")"));
-        assert!(top_bar.contains("changed has-hover"));
-        assert!(top_bar.contains("self.has-hover && !AppState.reduced-motion"));
-        assert!(!top_bar.contains("interval: 5s"));
-        assert!(top_bar.contains("width: 44px"));
-        assert!(top_bar.contains("running: root.wobbling"));
-        assert!(top_bar.contains("function wobble-angle() -> angle"));
+        // The invitation pill's layout and navigation are exercised by
+        // tests/top_bar_layout.rs; its appearance is not a backend contract.
         assert!(app.contains("AppState.page == \"invitation-gift\""));
         assert!(account_api.contains("/v1/account/invitation-code"));
         assert!(callback.contains("api.submit_invitation_code_scoped(&code, &worker_scope)"));

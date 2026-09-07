@@ -1053,10 +1053,47 @@ fn model_picker_options(store: &Store, kind: &str) -> Vec<ModelOption> {
         .flat_map(|group| {
             group.models.iter().map(|model| ModelOption {
                 code: model.code.clone().into(),
-                name: format!("{} / {}", group.name, model.name).into(),
+                name: model.name.clone().into(),
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod model_picker_tests {
+    use super::*;
+
+    #[test]
+    fn options_show_catalog_names_and_preserve_purpose_codes_and_order() {
+        let store = Store {
+            model_groups: vec![
+                ModelGroupData {
+                    kind: "image".into(),
+                    name: "平台图像模型".into(),
+                    models: vec![
+                        ModelOptionData { code: "image-a".into(), name: "Model A".into() },
+                        ModelOptionData { code: "image-b".into(), name: "Model B / Preview".into() },
+                    ],
+                    ..Default::default()
+                },
+                ModelGroupData {
+                    kind: "reasoning".into(),
+                    name: "平台提示词模型".into(),
+                    models: vec![ModelOptionData { code: "prompt-a".into(), name: "Reasoning A".into() }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let images = model_picker_options(&store, "image");
+        assert_eq!(images.iter().map(|option| (option.code.as_str(), option.name.as_str())).collect::<Vec<_>>(),
+            [("image-a", "Model A"), ("image-b", "Model B / Preview")]);
+        let reasoning = model_picker_options(&store, "reasoning");
+        assert_eq!(reasoning.len(), 1);
+        assert_eq!(reasoning[0].code, "prompt-a");
+        assert_eq!(reasoning[0].name, "Reasoning A");
+        assert!(model_picker_options(&store, "missing").is_empty());
+    }
 }
 
 pub(super) fn push_conversations(app: &AppWindow, store: &Store) {
