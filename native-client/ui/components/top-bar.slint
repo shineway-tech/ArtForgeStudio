@@ -1,7 +1,6 @@
 import { AppState } from "../app-state.slint";
 import { ModelPicker } from "model-picker.slint";
 import { PillButton } from "pill-button.slint";
-import { ThemeMenuButton } from "theme-menu-button.slint";
 import { AppTheme } from "../theme.slint";
 
 component InvitationGiftButton {
@@ -114,7 +113,6 @@ export component TopBar {
                 }
                 if AppState.logged-in: InvitationGiftButton {}
                 PillButton { width: 94px; text: AppState.language == "zh" ? "中文" : "English"; clicked => { AppState.set-language(AppState.language == "zh" ? "en" : "zh"); } }
-                ThemeMenuButton { width: 94px; }
                 if !AppState.logged-in && AppState.page != "welcome": PillButton {
                     width: 112px;
                     text: AppState.en ? "Login" : "登录/注册";
@@ -130,9 +128,9 @@ export component TopBar {
         }
     }
     function actions-width() -> length {
-        return (AppState.logged-in ? (AppState.en ? 318px : 304px) : 318px) + (AppState.payment-active ? 120px : 0px);
+        return (AppState.logged-in ? (AppState.en ? 214px : 200px) : 214px) + (AppState.payment-active ? 120px : 0px);
     }
     function model-picker-width() -> length {
-        return min(330px, max(180px, (root.width - 18px - root.actions-width() - 70px) / 2));
+        return min(280px, max(180px, (root.width - 18px - root.actions-width() - 70px) / 2));
     }
 }

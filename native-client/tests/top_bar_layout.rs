@@ -46,11 +46,21 @@ fn invitation_pill_fits_beside_model_pickers_and_keeps_navigation() {
             );
             for picker in ElementHandle::find_by_element_type_name(&app, "ModelPicker") {
                 assert!(
+                    picker.size().width <= 280.0,
+                    "generation model controls must use the compact width"
+                );
+                assert!(
                     picker.absolute_position().x + picker.size().width + 8.0
                         <= gift.absolute_position().x,
                     "model controls must not overlap invitation actions"
                 );
             }
+            assert!(
+                ElementHandle::find_by_element_type_name(&app, "ThemeMenuButton")
+                    .next()
+                    .is_none(),
+                "theme selection belongs in the avatar menu, not the top bar"
+            );
             gift.mock_single_click(PointerEventButton::Left);
             assert_eq!(&*destination.borrow(), "invitation-gift");
             if let Some(directory) = std::env::var_os("ELUNVI_TEST_ARTIFACT_DIR") {
