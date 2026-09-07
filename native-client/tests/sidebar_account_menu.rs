@@ -107,6 +107,10 @@ fn bottom_account_controls_keep_routes_and_menu_fits_collapsed_and_expanded_side
             ElementHandle::find_by_element_id(&app, "Sidebar::sidebar-notifications")
                 .next()
                 .unwrap();
+        assert!(
+            credits.size().width <= if collapsed { 56.0 } else { 80.0 },
+            "credits entry must stay compact instead of filling the sidebar"
+        );
         assert!(credits.absolute_position().y > 520.0);
         assert!(
             credits.absolute_position().y + credits.size().height
@@ -142,7 +146,19 @@ fn bottom_account_controls_keep_routes_and_menu_fits_collapsed_and_expanded_side
         );
         let rows =
             ElementHandle::find_by_element_type_name(&app, "AccountMenuRow").collect::<Vec<_>>();
-        assert_eq!(rows.len(), 5);
+        assert_eq!(rows.len(), 3);
+        assert!(ElementHandle::find_by_element_id(
+            &app,
+            "SidebarAccountButton::account-theme"
+        )
+        .next()
+        .is_none());
+        assert!(ElementHandle::find_by_element_id(
+            &app,
+            "SidebarAccountButton::account-about"
+        )
+        .next()
+        .is_none());
         for row in &rows {
             assert!(row.absolute_position().y + row.size().height <= panel.size().height - 10.0);
         }
@@ -175,16 +191,10 @@ fn bottom_account_controls_keep_routes_and_menu_fits_collapsed_and_expanded_side
             "Very long display name for layout"
         );
         state.set_profile_open(false);
-        for (id, section) in [
-            ("account-settings", "basic"),
-            ("account-about", "about"),
-            ("account-theme", "basic"),
-        ] {
-            avatar.mock_single_click(PointerEventButton::Left);
-            menu_click(&app, &avatar, id);
-            assert_eq!(&*destination.borrow(), "settings");
-            assert_eq!(state.get_settings_section(), section);
-        }
+        avatar.mock_single_click(PointerEventButton::Left);
+        menu_click(&app, &avatar, "account-settings");
+        assert_eq!(&*destination.borrow(), "settings");
+        assert_eq!(state.get_settings_section(), "basic");
         avatar.mock_single_click(PointerEventButton::Left);
         menu_click(&app, &avatar, "account-membership");
         assert_eq!(&*destination.borrow(), "credits");

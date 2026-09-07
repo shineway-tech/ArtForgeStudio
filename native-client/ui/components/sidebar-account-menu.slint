@@ -47,7 +47,9 @@ component AccountMenuRow inherits Rectangle {
 
 export component SidebarCreditsButton inherits Rectangle {
     in property <bool> collapsed: false;
+    width: root.collapsed ? 56px : 80px;
     height: 54px;
+    horizontal-stretch: 0;
     accessible-role: button;
     accessible-label: (AppState.en ? "Credits " : "积分 ") + AppState.credit-balance;
     accessible-action-default => { AppState.navigate("credits"); }
@@ -65,8 +67,7 @@ export component SidebarCreditsButton inherits Rectangle {
     }
     Text {
         x: 4px; y: 30px; width: parent.width - 8px; height: 16px;
-        text: root.collapsed ? (AppState.en ? "Credits" : "积分")
-            : (AppState.en ? "Credits & membership" : "积分与会员");
+        text: AppState.en ? "Credits" : "积分";
         color: AppTheme.muted; font-size: root.collapsed ? 10px : 11px;
         font-weight: 400; horizontal-alignment: center; vertical-alignment: center;
         overflow: elide;
@@ -116,7 +117,7 @@ export component SidebarAccountButton inherits Rectangle {
         x: root.width + 12px;
         y: root.height - self.height;
         width: 280px;
-        height: 370px;
+        height: 286px;
         close-policy: close-on-click-outside;
         account-popup-panel := Rectangle {
             width: parent.width; height: parent.height;
@@ -167,28 +168,15 @@ export component SidebarAccountButton inherits Rectangle {
                     } else { root.login(); }
                 }
             }
-            account-theme := AccountMenuRow {
-                x: 8px; y: 190px; width: parent.width - 16px;
-                label: AppState.en ? "Theme settings" : "主题设置";
-                icon: @image-url("../../assets/icons/palette.svg");
-                clicked => { account-popup.close(); AppState.settings-section = "basic"; AppState.navigate("settings"); }
-            }
             account-settings := AccountMenuRow {
-                x: 8px; y: 232px; width: parent.width - 16px;
+                x: 8px; y: 190px; width: parent.width - 16px;
                 label: AppState.en ? "Settings" : "设置";
                 icon: AppState.icon-settings;
                 show-dot: AppState.update-available;
                 clicked => { account-popup.close(); AppState.settings-section = "basic"; AppState.navigate("settings"); }
             }
-            account-about := AccountMenuRow {
-                x: 8px; y: 274px; width: parent.width - 16px;
-                label: AppState.en ? "About" : "关于";
-                icon: @image-url("../../assets/icons/info.svg");
-                show-dot: AppState.update-available;
-                clicked => { account-popup.close(); AppState.settings-section = "about"; AppState.navigate("settings"); }
-            }
             account-logout := AccountMenuRow {
-                x: 8px; y: 316px; width: parent.width - 16px;
+                x: 8px; y: 232px; width: parent.width - 16px;
                 label: AppState.logged-in ? (AppState.en ? "Logout" : "退出登录") : (AppState.en ? "Sign in" : "登录/注册");
                 icon: @image-url("../../assets/icons/account-logout.svg");
                 clicked => { account-popup.close(); if AppState.logged-in { AppState.logout(); } else { root.login(); } }
