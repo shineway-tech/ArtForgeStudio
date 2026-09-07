@@ -2205,9 +2205,8 @@ mod tests {
         assert!(nav_item.contains("in property <bool> active: AppState.page == root.page;"));
         assert!(nav_item.contains("background: root.active ? AppTheme.panel-soft"));
         assert!(nav_item.contains("border-width: root.active ? 1px : 0px;"));
-        assert!(sidebar.contains(
-            "active: AppState.page == \"settings\" || AppState.page == \"custom-prompt-editor\";"
-        ));
+        // Settings now lives in the avatar menu; its route and popup behavior
+        // are exercised by tests/sidebar_account_menu.rs.
     }
 
     #[test]

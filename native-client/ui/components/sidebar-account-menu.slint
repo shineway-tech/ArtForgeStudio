@@ -1,0 +1,198 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { PillButton } from "pill-button.slint";
+
+component AccountAvatar inherits Rectangle {
+    width: 32px;
+    height: 32px;
+    border-radius: 16px;
+    background: AppTheme.accent-dark;
+    Image {
+        x: 7px; y: 7px; width: 18px; height: 18px;
+        source: AppState.icon-account-person;
+        colorize: #ffffff;
+        image-fit: contain;
+    }
+}
+
+component AccountMenuRow inherits Rectangle {
+    in property <string> label;
+    in property <image> icon;
+    in property <bool> show-dot: false;
+    callback clicked();
+    height: 38px;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    border-radius: 8px;
+    background: touch.has-hover ? AppTheme.panel-soft : transparent;
+    Image {
+        x: 10px; y: 10px; width: 18px; height: 18px;
+        source: root.icon; colorize: AppTheme.text; image-fit: contain;
+    }
+    Text {
+        x: 40px; width: parent.width - 66px; height: parent.height;
+        text: root.label; color: AppTheme.text; font-size: 13px;
+        font-weight: 400; vertical-alignment: center; overflow: elide;
+    }
+    if root.show-dot: Rectangle {
+        x: parent.width - 20px; y: 15px; width: 7px; height: 7px;
+        border-radius: 4px; background: AppTheme.danger;
+    }
+    touch := TouchArea {
+        width: parent.width; height: parent.height; mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component SidebarCreditsButton inherits Rectangle {
+    in property <bool> collapsed: false;
+    height: 54px;
+    accessible-role: button;
+    accessible-label: (AppState.en ? "Credits " : "积分 ") + AppState.credit-balance;
+    accessible-action-default => { AppState.navigate("credits"); }
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: AppTheme.border;
+    background: credit-touch.has-hover ? AppTheme.panel-soft : AppTheme.panel;
+    Text {
+        x: 6px; y: 7px; width: parent.width - 12px; height: 20px;
+        text: AppState.credit-balance;
+        color: AppTheme.text;
+        font-size: root.collapsed ? 11px : 15px;
+        font-weight: 500; horizontal-alignment: center; vertical-alignment: center;
+        overflow: elide;
+    }
+    Text {
+        x: 4px; y: 30px; width: parent.width - 8px; height: 16px;
+        text: root.collapsed ? (AppState.en ? "Credits" : "积分")
+            : (AppState.en ? "Credits & membership" : "积分与会员");
+        color: AppTheme.muted; font-size: root.collapsed ? 10px : 11px;
+        font-weight: 400; horizontal-alignment: center; vertical-alignment: center;
+        overflow: elide;
+    }
+    credit-touch := TouchArea {
+        width: parent.width; height: parent.height; mouse-cursor: pointer;
+        clicked => { AppState.navigate("credits"); }
+    }
+}
+
+export component SidebarAccountButton inherits Rectangle {
+    in property <bool> collapsed: false;
+    in property <bool> show-dot: false;
+    height: 42px;
+    accessible-role: button;
+    accessible-label: AppState.en ? "Account menu" : "账户菜单";
+    accessible-action-default => { account-popup.show(); }
+    border-radius: 9px;
+    background: account-touch.has-hover ? AppTheme.panel-soft : transparent;
+    AccountAvatar {
+        x: root.collapsed ? (parent.width - 32px) / 2 : 6px;
+        y: 5px;
+    }
+    if !root.collapsed: Text {
+        x: 48px; width: parent.width - 70px; height: parent.height;
+        text: AppState.logged-in ? AppState.nickname : (AppState.en ? "Guest" : "未登录");
+        color: AppTheme.text; font-size: 13px; font-weight: 400;
+        vertical-alignment: center; overflow: elide;
+    }
+    if root.show-dot: Rectangle {
+        x: parent.width - (root.collapsed ? 9px : 12px); y: 5px;
+        width: 7px; height: 7px; border-radius: 4px; background: AppTheme.danger;
+    }
+    account-touch := TouchArea {
+        width: parent.width; height: parent.height; mouse-cursor: pointer;
+        clicked => { account-popup.show(); }
+    }
+
+    function login() {
+        AppState.auth-open = true;
+        if AppState.auth-method == "wechat" && !AppState.auth-wechat-busy && !AppState.auth-wechat-qr-ready {
+            AppState.start-wechat-login();
+        }
+    }
+
+    account-popup := PopupWindow {
+        x: root.width + 12px;
+        y: root.height - self.height;
+        width: 280px;
+        height: 370px;
+        close-policy: close-on-click-outside;
+        account-popup-panel := Rectangle {
+            width: parent.width; height: parent.height;
+            background: AppTheme.panel;
+            border-radius: 16px; border-width: 1px; border-color: AppTheme.border;
+            AccountAvatar { x: 16px; y: 16px; }
+            Text {
+                x: 60px; y: 16px; width: parent.width - 76px; height: 32px;
+                text: AppState.logged-in ? AppState.nickname : (AppState.en ? "Guest" : "未登录");
+                color: AppTheme.text; font-size: 15px; font-weight: 500;
+                vertical-alignment: center; overflow: elide;
+            }
+            Text {
+                x: 16px; y: 64px; width: 142px; height: 22px;
+                text: AppState.logged-in ? AppState.membership-plan-name : (AppState.en ? "Sign in to continue" : "登录后查看账户信息");
+                color: AppTheme.muted; font-size: 12px; vertical-alignment: center; overflow: elide;
+            }
+            if AppState.logged-in: Text {
+                x: 162px; y: 64px; width: parent.width - 178px; height: 22px;
+                text: AppState.credit-balance; color: AppTheme.text; font-size: 12px;
+                horizontal-alignment: right; vertical-alignment: center; overflow: elide;
+            }
+            account-membership := PillButton {
+                x: 16px; y: 94px; width: parent.width - 32px; height: 32px;
+                text: !AppState.logged-in ? (AppState.en ? "Sign in" : "登录/注册")
+                    : (AppState.membership-tier-rank > 0 ? (AppState.en ? "Manage membership" : "管理会员")
+                    : (AppState.en ? "Upgrade membership" : "开通会员"));
+                primary: true;
+                clicked => {
+                    account-popup.close();
+                    if AppState.logged-in {
+                        AppState.credits-tab = "membership";
+                        AppState.navigate("credits");
+                    } else { root.login(); }
+                }
+            }
+            Rectangle { x: 12px; y: 138px; width: parent.width - 24px; height: 1px; background: AppTheme.border; }
+            account-profile := AccountMenuRow {
+                x: 8px; y: 148px; width: parent.width - 16px;
+                label: AppState.en ? "Personal information" : "个人信息";
+                icon: AppState.icon-account-person;
+                clicked => {
+                    account-popup.close();
+                    if AppState.logged-in {
+                        AppState.profile-section = "login";
+                        AppState.profile-name = AppState.nickname;
+                        AppState.profile-open = true;
+                    } else { root.login(); }
+                }
+            }
+            account-theme := AccountMenuRow {
+                x: 8px; y: 190px; width: parent.width - 16px;
+                label: AppState.en ? "Theme settings" : "主题设置";
+                icon: @image-url("../../assets/icons/palette.svg");
+                clicked => { account-popup.close(); AppState.settings-section = "basic"; AppState.navigate("settings"); }
+            }
+            account-settings := AccountMenuRow {
+                x: 8px; y: 232px; width: parent.width - 16px;
+                label: AppState.en ? "Settings" : "设置";
+                icon: AppState.icon-settings;
+                show-dot: AppState.update-available;
+                clicked => { account-popup.close(); AppState.settings-section = "basic"; AppState.navigate("settings"); }
+            }
+            account-about := AccountMenuRow {
+                x: 8px; y: 274px; width: parent.width - 16px;
+                label: AppState.en ? "About" : "关于";
+                icon: @image-url("../../assets/icons/info.svg");
+                show-dot: AppState.update-available;
+                clicked => { account-popup.close(); AppState.settings-section = "about"; AppState.navigate("settings"); }
+            }
+            account-logout := AccountMenuRow {
+                x: 8px; y: 316px; width: parent.width - 16px;
+                label: AppState.logged-in ? (AppState.en ? "Logout" : "退出登录") : (AppState.en ? "Sign in" : "登录/注册");
+                icon: @image-url("../../assets/icons/account-logout.svg");
+                clicked => { account-popup.close(); if AppState.logged-in { AppState.logout(); } else { root.login(); } }
+            }
+        }
+    }
+}

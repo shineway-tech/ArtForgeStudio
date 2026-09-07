@@ -115,8 +115,6 @@ export component TopBar {
                 if AppState.logged-in: InvitationGiftButton {}
                 PillButton { width: 94px; text: AppState.language == "zh" ? "中文" : "English"; clicked => { AppState.set-language(AppState.language == "zh" ? "en" : "zh"); } }
                 ThemeMenuButton { width: 94px; }
-                if AppState.logged-in: PillButton { width: 104px; text: AppState.en ? ("Credits " + AppState.credit-balance) : ("积分 " + AppState.credit-balance); clicked => { AppState.navigate("credits"); } }
-                if AppState.logged-in: PillButton { width: 128px; text: AppState.nickname; clicked => { AppState.profile-section = "login"; AppState.profile-open = true; AppState.profile-name = AppState.nickname; } }
                 if !AppState.logged-in && AppState.page != "welcome": PillButton {
                     width: 112px;
                     text: AppState.en ? "Login" : "登录/注册";
@@ -132,7 +130,7 @@ export component TopBar {
         }
     }
     function actions-width() -> length {
-        return (AppState.logged-in ? (AppState.en ? 566px : 552px) : 318px) + (AppState.payment-active ? 120px : 0px);
+        return (AppState.logged-in ? (AppState.en ? 318px : 304px) : 318px) + (AppState.payment-active ? 120px : 0px);
     }
     function model-picker-width() -> length {
         return min(330px, max(180px, (root.width - 18px - root.actions-width() - 70px) / 2));
