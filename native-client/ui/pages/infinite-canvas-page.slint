@@ -1,4 +1,5 @@
 import { AppState } from "../app-state.slint";
+import { CanvasSplitGuides } from "../components/canvas-split-guides.slint";
 import { DialogCloseButton } from "../components/dialog-close-button.slint";
 import { LoadingDots } from "../components/loading-dots.slint";
 import { CanvasLink, CanvasNote } from "../types.slint";
@@ -472,12 +473,12 @@ component CanvasSplitConfirmButton {
 component CanvasSplitNumberField {
     in property <string> suffix;
     in property <float> scale-factor: 1;
-    in-out property <string> value: "1";
+    in-out property <string> value: "0";
     width: 104px * root.scale-factor;
     height: 38px * root.scale-factor;
 
     function step-value(delta: int) {
-        root.value = "" + max(1, min(64, Math.round(root.value.to-float()) + delta));
+        root.value = "" + max(0, min(64, Math.round(root.value.to-float()) + delta));
     }
 
     Rectangle {
@@ -1029,8 +1030,12 @@ component CanvasNodeCard {
     in-out property <string> current-content: root.note.content;
     in-out property <bool> editing: false;
     in-out property <bool> split-mode: false;
-    in-out property <string> split-rows: "1";
-    in-out property <string> split-columns: "1";
+    in-out property <string> split-rows: "0";
+    in-out property <string> split-columns: "0";
+    in-out property <[float]> split-row-positions;
+    in-out property <[float]> split-column-positions;
+    changed split-rows => { root.split-row-positions = AppState.canvas-split-positions(root.split-row-line-count()); }
+    changed split-columns => { root.split-column-positions = AppState.canvas-split-positions(root.split-column-line-count()); }
     in-out property <bool> media-model-open: false;
     in-out property <bool> media-settings-open: false;
     in-out property <string> video-quality: "720p";
@@ -1066,11 +1071,11 @@ component CanvasNodeCard {
     }
 
     function split-row-line-count() -> int {
-        return max(1, min(64, Math.round(root.split-rows.to-float())));
+        return max(0, min(64, Math.round(root.split-rows.to-float())));
     }
 
     function split-column-line-count() -> int {
-        return max(1, min(64, Math.round(root.split-columns.to-float())));
+        return max(0, min(64, Math.round(root.split-columns.to-float())));
     }
 
     function image-processing() -> bool {
@@ -1677,23 +1682,16 @@ component CanvasNodeCard {
                     }
                 }
             }
-            if root.split-mode: Rectangle {
-                width: parent.width;
-                height: parent.height;
-                background: #07111f99;
-
-                for column in root.split-column-line-count(): Rectangle {
-                    x: (column + 1) * parent.width / (root.split-column-line-count() + 1) - 1px * root.node-scale();
-                    width: max(1px, 2px * root.node-scale());
-                    height: parent.height;
-                    background: #ffffffdd;
-                }
-                for row in root.split-row-line-count(): Rectangle {
-                    y: (row + 1) * parent.height / (root.split-row-line-count() + 1) - 1px * root.node-scale();
-                    width: parent.width;
-                    height: max(1px, 2px * root.node-scale());
-                    background: #ffffffdd;
-                }
+            if root.split-mode: CanvasSplitGuides {
+                property <float> image-ratio: root.note.preview-image.width / max(1, root.note.preview-image.height);
+                width: min(parent.width, parent.height * self.image-ratio);
+                height: self.width / max(0.001, self.image-ratio);
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                z: 90;
+                scale-factor: root.node-scale();
+                row-positions <=> root.split-row-positions;
+                column-positions <=> root.split-column-positions;
             }
             if root.image-processing(): Rectangle {
                 width: parent.width;
@@ -1877,8 +1875,10 @@ component CanvasNodeCard {
                 CanvasSplitConfirmButton {
                     scale-factor: root.node-scale();
                     clicked => {
-                        AppState.split-canvas-image(root.note.id, root.split-rows, root.split-columns);
-                        root.split-mode = false;
+                        if root.split-row-line-count() + root.split-column-line-count() > 0 {
+                            AppState.split-canvas-image(root.note.id, root.split-rows, root.split-columns, root.split-row-positions, root.split-column-positions);
+                            root.split-mode = false;
+                        }
                     }
                 }
             }
@@ -1903,7 +1903,7 @@ component CanvasNodeCard {
                 CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
                 if (root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "": CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/download.svg"); text: AppState.en ? "Download" : "下载"; clicked => { AppState.save-canvas-image(root.note.id); } }
                 if (root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "": CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/group.svg"); text: AppState.en ? "Extract UI" : "提取元素"; clicked => { if !AppState.generating { AppState.extract-canvas-ui-elements(root.note.id); } } }
-                if (root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "": CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/split.svg"); text: AppState.en ? "Split" : "分割"; clicked => { root.split-rows = "1"; root.split-columns = "1"; root.split-mode = true; } }
+                if (root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "": CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/split.svg"); text: AppState.en ? "Split" : "分割"; clicked => { root.split-rows = "0"; root.split-columns = "0"; root.split-row-positions = []; root.split-column-positions = []; root.split-mode = true; } }
                 CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/upload.svg"); text: (root.note.kind == "image" || root.is-board-image()) ? (AppState.en ? "Upload image" : "上传图片") : (AppState.en ? "Upload audio" : "上传音频"); clicked => { if root.note.kind == "image" || root.is-board-image() { AppState.choose-canvas-node-image(root.note.id); } else { AppState.generation-status = AppState.en ? "Audio upload requires a configured audio provider" : "请先配置音频生成服务"; } } }
             }
         }
@@ -3210,7 +3210,7 @@ export component InfiniteCanvasPage {
                             : "正在分析当前图片并生成透明 PNG，请稍候")
                         : (AppState.en
                             ? "Splitting this image evenly. Please wait."
-                            : "正在平均分割当前图片，请稍候");
+                            : "正在按分割线裁切当前图片，请稍候");
                     color: AppTheme.muted;
                     font-size: 12px;
                     font-weight: 400;

@@ -4969,11 +4969,6 @@ mod tests {
             .and_then(|value| value.split("export component InfiniteCanvasPage").next())
             .expect("canvas node component");
 
-        assert!(node.contains("if root.split-mode: Rectangle"));
-        assert!(node.contains("for column in root.split-column-line-count()"));
-        assert!(node.contains("root.split-column-line-count() + 1"));
-        assert!(node.contains("for row in root.split-row-line-count()"));
-        assert!(node.contains("root.split-row-line-count() + 1"));
         assert!(node.contains("AppState.canvas-split-loading-node-id == root.note.id"));
         assert!(node.contains("AppState.canvas-extraction-loading-node-id == root.note.id"));
         assert!(node.contains("root.image-processing()"));
@@ -5010,7 +5005,6 @@ mod tests {
             .expect("split number field");
 
         assert!(number.contains("function step-value(delta: int)"));
-        assert!(number.contains("max(1, min(64"));
         assert!(number.contains("step-controls := TouchArea"));
         assert!(number.contains(
             "clicked => { root.step-value(self.mouse-y < self.height / 2 ? 1 : -1); }"

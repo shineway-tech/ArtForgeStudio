@@ -26,6 +26,8 @@ struct CanvasSplitTile {
     path: String,
     row: u32,
     column: u32,
+    width: u32,
+    height: u32,
 }
 
 type CanvasSplitOutcome = std::result::Result<Vec<CanvasSplitTile>, String>;
@@ -112,6 +114,7 @@ fn persist_canvas_clipboard_image(
     })
 }
 
+#[cfg(test)]
 fn terminal_remainder_span(total: u32, parts: u32, index: u32) -> (u32, u32) {
     let base = total / parts;
     let remainder = total % parts;
@@ -126,18 +129,35 @@ fn split_parts_from_lines(lines: u32) -> Option<u32> {
     lines.checked_add(1)
 }
 
+fn split_pixel_edges(total: u32, positions: &[f32]) -> Result<Vec<u32>> {
+    let mut edges = vec![0];
+    for &position in positions {
+        if !position.is_finite() || position <= 0.0 || position >= 1.0 {
+            return Err(anyhow!("Invalid split position"));
+        }
+        let edge = (position as f64 * total as f64).round() as u32;
+        if edge <= *edges.last().unwrap() || edge >= total {
+            return Err(anyhow!("Split lines must leave at least one pixel between them"));
+        }
+        edges.push(edge);
+    }
+    edges.push(total);
+    Ok(edges)
+}
+
 fn split_canvas_image_to_directory(
     source_path: &Path,
     output_dir: &Path,
-    rows: u32,
-    columns: u32,
+    row_positions: &[f32],
+    column_positions: &[f32],
 ) -> Result<Vec<CanvasSplitTile>> {
     let (decoded, _) = decode_image_file(source_path)?;
     let rgba = decoded.to_rgba8();
     let (image_width, image_height) = rgba.dimensions();
-    if rows == 0 || columns == 0 || rows > image_height || columns > image_width {
-        return Err(anyhow!("split grid exceeds image dimensions"));
-    }
+    let row_edges = split_pixel_edges(image_height, row_positions)?;
+    let column_edges = split_pixel_edges(image_width, column_positions)?;
+    let rows = row_edges.len() as u32 - 1;
+    let columns = column_edges.len() as u32 - 1;
     ensure_managed_subdirectory(output_dir)
         .then_some(())
         .ok_or_else(|| anyhow!("unable to prepare the canvas split output directory"))?;
@@ -145,9 +165,11 @@ fn split_canvas_image_to_directory(
     let mut tiles = Vec::with_capacity((rows * columns) as usize);
     let result = (|| -> Result<()> {
         for row in 0..rows {
-            let (top, tile_height) = terminal_remainder_span(image_height, rows, row);
+            let top = row_edges[row as usize];
+            let tile_height = row_edges[row as usize + 1] - top;
             for column in 0..columns {
-                let (left, tile_width) = terminal_remainder_span(image_width, columns, column);
+                let left = column_edges[column as usize];
+                let tile_width = column_edges[column as usize + 1] - left;
                 let tile =
                     image::imageops::crop_imm(&rgba, left, top, tile_width, tile_height).to_image();
                 let bytes = encode_png_rgba(&tile, tile_width, tile_height)?;
@@ -157,6 +179,8 @@ fn split_canvas_image_to_directory(
                     path: path.display().to_string(),
                     row,
                     column,
+                    width: tile_width,
+                    height: tile_height,
                 });
             }
         }
@@ -493,6 +517,7 @@ fn poll_canvas_image_split(
         let mut created_ids = Vec::with_capacity(tiles.len());
 
         for (index, tile) in tiles.into_iter().enumerate() {
+            let scale = (tile_width / tile.width as f32).min(tile_height / tile.height as f32);
             let id = if index == 0 {
                 first_id
                     .clone()
@@ -506,8 +531,8 @@ fn poll_canvas_image_split(
                 content: String::new(),
                 x: origin_x + tile.column as f32 * (tile_width + gap),
                 y: origin_y + tile.row as f32 * (tile_height + gap),
-                width: tile_width,
-                height: tile_height,
+                width: tile.width as f32 * scale,
+                height: tile.height as f32 * scale,
                 parent_group_id: String::new(),
                 z_index: next_z + index as i32,
                 image_path: tile.path,
@@ -528,10 +553,10 @@ fn poll_canvas_image_split(
         clear_canvas_split_loading(&state, &source.id);
         state.set_generation_status(
             if state.get_language().as_str() == "en" {
-                format!("Split evenly into {rows} rows × {columns} columns")
+                format!("Split into {rows} rows × {columns} columns")
             } else {
                 format!(
-                    "已平均分割为 {rows} 行 × {columns} 列，共 {} 张",
+                    "已按分割线裁切为 {rows} 行 × {columns} 列，共 {} 张",
                     rows * columns
                 )
             }
@@ -1147,7 +1172,11 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
         let app_weak = app.as_weak();
         let store = store.clone();
         let history = history.clone();
-        state.on_split_canvas_image(move |source_node_id, rows, columns| {
+        state.on_canvas_split_positions(|count| {
+            let count = count.clamp(0, 64);
+            ModelRc::new(VecModel::from((1..=count).map(|index| index as f32 / (count + 1) as f32).collect::<Vec<_>>()))
+        });
+        state.on_split_canvas_image(move |source_node_id, rows, columns, row_positions, column_positions| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -1172,24 +1201,23 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
             else {
                 state.set_generation_status(
                     if state.get_language().as_str() == "en" {
-                        "Enter positive whole numbers for horizontal and vertical split lines"
+                        "Enter non-negative whole numbers for split lines"
                     } else {
-                        "横向和纵向分割线数量请输入正整数"
+                        "横向和纵向分割线数量请输入非负整数"
                     }
                     .into(),
                 );
                 return;
             };
-            if horizontal_lines == 0
-                || vertical_lines == 0
+            if (horizontal_lines == 0 && vertical_lines == 0)
                 || horizontal_lines > MAX_CANVAS_SPLIT_AXIS
                 || vertical_lines > MAX_CANVAS_SPLIT_AXIS
             {
                 state.set_generation_status(
                     if state.get_language().as_str() == "en" {
-                        "Horizontal and vertical split lines must each be between 1 and 64"
+                        "Use 0 to 64 lines per axis and add at least one split line"
                     } else {
-                        "横向和纵向分割线数量均需在 1 到 64 之间"
+                        "每个方向可设置 0 到 64 条线，请至少添加一条分割线"
                     }
                     .into(),
                 );
@@ -1267,11 +1295,26 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                 return;
             }
 
+            let row_positions: Vec<f32> = row_positions.iter().collect();
+            let column_positions: Vec<f32> = column_positions.iter().collect();
+            if row_positions.len() != horizontal_lines as usize
+                || column_positions.len() != vertical_lines as usize
+                || split_pixel_edges(image_height, &row_positions).is_err()
+                || split_pixel_edges(image_width, &column_positions).is_err()
+            {
+                state.set_generation_status(if state.get_language().as_str() == "en" {
+                    "Move split lines apart; each tile needs at least one pixel"
+                } else {
+                    "请拉开分割线间距，每个分块至少需要一个像素"
+                }.into());
+                return;
+            }
+
             state.set_generation_status(
                 if state.get_language().as_str() == "en" {
                     "Splitting image locally..."
                 } else {
-                    "正在本地平均分割图片..."
+                    "正在按分割线位置裁切图片..."
                 }
                 .into(),
             );
@@ -1284,7 +1327,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
             let (sender, receiver) = mpsc::channel::<CanvasSplitOutcome>();
             std::thread::spawn(move || {
                 let outcome =
-                    split_canvas_image_to_directory(&source_path, &output_dir, rows, columns)
+                    split_canvas_image_to_directory(&source_path, &output_dir, &row_positions, &column_positions)
                         .map_err(|error| error.to_string());
                 let _ = sender.send(outcome);
             });
@@ -2677,9 +2720,19 @@ mod tests {
 
     #[test]
     fn split_line_counts_create_one_more_tile_part_per_axis() {
+        assert_eq!(split_parts_from_lines(0), Some(1));
         assert_eq!(split_parts_from_lines(1), Some(2));
         assert_eq!(split_parts_from_lines(2), Some(3));
         assert_eq!(split_parts_from_lines(64), Some(65));
+    }
+
+    #[test]
+    fn moved_split_lines_preserve_pixel_boundaries_and_reject_empty_tiles() {
+        assert_eq!(split_pixel_edges(100, &[0.2, 0.73]).unwrap(), vec![0, 20, 73, 100]);
+        assert_eq!(split_pixel_edges(100, &[]).unwrap(), vec![0, 100]);
+        for positions in [vec![0.0], vec![1.0], vec![f32::NAN], vec![0.7, 0.2], vec![0.201, 0.202]] {
+            assert!(split_pixel_edges(100, &positions).is_err());
+        }
     }
 
     #[test]
@@ -2700,18 +2753,24 @@ mod tests {
         let bytes = encode_png_rgba(&source, 5, 3).expect("encode split source");
         atomic_write_file(&source_path, &bytes).expect("write split source");
 
-        let tiles =
-            split_canvas_image_to_directory(&source_path, &output_dir, 2, 2).expect("split source");
-        assert_eq!(tiles.len(), 4);
-        let mut rebuilt = image::RgbaImage::new(5, 3);
-        for tile in &tiles {
-            let (left, _) = terminal_remainder_span(5, 2, tile.column);
-            let (top, _) = terminal_remainder_span(3, 2, tile.row);
-            let decoded = image::open(&tile.path).expect("read tile").to_rgba8();
-            image::imageops::replace(&mut rebuilt, &decoded, left as i64, top as i64);
+        for (row_positions, column_positions, expected_x, expected_y) in [
+            (vec![1.0 / 3.0], vec![0.4], vec![0, 2], vec![0, 1]),
+            (vec![], vec![0.2, 0.8], vec![0, 1, 4], vec![0]),
+            (vec![2.0 / 3.0], vec![], vec![0], vec![0, 2]),
+        ] {
+            let tiles = split_canvas_image_to_directory(&source_path, &output_dir, &row_positions, &column_positions).expect("split source");
+            assert_eq!(tiles.len(), expected_x.len() * expected_y.len());
+            let mut rebuilt = image::RgbaImage::new(5, 3);
+            for tile in &tiles {
+                let left = expected_x[tile.column as usize];
+                let top = expected_y[tile.row as usize];
+                let decoded = image::open(&tile.path).expect("read tile").to_rgba8();
+                assert_eq!(decoded.dimensions(), (tile.width, tile.height));
+                image::imageops::replace(&mut rebuilt, &decoded, left, top);
+            }
+            assert_eq!(rebuilt, source);
+            remove_canvas_split_tiles(&tiles);
         }
-        assert_eq!(rebuilt, source);
-        remove_canvas_split_tiles(&tiles);
     }
 
     #[test]
