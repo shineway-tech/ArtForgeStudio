@@ -2713,6 +2713,47 @@ mod tests {
     }
 
     #[test]
+    fn canvas_failure_remains_visible_and_retry_requires_a_click() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("canvas".into());
+        state.set_image_model("test-model".into());
+        state.set_canvas_workflow_id("character-age".into());
+        state.set_canvas_workflow_prompt("保留蓝色服饰".into());
+        state.set_references(ModelRc::new(VecModel::from(vec![ReferenceItem {
+            id: "reference".into(), image: Image::default(), source_path: "reference.png".into(),
+        }])));
+        state.on_compose_canvas_workflow_prompt(|_, prompt, _, _| prompt);
+        state.on_create_canvas_generation_source(|_, _, _| "retry-source".into());
+        let submissions = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed = submissions.clone();
+        state.on_generate_canvas_node(move |_, prompt| observed.borrow_mut().push(prompt.to_string()));
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().unwrap();
+        state.set_generating(false);
+        state.set_generation_status("生成失败：服务暂时不可用".into());
+        assert!(ElementHandle::find_by_accessible_label(&app, "生成失败：服务暂时不可用").next().is_some(),
+            "Canvas must expose the failure after loading disappears");
+        assert!(submissions.borrow().is_empty(), "Never automatically resubmit a paid task");
+        assert_eq!(state.get_canvas_workflow_prompt(), "保留蓝色服饰");
+        assert_eq!(state.get_references().row_count(), 1);
+        ElementHandle::find_by_accessible_label(&app, "重试生成").next().unwrap()
+            .mock_single_click(PointerEventButton::Left);
+        assert_eq!(submissions.borrow().as_slice(), ["保留蓝色服饰"]);
+        assert_eq!(state.get_references().row_count(), 1);
+        state.set_generating(true);
+        if let Some(retry) = ElementHandle::find_by_accessible_label(&app, "重试生成").next() {
+            retry.mock_single_click(PointerEventButton::Left);
+        }
+        assert_eq!(submissions.borrow().len(), 1, "Retry cannot stop or duplicate an active task");
+    }
+
+    #[test]
     fn free_canvas_presets_open_the_shared_canvas_composer() {
         let state = include_str!("../../ui/app-state.slint");
         let launcher = include_str!("../../ui/pages/free-canvas-page.slint");

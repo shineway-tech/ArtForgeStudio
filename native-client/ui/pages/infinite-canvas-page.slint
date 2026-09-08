@@ -3310,6 +3310,81 @@ export component InfiniteCanvasPage {
                 }
             }
 
+            if AppState.generation-status != "": canvas-generation-feedback := Rectangle {
+                x: canvas-workflow-dock.x;
+                y: max(8px, canvas-workflow-dock.y - self.height - 8px);
+                width: canvas-workflow-dock.width;
+                height: 96px;
+                background: AppTheme.panel;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+                property <bool> can-retry: !AppState.generating
+                    && AppState.generation-status != "生成成功"
+                    && AppState.generation-status != "已停止生成"
+                    && AppState.image-model != ""
+                    && (AppState.canvas-workflow-id != ""
+                        ? AppState.references.length > 0
+                        : AppState.canvas-workflow-prompt != "");
+
+                Flickable {
+                    x: 14px;
+                    y: 10px;
+                    width: parent.width - 28px;
+                    height: 40px;
+                    viewport-width: self.width;
+                    viewport-height: max(self.height, feedback-text.preferred-height);
+                    feedback-text := Text {
+                        width: parent.width;
+                        text: AppState.generation-status;
+                        accessible-role: text;
+                        accessible-label: AppState.generation-status;
+                        wrap: word-wrap;
+                        color: AppTheme.text;
+                        font-size: 13px;
+                    }
+                }
+                Text {
+                    x: 14px;
+                    y: 58px;
+                    width: parent.width - 130px;
+                    height: 28px;
+                    text: canvas-generation-feedback.can-retry
+                        ? (AppState.en ? "Retry uses current inputs and may incur a new charge" : "按当前输入重新生成，可能产生新的费用")
+                        : (AppState.en ? "Your text and reference images are retained" : "文字和参考图已保留");
+                    color: AppTheme.muted;
+                    font-size: 11px;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                }
+                if canvas-generation-feedback.can-retry: Rectangle {
+                    x: parent.width - 104px;
+                    y: 56px;
+                    width: 90px;
+                    height: 30px;
+                    background: AppTheme.accent;
+                    border-radius: 7px;
+                    accessible-role: button;
+                    accessible-label: AppState.en ? "Retry generation" : "重试生成";
+                    Text {
+                        width: parent.width;
+                        height: parent.height;
+                        text: AppState.en ? "Retry" : "重试生成";
+                        color: #ffffff;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            // Never route a stale retry click to the composer's stop action.
+                            if !AppState.generating { root.generate-workflow(); }
+                        }
+                    }
+                }
+            }
+
             canvas-workflow-dock := Rectangle {
                 x: max(16px, (parent.width - self.width) / 2);
                 y: parent.height - self.height - 14px;
