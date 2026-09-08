@@ -1,4 +1,5 @@
 import { AppState } from "../app-state.slint";
+import { CharacterAgePreset } from "../components/character-age-preset.slint";
 import { AppTheme } from "../theme.slint";
 import { BuildingDerivationPreset } from "../components/building-derivation-preset.slint";
 
@@ -329,8 +330,8 @@ export component FreeCanvasPage {
                 title: AppState.en ? "Character Age Progression" : "角色年龄变化";
                 description: AppState.en ? "Generate adjustable life stages" : "生成可调数量的角色年龄阶段";
                 artwork: @image-url("../../assets/free-canvas/character-age.png");
-                prompt-zh: "根据参考角色生成从婴儿到老年的{count}个连续年龄阶段。除非用户明确指定其他年龄起点，最左侧第一个角色必须是0至1岁的婴儿：圆润婴儿脸、大头短肢、柔软的小身体，采用符合月龄的躺姿、坐姿或爬姿；不得用幼儿、儿童或缩小版成人代替婴儿。参考图即使是成人，也必须先还原为具有同一身份特征的婴儿。按所选数量从左到右分布后续人生阶段，依次向幼儿、儿童、少年、青年、中年、老年成长；数量不足时精简中间阶段，不得省略婴儿起点，数量大于1时保留老年终点，数量为1时只生成婴儿。保持角色身份特征、服装主题、配色和绘制风格连贯，让面部、身高、体型和姿态符合年龄变化。将{count}个完整角色均匀排列在同一张横向设定图中，婴儿的头、手、脚和身体也必须完整可见，各角色之间保留清晰空隙，不接触、不重叠、不裁切。";
-                prompt-en: "Create exactly {count} consecutive age stages of the reference character from infancy to old age. Unless the user explicitly specifies another starting age, the leftmost first character must be a 0-to-1-year-old baby: a round baby face, a large head, short limbs, and a soft small body, lying, sitting, or crawling as appropriate for the age. Never substitute a toddler, child, or miniature adult for the baby. Even an adult reference must first be reinterpreted as a baby with recognizable identity cues. Progress from left to right through toddler, child, adolescent, young adult, middle-aged adult, and elderly stages as the selected count allows. For smaller counts, omit intermediate stages, never the baby start. Preserve an elderly endpoint when count exceeds one; for count one, generate only the baby. Preserve identity cues, outfit theme, palette, and art style while changing face, height, body proportions, and posture appropriately. Arrange all {count} complete characters evenly in one horizontal character sheet. Show the baby's entire head, hands, feet, and body, with clear background gaps between all characters, no touching, overlap, or cropping.";
+                prompt-zh: CharacterAgePreset.prompt-zh;
+                prompt-en: CharacterAgePreset.prompt-en;
                 hint-zh: "简单描述角色特征，例如：蓝袍法师，始终保留蓝色魔法";
                 hint-en: "Describe the character cue, e.g. blue-robed mage, keep the blue magic";
             }

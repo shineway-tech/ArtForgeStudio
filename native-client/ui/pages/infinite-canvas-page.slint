@@ -1,4 +1,5 @@
 import { AppState } from "../app-state.slint";
+import { CharacterAgePreset } from "../components/character-age-preset.slint";
 import { CanvasSplitGuides } from "../components/canvas-split-guides.slint";
 import { DialogCloseButton } from "../components/dialog-close-button.slint";
 import { LoadingDots } from "../components/loading-dots.slint";
@@ -2691,8 +2692,8 @@ export component InfiniteCanvasPage {
             AppState.canvas-workflow-title = AppState.en ? "Character Age Progression" : "角色年龄变化";
             AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-age.png");
             AppState.canvas-workflow-template = AppState.en
-                ? "Create exactly {count} consecutive age stages of the reference character from infancy to old age, distributed evenly across the lifespan. Preserve identity cues, outfit theme, palette, and art style while changing face, height, body proportions, and posture appropriately. Arrange all {count} full characters evenly in one horizontal character sheet."
-                : "根据参考角色生成从婴儿到老年的{count}个连续年龄阶段，并按所选数量均匀分布人生阶段。保持角色身份特征、服装主题、配色和绘制风格连贯，让面部、身高、体型和姿态符合年龄变化。将{count}个完整角色均匀排列在同一张横向设定图中。";
+                ? CharacterAgePreset.prompt-en
+                : CharacterAgePreset.prompt-zh;
             AppState.canvas-workflow-hint = AppState.en
                 ? "Describe the character cue, e.g. blue-robed mage, keep the blue magic"
                 : "简单描述角色特征，例如：蓝袍法师，始终保留蓝色魔法";

@@ -3346,7 +3346,8 @@ mod tests {
                 panic!("expected an image failure");
             };
             assert!(reason.contains("上游安全系统拦截"));
-            assert!(reason.contains("不返还积分"));
+            assert!(!reason.contains("不返还积分"));
+            assert!(reason.contains("积分记录"));
         }
     }
 
