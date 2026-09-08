@@ -2735,8 +2735,10 @@ mod tests {
         state.on_generate_canvas_node(move |_, prompt| observed.borrow_mut().push(prompt.to_string()));
         app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
         app.show().unwrap();
+        slint::platform::update_timers_and_animations();
         state.set_generating(false);
         state.set_generation_status("生成失败：服务暂时不可用".into());
+        slint::platform::update_timers_and_animations();
         assert!(ElementHandle::find_by_accessible_label(&app, "生成失败：服务暂时不可用").next().is_some(),
             "Canvas must expose the failure after loading disappears");
         assert!(submissions.borrow().is_empty(), "Never automatically resubmit a paid task");
@@ -2768,6 +2770,38 @@ mod tests {
             .mock_single_click(PointerEventButton::Left);
         assert!(ElementHandle::find_by_accessible_label(&app, "另一条失败提示").next().is_none());
         assert_eq!(submissions.borrow().len(), 1);
+        state.set_page("free-canvas".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "另一条失败提示").next().is_none());
+        state.set_page("canvas".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "另一条失败提示").next().is_none(),
+            "Reopening the canvas must not resurrect dismissed feedback");
+        state.set_generating(true);
+        slint::platform::update_timers_and_animations();
+        state.set_generating(false);
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "另一条失败提示").next().is_some(),
+            "A new task may report the same error again");
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(5100));
+        slint::platform::update_timers_and_animations();
+        state.set_page("free-canvas".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "另一条失败提示").next().is_none());
+        state.set_page("canvas".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "另一条失败提示").next().is_none(),
+            "Auto-dismissal must also survive reopening the canvas");
+        state.set_generation_status("尚未关闭的新错误".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "尚未关闭的新错误").next().is_some());
+        state.set_page("free-canvas".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "尚未关闭的新错误").next().is_none());
+        state.set_page("canvas".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "尚未关闭的新错误").next().is_none(),
+            "Navigation must not replay even an undismissed old notification");
     }
 
     #[test]
