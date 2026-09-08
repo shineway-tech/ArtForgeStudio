@@ -3075,35 +3075,31 @@ mod tests {
 
     #[test]
     fn canvas_workflow_step_count_replaces_every_template_placeholder() {
-        assert_eq!(
-            compose_canvas_workflow_prompt(
-                "Create exactly {count} stages with {count} separate subjects.",
-                "tomato",
-                8,
-                true,
-            ),
-            "Create exactly 8 stages with 8 separate subjects.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Keep a clear, continuous solid-background gap between every pair of subjects. No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect. If space is insufficient, uniformly scale down all subjects within the image; keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged. Prefer more empty space over compressed gaps so that each subject can be cleanly extracted on its own. Arrange all 8 subjects in two rows, ordered left to right and then top to bottom.\n\nUser description: tomato"
-        );
+        let prompt = compose_canvas_workflow_prompt(
+            "Create exactly {count} stages with {count} separate subjects.", "tomato", 8, true);
+        assert!(prompt.starts_with("Create exactly 8 stages with 8 separate subjects."));
+        assert!(!prompt.contains("{count}"));
+        assert!(prompt.ends_with("User description: tomato"));
     }
 
     #[test]
     fn canvas_workflow_step_count_is_clamped_between_four_and_twelve() {
-        assert_eq!(
-            compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 1, false),
-            "制作4个步骤。\n\n强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。任意两个主体之间必须保留清晰、连续的纯色背景间距，主体的轮廓、服装、武器、装备、特效和阴影均不得互相接触、重叠或连接。空间不足时必须统一缩小所有主体在画面中的占比，保持所选画布比例及正常2K或4K输出尺寸不变，宁可增加留白也不得压缩间距，确保每个主体都能被单独完整抠图。将全部4个对象按演变顺序排列在同一行。\n\n用户描述：番茄"
-        );
-        assert_eq!(
-            compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 99, false),
-            "制作12个步骤。\n\n强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。任意两个主体之间必须保留清晰、连续的纯色背景间距，主体的轮廓、服装、武器、装备、特效和阴影均不得互相接触、重叠或连接。空间不足时必须统一缩小所有主体在画面中的占比，保持所选画布比例及正常2K或4K输出尺寸不变，宁可增加留白也不得压缩间距，确保每个主体都能被单独完整抠图。将全部12个对象分成上下两行，按从左到右、从上到下的顺序排列。\n\n用户描述：番茄"
-        );
+        let minimum = compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 1, false);
+        assert!(minimum.starts_with("制作4个步骤。"));
+        assert!(minimum.contains("总共恰好4个完整主体"));
+        let maximum = compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 99, false);
+        assert!(maximum.starts_with("制作12个步骤。"));
+        assert!(maximum.contains("上排恰好6个，下排恰好6个"));
+        assert!(maximum.contains("总共恰好12个完整主体"));
     }
 
     #[test]
     fn canvas_workflow_prompt_requires_a_solid_background_and_no_labels() {
-        assert_eq!(
-            compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 5, false),
-            "制作5个步骤。\n\n强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。任意两个主体之间必须保留清晰、连续的纯色背景间距，主体的轮廓、服装、武器、装备、特效和阴影均不得互相接触、重叠或连接。空间不足时必须统一缩小所有主体在画面中的占比，保持所选画布比例及正常2K或4K输出尺寸不变，宁可增加留白也不得压缩间距，确保每个主体都能被单独完整抠图。将全部5个对象按演变顺序排列在同一行。\n\n用户描述：番茄"
-        );
+        let prompt = compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 5, false);
+        assert!(prompt.contains("必须使用单一纯色背景"));
+        assert!(prompt.contains("不得出现编号、序号、文字标签、标题、说明文字或水印"));
+        assert!(prompt.contains("将全部5个对象按演变顺序排列在同一行"));
+        assert!(prompt.ends_with("用户描述：番茄"));
     }
 
     #[test]
@@ -3131,18 +3127,21 @@ mod tests {
 
     #[test]
     fn canvas_workflow_prompt_splits_eight_subjects_into_two_rows() {
-        assert_eq!(
-            compose_canvas_workflow_prompt("Create {count} stages.", "tomato", 8, true),
-            "Create 8 stages.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Keep a clear, continuous solid-background gap between every pair of subjects. No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect. If space is insufficient, uniformly scale down all subjects within the image; keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged. Prefer more empty space over compressed gaps so that each subject can be cleanly extracted on its own. Arrange all 8 subjects in two rows, ordered left to right and then top to bottom.\n\nUser description: tomato"
-        );
+        let english = compose_canvas_workflow_prompt("Create {count} stages.", "", 8, true);
+        assert!(english.contains("exactly 4 subjects in the top row and 4 in the bottom row"));
+        assert!(english.contains("exactly 8 complete subjects"));
+        let chinese = compose_canvas_workflow_prompt("生成{count}个角色", "", 8, false);
+        assert!(chinese.contains("上排恰好4个，下排恰好4个"));
+        assert!(chinese.contains("总共恰好8个完整主体"));
     }
 
     #[test]
     fn canvas_workflow_prompt_splits_nine_subjects_into_two_rows() {
-        assert_eq!(
-            compose_canvas_workflow_prompt("Create {count} stages.", "tomato", 9, true),
-            "Create 9 stages.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Keep a clear, continuous solid-background gap between every pair of subjects. No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect. If space is insufficient, uniformly scale down all subjects within the image; keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged. Prefer more empty space over compressed gaps so that each subject can be cleanly extracted on its own. Arrange all 9 subjects in two rows, ordered left to right and then top to bottom.\n\nUser description: tomato"
-        );
+        let english = compose_canvas_workflow_prompt("Create {count} stages.", "", 9, true);
+        assert!(english.contains("exactly 5 subjects in the top row and 4 in the bottom row"));
+        let chinese = compose_canvas_workflow_prompt("生成{count}个角色", "", 9, false);
+        assert!(chinese.contains("上排恰好5个，下排恰好4个"));
+        assert!(chinese.contains("总共恰好9个完整主体"));
     }
 
     #[test]

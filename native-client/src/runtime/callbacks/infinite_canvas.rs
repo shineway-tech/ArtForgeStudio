@@ -886,6 +886,8 @@ pub(super) fn compose_canvas_workflow_prompt(
     }
 
     let step_count = requested_step_count.clamp(4, 12);
+    let top_count = (step_count + 1) / 2;
+    let bottom_count = step_count / 2;
     let template = template
         .trim()
         .replace("{count}", &step_count.to_string());
@@ -912,7 +914,7 @@ pub(super) fn compose_canvas_workflow_prompt(
         };
         let layout = if step_count > 5 {
             format!(
-                "Arrange all {step_count} subjects in two rows, ordered left to right and then top to bottom.{}",
+                "Arrange all {step_count} subjects in two rows, ordered left to right and then top to bottom: exactly {top_count} subjects in the top row and {bottom_count} in the bottom row.{}",
                 if is_building_derivation { " Order buildings by function, not by upgrade level." } else { "" }
             )
         } else if is_building_derivation {
@@ -921,7 +923,7 @@ pub(super) fn compose_canvas_workflow_prompt(
             format!("Arrange all {step_count} subjects in one row in progression order.")
         };
         format!(
-            "Mandatory composition rules: use one solid-color background only. {background_rule} Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Keep a clear, continuous solid-background gap between every pair of subjects. No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect. If space is insufficient, uniformly scale down all subjects within the image; keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged. Prefer more empty space over compressed gaps so that each subject can be cleanly extracted on its own. {layout}"
+            "Mandatory composition rules: use one solid-color background only. {background_rule} Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Keep a clear, continuous solid-background gap between every pair of subjects. No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect. If space is insufficient, uniformly scale down all subjects within the image; keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged. Prefer more empty space over compressed gaps so that each subject can be cleanly extracted on its own. {layout} Count contract: exactly {step_count} complete subjects, with one independent subject in every planned position and no empty positions. The reference is not an extra output subject. Stage examples never limit the selected count; add distinct intermediate stages as needed, without merging or omitting subjects. If space is insufficient, shrink subjects, never reduce their count. Check each row and the total before finalizing; the visible total must equal {step_count}. Do not draw these counting instructions or any numbers on the image."
         )
     } else {
         let background_rule = if permits_localized_glow {
@@ -931,7 +933,7 @@ pub(super) fn compose_canvas_workflow_prompt(
         };
         let layout = if step_count > 5 {
             format!(
-                "将全部{step_count}个对象分成上下两行，按从左到右、从上到下的顺序排列。{}",
+                "将全部{step_count}个对象分成上下两行，上排恰好{top_count}个，下排恰好{bottom_count}个，按从左到右、从上到下的顺序排列。{}",
                 if is_building_derivation { "建筑按功能顺序排列，不按升级等级排列。" } else { "" }
             )
         } else if is_building_derivation {
@@ -940,7 +942,7 @@ pub(super) fn compose_canvas_workflow_prompt(
             format!("将全部{step_count}个对象按演变顺序排列在同一行。")
         };
         format!(
-            "强制画面规范：必须使用单一纯色背景，{background_rule}画面中不得出现编号、序号、文字标签、标题、说明文字或水印。任意两个主体之间必须保留清晰、连续的纯色背景间距，主体的轮廓、服装、武器、装备、特效和阴影均不得互相接触、重叠或连接。空间不足时必须统一缩小所有主体在画面中的占比，保持所选画布比例及正常2K或4K输出尺寸不变，宁可增加留白也不得压缩间距，确保每个主体都能被单独完整抠图。{layout}"
+            "强制画面规范：必须使用单一纯色背景，{background_rule}画面中不得出现编号、序号、文字标签、标题、说明文字或水印。任意两个主体之间必须保留清晰、连续的纯色背景间距，主体的轮廓、服装、武器、装备、特效和阴影均不得互相接触、重叠或连接。空间不足时必须统一缩小所有主体在画面中的占比，保持所选画布比例及正常2K或4K输出尺寸不变，宁可增加留白也不得压缩间距，确保每个主体都能被单独完整抠图。{layout} 数量硬约束：总共恰好{step_count}个完整主体，每个预定位置必须有且仅有一个独立主体，不得留空位。参考图不作为额外主体加入结果。阶段示例不能限制所选数量；不足时补充有明显差异的中间阶段，不得合并或省略主体。空间不足时缩小主体，不能减少数量。输出前逐排检查并核对总数，画面可见主体总数必须等于{step_count}。这些计数要求只用于规划，禁止在图片上画出计数文字或编号。"
         )
     };
     let label = if english {
