@@ -204,11 +204,11 @@ export component FreeCanvasPage {
     in property <bool> import-mode: false;
     callback import-workflow(string, string, string, string, image);
     function cards-width() -> length {
-        return min(1238px, root.width - 64px);
+        return max(0px, root.width - 64px);
     }
 
     function card-gap() -> length {
-        return 18px;
+        return min(32px, max(18px, root.cards-width() * 0.02));
     }
 
     function card-width() -> length {
