@@ -2714,8 +2714,7 @@ export component InfiniteCanvasPage {
             AppState.stop-generation();
             return;
         }
-        let reference-driven-workflow = AppState.canvas-workflow-id == "upgrade-evolution"
-            || AppState.canvas-workflow-id == "building-derivation";
+        let reference-driven-workflow = AppState.canvas-workflow-id != "";
         if reference-driven-workflow && AppState.references.length == 0 {
             AppState.generation-status = AppState.canvas-workflow-id == "building-derivation"
                 ? (AppState.en ? "Upload a building reference image first" : "请先上传建筑参考图")
@@ -3477,7 +3476,9 @@ export component InfiniteCanvasPage {
                         height: 24px;
                         text: AppState.canvas-workflow-id == "building-derivation"
                             ? AppState.canvas-workflow-hint
-                            : (AppState.en ? "Image editing, enter a prompt" : "图片编辑，请输入提示词");
+                            : (AppState.canvas-workflow-id != ""
+                                ? (AppState.en ? "Reference image required; additional instructions optional" : "参考图必填，补充提示词选填")
+                                : (AppState.en ? "Image editing, enter a prompt" : "图片编辑，请输入提示词"));
                         color: #9895a1;
                         font-size: 13px;
                         font-weight: 400;
@@ -3799,8 +3800,7 @@ export component InfiniteCanvasPage {
                     height: 32px;
                     property <bool> disabled: !AppState.generating
                         && (AppState.image-model == ""
-                            || (AppState.canvas-workflow-id != "upgrade-evolution"
-                                && AppState.canvas-workflow-id != "building-derivation"
+                            || (AppState.canvas-workflow-id == ""
                                 && AppState.canvas-workflow-prompt == ""));
                     opacity: self.disabled ? 0.46 : 1;
                     background: self.disabled

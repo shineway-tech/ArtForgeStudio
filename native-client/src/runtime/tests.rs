@@ -2646,6 +2646,73 @@ mod tests {
     }
 
     #[test]
+    fn all_creation_presets_require_images_and_accept_optional_prompts() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_image_model("test-image-model".into());
+        state.on_compose_canvas_workflow_prompt(|template, prompt, count, english| {
+            compose_canvas_workflow_prompt(template.as_str(), prompt.as_str(), count, english).into()
+        });
+        state.on_create_canvas_generation_source(|_, _, _| "preset-source".into());
+        let submitted = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed = submitted.clone();
+        state.on_generate_canvas_node(move |_, prompt| observed.borrow_mut().push(prompt.to_string()));
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().unwrap();
+
+        for (label, id, expected) in [
+            ("植物生成器", "plant-growth", "完整生命周期"),
+            ("角色换装", "character-outfit", "只改变服装"),
+            ("怪物生成器", "monster-generator", "怪物设计"),
+            ("升级进化", "upgrade-evolution", "连续升级进化阶段"),
+            ("角色年龄变化", "character-age", "婴儿到老年"),
+            ("角色体型修改器", "character-body", "体型"),
+            ("建筑衍生器", "building-derivation", "不同功能的新建筑"),
+        ] {
+            submitted.borrow_mut().clear();
+            state.set_page("free-canvas".into());
+            ElementHandle::find_by_accessible_label(&app, label).next().expect(label)
+                .mock_single_click(PointerEventButton::Left);
+            assert_eq!(state.get_canvas_workflow_id(), id);
+            state.set_page("canvas".into());
+            state.set_references(ModelRc::new(VecModel::from(Vec::<ReferenceItem>::new())));
+            state.set_canvas_workflow_prompt("".into());
+            let generate = ElementHandle::find_by_element_id(&app, "InfiniteCanvasPage::workflow-generate-button")
+                .next().unwrap();
+            generate.mock_single_click(PointerEventButton::Left);
+            assert!(submitted.borrow().is_empty(), "{label} requires an image");
+            state.set_canvas_workflow_prompt("水彩风格".into());
+            generate.mock_single_click(PointerEventButton::Left);
+            assert!(submitted.borrow().is_empty(), "text alone must not bypass {label}'s reference requirement");
+            state.set_references(ModelRc::new(VecModel::from(vec![ReferenceItem {
+                id: "reference".into(), image: Image::default(), source_path: "reference.png".into(),
+            }])));
+            state.set_canvas_workflow_prompt("".into());
+            generate.mock_single_click(PointerEventButton::Left);
+            assert_eq!(submitted.borrow().len(), 1, "{label} must accept reference-only generation");
+            assert!(submitted.borrow()[0].contains(expected), "{label} must use its built-in template");
+            assert!(!submitted.borrow()[0].contains("{count}"));
+            state.set_canvas_workflow_prompt("水彩风格".into());
+            generate.mock_single_click(PointerEventButton::Left);
+            assert_eq!(submitted.borrow().len(), 2);
+            assert!(submitted.borrow()[1].contains("用户描述：水彩风格"));
+        }
+        // The infinite canvas still needs a prompt even when an image is attached.
+        submitted.borrow_mut().clear();
+        state.set_canvas_workflow_id("".into());
+        state.set_canvas_workflow_template("".into());
+        state.set_canvas_workflow_prompt("".into());
+        ElementHandle::find_by_element_id(&app, "InfiniteCanvasPage::workflow-generate-button")
+            .next().unwrap().mock_single_click(PointerEventButton::Left);
+        assert!(submitted.borrow().is_empty());
+    }
+
+    #[test]
     fn free_canvas_presets_open_the_shared_canvas_composer() {
         let state = include_str!("../../ui/app-state.slint");
         let launcher = include_str!("../../ui/pages/free-canvas-page.slint");

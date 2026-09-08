@@ -204,7 +204,7 @@ export component FreeCanvasPage {
     in property <bool> import-mode: false;
     callback import-workflow(string, string, string, string, image);
     function cards-width() -> length {
-        return min(1238px, root.width - 48px);
+        return min(1238px, root.width - 64px);
     }
 
     function card-gap() -> length {
@@ -246,7 +246,7 @@ export component FreeCanvasPage {
         }
 
         cards := Rectangle {
-            x: (parent.width - self.width) / 2;
+            x: 32px;
             y: 100px;
             width: root.cards-width();
             height: root.card-height() * 2 + root.card-gap();

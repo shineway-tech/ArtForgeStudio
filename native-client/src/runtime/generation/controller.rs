@@ -27,6 +27,15 @@ pub(super) fn start_canvas_generation(
     source_node_id: String,
     prompt: String,
 ) {
+    let state = app.global::<AppState>();
+    if !state.get_canvas_workflow_id().is_empty() && context.store.borrow().canvas_references.is_empty() {
+        state.set_generation_status(if state.get_language().as_str() == "en" {
+            "Upload a reference image first"
+        } else {
+            "请先上传参考图"
+        }.into());
+        return;
+    }
     start_generation_for_destination(
         app,
         context,
