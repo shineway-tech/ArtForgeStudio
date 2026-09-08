@@ -91,7 +91,7 @@ export component AppWindow inherits Window {
     feedback-hide-timer := Timer {
         interval: 5s;
         running: AppState.page == "canvas" && !AppState.generating
-            && AppState.generation-status != "" && !AppState.generation-feedback-dismissed;
+            && AppState.generation-status-is-error && !AppState.generation-feedback-dismissed;
         triggered => { AppState.generation-feedback-dismissed = true; }
     }
     title: "Elunvi Canvas";

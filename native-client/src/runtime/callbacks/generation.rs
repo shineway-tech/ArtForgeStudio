@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) fn wire_generation_callbacks(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
+    state.on_is_generation_error(|message| is_generation_error_message(message.as_str()));
     let store = context.store.clone();
 
     {

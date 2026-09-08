@@ -160,6 +160,9 @@ use generation_poll::*;
 #[path = "generation/state.rs"]
 mod generation_state;
 use generation_state::*;
+#[path = "presentation/generation_feedback.rs"]
+mod generation_feedback;
+use generation_feedback::*;
 #[path = "presentation/sync.rs"]
 mod sync;
 use sync::*;

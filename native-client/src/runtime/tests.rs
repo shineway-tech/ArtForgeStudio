@@ -2719,6 +2719,7 @@ mod tests {
         i_slint_backend_testing::init_no_event_loop();
         let app = AppWindow::new().unwrap();
         let state = app.global::<AppState>();
+        state.on_is_generation_error(|message| is_generation_error_message(message.as_str()));
         state.set_logged_in(true);
         state.set_contact_popup_open(false);
         state.set_page("canvas".into());
@@ -2802,6 +2803,13 @@ mod tests {
         slint::platform::update_timers_and_animations();
         assert!(ElementHandle::find_by_accessible_label(&app, "尚未关闭的新错误").next().is_none(),
             "Navigation must not replay even an undismissed old notification");
+        for status in ["已添加参考图", "任务已提交，正在排队...", "正在生成...", "生成成功", "已停止生成"] {
+            state.set_generation_status(status.into());
+            slint::platform::update_timers_and_animations();
+            assert!(ElementHandle::find_by_accessible_label(&app, status).next().is_none(),
+                "Normal status must not display the error panel: {status}");
+            assert!(ElementHandle::find_by_accessible_label(&app, "重试生成").next().is_none());
+        }
     }
 
     #[test]

@@ -258,6 +258,8 @@ export global AppState {
     in-out property <int> count: 1;
     in-out property <string> mode: "game";
     in-out property <string> generation-status: "";
+    pure callback is-generation-error(string) -> bool;
+    out property <bool> generation-status-is-error: is-generation-error(generation-status);
     in-out property <bool> generation-feedback-dismissed: true;
     in-out property <int> image-price-1k: 0;
     in-out property <int> image-price-2k: 0;

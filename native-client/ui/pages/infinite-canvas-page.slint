@@ -3311,7 +3311,7 @@ export component InfiniteCanvasPage {
                 }
             }
 
-            if AppState.generation-status != "" && !AppState.generation-feedback-dismissed: canvas-generation-feedback := Rectangle {
+            if AppState.generation-status-is-error && !AppState.generation-feedback-dismissed: canvas-generation-feedback := Rectangle {
                 x: canvas-workflow-dock.x;
                 y: max(8px, canvas-workflow-dock.y - self.height - 8px);
                 width: canvas-workflow-dock.width;
@@ -3321,8 +3321,7 @@ export component InfiniteCanvasPage {
                 border-width: 1px;
                 border-color: AppTheme.border;
                 property <bool> can-retry: !AppState.generating
-                    && AppState.generation-status != "生成成功"
-                    && AppState.generation-status != "已停止生成"
+                    && AppState.generation-status-is-error
                     && AppState.image-model != ""
                     && (AppState.canvas-workflow-id != ""
                         ? AppState.references.length > 0
@@ -3560,7 +3559,7 @@ export component InfiniteCanvasPage {
                         text: AppState.canvas-workflow-id == "building-derivation"
                             ? AppState.canvas-workflow-hint
                             : (AppState.canvas-workflow-id != ""
-                                ? (AppState.en ? "Reference image required; additional instructions optional" : "参考图必填，补充提示词选填")
+                                ? ""
                                 : (AppState.en ? "Image editing, enter a prompt" : "图片编辑，请输入提示词"));
                         color: #9895a1;
                         font-size: 13px;
