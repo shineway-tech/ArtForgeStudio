@@ -2522,6 +2522,23 @@ export component InfiniteCanvasPage {
     in-out property <int> node-search-index: 0;
     in-out property <int> link-flow-step: 0;
     in property <int> workspace-switch-request: AppState.canvas-workspace-switch-request;
+    in property <string> feedback-status: AppState.generation-status;
+    in property <bool> feedback-generating: AppState.generating;
+    property <bool> feedback-dismissed: false;
+
+    changed feedback-status => {
+        root.feedback-dismissed = false;
+        feedback-hide-timer.restart();
+    }
+    changed feedback-generating => {
+        root.feedback-dismissed = false;
+        feedback-hide-timer.restart();
+    }
+    feedback-hide-timer := Timer {
+        interval: 5s;
+        running: !root.feedback-generating && root.feedback-status != "" && !root.feedback-dismissed;
+        triggered => { root.feedback-dismissed = true; }
+    }
 
     changed workspace-switch-request => {
         root.reset-view();
@@ -3311,7 +3328,7 @@ export component InfiniteCanvasPage {
                 }
             }
 
-            if AppState.generation-status != "": canvas-generation-feedback := Rectangle {
+            if AppState.generation-status != "" && !root.feedback-dismissed: canvas-generation-feedback := Rectangle {
                 x: canvas-workflow-dock.x;
                 y: max(8px, canvas-workflow-dock.y - self.height - 8px);
                 width: canvas-workflow-dock.width;
@@ -3331,7 +3348,7 @@ export component InfiniteCanvasPage {
                 Flickable {
                     x: 14px;
                     y: 10px;
-                    width: parent.width - 28px;
+                    width: parent.width - 58px;
                     height: 40px;
                     viewport-width: self.width;
                     viewport-height: max(self.height, feedback-text.preferred-height);
@@ -3344,6 +3361,13 @@ export component InfiniteCanvasPage {
                         color: AppTheme.text;
                         font-size: 13px;
                     }
+                }
+                DialogCloseButton {
+                    x: parent.width - self.width - 6px;
+                    y: 4px;
+                    accessible-role: button;
+                    accessible-label: AppState.en ? "Dismiss notification" : "关闭提示";
+                    clicked => { root.feedback-dismissed = true; }
                 }
                 Text {
                     x: 14px;

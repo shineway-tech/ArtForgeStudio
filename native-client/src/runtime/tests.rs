@@ -2751,6 +2751,23 @@ mod tests {
             retry.mock_single_click(PointerEventButton::Left);
         }
         assert_eq!(submissions.borrow().len(), 1, "Retry cannot stop or duplicate an active task");
+        state.set_generating(false);
+        state.set_generation_status("服务响应异常，请稍后重试".into());
+        slint::platform::update_timers_and_animations();
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(5100));
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "服务响应异常，请稍后重试").next().is_none(),
+            "Finished-task feedback must disappear after five seconds");
+        assert_eq!(state.get_generation_status(), "服务响应异常，请稍后重试");
+        assert_eq!(state.get_canvas_workflow_prompt(), "保留蓝色服饰");
+        assert_eq!(state.get_references().row_count(), 1);
+        state.set_generation_status("另一条失败提示".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "另一条失败提示").next().is_some());
+        ElementHandle::find_by_accessible_label(&app, "关闭提示").next().unwrap()
+            .mock_single_click(PointerEventButton::Left);
+        assert!(ElementHandle::find_by_accessible_label(&app, "另一条失败提示").next().is_none());
+        assert_eq!(submissions.borrow().len(), 1);
     }
 
     #[test]
