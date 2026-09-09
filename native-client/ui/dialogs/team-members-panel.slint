@@ -20,7 +20,7 @@ export component TeamMembersPanel {
             content-height: 42px + AppState.team-members.length * 70px;
             VerticalLayout {
                 width: table.table-width; spacing: 0px; alignment: start;
-                Rectangle {
+                member-header := Rectangle {
                     height: 42px; background: AppTheme.panel-soft;
                     HorizontalLayout {
                         padding-left: root.table-padding; padding-right: root.table-padding; spacing: root.column-gap;
@@ -33,7 +33,7 @@ export component TeamMembersPanel {
                         TeamTableCell { width: root.actions-width; heading: true; text: AppState.en ? "Actions" : "操作"; center-aligned: true; }
                     }
                 }
-                for member in AppState.team-members: Rectangle {
+                for member in AppState.team-members: member-row := Rectangle {
                     height: 70px; background: AppTheme.panel;
                     HorizontalLayout {
                         padding-left: root.table-padding; padding-right: root.table-padding; spacing: root.column-gap;

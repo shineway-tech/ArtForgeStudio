@@ -63,8 +63,8 @@ pub(super) fn normalized_quality(quality: &str) -> &'static str {
 
 pub(super) fn pixel_dimensions_for(ratio: &str, quality: &str) -> (i32, i32) {
     let max_edge = match normalized_quality(quality) {
-        "4K" => 4096,
-        "2K" => 2048,
+        "4K" => 3840,
+        "2K" => 2560,
         _ => 1024,
     };
     let (w, h) = ratio_dimensions(ratio);
@@ -117,7 +117,7 @@ pub(super) fn ratio_from_actual_dimensions(width: i32, height: i32) -> String {
 
 pub(super) fn quality_from_actual_dimensions(width: i32, height: i32) -> String {
     let longest = width.max(height);
-    if longest > 2048 {
+    if longest > 2560 {
         "4K".to_string()
     } else if longest > 1024 {
         "2K".to_string()

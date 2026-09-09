@@ -1,8 +1,11 @@
 import { AppState } from "../app-state.slint";
+import { CharacterAgePreset } from "../components/character-age-preset.slint";
+import { CanvasSplitGuides } from "../components/canvas-split-guides.slint";
 import { DialogCloseButton } from "../components/dialog-close-button.slint";
 import { LoadingDots } from "../components/loading-dots.slint";
 import { CanvasLink, CanvasNote } from "../types.slint";
 import { AppTheme } from "../theme.slint";
+import { BuildingDerivationPreset } from "../components/building-derivation-preset.slint";
 
 component CanvasToolButton {
     in property <image> icon;
@@ -139,6 +142,131 @@ component CanvasImageInsertChoice {
             wrap: no-wrap;
         }
         choice-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+component CanvasReferenceSourceOption {
+    in property <image> icon;
+    in property <string> text;
+    callback clicked();
+    height: 46px;
+
+    Rectangle {
+        background: option-touch.has-hover ? #302e38 : transparent;
+        border-radius: 7px;
+        accessible-role: button;
+        accessible-label: root.text;
+        accessible-action-default => { root.clicked(); }
+        Image {
+            x: 12px;
+            y: 13px;
+            width: 20px;
+            height: 20px;
+            source: root.icon;
+            colorize: option-touch.has-hover ? #a99fff : #c3c0ca;
+            image-fit: contain;
+        }
+        Text {
+            x: 44px;
+            width: parent.width - 56px;
+            height: parent.height;
+            text: root.text;
+            color: option-touch.has-hover ? #f5f2fa : #d9d6df;
+            font-size: 13px;
+            font-weight: 400;
+            vertical-alignment: center;
+        }
+        option-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+component CanvasWorkflowQuickCard {
+    in property <string> workflow-id;
+    in property <string> title;
+    in property <string> description;
+    in property <image> artwork;
+    in property <bool> selected: false;
+    callback clicked();
+    width: 190px;
+    height: 120px;
+
+    card-frame := Rectangle {
+        background: card-touch.has-hover ? #353140 : (root.selected ? #302b50 : #29272f);
+        border-radius: 11px;
+        border-width: root.selected || card-touch.has-hover ? 1.5px : 1px;
+        border-color: root.selected ? #8175ff : (card-touch.has-hover ? #7066d8 : #46434d);
+        clip: true;
+        accessible-role: button;
+        accessible-label: (AppState.en ? "Switch to " : "切换到") + root.title;
+        accessible-action-default => { root.clicked(); }
+
+        Rectangle {
+            x: 7px;
+            y: 7px;
+            width: 72px;
+            height: parent.height - 14px;
+            background: #111624;
+            border-radius: 8px;
+            clip: true;
+            Image {
+                width: parent.width;
+                height: parent.height;
+                source: root.artwork;
+                image-fit: contain;
+            }
+        }
+        Text {
+            x: 90px;
+            y: 22px;
+            width: parent.width - 102px;
+            height: 25px;
+            text: root.title;
+            color: #f3f0f7;
+            font-size: 14px;
+            font-weight: 600;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            x: 90px;
+            y: 51px;
+            width: parent.width - 102px;
+            height: 46px;
+            text: root.description;
+            color: #aaa6b2;
+            font-size: 11px;
+            font-weight: 400;
+            wrap: word-wrap;
+            vertical-alignment: top;
+        }
+        if root.selected: Rectangle {
+            x: parent.width - 22px;
+            y: 8px;
+            width: 14px;
+            height: 14px;
+            border-radius: 7px;
+            background: #8175ff;
+            Image {
+                x: 3px;
+                y: 3px;
+                width: 8px;
+                height: 8px;
+                source: @image-url("../../assets/icons/check.svg");
+                colorize: #ffffff;
+                image-fit: contain;
+            }
+        }
+        card-touch := TouchArea {
             width: parent.width;
             height: parent.height;
             mouse-cursor: pointer;
@@ -346,12 +474,12 @@ component CanvasSplitConfirmButton {
 component CanvasSplitNumberField {
     in property <string> suffix;
     in property <float> scale-factor: 1;
-    in-out property <string> value: "1";
+    in-out property <string> value: "0";
     width: 104px * root.scale-factor;
     height: 38px * root.scale-factor;
 
     function step-value(delta: int) {
-        root.value = "" + max(1, min(64, Math.round(root.value.to-float()) + delta));
+        root.value = "" + max(0, min(64, Math.round(root.value.to-float()) + delta));
     }
 
     Rectangle {
@@ -903,8 +1031,12 @@ component CanvasNodeCard {
     in-out property <string> current-content: root.note.content;
     in-out property <bool> editing: false;
     in-out property <bool> split-mode: false;
-    in-out property <string> split-rows: "1";
-    in-out property <string> split-columns: "1";
+    in-out property <string> split-rows: "0";
+    in-out property <string> split-columns: "0";
+    in-out property <[float]> split-row-positions;
+    in-out property <[float]> split-column-positions;
+    changed split-rows => { root.split-row-positions = AppState.canvas-split-positions(root.split-row-line-count()); }
+    changed split-columns => { root.split-column-positions = AppState.canvas-split-positions(root.split-column-line-count()); }
     in-out property <bool> media-model-open: false;
     in-out property <bool> media-settings-open: false;
     in-out property <string> video-quality: "720p";
@@ -940,11 +1072,11 @@ component CanvasNodeCard {
     }
 
     function split-row-line-count() -> int {
-        return max(1, min(64, Math.round(root.split-rows.to-float())));
+        return max(0, min(64, Math.round(root.split-rows.to-float())));
     }
 
     function split-column-line-count() -> int {
-        return max(1, min(64, Math.round(root.split-columns.to-float())));
+        return max(0, min(64, Math.round(root.split-columns.to-float())));
     }
 
     function image-processing() -> bool {
@@ -1489,23 +1621,78 @@ component CanvasNodeCard {
                 source: root.note.preview-image;
                 image-fit: contain;
             }
-            if root.split-mode: Rectangle {
-                width: parent.width;
-                height: parent.height;
-                background: #07111f99;
-
-                for column in root.split-column-line-count(): Rectangle {
-                    x: (column + 1) * parent.width / (root.split-column-line-count() + 1) - 1px * root.node-scale();
-                    width: max(1px, 2px * root.node-scale());
+            image-detail-action := Rectangle {
+                visible: root.note.kind == "image"
+                    && root.zoom-percent >= 30
+                    && !root.image-processing()
+                    && (node-drag-touch.has-hover || image-detail-touch.has-hover);
+                x: parent.width - self.width - 10px * root.node-scale();
+                y: 10px * root.node-scale();
+                width: 86px * root.node-scale();
+                height: 28px * root.node-scale();
+                background: image-detail-touch.has-hover ? #62636ae8 : #77787ed6;
+                border-radius: self.height / 2;
+                border-width: 1px * root.node-scale();
+                border-color: #ffffff42;
+                z: 80;
+                accessible-role: button;
+                accessible-label: AppState.en ? "View Details" : "查看详情";
+                accessible-action-default => {
+                    AppState.open-canvas-image-detail(
+                        root.note.id,
+                        root.note.image-path,
+                        root.note.preview-image,
+                        root.effective-prompt(),
+                        root.note.width,
+                        root.note.height,
+                    );
+                }
+                Image {
+                    x: 8px * root.node-scale();
+                    y: (parent.height - 13px * root.node-scale()) / 2;
+                    width: 13px * root.node-scale();
+                    height: self.width;
+                    source: @image-url("../../assets/icons/info.svg");
+                    colorize: #ffffff;
+                    image-fit: contain;
+                }
+                Text {
+                    x: 25px * root.node-scale();
+                    width: parent.width - self.x - 8px * root.node-scale();
                     height: parent.height;
-                    background: #ffffffdd;
+                    text: AppState.en ? "View Details" : "查看详情";
+                    color: #ffffff;
+                    font-size: 11px * root.node-scale();
+                    font-weight: 400;
+                    vertical-alignment: center;
+                    wrap: no-wrap;
                 }
-                for row in root.split-row-line-count(): Rectangle {
-                    y: (row + 1) * parent.height / (root.split-row-line-count() + 1) - 1px * root.node-scale();
+                image-detail-touch := TouchArea {
                     width: parent.width;
-                    height: max(1px, 2px * root.node-scale());
-                    background: #ffffffdd;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => {
+                        AppState.open-canvas-image-detail(
+                            root.note.id,
+                            root.note.image-path,
+                            root.note.preview-image,
+                            root.effective-prompt(),
+                            root.note.width,
+                            root.note.height,
+                        );
+                    }
                 }
+            }
+            if root.split-mode: CanvasSplitGuides {
+                property <float> image-ratio: root.note.preview-image.width / max(1, root.note.preview-image.height);
+                width: min(parent.width, parent.height * self.image-ratio);
+                height: self.width / max(0.001, self.image-ratio);
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                z: 90;
+                scale-factor: root.node-scale();
+                row-positions <=> root.split-row-positions;
+                column-positions <=> root.split-column-positions;
             }
             if root.image-processing(): Rectangle {
                 width: parent.width;
@@ -1689,8 +1876,10 @@ component CanvasNodeCard {
                 CanvasSplitConfirmButton {
                     scale-factor: root.node-scale();
                     clicked => {
-                        AppState.split-canvas-image(root.note.id, root.split-rows, root.split-columns);
-                        root.split-mode = false;
+                        if root.split-row-line-count() + root.split-column-line-count() > 0 {
+                            AppState.split-canvas-image(root.note.id, root.split-rows, root.split-columns, root.split-row-positions, root.split-column-positions);
+                            root.split-mode = false;
+                        }
                     }
                 }
             }
@@ -1715,7 +1904,7 @@ component CanvasNodeCard {
                 CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
                 if (root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "": CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/download.svg"); text: AppState.en ? "Download" : "下载"; clicked => { AppState.save-canvas-image(root.note.id); } }
                 if (root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "": CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/group.svg"); text: AppState.en ? "Extract UI" : "提取元素"; clicked => { if !AppState.generating { AppState.extract-canvas-ui-elements(root.note.id); } } }
-                if (root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "": CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/split.svg"); text: AppState.en ? "Split" : "分割"; clicked => { root.split-rows = "1"; root.split-columns = "1"; root.split-mode = true; } }
+                if (root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "": CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/split.svg"); text: AppState.en ? "Split" : "分割"; clicked => { root.split-rows = "0"; root.split-columns = "0"; root.split-row-positions = []; root.split-column-positions = []; root.split-mode = true; } }
                 CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/upload.svg"); text: (root.note.kind == "image" || root.is-board-image()) ? (AppState.en ? "Upload image" : "上传图片") : (AppState.en ? "Upload audio" : "上传音频"); clicked => { if root.note.kind == "image" || root.is-board-image() { AppState.choose-canvas-node-image(root.note.id); } else { AppState.generation-status = AppState.en ? "Audio upload requires a configured audio provider" : "请先配置音频生成服务"; } } }
             }
         }
@@ -2445,12 +2634,95 @@ export component InfiniteCanvasPage {
         return AppState.canvas-workflow-id != "" && AppState.canvas-tool == "hand";
     }
 
+    function switch-workflow(workflow-id: string) {
+        AppState.open-canvas-workspace(workflow-id);
+        AppState.canvas-workflow-id = workflow-id;
+        AppState.canvas-tool = "select";
+        AppState.canvas-grid-style = "dot";
+        AppState.canvas-dark-background = true;
+
+        if workflow-id == "plant-growth" {
+            AppState.asset-type = "scene";
+            AppState.canvas-workflow-title = AppState.en ? "Plant Growth Generator" : "植物生成器";
+            AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/plant-growth.png");
+            AppState.canvas-workflow-template = AppState.en
+                ? "Using the reference plant and keyword, create exactly {count} consecutive growth stages of the same plant from germination through maturity, fruiting, and withering. Cover the complete life cycle and add evenly spaced intermediate changes for the selected count. Arrange all {count} stages in one horizontal image. Keep the species, camera, scale, background, and rendering style consistent, with complete silhouettes, even spacing, and a clear progression. By default, grow every stage directly in natural soil without a pot or container. Place each stage on its own separate mound of soil. The {count} mounds must not touch, with visible background gaps between every mound. Never form a continuous soil strip, shared ground, or connected soil. Only use a pot or container when the user explicitly requests one, and keep it consistent across every stage."
+                : "根据参考图中的植物和关键词，生成同一植物从种子萌发到成熟、结果与衰败的{count}个连续生长阶段。阶段需覆盖完整生命周期，并按所选数量均匀补充中间变化。将{count}个阶段安排在同一张横向画面中，保持植物品种、视角、比例、背景和绘制风格一致，各阶段轮廓完整、间距均匀、演变清晰。默认直接生长在自然土壤中，不使用花盆或其他容器。采用自然土壤时，每个阶段分别位于一块独立的小土堆上，{count}块土壤互不接触，土块之间必须保留清晰的背景空隙；禁止形成连续土带、共享地面或相互连接的土壤。只有当用户在描述中明确要求花盆、花器或容器时，才采用对应容器，并在所有阶段保持一致。";
+            AppState.canvas-workflow-hint = AppState.en
+                ? "Describe the plant and style, e.g. tomato, educational illustration"
+                : "简单描述植物和风格，例如：西红柿，儿童科普插画";
+        } else if workflow-id == "character-outfit" {
+            AppState.asset-type = "character";
+            AppState.canvas-workflow-title = AppState.en ? "Character Outfit Swap" : "角色换装";
+            AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-outfit.png");
+            AppState.canvas-workflow-template = AppState.en
+                ? "Create exactly {count} outfit variations for the reference character. Preserve identity, face, hair, body shape, pose, camera, and rendering style; change only clothing, footwear, and accessories. Arrange all {count} full-body designs evenly in one clean horizontal character sheet."
+                : "根据参考角色生成{count}套不同服装造型。保持角色身份、面部、发型、体型、姿势、视角和绘制风格一致，只改变服装、鞋履和配饰。将{count}套完整造型均匀排列在同一张横向角色设定图中，背景干净。";
+            AppState.canvas-workflow-hint = AppState.en
+                ? "Describe the character and outfit direction, e.g. swordswoman, formal and battle outfits"
+                : "简单描述角色和换装方向，例如：女剑士，礼服与战斗服";
+        } else if workflow-id == "monster-generator" {
+            AppState.asset-type = "character";
+            AppState.canvas-workflow-title = AppState.en ? "Monster Generator" : "怪物生成器";
+            AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/monster-generator.png");
+            AppState.canvas-workflow-template = AppState.en
+                ? "Use the reference shape, material, and motif to create exactly {count} monster designs from the same world. Preserve recognizable visual DNA while varying body mass, silhouette, anatomy, and details. Arrange all {count} complete monsters evenly in one clean horizontal concept sheet with a consistent camera and art style."
+                : "以参考图中的造型、材质和主题为核心，生成{count}个同一世界观下的怪物设计。保留可识别的核心视觉基因，让体型、轮廓、肢体结构和细节产生明确变化。将{count}个完整怪物均匀排列在同一张横向设定图中，视角和画风统一，背景干净。";
+            AppState.canvas-workflow-hint = AppState.en
+                ? "Describe the motif and mood, e.g. stone idol, massive but cute"
+                : "简单描述原型和气质，例如：石雕图腾，厚重但可爱";
+        } else if workflow-id == "building-derivation" {
+            AppState.asset-type = "scene";
+            AppState.canvas-workflow-title = AppState.en ? "Building Derivation" : "建筑衍生器";
+            AppState.canvas-workflow-artwork = BuildingDerivationPreset.artwork;
+            AppState.canvas-workflow-template = AppState.en ? BuildingDerivationPreset.prompt-en : BuildingDerivationPreset.prompt-zh;
+            AppState.canvas-workflow-hint = AppState.en ? BuildingDerivationPreset.hint-en : BuildingDerivationPreset.hint-zh;
+        } else if workflow-id == "upgrade-evolution" {
+            AppState.asset-type = "scene";
+            AppState.canvas-workflow-title = AppState.en ? "Upgrade Evolution" : "升级进化";
+            AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/upgrade-evolution.png");
+            AppState.canvas-workflow-template = AppState.en
+                ? "Using the uploaded reference image, create exactly {count} consecutive upgrade-evolution stages of the same subject, progressing from a low-level basic form to a top-tier ultimate form. Automatically identify the subject type first and apply the appropriate type-specific upgrade logic; never treat every subject as a simple small-to-large scale-up. For a human or humanoid character, keep age, height, build, body proportions, face, and identity stable; do not turn the character into a child, giant, or different person. Upgrade mainly through clothing tier, weapons, gear, armor, accessories, material quality, craftsmanship complexity, and energy effects. For a monster, mechanical creature, or other organism, size, body proportions, silhouette, and form may evolve gradually by tier, with added horns, wings, limbs, mechanical modules, carapace, crystals, armor, or energy structures, while preserving the same species or design lineage and core identity. For a standalone weapon, prop, vehicle, plant, or building, evolve its functional parts, structural tiers, material quality, ornamental complexity, and magical or technological energy systems. Keep the main colors, base materials, signature structure, and recognizable features coherent across all stages. Make every step even, clear, and traceable; never replace it with a different subject. Arrange all {count} complete forms evenly from lowest to highest on one solid-color background. Do not include any words, letters, numbers, numbering, labels, titles, captions, explanations, or watermarks."
+                : "根据上传的参考图，以图中主体为唯一核心，生成保持同一主体的{count}个连续升级进化阶段，从低级、基础形态逐步进化到顶级、终极形态。先自动识别参考图中的主体类型，并按类型采用不同的升级逻辑，不得把所有主体统一处理为从小到大。若主体是人类或类人角色，必须保持年龄、身高、体型、身体比例、面部和身份特征稳定，不得变成儿童、巨人或不同人物；主要通过服装等级、武器、装备、护甲、饰品、材质品质、工艺复杂度和能量效果逐级增强。若主体是怪物、机械生物或其他生物，允许随等级逐步改变体型、身体比例、轮廓和形态，并可增加角、翼、肢体、机械模块、甲壳、水晶、装甲或能量结构，但必须保持同一物种或设计谱系和核心识别特征。若主体是武器、道具、载具、植物或建筑，则围绕其功能部件、结构层级、材质品质、装饰复杂度和魔法或科技能量系统逐级进化。所有阶段必须保持主色、基础材质、标志性结构和识别特征连贯，让每一步变化均匀、清晰且可追溯，不得突然变成不同主体。将{count}个完整形态按从低级到顶级的顺序均匀排列，使用单一纯色背景，不得出现任何文字、字母、数字、编号、标签、标题、说明或水印。";
+            AppState.canvas-workflow-hint = AppState.en
+                ? "Upload the subject and optionally describe its upgrade direction"
+                : "上传主体图片，可补充升级方向，例如：石头巨兽，逐步增加水晶装甲与魔法能量";
+        } else if workflow-id == "character-age" {
+            AppState.asset-type = "character";
+            AppState.canvas-workflow-title = AppState.en ? "Character Age Progression" : "角色年龄变化";
+            AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-age.png");
+            AppState.canvas-workflow-template = AppState.en
+                ? CharacterAgePreset.prompt-en
+                : CharacterAgePreset.prompt-zh;
+            AppState.canvas-workflow-hint = AppState.en
+                ? "Describe the character cue, e.g. blue-robed mage, keep the blue magic"
+                : "简单描述角色特征，例如：蓝袍法师，始终保留蓝色魔法";
+        } else if workflow-id == "character-body" {
+            AppState.asset-type = "character";
+            AppState.canvas-workflow-title = AppState.en ? "Character Body Variations" : "角色体型修改器";
+            AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-body.png");
+            AppState.canvas-workflow-template = AppState.en
+                ? "Create exactly {count} clearly different body-shape variations of the reference character in a deliberate progression. Preserve identity, face, hair, outfit theme, weapon, and art style; change only height, shoulder width, muscle mass, body-fat distribution, and silhouette. Arrange all {count} full characters evenly in one horizontal character sheet."
+                : "根据参考角色生成{count}种明显不同且变化有序的体型。保持角色身份、面部、发型、服装主题、武器和绘制风格一致，只改变身高、肩宽、肌肉量、脂肪比例和身体轮廓。将{count}个完整角色均匀排列在同一张横向设定图中。";
+            AppState.canvas-workflow-hint = AppState.en
+                ? "Describe the character cue, e.g. green orc warrior, lean to massive"
+                : "简单描述角色特征，例如：绿色兽人战士，从瘦小到魁梧";
+        }
+    }
+
     function generate-workflow() {
         if AppState.generating {
             AppState.stop-generation();
             return;
         }
-        if AppState.canvas-workflow-prompt == "" {
+        let reference-driven-workflow = AppState.canvas-workflow-id != "";
+        if reference-driven-workflow && AppState.references.length == 0 {
+            AppState.generation-status = AppState.canvas-workflow-id == "building-derivation"
+                ? (AppState.en ? "Upload a building reference image first" : "请先上传建筑参考图")
+                : (AppState.en ? "Upload a subject reference image first" : "请先上传主体参考图");
+            return;
+        }
+        if AppState.canvas-workflow-prompt == "" && !reference-driven-workflow {
             AppState.generation-status = AppState.en ? "Enter a prompt first" : "请先输入提示词";
             return;
         }
@@ -2466,8 +2738,11 @@ export component InfiniteCanvasPage {
         );
         let world-x = (canvas.width / 2 - root.pan-x) * 100 / root.zoom-percent;
         let world-y = ((canvas.height - (canvas-workflow-dock.height - 23px)) / 2 - root.pan-y) * 100 / root.zoom-percent;
+        let source-prompt = AppState.canvas-workflow-prompt == ""
+            ? AppState.canvas-workflow-title
+            : AppState.canvas-workflow-prompt;
         let source-id = AppState.create-canvas-generation-source(
-            AppState.canvas-workflow-prompt,
+            source-prompt,
             world-x / 1px,
             world-y / 1px,
         );
@@ -2935,7 +3210,7 @@ export component InfiniteCanvasPage {
                             : "正在分析当前图片并生成透明 PNG，请稍候")
                         : (AppState.en
                             ? "Splitting this image evenly. Please wait."
-                            : "正在平均分割当前图片，请稍候");
+                            : "正在按分割线裁切当前图片，请稍候");
                     color: AppTheme.muted;
                     font-size: 12px;
                     font-weight: 400;
@@ -3033,6 +3308,87 @@ export component InfiniteCanvasPage {
                     background: transparent;
                     border-width: 1px;
                     border-color: AppTheme.warning;
+                }
+            }
+
+            if AppState.generation-status-is-error && !AppState.generation-feedback-dismissed: canvas-generation-feedback := Rectangle {
+                x: canvas-workflow-dock.x;
+                y: max(8px, canvas-workflow-dock.y - self.height - 8px);
+                width: canvas-workflow-dock.width;
+                height: 96px;
+                background: AppTheme.panel;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+                property <bool> can-retry: !AppState.generating
+                    && AppState.generation-status-is-error
+                    && AppState.image-model != ""
+                    && (AppState.canvas-workflow-id != ""
+                        ? AppState.references.length > 0
+                        : AppState.canvas-workflow-prompt != "");
+
+                Flickable {
+                    x: 14px;
+                    y: 10px;
+                    width: parent.width - 58px;
+                    height: 40px;
+                    viewport-width: self.width;
+                    viewport-height: max(self.height, feedback-text.preferred-height);
+                    feedback-text := Text {
+                        width: parent.width;
+                        text: AppState.generation-status;
+                        accessible-role: text;
+                        accessible-label: AppState.generation-status;
+                        wrap: word-wrap;
+                        color: AppTheme.text;
+                        font-size: 13px;
+                    }
+                }
+                DialogCloseButton {
+                    x: parent.width - self.width - 6px;
+                    y: 4px;
+                    accessible-role: button;
+                    accessible-label: AppState.en ? "Dismiss notification" : "关闭提示";
+                    clicked => { AppState.generation-feedback-dismissed = true; }
+                }
+                Text {
+                    x: 14px;
+                    y: 58px;
+                    width: parent.width - 130px;
+                    height: 28px;
+                    text: canvas-generation-feedback.can-retry
+                        ? (AppState.en ? "Retry uses current inputs and may incur a new charge" : "按当前输入重新生成，可能产生新的费用")
+                        : (AppState.en ? "Your text and reference images are retained" : "文字和参考图已保留");
+                    color: AppTheme.muted;
+                    font-size: 11px;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                }
+                if canvas-generation-feedback.can-retry: Rectangle {
+                    x: parent.width - 104px;
+                    y: 56px;
+                    width: 90px;
+                    height: 30px;
+                    background: AppTheme.accent;
+                    border-radius: 7px;
+                    accessible-role: button;
+                    accessible-label: AppState.en ? "Retry generation" : "重试生成";
+                    Text {
+                        width: parent.width;
+                        height: parent.height;
+                        text: AppState.en ? "Retry" : "重试生成";
+                        color: #ffffff;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            // Never route a stale retry click to the composer's stop action.
+                            if !AppState.generating { root.generate-workflow(); }
+                        }
+                    }
                 }
             }
 
@@ -3200,7 +3556,11 @@ export component InfiniteCanvasPage {
                         y: 0px;
                         width: parent.width - self.x;
                         height: 24px;
-                        text: AppState.en ? "Image editing, enter a prompt" : "图片编辑，请输入提示词";
+                        text: AppState.canvas-workflow-id == "building-derivation"
+                            ? AppState.canvas-workflow-hint
+                            : (AppState.canvas-workflow-id != ""
+                                ? ""
+                                : (AppState.en ? "Image editing, enter a prompt" : "图片编辑，请输入提示词"));
                         color: #9895a1;
                         font-size: 13px;
                         font-weight: 400;
@@ -3252,7 +3612,7 @@ export component InfiniteCanvasPage {
                         width: parent.width;
                         height: parent.height;
                         mouse-cursor: pointer;
-                        clicked => { AppState.add-reference(); }
+                        clicked => { workflow-reference-source-popup.show(); }
                     }
                 }
 
@@ -3338,6 +3698,9 @@ export component InfiniteCanvasPage {
                     drop-shadow-blur: template-action-touch.has-hover ? 14px : 8px;
                     drop-shadow-color: #766aff55;
                     clip: true;
+                    accessible-role: button;
+                    accessible-label: AppState.en ? "Switch creation workflow" : "切换创作模板";
+                    accessible-action-default => { workflow-switch-popup.show(); }
                     if AppState.canvas-workflow-id != "": Image {
                         x: 3px;
                         y: 3px;
@@ -3372,7 +3735,7 @@ export component InfiniteCanvasPage {
                         width: parent.width;
                         height: parent.height;
                         mouse-cursor: pointer;
-                        clicked => { AppState.navigate("free-canvas"); }
+                        clicked => { workflow-switch-popup.show(); }
                     }
                 }
 
@@ -3518,7 +3881,9 @@ export component InfiniteCanvasPage {
                     width: 72px;
                     height: 32px;
                     property <bool> disabled: !AppState.generating
-                        && (AppState.canvas-workflow-prompt == "" || AppState.image-model == "");
+                        && (AppState.image-model == ""
+                            || (AppState.canvas-workflow-id == ""
+                                && AppState.canvas-workflow-prompt == ""));
                     opacity: self.disabled ? 0.46 : 1;
                     background: self.disabled
                         ? #4c4b50
@@ -3925,6 +4290,286 @@ export component InfiniteCanvasPage {
         CanvasNodeInfoDialog {
             width: parent.width;
             height: parent.height;
+        }
+    }
+
+    workflow-switch-popup := PopupWindow {
+        x: max(12px, min(root.width - self.width - 12px, canvas.x + canvas-workflow-dock.x + canvas-workflow-dock.width - self.width));
+        y: max(12px, canvas.y + canvas-workflow-dock.y - self.height - 12px);
+        width: 843px;
+        height: 326px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: #211f26;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: #514d5c;
+            clip: true;
+            drop-shadow-blur: 22px;
+            drop-shadow-color: #00000099;
+            drop-shadow-offset-y: 7px;
+
+            Text {
+                x: 17px;
+                y: 10px;
+                width: parent.width - 34px;
+                height: 24px;
+                text: AppState.en ? "Switch creation workflow" : "切换创作模板";
+                color: #f3f0f7;
+                font-size: 15px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            Text {
+                x: 17px;
+                y: 33px;
+                width: parent.width - 34px;
+                height: 17px;
+                text: AppState.en ? "Each workflow keeps its own canvas content" : "每个模板独立保留画布内容";
+                color: #918d9a;
+                font-size: 10px;
+                vertical-alignment: center;
+            }
+
+            CanvasWorkflowQuickCard {
+                x: 16px;
+                y: 58px;
+                workflow-id: "plant-growth";
+                title: AppState.en ? "Plant Growth Generator" : "植物生成器";
+                description: AppState.en ? "Continuous plant life stages" : "连续植物生长阶段";
+                artwork: @image-url("../../assets/free-canvas/plant-growth.png");
+                selected: AppState.canvas-workflow-id == self.workflow-id;
+                clicked => { root.switch-workflow("plant-growth"); workflow-switch-popup.close(); }
+            }
+            CanvasWorkflowQuickCard {
+                x: 223px;
+                y: 58px;
+                workflow-id: "character-outfit";
+                title: AppState.en ? "Character Outfit Swap" : "角色换装";
+                description: AppState.en ? "Keep the character, vary gear" : "保持角色，更换服装装备";
+                artwork: @image-url("../../assets/free-canvas/character-outfit.png");
+                selected: AppState.canvas-workflow-id == self.workflow-id;
+                clicked => { root.switch-workflow("character-outfit"); workflow-switch-popup.close(); }
+            }
+            CanvasWorkflowQuickCard {
+                x: 430px;
+                y: 58px;
+                workflow-id: "monster-generator";
+                title: AppState.en ? "Monster Generator" : "怪物生成器";
+                description: AppState.en ? "Expand a motif into monsters" : "基于原型扩展怪物设计";
+                artwork: @image-url("../../assets/free-canvas/monster-generator.png");
+                selected: AppState.canvas-workflow-id == self.workflow-id;
+                clicked => { root.switch-workflow("monster-generator"); workflow-switch-popup.close(); }
+            }
+            CanvasWorkflowQuickCard {
+                x: 637px;
+                y: 58px;
+                workflow-id: "upgrade-evolution";
+                title: AppState.en ? "Upgrade Evolution" : "升级进化";
+                description: AppState.en ? "Auto-detect and evolve the subject" : "自动识别主体并逐级进化";
+                artwork: @image-url("../../assets/free-canvas/upgrade-evolution.png");
+                selected: AppState.canvas-workflow-id == self.workflow-id;
+                clicked => { root.switch-workflow("upgrade-evolution"); workflow-switch-popup.close(); }
+            }
+            CanvasWorkflowQuickCard {
+                x: 16px;
+                y: 190px;
+                workflow-id: "character-age";
+                title: AppState.en ? "Character Age Progression" : "角色年龄变化";
+                description: AppState.en ? "Continuous character life stages" : "连续角色年龄阶段";
+                artwork: @image-url("../../assets/free-canvas/character-age.png");
+                selected: AppState.canvas-workflow-id == self.workflow-id;
+                clicked => { root.switch-workflow("character-age"); workflow-switch-popup.close(); }
+            }
+            CanvasWorkflowQuickCard {
+                x: 223px;
+                y: 190px;
+                workflow-id: "character-body";
+                title: AppState.en ? "Character Body Variations" : "角色体型修改器";
+                description: AppState.en ? "Explore character silhouettes" : "探索不同角色体型";
+                artwork: @image-url("../../assets/free-canvas/character-body.png");
+                selected: AppState.canvas-workflow-id == self.workflow-id;
+                clicked => { root.switch-workflow("character-body"); workflow-switch-popup.close(); }
+            }
+            CanvasWorkflowQuickCard {
+                x: 430px;
+                y: 190px;
+                workflow-id: "building-derivation";
+                title: AppState.en ? "Building Derivation" : "建筑衍生器";
+                description: AppState.en ? "Same style, different functions" : "同系列风格，不同建筑功能";
+                artwork: BuildingDerivationPreset.artwork;
+                selected: AppState.canvas-workflow-id == self.workflow-id;
+                clicked => { root.switch-workflow("building-derivation"); workflow-switch-popup.close(); }
+            }
+        }
+    }
+
+    workflow-reference-source-popup := PopupWindow {
+        x: canvas.x + canvas-workflow-dock.x + 14px;
+        y: max(12px, canvas.y + canvas-workflow-dock.y + 110px - self.height);
+        width: 220px;
+        height: 108px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: #211f26;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #514d5c;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #00000088;
+            drop-shadow-offset-y: 6px;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 0px;
+                CanvasReferenceSourceOption {
+                    text: AppState.en ? "Local upload" : "本地上传";
+                    icon: @image-url("../../assets/icons/upload.svg");
+                    clicked => {
+                        workflow-reference-source-popup.close();
+                        AppState.add-reference();
+                    }
+                }
+                CanvasReferenceSourceOption {
+                    text: AppState.en ? "Choose from My Assets" : "从我的资产选择";
+                    icon: @image-url("../../assets/icons/assets.svg");
+                    clicked => {
+                        workflow-reference-source-popup.close();
+                        AppState.asset-category-filter = "all";
+                        AppState.refresh-assets();
+                        workflow-reference-assets-popup.show();
+                    }
+                }
+            }
+        }
+    }
+
+    workflow-reference-assets-popup := PopupWindow {
+        x: max(18px, (root.width - self.width) / 2);
+        y: max(18px, (root.height - self.height) / 2);
+        width: min(820px, root.width - 36px);
+        height: min(610px, root.height - 36px);
+        close-policy: close-on-click-outside;
+
+        asset-picker-card := Rectangle {
+            background: #211f26;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: #514d5c;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000099;
+            drop-shadow-offset-y: 8px;
+            accessible-role: text;
+            accessible-label: AppState.en ? "Choose from My Assets" : "选择我的资产";
+
+            Text {
+                x: 22px;
+                y: 16px;
+                width: parent.width - 86px;
+                height: 30px;
+                text: AppState.en ? "Choose from My Assets" : "选择我的资产";
+                color: #f3f0f7;
+                font-size: 19px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            Text {
+                x: 22px;
+                y: 48px;
+                width: parent.width - 44px;
+                height: 22px;
+                text: AppState.en ? "Select an image to add it as a reference" : "选择一张图片作为当前创作的参考图";
+                color: #aaa6b2;
+                font-size: 12px;
+                font-weight: 400;
+            }
+            DialogCloseButton {
+                x: parent.width - 50px;
+                y: 14px;
+                clicked => { workflow-reference-assets-popup.close(); }
+            }
+
+            if AppState.assets.length > 0: asset-picker-scroll := Flickable {
+                x: 22px;
+                y: 84px;
+                width: parent.width - 44px;
+                height: parent.height - 106px;
+                viewport-width: self.width;
+                property <int> columns: max(2, floor((self.width + 14px) / 176px));
+                property <length> card-width: (self.width - (self.columns - 1) * 14px) / self.columns;
+                property <length> row-height: self.card-width + 40px;
+                viewport-height: max(self.height, ceil(AppState.assets.length / self.columns) * self.row-height);
+
+                for asset[index] in AppState.assets: asset-choice := Rectangle {
+                    x: Math.mod(index, asset-picker-scroll.columns) * (asset-picker-scroll.card-width + 14px);
+                    y: floor(index / asset-picker-scroll.columns) * asset-picker-scroll.row-height;
+                    width: asset-picker-scroll.card-width;
+                    height: asset-picker-scroll.row-height - 14px;
+                    background: asset-choice-touch.has-hover ? #302e38 : #29272f;
+                    border-radius: 10px;
+                    border-width: 1px;
+                    border-color: asset-choice-touch.has-hover ? #8175ff : #46434d;
+                    clip: true;
+                    accessible-role: button;
+                    accessible-label: (AppState.en ? "Choose asset " : "选择资产 ") + asset.title;
+                    accessible-action-default => {
+                        if AppState.add-reference-from-asset(asset.id) {
+                            workflow-reference-assets-popup.close();
+                        }
+                    }
+                    Rectangle {
+                        x: 7px;
+                        y: 7px;
+                        width: parent.width - 14px;
+                        height: parent.width - 14px;
+                        background: #17161b;
+                        border-radius: 7px;
+                        clip: true;
+                        Image {
+                            width: parent.width;
+                            height: parent.height;
+                            source: asset.image;
+                            image-fit: contain;
+                        }
+                    }
+                    Text {
+                        x: 10px;
+                        y: parent.width + 2px;
+                        width: parent.width - 20px;
+                        height: 24px;
+                        text: asset.title;
+                        color: #ddd9e2;
+                        font-size: 12px;
+                        font-weight: 400;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    asset-choice-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if AppState.add-reference-from-asset(asset.id) {
+                                workflow-reference-assets-popup.close();
+                            }
+                        }
+                    }
+                }
+            }
+            if AppState.assets.length == 0: Text {
+                x: 30px;
+                y: 110px;
+                width: parent.width - 60px;
+                height: parent.height - 160px;
+                text: AppState.en ? "No saved images yet. Try local upload." : "我的资产中暂无可用图片，请使用本地上传";
+                color: #aaa6b2;
+                font-size: 14px;
+                font-weight: 400;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
         }
     }
 

@@ -1,0 +1,44 @@
+import { AppTheme } from "../theme.slint";
+
+// Normalized positions are shared with the crop request; guides capture their own drags.
+export component CanvasSplitGuides inherits Rectangle {
+    in property <float> scale-factor: 1;
+    in-out property <[float]> row-positions;
+    in-out property <[float]> column-positions;
+    background: #07111f99;
+
+    // Consume presses here so dragging a guide never moves the image node.
+    TouchArea { width: parent.width; height: parent.height; }
+    for position[column] in root.column-positions: Rectangle {
+        x: position * parent.width - self.width / 2;
+        width: max(12px, 12px * root.scale-factor);
+        height: parent.height;
+        Rectangle { x: (parent.width - self.width) / 2; width: max(1px, 2px * root.scale-factor); height: parent.height; background: guide-x.has-hover || guide-x.pressed ? AppTheme.accent : #ffffffdd; }
+        guide-x := TouchArea {
+            width: parent.width; height: parent.height;
+            mouse-cursor: ew-resize;
+            moved => {
+                if self.pressed {
+                    root.column-positions[column] = max(column == 0 ? 0.001 : root.column-positions[column - 1] + 0.001, min(column + 1 == root.column-positions.length ? 0.999 : root.column-positions[column + 1] - 0.001, (parent.x + self.mouse-x) / root.width));
+                }
+            }
+        }
+    }
+    for position[row] in root.row-positions: Rectangle {
+        y: position * parent.height - self.height / 2;
+        width: parent.width;
+        height: max(12px, 12px * root.scale-factor);
+        Rectangle { y: (parent.height - self.height) / 2; height: max(1px, 2px * root.scale-factor); width: parent.width; background: guide-y.has-hover || guide-y.pressed ? AppTheme.accent : #ffffffdd; }
+        guide-y := TouchArea {
+            width: parent.width; height: parent.height;
+            mouse-cursor: ns-resize;
+            moved => {
+                if self.pressed {
+                    root.row-positions[row] = max(row == 0 ? 0.001 : root.row-positions[row - 1] + 0.001, min(row + 1 == root.row-positions.length ? 0.999 : root.row-positions[row + 1] - 0.001, (parent.y + self.mouse-y) / root.height));
+                }
+            }
+        }
+    }
+
+}
+

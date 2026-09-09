@@ -112,6 +112,8 @@ struct CanvasSplitTile {
     path: String,
     row: u32,
     column: u32,
+    width: u32,
+    height: u32,
 }
 
 type CanvasSplitOutcome = std::result::Result<Vec<CanvasSplitTile>, String>;
@@ -567,21 +569,38 @@ fn split_parts_from_lines(lines: u32) -> Option<u32> {
     lines.checked_add(1)
 }
 
+fn split_pixel_edges(total: u32, positions: &[f32]) -> Result<Vec<u32>> {
+    let mut edges = vec![0];
+    for &position in positions {
+        if !position.is_finite() || position <= 0.0 || position >= 1.0 {
+            return Err(anyhow!("Invalid split position"));
+        }
+        let edge = (position as f64 * total as f64).round() as u32;
+        if edge <= *edges.last().unwrap() || edge >= total {
+            return Err(anyhow!("Split lines must leave at least one pixel between them"));
+        }
+        edges.push(edge);
+    }
+    edges.push(total);
+    Ok(edges)
+}
+
 #[cfg(test)]
 fn split_canvas_image_to_directory(
     source_path: &Path,
     output_dir: &Path,
     data_root: &Path,
     configured_output_root: &Path,
-    rows: u32,
-    columns: u32,
+    row_positions: &[f32],
+    column_positions: &[f32],
 ) -> Result<Vec<CanvasSplitTile>> {
     let (decoded, _) = decode_image_file(source_path)?;
     let rgba = decoded.to_rgba8();
     let (image_width, image_height) = rgba.dimensions();
-    if rows == 0 || columns == 0 || rows > image_height || columns > image_width {
-        return Err(anyhow!("split grid exceeds image dimensions"));
-    }
+    let row_edges = split_pixel_edges(image_height, row_positions)?;
+    let column_edges = split_pixel_edges(image_width, column_positions)?;
+    let rows = row_edges.len() as u32 - 1;
+    let columns = column_edges.len() as u32 - 1;
     ensure_managed_subdirectory_at(data_root, configured_output_root, output_dir)
         .then_some(())
         .ok_or_else(|| anyhow!("unable to prepare the canvas split output directory"))?;
@@ -589,9 +608,11 @@ fn split_canvas_image_to_directory(
     let mut tiles = Vec::with_capacity((rows * columns) as usize);
     let result = (|| -> Result<()> {
         for row in 0..rows {
-            let (top, tile_height) = terminal_remainder_span(image_height, rows, row);
+            let top = row_edges[row as usize];
+            let tile_height = row_edges[row as usize + 1] - top;
             for column in 0..columns {
-                let (left, tile_width) = terminal_remainder_span(image_width, columns, column);
+                let left = column_edges[column as usize];
+                let tile_width = column_edges[column as usize + 1] - left;
                 let tile =
                     image::imageops::crop_imm(&rgba, left, top, tile_width, tile_height).to_image();
                 let bytes = encode_png_rgba(&tile, tile_width, tile_height)?;
@@ -601,6 +622,8 @@ fn split_canvas_image_to_directory(
                     path: path.display().to_string(),
                     row,
                     column,
+                    width: tile_width,
+                    height: tile_height,
                 });
             }
         }
@@ -616,28 +639,32 @@ fn split_canvas_image_to_directory(
 fn split_canvas_image_for_authority(
     authority: &NamespaceStorageAuthority,
     source_path: &Path,
-    rows: u32,
-    columns: u32,
+    row_positions: &[f32],
+    column_positions: &[f32],
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<Vec<CanvasSplitTile>> {
     let bytes = authority.read_image_source(source_path, 100 * 1024 * 1024)?;
     let (decoded, _) = decode_image_bytes(source_path, &bytes)?;
     let rgba = decoded.to_rgba8();
     let (image_width, image_height) = rgba.dimensions();
-    anyhow::ensure!(rows > 0 && columns > 0 && rows <= image_height && columns <= image_width,
-        "split grid exceeds image dimensions");
+    let row_edges = split_pixel_edges(image_height, row_positions)?;
+    let column_edges = split_pixel_edges(image_width, column_positions)?;
+    let rows = row_edges.len() as u32 - 1;
+    let columns = column_edges.len() as u32 - 1;
     let mut tiles = Vec::with_capacity((rows * columns) as usize);
     for row in 0..rows {
-        let (top, tile_height) = terminal_remainder_span(image_height, rows, row);
+        let top = row_edges[row as usize];
+        let tile_height = row_edges[row as usize + 1] - top;
         for column in 0..columns {
             anyhow::ensure!(!cancel.load(Ordering::Acquire), "canvas split cancelled");
-            let (left, tile_width) = terminal_remainder_span(image_width, columns, column);
+            let left = column_edges[column as usize];
+            let tile_width = column_edges[column as usize + 1] - left;
             let tile = image::imageops::crop_imm(&rgba, left, top, tile_width, tile_height).to_image();
             let bytes = encode_png_rgba(&tile, tile_width, tile_height)?;
             let path = persist_canvas_managed_image(
                 authority, ManagedUserArea::Canvas, &format!("split-r{}-c{}", row + 1, column + 1), &bytes,
             )?;
-            tiles.push(CanvasSplitTile { path: path.display().to_string(), row, column });
+            tiles.push(CanvasSplitTile { path: path.display().to_string(), row, column, width: tile_width, height: tile_height });
         }
     }
     Ok(tiles)
@@ -1018,6 +1045,7 @@ fn poll_canvas_image_split(
         let mut created_ids = Vec::with_capacity(tiles.len());
 
         for (index, tile) in tiles.into_iter().enumerate() {
+            let scale = (tile_width / tile.width as f32).min(tile_height / tile.height as f32);
             let id = if index == 0 {
                 first_id
                     .clone()
@@ -1031,8 +1059,8 @@ fn poll_canvas_image_split(
                 content: String::new(),
                 x: origin_x + tile.column as f32 * (tile_width + gap),
                 y: origin_y + tile.row as f32 * (tile_height + gap),
-                width: tile_width,
-                height: tile_height,
+                width: tile.width as f32 * scale,
+                height: tile.height as f32 * scale,
                 parent_group_id: String::new(),
                 z_index: next_z + index as i32,
                 image_path: tile.path,
@@ -1851,30 +1879,63 @@ pub(super) fn compose_canvas_workflow_prompt(
     }
 
     let step_count = requested_step_count.clamp(4, 12);
+    let top_count = (step_count + 1) / 2;
+    let bottom_count = step_count / 2;
     let template = template
         .trim()
         .replace("{count}", &step_count.to_string());
+    let is_upgrade_evolution = if english {
+        template.contains("consecutive upgrade-evolution stages")
+    } else {
+        template.contains("连续升级进化阶段")
+    };
+    let workflow_visual_rules = if is_upgrade_evolution && english {
+        "Mandatory upgrade-tier visuals: automatically map the actual stages from low to high through the universal rarity order white, green, blue, purple, orange, and red. The lowest stage must begin with white-quality details and the highest base stage must reach red-quality details; when there are fewer than six stages, sample this sequence evenly while preserving its order. Tier colors are localized quality accents only, applied to accessories, weapons, armor trim, gems, emblems, functional parts, mechanical modules, crystals, or energy lines. Never tint the whole subject or change its original skin tone, hair color, outfit main color, core palette, base material, or identity. Beyond the six base tiers, add soft localized back glows in this order: green, blue, purple, gold, and red. Confine each subject's back glow and every other effect to its own isolated area; they must not cross the solid-background gap between subjects or touch or connect to neighboring effects. Keep the base background uniform outside each glow."
+    } else if is_upgrade_evolution {
+        "强制升级视觉等级：根据实际阶段数量，从低到高自动映射白、绿、蓝、紫、橙、红的通用稀有度顺序。最低阶必须从白色品质细节开始，最高基础阶必须达到红色品质细节；不足六阶时按顺序均匀取样。等级色只能作为局部品质标识，用于配饰、武器、护甲镶边、宝石、纹章、功能部件、机械模块、晶体或能量纹路等，不得给整个主体统一染色，不得改变主体原有肤色、发色、服装主色、核心配色、基础材质和身份特征。超过基础六阶后，依次增加绿光、蓝光、紫光、金光、红光的柔和局部背光。每个主体的背光和其他光效必须限制在自己的独立区域内，不得跨越主体之间的纯色背景间距，不得与相邻主体的光效接触或相连；光晕区域之外的基础背景必须保持均匀纯色。"
+    } else {
+        ""
+    };
+    let permits_localized_glow = is_upgrade_evolution;
+    let is_building_derivation = template.contains("建筑功能衍生：")
+        || template.contains("Building function derivation:");
     let composition_rules = if english {
-        let layout = if step_count > 8 {
+        let background_rule = if permits_localized_glow {
+            "Outside any workflow-requested soft localized back glow strictly confined behind one subject, do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements."
+        } else {
+            "Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements."
+        };
+        let layout = if step_count > 5 {
             format!(
-                "Arrange all {step_count} subjects in two rows, ordered left to right and then top to bottom."
+                "Arrange all {step_count} subjects in two rows, ordered left to right and then top to bottom: exactly {top_count} subjects in the top row and {bottom_count} in the bottom row.{}",
+                if is_building_derivation { " Order buildings by function, not by upgrade level." } else { "" }
             )
+        } else if is_building_derivation {
+            format!("Arrange all {step_count} buildings in one row by function, not by upgrade level.")
         } else {
             format!("Arrange all {step_count} subjects in one row in progression order.")
         };
         format!(
-            "Mandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. {layout}"
+            "Mandatory composition rules: use one solid-color background only. {background_rule} Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Keep a clear, continuous solid-background gap between every pair of subjects. No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect. If space is insufficient, uniformly scale down all subjects within the image; keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged. Prefer more empty space over compressed gaps so that each subject can be cleanly extracted on its own. {layout} Count contract: exactly {step_count} complete subjects, with one independent subject in every planned position and no empty positions. The reference is not an extra output subject. Stage examples never limit the selected count; add distinct intermediate stages as needed, without merging or omitting subjects. If space is insufficient, shrink subjects, never reduce their count. Check each row and the total before finalizing; the visible total must equal {step_count}. Do not draw these counting instructions or any numbers on the image."
         )
     } else {
-        let layout = if step_count > 8 {
+        let background_rule = if permits_localized_glow {
+            "除工作流明确要求且严格限制在单个主体后方的局部柔和光晕外，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。"
+        } else {
+            "不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。"
+        };
+        let layout = if step_count > 5 {
             format!(
-                "将全部{step_count}个对象分成上下两行，按从左到右、从上到下的顺序排列。"
+                "将全部{step_count}个对象分成上下两行，上排恰好{top_count}个，下排恰好{bottom_count}个，按从左到右、从上到下的顺序排列。{}",
+                if is_building_derivation { "建筑按功能顺序排列，不按升级等级排列。" } else { "" }
             )
+        } else if is_building_derivation {
+            format!("将全部{step_count}座建筑按功能顺序排列在同一行，不按升级等级排列。")
         } else {
             format!("将全部{step_count}个对象按演变顺序排列在同一行。")
         };
         format!(
-            "强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。{layout}"
+            "强制画面规范：必须使用单一纯色背景，{background_rule}画面中不得出现编号、序号、文字标签、标题、说明文字或水印。任意两个主体之间必须保留清晰、连续的纯色背景间距，主体的轮廓、服装、武器、装备、特效和阴影均不得互相接触、重叠或连接。空间不足时必须统一缩小所有主体在画面中的占比，保持所选画布比例及正常2K或4K输出尺寸不变，宁可增加留白也不得压缩间距，确保每个主体都能被单独完整抠图。{layout} 数量硬约束：总共恰好{step_count}个完整主体，每个预定位置必须有且仅有一个独立主体，不得留空位。参考图不作为额外主体加入结果。阶段示例不能限制所选数量；不足时补充有明显差异的中间阶段，不得合并或省略主体。空间不足时缩小主体，不能减少数量。输出前逐排检查并核对总数，画面可见主体总数必须等于{step_count}。这些计数要求只用于规划，禁止在图片上画出计数文字或编号。"
         )
     };
     let label = if english {
@@ -1882,7 +1943,13 @@ pub(super) fn compose_canvas_workflow_prompt(
     } else {
         "用户描述："
     };
-    format!("{template}\n\n{composition_rules}\n\n{label}{user_description}")
+    if workflow_visual_rules.is_empty() {
+        format!("{template}\n\n{composition_rules}\n\n{label}{user_description}")
+    } else {
+        format!(
+            "{template}\n\n{workflow_visual_rules}\n\n{composition_rules}\n\n{label}{user_description}"
+        )
+    }
 }
 
 pub(super) fn normalize_canvas_workspace_prompts(
@@ -2117,7 +2184,11 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
         let app_weak = app.as_weak();
         let store = store.clone();
         let history = history.clone();
-        state.on_split_canvas_image(move |source_node_id, rows, columns| {
+        state.on_canvas_split_positions(|count| {
+            let count = count.clamp(0, 64);
+            ModelRc::new(VecModel::from((1..=count).map(|index| index as f32 / (count + 1) as f32).collect::<Vec<_>>()))
+        });
+        state.on_split_canvas_image(move |source_node_id, rows, columns, row_positions, column_positions| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -2132,24 +2203,30 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                 let _ = capture.apply(&store, || {
                     let state = app.global::<AppState>();
                     state.set_generation_status(
-                        (if state.get_language().as_str() == "en" { "Enter positive whole numbers for horizontal and vertical split lines" }
-                        else { "横向和纵向分割线数量请输入正整数" }).into(),
+                        (if state.get_language().as_str() == "en" { "Enter non-negative whole numbers for split lines" }
+                        else { "横向和纵向分割线数量请输入非负整数" }).into(),
                     );
                 });
                 return;
             };
-            if horizontal_lines == 0
-                || vertical_lines == 0
+            if (horizontal_lines == 0 && vertical_lines == 0)
                 || horizontal_lines > MAX_CANVAS_SPLIT_AXIS
                 || vertical_lines > MAX_CANVAS_SPLIT_AXIS
             {
                 let _ = capture.apply(&store, || {
                     let state = app.global::<AppState>();
                     state.set_generation_status(
-                        (if state.get_language().as_str() == "en" { "Horizontal and vertical split lines must each be between 1 and 64" }
-                        else { "横向和纵向分割线数量均需在 1 到 64 之间" }).into(),
+                        (if state.get_language().as_str() == "en" { "Use 0 to 64 lines per axis and add at least one split line" }
+                        else { "每个方向可设置 0 到 64 条线，请至少添加一条分割线" }).into(),
                     );
                 });
+                return;
+            }
+            let row_positions: Vec<f32> = row_positions.iter().collect();
+            let column_positions: Vec<f32> = column_positions.iter().collect();
+            if row_positions.len() != horizontal_lines as usize || column_positions.len() != vertical_lines as usize {
+                let _ = capture.apply(&store, || app.global::<AppState>().set_generation_status(
+                    "分割线位置与数量不一致，请重试 / Split line positions do not match the count".into()));
                 return;
             }
             let Some(rows) = split_parts_from_lines(horizontal_lines) else {
@@ -2211,7 +2288,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                 if state.get_language().as_str() == "en" {
                     "Splitting image locally..."
                 } else {
-                    "正在本地平均分割图片..."
+                    "正在按分割线位置裁切图片..."
                 }
                 .into(),
                 );
@@ -2225,7 +2302,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
             let worker_persistence = persistence.clone();
             let ticket = match spawn_canvas_worker(persistence, move |cancel, _activity| {
                 let outcome = worker_persistence.storage_authority()
-                    .and_then(|authority| split_canvas_image_for_authority(&authority, &source_path, rows, columns, &cancel))
+                    .and_then(|authority| split_canvas_image_for_authority(&authority, &source_path, &row_positions, &column_positions, &cancel))
                     .map_err(|error| error.to_string());
                 let _ = sender.send(outcome);
                 wait_at_canvas_worker_exit_for_test();
@@ -3871,7 +3948,7 @@ mod tests {
         wire_infinite_canvas_callbacks(&app, fixture.context.clone());
 
         app.global::<AppState>()
-            .invoke_split_canvas_image("split".into(), "1".into(), "1".into());
+            .invoke_split_canvas_image("split".into(), "1".into(), "1".into(), ModelRc::new(VecModel::from(vec![0.5])), ModelRc::new(VecModel::from(vec![0.5])));
         video_image_callbacks::tests::scoped_inputs::pump(|| canvas_test_worker_exit_reached().load(Ordering::Acquire));
         i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(100));
         slint::platform::update_timers_and_animations();
@@ -4029,7 +4106,7 @@ mod tests {
         wire_infinite_canvas_callbacks(&app, original.context.clone());
 
         app.global::<AppState>()
-            .invoke_split_canvas_image("split".into(), "1".into(), "1".into());
+            .invoke_split_canvas_image("split".into(), "1".into(), "1".into(), ModelRc::new(VecModel::from(vec![0.5])), ModelRc::new(VecModel::from(vec![0.5])));
         video_image_callbacks::tests::scoped_inputs::pump(|| {
             canvas_test_worker_exit_reached().load(Ordering::Acquire)
         });
@@ -4137,7 +4214,7 @@ mod tests {
         wire_infinite_canvas_callbacks(&app, fixture.context.clone());
 
         app.global::<AppState>()
-            .invoke_split_canvas_image("source".into(), "1".into(), "1".into());
+            .invoke_split_canvas_image("source".into(), "1".into(), "1".into(), ModelRc::new(VecModel::from(vec![0.5])), ModelRc::new(VecModel::from(vec![0.5])));
         video_image_callbacks::tests::scoped_inputs::pump(|| {
             app.global::<AppState>().get_canvas_split_loading_node_id().is_empty()
                 && fixture.context.store.borrow().canvas_notes.len() == 5
@@ -4183,7 +4260,7 @@ mod tests {
         let app = AppWindow::new().unwrap();
         wire_infinite_canvas_callbacks(&app, fixture.context.clone());
         app.global::<AppState>()
-            .invoke_split_canvas_image("split".into(), "1".into(), "1".into());
+            .invoke_split_canvas_image("split".into(), "1".into(), "1".into(), ModelRc::new(VecModel::from(vec![0.5])), ModelRc::new(VecModel::from(vec![0.5])));
         video_image_callbacks::tests::scoped_inputs::pump(|| {
             canvas_test_worker_exit_reached().load(Ordering::Acquire)
         });
@@ -4265,7 +4342,7 @@ mod tests {
         let app = AppWindow::new().unwrap();
         wire_infinite_canvas_callbacks(&app, fixture.context.clone());
         app.global::<AppState>()
-            .invoke_split_canvas_image("split".into(), "1".into(), "1".into());
+            .invoke_split_canvas_image("split".into(), "1".into(), "1".into(), ModelRc::new(VecModel::from(vec![0.5])), ModelRc::new(VecModel::from(vec![0.5])));
         video_image_callbacks::tests::scoped_inputs::pump(|| {
             canvas_test_worker_exit_reached().load(Ordering::Acquire)
         });
@@ -4320,9 +4397,19 @@ mod tests {
 
     #[test]
     fn split_line_counts_create_one_more_tile_part_per_axis() {
+        assert_eq!(split_parts_from_lines(0), Some(1));
         assert_eq!(split_parts_from_lines(1), Some(2));
         assert_eq!(split_parts_from_lines(2), Some(3));
         assert_eq!(split_parts_from_lines(64), Some(65));
+    }
+
+    #[test]
+    fn moved_split_lines_preserve_pixel_boundaries_and_reject_empty_tiles() {
+        assert_eq!(split_pixel_edges(100, &[0.2, 0.73]).unwrap(), vec![0, 20, 73, 100]);
+        assert_eq!(split_pixel_edges(100, &[]).unwrap(), vec![0, 100]);
+        for positions in [vec![0.0], vec![1.0], vec![f32::NAN], vec![0.7, 0.2], vec![0.201, 0.202]] {
+            assert!(split_pixel_edges(100, &positions).is_err());
+        }
     }
 
     #[test]
@@ -4344,20 +4431,24 @@ mod tests {
         let bytes = encode_png_rgba(&source, 5, 3).expect("encode split source");
         atomic_write_file(&source_path, &bytes).expect("write split source");
 
-        let tiles = split_canvas_image_to_directory(
-            &source_path, &output_dir, &data_root, &configured_output_root, 2, 2,
-        ).expect("split source");
-        assert_eq!(tiles.len(), 4);
-        let mut rebuilt = image::RgbaImage::new(5, 3);
-        for tile in &tiles {
-            assert!(Path::new(&tile.path).starts_with(&output_dir));
-            let (left, _) = terminal_remainder_span(5, 2, tile.column);
-            let (top, _) = terminal_remainder_span(3, 2, tile.row);
-            let decoded = image::open(&tile.path).expect("read tile").to_rgba8();
-            image::imageops::replace(&mut rebuilt, &decoded, left as i64, top as i64);
+        for (row_positions, column_positions, expected_x, expected_y) in [
+            (vec![1.0 / 3.0], vec![0.4], vec![0, 2], vec![0, 1]),
+            (vec![], vec![0.2, 0.8], vec![0, 1, 4], vec![0]),
+            (vec![2.0 / 3.0], vec![], vec![0], vec![0, 2]),
+        ] {
+            let tiles = split_canvas_image_to_directory(&source_path, &output_dir, &data_root, &configured_output_root, &row_positions, &column_positions).expect("split source");
+            assert_eq!(tiles.len(), expected_x.len() * expected_y.len());
+            let mut rebuilt = image::RgbaImage::new(5, 3);
+            for tile in &tiles {
+                let left = expected_x[tile.column as usize];
+                let top = expected_y[tile.row as usize];
+                let decoded = image::open(&tile.path).expect("read tile").to_rgba8();
+                assert_eq!(decoded.dimensions(), (tile.width, tile.height));
+                image::imageops::replace(&mut rebuilt, &decoded, left, top);
+            }
+            assert_eq!(rebuilt, source);
+            remove_canvas_split_tiles(&tiles);
         }
-        assert_eq!(rebuilt, source);
-        remove_canvas_split_tiles(&tiles);
         assert_eq!(fs::read(sentinel).unwrap(), b"untouched");
         assert_eq!(fs::read(source_path).unwrap(), bytes);
         assert!(!configured_output_root.exists());

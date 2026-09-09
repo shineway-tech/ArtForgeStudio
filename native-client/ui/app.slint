@@ -73,6 +73,28 @@ export component AppTray inherits SystemTrayIcon {
 }
 
 export component AppWindow inherits Window {
+    // Feedback belongs to the app session, not the conditionally created canvas page.
+    in property <string> feedback-status: AppState.generation-status;
+    in property <bool> feedback-generating: AppState.generating;
+    in property <string> feedback-page: AppState.page;
+    changed feedback-status => {
+        AppState.generation-feedback-dismissed = AppState.page != "canvas";
+        feedback-hide-timer.restart();
+    }
+    changed feedback-generating => {
+        AppState.generation-feedback-dismissed = AppState.page != "canvas";
+        feedback-hide-timer.restart();
+    }
+    changed feedback-page => {
+        // Navigation is never a new notification, even if the old one was not dismissed.
+        AppState.generation-feedback-dismissed = true;
+    }
+    feedback-hide-timer := Timer {
+        interval: 5s;
+        running: AppState.page == "canvas" && !AppState.generating
+            && AppState.generation-status-is-error && !AppState.generation-feedback-dismissed;
+        triggered => { AppState.generation-feedback-dismissed = true; }
+    }
     title: "Elunvi Canvas";
     preferred-width: 1440px;
     preferred-height: 900px;

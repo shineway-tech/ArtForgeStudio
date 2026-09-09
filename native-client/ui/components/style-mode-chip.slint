@@ -20,14 +20,14 @@ export component StyleModeChip {
         x: 0px;
         y: 0px - self.height - 8px;
         width: 170px;
-        height: 282px;
+        height: options.preferred-height;
         close-policy: close-on-click-outside;
         Rectangle {
             background: AppTheme.panel;
             border-radius: 8px;
             border-width: 1px;
             border-color: AppTheme.accent;
-            VerticalLayout {
+            options := VerticalLayout {
                 padding: 6px;
                 spacing: 3px;
                 TextOption { left: AppState.en ? "Free Style" : "自由风格"; right: ""; active: AppState.style-mode == "free"; clicked => { AppState.style-mode = "free"; root.open = false; popup.close(); } }

@@ -1,64 +1,45 @@
 import { AppState } from "../app-state.slint";
 import { ModelPicker } from "model-picker.slint";
 import { PillButton } from "pill-button.slint";
-import { ThemeMenuButton } from "theme-menu-button.slint";
 import { AppTheme } from "../theme.slint";
 
 component InvitationGiftButton {
-    property <int> wobble-step: 0;
-    property <bool> wobbling: false;
-    width: 48px;
+    width: AppState.en ? 112px : 98px;
     height: 36px;
-
-    Timer {
-        interval: 110ms;
-        running: root.wobbling;
-        triggered => {
-            if root.wobble-step >= 6 {
-                root.wobble-step = 0;
-                root.wobbling = false;
-            } else {
-                root.wobble-step += 1;
-            }
-        }
-    }
+    accessible-role: button;
+    accessible-label: AppState.en ? "Invite & earn" : "邀请有礼";
 
     Rectangle {
         width: parent.width;
-        height: parent.height;
-        background: gift-touch.has-hover ? AppTheme.panel-soft : transparent;
-        border-radius: 10px;
+        y: 2px;
+        height: parent.height - 4px;
+        background: gift-touch.pressed ? #ffddb5 : (gift-touch.has-hover ? #ffe4c5 : #ffecd5);
+        border-radius: 16px;
         gift-image := Image {
-            x: 2px;
-            y: -5px;
-            width: 44px;
-            height: 44px;
-            source: @image-url("../../assets/invitation-gift.png");
+            x: 12px;
+            y: (parent.height - 16px) / 2;
+            width: 16px;
+            height: 16px;
+            source: @image-url("../../assets/icons/invitation-gift.svg");
+            colorize: #ff850b;
             image-fit: contain;
-            transform-rotation: root.wobble-angle();
-            animate transform-rotation { duration: AppState.reduced-motion ? 0ms : 110ms; easing: ease-in-out; }
+        }
+        Text {
+            x: 31px;
+            width: parent.width - 41px;
+            height: parent.height;
+            text: AppState.en ? "Invite & earn" : "邀请有礼";
+            color: #f78008;
+            font-size: 13px;
+            font-weight: 400;
+            vertical-alignment: center;
         }
         gift-touch := TouchArea {
             width: parent.width;
             height: parent.height;
             mouse-cursor: pointer;
-            changed has-hover => {
-                if self.has-hover && !AppState.reduced-motion {
-                    root.wobble-step = 1;
-                    root.wobbling = true;
-                }
-            }
             clicked => { AppState.navigate("invitation-gift"); }
         }
-    }
-
-    function wobble-angle() -> angle {
-        return root.wobble-step == 1 ? -7deg
-            : root.wobble-step == 2 ? 7deg
-            : root.wobble-step == 3 ? -5deg
-            : root.wobble-step == 4 ? 5deg
-            : root.wobble-step == 5 ? -2deg
-            : 0deg;
     }
 }
 
@@ -109,7 +90,7 @@ export component TopBar {
                     x: 0px;
                     y: 6px;
                     kind: "image";
-                    label: AppState.en ? "Image Model" : "生图模型";
+                    label: AppState.en ? "Image" : "生图";
                     picker-width: root.model-picker-width();
                     select-model(model) => { AppState.select-image-model(model); }
                 }
@@ -117,7 +98,7 @@ export component TopBar {
                     x: root.model-picker-width() + 18px;
                     y: 6px;
                     kind: "reasoning";
-                    label: AppState.en ? "Reasoning Model" : "推理模型";
+                    label: AppState.en ? "Reasoning" : "推理";
                     picker-width: root.model-picker-width();
                     select-model(model) => { AppState.select-reasoning-model(model); }
                 }
@@ -140,18 +121,8 @@ export component TopBar {
                     text: AppState.en ? "Payment status" : "查看支付状态";
                     clicked => { AppState.payment-dialog-open = true; }
                 }
-                if AppState.logged-in: InvitationGiftButton { width: root.gift-width; }
-                PillButton { width: root.language-width; text: AppState.language == "zh" ? "中文" : "English"; clicked => { AppState.set-language(AppState.language == "zh" ? "en" : "zh"); } }
-                ThemeMenuButton { width: root.theme-width; }
-                if AppState.logged-in: PillButton {
-                    width: root.balance-width;
-                    text: AppState.account-amount-label;
-                    clicked => {
-                        AppState.profile-open = false;
-                        AppState.navigate("credits");
-                    }
-                }
-                if AppState.logged-in: PillButton { width: root.profile-width; text: AppState.nickname; clicked => { AppState.account-center-section = "login"; AppState.profile-open = true; AppState.profile-name = AppState.nickname; } }
+                if AppState.logged-in: InvitationGiftButton {}
+                PillButton { width: 94px; text: AppState.language == "zh" ? "中文" : "English"; clicked => { AppState.set-language(AppState.language == "zh" ? "en" : "zh"); } }
                 if !AppState.logged-in && AppState.page != "welcome": PillButton {
                     width: root.login-width;
                     text: AppState.en ? "Login" : "登录/注册";
@@ -167,12 +138,12 @@ export component TopBar {
         }
     }
     function actions-width() -> length {
-        let count = 2 + (AppState.logged-in ? 3 : (AppState.page != "welcome" ? 1 : 0)) + (AppState.payment-active ? 1 : 0);
-        return root.language-width + root.theme-width
-            + (AppState.logged-in ? root.gift-width + root.balance-width + root.profile-width : (AppState.page != "welcome" ? root.login-width : 0px))
+        let count = 1 + (AppState.logged-in || AppState.page != "welcome" ? 1 : 0) + (AppState.payment-active ? 1 : 0);
+        return root.language-width
+            + (AppState.logged-in ? (AppState.en ? 112px : 98px) : (AppState.page != "welcome" ? root.login-width : 0px))
             + (AppState.payment-active ? root.payment-width : 0px) + (count - 1) * root.action-gap;
     }
     function model-picker-width() -> length {
-        return min(330px, (root.width - (root.models-on-second-row ? 36px : root.actions-width() + 56px) - 18px) / 2);
+        return min(280px, (root.width - (root.models-on-second-row ? 36px : root.actions-width() + 56px) - 18px) / 2);
     }
 }

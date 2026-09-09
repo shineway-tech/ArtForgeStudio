@@ -170,6 +170,9 @@ use generation_poll::*;
 #[path = "generation/state.rs"]
 mod generation_state;
 use generation_state::*;
+#[path = "presentation/generation_feedback.rs"]
+mod generation_feedback;
+use generation_feedback::*;
 #[path = "presentation/sync.rs"]
 mod sync;
 use sync::*;
@@ -178,6 +181,9 @@ mod theme;
 use theme::*;
 mod prompt;
 use prompt::*;
+#[path = "generation/canvas_prompt.rs"]
+mod canvas_prompt;
+use canvas_prompt::*;
 #[path = "services/image_processing.rs"]
 mod image_processing;
 use image_processing::*;

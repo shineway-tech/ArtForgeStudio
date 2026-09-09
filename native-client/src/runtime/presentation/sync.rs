@@ -393,7 +393,20 @@ static CANVAS_PREVIEW_EPOCH: AtomicU64 = AtomicU64::new(0);
 static COMPRESSION_PREVIEW_EPOCH: AtomicU64 = AtomicU64::new(0);
 static CONVERSION_PREVIEW_EPOCH: AtomicU64 = AtomicU64::new(0);
 static CONVERSATION_PREVIEW_EPOCH: AtomicU64 = AtomicU64::new(0);
-static REFERENCE_PREVIEW_EPOCH: AtomicU64 = AtomicU64::new(0);
+thread_local! {
+    // Each UI thread owns its preview sequence; workers retain that exact counter.
+    static REFERENCE_PREVIEW_EPOCH: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+}
+#[derive(Clone)]
+struct ReferencePreviewEpoch { counter: Arc<AtomicU64>, value: u64 }
+impl ReferencePreviewEpoch {
+    fn advance() -> Option<Self> {
+        REFERENCE_PREVIEW_EPOCH.with(|counter| counter.fetch_update(Ordering::AcqRel, Ordering::Acquire,
+            |value| value.checked_add(1).filter(|next| *next < u64::MAX)).ok()
+            .map(|value| Self { counter: counter.clone(), value: value + 1 }))
+    }
+    fn is_current(&self) -> bool { self.counter.load(Ordering::Acquire) == self.value }
+}
 static VIEWER_PREVIEW_EPOCH: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug)]
@@ -1170,7 +1183,7 @@ fn release_inactive_page_images(state: &AppState, target_page: &str) {
         cancel_gallery_previews(PreviewCollection::Generations);
         invalidate_virtual_gallery(PreviewCollection::Generations);
         CONVERSATION_PREVIEW_EPOCH.fetch_add(1, Ordering::AcqRel);
-        let _ = REFERENCE_PREVIEW_EPOCH.fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| value.checked_add(1));
+        let _ = ReferencePreviewEpoch::advance();
         state.set_generation_visible_limit(GALLERY_PAGE_SIZE);
         state.set_generations(ModelRc::new(VecModel::<AssetItem>::default()));
         state.set_generation_groups(ModelRc::new(VecModel::<AssetGroup>::default()));
@@ -1875,10 +1888,47 @@ fn model_picker_options(store: &Store, kind: &str) -> Vec<ModelOption> {
         .flat_map(|group| {
             group.models.iter().map(|model| ModelOption {
                 code: model.code.clone().into(),
-                name: format!("{} / {}", group.name, model.name).into(),
+                name: model.name.clone().into(),
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod model_picker_tests {
+    use super::*;
+
+    #[test]
+    fn options_show_catalog_names_and_preserve_purpose_codes_and_order() {
+        let store = Store {
+            model_groups: vec![
+                ModelGroupData {
+                    kind: "image".into(),
+                    name: "平台图像模型".into(),
+                    models: vec![
+                        ModelOptionData { code: "image-a".into(), name: "Model A".into() },
+                        ModelOptionData { code: "image-b".into(), name: "Model B / Preview".into() },
+                    ],
+                    ..Default::default()
+                },
+                ModelGroupData {
+                    kind: "reasoning".into(),
+                    name: "平台提示词模型".into(),
+                    models: vec![ModelOptionData { code: "prompt-a".into(), name: "Reasoning A".into() }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let images = model_picker_options(&store, "image");
+        assert_eq!(images.iter().map(|option| (option.code.as_str(), option.name.as_str())).collect::<Vec<_>>(),
+            [("image-a", "Model A"), ("image-b", "Model B / Preview")]);
+        let reasoning = model_picker_options(&store, "reasoning");
+        assert_eq!(reasoning.len(), 1);
+        assert_eq!(reasoning[0].code, "prompt-a");
+        assert_eq!(reasoning[0].name, "Reasoning A");
+        assert!(model_picker_options(&store, "missing").is_empty());
+    }
 }
 
 pub(super) fn push_conversations(app: &AppWindow, store: &Store) {
@@ -3237,15 +3287,14 @@ pub(super) struct PreparedCanvasReferenceProjection {
     model: ModelRc<ReferenceItem>, tasks: Vec<(String,String)>, binding: Option<PrivatePersistence>,
 }
 pub(super) struct CanvasReferencePreviewEffects {
-    model: ModelRc<ReferenceItem>, tasks: Vec<(String,String)>, epoch: Option<u64>, binding: Option<PrivatePersistence>,
+    model: ModelRc<ReferenceItem>, tasks: Vec<(String,String)>, epoch: Option<ReferencePreviewEpoch>, binding: Option<PrivatePersistence>,
 }
 impl PreparedCanvasReferenceProjection {
     /// Already-admitted UI publication: only the prepared model and epoch change.
     /// No authority acquisition, filesystem work, worker start or join occurs here.
     pub(super) fn publish_metadata(self,app:&AppWindow)->CanvasReferencePreviewEffects {
         let epoch=if self.binding.is_some(){
-            REFERENCE_PREVIEW_EPOCH.fetch_update(Ordering::AcqRel,Ordering::Acquire,
-                |value|value.checked_add(1).filter(|next|*next<u64::MAX)).ok().map(|value|value+1)
+            ReferencePreviewEpoch::advance()
         }else{None};
         if epoch.is_some(){app.global::<AppState>().set_references(self.model.clone());}
         CanvasReferencePreviewEffects{model:self.model,tasks:self.tasks,epoch,binding:self.binding}
@@ -3296,17 +3345,18 @@ pub(super) fn start_canvas_reference_preview_effects(app:&AppWindow,persistence:
     let hook=REFERENCE_PREVIEW_WORKER_HOOK.with(|hook|hook.borrow_mut().take());
     #[cfg(test)]
     let mut full_hook=REFERENCE_PREVIEW_FULL_HOOK.with(|hook|hook.borrow_mut().take());
+    let worker_epoch = epoch.clone();
     let worker=std::thread::Builder::new().name("owned-reference-previews".into()).spawn(move||{
         #[cfg(test)]
         if let Some(hook)=hook{hook();}
         for(id,path)in effects.tasks{
             if worker_cancel.load(Ordering::Acquire) || activity.is_quiescing()
-                || REFERENCE_PREVIEW_EPOCH.load(Ordering::Acquire)!=epoch{break;}
+                || !worker_epoch.is_current(){break;}
             let Ok(preview)=prepare_owned_preview(&captured,Path::new(&path),PreviewPurpose::Reference)else{continue;};
             let mut value=(id,path,preview);
             loop{
                 if worker_cancel.load(Ordering::Acquire) || activity.is_quiescing()
-                    || REFERENCE_PREVIEW_EPOCH.load(Ordering::Acquire)!=epoch || !captured.is_current(){return;}
+                    || !worker_epoch.is_current() || !captured.is_current(){return;}
                 match sender.try_send(value){
                     Ok(())=>break,Err(mpsc::TrySendError::Disconnected(_))=>return,
                     Err(mpsc::TrySendError::Full(pending))=>{
@@ -3325,14 +3375,14 @@ pub(super) fn start_canvas_reference_preview_effects(app:&AppWindow,persistence:
     }));
     poll_owned_reference_previews(app.as_weak(),persistence,epoch,effects.model,cancel,receiver);
 }
-fn poll_owned_reference_previews(weak:Weak<AppWindow>,persistence:PrivatePersistence,epoch:u64,
+fn poll_owned_reference_previews(weak:Weak<AppWindow>,persistence:PrivatePersistence,epoch:ReferencePreviewEpoch,
     model:ModelRc<ReferenceItem>,cancel:Arc<std::sync::atomic::AtomicBool>,
     receiver:mpsc::Receiver<(String,String,PreparedDeliveryPreview)>){
     slint::Timer::single_shot(Duration::from_millis(50),move||{
         reap_activation_preview_workers();
         let Some(app)=weak.upgrade()else{cancel.store(true,Ordering::Release);return;};
         if cancel.load(Ordering::Acquire) || ACTIVATION_PREVIEW_FAILURE.with(Cell::get)
-            || REFERENCE_PREVIEW_EPOCH.load(Ordering::Acquire)!=epoch || !persistence.is_current()
+            || !epoch.is_current() || !persistence.is_current()
             || app.global::<AppState>().get_references()!=model{
             cancel.store(true,Ordering::Release);return;
         }
@@ -3345,7 +3395,7 @@ fn poll_owned_reference_previews(weak:Weak<AppWindow>,persistence:PrivatePersist
             let Ok(activity)=persistence.begin_activity()else{cancel.store(true,Ordering::Release);return;};
             let _=persistence.upgrade_latch().apply_if_open(||{
                 let state=app.global::<AppState>();
-                if cancel.load(Ordering::Acquire) || REFERENCE_PREVIEW_EPOCH.load(Ordering::Acquire)!=epoch
+                if cancel.load(Ordering::Acquire) || !epoch.is_current()
                     || !reference_preview_page_is_visible(state.get_page().as_str()) || state.get_references()!=model{return;}
                 for row in 0..model.row_count(){
                     if let Some(mut item)=model.row_data(row).filter(|item|item.id.as_str()==id && item.source_path.as_str()==path){

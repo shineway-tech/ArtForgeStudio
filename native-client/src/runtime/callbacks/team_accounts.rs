@@ -194,7 +194,7 @@ mod core_team_ui_patch_tests {
     }
 
     #[test]
-    fn core_team_ui_refinement_received_invitation_is_a_stable_peer_tab_for_both_roles() {
+    fn core_team_ui_refinement_owner_invitation_tabs_and_member_quota_follow_role() {
         use i_slint_backend_testing::ElementHandle;
         let (_fixture, app, context) = setup("http://127.0.0.1:9");
         render_team_context(&app, &context);
@@ -221,19 +221,23 @@ mod core_team_ui_patch_tests {
         app.window().dispatch_event(slint::platform::WindowEvent::KeyPressed { text: " ".into() });
         app.window().dispatch_event(slint::platform::WindowEvent::KeyReleased { text: " ".into() });
         assert_eq!(state.get_team_tab(), "pending", "keyboard navigation must still activate the next invitation tab");
-        state.set_team_can_manage_members(false);
-        state.set_team_can_manage_invitations(false);
-        state.set_team_can_read_usage(false);
-        state.set_team_has_own_quota(true);
+        let mut member_snapshot = context.billing_context.confirmed_snapshot().unwrap();
+        member_snapshot.billing_group.role = "member".into();
+        member_snapshot.billing_group.capabilities = vec!["read_own_quota".into(), "leave_team".into()];
+        member_snapshot.quota = Some(serde_json::from_value(serde_json::json!({
+            "period_start":"2026-09-01T00:00:00Z", "period_end":"2026-10-01T00:00:00Z",
+            "monthly_limit":"500", "settled":"80", "reserved":"20", "remaining":"400"
+        })).unwrap());
+        prepare_activation_team_projection(&[member_snapshot.billing_group.clone()],
+            &context.billing_context.confirmed_scope().unwrap(), &member_snapshot).publish(&state);
         state.set_team_tab("accounts".into());
-        assert!(ElementHandle::find_by_accessible_label(&app, "发出的邀请").next().is_none());
-        assert!(ElementHandle::find_by_accessible_label(&app, "用量记录").next().is_none());
-        ElementHandle::find_by_accessible_label(&app, "收到的邀请 2").next().unwrap()
-            .mock_single_click(slint::platform::PointerEventButton::Left);
-        assert_eq!(state.get_team_tab(), "pending");
-        ElementHandle::find_by_accessible_label(&app, "我的额度").next().unwrap()
-            .mock_single_click(slint::platform::PointerEventButton::Left);
-        assert_eq!(state.get_team_tab(), "accounts");
+        for label in ["发出的邀请", "用量记录", "收到的邀请 2"] {
+            assert!(ElementHandle::find_by_accessible_label(&app, label).next().is_none());
+        }
+        assert!(ElementHandle::find_by_element_type_name(&app, "TeamOverviewPanel").next().is_some());
+        assert_eq!(state.get_team_quota_remaining(), "400");
+        assert!(!state.get_team_can_manage_members());
+
     }
 
     #[test]

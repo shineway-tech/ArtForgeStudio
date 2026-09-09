@@ -1617,7 +1617,8 @@ mod tests {
         assert!(failure.is_content_policy_blocked());
         let message = failure.generation_message();
         assert!(message.contains("裸露、色情或情色内容"));
-        assert!(message.contains("不返还积分"));
+        assert!(!message.contains("不返还积分"));
+        assert!(message.contains("积分记录"));
     }
 
     #[test]

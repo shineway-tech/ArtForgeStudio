@@ -1510,7 +1510,7 @@ pub(super) fn start_backend_generation_with_billing_scope(
     } else {
         PromptLanguage::Chinese
     };
-    let generation_prompt = build_generation_prompt(
+    let generation_prompt = build_generation_prompt_for_destination(
         &raw_prompt,
         &state.get_negative_prompt().to_string(),
         &controls,
@@ -1519,6 +1519,7 @@ pub(super) fn start_backend_generation_with_billing_scope(
         &ratio,
         &quality,
         language,
+        &destination,
     );
     let recoverable_delivery_id = retry_failed_id.as_deref().filter(|failed_asset_id| {
         store.borrow().generations.iter().any(|item| {
@@ -1528,7 +1529,7 @@ pub(super) fn start_backend_generation_with_billing_scope(
         })
     });
 
-    let conversation_id = if create_conversation {
+    let conversation_id = if create_conversation || matches!(&destination, GenerationDestination::Canvas { .. }) {
         Uuid::new_v4().to_string()
     } else {
         let current = state.get_current_conversation_id().to_string();
@@ -4319,7 +4320,8 @@ mod tests {
                 panic!("expected an image failure");
             };
             assert!(reason.contains("上游安全系统拦截"));
-            assert!(reason.contains("不返还积分"));
+            assert!(!reason.contains("不返还积分"));
+            assert!(reason.contains("积分记录"));
         }
     }
 

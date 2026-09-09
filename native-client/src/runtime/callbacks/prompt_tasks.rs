@@ -349,6 +349,10 @@ fn launch_prompt_record(
         reservations.retain(|reservation|reservation.upgrade().is_some_and(|value|!value.released.get()));
         reservations.push(Rc::downgrade(&release));
     });
+    // Only failures before durable submission preparation are known to have no server effect.
+    // Later LocalState errors may follow successful billing, so they still refresh.
+    let needs_refresh = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let prepared = needs_refresh.clone();
     let job=spawn_prompt_job(&context,&capture,move|worker|{
         let mut record=work_record;
         if new_record{
@@ -367,12 +371,13 @@ fn launch_prompt_record(
             worker.ensure()?;
             upsert_pending_prompt_task_for_namespace(&worker.capture.authority,billing_scope.as_ref().ok_or(ApiError::AuthenticationRequired)?,record.clone()).map_err(transition_error)?;
         }
+        prepared.store(true, Ordering::Release);
         run_prompt_record(worker,record,billing_scope.as_ref())
     });
     match job{
         Ok(job)=>poll_prompt_job(app.as_weak(),context,capture,job,move|app,context,capture,result|{
             let _release=release;
-            finish_prompt_record(app,context,capture,record,result);
+            finish_prompt_record(app,context,capture,record,result,needs_refresh.load(Ordering::Acquire));
         }),
         Err(error)=>{
             drop(release);
@@ -569,7 +574,7 @@ fn finish_prompt_terminal(worker:&PromptWorker,api:&GenerationApi,mut record:Pen
         Ok(PromptTaskOutcome::Settled(record))
     }else{Ok(PromptTaskOutcome::Ready(record))}
 }
-fn finish_prompt_record(app:&AppWindow,context:&AppContext,capture:&PromptCapture,expected:PendingPromptTaskRecord,result:std::result::Result<PromptTaskOutcome,ApiError>){
+fn finish_prompt_record(app:&AppWindow,context:&AppContext,capture:&PromptCapture,expected:PendingPromptTaskRecord,result:std::result::Result<PromptTaskOutcome,ApiError>,refresh_account:bool){
     match result{
         Ok(PromptTaskOutcome::Ready(record))=>{
             if record.owner_user_id!=expected.owner_user_id || record.client_request_id!=expected.client_request_id
@@ -583,7 +588,7 @@ fn finish_prompt_record(app:&AppWindow,context:&AppContext,capture:&PromptCaptur
         Ok(_)=>{present_next_recovered_prompt_result(app,context);}
         Err(error)=>report_prompt_error(app,context,capture,&expected,&error),
     }
-    if capture.namespace_current(context) {
+    if refresh_account && capture.namespace_current(context) {
         refresh_backend_snapshot_captured(app,context.clone(),capture.persistence.clone());
     }
 }
@@ -2287,6 +2292,14 @@ mod core_prompt_tests {
                                     let remaining=(total-bytes.len()).min(block.len());
                                     let count=stream.read(&mut block[..remaining]).expect("incomplete prompt fixture body");
                                     assert!(count>0,"incomplete prompt fixture body");bytes.extend_from_slice(&block[..count]);
+                                }
+                                let header=std::str::from_utf8(&bytes[..header_end]).unwrap();
+                                // Account refreshes are independent of the controlled task exchange.
+                                // Reject the snapshot explicitly so it cannot start profile/catalog follow-ups.
+                                if header.starts_with("GET /v1/account ") {
+                                    assert!(header.to_ascii_lowercase().contains("x-account-group-id:"));
+                                    let _ = stream.write_all(response(400, Value::Null, "fixture_refresh_refused").as_bytes());
+                                    return None;
                                 }
                                 let(index,reply)={let mut slots=response_slots.lock().unwrap();let index=slots.0;
                                     slots.0=slots.0.checked_add(1).unwrap();(index,slots.1.get_mut(index).and_then(Option::take))};

@@ -508,6 +508,20 @@ pub(super) fn wire_reference_callbacks(app:&AppWindow,context:AppContext){
         });
     }
     {
+        let weak = app.as_weak(); let context = context.clone();
+        state.on_add_reference_from_asset(move |id| {
+            let Some(app) = weak.upgrade() else { return false; };
+            let Some(capture) = ReferenceCapture::new(&app, &context) else { return false; };
+            if reference_retry_before_action(&app, &context, &capture) { return true; }
+            let path = capture.apply(&app, &context, || context.store.borrow().assets.iter()
+                .find(|asset| asset.id == id.as_str())
+                .map(|asset| PathBuf::from(&asset.source_path))).flatten();
+            let Some(path) = path else { return false; };
+            start_reference_import(&app, context.clone(), capture, ReferenceSource::Paths(vec![path]));
+            true
+        });
+    }
+    {
         let weak=app.as_weak();let context=context.clone();
         state.on_paste_reference(move||{
             let Some(app)=weak.upgrade()else{return false;};let Some(capture)=ReferenceCapture::new(&app,&context)else{return false;};
@@ -879,6 +893,25 @@ mod core_reference_tests{
         fn finish(mut self){self.stop.store(true,Ordering::Release);self.release.take();self.worker.take().unwrap().join().unwrap();}
     }
     impl Drop for Http{fn drop(&mut self){self.stop.store(true,Ordering::Release);self.release.take();if let Some(worker)=self.worker.take(){let joined=worker.join();if !std::thread::panicking(){assert!(joined.is_ok());}}}}
+    #[test]
+    fn core_reference_asset_picker_saves_owned_reference_and_rejects_retired_account() {
+        let (f, app) = fixture(); let item = owned(&f);
+        f.context.store.borrow_mut().assets.push(AssetData { id: "picker-asset".into(),
+            source_path: item.source_path.clone(), conversation_id: String::new(), title: "Asset".into(),
+            category: "character".into(), kind: "game".into(), time: String::new(), prompt: String::new(),
+            ratio: "1:1".into(), quality: String::new(), model: String::new(), origin: String::new(),
+            width: 2, height: 2, reference_paths: vec![], cutout_done: false, remove_black_done: false,
+            upscale_done: false, is_new: false, delivery_recoverable: false, delivery_downloading: false });
+        assert!(app.global::<AppState>().invoke_add_reference_from_asset("picker-asset".into()));
+        pump_until(|| !f.context.store.borrow().references.character.is_empty());
+        drain_reference_test_workers(); pump_for(Duration::from_millis(80));
+        let references = saved(&f).references.character;
+        assert_eq!(references.len(), 1);
+        assert!(f.persistence.owns_path(Path::new(&references[0].source_path)));
+        *f.context.active_namespace.lock().unwrap() = None;
+        assert!(!app.global::<AppState>().invoke_add_reference_from_asset("picker-asset".into()));
+        assert_eq!(f.context.store.borrow().references.character, references);
+    }
     #[test]
     fn core_reference_retired_binding_remove_and_clear_do_not_mutate(){
         let(f,app)=fixture();let item=seed(&f,&app);let state=app.global::<AppState>();state.set_generation_status("replacement boundary".into());

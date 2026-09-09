@@ -1,7 +1,11 @@
 import { AppState } from "../app-state.slint";
+import { CharacterAgePreset } from "../components/character-age-preset.slint";
 import { AppTheme } from "../theme.slint";
+import { BuildingDerivationPreset } from "../components/building-derivation-preset.slint";
 
 component FreeCanvasCard {
+    in property <bool> import-mode: false;
+    callback import-workflow(string, string, string, string, image);
     in property <string> card-id;
     in property <string> title;
     in property <string> description;
@@ -166,6 +170,12 @@ component FreeCanvasCard {
             height: parent.height;
             mouse-cursor: pointer;
             clicked => {
+                if root.import-mode {
+                    root.import-workflow(root.card-id, root.title,
+                        AppState.en ? root.prompt-en : root.prompt-zh,
+                        AppState.en ? root.hint-en : root.hint-zh, root.artwork);
+                    return;
+                }
                 AppState.open-canvas-workspace(root.card-id);
                 AppState.canvas-workflow-artwork = root.artwork;
                 if root.opens-canvas {
@@ -192,16 +202,18 @@ component FreeCanvasCard {
 }
 
 export component FreeCanvasPage {
+    in property <bool> import-mode: false;
+    callback import-workflow(string, string, string, string, image);
     function cards-width() -> length {
-        return min(916px, root.width - 48px);
+        return max(0px, root.width - 64px);
     }
 
     function card-gap() -> length {
-        return 18px;
+        return min(32px, max(18px, root.cards-width() * 0.02));
     }
 
     function card-width() -> length {
-        return (root.cards-width() - root.card-gap() * 2) / 3;
+        return (root.cards-width() - root.card-gap() * 3) / 4;
     }
 
     function card-height() -> length {
@@ -216,7 +228,7 @@ export component FreeCanvasPage {
             y: 22px;
             width: parent.width - 64px;
             height: 34px;
-            text: AppState.en ? "Free Canvas" : "自由画布";
+            text: root.import-mode ? (AppState.en ? "Import image" : "选择导入方式") : (AppState.en ? "AI Creation" : "AI创作");
             color: AppTheme.text;
             font-size: 25px;
             font-weight: 600;
@@ -227,7 +239,7 @@ export component FreeCanvasPage {
             y: 59px;
             width: parent.width - 64px;
             height: 22px;
-            text: AppState.en ? "Choose a creative workflow, or open the infinite canvas" : "选择一种创作方式，或进入无限画布自由编排";
+            text: root.import-mode ? (AppState.en ? "Choose a workflow to use this image as a reference, or place it on the infinite canvas" : "选择创作卡片，将当前图片用作参考图；也可以导入无限画布") : (AppState.en ? "Choose a creative workflow, or open the infinite canvas" : "选择一种创作方式，或进入无限画布自由编排");
             color: AppTheme.muted;
             font-size: 13px;
             font-weight: 400;
@@ -235,7 +247,7 @@ export component FreeCanvasPage {
         }
 
         cards := Rectangle {
-            x: (parent.width - self.width) / 2;
+            x: 32px;
             y: 100px;
             width: root.cards-width();
             height: root.card-height() * 2 + root.card-gap();
@@ -247,6 +259,8 @@ export component FreeCanvasPage {
                 width: root.card-width();
                 height: root.card-height();
                 card-id: "plant-growth";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
                 title: AppState.en ? "Plant Growth Generator" : "植物生成器";
                 description: AppState.en ? "Generate adjustable growth stages" : "生成可调数量的植物生长阶段";
                 category: "scene";
@@ -262,6 +276,8 @@ export component FreeCanvasPage {
                 width: root.card-width();
                 height: root.card-height();
                 card-id: "character-outfit";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
                 title: AppState.en ? "Character Outfit Swap" : "角色换装";
                 description: AppState.en ? "Keep the character, vary the outfits" : "保持角色一致并生成可调数量的服装";
                 artwork: @image-url("../../assets/free-canvas/character-outfit.png");
@@ -276,6 +292,8 @@ export component FreeCanvasPage {
                 width: root.card-width();
                 height: root.card-height();
                 card-id: "monster-generator";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
                 title: AppState.en ? "Monster Generator" : "怪物生成器";
                 description: AppState.en ? "Expand one motif into multiple monsters" : "根据原型扩展可调数量的怪物设计";
                 artwork: @image-url("../../assets/free-canvas/monster-generator.png");
@@ -285,16 +303,35 @@ export component FreeCanvasPage {
                 hint-en: "Describe the motif and mood, e.g. stone idol, massive but cute";
             }
             FreeCanvasCard {
+                x: (root.card-width() + root.card-gap()) * 3;
+                y: 0px;
+                width: root.card-width();
+                height: root.card-height();
+                card-id: "upgrade-evolution";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
+                title: AppState.en ? "Upgrade Evolution" : "升级进化";
+                description: AppState.en ? "Evolve one subject from basic to ultimate" : "生成主体从低级到顶级的连续进化";
+                category: "scene";
+                artwork: @image-url("../../assets/free-canvas/upgrade-evolution.png");
+                prompt-zh: "根据上传的参考图，以图中主体为唯一核心，生成保持同一主体的{count}个连续升级进化阶段，从低级、基础形态逐步进化到顶级、终极形态。先自动识别参考图中的主体类型，并按类型采用不同的升级逻辑，不得把所有主体统一处理为从小到大。若主体是人类或类人角色，必须保持年龄、身高、体型、身体比例、面部和身份特征稳定，不得变成儿童、巨人或不同人物；主要通过服装等级、武器、装备、护甲、饰品、材质品质、工艺复杂度和能量效果逐级增强。若主体是怪物、机械生物或其他生物，允许随等级逐步改变体型、身体比例、轮廓和形态，并可增加角、翼、肢体、机械模块、甲壳、水晶、装甲或能量结构，但必须保持同一物种或设计谱系和核心识别特征。若主体是武器、道具、载具、植物或建筑，则围绕其功能部件、结构层级、材质品质、装饰复杂度和魔法或科技能量系统逐级进化。所有阶段必须保持主色、基础材质、标志性结构和识别特征连贯，让每一步变化均匀、清晰且可追溯，不得突然变成不同主体。将{count}个完整形态按从低级到顶级的顺序均匀排列，使用单一纯色背景，不得出现任何文字、字母、数字、编号、标签、标题、说明或水印。";
+                prompt-en: "Using the uploaded reference image, create exactly {count} consecutive upgrade-evolution stages of the same subject, progressing from a low-level basic form to a top-tier ultimate form. Automatically identify the subject type first and apply the appropriate type-specific upgrade logic; never treat every subject as a simple small-to-large scale-up. For a human or humanoid character, keep age, height, build, body proportions, face, and identity stable; do not turn the character into a child, giant, or different person. Upgrade mainly through clothing tier, weapons, gear, armor, accessories, material quality, craftsmanship complexity, and energy effects. For a monster, mechanical creature, or other organism, size, body proportions, silhouette, and form may evolve gradually by tier, with added horns, wings, limbs, mechanical modules, carapace, crystals, armor, or energy structures, while preserving the same species or design lineage and core identity. For a standalone weapon, prop, vehicle, plant, or building, evolve its functional parts, structural tiers, material quality, ornamental complexity, and magical or technological energy systems. Keep the main colors, base materials, signature structure, and recognizable features coherent across all stages. Make every step even, clear, and traceable; never replace it with a different subject. Arrange all {count} complete forms evenly from lowest to highest on one solid-color background. Do not include any words, letters, numbers, numbering, labels, titles, captions, explanations, or watermarks.";
+                hint-zh: "上传主体图片，可补充升级方向，例如：石头巨兽，逐步增加水晶装甲与魔法能量";
+                hint-en: "Upload the subject and optionally describe its upgrade direction";
+            }
+            FreeCanvasCard {
                 x: 0px;
                 y: root.card-height() + root.card-gap();
                 width: root.card-width();
                 height: root.card-height();
                 card-id: "character-age";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
                 title: AppState.en ? "Character Age Progression" : "角色年龄变化";
                 description: AppState.en ? "Generate adjustable life stages" : "生成可调数量的角色年龄阶段";
                 artwork: @image-url("../../assets/free-canvas/character-age.png");
-                prompt-zh: "根据参考角色生成从婴儿到老年的{count}个连续年龄阶段，并按所选数量均匀分布人生阶段。保持角色身份特征、服装主题、配色和绘制风格连贯，让面部、身高、体型和姿态符合年龄变化。将{count}个完整角色均匀排列在同一张横向设定图中。";
-                prompt-en: "Create exactly {count} consecutive age stages of the reference character from infancy to old age, distributed evenly across the lifespan. Preserve identity cues, outfit theme, palette, and art style while changing face, height, body proportions, and posture appropriately. Arrange all {count} full characters evenly in one horizontal character sheet.";
+                prompt-zh: CharacterAgePreset.prompt-zh;
+                prompt-en: CharacterAgePreset.prompt-en;
                 hint-zh: "简单描述角色特征，例如：蓝袍法师，始终保留蓝色魔法";
                 hint-en: "Describe the character cue, e.g. blue-robed mage, keep the blue magic";
             }
@@ -304,6 +341,8 @@ export component FreeCanvasPage {
                 width: root.card-width();
                 height: root.card-height();
                 card-id: "character-body";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
                 title: AppState.en ? "Character Body Variations" : "角色体型修改器";
                 description: AppState.en ? "Explore adjustable body silhouettes" : "保持角色身份并生成可调数量的体型";
                 artwork: @image-url("../../assets/free-canvas/character-body.png");
@@ -317,7 +356,26 @@ export component FreeCanvasPage {
                 y: root.card-height() + root.card-gap();
                 width: root.card-width();
                 height: root.card-height();
+                card-id: "building-derivation";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
+                title: AppState.en ? "Building Derivation" : "建筑衍生器";
+                description: AppState.en ? "Same style, different building functions" : "从一张建筑图衍生同风格的功能建筑";
+                category: "scene";
+                artwork: BuildingDerivationPreset.artwork;
+                prompt-zh: BuildingDerivationPreset.prompt-zh;
+                prompt-en: BuildingDerivationPreset.prompt-en;
+                hint-zh: BuildingDerivationPreset.hint-zh;
+                hint-en: BuildingDerivationPreset.hint-en;
+            }
+            FreeCanvasCard {
+                x: (root.card-width() + root.card-gap()) * 3;
+                y: root.card-height() + root.card-gap();
+                width: root.card-width();
+                height: root.card-height();
                 card-id: "infinite-canvas";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
                 title: AppState.en ? "Infinite Canvas" : "无限画布";
                 description: AppState.en ? "Connect images, text and ideas freely" : "自由连接图片、文字与灵感";
                 opens-canvas: true;

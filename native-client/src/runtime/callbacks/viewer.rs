@@ -18,7 +18,7 @@ fn viewer_reference_source_after_target(
     persistence: &PrivatePersistence, target_workspace: &str,
 ) -> bool {
     if source.is_current(app, context, persistence) { return true; }
-    let ViewerSourceTarget::Canvas(original_workspace) = &source.target else { return false; };
+    let (ViewerSourceTarget::Canvas(original_workspace) | ViewerSourceTarget::CanvasNode(original_workspace)) = &source.target else { return false; };
     let store = context.store.borrow();
     if !store.private_persistence.as_ref().is_some_and(|binding| binding.same_binding_metadata(persistence))
         || normalize_canvas_workspace_id(&store.active_canvas_workspace_id)
@@ -31,8 +31,7 @@ fn viewer_reference_source_after_target(
         && Path::new(state.get_viewer_source_path().as_str()) == source.path
         && viewer_source_presentation(&state) == Some(source.presentation)
         && store.canvas_workspaces.get(original_workspace).is_some_and(|workspace|
-            workspace.references.iter().any(|row| row.id == source.id
-                && Path::new(&row.source_path) == source.path))
+            saved_canvas_viewer_source_matches(source, workspace))
 }
 
 impl ViewerActionCapture {
@@ -344,6 +343,14 @@ impl CapturedImageEditorSubmission {
     }
 }
 
+fn saved_canvas_viewer_source_matches(source: &CapturedViewerSource, workspace: &CanvasWorkspaceData) -> bool {
+    match &source.target {
+        ViewerSourceTarget::CanvasNode(_) => workspace.notes.iter().any(|row| row.id == source.id && Path::new(&row.image_path) == source.path),
+        ViewerSourceTarget::Canvas(_) => workspace.references.iter().any(|row| row.id == source.id && Path::new(&row.source_path) == source.path),
+        _ => false,
+    }
+}
+
 fn captured_editor_source_current(source: &CapturedViewerSource, app: &AppWindow, context: &AppContext) -> bool {
     let store = context.store.borrow();
     if !store.private_persistence.as_ref()
@@ -362,6 +369,13 @@ fn captured_editor_source_current(source: &CapturedViewerSource, app: &AppWindow
                 &value.references
             };
             rows.iter().any(|item| item.id == source.id && Path::new(&item.source_path) == source.path)
+        }
+        ViewerSourceTarget::CanvasNode(workspace) => {
+            if store.active_canvas_workspace_id == *workspace {
+                store.canvas_notes.iter().any(|row| row.id == source.id && Path::new(&row.image_path) == source.path)
+            } else {
+                store.canvas_workspaces.get(workspace).is_some_and(|saved| saved_canvas_viewer_source_matches(source, saved))
+            }
         }
         ViewerSourceTarget::Custom { session, original, return_page } => {
             let state = app.global::<AppState>();
@@ -525,7 +539,7 @@ fn poll_captured_image_edit(
 enum CapturedViewerReferenceIntent {
     Reference { category: String },
     Same { category: String, prompt: String, conversation_id: String },
-    Character {
+    Creation {
         workflow_id: String, title: String, template: String, hint: String,
         original_prompt: String,
     },
@@ -545,8 +559,8 @@ fn reference_intent_same(a: &CapturedViewerReferenceIntent, b: &CapturedViewerRe
         (CapturedViewerReferenceIntent::Reference { category: a }, CapturedViewerReferenceIntent::Reference { category: b }) => a == b,
         (CapturedViewerReferenceIntent::Same { category: ac, prompt: ap, .. },
             CapturedViewerReferenceIntent::Same { category: bc, prompt: bp, .. }) => ac == bc && ap == bp,
-        (CapturedViewerReferenceIntent::Character { workflow_id: aw, title: at, template: ax, hint: ah, .. },
-            CapturedViewerReferenceIntent::Character { workflow_id: bw, title: bt, template: bx, hint: bh, .. }) =>
+        (CapturedViewerReferenceIntent::Creation { workflow_id: aw, title: at, template: ax, hint: ah, .. },
+            CapturedViewerReferenceIntent::Creation { workflow_id: bw, title: bt, template: bx, hint: bh, .. }) =>
                 aw == bw && at == bt && ax == bx && ah == bh,
         _ => false,
     }
@@ -595,7 +609,7 @@ fn start_captured_viewer_reference(
         ticket, source, intent: saved_intent, reference_id,
     }) = existing.as_ref() {
         let current = match saved_intent {
-            CapturedViewerReferenceIntent::Character { workflow_id, .. } =>
+            CapturedViewerReferenceIntent::Creation { workflow_id, .. } =>
                 viewer_reference_source_after_target(source, app, &context, &source.persistence, workflow_id),
             _ => source.is_current(app, &context, &source.persistence),
         };
@@ -628,7 +642,7 @@ fn start_captured_viewer_reference(
             | CapturedViewerReferenceIntent::Same { category, .. } =>
                 references_for_category(&store.references, category).len()
                     < max_reference_images_for_category(category),
-            CapturedViewerReferenceIntent::Character { workflow_id, .. } => {
+            CapturedViewerReferenceIntent::Creation { workflow_id, .. } => {
                 let target = normalize_canvas_workspace_id(workflow_id);
                 if normalize_canvas_workspace_id(&store.active_canvas_workspace_id) == target {
                     store.canvas_references.len() < MAX_REFERENCE_IMAGES
@@ -645,7 +659,7 @@ fn start_captured_viewer_reference(
             CapturedViewerReferenceIntent::Reference { category }
             | CapturedViewerReferenceIntent::Same { category, .. } =>
                 max_reference_images_for_category(category),
-            CapturedViewerReferenceIntent::Character { .. } => MAX_REFERENCE_IMAGES,
+            CapturedViewerReferenceIntent::Creation { .. } => MAX_REFERENCE_IMAGES,
         };
         let _ = context.apply_user_completion(persistence.lease(), || {
             if source.is_current(app, &context, &persistence) {
@@ -755,7 +769,7 @@ fn commit_captured_viewer_reference(
                 state.set_current_conversation_id(conversation_id.clone().into());
                 state.set_prompt(prompt.clone().into());
             }
-            CapturedViewerReferenceIntent::Character { workflow_id, original_prompt, .. } => {
+            CapturedViewerReferenceIntent::Creation { workflow_id, original_prompt, .. } => {
                 let target = normalize_canvas_workspace_id(workflow_id);
                 let count = if normalize_canvas_workspace_id(&store.active_canvas_workspace_id) == target {
                     store.canvas_references.len()
@@ -828,7 +842,7 @@ fn poll_captured_reference_store_ack(
         if !matches!(receiver.try_recv(), Ok(Ok(()))) {
             let _ = context.apply_user_completion(persistence.lease(), || {
                 let current = match &intent {
-                    CapturedViewerReferenceIntent::Character { workflow_id, .. } =>
+                    CapturedViewerReferenceIntent::Creation { workflow_id, .. } =>
                         viewer_reference_source_after_target(&source, &app, &context, &persistence, workflow_id),
                     _ => source.is_current(&app, &context, &persistence),
                 };
@@ -860,7 +874,7 @@ fn poll_captured_reference_store_ack(
                     start_canvas_reference_preview_effects(&app, persistence, effects);
                 }
             }
-            CapturedViewerReferenceIntent::Character { workflow_id, title, template, hint, .. } => {
+            CapturedViewerReferenceIntent::Creation { workflow_id, title, template, hint, .. } => {
                 let store = context.store.borrow();
                 let canvas = prepare_canvas_projection(&app, &store);
                 let references = prepare_canvas_reference_projection(&app, &store);
@@ -872,7 +886,8 @@ fn poll_captured_reference_store_ack(
                     )
                         || !context.store.borrow().canvas_references.iter().any(|row| row.id == reference_id) { return None; }
                     let (canvas, references) = projections.take().expect("single character projections");
-                    let state = app.global::<AppState>(); state.set_asset_type("character".into());
+                    let state = app.global::<AppState>();
+                    state.set_asset_type(if matches!(workflow_id.as_str(), "plant-growth" | "monster-generator" | "upgrade-evolution" | "building-derivation") { "scene" } else { "character" }.into());
                     state.set_canvas_tool("select".into()); state.set_canvas_grid_style("dot".into()); state.set_canvas_dark_background(true);
                     state.set_canvas_workflow_id(workflow_id.clone().into()); state.set_canvas_workflow_title(title.clone().into());
                     state.set_canvas_workflow_template(template.clone().into()); state.set_canvas_workflow_hint(hint.clone().into());
@@ -903,7 +918,7 @@ fn retry_captured_reference_save(
     let mut write = Some(write);
     let queued = context.apply_user_completion(persistence.lease(), || {
         let source_current = match &intent {
-            CapturedViewerReferenceIntent::Character { workflow_id, .. } =>
+            CapturedViewerReferenceIntent::Creation { workflow_id, .. } =>
                 viewer_reference_source_after_target(&source, app, &context, &persistence, workflow_id),
             _ => source.is_current(app, &context, &persistence),
         };
@@ -913,7 +928,7 @@ fn retry_captured_reference_save(
             CapturedViewerReferenceIntent::Reference { category }
             | CapturedViewerReferenceIntent::Same { category, .. } =>
                 references_for_category(&store.references, category).iter().any(|row| row.id == reference_id),
-            CapturedViewerReferenceIntent::Character { .. } =>
+            CapturedViewerReferenceIntent::Creation { .. } =>
                 store.canvas_references.iter().any(|row| row.id == reference_id),
         };
         present.then(|| write.take().expect("single reference retry write")
@@ -1199,7 +1214,7 @@ fn retry_captured_remove_black_save(
 // Metadata provenance only. Reading still requires held namespace authority.
 #[derive(Clone,PartialEq,Eq)]
 enum ViewerSourceTarget {
-    Asset(String),Category(String),Canvas(String),Custom{session:String,original:String,return_page:String},
+    Asset(String),Category(String),Canvas(String),CanvasNode(String),Custom{session:String,original:String,return_page:String},
 }
 #[derive(Clone,Copy,PartialEq,Eq)]
 enum ViewerSourcePresentation { Viewer,Cutout }
@@ -1228,6 +1243,8 @@ impl CapturedViewerSource {
                 && references_for_category(&store.references,category).iter().any(|row|row.id==self.id && Path::new(&row.source_path)==self.path),
             ViewerSourceTarget::Canvas(workspace)=>store.active_canvas_workspace_id==*workspace
                 && store.canvas_references.iter().any(|row|row.id==self.id && Path::new(&row.source_path)==self.path),
+            ViewerSourceTarget::CanvasNode(workspace)=>store.active_canvas_workspace_id==*workspace
+                && store.canvas_notes.iter().any(|row|row.id==self.id && Path::new(&row.image_path)==self.path),
             ViewerSourceTarget::Custom{session,original,return_page}=>state.get_custom_prompt_editor_open()
                 && state.get_custom_prompt_editor_session_id()==*session && state.get_custom_prompt_editing_original()==*original
                 && state.get_custom_prompt_editor_return_page()==*return_page
@@ -1255,6 +1272,11 @@ pub(super) fn capture_current_viewer_source(app:&AppWindow,context:&AppContext)-
             && state.get_custom_prompt_reference_items().iter().any(|row|row.id==id && Path::new(row.source_path.as_str())==path){
             ViewerSourceTarget::Custom{session:state.get_custom_prompt_editor_session_id().into(),original:state.get_custom_prompt_editing_original().into(),return_page:state.get_custom_prompt_editor_return_page().into()}
         }else{anyhow::bail!("viewer reference no longer matches its original target");}
+    }else if source == "canvas" {
+        anyhow::ensure!(page == "canvas" && store.canvas_notes.iter().any(|row| row.id == id
+            && matches!(row.kind.as_str(), "image" | "board-image") && Path::new(&row.image_path) == path),
+            "viewer canvas image no longer matches its original target");
+        ViewerSourceTarget::CanvasNode(store.active_canvas_workspace_id.clone())
     }else{
         anyhow::ensure!(matches!(source.as_str(),"asset"|"generation"|"inspiration"),"unsupported viewer source");
         anyhow::ensure!(viewer_item(&store,&id,&source).is_some_and(|row|Path::new(&row.source_path)==path),"viewer asset no longer matches its original target");
@@ -1270,7 +1292,7 @@ pub(super) fn capture_current_viewer_source(app:&AppWindow,context:&AppContext)-
 // Only the import's own acknowledged DEFAULT-target transition may consult the
 // saved original workspace. Ordinary source checks above stay strict.
 fn viewer_canvas_source_after_target(source:&CapturedViewerSource, app:&AppWindow, context:&AppContext)->bool {
-    let ViewerSourceTarget::Canvas(original_workspace)=&source.target else {
+    let (ViewerSourceTarget::Canvas(original_workspace) | ViewerSourceTarget::CanvasNode(original_workspace))=&source.target else {
         return source.is_current(app,context,&source.persistence);
     };
     if source.is_current(app,context,&source.persistence) { return true; }
@@ -1285,7 +1307,7 @@ fn viewer_canvas_source_after_target(source:&CapturedViewerSource, app:&AppWindo
         && Path::new(state.get_viewer_source_path().as_str())==source.path
         && viewer_source_presentation(&state)==Some(source.presentation)
         && store.canvas_workspaces.get(original_workspace).is_some_and(|workspace|
-            workspace.references.iter().any(|row|row.id==source.id && Path::new(&row.source_path)==source.path))
+            saved_canvas_viewer_source_matches(source, workspace))
 }
 
 #[cfg(test)]
@@ -1467,6 +1489,56 @@ mod viewer_canvas_bridge_tests {
         (f,app,reference)
     }
     fn pump_completion(){video_image_callbacks::tests::scoped_inputs::pump(||VIEWER_CANVAS_COMPLETIONS.with(Cell::get)>0);}
+    #[test]
+    fn core_viewer_canvas_node_import_and_creation_keep_owned_original() {
+        let (f, app, reference) = setup();
+        let state = app.global::<AppState>();
+        {
+            let mut store = f.context.store.borrow_mut();
+            store.canvas_references.clear();
+            store.canvas_notes.push(CanvasNoteData { id: reference.id.clone(), kind: "board-image".into(),
+                image_path: reference.source_path.clone(), width: 80.0, height: 80.0, ..Default::default() });
+        }
+        state.set_viewer_open(false);
+        state.invoke_open_canvas_image_detail(reference.id.clone().into(), reference.source_path.clone().into(),
+            Image::default(), "original".into(), 80.0, 80.0);
+        assert!(state.get_viewer_open());
+        assert_eq!(state.get_viewer_source(), "canvas");
+        let source = capture_current_viewer_source(&app, &f.context).unwrap();
+        assert!(source.is_current(&app, &f.context, &f.persistence));
+        state.invoke_viewer_open_creation_workflow("building-derivation".into(), "建筑衍生器".into(), "template".into(), "hint".into());
+        video_image_callbacks::tests::scoped_inputs::pump(|| !state.get_viewer_open());
+        assert_eq!(state.get_asset_type(), "scene");
+        assert_eq!(state.get_canvas_workflow_id(), "building-derivation");
+        let saved = f.writer.load_client_state_for_namespace(f.persistence.lease()).unwrap().unwrap();
+        assert_eq!(saved.active_canvas_workspace_id, "building-derivation");
+        assert_eq!(saved.canvas_workspaces["building-derivation"].references.len(), 1);
+        assert!(f.persistence.owns_path(Path::new(&saved.canvas_workspaces["building-derivation"].references[0].source_path)));
+        assert_eq!(saved.canvas_workspaces["source-workspace"].notes[0].image_path, reference.source_path);
+        assert!(!source.is_current(&app, &f.context, &f.persistence));
+    }
+
+    #[test]
+    fn core_viewer_canvas_node_import_waits_for_default_workspace_save() {
+        let (f, app, reference) = setup();
+        let state = app.global::<AppState>();
+        {
+            let mut store = f.context.store.borrow_mut();
+            store.canvas_references.clear();
+            store.canvas_notes.push(CanvasNoteData { id: reference.id.clone(), kind: "board-image".into(),
+                image_path: reference.source_path.clone(), width: 80.0, height: 80.0, ..Default::default() });
+        }
+        state.set_viewer_source("canvas".into());
+        state.invoke_viewer_import_to_canvas();
+        assert!(state.get_viewer_open());
+        pump_completion();
+        assert!(!state.get_viewer_open());
+        let saved = f.writer.load_client_state_for_namespace(f.persistence.lease()).unwrap().unwrap();
+        assert_eq!(saved.active_canvas_workspace_id, DEFAULT_CANVAS_WORKSPACE_ID);
+        assert_eq!(saved.canvas_notes.len(), 1);
+        assert_eq!(saved.canvas_workspaces["source-workspace"].notes[0].image_path, reference.source_path);
+    }
+
     #[test]
     fn core_viewer_canvas_nondefault_reference_waits_for_real_default_target_save() {
         let(f,app,reference)=setup();
@@ -2036,30 +2108,86 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         let context = context.clone();
+        state.on_open_canvas_image_detail(
+            move |id, source_path, image, prompt, width, height| {
+                let Some(app) = app_weak.upgrade() else {
+                    return;
+                };
+                if source_path.trim().is_empty() {
+                    return;
+                }
+                let Some(capture) = ViewerActionCapture::capture(&context) else { return; };
+                let _ = capture.apply(&context, || {
+                if app.global::<AppState>().get_page() != "canvas" || !context.store.borrow().canvas_notes.iter()
+                    .any(|row| row.id == id.as_str() && row.image_path == source_path.as_str()
+                        && matches!(row.kind.as_str(), "image" | "board-image")) { return; }
+                let state = app.global::<AppState>();
+                let prompt = prompt.to_string();
+                state.set_viewer_message("".into());
+                state.set_viewer_id(id);
+                state.set_viewer_source("canvas".into());
+                state.set_viewer_category(state.get_asset_type());
+                state.set_viewer_source_path(source_path);
+                state.set_viewer_image(image);
+                state.set_viewer_title(
+                    if state.get_canvas_workflow_title().is_empty() {
+                        if state.get_language().as_str() == "en" {
+                            "Canvas Image".into()
+                        } else {
+                            "画布图片".into()
+                        }
+                    } else {
+                        state.get_canvas_workflow_title()
+                    },
+                );
+                state.set_viewer_prompt(prompt.clone().into());
+                state.set_viewer_prompt_lines(estimated_prompt_lines(&prompt));
+                state.set_viewer_time("".into());
+                state.set_viewer_ratio(state.get_ratio());
+                state.set_viewer_quality(state.get_quality());
+                state.set_viewer_model(state.get_image_model_name());
+                state.set_viewer_repeat_enabled(false);
+                state.set_viewer_cutout_done(false);
+                state.set_viewer_remove_black_done(false);
+                state.set_viewer_upscale_done(false);
+                state.set_viewer_width(width.round().max(1.0) as i32);
+                state.set_viewer_height(height.round().max(1.0) as i32);
+                state.set_viewer_open(true);
+                });
+            },
+        );
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let context = context.clone();
         let save_state = viewer_reference_save.clone();
-        state.on_viewer_open_character_workflow(move |workflow_id, title, template, hint| {
+        state.on_viewer_open_creation_workflow(move |workflow_id, title, template, hint| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let Some(capture) = ViewerActionCapture::capture(&context) else { return; };
+            let Some(_capture) = ViewerActionCapture::capture(&context) else { return; };
             let state = app.global::<AppState>();
-            if state.get_viewer_category().as_str() != "character"
-                || !matches!(
-                    workflow_id.as_str(),
-                    "character-age" | "character-outfit" | "character-body"
-                )
-            {
-                let _ = capture.apply(&context, || {
-                    let message = if state.get_language().as_str() == "en" {
-                        "This shortcut is only available for character images"
+            let is_scene_workflow = matches!(
+                workflow_id.as_str(),
+                "plant-growth" | "monster-generator" | "upgrade-evolution" | "building-derivation"
+            );
+            let is_character_workflow = matches!(
+                workflow_id.as_str(),
+                "character-age" | "character-outfit" | "character-body"
+            );
+            if !is_scene_workflow && !is_character_workflow {
+                state.set_viewer_message(
+                    if state.get_language().as_str() == "en" {
+                        "Unsupported import workflow"
                     } else {
-                        "该快捷入口仅适用于角色图片"
-                    };
-                    state.set_viewer_message(message.into());
-                });
+                        "不支持的导入方式"
+                    }
+                    .into(),
+                );
                 return;
             }
-            start_captured_viewer_reference(&app, context.clone(), CapturedViewerReferenceIntent::Character {
+            start_captured_viewer_reference(&app, context.clone(), CapturedViewerReferenceIntent::Creation {
                 workflow_id: workflow_id.into(), title: title.into(), template: template.into(), hint: hint.into(),
                 original_prompt: state.get_canvas_workflow_prompt().to_string(),
             }, save_state.clone());
@@ -2650,7 +2778,7 @@ fn current_viewer_source_path(state: &AppState) -> Result<PathBuf> {
     persist_slint_reference(&state.get_viewer_image())
 }
 
-fn add_viewer_reference_to_character_workspace(
+fn add_viewer_reference_to_creation_workspace(
     store: &mut Store,
     current_prompt: &str,
     workflow_id: &str,

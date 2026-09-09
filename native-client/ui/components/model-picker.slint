@@ -10,6 +10,7 @@ export component ModelPicker {
     in property <length> picker-width: 320px;
     callback select-model(string);
     property <bool> open: false;
+    property <length> label-width: AppState.en ? 62px : 32px;
     width: root.picker-width;
     height: 46px;
     Rectangle {
@@ -19,7 +20,7 @@ export component ModelPicker {
         border-color: open ? AppTheme.accent : AppTheme.border;
         Text {
             x: 14px;
-            width: 62px;
+            width: root.label-width;
             height: parent.height;
             text: root.label;
             color: AppTheme.muted;
@@ -28,10 +29,10 @@ export component ModelPicker {
             vertical-alignment: center;
             overflow: elide;
         }
-        Rectangle { x: 82px; y: (parent.height - 8px) / 2; width: 8px; height: 8px; border-radius: 4px; background: AppTheme.accent; }
+        Rectangle { x: root.label-width + 20px; y: (parent.height - 8px) / 2; width: 8px; height: 8px; border-radius: 4px; background: AppTheme.accent; }
         Text {
-            x: 100px;
-            width: parent.width - 134px;
+            x: root.label-width + 38px;
+            width: parent.width - root.label-width - 72px;
             height: parent.height;
             text: display-text();
             color: AppTheme.text;

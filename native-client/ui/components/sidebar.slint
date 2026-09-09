@@ -2,6 +2,7 @@ import { AppState } from "../app-state.slint";
 import { CategoryWorkspaceMenu } from "category-workspace-menu.slint";
 import { NavItem } from "nav-item.slint";
 import { AppTheme } from "../theme.slint";
+import { SidebarCreditsButton, SidebarAccountButton } from "sidebar-account-menu.slint";
 
 export component Sidebar {
     width: AppState.sidebar-collapsed ? 72px : 204px;
@@ -76,8 +77,8 @@ export component Sidebar {
             CategoryWorkspaceMenu { collapsed: AppState.sidebar-collapsed; }
             NavItem {
                 collapsed: AppState.sidebar-collapsed;
-                icon: "canvas";
-                label: AppState.en ? "Free Canvas" : "自由画布";
+                icon: "ai-creation";
+                label: AppState.en ? "AI Creation" : "AI创作";
                 page: "free-canvas";
                 active: AppState.page == "free-canvas" || AppState.page == "canvas";
             }
@@ -96,14 +97,11 @@ export component Sidebar {
             }
             NavItem { collapsed: AppState.sidebar-collapsed; icon: "assets"; label: AppState.en ? "My Assets" : "我的资产"; page: "assets"; }
             NavItem { collapsed: AppState.sidebar-collapsed; icon: "inspiration"; label: AppState.en ? "Inspiration" : "灵感广场"; page: "inspiration"; }
-            NavItem { collapsed: AppState.sidebar-collapsed; icon: "notifications"; label: AppState.en ? "Notifications" : "通知"; page: "notifications"; show-dot: AppState.has-unread; }
             Rectangle { vertical-stretch: 1; }
-            NavItem {
+            if AppState.logged-in: SidebarCreditsButton { collapsed: AppState.sidebar-collapsed; }
+            sidebar-notifications := NavItem { collapsed: AppState.sidebar-collapsed; icon: "notifications"; label: AppState.en ? "Notifications" : "通知"; page: "notifications"; show-dot: AppState.has-unread; }
+            SidebarAccountButton {
                 collapsed: AppState.sidebar-collapsed;
-                icon: "settings";
-                label: AppState.en ? "Settings" : "设置";
-                page: "settings";
-                active: AppState.page == "settings" || AppState.page == "custom-prompt-editor";
                 show-dot: AppState.update-available;
             }
         }

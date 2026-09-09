@@ -82,7 +82,7 @@ pub(crate) fn generation_content_policy_message(message: &str) -> String {
     };
 
     format!(
-        "生成失败：提示词或参考图可能涉及{policy}，已被上游安全系统拦截。请调整内容后重试；此类违规拦截不返还积分。"
+        "生成失败：提示词或参考图可能涉及{policy}，已被上游安全系统拦截。请检查提示词和参考图后再试；是否扣费或退还请以服务端积分记录为准。"
     )
 }
 
@@ -860,7 +860,7 @@ mod tests {
     }
 
     #[test]
-    fn generation_http_content_policy_failure_has_no_refund_message() {
+    fn generation_http_content_policy_failure_defers_billing_to_server() {
         let error = ApiError::Http {
             status: 400,
             code: "provider_rejected".to_string(),
@@ -872,7 +872,8 @@ mod tests {
         let message = error.generation_message();
         assert!(message.contains("上游安全系统拦截"));
         assert!(message.contains("裸露、色情或情色内容"));
-        assert!(message.contains("不返还积分"));
+        assert!(!message.contains("不返还积分"));
+        assert!(message.contains("积分记录"));
     }
 
     #[test]

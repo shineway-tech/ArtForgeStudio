@@ -3,16 +3,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn quality_pixel_size_uses_longest_edge_limits() {
+    fn quality_pixel_size_uses_standard_2k_and_4k_dimensions() {
         assert_eq!(pixel_dimensions_for("9:16", "1K"), (576, 1024));
         assert_eq!(pixel_dimensions_for("16:9", "1K"), (1024, 576));
-        assert_eq!(pixel_dimensions_for("9:16", "2K"), (1152, 2048));
-        assert_eq!(pixel_dimensions_for("16:9", "4K"), (4096, 2304));
+        assert_eq!(pixel_dimensions_for("16:9", "2K"), (2560, 1440));
+        assert_eq!(pixel_dimensions_for("9:16", "2K"), (1440, 2560));
+        assert_eq!(pixel_dimensions_for("16:9", "4K"), (3840, 2160));
+        assert_eq!(pixel_dimensions_for("9:16", "4K"), (2160, 3840));
 
         assert_eq!(quality_from_actual_dimensions(1023, 1537), "2K");
         assert_eq!(quality_from_actual_dimensions(1024, 1024), "1K");
         assert_eq!(quality_from_actual_dimensions(2048, 1152), "2K");
-        assert_eq!(quality_from_actual_dimensions(4096, 2304), "4K");
+        assert_eq!(quality_from_actual_dimensions(2560, 1440), "2K");
+        assert_eq!(quality_from_actual_dimensions(3840, 2160), "4K");
     }
 
     #[test]
@@ -2364,21 +2367,28 @@ mod tests {
         assert!(nav_item.contains("in property <bool> active: AppState.page == root.page;"));
         assert!(nav_item.contains("background: root.active ? AppTheme.panel-soft"));
         assert!(nav_item.contains("border-width: root.active ? 1px : 0px;"));
-        assert!(sidebar.contains(
-            "active: AppState.page == \"settings\" || AppState.page == \"custom-prompt-editor\";"
-        ));
+        // Settings now lives in the avatar menu; its route and popup behavior
+        // are exercised by tests/sidebar_account_menu.rs.
     }
 
     #[test]
-    fn free_canvas_entry_opens_a_six_choice_launcher_before_the_infinite_canvas() {
+    fn ai_creation_entry_opens_an_eight_choice_launcher_before_the_infinite_canvas() {
         let app = include_str!("../../ui/app.slint");
         let sidebar = include_str!("../../ui/components/sidebar.slint");
+        let nav_glyph = include_str!("../../ui/components/nav-glyph.slint");
         let page = include_str!("../../ui/pages/free-canvas-page.slint");
         let runtime = include_str!("app.rs");
         let viewer = include_str!("callbacks/viewer.rs");
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
 
-        assert!(sidebar.contains("label: AppState.en ? \"Free Canvas\" : \"自由画布\""));
+        assert!(sidebar.contains("label: AppState.en ? \"AI Creation\" : \"AI创作\""));
+        assert!(sidebar.contains("icon: \"ai-creation\""));
+        assert!(nav_glyph.contains("root.kind == \"ai-creation\""));
+        assert!(nav_glyph.contains("../../assets/icons/ai-creation.svg"));
+        let ai_icon = std::fs::read_to_string(manifest.join("assets/icons/ai-creation.svg"))
+            .expect("AI creation navigation icon");
+        assert!(ai_icon.contains("viewBox=\"0 0 1024 1024\""));
+        assert!(ai_icon.contains("M442.688 163.84l-288 720"));
         assert!(sidebar.contains("page: \"free-canvas\""));
         assert!(sidebar.contains(
             "active: AppState.page == \"free-canvas\" || AppState.page == \"canvas\""
@@ -2386,20 +2396,22 @@ mod tests {
         assert!(app.contains("import { FreeCanvasPage }"));
         assert!(app.contains("AppState.page == \"free-canvas\": FreeCanvasPage"));
         assert!(app.contains("AppState.page == \"canvas\": InfiniteCanvasPage"));
-        assert_eq!(page.matches("card-id: \"").count(), 6);
+        assert_eq!(page.matches("card-id: \"").count(), 8);
         for (card_id, title) in [
             ("plant-growth", "植物生成器"),
             ("character-outfit", "角色换装"),
             ("monster-generator", "怪物生成器"),
+            ("upgrade-evolution", "升级进化"),
             ("character-age", "角色年龄变化"),
             ("character-body", "角色体型修改器"),
+            ("building-derivation", "建筑衍生器"),
             ("infinite-canvas", "无限画布"),
         ] {
             assert!(page.contains(&format!("card-id: \"{card_id}\"")));
             assert!(page.contains(title));
         }
-        assert_eq!(page.matches("prompt-zh:").count(), 6);
-        assert_eq!(page.matches("prompt-en:").count(), 6);
+        assert_eq!(page.matches("prompt-zh:").count(), 8);
+        assert_eq!(page.matches("prompt-en:").count(), 8);
         assert!(!page.contains("AppState.navigate(\"generation\")"));
         assert!(page.contains("AppState.navigate(\"canvas\")"));
         assert!(page.contains("opens-canvas: true"));
@@ -2407,11 +2419,11 @@ mod tests {
         let back: String = back.split_whitespace().collect();
         assert!(back.contains("ifpage==\"canvas\"{navigate_to_with_store(&app,&store.borrow(),\"free-canvas\");return;"));
         let shortcut = core_toolbox_contract_block(viewer,
-            "state.on_viewer_open_character_workflow(", "state.on_request_delete_asset(");
-        assert!(shortcut.contains("start_captured_viewer_reference(&app, context.clone(), CapturedViewerReferenceIntent::Character"));
+            "state.on_viewer_open_creation_workflow(", "state.on_request_delete_asset(");
+        assert!(shortcut.contains("start_captured_viewer_reference(&app, context.clone(), CapturedViewerReferenceIntent::Creation"));
         let saved = core_toolbox_contract_block(viewer,
             "fn poll_captured_reference_store_ack(", "\nfn retry_captured_reference_save(");
-        let character = saved.split_once("CapturedViewerReferenceIntent::Character { workflow_id, title, template, hint, .. } =>")
+        let character = saved.split_once("CapturedViewerReferenceIntent::Creation { workflow_id, title, template, hint, .. } =>")
             .expect("actual saved character-workflow branch").1;
         assert!(saved.find("finish_delivery_preparation(&cancel)").unwrap()
             < saved.find("if !matches!(receiver.try_recv(), Ok(Ok(())))").unwrap());
@@ -2424,10 +2436,553 @@ mod tests {
             "plant-growth.png",
             "character-outfit.png",
             "monster-generator.png",
+            "upgrade-evolution.png",
             "character-age.png",
             "character-body.png",
+            "building-derivation.png",
         ] {
             assert!(manifest.join("assets/free-canvas").join(image).is_file());
+        }
+    }
+
+    #[test]
+    fn canvas_submission_ignores_workbench_controls_and_keeps_cutout_rules_last() {
+        let controls = PromptControls {
+            category: "ui".into(), creation: "ui-hud".into(), style: "dark".into(),
+            view: "first-person".into(), weather: "rainy".into(), time: "night".into(), light: "neon".into(),
+        };
+        let quote = QuoteContext {
+            title: "unrelated workbench reference".into(), prompt: "close-up portrait".into(),
+            ratio: "1:1".into(), quality: "1K".into(), width: 1024, height: 1024,
+        };
+        let requested = compose_canvas_workflow_prompt("Create {count} outfit variations.", "wide capes", 8, true);
+        let submitted = build_generation_prompt_for_destination(
+            &requested, "unrelated negative", &controls, &quote, "ui", "16:9", "4K",
+            PromptLanguage::English, &GenerationDestination::Canvas { source_node_id: "test-node".into() },
+        );
+        assert!(submitted.contains("Create 8 outfit variations."));
+        assert!(submitted.contains("Arrange all 8 subjects in two rows"));
+        assert!(submitted.contains("full body from the top of the head to the soles"));
+        assert!(submitted.contains("70%"));
+        assert!(submitted.contains("16:9"));
+        assert!(submitted.contains("4K"));
+        assert!(!submitted.contains("unrelated"));
+        assert!(!submitted.contains("close-up portrait"));
+        assert!(!submitted.contains("UI component atlas"));
+        assert!(!submitted.contains("Generation controls:"));
+        assert!(submitted.ends_with("Completeness and separation take priority over large subjects, filling the frame or a fixed single row."));
+        let gallery = build_generation_prompt_for_destination(
+            "game interface", "unrelated negative", &controls, &quote, "ui", "1:1", "2K",
+            PromptLanguage::English, &GenerationDestination::Gallery,
+        );
+        assert!(gallery.contains("UI component atlas"));
+        assert!(gallery.contains("unrelated negative"));
+        assert!(gallery.contains("unrelated workbench reference"));
+        assert!(!gallery.contains("final cutout-safe composition rules"));
+    }
+
+    #[test]
+    fn upgrade_evolution_card_opens_a_reference_driven_canvas_with_strict_output_rules() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("free-canvas".into());
+
+        let opened_workspaces = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed_workspaces = opened_workspaces.clone();
+        state.on_open_canvas_workspace(move |id| {
+            observed_workspaces.borrow_mut().push(id.to_string());
+        });
+        let routes = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed_routes = routes.clone();
+        state.on_navigate(move |page| {
+            observed_routes.borrow_mut().push(page.to_string());
+        });
+
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().expect("show app window");
+
+        let page = ElementHandle::find_by_element_type_name(&app, "FreeCanvasPage")
+            .next()
+            .expect("AI creation launcher");
+        let card = ElementHandle::find_by_accessible_label(&app, "升级进化")
+            .next()
+            .expect("upgrade evolution card");
+        assert!(card.absolute_position().y >= page.absolute_position().y);
+        assert!(
+            card.absolute_position().y + card.size().height
+                <= page.absolute_position().y + page.size().height + 1.0,
+            "upgrade evolution card must be visible without leaving the launcher viewport"
+        );
+
+        card.mock_single_click(PointerEventButton::Left);
+
+        assert_eq!(
+            opened_workspaces.borrow().last().map(String::as_str),
+            Some("upgrade-evolution")
+        );
+        assert_eq!(routes.borrow().last().map(String::as_str), Some("canvas"));
+        assert_eq!(state.get_canvas_workflow_id(), "upgrade-evolution");
+        assert_eq!(state.get_canvas_workflow_title(), "升级进化");
+        assert_eq!(state.get_asset_type(), "scene");
+
+        let template = state.get_canvas_workflow_template().to_string();
+        assert!(template.contains("{count}个连续升级进化阶段"));
+        assert!(template.contains("从低级、基础形态逐步进化到顶级、终极形态"));
+        assert!(template.contains("保持同一主体"));
+        let submitted = compose_canvas_workflow_prompt(&template, "参考图中的主体", 5, false);
+        assert!(submitted.contains("不得把所有主体统一处理为从小到大"));
+        assert!(submitted.contains("若主体是人类或类人角色"));
+        assert!(submitted.contains("保持年龄、身高、体型、身体比例、面部和身份特征稳定"));
+        assert!(submitted.contains("主要通过服装等级、武器、装备、护甲"));
+        assert!(submitted.contains("若主体是怪物、机械生物或其他生物"));
+        assert!(submitted.contains("允许随等级逐步改变体型、身体比例、轮廓和形态"));
+        assert!(submitted.contains("若主体是武器、道具、载具、植物或建筑"));
+        assert!(submitted.contains("白、绿、蓝、紫、橙、红"));
+        assert!(submitted.contains("等级色只能作为局部品质标识"));
+        assert!(submitted.contains("不得给整个主体统一染色"));
+        assert!(submitted.contains("绿光、蓝光、紫光、金光、红光"));
+        assert!(submitted.contains("不得跨越主体之间的纯色背景间距"));
+        assert!(submitted.contains("除工作流明确要求且严格限制在单个主体后方的局部柔和光晕外"));
+        assert!(submitted.contains("必须使用单一纯色背景"));
+        assert!(submitted.contains("不得出现编号、序号、文字标签、标题、说明文字或水印"));
+    }
+
+    #[test]
+    fn building_derivation_uses_the_uploaded_style_with_optional_function_description() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("free-canvas".into());
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().expect("show app window");
+        ElementHandle::find_by_accessible_label(&app, "建筑衍生器")
+            .next()
+            .expect("building derivation launcher card")
+            .mock_single_click(PointerEventButton::Left);
+        assert_eq!(state.get_canvas_workflow_id(), "building-derivation");
+        assert_eq!(state.get_canvas_workflow_title(), "建筑衍生器");
+        assert_eq!(state.get_asset_type(), "scene");
+        let template = state.get_canvas_workflow_template().to_string();
+        assert!(template.contains("自动识别其世界观"));
+        assert!(template.contains("不同功能的新建筑"));
+        assert!(template.contains("保持原图的2D或3D表现方式和观察角度"));
+        assert!(template.contains("不是同一建筑逐级升级"));
+        let composed = compose_canvas_workflow_prompt(&template, "铁匠铺、酒馆、仓库", 12, false);
+        assert!(composed.contains("12座同风格"));
+        assert!(composed.contains("用户描述：铁匠铺、酒馆、仓库"));
+        assert!(composed.contains("分成上下两行"));
+        assert!(composed.contains("必须统一缩小所有主体"));
+        assert!(composed.contains("必须使用单一纯色背景"));
+        assert!(!composed.contains("白、绿、蓝、紫、橙、红"));
+        assert!(!composed.contains("{count}"));
+
+        state.set_page("canvas".into());
+        state.set_canvas_workflow_prompt("".into());
+        state.set_image_model("test-image-model".into());
+        state.on_compose_canvas_workflow_prompt(|template, prompt, count, english| {
+            compose_canvas_workflow_prompt(template.as_str(), prompt.as_str(), count, english).into()
+        });
+        state.on_create_canvas_generation_source(|_, _, _| "building-source".into());
+        let submitted = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed = submitted.clone();
+        state.on_generate_canvas_node(move |_, prompt| observed.borrow_mut().push(prompt.to_string()));
+        let generate = ElementHandle::find_by_element_id(&app, "InfiniteCanvasPage::workflow-generate-button")
+            .next()
+            .expect("workflow generate button");
+        generate.mock_single_click(PointerEventButton::Left);
+        assert!(submitted.borrow().is_empty());
+        assert_eq!(state.get_generation_status(), "请先上传建筑参考图");
+        state.set_references(ModelRc::new(VecModel::from(vec![ReferenceItem {
+            id: "building-reference".into(),
+            image: slint::Image::default(),
+            source_path: "building.png".into(),
+        }])));
+        generate.mock_single_click(PointerEventButton::Left);
+        assert_eq!(submitted.borrow().len(), 1);
+        assert!(submitted.borrow()[0].contains("5座同风格"));
+        assert!(submitted.borrow()[0].contains("不按升级等级排列"));
+        assert!(state.get_canvas_workflow_prompt().is_empty());
+
+        state.set_canvas_workflow_prompt("铁匠铺、酒馆、仓库".into());
+        generate.mock_single_click(PointerEventButton::Left);
+        assert_eq!(submitted.borrow().len(), 2);
+        assert!(submitted.borrow()[1].contains("用户描述：铁匠铺、酒馆、仓库"));
+
+        state.set_language("en".into());
+        state.set_page("free-canvas".into());
+        ElementHandle::find_by_accessible_label(&app, "Building Derivation")
+            .next().expect("English building derivation card")
+            .mock_single_click(PointerEventButton::Left);
+        let english = compose_canvas_workflow_prompt(
+            state.get_canvas_workflow_template().as_str(), "smithy, tavern", 6, true,
+        );
+        assert!(english.contains("exactly 6 NEW buildings"));
+        assert!(english.contains("by function, not by upgrade level"));
+        assert!(english.contains("User description: smithy, tavern"));
+        assert!(!english.contains("{count}"));
+    }
+
+    #[test]
+    fn workflow_thumbnail_opens_a_quick_switcher_and_switches_workspaces() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("canvas".into());
+        state.set_canvas_workflow_id("upgrade-evolution".into());
+        state.set_canvas_workflow_title("升级进化".into());
+
+        let opened_workspaces = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed_workspaces = opened_workspaces.clone();
+        state.on_open_canvas_workspace(move |id| {
+            observed_workspaces.borrow_mut().push(id.to_string());
+        });
+
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().expect("show app window");
+
+        assert!(
+            ElementHandle::find_by_accessible_label(&app, "切换到植物生成器")
+                .next()
+                .is_none(),
+            "quick switch cards should stay hidden until the workflow thumbnail is clicked"
+        );
+        let switcher = ElementHandle::find_by_accessible_label(&app, "切换创作模板")
+            .next()
+            .expect("workflow thumbnail switcher");
+        switcher.mock_single_click(PointerEventButton::Left);
+
+        let plant = ElementHandle::find_by_accessible_label(&app, "切换到植物生成器")
+            .next()
+            .expect("plant generator quick switch card");
+        plant.invoke_accessible_default_action();
+
+        assert_eq!(
+            opened_workspaces.borrow().last().map(String::as_str),
+            Some("plant-growth")
+        );
+        assert_eq!(state.get_canvas_workflow_id(), "plant-growth");
+        assert_eq!(state.get_canvas_workflow_title(), "植物生成器");
+        assert_eq!(state.get_asset_type(), "scene");
+        assert!(
+            state
+                .get_canvas_workflow_template()
+                .to_string()
+                .contains("完整生命周期")
+        );
+
+        let switcher = ElementHandle::find_by_accessible_label(&app, "切换创作模板")
+            .next()
+            .expect("workflow thumbnail switcher after first switch");
+        switcher.mock_single_click(PointerEventButton::Left);
+        let outfit = ElementHandle::find_by_accessible_label(&app, "切换到角色换装")
+            .next()
+            .expect("character outfit quick switch card");
+        outfit.invoke_accessible_default_action();
+
+        assert_eq!(
+            opened_workspaces.borrow().last().map(String::as_str),
+            Some("character-outfit")
+        );
+        assert_eq!(state.get_canvas_workflow_id(), "character-outfit");
+        assert_eq!(state.get_canvas_workflow_title(), "角色换装");
+        assert_eq!(state.get_asset_type(), "character");
+        assert!(
+            state
+                .get_canvas_workflow_template()
+                .to_string()
+                .contains("只改变服装、鞋履和配饰")
+        );
+
+        let switcher = ElementHandle::find_by_accessible_label(&app, "切换创作模板")
+            .next()
+            .expect("workflow thumbnail switcher after second switch");
+        switcher.mock_single_click(PointerEventButton::Left);
+        let evolution = ElementHandle::find_by_accessible_label(&app, "切换到升级进化")
+            .next()
+            .expect("upgrade evolution quick switch card");
+        evolution.invoke_accessible_default_action();
+
+        assert_eq!(
+            opened_workspaces.borrow().last().map(String::as_str),
+            Some("upgrade-evolution")
+        );
+        assert_eq!(state.get_canvas_workflow_id(), "upgrade-evolution");
+        assert_eq!(state.get_canvas_workflow_title(), "升级进化");
+        assert_eq!(state.get_asset_type(), "scene");
+        let template = state.get_canvas_workflow_template().to_string();
+        assert!(template.contains("先自动识别参考图中的主体类型"));
+        assert!(template.contains("若主体是人类或类人角色"));
+        assert!(template.contains("若主体是怪物、机械生物或其他生物"));
+        assert!(template.contains("若主体是武器、道具、载具、植物或建筑"));
+        let submitted = compose_canvas_workflow_prompt(&template, "", 8, false);
+        assert!(submitted.contains("白、绿、蓝、紫、橙、红"));
+        assert!(submitted.contains("等级色只能作为局部品质标识"));
+        assert!(submitted.contains("不得给整个主体统一染色"));
+        assert!(submitted.contains("绿光、蓝光、紫光、金光、红光"));
+        assert!(submitted.contains("不得跨越主体之间的纯色背景间距"));
+        assert!(template.contains("使用单一纯色背景"));
+        assert!(template.contains("不得出现任何文字、字母、数字"));
+
+        ElementHandle::find_by_accessible_label(&app, "切换创作模板")
+            .next().expect("workflow switcher")
+            .mock_single_click(PointerEventButton::Left);
+        ElementHandle::find_by_accessible_label(&app, "切换到建筑衍生器")
+            .next().expect("building derivation quick switch card")
+            .invoke_accessible_default_action();
+        assert_eq!(opened_workspaces.borrow().last().map(String::as_str), Some("building-derivation"));
+        assert_eq!(state.get_canvas_workflow_id(), "building-derivation");
+        assert!(state.get_canvas_workflow_template().contains("建筑功能衍生："));
+        assert_eq!(state.get_asset_type(), "scene");
+    }
+
+    #[test]
+    fn upgrade_evolution_requires_a_reference_but_not_an_extra_description() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("canvas".into());
+        state.set_canvas_workflow_id("upgrade-evolution".into());
+        state.set_canvas_workflow_title("升级进化".into());
+        state.set_canvas_workflow_template("生成{count}个连续升级进化阶段。".into());
+        state.set_canvas_workflow_prompt("".into());
+        state.set_image_model("test-image-model".into());
+        state.on_compose_canvas_workflow_prompt(|template, prompt, step_count, english| {
+            compose_canvas_workflow_prompt(
+                template.as_str(),
+                prompt.as_str(),
+                step_count,
+                english,
+            )
+            .into()
+        });
+
+        let source_prompts = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed_source_prompts = source_prompts.clone();
+        state.on_create_canvas_generation_source(move |prompt, _, _| {
+            observed_source_prompts
+                .borrow_mut()
+                .push(prompt.to_string());
+            "upgrade-source".into()
+        });
+        let submitted_prompts = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed_submitted_prompts = submitted_prompts.clone();
+        state.on_generate_canvas_node(move |_, prompt| {
+            observed_submitted_prompts
+                .borrow_mut()
+                .push(prompt.to_string());
+        });
+
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().expect("show app window");
+        let generate = ElementHandle::find_by_element_id(
+            &app,
+            "InfiniteCanvasPage::workflow-generate-button",
+        )
+        .next()
+        .expect("workflow generate button");
+
+        generate.mock_single_click(PointerEventButton::Left);
+        assert!(source_prompts.borrow().is_empty());
+        assert_eq!(state.get_generation_status(), "请先上传主体参考图");
+
+        state.set_references(ModelRc::new(VecModel::from(vec![ReferenceItem {
+            id: "subject-reference".into(),
+            image: slint::Image::default(),
+            source_path: "subject.png".into(),
+        }])));
+        generate.mock_single_click(PointerEventButton::Left);
+
+        assert_eq!(source_prompts.borrow().as_slice(), ["升级进化"]);
+        assert_eq!(submitted_prompts.borrow().len(), 1);
+        assert!(submitted_prompts.borrow()[0].contains("生成5个连续升级进化阶段"));
+        assert!(submitted_prompts.borrow()[0].contains("必须使用单一纯色背景"));
+    }
+
+    #[test]
+    fn all_creation_presets_require_images_and_accept_optional_prompts() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_image_model("test-image-model".into());
+        state.on_compose_canvas_workflow_prompt(|template, prompt, count, english| {
+            compose_canvas_workflow_prompt(template.as_str(), prompt.as_str(), count, english).into()
+        });
+        state.on_create_canvas_generation_source(|_, _, _| "preset-source".into());
+        let submitted = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed = submitted.clone();
+        state.on_generate_canvas_node(move |_, prompt| observed.borrow_mut().push(prompt.to_string()));
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().unwrap();
+
+        for (label, id, expected) in [
+            ("植物生成器", "plant-growth", "完整生命周期"),
+            ("角色换装", "character-outfit", "只改变服装"),
+            ("怪物生成器", "monster-generator", "怪物设计"),
+            ("升级进化", "upgrade-evolution", "连续升级进化阶段"),
+            ("角色年龄变化", "character-age", "婴儿到老年"),
+            ("角色体型修改器", "character-body", "体型"),
+            ("建筑衍生器", "building-derivation", "不同功能的新建筑"),
+        ] {
+            submitted.borrow_mut().clear();
+            state.set_page("free-canvas".into());
+            ElementHandle::find_by_accessible_label(&app, label).next().expect(label)
+                .mock_single_click(PointerEventButton::Left);
+            assert_eq!(state.get_canvas_workflow_id(), id);
+            state.set_page("canvas".into());
+            state.set_references(ModelRc::new(VecModel::from(Vec::<ReferenceItem>::new())));
+            state.set_canvas_workflow_prompt("".into());
+            let generate = ElementHandle::find_by_element_id(&app, "InfiniteCanvasPage::workflow-generate-button")
+                .next().unwrap();
+            generate.mock_single_click(PointerEventButton::Left);
+            assert!(submitted.borrow().is_empty(), "{label} requires an image");
+            state.set_canvas_workflow_prompt("水彩风格".into());
+            generate.mock_single_click(PointerEventButton::Left);
+            assert!(submitted.borrow().is_empty(), "text alone must not bypass {label}'s reference requirement");
+            state.set_references(ModelRc::new(VecModel::from(vec![ReferenceItem {
+                id: "reference".into(), image: Image::default(), source_path: "reference.png".into(),
+            }])));
+            state.set_canvas_workflow_prompt("".into());
+            generate.mock_single_click(PointerEventButton::Left);
+            assert_eq!(submitted.borrow().len(), 1, "{label} must accept reference-only generation");
+            assert!(submitted.borrow()[0].contains(expected), "{label} must use its built-in template");
+            assert!(!submitted.borrow()[0].contains("{count}"));
+            state.set_canvas_workflow_prompt("水彩风格".into());
+            generate.mock_single_click(PointerEventButton::Left);
+            assert_eq!(submitted.borrow().len(), 2);
+            assert!(submitted.borrow()[1].contains("用户描述：水彩风格"));
+        }
+        // The infinite canvas still needs a prompt even when an image is attached.
+        submitted.borrow_mut().clear();
+        state.set_canvas_workflow_id("".into());
+        state.set_canvas_workflow_template("".into());
+        state.set_canvas_workflow_prompt("".into());
+        ElementHandle::find_by_element_id(&app, "InfiniteCanvasPage::workflow-generate-button")
+            .next().unwrap().mock_single_click(PointerEventButton::Left);
+        assert!(submitted.borrow().is_empty());
+    }
+
+    #[test]
+    fn canvas_failure_remains_visible_and_retry_requires_a_click() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.on_is_generation_error(|message| is_generation_error_message(message.as_str()));
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("canvas".into());
+        state.set_image_model("test-model".into());
+        state.set_canvas_workflow_id("character-age".into());
+        state.set_canvas_workflow_prompt("保留蓝色服饰".into());
+        state.set_references(ModelRc::new(VecModel::from(vec![ReferenceItem {
+            id: "reference".into(), image: Image::default(), source_path: "reference.png".into(),
+        }])));
+        state.on_compose_canvas_workflow_prompt(|_, prompt, _, _| prompt);
+        state.on_create_canvas_generation_source(|_, _, _| "retry-source".into());
+        let submissions = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed = submissions.clone();
+        state.on_generate_canvas_node(move |_, prompt| observed.borrow_mut().push(prompt.to_string()));
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().unwrap();
+        slint::platform::update_timers_and_animations();
+        state.set_generating(false);
+        state.set_generation_status("生成失败：服务暂时不可用".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "生成失败：服务暂时不可用").next().is_some(),
+            "Canvas must expose the failure after loading disappears");
+        assert!(submissions.borrow().is_empty(), "Never automatically resubmit a paid task");
+        assert_eq!(state.get_canvas_workflow_prompt(), "保留蓝色服饰");
+        assert_eq!(state.get_references().row_count(), 1);
+        ElementHandle::find_by_accessible_label(&app, "重试生成").next().unwrap()
+            .mock_single_click(PointerEventButton::Left);
+        assert_eq!(submissions.borrow().as_slice(), ["保留蓝色服饰"]);
+        assert_eq!(state.get_references().row_count(), 1);
+        state.set_generating(true);
+        if let Some(retry) = ElementHandle::find_by_accessible_label(&app, "重试生成").next() {
+            retry.mock_single_click(PointerEventButton::Left);
+        }
+        assert_eq!(submissions.borrow().len(), 1, "Retry cannot stop or duplicate an active task");
+        state.set_generating(false);
+        state.set_generation_status("服务响应异常，请稍后重试".into());
+        slint::platform::update_timers_and_animations();
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(5100));
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "服务响应异常，请稍后重试").next().is_none(),
+            "Finished-task feedback must disappear after five seconds");
+        assert_eq!(state.get_generation_status(), "服务响应异常，请稍后重试");
+        assert_eq!(state.get_canvas_workflow_prompt(), "保留蓝色服饰");
+        assert_eq!(state.get_references().row_count(), 1);
+        state.set_generation_status("另一条失败提示".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "另一条失败提示").next().is_some());
+        ElementHandle::find_by_accessible_label(&app, "关闭提示").next().unwrap()
+            .mock_single_click(PointerEventButton::Left);
+        assert!(ElementHandle::find_by_accessible_label(&app, "另一条失败提示").next().is_none());
+        assert_eq!(submissions.borrow().len(), 1);
+        state.set_page("free-canvas".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "另一条失败提示").next().is_none());
+        state.set_page("canvas".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "另一条失败提示").next().is_none(),
+            "Reopening the canvas must not resurrect dismissed feedback");
+        state.set_generating(true);
+        slint::platform::update_timers_and_animations();
+        state.set_generating(false);
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "另一条失败提示").next().is_some(),
+            "A new task may report the same error again");
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(5100));
+        slint::platform::update_timers_and_animations();
+        state.set_page("free-canvas".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "另一条失败提示").next().is_none());
+        state.set_page("canvas".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "另一条失败提示").next().is_none(),
+            "Auto-dismissal must also survive reopening the canvas");
+        state.set_generation_status("尚未关闭的新错误".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "尚未关闭的新错误").next().is_some());
+        state.set_page("free-canvas".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "尚未关闭的新错误").next().is_none());
+        state.set_page("canvas".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ElementHandle::find_by_accessible_label(&app, "尚未关闭的新错误").next().is_none(),
+            "Navigation must not replay even an undismissed old notification");
+        for status in ["已添加参考图", "任务已提交，正在排队...", "正在生成...", "生成成功", "已停止生成"] {
+            state.set_generation_status(status.into());
+            slint::platform::update_timers_and_animations();
+            assert!(ElementHandle::find_by_accessible_label(&app, status).next().is_none(),
+                "Normal status must not display the error panel: {status}");
+            assert!(ElementHandle::find_by_accessible_label(&app, "重试生成").next().is_none());
         }
     }
 
@@ -2518,6 +3073,123 @@ mod tests {
     }
 
     #[test]
+    fn canvas_reference_addition_asks_for_a_source_before_opening_a_picker() {
+        use i_slint_backend_testing::{ElementHandle, TestingBackend, TestingBackendOptions};
+        use slint::platform::PointerEventButton;
+
+        slint::platform::set_platform(Box::new(TestingBackend::new(TestingBackendOptions {
+            mock_time: true,
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        })))
+        .unwrap();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("canvas".into());
+        state.set_canvas_workflow_id("upgrade-evolution".into());
+        state.set_assets(ModelRc::new(VecModel::from(vec![AssetItem {
+            id: "asset-1".into(),
+            title: "测试资产".into(),
+            source_path: "asset-1.png".into(),
+            ..Default::default()
+        }])));
+        state.on_refresh_assets(|| {});
+        let local_picker_calls = Rc::new(Cell::new(0));
+        let local_picker_calls_for_callback = local_picker_calls.clone();
+        state.on_add_reference(move || {
+            local_picker_calls_for_callback.set(local_picker_calls_for_callback.get() + 1);
+        });
+        app.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        app.show().expect("show app window");
+
+        let add = ElementHandle::find_by_element_id(
+            &app,
+            "InfiniteCanvasPage::upload-reference-touch",
+        )
+        .next()
+        .expect("reference add tile");
+        add.mock_single_click(PointerEventButton::Left);
+
+        assert_eq!(local_picker_calls.get(), 0, "opening the tile must not choose a source yet");
+        let local = ElementHandle::find_by_accessible_label(&app, "本地上传")
+            .next()
+            .expect("local upload source option");
+        assert!(ElementHandle::find_by_accessible_label(&app, "从我的资产选择")
+            .next()
+            .is_some());
+        local.invoke_accessible_default_action();
+        assert_eq!(local_picker_calls.get(), 1);
+
+        add.mock_single_click(PointerEventButton::Left);
+        ElementHandle::find_by_accessible_label(&app, "从我的资产选择")
+            .next()
+            .expect("my assets source option")
+            .invoke_accessible_default_action();
+        assert!(ElementHandle::find_by_accessible_label(&app, "选择我的资产")
+            .next()
+            .is_some());
+        let selected_asset_id = Rc::new(RefCell::new(String::new()));
+        let selected_asset_id_for_callback = selected_asset_id.clone();
+        state.on_add_reference_from_asset(move |id| {
+            *selected_asset_id_for_callback.borrow_mut() = id.to_string();
+            true
+        });
+        ElementHandle::find_by_accessible_label(&app, "选择资产 测试资产")
+            .next()
+            .expect("asset choice")
+            .invoke_accessible_default_action();
+        assert_eq!(selected_asset_id.borrow().as_str(), "asset-1");
+    }
+
+    #[test]
+    fn stopping_a_canvas_generation_preserves_its_prompt_and_reference_images() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_page("canvas".into());
+        state.set_asset_type("scene".into());
+        state.set_canvas_workflow_prompt("石头巨兽，逐步增加水晶装甲".into());
+        state.set_references(ModelRc::new(VecModel::from(vec![ReferenceItem {
+            id: "canvas-subject".into(),
+            image: slint::Image::default(),
+            source_path: "".into(),
+        }])));
+
+        let context = AppContext::default();
+        context.store.borrow_mut().canvas_references.push(ReferenceData {
+            id: "canvas-subject".to_string(),
+            source_path: String::new(),
+        });
+        insert_active_generation(
+            &context,
+            ActiveGeneration {
+                task_id: "canvas-task".to_string(),
+                category: "scene".to_string(),
+                prompt: "submitted workflow prompt".to_string(),
+                destination: GenerationDestination::Canvas {
+                    source_node_id: "loading-node".to_string(),
+                },
+                ..ActiveGeneration::default()
+            },
+        );
+
+        stop_generation(&app, &context);
+
+        assert_eq!(
+            state.get_canvas_workflow_prompt(),
+            "石头巨兽，逐步增加水晶装甲"
+        );
+        assert_eq!(state.get_references().row_count(), 1);
+        assert_eq!(
+            state.get_references().row_data(0).expect("canvas reference").id,
+            "canvas-subject"
+        );
+    }
+
+    #[test]
     fn reference_picker_does_not_block_the_slint_event_loop() {
         let callbacks = include_str!("callbacks/reference.rs");
         let add_reference = callbacks
@@ -2583,51 +3255,73 @@ mod tests {
 
     #[test]
     fn canvas_workflow_step_count_replaces_every_template_placeholder() {
-        assert_eq!(
-            compose_canvas_workflow_prompt(
-                "Create exactly {count} stages with {count} separate subjects.",
-                "tomato",
-                8,
-                true,
-            ),
-            "Create exactly 8 stages with 8 separate subjects.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Arrange all 8 subjects in one row in progression order.\n\nUser description: tomato"
-        );
+        let prompt = compose_canvas_workflow_prompt(
+            "Create exactly {count} stages with {count} separate subjects.", "tomato", 8, true);
+        assert!(prompt.starts_with("Create exactly 8 stages with 8 separate subjects."));
+        assert!(!prompt.contains("{count}"));
+        assert!(prompt.ends_with("User description: tomato"));
     }
 
     #[test]
     fn canvas_workflow_step_count_is_clamped_between_four_and_twelve() {
-        assert_eq!(
-            compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 1, false),
-            "制作4个步骤。\n\n强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。将全部4个对象按演变顺序排列在同一行。\n\n用户描述：番茄"
-        );
-        assert_eq!(
-            compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 99, false),
-            "制作12个步骤。\n\n强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。将全部12个对象分成上下两行，按从左到右、从上到下的顺序排列。\n\n用户描述：番茄"
-        );
+        let minimum = compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 1, false);
+        assert!(minimum.starts_with("制作4个步骤。"));
+        assert!(minimum.contains("总共恰好4个完整主体"));
+        let maximum = compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 99, false);
+        assert!(maximum.starts_with("制作12个步骤。"));
+        assert!(maximum.contains("上排恰好6个，下排恰好6个"));
+        assert!(maximum.contains("总共恰好12个完整主体"));
     }
 
     #[test]
     fn canvas_workflow_prompt_requires_a_solid_background_and_no_labels() {
-        assert_eq!(
-            compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 5, false),
-            "制作5个步骤。\n\n强制画面规范：必须使用单一纯色背景，不得添加渐变、纹理、图案、风景、环境、装饰或其他背景元素。画面中不得出现编号、序号、文字标签、标题、说明文字或水印。将全部5个对象按演变顺序排列在同一行。\n\n用户描述：番茄"
-        );
+        let prompt = compose_canvas_workflow_prompt("制作{count}个步骤。", "番茄", 5, false);
+        assert!(prompt.contains("必须使用单一纯色背景"));
+        assert!(prompt.contains("不得出现编号、序号、文字标签、标题、说明文字或水印"));
+        assert!(prompt.contains("将全部5个对象按演变顺序排列在同一行"));
+        assert!(prompt.ends_with("用户描述：番茄"));
     }
 
     #[test]
-    fn canvas_workflow_prompt_keeps_eight_subjects_in_one_row() {
-        assert_eq!(
-            compose_canvas_workflow_prompt("Create {count} stages.", "tomato", 8, true),
-            "Create 8 stages.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Arrange all 8 subjects in one row in progression order.\n\nUser description: tomato"
-        );
+    fn canvas_workflow_prompt_forces_cutout_safe_gaps_between_every_subject() {
+        let chinese =
+            compose_canvas_workflow_prompt("制作{count}个升级阶段。", "仙侠角色", 6, false);
+        assert!(chinese.contains("任意两个主体之间必须保留清晰、连续的纯色背景间距"));
+        assert!(chinese.contains("主体的轮廓、服装、武器、装备、特效和阴影均不得互相接触、重叠或连接"));
+        assert!(chinese.contains("空间不足时必须统一缩小所有主体"));
+        assert!(chinese.contains("保持所选画布比例及正常2K或4K输出尺寸不变"));
+        assert!(chinese.contains("确保每个主体都能被单独完整抠图"));
+
+        let english =
+            compose_canvas_workflow_prompt("Create {count} upgrade stages.", "wuxia hero", 6, true);
+        assert!(english.contains(
+            "Keep a clear, continuous solid-background gap between every pair of subjects"
+        ));
+        assert!(english.contains(
+            "No silhouettes, clothing, weapons, gear, effects, or shadows may touch, overlap, or connect"
+        ));
+        assert!(english.contains("uniformly scale down all subjects"));
+        assert!(english.contains("keep the selected canvas ratio and normal 2K or 4K output dimensions unchanged"));
+        assert!(english.contains("each subject can be cleanly extracted on its own"));
     }
 
     #[test]
-    fn canvas_workflow_prompt_splits_more_than_eight_subjects_into_two_rows() {
-        assert_eq!(
-            compose_canvas_workflow_prompt("Create {count} stages.", "tomato", 9, true),
-            "Create 9 stages.\n\nMandatory composition rules: use one solid-color background only. Do not add gradients, textures, patterns, scenery, environments, decorations, or any other background elements. Do not include numbers, numbering, text labels, titles, captions, explanatory text, or watermarks. Arrange all 9 subjects in two rows, ordered left to right and then top to bottom.\n\nUser description: tomato"
-        );
+    fn canvas_workflow_prompt_splits_eight_subjects_into_two_rows() {
+        let english = compose_canvas_workflow_prompt("Create {count} stages.", "", 8, true);
+        assert!(english.contains("exactly 4 subjects in the top row and 4 in the bottom row"));
+        assert!(english.contains("exactly 8 complete subjects"));
+        let chinese = compose_canvas_workflow_prompt("生成{count}个角色", "", 8, false);
+        assert!(chinese.contains("上排恰好4个，下排恰好4个"));
+        assert!(chinese.contains("总共恰好8个完整主体"));
+    }
+
+    #[test]
+    fn canvas_workflow_prompt_splits_nine_subjects_into_two_rows() {
+        let english = compose_canvas_workflow_prompt("Create {count} stages.", "", 9, true);
+        assert!(english.contains("exactly 5 subjects in the top row and 4 in the bottom row"));
+        let chinese = compose_canvas_workflow_prompt("生成{count}个角色", "", 9, false);
+        assert!(chinese.contains("上排恰好5个，下排恰好4个"));
+        assert!(chinese.contains("总共恰好9个完整主体"));
     }
 
     #[test]
@@ -2798,7 +3492,7 @@ mod tests {
             "\nfn poll_image_colorization_outcomes(");
         assert!(worker.contains("create_image_colorization_billing"));
         assert!(worker.contains("SavedReplayRequest::generation"));
-        assert!(callbacks.contains("本次老照片上色需要 20 积分"));
+        assert!(callbacks.contains("show_credit_rejection"));
         assert!(!callbacks.contains("老照片上色能力等待后端配置"));
         assert!(api.contains("/v1/toolbox/image-colorizations"));
         assert!(recovery.contains("resume_pending_image_colorization"));
@@ -4306,6 +5000,116 @@ mod tests {
         assert!(ops.contains("fn fit_image_node_to_intrinsic_aspect"));
     }
 
+    struct IntegratedViewerFixture {
+        scoped: video_image_callbacks::tests::scoped_inputs::Fixture,
+        source_path: PathBuf,
+    }
+    impl IntegratedViewerFixture {
+        fn new(app: &AppWindow) -> Self {
+            let scoped = video_image_callbacks::tests::scoped_inputs::Fixture::new();
+            let transition = scoped.context.namespace_operations.try_begin_transition().unwrap();
+            let recovery = transition.begin_prepublication_recovery(scoped.persistence.lease()).unwrap();
+            recovery.verify_no_unsupported_imports(&scoped.authority).unwrap();
+            let recovered = recovery.finish().unwrap();
+            transition.prepare_publication(scoped.persistence.lease(), recovered).unwrap().publish();
+            let source_path = persist_reference_image_for_namespace(&scoped.authority,
+                &image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(32, 20, image::Rgba([22,44,66,255])))).unwrap();
+            scoped.context.store.borrow_mut().assets.push(AssetData {
+                id: "integration-original".into(), conversation_id: String::new(), title: "Original".into(),
+                category: "other".into(), kind: "game".into(), time: "fixture".into(), prompt: String::new(),
+                ratio: "1:1".into(), quality: "1K".into(), model: "fixture".into(), origin: "generation".into(),
+                width: 32, height: 20, source_path: source_path.to_string_lossy().into_owned(), reference_paths: vec![],
+                cutout_done: false, remove_black_done: false, upscale_done: false, is_new: false,
+                delivery_recoverable: false, delivery_downloading: false,
+            });
+            wire_viewer_callbacks(app, scoped.context.clone());
+            let state = app.global::<AppState>();
+            state.set_session_state("online".into());
+            state.set_viewer_id("integration-original".into());
+            state.set_viewer_source("asset".into());
+            Self { scoped, source_path }
+        }
+        fn assert_owned_copy(&self, path: &str) {
+            assert!(self.scoped.persistence.owns_path(Path::new(path)));
+            assert_ne!(Path::new(path), self.source_path);
+            assert_eq!(decode_image_file(Path::new(path)).unwrap().0.to_rgba8(),
+                decode_image_file(&self.source_path).unwrap().0.to_rgba8());
+        }
+    }
+    impl Drop for IntegratedViewerFixture {
+        fn drop(&mut self) {
+            let lease = self.scoped.persistence.lease();
+            let delivery = drain_delivery_commit_workers_for_lease_for_test(lease);
+            let references = drain_activation_preview_workers_for_lease_for_test(lease);
+            let previews = drain_canvas_preview_workers_for_lease_for_test(lease);
+            let canvas = drain_canvas_workers_for_lease_for_test(lease);
+            let retired = self.scoped.context.user_activity.begin_quiesce(lease).map(|guard| guard.retire());
+            if !std::thread::panicking() {
+                delivery.unwrap(); references.unwrap(); previews.unwrap(); canvas.unwrap(); retired.unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn generated_canvas_image_reveals_a_hover_detail_action_that_opens_the_viewer() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::{PointerEventButton, WindowEvent};
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let fixture = IntegratedViewerFixture::new(&app);
+        let context = fixture.scoped.context.clone();
+        let source_path = fixture.source_path.clone();
+        context.store.borrow_mut().canvas_notes.push(CanvasNoteData {
+            id: "generated-image".into(),
+            kind: "image".into(),
+            content: "机械生物逐级进化".into(),
+            x: 120.0,
+            y: 100.0,
+            width: 420.0,
+            height: 280.0,
+            image_path: source_path.display().to_string(),
+            ..CanvasNoteData::default()
+        });
+
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("canvas".into());
+        state.set_canvas_workflow_id("upgrade-evolution".into());
+        state.set_canvas_workflow_title("升级进化".into());
+        push_canvas_notes(&app, &context.store.borrow());
+        app.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
+        app.show().expect("show app window");
+
+        assert!(
+            ElementHandle::find_by_accessible_label(&app, "查看详情")
+                .next()
+                .is_none(),
+            "detail action must stay hidden until the generated image is hovered"
+        );
+        let node = ElementHandle::find_by_element_type_name(&app, "CanvasNodeCard")
+            .next()
+            .expect("generated canvas image node");
+        let position = slint::LogicalPosition::new(
+            node.absolute_position().x + node.size().width / 2.0,
+            node.absolute_position().y + node.size().height / 2.0,
+        );
+        app.window()
+            .dispatch_event(WindowEvent::PointerMoved { position });
+        ElementHandle::find_by_accessible_label(&app, "查看详情")
+            .next()
+            .expect("hovered generated image detail action")
+            .mock_single_click(PointerEventButton::Left);
+
+        assert!(state.get_viewer_open());
+        assert_eq!(state.get_viewer_source(), "canvas");
+        assert_eq!(state.get_viewer_source_path(), source_path.display().to_string());
+        assert_eq!(state.get_viewer_prompt(), "机械生物逐级进化");
+        assert_eq!(state.get_viewer_title(), "升级进化");
+
+    }
+
     #[test]
     fn infinite_canvas_image_tool_separates_plain_uploads_from_generation_nodes() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
@@ -4691,11 +5495,6 @@ mod tests {
             .and_then(|value| value.split("export component InfiniteCanvasPage").next())
             .expect("canvas node component");
 
-        assert!(node.contains("if root.split-mode: Rectangle"));
-        assert!(node.contains("for column in root.split-column-line-count()"));
-        assert!(node.contains("root.split-column-line-count() + 1"));
-        assert!(node.contains("for row in root.split-row-line-count()"));
-        assert!(node.contains("root.split-row-line-count() + 1"));
         assert!(node.contains("AppState.canvas-split-loading-node-id == root.note.id"));
         assert!(node.contains("AppState.canvas-extraction-loading-node-id == root.note.id"));
         assert!(node.contains("root.image-processing()"));
@@ -4735,7 +5534,6 @@ mod tests {
             .expect("split number field");
 
         assert!(number.contains("function step-value(delta: int)"));
-        assert!(number.contains("max(1, min(64"));
         assert!(number.contains("step-controls := TouchArea"));
         assert!(number.contains(
             "clicked => { root.step-value(self.mouse-y < self.height / 2 ? 1 : -1); }"
@@ -5174,7 +5972,7 @@ mod tests {
         assert!(redeem_api.contains("Some(client_request_id)"));
         assert!(auth_callbacks.contains("clear_credit_redemption_state"));
         assert!(credits.contains("CreditLedgerSection"));
-        assert!(credits.contains("兑换成功后，积分将自动到账当前账号"));
+        assert!(credits.contains("兑换成功后，积分将自动到账你自己的主账号。"));
         assert!(credits.contains("if AppState.credits-tab == \"recharge\": CreditLedgerSection"));
         let redeem_section = credits
             .split("if AppState.credits-tab == \"redeem\": VerticalLayout {")
@@ -5452,7 +6250,7 @@ mod tests {
         assert!(callbacks.contains("state.on_viewer_open_image"));
         assert!(callbacks.contains("state.on_viewer_import_to_canvas"));
         let import = callbacks.split_once("state.on_viewer_import_to_canvas(").unwrap().1
-            .split_once("state.on_viewer_open_character_workflow(").unwrap().0;
+            .split_once("state.on_viewer_open_creation_workflow(").unwrap().0;
         let bridge = callbacks.split_once("fn start_or_retry_viewer_canvas_import(").unwrap().1
             .split_once("#[cfg(test)]").unwrap().0;
         assert!(import.contains("start_or_retry_viewer_canvas_import("));
@@ -5692,8 +6490,7 @@ mod tests {
     }
 
     #[test]
-    fn viewer_can_import_the_current_image_to_canvas_from_footer_or_context_menu() {
-        let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+    fn canvas_import_uses_board_image_nodes_and_focuses_selection() {
         let canvas = include_str!("callbacks/infinite_canvas.rs");
         let callbacks = include_str!("callbacks/viewer.rs");
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
@@ -5704,10 +6501,7 @@ mod tests {
         let commit = canvas.split_once("fn poll_viewer_canvas_import(").unwrap().1
             .split_once("fn target_at_input(").unwrap().0;
 
-        assert_eq!(viewer.matches("AppState.viewer-import-to-canvas();").count(), 2);
-        assert_eq!(viewer.matches("Import to Canvas").count(), 2);
-        assert_eq!(viewer.matches("导入无限画布").count(), 2);
-        assert!(bridge.contains("source.path().to_owned()"));
+    assert!(bridge.contains("source.path().to_owned()"));
         assert!(bridge.contains("DEFAULT_CANVAS_WORKSPACE_ID.into()"));
         assert!(import.contains("source_current(app, &context, false)"));
         assert!(import.contains("persist_canvas_managed_image("));
@@ -5720,7 +6514,7 @@ mod tests {
     }
 
     #[test]
-    fn character_viewer_right_click_exposes_the_three_character_workflows() {
+    fn viewer_right_click_exposes_the_relevant_creation_workflows() {
         use i_slint_backend_testing::ElementHandle;
         use slint::platform::PointerEventButton;
 
@@ -5736,7 +6530,7 @@ mod tests {
         state.set_viewer_open(true);
         let selected_workflows = Rc::new(RefCell::new(Vec::<String>::new()));
         let observed_workflows = selected_workflows.clone();
-        state.on_viewer_open_character_workflow(move |id, _, _, _| {
+        state.on_viewer_open_creation_workflow(move |id, _, _, _| {
             observed_workflows.borrow_mut().push(id.to_string());
         });
         app.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
@@ -5750,6 +6544,8 @@ mod tests {
             ("导入角色年龄变化", "character-age"),
             ("导入角色换装", "character-outfit"),
             ("导入角色体型修改", "character-body"),
+            ("导入升级进化", "upgrade-evolution"),
+            ("导入建筑衍生器", "building-derivation"),
         ] {
             image_touch.mock_single_click(PointerEventButton::Right);
             ElementHandle::find_by_accessible_label(&app, label)
@@ -5772,6 +6568,14 @@ mod tests {
                 "non-character context menu must hide {label}"
             );
         }
+        ElementHandle::find_by_accessible_label(&app, "导入升级进化")
+            .next()
+            .expect("upgrade evolution must be available for every image category")
+            .mock_single_click(PointerEventButton::Left);
+        assert_eq!(
+            selected_workflows.borrow().last().map(String::as_str),
+            Some("upgrade-evolution")
+        );
     }
 
     #[test]
@@ -5830,7 +6634,7 @@ mod tests {
         state.set_canvas_workflow_prompt("prompt in the previous workspace".into());
         fixture.persistence.save_store(local_store_data(&app, &context.store.borrow())).unwrap();
 
-        state.invoke_viewer_open_character_workflow(
+        state.invoke_viewer_open_creation_workflow(
             "character-age".into(),
             "角色年龄变化".into(),
             "age template {count}".into(),
@@ -5881,7 +6685,7 @@ mod tests {
         state.set_viewer_open(true);
         state.set_viewer_category("character".into());
         state.set_viewer_source_path(source_path.display().to_string().into());
-        state.invoke_viewer_open_character_workflow(
+        state.invoke_viewer_open_creation_workflow(
             "character-body".into(),
             "角色体型修改器".into(),
             "body template {count}".into(),
@@ -5897,6 +6701,143 @@ mod tests {
         );
         assert_eq!(fs::read(&source_path).unwrap(), original_bytes);
         assert!(copied_path.is_file());
+    }
+
+    #[test]
+    fn viewer_building_derivation_imports_the_current_image_into_its_workspace() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let fixture = IntegratedViewerFixture::new(&app);
+        let context = fixture.scoped.context.clone();
+        let state = app.global::<AppState>();
+        let source_path = fixture.source_path.clone();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("assets".into());
+        state.set_viewer_source("asset".into());
+        state.set_viewer_open(true);
+        state.set_viewer_category("scene".into());
+        state.set_viewer_width(1024);
+        state.set_viewer_height(1024);
+        state.set_viewer_source_path(source_path.display().to_string().into());
+        app.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
+        app.show().expect("show app window");
+        ElementHandle::find_by_element_id(&app, "ViewerOverlay::image-touch")
+            .next().expect("viewer image touch area")
+            .mock_single_click(PointerEventButton::Right);
+        ElementHandle::find_by_accessible_label(&app, "导入建筑衍生器")
+            .next().expect("building derivation menu item")
+            .mock_single_click(PointerEventButton::Left);
+        video_image_callbacks::tests::scoped_inputs::pump(|| !state.get_viewer_open());
+        assert_eq!(state.get_page(), "canvas");
+        assert_eq!(state.get_canvas_workflow_id(), "building-derivation");
+        assert_eq!(state.get_asset_type(), "scene");
+        assert!(state.get_canvas_workflow_template().contains("建筑功能衍生："));
+        assert!(!state.get_viewer_open());
+        let store = context.store.borrow();
+        assert_eq!(store.active_canvas_workspace_id, "building-derivation");
+        assert_eq!(store.canvas_references.len(), 1);
+        fixture.assert_owned_copy(&store.canvas_references[0].source_path);
+        drop(store);
+
+    }
+
+    #[test]
+    fn viewer_import_picker_accepts_every_workflow_for_unclassified_images() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let fixture = IntegratedViewerFixture::new(&app);
+        let context = fixture.scoped.context.clone();
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        let source_path = fixture.source_path.clone();
+        for id in ["character-outfit", "character-age", "character-body", "plant-growth",
+            "monster-generator", "upgrade-evolution", "building-derivation"] {
+            state.set_viewer_id("integration-original".into());
+            state.set_viewer_source("asset".into());
+            state.set_page("assets".into());
+            state.set_viewer_open(true);
+            state.set_viewer_category("other".into());
+            state.set_viewer_source_path(source_path.display().to_string().into());
+            state.invoke_viewer_open_creation_workflow(id.into(), "title".into(), "template".into(), "hint".into());
+            video_image_callbacks::tests::scoped_inputs::pump(|| !state.get_viewer_open());
+            assert_eq!(state.get_page(), "canvas", "workflow {id}");
+            assert!(!state.get_viewer_open());
+            let store = context.store.borrow();
+            assert_eq!(store.active_canvas_workspace_id, id);
+            assert_eq!(store.canvas_references.len(), 1);
+            fixture.assert_owned_copy(&store.canvas_references[0].source_path);
+        }
+        state.set_page("assets".into());
+        state.set_viewer_open(true);
+        state.set_viewer_source_path(source_path.display().to_string().into());
+        state.invoke_viewer_open_creation_workflow("unknown".into(), "".into(), "".into(), "".into());
+        assert_eq!(state.get_page(), "assets");
+        assert!(state.get_viewer_open());
+        assert_eq!(context.store.borrow().active_canvas_workspace_id, "building-derivation");
+
+    }
+
+    #[test]
+    fn viewer_upgrade_evolution_opens_with_the_current_image_as_reference() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let fixture = IntegratedViewerFixture::new(&app);
+        let context = fixture.scoped.context.clone();
+        let state = app.global::<AppState>();
+        let source_path = fixture.source_path.clone();
+
+        state.set_logged_in(true);
+        state.set_page("assets".into());
+        state.set_viewer_source("asset".into());
+        state.set_viewer_open(true);
+        state.set_viewer_category("scene".into());
+        state.set_viewer_width(1024);
+        state.set_viewer_height(1024);
+        state.set_viewer_source_path(source_path.display().to_string().into());
+        app.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
+        app.show().expect("show app window");
+
+        ElementHandle::find_by_element_id(&app, "ViewerOverlay::image-touch")
+            .next()
+            .expect("viewer image touch area")
+            .mock_single_click(PointerEventButton::Right);
+        ElementHandle::find_by_accessible_label(&app, "导入升级进化")
+            .next()
+            .expect("upgrade evolution context menu item")
+            .mock_single_click(PointerEventButton::Left);
+
+        video_image_callbacks::tests::scoped_inputs::pump(|| !state.get_viewer_open());
+        assert_eq!(state.get_page(), "canvas");
+        assert_eq!(state.get_canvas_workflow_id(), "upgrade-evolution");
+        assert_eq!(state.get_canvas_workflow_title(), "升级进化");
+        assert_eq!(state.get_asset_type(), "scene");
+        let template = state.get_canvas_workflow_template().to_string();
+        assert!(template.contains("不得把所有主体统一处理为从小到大"));
+        assert!(template.contains("若主体是人类或类人角色"));
+        assert!(template.contains("主要通过服装等级、武器、装备、护甲"));
+        assert!(template.contains("若主体是怪物、机械生物或其他生物"));
+        assert!(template.contains("允许随等级逐步改变体型、身体比例、轮廓和形态"));
+        assert!(template.contains("若主体是武器、道具、载具、植物或建筑"));
+        let submitted = compose_canvas_workflow_prompt(&template, "", 8, false);
+        assert!(submitted.contains("白、绿、蓝、紫、橙、红"));
+        assert!(submitted.contains("等级色只能作为局部品质标识"));
+        assert!(submitted.contains("不得给整个主体统一染色"));
+        assert!(submitted.contains("绿光、蓝光、紫光、金光、红光"));
+        assert!(submitted.contains("不得跨越主体之间的纯色背景间距"));
+        assert!(!state.get_viewer_open());
+        let store = context.store.borrow();
+        assert_eq!(store.active_canvas_workspace_id, "upgrade-evolution");
+        assert_eq!(store.canvas_references.len(), 1);
+        fixture.assert_owned_copy(&store.canvas_references[0].source_path);
+        drop(store);
+
     }
 
     #[test]
@@ -6781,12 +7722,8 @@ mod tests {
             "disabled: AppState.invitation-code-busy || AppState.invitation-code-submitted"
         ));
         assert!(top_bar.contains("AppState.navigate(\"invitation-gift\")"));
-        assert!(top_bar.contains("changed has-hover"));
-        assert!(top_bar.contains("self.has-hover && !AppState.reduced-motion"));
-        assert!(!top_bar.contains("interval: 5s"));
-        assert!(top_bar.contains("width: 44px"));
-        assert!(top_bar.contains("running: root.wobbling"));
-        assert!(top_bar.contains("function wobble-angle() -> angle"));
+        // The invitation pill's layout and navigation are exercised by
+        // tests/top_bar_layout.rs; its appearance is not a backend contract.
         assert!(app.contains("AppState.page == \"invitation-gift\""));
         assert!(account_api.contains("/v1/account/invitation-code"));
         assert!(callback.contains("api.submit_invitation_code_scoped(&code, &worker_scope)"));

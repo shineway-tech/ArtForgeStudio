@@ -358,6 +358,9 @@ export global AppState {
     in-out property <int> count: 1;
     in-out property <string> mode: "game";
     in-out property <string> generation-status: "";
+    pure callback is-generation-error(string) -> bool;
+    out property <bool> generation-status-is-error: is-generation-error(generation-status);
+    in-out property <bool> generation-feedback-dismissed: true;
     in-out property <int> image-price-1k: 0;
     in-out property <int> image-price-2k: 0;
     in-out property <int> image-price-4k: 0;
@@ -920,7 +923,8 @@ export global AppState {
     callback show-canvas-node-info(string);
     callback choose-canvas-node-image(string);
     callback extract-canvas-ui-elements(string);
-    callback split-canvas-image(string, string, string);
+    callback canvas-split-positions(int) -> [float];
+    callback split-canvas-image(string, string, string, [float], [float]);
     callback save-canvas-image(string);
     callback add-canvas-uploaded-image(float, float);
     callback undo-canvas();
@@ -934,6 +938,7 @@ export global AppState {
     callback load-more-inspiration();
     callback update-gallery-viewport(string, float, float, float, string, float, int);
     callback add-reference();
+    callback add-reference-from-asset(string) -> bool;
     callback add-reference-from-transfer(data-transfer) -> bool;
     callback clear-references();
     callback start-thumbnail-drag-preview(string) -> bool;
@@ -972,6 +977,7 @@ export global AppState {
     callback retry-generation-delivery(string);
     callback quote-generation(string);
     callback open-viewer(string, string);
+    callback open-canvas-image-detail(string, string, image, string, float, float);
     callback download-asset(string);
     callback close-viewer();
     callback viewer-prev();
@@ -993,7 +999,7 @@ export global AppState {
     callback viewer-use-same();
     callback viewer-use-reference();
     callback viewer-import-to-canvas();
-    callback viewer-open-character-workflow(string, string, string, string);
+    callback viewer-open-creation-workflow(string, string, string, string);
     callback viewer-copy-image();
     callback viewer-download-image();
     callback viewer-open-image();
