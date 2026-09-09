@@ -75,6 +75,21 @@ component CutoutPreviewPanel {
     in property <bool> result-panel: false;
     in property <bool> processing: false;
     in property <int> progress: 0;
+    in-out property <float> preview-zoom: 1.0;
+    in-out property <length> preview-pan-x: 0px;
+    in-out property <length> preview-pan-y: 0px;
+
+    function set-preview-zoom(next: float, anchor-x: length, anchor-y: length) {
+        let target = max(0.5, min(4.0, next));
+        let ratio = target / root.preview-zoom;
+        let center-x = preview-frame.width / 2;
+        let center-y = preview-frame.height / 2;
+        let next-pan-x = (root.preview-pan-x - (anchor-x - center-x)) * ratio + (anchor-x - center-x);
+        let next-pan-y = (root.preview-pan-y - (anchor-y - center-y)) * ratio + (anchor-y - center-y);
+        root.preview-zoom = target;
+        root.preview-pan-x = max(-preview-frame.max-pan-x, min(preview-frame.max-pan-x, next-pan-x));
+        root.preview-pan-y = max(-preview-frame.max-pan-y, min(preview-frame.max-pan-y, next-pan-y));
+    }
 
     Rectangle {
         min-width: 260px;
@@ -118,6 +133,10 @@ component CutoutPreviewPanel {
             border-width: 1px;
             border-color: AppTheme.border;
             clip: true;
+            property <length> image-area-width: max(1px, self.width - 24px);
+            property <length> image-area-height: max(1px, self.height - 24px);
+            property <length> max-pan-x: max(0px, (self.image-area-width * root.preview-zoom - self.width) / 2 + 12px);
+            property <length> max-pan-y: max(0px, (self.image-area-height * root.preview-zoom - self.height) / 2 + 12px);
 
             if root.result-panel: TransparencyBackground {
                 width: parent.width;
@@ -125,12 +144,51 @@ component CutoutPreviewPanel {
             }
 
             if root.has-image: Image {
-                x: 12px;
-                y: 12px;
-                width: parent.width - 24px;
-                height: parent.height - 24px;
+                x: (parent.width - self.width) / 2 + root.preview-pan-x;
+                y: (parent.height - self.height) / 2 + root.preview-pan-y;
+                width: parent.image-area-width * root.preview-zoom;
+                height: parent.image-area-height * root.preview-zoom;
                 source: root.preview;
                 image-fit: contain;
+            }
+
+            preview-zoom-touch := TouchArea {
+                enabled: root.has-image && !root.processing;
+                width: parent.width;
+                height: parent.height;
+                accessible-role: button;
+                accessible-label: root.title + (AppState.en ? " preview " : "预览 ") + round(root.preview-zoom * 100) + "%";
+                scroll-event(event) => {
+                    if event.modifiers.control && event.delta-y != 0 {
+                        root.set-preview-zoom(
+                            root.preview-zoom + (event.delta-y > 0 ? 0.1 : -0.1),
+                            self.mouse-x,
+                            self.mouse-y,
+                        );
+                        return accept;
+                    }
+                    return reject;
+                }
+            }
+
+            if root.has-image && (preview-zoom-touch.has-hover || root.preview-zoom != 1.0): Rectangle {
+                x: parent.width - 72px;
+                y: parent.height - 40px;
+                width: 60px;
+                height: 28px;
+                border-radius: 8px;
+                background: #080d18cc;
+
+                Text {
+                    width: parent.width;
+                    height: parent.height;
+                    text: round(root.preview-zoom * 100) + "%";
+                    color: #ffffff;
+                    font-size: 12px;
+                    font-weight: 400;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
             }
 
             if !root.has-image && !root.processing: Rectangle {

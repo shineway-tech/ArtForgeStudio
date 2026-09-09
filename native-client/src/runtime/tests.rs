@@ -6641,6 +6641,41 @@ mod tests {
     }
 
     #[test]
+    fn cutout_previews_zoom_only_with_control_wheel() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::{Key, WindowEvent};
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_cutout_open(true);
+        state.set_cutout_result_path("result.png".into());
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().expect("show app window");
+
+        let original = ElementHandle::find_by_accessible_label(&app, "原图预览 100%")
+            .next()
+            .expect("original cutout preview zoom surface");
+        original.scroll(0.0, 120.0);
+        assert_eq!(original.accessible_label().as_deref(), Some("原图预览 100%"));
+
+        app.window().dispatch_event(WindowEvent::KeyPressed { text: Key::Control.into() });
+        original.scroll(0.0, 120.0);
+        app.window().dispatch_event(WindowEvent::KeyReleased { text: Key::Control.into() });
+        assert_eq!(original.accessible_label().as_deref(), Some("原图预览 110%"));
+
+        let result = ElementHandle::find_by_accessible_label(&app, "透明背景结果预览 100%")
+            .next()
+            .expect("transparent result preview zoom surface");
+        app.window().dispatch_event(WindowEvent::KeyPressed { text: Key::Control.into() });
+        result.scroll(0.0, -120.0);
+        app.window().dispatch_event(WindowEvent::KeyReleased { text: Key::Control.into() });
+        assert_eq!(result.accessible_label().as_deref(), Some("透明背景结果预览 90%"));
+    }
+
+    #[test]
     fn viewer_groups_local_edit_with_image_tools_and_keeps_use_prompt() {
         let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
         let tools = viewer
