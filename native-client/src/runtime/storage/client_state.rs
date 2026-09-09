@@ -30,18 +30,36 @@ const V1_TABLES: [&str; 8] = [
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ClientStateWriteError {
     StaleLease,
+    RetirementInProgress,
+    AuthorityExhausted,
     LocalState { message: String },
 }
 impl std::fmt::Display for ClientStateWriteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::StaleLease => f.write_str("用户命名空间已失效"),
+            Self::RetirementInProgress => f.write_str("用户命名空间正在停止写入"),
+            Self::AuthorityExhausted => f.write_str("本地写入权限已关闭"),
             Self::LocalState { message } => f.write_str(message),
         }
     }
 }
 impl std::error::Error for ClientStateWriteError {}
-type WriteResult = std::result::Result<(), ClientStateWriteError>;
+pub(super) type WriteResult = std::result::Result<(), ClientStateWriteError>;
+pub(super) type StoreWriteAdmission = (UserActivityPermit, api::OrdinaryDurableCommitPermit);
+/// Retains unqueued admission. Return this error out of any latch completion
+/// before formatting or dropping it: releasing a counted guard re-enters the latch.
+pub(super) struct PreparedStoreEnqueueError {
+    error: ClientStateWriteError,
+    _admission: StoreWriteAdmission,
+}
+impl std::fmt::Debug for PreparedStoreEnqueueError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { std::fmt::Debug::fmt(&self.error, f) }
+}
+impl std::fmt::Display for PreparedStoreEnqueueError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { std::fmt::Display::fmt(&self.error, f) }
+}
+impl std::error::Error for PreparedStoreEnqueueError {}
 type Ack = Sender<WriteResult>;
 fn local_error(_: impl std::fmt::Display) -> ClientStateWriteError {
     ClientStateWriteError::LocalState {
@@ -58,15 +76,27 @@ enum ClientStateWrite {
         lease: NamespaceLease,
         acknowledgement: Ack,
     },
+    FlushForRetirement {
+        lease: NamespaceLease,
+        generation: u64,
+        acknowledgement: Ack,
+    },
     LocalStoreChecked {
         lease: NamespaceLease,
         data: LocalStoreData,
         acknowledgement: Ack,
+        admission: Option<StoreWriteAdmission>,
+    },
+    RetainedRedemptionRead {
+        lease: NamespaceLease,
+        client_request_id: String,
+        acknowledgement: Sender<std::result::Result<Option<PendingCreditRedemption>, ClientStateWriteError>>,
     },
     UserProfileChecked {
         lease: NamespaceLease,
         data: UserProfileData,
         acknowledgement: Ack,
+        admission: Option<StoreWriteAdmission>,
     },
     DeviceSettingsChecked {
         data: DeviceSettings,
@@ -91,6 +121,8 @@ struct QueuedWrite {
 struct PendingClientState {
     active: Option<NamespaceLease>,
     sequence: u64,
+    retirement: Option<u64>,
+    authority_exhausted: bool,
     local_store: Option<(u64, NamespaceLease, LocalStoreData)>,
     user_profile: Option<(u64, NamespaceLease, UserProfileData)>,
     pending_device_settings: Option<(u64, DeviceSettings)>,
@@ -106,9 +138,30 @@ impl PendingClientState {
             Err(ClientStateWriteError::StaleLease)
         }
     }
-    fn next_sequence(&mut self) -> u64 {
-        self.sequence += 1;
-        self.sequence
+    fn require_unreserved(&self) -> WriteResult {
+        if self.authority_exhausted {
+            Err(ClientStateWriteError::AuthorityExhausted)
+        } else if self.retirement.is_some() {
+            Err(ClientStateWriteError::RetirementInProgress)
+        } else {
+            Ok(())
+        }
+    }
+    fn require_enqueue(&self, lease: &NamespaceLease) -> WriteResult {
+        self.require(lease)?;
+        self.require_unreserved()
+    }
+    fn next_sequence(&mut self) -> std::result::Result<u64, ClientStateWriteError> {
+        if self.authority_exhausted {
+            return Err(ClientStateWriteError::AuthorityExhausted);
+        }
+        match self.sequence.checked_add(1) {
+            Some(sequence) => { self.sequence = sequence; Ok(sequence) }
+            None => {
+                self.authority_exhausted = true;
+                Err(ClientStateWriteError::AuthorityExhausted)
+            }
+        }
     }
     fn clear_private(&mut self) {
         self.local_store = None;
@@ -123,6 +176,58 @@ pub(super) struct ClientStateWriter {
     path: PathBuf,
     sender: Sender<QueuedWrite>,
     pending: Arc<Mutex<PendingClientState>>,
+}
+
+// Logical ownership may move between worker and UI; the mutex never does.
+// The queue generation is checked and unique for this original pending Arc.
+struct WriterRetirementReservation {
+    pending: Arc<Mutex<PendingClientState>>,
+    lease: NamespaceLease,
+    generation: u64,
+    armed: bool,
+}
+impl WriterRetirementReservation {
+    fn matches(&self, state: &PendingClientState) -> bool {
+        state.retirement == Some(self.generation) && state.active.as_ref() == Some(&self.lease)
+    }
+}
+impl Drop for WriterRetirementReservation {
+    fn drop(&mut self) {
+        if !self.armed { return; }
+        let mut state = self.pending.lock().unwrap_or_else(|poisoned| {
+            let mut state = poisoned.into_inner();
+            state.authority_exhausted = true;
+            state
+        });
+        // Clean abort only releases this reservation. It never restores a lease.
+        if self.matches(&state) { state.retirement = None; }
+    }
+}
+
+pub(super) struct FlushedWriterRetirement {
+    reservation: WriterRetirementReservation,
+}
+impl FlushedWriterRetirement {
+    pub(super) fn lease(&self) -> &NamespaceLease { &self.reservation.lease }
+    /// Consumes the acknowledged original binding; no arbitrary writer argument,
+    /// filesystem work, dispatch or acknowledgement remains after the proof.
+    pub(super) fn retire_flushed(mut self) {
+        let mut state = self.reservation.pending.lock().unwrap_or_else(|poisoned| {
+            let mut state = poisoned.into_inner();
+            state.authority_exhausted = true;
+            state
+        });
+        if self.reservation.matches(&state) {
+            state.clear_private();
+            state.active = None;
+            state.retirement = None;
+        } else {
+            // Unreachable through the sealed producer; corruption never grants
+            // admission or retires an unrelated binding.
+            state.authority_exhausted = true;
+        }
+        self.reservation.armed = false;
+    }
 }
 static CLIENT_STATE_WRITER: OnceLock<ClientStateWriter> = OnceLock::new();
 pub(super) fn client_state_path() -> PathBuf {
@@ -165,13 +270,14 @@ impl ClientStateWriter {
     }
     pub(super) fn activate(&self, lease: NamespaceLease) -> WriteResult {
         let mut pending = self.pending.lock().map_err(local_error)?;
+        pending.require_unreserved()?;
         pending.clear_private();
         pending.active = Some(lease);
         Ok(())
     }
     pub(super) fn deactivate(&self, lease: &NamespaceLease) -> WriteResult {
         let mut pending = self.pending.lock().map_err(local_error)?;
-        pending.require(lease)?;
+        pending.require_enqueue(lease)?;
         pending.clear_private();
         pending.active = None;
         Ok(())
@@ -185,9 +291,9 @@ impl ClientStateWriter {
         {
             let mut pending = self.pending.lock().map_err(local_error)?;
             if let Some(lease) = lease {
-                pending.require(lease)?;
+                pending.require_enqueue(lease)?;
             }
-            let sequence = pending.next_sequence();
+            let sequence = pending.next_sequence()?;
             self.sender
                 .send(QueuedWrite {
                     sequence,
@@ -204,8 +310,8 @@ impl ClientStateWriter {
         profile: Option<UserProfileData>,
     ) -> WriteResult {
         let mut pending = self.pending.lock().map_err(local_error)?;
-        pending.require(&lease)?;
-        let sequence = pending.next_sequence();
+        pending.require_enqueue(&lease)?;
+        let sequence = pending.next_sequence()?;
         if let Some(data) = store {
             pending.local_store = Some((sequence, lease.clone(), data));
         }
@@ -233,7 +339,7 @@ impl ClientStateWriter {
             .transpose()
             .map_err(local_error)?;
         let mut pending = self.pending.lock().map_err(local_error)?;
-        let sequence = pending.next_sequence();
+        let sequence = pending.next_sequence()?;
         if let Some(data) = settings {
             pending.pending_device_settings = Some((sequence, data.normalized()));
         }
@@ -257,10 +363,94 @@ impl ClientStateWriter {
             acknowledgement,
         })
     }
+    pub(super) fn flush_for_retirement(
+        &self,
+        lease: &NamespaceLease,
+    ) -> std::result::Result<FlushedWriterRetirement, ClientStateWriteError> {
+        let (acknowledgement, receiver) = mpsc::channel();
+        let (generation, sent) = {
+            let mut pending = self.pending.lock().map_err(local_error)?;
+            pending.require_enqueue(lease)?;
+            let generation = pending.next_sequence()?;
+            pending.retirement = Some(generation);
+            let sent = self.sender.send(QueuedWrite {
+                sequence: generation,
+                command: ClientStateWrite::FlushForRetirement {
+                    lease: lease.clone(), generation, acknowledgement,
+                },
+            });
+            (generation, sent)
+        };
+        // Construct cleanup before any fallible wait, outside the short lock.
+        let reservation = WriterRetirementReservation {
+            pending: self.pending.clone(), lease: lease.clone(), generation, armed: true,
+        };
+        sent.map_err(local_error)?;
+        receiver.recv().map_err(local_error)??;
+        {
+            let pending = self.pending.lock().map_err(local_error)?;
+            if !reservation.matches(&pending) {
+                return Err(ClientStateWriteError::StaleLease);
+            }
+        }
+        Ok(FlushedWriterRetirement { reservation })
+    }
     pub(super) fn flush_device(&self) -> WriteResult {
         self.checked(None, |acknowledgement| ClientStateWrite::FlushDevice {
             acknowledgement,
         })
+    }
+    pub(super) fn enqueue_client_state_checked_for_namespace(
+        &self, lease: &NamespaceLease, data: LocalStoreData, admission: StoreWriteAdmission,
+    ) -> std::result::Result<Receiver<WriteResult>, PreparedStoreEnqueueError> {
+        let (acknowledgement, receiver) = mpsc::channel();
+        let mut admission = Some(admission);
+        let result = (|| {
+            let mut pending = self.pending.lock().map_err(local_error)?;
+            pending.require_enqueue(lease)?;
+            let sequence = pending.next_sequence()?;
+            let command = ClientStateWrite::LocalStoreChecked {
+                lease: lease.clone(), data, acknowledgement, admission: admission.take(),
+            };
+            match self.sender.send(QueuedWrite { sequence, command }) {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    let ClientStateWrite::LocalStoreChecked { admission: returned, .. } = error.0.command else { unreachable!() };
+                    admission = returned;
+                    Err(local_error("writer unavailable"))
+                }
+            }
+        })();
+        match result {
+            Ok(()) => Ok(receiver),
+            Err(error) => Err(PreparedStoreEnqueueError { error, _admission: admission.expect("failed enqueue retains owned admission") }),
+        }
+    }
+    pub(super) fn enqueue_client_user_profile_checked_for_namespace(
+        &self, lease: &NamespaceLease, data: UserProfileData, admission: StoreWriteAdmission,
+    ) -> std::result::Result<Receiver<WriteResult>, PreparedStoreEnqueueError> {
+        let (acknowledgement, receiver) = mpsc::channel();
+        let mut admission = Some(admission);
+        let result = (|| {
+            let mut pending = self.pending.lock().map_err(local_error)?;
+            pending.require_enqueue(lease)?;
+            let sequence = pending.next_sequence()?;
+            let command = ClientStateWrite::UserProfileChecked {
+                lease: lease.clone(), data, acknowledgement, admission: admission.take(),
+            };
+            match self.sender.send(QueuedWrite { sequence, command }) {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    let ClientStateWrite::UserProfileChecked { admission: returned, .. } = error.0.command else { unreachable!() };
+                    admission = returned;
+                    Err(local_error("writer unavailable"))
+                }
+            }
+        })();
+        match result {
+            Ok(()) => Ok(receiver),
+            Err(error) => Err(PreparedStoreEnqueueError { error, _admission: admission.expect("failed enqueue retains owned admission") }),
+        }
     }
     pub(super) fn persist_client_state_checked_for_namespace(
         &self,
@@ -272,10 +462,11 @@ impl ClientStateWriter {
                 lease: lease.clone(),
                 data,
                 acknowledgement,
+                admission: None,
             }
         })
     }
-    fn persist_client_user_profile_checked_for_namespace(
+    pub(super) fn persist_client_user_profile_checked_for_namespace(
         &self,
         lease: &NamespaceLease,
         data: UserProfileData,
@@ -285,6 +476,7 @@ impl ClientStateWriter {
                 lease: lease.clone(),
                 data,
                 acknowledgement,
+                admission: None,
             }
         })
     }
@@ -308,7 +500,21 @@ impl ClientStateWriter {
             }
         })
     }
-    fn load_client_state_for_namespace(
+    pub(super) fn read_retained_redemption_checked(
+        &self, lease: &NamespaceLease, client_request_id: &str,
+    ) -> Result<Option<PendingCreditRedemption>> {
+        let (acknowledgement, receiver) = mpsc::channel();
+        {
+            let mut pending = self.pending.lock().map_err(local_error)?;
+            pending.require_enqueue(lease)?;
+            let sequence = pending.next_sequence()?;
+            self.sender.send(QueuedWrite { sequence, command: ClientStateWrite::RetainedRedemptionRead {
+                lease: lease.clone(), client_request_id: client_request_id.into(), acknowledgement,
+            }}).map_err(local_error)?;
+        }
+        receiver.recv().map_err(local_error)?.map_err(Into::into)
+    }
+    pub(super) fn load_client_state_for_namespace(
         &self,
         lease: &NamespaceLease,
     ) -> Result<Option<LocalStoreData>> {
@@ -322,7 +528,7 @@ impl ClientStateWriter {
         tx.commit()?;
         Ok(Some(data))
     }
-    fn load_client_user_profile_for_namespace(
+    pub(super) fn load_client_user_profile_for_namespace(
         &self,
         lease: &NamespaceLease,
     ) -> Result<Option<UserProfileData>> {
@@ -351,12 +557,12 @@ impl ClientStateWriter {
             .transpose()?;
         validate_export(self.data_root.as_ref(), preference)
     }
-    fn load_selected_group(&self, user: &str, device: &str) -> Result<Option<String>> {
+    pub(super) fn load_selected_group(&self, user: &str, device: &str) -> Result<Option<String>> {
         validate_uuid(user)?;
         anyhow::ensure!(!device.is_empty(), "设备标识不能为空");
         Ok(open_client_state_connection(&self.path)?.query_row("SELECT account_group_id FROM billing_context_preferences WHERE user_public_id = ?1 AND device_installation_id = ?2", params![user, device], |row| row.get(0)).optional()?)
     }
-    fn save_selected_group(&self, user: &str, device: &str, group: &str) -> Result<()> {
+    pub(super) fn save_selected_group(&self, user: &str, device: &str, group: &str) -> Result<()> {
         validate_uuid(user)?;
         validate_uuid(group)?;
         anyhow::ensure!(!device.is_empty(), "设备标识不能为空");
@@ -391,8 +597,42 @@ struct CommittedSequences {
     profile_error: Option<(NamespaceLease, ClientStateWriteError)>,
     device_error: Option<ClientStateWriteError>,
     export_error: Option<ClientStateWriteError>,
+    // Unlike the compatibility Flush errors above, these obligations cannot be
+    // consumed by an empty retry. Only an actually committed covering snapshot
+    // for the same slot and exact lease can discharge one.
+    retirement_debts: Vec<RetirementWriteDebt>,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RetirementWriteSlot { Store, Profile, Device, Export }
+struct RetirementWriteDebt {
+    slot: RetirementWriteSlot,
+    lease: Option<NamespaceLease>,
+    sequence: u64,
+    error: ClientStateWriteError,
 }
 impl CommittedSequences {
+    fn record_retirement_result(
+        &mut self, slot: RetirementWriteSlot, lease: Option<&NamespaceLease>,
+        sequence: u64, result: &WriteResult,
+    ) {
+        let existing = self.retirement_debts.iter().position(|debt| {
+            debt.slot == slot && debt.lease.as_ref() == lease
+        });
+        if let Some(index) = existing {
+            if self.retirement_debts[index].sequence > sequence { return; }
+            self.retirement_debts.remove(index);
+        }
+        if let Err(error) = result {
+            self.retirement_debts.push(RetirementWriteDebt {
+                slot, lease: lease.cloned(), sequence, error: error.clone(),
+            });
+        }
+    }
+    fn retirement_result(&self, lease: &NamespaceLease) -> WriteResult {
+        self.retirement_debts.iter()
+            .find(|debt| debt.lease.as_ref().is_none_or(|owner| owner == lease))
+            .map_or(Ok(()), |debt| Err(debt.error.clone()))
+    }
     fn take_device_error(&mut self) -> WriteResult {
         let error = self.device_error.take().or(self.export_error.take());
         error.map_or(Ok(()), Err)
@@ -441,12 +681,17 @@ fn drain_private(
     };
     let mut result = Ok(());
     if let Some((seq, lease, data)) = store {
+        let before = last.store;
         result = commit_private(connection, writer, &lease, seq, &mut last.store, |c, u| {
             write_local_store(c, u, &data)
         });
+        if result.is_err() || last.store > before {
+            last.record_retirement_result(RetirementWriteSlot::Store, Some(&lease), seq, &result);
+        }
         last.store_error = result.as_ref().err().map(|error| (lease, error.clone()));
     }
     if let Some((seq, lease, data)) = profile {
+        let before = last.profile;
         let next = commit_private(
             connection,
             writer,
@@ -455,6 +700,9 @@ fn drain_private(
             &mut last.profile,
             |c, u| write_user_profile(c, u, &data),
         );
+        if next.is_err() || last.profile > before {
+            last.record_retirement_result(RetirementWriteSlot::Profile, Some(&lease), seq, &next);
+        }
         last.profile_error = next.as_ref().err().map(|error| (lease, error.clone()));
         result = result.and(next);
     }
@@ -477,6 +725,7 @@ fn drain_device(
     if let Some((seq, data)) = settings {
         if seq > last.device {
             result = write_device_settings(connection, &data).map_err(local_error);
+            last.record_retirement_result(RetirementWriteSlot::Device, None, seq, &result);
             last.device_error = result.as_ref().err().cloned();
             if result.is_ok() {
                 last.device = seq;
@@ -487,6 +736,7 @@ fn drain_device(
         if seq > last.export {
             let next = write_export_directory(connection, writer.data_root.as_ref(), data)
                 .map_err(local_error);
+            last.record_retirement_result(RetirementWriteSlot::Export, None, seq, &next);
             last.export_error = next.as_ref().err().cloned();
             if next.is_ok() {
                 last.export = seq;
@@ -504,6 +754,22 @@ fn process_client_state_write(
 ) {
     let seq = queued.sequence;
     match queued.command {
+        ClientStateWrite::RetainedRedemptionRead { lease, client_request_id, acknowledgement } => {
+            let result = (|| {
+                // Same held connection as writes. No path resolution, open,
+                // schema migration, chmod, or WAL reconfiguration is permitted.
+                let pending = writer.pending.lock().map_err(local_error)?;
+                pending.require(&lease)?;
+                let tx = connection.transaction().map_err(local_error)?;
+                let records: Option<BTreeMap<String, PendingCreditRedemption>> =
+                    read_setting_json(&tx, lease.namespace.user_public_id(), "pending_credit_redemptions_by_owner").map_err(local_error)?;
+                let record = records.and_then(|mut rows| rows.remove(lease.namespace.user_public_id()))
+                    .filter(|row| row.client_request_id == client_request_id);
+                tx.commit().map_err(local_error)?;
+                Ok(record)
+            })();
+            let _ = acknowledgement.send(result);
+        }
         ClientStateWrite::Wake(lease) => {
             let _ = drain_private(connection, writer, &lease, last);
         }
@@ -525,40 +791,71 @@ fn process_client_state_write(
             let prior_private = last.take_private_error(&lease);
             let _ = acknowledgement.send(device.and(private).and(prior_device).and(prior_private));
         }
+        ClientStateWrite::FlushForRetirement { lease, generation, acknowledgement } => {
+            let result = (|| {
+                {
+                    let pending = writer.pending.lock().map_err(local_error)?;
+                    pending.require(&lease)?;
+                    if pending.retirement != Some(generation) {
+                        return Err(ClientStateWriteError::StaleLease);
+                    }
+                }
+                let device = drain_device(connection, writer, last);
+                let private = drain_private(connection, writer, &lease, last);
+                device.and(private).and(last.retirement_result(&lease))
+            })();
+            let _ = acknowledgement.send(result);
+        }
         ClientStateWrite::LocalStoreChecked {
             lease,
             data,
             acknowledgement,
+            admission,
         } => {
-            let _ = acknowledgement.send(commit_private(
+            let before = last.store;
+            let result = commit_private(
                 connection,
                 writer,
                 &lease,
                 seq,
                 &mut last.store,
                 |c, u| write_local_store(c, u, &data),
-            ));
+            );
+            if result.is_err() || last.store > before {
+                last.record_retirement_result(RetirementWriteSlot::Store, Some(&lease), seq, &result);
+            }
+            let _ = acknowledgement.send(result);
+            drop(admission);
         }
         ClientStateWrite::UserProfileChecked {
             lease,
             data,
             acknowledgement,
+            admission,
         } => {
-            let _ = acknowledgement.send(commit_private(
+            let before = last.profile;
+            let result = commit_private(
                 connection,
                 writer,
                 &lease,
                 seq,
                 &mut last.profile,
                 |c, u| write_user_profile(c, u, &data),
-            ));
+            );
+            if result.is_err() || last.profile > before {
+                last.record_retirement_result(RetirementWriteSlot::Profile, Some(&lease), seq, &result);
+            }
+            let _ = acknowledgement.send(result);
+            drop(admission);
         }
         ClientStateWrite::DeviceSettingsChecked {
             data,
             acknowledgement,
         } => {
             let result = if seq > last.device {
-                write_device_settings(connection, &data).map_err(local_error)
+                let result = write_device_settings(connection, &data).map_err(local_error);
+                last.record_retirement_result(RetirementWriteSlot::Device, None, seq, &result);
+                result
             } else {
                 Ok(())
             };
@@ -572,8 +869,10 @@ fn process_client_state_write(
             acknowledgement,
         } => {
             let result = if seq > last.export {
-                write_export_directory(connection, writer.data_root.as_ref(), data)
-                    .map_err(local_error)
+                let result = write_export_directory(connection, writer.data_root.as_ref(), data)
+                    .map_err(local_error);
+                last.record_retirement_result(RetirementWriteSlot::Export, None, seq, &result);
+                result
             } else {
                 Ok(())
             };
@@ -1019,6 +1318,16 @@ fn write_local_store(
     data: &LocalStoreData,
 ) -> Result<()> {
     let transaction = connection.transaction()?;
+    let previous: BTreeMap<String,SavedVideoOutput> = read_setting_json_or_default(&transaction,user_public_id,"video_outputs")?;
+    for (key,output) in &data.video_outputs {
+        output.validate()?;
+        anyhow::ensure!(key==&output.key(),"saved video key mismatch");
+    }
+    for (key,output) in &previous {
+        anyhow::ensure!(data.video_outputs.get(key)==Some(output),"retained video cannot be replaced or erased by a Store snapshot");
+    }
+    write_setting_json(&transaction,user_public_id,"video_outputs",&data.video_outputs)?;
+
     write_asset_collection(
         &transaction,
         user_public_id,
@@ -1030,6 +1339,9 @@ fn write_local_store(
     write_canvas_nodes(&transaction, user_public_id, &data.canvas_notes)?;
     write_canvas_links(&transaction, user_public_id, &data.canvas_links)?;
     write_custom_prompts(&transaction, user_public_id, data)?;
+
+    write_setting_json(&transaction, user_public_id, "pending_credit_redemptions_by_owner", &data.pending_credit_redemptions_by_owner)?;
+    write_setting_json(&transaction, user_public_id, "references", &data.references)?;
 
     write_setting_json(
         &transaction,
@@ -1415,6 +1727,9 @@ fn read_local_store_transaction(
         custom_prompts.push(prompt);
     }
     Ok(LocalStoreData {
+        video_outputs: read_setting_json_or_default(transaction,user_public_id,"video_outputs")?,
+        references: read_setting_json_or_default(transaction, user_public_id, "references")?,
+        pending_credit_redemptions_by_owner: read_setting_json_or_default(transaction, user_public_id, "pending_credit_redemptions_by_owner")?,
         generations: read_assets(transaction, user_public_id, "generation")?,
         assets: read_assets(transaction, user_public_id, "asset")?,
         notifications: read_notifications(transaction, user_public_id)?,
@@ -1705,7 +2020,7 @@ fn read_meta(connection: &Connection, user_public_id: &str, key: &str) -> Result
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use std::sync::{
         atomic::{AtomicBool, Ordering},
@@ -1727,16 +2042,25 @@ mod tests {
         std::thread::scope(|scope| scope.spawn(operation).join().unwrap())
     }
     struct DeliveryFixture {
-        repo: Fixture,
         authority: Arc<NamespaceStorageAuthority>,
         session: Arc<SessionManager>,
+        client: ApiClient,
+        activity: UserActivityGate,
+        active_namespace: Arc<Mutex<Option<NamespaceLease>>>,
         api: GenerationApi,
         index: FileIndex,
         record: PendingGenerationRecord,
         scope: BillingScope,
+        repo: Fixture,
     }
     impl DeliveryFixture {
         fn new(url: &str) -> Self {
+            Self::new_with_canvas_source(url, "")
+        }
+        fn new_with_canvas_source(url: &str, canvas_source: &str) -> Self {
+            Self::new_with_canvas_count(url,canvas_source,1)
+        }
+        fn new_with_canvas_count(url: &str, canvas_source: &str, count:i32) -> Self {
             let repo = test_repository_v2();
             let session = Arc::new(SessionManager::new(Arc::new(
                 crate::runtime::test_support::MemoryRefreshTokenStore::default(),
@@ -1764,9 +2088,8 @@ mod tests {
             let authority = Arc::new(
                 NamespaceStorageAuthority::open(repo.data_root_capability_arc(), &lease).unwrap(),
             );
-            repo.activate(lease).unwrap();
-            let api = GenerationApi::new(
-                ApiClient::new(
+            repo.activate(lease.clone()).unwrap();
+            let client = ApiClient::new(
                     ApiClientConfig {
                         base_url: reqwest::Url::parse(url).unwrap(),
                         app_version: "fixture".into(),
@@ -1779,8 +2102,12 @@ mod tests {
                     },
                     session.clone(),
                 )
-                .unwrap(),
-            );
+                .unwrap();
+            let activity = UserActivityGate::default();
+            activity.activate(lease.clone()).unwrap();
+            let active_namespace=Arc::new(Mutex::new(Some(lease)));
+            client.bind_user_work(UserWorkAdmission::new(active_namespace.clone(), activity.clone())).unwrap();
+            let api = GenerationApi::new(client.clone());
             let index = FileIndex::initialize(repo.directory.path().join("index.sqlite3")).unwrap();
             let record: PendingGenerationRecord = serde_json::from_value(serde_json::json!({
                 "schema_version":2, "created_at_epoch_ms":1,
@@ -1790,7 +2117,8 @@ mod tests {
                 "raw_prompt":"raw prompt", "generation_prompt":"generated prompt",
                 "task_type":"image_generation", "category":"scene", "mode":"game",
                 "ratio":"1:1", "quality":"1K", "model_code":"image-model",
-                "conversation_id":"delivery-conversation", "count":1,
+                "conversation_id":"delivery-conversation", "count":count,
+                "canvas_source_node_id":canvas_source,
                 "create_conversation":false, "lineage_reference_paths":["captured/reference.png"]
             }))
             .unwrap();
@@ -1799,11 +2127,31 @@ mod tests {
                 repo,
                 authority,
                 session,
+                client, activity, active_namespace,
                 api,
                 index,
                 record,
                 scope,
             }
+        }
+        fn bound_context(&self) -> AppContext {
+            let context=AppContext {
+                backend:Some(Arc::new(BackendRuntime{api:self.client.clone()})),
+                data_root_capability:Some(self.repo.data_root_capability_arc()),file_index:Some(self.index.clone()),
+                user_activity:self.activity.clone(),active_namespace:self.active_namespace.clone(),
+                current_user_id:Arc::new(Mutex::new(Some(USER_A.into()))),
+                account_snapshot_scope:Arc::new(Mutex::new(Some(self.scope.request.session.clone()))),
+                ..Default::default()
+            };
+            let transition=context.namespace_operations.try_begin_transition().unwrap();
+            let phase=transition.begin_prepublication_recovery(self.authority.lease()).unwrap();
+            phase.verify_no_unsupported_imports(&self.authority).unwrap();
+            let proof=phase.finish().unwrap();
+            transition.prepare_publication(self.authority.lease(),proof).unwrap().publish();
+            context.store.borrow_mut().private_persistence=Some(PrivatePersistence::for_test_with_storage(
+                self.repo.writer.clone(),self.authority.lease().clone(),self.activity.clone(),self.client.upgrade_latch().clone(),
+                self.repo.data_root_capability_arc(),self.client.clone(),self.index.clone()));
+            context
         }
         fn prepare(&self) -> std::result::Result<PreparedNamespaceDelivery, DeliveryRetryError> {
             run_owned_worker(|| {
@@ -1840,6 +2188,13 @@ mod tests {
             mut detail: serde_json::Value,
             blob: Vec<u8>,
             ack_ok: bool,
+        ) -> Self {
+            Self::start_controlled(listener,base,fixture,detail,blob,ack_ok,2,None)
+        }
+        fn start_controlled(
+            listener: std::net::TcpListener, base: &str, fixture: &DeliveryFixture,
+            mut detail: serde_json::Value, blob: Vec<u8>, ack_ok: bool,
+            expected_assets: i64, mut before_ack_response: Option<Box<dyn FnOnce()+Send>>,
         ) -> Self {
             use std::io::Write;
             let winner = detail.as_object_mut().unwrap().remove("_fixture_winner");
@@ -1912,7 +2267,7 @@ mod tests {
                             )
                             .unwrap();
                         let records = load_pending_generations_for_namespace(&authority).unwrap();
-                        assets == 2
+                        assets == expected_assets
                             && notifications == 1
                             && records.len() == 1
                             && records[0].billing_account_group_id == GROUP_A
@@ -1944,6 +2299,7 @@ mod tests {
                     } else {
                         body.len()
                     };
+                    if is_ack { if let Some(hook)=before_ack_response.take(){hook();} }
                     write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/octet-stream\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n").unwrap();
                     // An invalidating client may close early; teardown must still join.
                     let _ = stream.write_all(&body);
@@ -1969,6 +2325,178 @@ mod tests {
             }
         }
     }
+// Appended to client_state::tests. Uses the existing held namespace, actual
+// SQLite writer, controlled delivery HTTP and joined family fixtures.
+fn cutout_delivery_fixture(url: &str, subject: &str) -> DeliveryFixture {
+    use sha2::Digest;
+    let mut f = DeliveryFixture::new(url);
+    f.authority=Arc::new(NamespaceStorageAuthority::open_active(f.repo.data_root_capability_arc(),
+        f.authority.lease(),f.client.clone(),f.index.clone()).unwrap());
+    let image = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(80,80,image::Rgba([17,41,89,255])));
+    let source = persist_reference_image_for_namespace(&f.authority,&image).unwrap();
+    let bytes = f.authority.read_image_source(&source,100*1024*1024).unwrap();
+    f.record.task_type="image_cutout".into();f.record.quality=subject.into();
+    f.record.category="other".into();f.record.raw_prompt="original source".into();
+    f.record.reference_paths=vec![source.to_str().unwrap().into()];
+    f.record.reference_sha256=vec![format!("{:x}",sha2::Sha256::digest(&bytes))];
+    f.record.reference_size_bytes=vec![bytes.len() as u64];
+    f.record.lineage_reference_paths=f.record.reference_paths.clone();
+    upsert_pending_generation_for_namespace(&f.authority,&f.scope,f.record.clone()).unwrap();
+    f
+}
+fn cutout_mask() -> Vec<u8> {
+    let image=image::DynamicImage::ImageLuma8(image::GrayImage::from_pixel(80,80,image::Luma([127])));
+    let mut output=std::io::Cursor::new(Vec::new());image.write_to(&mut output,image::ImageFormat::Png).unwrap();output.into_inner()
+}
+fn cutout_detail(bytes:&[u8])->serde_json::Value {
+    use sha2::Digest;
+    let mut detail=delivery_detail();detail["type"]="image_cutout".into();
+    detail["items"][0]["file"]["sha256"]=format!("{:x}",sha2::Sha256::digest(bytes)).into();
+    detail["items"][0]["file"]["size_bytes"]=bytes.len().to_string().into();detail
+}
+fn prepare_cutout_fixture(f:&DeliveryFixture)->std::result::Result<PreparedNamespaceDelivery,DeliveryRetryError>{
+    run_owned_worker(||prepare_namespace_cutout_delivery(&f.api,f.authority.clone(),f.index.clone(),&f.record.identity(),0))
+}
+#[test]
+fn core_cutout_derived_pixels_and_store_ack_keep_original_remote_confirmation(){
+    use sha2::Digest;
+    i_slint_backend_testing::init_no_event_loop();let app=AppWindow::new().unwrap();
+    let(listener,url)=backend_generation::billing_capture_test_support::listener();
+    let f=cutout_delivery_fixture(&url,"skin");let context=f.bound_context();let mask=cutout_mask();
+    let original_hash=format!("{:x}",sha2::Sha256::digest(&mask));
+    let server=DeliveryServer::start_controlled(listener,&url,&f,cutout_detail(&mask),mask.clone(),true,1,None);
+    let _drain=DeliveryFamilyDrain;
+    let prepared=prepare_cutout_fixture(&f).unwrap();let path=prepared.source_path().to_owned();
+    assert_ne!(path,f.output().to_string_lossy());assert!(path.ends_with("-cutout-v1.png"));
+    assert_eq!(prepared.confirmation().sha256,original_hash);assert_eq!(prepared.confirmation().size_bytes,mask.len() as u64);
+    let derived=std::fs::read(&path).unwrap();assert_ne!(format!("{:x}",sha2::Sha256::digest(&derived)),original_hash);
+    let pixels=image::load_from_memory(&derived).unwrap().to_rgba8();assert_eq!(pixels.get_pixel(1,1).0,[17,41,89,127]);
+    f.repo.private_paused.store(true,Ordering::SeqCst);let _resume=DeliveryWriterResume(f.repo.private_paused.clone());
+    let done=Rc::new(Cell::new(false));let observed=done.clone();
+    start_image_delivery_commit(&app,context.clone(),prepared,"now".into(),move|_,result|{assert!(result.unwrap().2);observed.set(true);});
+    assert!(!done.get());assert!(f.repo.load_client_state_for_namespace(f.authority.lease()).unwrap().is_none());
+    assert_eq!(context.store.borrow().assets[0].source_path,path);assert!(context.store.borrow().generations.is_empty());
+    f.repo.resume_private_writer();pump_delivery_fixture(||done.get());
+    let saved=f.repo.load_client_state_for_namespace(f.authority.lease()).unwrap().unwrap();
+    assert_eq!(saved.assets.len(),1);assert_eq!(saved.assets[0].source_path,path);assert!(saved.assets[0].cutout_done);
+    assert_eq!(saved.assets[0].origin,"image_cutout");assert_eq!(f.recovery(),serde_json::json!([]));
+    assert_eq!(std::fs::read(f.output()).unwrap(),mask);assert!(Path::new(&f.record.reference_paths[0]).exists());
+    let requests=server.finish();let acknowledgments=requests.iter().filter(|request|request.0.starts_with("POST ")).collect::<Vec<_>>();
+    assert_eq!(acknowledgments.len(),1);assert!(acknowledgments[0].1,"real SQLite state must precede remote ack");
+    let body:serde_json::Value=serde_json::from_str(acknowledgments[0].0.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    assert_eq!(body["sha256"],original_hash);assert_eq!(body["size_bytes"],mask.len() as u64);
+}
+#[test]
+fn core_cutout_derived_index_crash_window_reuses_verified_files_without_redownload(){
+    let(listener,url)=backend_generation::billing_capture_test_support::listener();
+    let f=cutout_delivery_fixture(&url,"sky");let mask=cutout_mask();
+    let server=DeliveryServer::start_controlled(listener,&url,&f,cutout_detail(&mask),mask,true,1,None);
+    let index=Connection::open(f.repo.directory.path().join("index.sqlite3")).unwrap();
+    index.execute_batch("CREATE TRIGGER fail_cutout_index BEFORE INSERT ON managed_files WHEN NEW.path LIKE '%-cutout-v1.png' BEGIN SELECT RAISE(FAIL,'controlled derived index failure'); END;").unwrap();
+    let before=f.recovery();assert!(prepare_cutout_fixture(&f).is_err());assert_eq!(f.recovery(),before);
+    let derived=f.authority.lease().namespace.path(ManagedUserArea::Output).join(format!("{DELIVERY_FILE}-cutout-v1.png"));
+    let bytes=std::fs::read(&derived).unwrap();let mask_bytes=std::fs::read(f.output()).unwrap();
+    index.execute_batch("DROP TRIGGER fail_cutout_index").unwrap();
+    let prepared=prepare_cutout_fixture(&f).unwrap();assert_eq!(prepared.source_path(),derived.to_str().unwrap());
+    assert_eq!(std::fs::read(&derived).unwrap(),bytes);assert_eq!(std::fs::read(f.output()).unwrap(),mask_bytes);
+    let requests=server.finish();assert_eq!(requests.iter().filter(|r|r.0.starts_with("GET /blob ")).count(),1);
+    assert!(!requests.iter().any(|r|r.0.starts_with("POST ")));assert_eq!(f.recovery(),before);
+}
+#[test]
+fn core_cutout_stale_input_and_derived_collision_preserve_original_files_and_row(){
+    for collision in [false,true] {
+        let(listener,url)=backend_generation::billing_capture_test_support::listener();
+        let f=cutout_delivery_fixture(&url,"skin");let mask=cutout_mask();
+        let server=DeliveryServer::start_controlled(listener,&url,&f,cutout_detail(&mask),mask,true,1,None);
+        let before=f.recovery();let derived=f.authority.lease().namespace.path(ManagedUserArea::Output).join(format!("{DELIVERY_FILE}-cutout-v1.png"));
+        let changed=if collision{derived}else{PathBuf::from(&f.record.reference_paths[0])};
+        std::fs::write(&changed,b"preserved replacement sentinel").unwrap();
+        assert!(prepare_cutout_fixture(&f).is_err());assert_eq!(std::fs::read(&changed).unwrap(),b"preserved replacement sentinel");
+        assert_eq!(f.recovery(),before);assert!(!server.finish().iter().any(|r|r.0.starts_with("POST ")));
+    }
+}
+
+#[cfg(unix)]
+struct CutoutRecoveryPermissions { path:PathBuf, permissions:std::fs::Permissions }
+#[cfg(unix)]
+impl Drop for CutoutRecoveryPermissions { fn drop(&mut self) {
+    if let Err(error)=std::fs::set_permissions(&self.path,self.permissions.clone()){
+        if std::thread::panicking(){eprintln!("controlled Recovery fixture permission restoration failed during unwind: {error}");}
+        else{panic!("controlled Recovery fixture permission restoration failed: {error}");}
+    }
+} }
+
+#[cfg(unix)]
+fn assert_cutout_atomic_settle_rejection(case:&'static str){
+    use std::os::unix::fs::PermissionsExt;
+    i_slint_backend_testing::init_no_event_loop();let app=AppWindow::new().unwrap();
+    let(listener,url)=backend_generation::billing_capture_test_support::listener();
+    let f=cutout_delivery_fixture(&url,"skin");let context=f.bound_context();let mask=cutout_mask();
+    let recovery_dir=f.authority.lease().namespace.path(ManagedUserArea::Recovery);
+    let recovery_path=recovery_dir.join("pending-generations.json");
+    let permissions=CutoutRecoveryPermissions{path:recovery_dir.clone(),permissions:std::fs::metadata(&recovery_dir).unwrap().permissions()};
+    let expected=Arc::new(Mutex::new(None::<Vec<u8>>));let observed=expected.clone();
+    let captured_path=recovery_path.clone();
+    let hook=Box::new(move||{
+        let mut bytes=std::fs::read(&captured_path).unwrap();
+        if case=="write-failure" {std::fs::set_permissions(&recovery_dir,std::fs::Permissions::from_mode(0o500)).unwrap();}
+        else {
+            let mut document:serde_json::Value=serde_json::from_slice(&bytes).unwrap();let row=&mut document["generations"][0];
+            match case {
+                "stale-input"=>row["reference_sha256"][0]="00".repeat(32).into(),
+                "wrong-confirmation"=>row["deliveries"][0]["sha256"]="00".repeat(32).into(),
+                "wrong-path"=>row["deliveries"][0]["local_path"]="different nonempty untrusted display path".into(),
+                "extra-delivery"=>{let mut extra=row["deliveries"][0].clone();extra["file_id"]="44444444-4444-4444-8444-444444444444".into();extra["item_index"]=1.into();row["deliveries"].as_array_mut().unwrap().push(extra);},
+                "duplicate-delivery"=>{let duplicate=row["deliveries"][0].clone();row["deliveries"].as_array_mut().unwrap().push(duplicate);},
+                _=>panic!("unknown controlled cutout case"),
+            }
+            bytes=serde_json::to_vec_pretty(&document).unwrap();std::fs::write(&captured_path,&bytes).unwrap();
+        }
+        *observed.lock().unwrap()=Some(bytes);
+    });
+    let server=DeliveryServer::start_controlled(listener,&url,&f,cutout_detail(&mask),mask,true,1,Some(hook));
+    let _drain=DeliveryFamilyDrain;
+    let prepared=prepare_cutout_fixture(&f).unwrap();let output=prepared.source_path().to_owned();
+    let done=Rc::new(Cell::new(false));let observed=done.clone();
+    start_image_delivery_commit(&app,context.clone(),prepared,"now".into(),move|_,result|{
+        assert!(!result.unwrap().2,"rejected atomic settle must not claim completed cleanup");observed.set(true);
+    });
+    pump_delivery_fixture(||done.get());
+    let expected=expected.lock().unwrap().clone().expect("real remote ack hook must execute");
+    assert_eq!(std::fs::read(&recovery_path).unwrap(),expected,"failed atomic settle changed retained bytes");
+    assert!(Path::new(&f.record.reference_paths[0]).exists());assert!(Path::new(&output).exists());assert!(f.output().exists());
+    assert_eq!(context.store.borrow().assets.len(),1);assert!(context.store.borrow().generations.is_empty());
+    drop(permissions);
+    if case=="write-failure" {
+        let prepared=prepare_cutout_fixture(&f).unwrap();
+        let retry=Rc::new(Cell::new(false));let observed=retry.clone();
+        start_image_delivery_commit(&app,context.clone(),prepared,"retry".into(),move|_,result|{assert!(result.unwrap().2);observed.set(true);});
+        pump_delivery_fixture(||retry.get());
+        assert_eq!(f.recovery(),serde_json::json!([]));assert_eq!(context.store.borrow().assets.len(),1);
+    }
+    let requests=server.finish();let acknowledgments=requests.iter().filter(|r|r.0.starts_with("POST ")).collect::<Vec<_>>();
+    assert_eq!(acknowledgments.len(),if case=="write-failure"{2}else{1});
+    assert!(acknowledgments.iter().all(|ack|ack.1),"real Store ack must precede original remote ack");
+}
+#[cfg(unix)]
+#[test]
+fn core_cutout_atomic_settle_rejects_changed_original_input_after_real_remote_ack(){assert_cutout_atomic_settle_rejection("stale-input");}
+#[cfg(unix)]
+#[test]
+fn core_cutout_atomic_settle_rejects_wrong_original_confirmation_after_real_remote_ack(){assert_cutout_atomic_settle_rejection("wrong-confirmation");}
+#[cfg(unix)]
+#[test]
+fn core_cutout_atomic_settle_rejects_duplicate_delivery_after_real_remote_ack(){assert_cutout_atomic_settle_rejection("duplicate-delivery");}
+#[cfg(unix)]
+#[test]
+fn core_cutout_atomic_settle_disk_failure_preserves_all_input_and_delivery_fields(){assert_cutout_atomic_settle_rejection("write-failure");}
+#[cfg(unix)]
+#[test]
+fn core_cutout_atomic_settle_rejects_changed_original_mask_path_after_real_remote_ack(){assert_cutout_atomic_settle_rejection("wrong-path");}
+#[cfg(unix)]
+#[test]
+fn core_cutout_atomic_settle_rejects_extra_out_of_count_delivery_after_real_remote_ack(){assert_cutout_atomic_settle_rejection("extra-delivery");}
+
     fn delivery_detail() -> serde_json::Value {
         serde_json::json!({
             "id":DELIVERY_TASK, "billing_account_group_id":GROUP_A, "status":"completed",
@@ -2104,7 +2632,7 @@ mod tests {
             "mismatched",
             "missing-task",
             "video",
-            "canvas",
+            "invalid-canvas-task",
             "invalid-index",
         ] {
             let (listener, url) = backend_generation::billing_capture_test_support::listener();
@@ -2133,11 +2661,15 @@ mod tests {
                 }
                 "missing-task" => f.record.server_task_id.clear(),
                 "video" => f.record.task_type = "video_generation".into(),
-                "canvas" => f.record.canvas_source_node_id = "node".into(),
+                "invalid-canvas-task" => {
+                    // Canvas output is supported only for image_generation.
+                    f.record.task_type = "image_edit".into();
+                    f.record.canvas_source_node_id = "node".into();
+                },
                 "invalid-index" => item_index = 1,
                 _ => unreachable!(),
             }
-            if matches!(case, "missing-task" | "video" | "canvas") {
+            if matches!(case, "missing-task" | "video" | "invalid-canvas-task") {
                 upsert_pending_generation_for_namespace(&f.authority, &f.scope, f.record.clone())
                     .unwrap();
             }
@@ -2285,6 +2817,583 @@ mod tests {
             }
         }
     }
+
+
+
+    fn assert_canvas_owned_output(reject_first:bool) {
+        i_slint_backend_testing::init_no_event_loop();let app=AppWindow::new().unwrap();
+        let (listener,url)=backend_generation::billing_capture_test_support::listener();
+        let f=DeliveryFixture::new_with_canvas_source(&url,"original-canvas-source");let context=f.bound_context();
+        let persistence=context.store.borrow().private_persistence.clone().unwrap();
+        struct Drain(PrivatePersistence,AppContext);impl Drop for Drain{fn drop(&mut self){
+            {let mut active=self.1.active_namespace.lock().unwrap();if active.as_ref()==Some(self.0.lease()){*active=None;}}
+            let delivery=drain_delivery_commit_workers_for_lease_for_test(self.0.lease());
+            let preview=drain_activation_preview_workers_for_lease_for_test(self.0.lease());
+            let quiet=self.1.user_activity.begin_quiesce(self.0.lease());
+            if !std::thread::panicking(){delivery.unwrap();preview.unwrap();quiet.unwrap();}
+        }}
+        let _drain=Drain(persistence.clone(),context.clone());
+        {
+            let mut store=context.store.borrow_mut();store.active_canvas_workspace_id="canvas-A".into();
+            store.canvas_notes.push(CanvasNoteData{id:"original-canvas-source".into(),kind:"note".into(),content:"original source".into(),
+                x:10.0,y:20.0,width:200.0,height:150.0,..Default::default()});
+        }
+        app.global::<AppState>().set_page("canvas".into());
+        persistence.save_store(local_store_data(&app,&context.store.borrow())).unwrap();
+        let writer=f.repo.writer.clone();let lease=persistence.lease().clone();let acked=Arc::new(AtomicBool::new(false));let seen=acked.clone();
+        let server=DeliveryServer::start_controlled(listener,&url,&f,delivery_detail(),DELIVERY_PNG.to_vec(),true,1,Some(Box::new(move||{
+            let saved=writer.load_client_state_for_namespace(&lease).unwrap().unwrap();
+            assert_eq!(saved.active_canvas_workspace_id,"canvas-B");
+            assert_eq!(saved.assets.len(),1);assert_eq!(saved.assets[0].category,"other");assert!(saved.generations.is_empty());
+            assert_eq!(saved.canvas_workspaces["canvas-A"].notes.len(),2);
+            assert!(saved.canvas_workspaces["canvas-A"].notes.iter().any(|note|note.image_path==saved.assets[0].source_path));
+            assert_eq!(saved.canvas_notes.len(),1);assert_eq!(saved.canvas_notes[0].id,"unrelated-B");
+            seen.store(true,Ordering::Release);
+        })));
+        let authority=persistence.storage_authority().unwrap();
+        let prepared=run_owned_worker(||prepare_runtime_image_delivery(&f.api,authority,&f.record.client_request_id,0))
+            .unwrap().expect("actual Canvas output must use namespace proof, not raw staging fallback");
+        {
+            let mut store=context.store.borrow_mut();switch_canvas_workspace(&mut store,"original prompt","canvas-B");
+            store.canvas_notes.push(CanvasNoteData{id:"unrelated-B".into(),content:"later workspace".into(),..Default::default()});
+        }
+        if reject_first {f.repo.connection().execute_batch("CREATE TRIGGER reject_canvas_output BEFORE INSERT ON assets BEGIN SELECT RAISE(ABORT,'controlled output failure'); END;").unwrap();}
+        let completed=Rc::new(RefCell::new(None));let observed=completed.clone();
+        start_image_delivery_commit(&app,context.clone(),prepared,"fixture".into(),move|_,result|{*observed.borrow_mut()=Some(result.is_ok());});
+        pump_delivery_fixture(||completed.borrow().is_some());
+        if reject_first {
+            assert_eq!(*completed.borrow(),Some(false));assert!(!acked.load(Ordering::Acquire));
+            let saved=f.repo.load_client_state_for_namespace(persistence.lease()).unwrap().unwrap();
+            assert!(saved.assets.is_empty());assert_eq!(saved.canvas_notes.len(),1);
+            assert_eq!(context.store.borrow().canvas_workspaces["canvas-A"].notes.len(),2,"failed ack retains exact staged node");
+            assert!(f.output().is_file());
+            f.repo.connection().execute_batch("DROP TRIGGER reject_canvas_output").unwrap();
+            context.store.borrow_mut().custom_prompts.push("later edit survives retry".into());
+            let authority=persistence.storage_authority().unwrap();
+            let prepared=run_owned_worker(||prepare_runtime_image_delivery(&f.api,authority,&f.record.client_request_id,0)).unwrap().unwrap();
+            *completed.borrow_mut()=None;let observed=completed.clone();
+            start_image_delivery_commit(&app,context.clone(),prepared,"retry".into(),move|_,result|{*observed.borrow_mut()=Some(result.is_ok());});
+            pump_delivery_fixture(||completed.borrow().is_some());
+            assert!(f.repo.load_client_state_for_namespace(persistence.lease()).unwrap().unwrap().custom_prompts.contains(&"later edit survives retry".into()));
+        }
+        assert_eq!(*completed.borrow(),Some(true));assert!(acked.load(Ordering::Acquire));
+        assert_eq!(context.store.borrow().canvas_workspaces["canvas-A"].notes.len(),2);
+        assert!(load_pending_generations_for_namespace(&f.authority).unwrap().is_empty());
+        assert_eq!(std::fs::read(f.output()).unwrap(),DELIVERY_PNG);
+        let requests=server.finish();assert_eq!(requests.iter().filter(|(head,_)|head.starts_with("POST ")).count(),1);
+    }
+    #[test]
+    fn core_canvas_actual_owned_output_commits_original_workspace_before_remote_ack(){assert_canvas_owned_output(false);}
+    #[test]
+    fn core_canvas_actual_owned_output_failed_ack_retries_current_store_without_duplicate_nodes(){assert_canvas_owned_output(true);}
+
+    #[test]
+    fn core_canvas_first_success_item_one_fills_original_placeholder_before_item_zero() {
+        i_slint_backend_testing::init_no_event_loop();let app=AppWindow::new().unwrap();
+        let (listener,url)=backend_generation::billing_capture_test_support::listener();
+        let f=DeliveryFixture::new_with_canvas_count(&url,"original-canvas-source",2);let context=f.bound_context();
+        let persistence=context.store.borrow().private_persistence.clone().unwrap();
+        struct Drain(PrivatePersistence,AppContext);impl Drop for Drain{fn drop(&mut self){
+            {let mut active=self.1.active_namespace.lock().unwrap();if active.as_ref()==Some(self.0.lease()){*active=None;}}
+            let delivery=drain_delivery_commit_workers_for_lease_for_test(self.0.lease());
+            let preview=drain_activation_preview_workers_for_lease_for_test(self.0.lease());
+            let quiet=self.1.user_activity.begin_quiesce(self.0.lease());
+            if !std::thread::panicking(){delivery.unwrap();preview.unwrap();quiet.unwrap();}
+        }}
+        let _drain=Drain(persistence.clone(),context.clone());
+        context.store.borrow_mut().canvas_notes.push(CanvasNoteData{id:"original-canvas-source".into(),kind:"image".into(),
+            x:10.0,y:20.0,width:340.0,height:250.0,..Default::default()});
+        context.generations.active.borrow_mut().insert("scene".into(),ActiveGeneration{
+            task_id:f.record.local_task_id.clone(),destination:GenerationDestination::Canvas{source_node_id:"original-canvas-source".into()},
+            session_scope:f.scope.request.session.clone(),..Default::default()});
+        let state=app.global::<AppState>();state.set_page("canvas".into());state.set_canvas_generation_loading_node_id("original-canvas-source".into());
+        persistence.save_store(local_store_data(&app,&context.store.borrow())).unwrap();
+        const OTHER_FILE:&str="33333333-3333-4333-8333-333333333333";
+        let mut detail=delivery_detail();detail["requested_count"]=2.into();detail["success_count"]=2.into();
+        let mut second=detail["items"][0].clone();second["index"]=1.into();second["file"]["id"]=OTHER_FILE.into();
+        second["file"]["download_url"]=format!("{url}blob").into();detail["items"].as_array_mut().unwrap().push(second);
+        let server=DeliveryServer::start_controlled(listener,&url,&f,detail,DELIVERY_PNG.to_vec(),true,2,None);
+        let first_path=f.authority.lease().namespace.path(ManagedUserArea::Output).join(format!("{OTHER_FILE}.png"));
+        for index in [1,0] {
+            let prepared=run_owned_worker(||prepare_runtime_image_delivery(&f.api,persistence.storage_authority().unwrap(),&f.record.client_request_id,index)).unwrap().unwrap();
+            let done=Rc::new(RefCell::new(None));let observed=done.clone();
+            start_image_delivery_commit_captured(&app,context.clone(),persistence.clone(),prepared,"fixture".into(),
+                move|_,result|{*observed.borrow_mut()=Some(result.map(|(_,_,ack)|ack));});
+            pump_delivery_fixture(||done.borrow().is_some());
+            assert_eq!(done.borrow_mut().take().unwrap().unwrap(),true);
+            let saved=f.repo.load_client_state_for_namespace(persistence.lease()).unwrap().unwrap();
+            assert_eq!(saved.canvas_notes.len(),if index==1{1}else{2});
+            assert!(saved.canvas_notes.iter().all(|note|note.kind!="image" || !note.image_path.is_empty()));
+            assert_eq!(saved.canvas_notes.iter().find(|note|note.id=="original-canvas-source").unwrap().image_path,first_path.to_str().unwrap());
+            assert_eq!(state.get_canvas_generation_loading_node_id(),"");
+        }
+        let saved=f.repo.load_client_state_for_namespace(persistence.lease()).unwrap().unwrap();
+        assert_eq!(saved.assets.len(),2);assert!(saved.assets.iter().all(|asset|asset.category=="other"));assert!(saved.generations.is_empty());
+        assert_eq!(saved.canvas_links.len(),1);assert_eq!(std::fs::read(first_path).unwrap(),DELIVERY_PNG);
+        assert_eq!(std::fs::read(f.output()).unwrap(),DELIVERY_PNG);assert!(load_pending_generations_for_namespace(&f.authority).unwrap().is_empty());
+        let requests=server.finish();assert_eq!(requests.iter().filter(|(request,_)|request.starts_with("POST ")).count(),2);
+    }
+
+    struct DeliveryWriterResume(Arc<AtomicBool>);
+    impl Drop for DeliveryWriterResume {
+        fn drop(&mut self){self.0.store(false,Ordering::SeqCst);}
+    }
+    struct DeliveryFamilyDrain;
+    impl Drop for DeliveryFamilyDrain {
+        fn drop(&mut self){
+            let delivery=drain_delivery_commit_workers_for_shutdown();
+            let previews=drain_activation_preview_workers_for_shutdown();
+            if !std::thread::panicking(){
+                assert!(delivery.is_ok(),"delivery fixture workers failed to join");
+                assert!(previews.is_ok(),"delivery preview fixture workers failed to join");
+            }
+        }
+    }
+    fn pump_delivery_fixture(mut ready:impl FnMut()->bool) {
+        let deadline=Instant::now()+Duration::from_secs(5);
+        while !ready() && Instant::now()<deadline {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(50));
+            slint::platform::update_timers_and_animations();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(ready(),"actual delivery worker completion missing");
+    }
+
+    #[test]
+    fn core_delivery_registered_worker_panic_is_sticky_after_actual_reap_and_empty_shutdown() {
+        let (_listener,url)=backend_generation::billing_capture_test_support::listener();
+        let f=DeliveryFixture::new(&url);let context=f.bound_context();
+        let persistence=context.store.borrow().private_persistence.clone().unwrap();
+        let (cancel,receiver)=spawn_delivery_preparation::<()>(&persistence,|_,_,_|panic!("controlled delivery worker panic")).unwrap();
+        assert!(receiver.recv_timeout(Duration::from_secs(3)).is_err());
+        let deadline=Instant::now()+Duration::from_secs(3);
+        while delivery_preparation_pending(&cancel) && Instant::now()<deadline{std::thread::yield_now();}
+        assert!(!delivery_preparation_pending(&cancel));
+        assert!(drain_delivery_commit_workers_for_shutdown().is_err());
+        assert!(drain_delivery_commit_workers_for_shutdown().is_err());
+    }
+    #[test]
+    fn core_delivery_after_send_panic_rejects_new_work_after_actual_reap() {
+        let (_listener,url)=backend_generation::billing_capture_test_support::listener();
+        let f=DeliveryFixture::new(&url);let context=f.bound_context();
+        let persistence=context.store.borrow().private_persistence.clone().unwrap();
+        set_delivery_preparation_after_send_for_test(||panic!("controlled delivery after-send panic"));
+        let (cancel,receiver)=spawn_delivery_preparation(&persistence,|_,_,_|Ok(7usize)).unwrap();
+        assert_eq!(receiver.recv_timeout(Duration::from_secs(3)).unwrap().unwrap(),7);
+        let deadline=Instant::now()+Duration::from_secs(3);
+        while delivery_preparation_pending(&cancel) && Instant::now()<deadline {std::thread::yield_now();}
+        assert!(!delivery_preparation_pending(&cancel));
+        let successor=spawn_delivery_preparation::<()>(&persistence,|_,_,_|Ok(()));
+        let admitted=successor.is_ok();
+        drop(successor);
+        // Join every actual handle before any assertion can unwind the fixture.
+        let drained=drain_delivery_commit_workers_for_lease_for_test(persistence.lease());
+        assert!(drained.is_err(),"actual after-send panic must remain sticky");
+        assert!(finish_delivery_preparation(&cancel).is_err(),"sent success cannot hide the actual worker failure");
+        assert!(!admitted,"a reaped after-send panic must reject new preparation work");
+    }
+    #[test]
+    fn core_delivery_after_send_success_remains_pending_until_real_worker_exit() {
+        let (_listener,url)=backend_generation::billing_capture_test_support::listener();
+        let f=DeliveryFixture::new(&url);let context=f.bound_context();
+        let persistence=context.store.borrow().private_persistence.clone().unwrap();
+        let (entered_tx,entered_rx)=mpsc::channel();let(release_tx,release_rx)=mpsc::channel();
+        struct ReleaseAndDrain(Option<mpsc::Sender<()>>,NamespaceLease);
+        impl Drop for ReleaseAndDrain {fn drop(&mut self) {
+            if let Some(release)=self.0.take(){let _=release.send(());}
+            let joined=drain_delivery_commit_workers_for_lease_for_test(&self.1);
+            if !std::thread::panicking(){joined.unwrap();}
+        }}
+        let _release=ReleaseAndDrain(Some(release_tx),persistence.lease().clone());
+        set_delivery_preparation_after_send_for_test(move|| {
+            entered_tx.send(()).unwrap();let _=release_rx.recv();
+        });
+        let(cancel,receiver)=spawn_delivery_preparation(&persistence,|_,_,_|Ok(9usize)).unwrap();
+        assert_eq!(receiver.recv_timeout(Duration::from_secs(3)).unwrap().unwrap(),9);
+        entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert!(delivery_preparation_pending(&cancel),"sent success is not a joined worker");
+        assert!(finish_delivery_preparation(&cancel).unwrap(),"checked completion still owns the held worker");
+    }
+    #[test]
+    fn core_delivery_window_loss_still_drains_actual_writer_ack_worker_before_owned_root_drop() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app=AppWindow::new().unwrap();
+        let (listener,url)=backend_generation::billing_capture_test_support::listener();
+        let f=DeliveryFixture::new(&url);let context=f.bound_context();
+        let server=DeliveryServer::start(listener,&url,&f,delivery_detail(),DELIVERY_PNG.to_vec(),true);
+        let _drain=DeliveryFamilyDrain;
+        let prepared=f.prepare().unwrap();
+        f.repo.private_paused.store(true,Ordering::SeqCst);
+        let _resume=DeliveryWriterResume(f.repo.private_paused.clone());
+        let visible=Rc::new(Cell::new(false));let observed=visible.clone();
+        start_image_delivery_commit(&app,context.clone(),prepared,"fixture".into(),move|_,_|observed.set(true));
+        drop(app);
+        f.repo.resume_private_writer();
+        drain_delivery_commit_workers_for_shutdown().unwrap();
+        assert!(!visible.get());
+        assert!(f.repo.load_client_state_for_namespace(f.authority.lease()).unwrap().is_some());
+        assert_eq!(std::fs::read(f.output()).unwrap(),DELIVERY_PNG);
+        server.finish();
+    }
+    #[test]
+    fn core_delivery_actual_ordered_worker_waits_for_ack_and_preserves_newer_store_snapshot() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app=AppWindow::new().unwrap();
+        let (listener,url)=backend_generation::billing_capture_test_support::listener();
+        let f=DeliveryFixture::new(&url);let context=f.bound_context();
+        let server=DeliveryServer::start(listener,&url,&f,delivery_detail(),DELIVERY_PNG.to_vec(),true);
+        let _drain=DeliveryFamilyDrain;
+        let prepared=f.prepare().unwrap();
+        f.repo.private_paused.store(true,Ordering::SeqCst);
+        let _resume=DeliveryWriterResume(f.repo.private_paused.clone());
+        let completed=Rc::new(Cell::new(false));let observed=completed.clone();
+        start_image_delivery_commit(&app,context.clone(),prepared,"first".into(),move|_,result|{
+            assert!(result.unwrap().2,"remote ack must follow actual Store ack");observed.set(true);
+        });
+        assert!(!completed.get());
+        assert_eq!(context.store.borrow().assets.len(),1);
+        assert!(f.repo.load_client_state_for_namespace(f.authority.lease()).unwrap().is_none());
+        let persistence=context.store.borrow().private_persistence.clone().unwrap();
+        let mut write=Some(persistence.prepare_ordered_save().unwrap());
+        let later=context.apply_user_completion(persistence.lease(),||{
+            context.store.borrow_mut().assets[0].title="newer edit".into();
+            write.take().unwrap().enqueue(local_store_data(&app,&context.store.borrow()))
+        }).unwrap().unwrap();
+        drop(later);
+        f.repo.resume_private_writer();
+        pump_delivery_fixture(||completed.get());
+        f.repo.flush(f.authority.lease()).unwrap();
+        let saved=f.repo.load_client_state_for_namespace(f.authority.lease()).unwrap().unwrap();
+        assert_eq!(saved.assets.iter().find(|asset|asset.id==DELIVERY_FILE).unwrap().title,"newer edit");
+        // The exact terminal row is removed only after the real remote ack.
+        assert_eq!(f.recovery(), serde_json::json!([]));
+        let requests=server.finish();
+        let acknowledgments=requests.iter().filter(|request|request.0.starts_with("POST ")).collect::<Vec<_>>();
+        assert_eq!(acknowledgments.len(),1);
+        assert!(acknowledgments[0].1);
+        drain_delivery_commit_workers_for_shutdown().unwrap();
+    }
+    fn delivery_index_rows(f: &DeliveryFixture, sql: &str) -> Vec<Vec<rusqlite::types::Value>> {
+        let c = Connection::open(f.repo.directory.path().join("index.sqlite3")).unwrap();
+        let mut statement = c.prepare(sql).unwrap();
+        let count = statement.column_count();
+        statement.query_map([], |row| (0..count).map(|column| row.get(column)).collect())
+            .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+    }
+    const DELIVERY_INDEX_ROWS: &str = "SELECT id,user_public_id,managed_area,path,physical_identity,kind,byte_size,managed,retention_policy,created_at,last_accessed_at,pending_delete FROM managed_files ORDER BY id";
+    #[test]
+    fn core_delivery_index_interrupted_publication_reconciles_original_content_without_losing_links() {
+        let (listener,url)=backend_generation::billing_capture_test_support::listener();
+        let f=DeliveryFixture::new(&url);
+        let server=DeliveryServer::start(listener,&url,&f,delivery_detail(),DELIVERY_PNG.to_vec(),true);
+        let original=f.prepare().unwrap(); // Keep its inode held while the directory entry is replaced.
+        let original_record=f.index.find_file_by_path_for_namespace(&f.authority,ManagedUserArea::Output,
+            &format!("{DELIVERY_FILE}.png")).unwrap().unwrap();
+        let preview=run_owned_worker(|| {
+            let key=ManagedFileKey::new(ManagedUserArea::Previews,"delivery-link-preview.png").unwrap();
+            let mut file=f.authority.create_new_regular(&key).unwrap();
+            f.authority.write_new_regular_from(&mut file,&mut &DELIVERY_PNG[..]).unwrap();
+            f.authority.sync_regular(&mut file).unwrap();
+            let registration=NamespacedManagedFileRegistration::new(&f.authority,file,"preview","cache").unwrap();
+            f.index.register_file_for_namespace(&f.authority,&registration).unwrap()
+        });
+        let c=Connection::open(f.repo.directory.path().join("index.sqlite3")).unwrap();
+        c.execute("INSERT INTO file_references(user_public_id,file_id,owner_type,owner_id,created_at) VALUES(?1,?2,'asset','original-asset',7)",
+            params![USER_A,original_record.id.0]).unwrap();
+        c.execute("INSERT INTO preview_cache(user_public_id,source_file_id,preview_file_id,purpose,longest_edge,source_size,source_mtime_ns,cache_version,status,last_accessed_at,created_at,updated_at) VALUES(?1,?2,?3,'gallery',64,68,1,1,'ready',11,12,13)",
+            params![USER_A,original_record.id.0,preview.id.0]).unwrap();
+        let before=delivery_index_rows(&f,DELIVERY_INDEX_ROWS);
+        let references=delivery_index_rows(&f,"SELECT * FROM file_references ORDER BY file_id");
+        let previews=delivery_index_rows(&f,"SELECT * FROM preview_cache ORDER BY id");
+        let recovery=f.recovery();
+        std::fs::remove_file(f.output()).unwrap();
+        c.execute_batch("CREATE TRIGGER reject_delivery_reconcile BEFORE UPDATE OF physical_identity ON managed_files BEGIN SELECT RAISE(ABORT,'fixture interrupted index commit'); END;").unwrap();
+        assert!(f.prepare().is_err());
+        assert_eq!(std::fs::read(f.output()).unwrap(),DELIVERY_PNG,
+            "verified publication must remain recoverable after failed index commit");
+        assert_eq!(delivery_index_rows(&f,DELIVERY_INDEX_ROWS),before);
+        c.execute_batch("DROP TRIGGER reject_delivery_reconcile").unwrap();
+        let recovered=f.prepare().unwrap();
+        let current=f.index.find_file_by_path_for_namespace(&f.authority,ManagedUserArea::Output,
+            &format!("{DELIVERY_FILE}.png")).unwrap().unwrap();
+        assert_eq!(current.id,original_record.id);
+        assert_ne!(current.physical_identity,original_record.physical_identity);
+        let mut after=delivery_index_rows(&f,DELIVERY_INDEX_ROWS);
+        assert_eq!(after.len(),before.len());after[0][4]=before[0][4].clone();
+        assert_eq!(after,before,"only physical identity changed; retention and timestamps are preserved");
+        assert_eq!(delivery_index_rows(&f,"SELECT * FROM file_references ORDER BY file_id"),references);
+        assert_eq!(delivery_index_rows(&f,"SELECT * FROM preview_cache ORDER BY id"),previews);
+        assert_eq!(f.recovery(),recovery);
+        drop(recovered);drop(original);
+        let requests=server.finish();
+        assert_eq!(requests.iter().filter(|request|request.0.starts_with("GET /blob ")).count(),2);
+        assert!(!requests.iter().any(|request|request.0.starts_with("POST ")),
+            "index reconciliation alone is not a Store or remote acknowledgment");
+    }
+    #[test]
+    fn core_delivery_index_reconcile_refuses_pending_delete_foreign_kind_and_physical_alias() {
+        for invalid in ["pending_delete=1","kind='reference'","retention_policy='cache'","managed=0"] {
+            let (listener,url)=backend_generation::billing_capture_test_support::listener();
+            let f=DeliveryFixture::new(&url);
+            let server=DeliveryServer::start(listener,&url,&f,delivery_detail(),DELIVERY_PNG.to_vec(),true);
+            let original=f.prepare().unwrap();
+            let c=Connection::open(f.repo.directory.path().join("index.sqlite3")).unwrap();
+            c.execute_batch(&format!("UPDATE managed_files SET {invalid}")).unwrap();
+            let before=delivery_index_rows(&f,DELIVERY_INDEX_ROWS);
+            assert!(f.prepare().is_err(),"{invalid} must not be implicitly repaired");
+            assert_eq!(delivery_index_rows(&f,DELIVERY_INDEX_ROWS),before);
+            drop(original);server.finish();
+        }
+        let (listener,url)=backend_generation::billing_capture_test_support::listener();
+        let f=DeliveryFixture::new(&url);
+        let server=DeliveryServer::start(listener,&url,&f,delivery_detail(),DELIVERY_PNG.to_vec(),true);
+        let original=f.prepare().unwrap();
+        let c=Connection::open(f.repo.directory.path().join("index.sqlite3")).unwrap();
+        c.execute("UPDATE managed_files SET path='different-logical-file.png'",[]).unwrap();
+        let before=delivery_index_rows(&f,DELIVERY_INDEX_ROWS);
+        assert!(f.prepare().is_err(),"one physical identity cannot be rebound from another logical row");
+        assert_eq!(delivery_index_rows(&f,DELIVERY_INDEX_ROWS),before);
+        drop(original);server.finish();
+    }
+    #[test]
+    fn core_delivery_index_reconcile_cas_refuses_changed_row_and_original_payer_or_stale_lease() {
+        for change in ["row","payer","task","content","lease"] {
+            let (listener,url)=backend_generation::billing_capture_test_support::listener();
+            let f=DeliveryFixture::new(&url);
+            let server=DeliveryServer::start(listener,&url,&f,delivery_detail(),DELIVERY_PNG.to_vec(),true);
+            let original=f.prepare().unwrap();
+            let before=delivery_index_rows(&f,DELIVERY_INDEX_ROWS);
+            std::fs::remove_file(f.output()).unwrap();
+            let path=f.repo.directory.path().join("index.sqlite3");
+            let authority=f.authority.clone();
+            let session=f.session.clone();
+            let result=run_owned_worker(|| {
+                FileIndex::delivery_reconcile_after_discovery_for_test(move || {
+                    match change {
+                        "row" => {
+                            let c=Connection::open(path).unwrap();
+                            c.execute("UPDATE managed_files SET last_accessed_at=last_accessed_at+1",[]).unwrap();
+                        }
+                        "payer" | "task" => {
+                            // Controlled corruption of this fixture's own retained document.
+                            // No mutation authority is minted from the changed row.
+                            let file=authority.lease().namespace.path(ManagedUserArea::Recovery)
+                                .join("pending-generations.json");
+                            let mut value:serde_json::Value=serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+                            if change=="payer" { value["generations"][0]["billing_account_group_id"]=GROUP_B.into(); }
+                            else { value["generations"][0]["server_task_id"]=USER_B.into(); }
+                            std::fs::write(&file,serde_json::to_vec(&value).unwrap()).unwrap();
+                        }
+                        "content" => {
+                            let file=authority.lease().namespace.path(ManagedUserArea::Output).join(format!("{DELIVERY_FILE}.png"));
+                            std::fs::write(file,vec![0_u8;DELIVERY_PNG.len()]).unwrap();
+                        }
+                        _ => { session.clear().unwrap(); }
+                    }
+                });
+                prepare_namespace_delivery(&f.api,f.authority.clone(),f.index.clone(),&f.record.identity(),0)
+            });
+            assert!(result.is_err());
+            let after=delivery_index_rows(&f,DELIVERY_INDEX_ROWS);
+            assert_eq!(after[0][4],before[0][4],"CAS must not update the old physical row");
+            if change=="row" {assert_ne!(after,before);} else {assert_eq!(after,before);}
+            if change!="content" { assert_eq!(std::fs::read(f.output()).unwrap(),DELIVERY_PNG); }
+            drop(original);server.finish();
+        }
+    }
+    #[test]
+    fn core_delivery_actual_retry_uses_owned_pipeline_for_existing_and_missing_output() {
+        assert_actual_retry_owned_output(false);
+    }
+    #[test]
+    fn core_delivery_actual_retry_replaces_missing_owned_output_without_rebinding_payer() {
+        assert_actual_retry_owned_output(true);
+    }
+    fn assert_actual_retry_owned_output(missing:bool) {
+        i_slint_backend_testing::init_no_event_loop();
+        let app=AppWindow::new().unwrap();
+        {
+            let (listener,url)=backend_generation::billing_capture_test_support::listener();
+            let mut f=DeliveryFixture::new(&url);
+            f.record.deliveries=vec![PendingDeliveryRecord{item_index:0,file_id:DELIVERY_FILE.into(),
+                sha256:"431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460".into(),
+                size_bytes:68,failed_asset_id:"failed-card".into(),..Default::default()}];
+            upsert_pending_generation_for_namespace(&f.authority,&f.scope,f.record.clone()).unwrap();
+            let context=f.bound_context();
+            let mut card=checked_asset("failed-card","failed","user edited prompt");
+            card.conversation_id="delivery-conversation".into();card.model="image-model".into();
+            card.delivery_recoverable=true;card.delivery_downloading=false;
+            context.store.borrow_mut().generations.push(card);
+            let server=DeliveryServer::start(listener,&url,&f,delivery_detail(),DELIVERY_PNG.to_vec(),true);
+            let _drain=DeliveryFamilyDrain;
+            drop(f.prepare().unwrap());
+            if missing {std::fs::remove_file(f.output()).unwrap();}
+            retry_failed_delivery(&app,context.clone(),"failed-card".into());
+            pump_delivery_fixture(||f.recovery()==serde_json::json!([])
+                && !context.store.borrow().generations[0].delivery_downloading);
+            let store=context.store.borrow();
+            assert_eq!(store.generations[0].id,"failed-card");
+            assert_eq!(store.generations[0].prompt,"user edited prompt");
+            assert_eq!(store.assets.len(),1);
+            assert_eq!(std::fs::read(f.output()).unwrap(),DELIVERY_PNG);
+            drop(store);
+            let requests=server.finish();
+            let acknowledgments=requests.iter().filter(|request|request.0.starts_with("POST ")).collect::<Vec<_>>();
+            assert_eq!(acknowledgments.len(),1);
+            assert!(acknowledgments[0].1);
+        }
+        drain_delivery_commit_workers_for_shutdown().unwrap();
+    }
+    #[test]
+    fn core_prompt_checked_owned_upload_rejects_changed_retained_fingerprint_before_transport() {
+        for wrong_size in [false, true] {
+            let (listener, url) = backend_generation::billing_capture_test_support::listener();
+            let f = DeliveryFixture::new(&url);
+            let server = DeliveryServer::start(listener, &url, &f, delivery_detail(), DELIVERY_PNG.to_vec(), true);
+            drop(f.prepare().unwrap());
+            let hash = if wrong_size { "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460" }
+                else { "0000000000000000000000000000000000000000000000000000000000000000" };
+            let result = run_owned_worker(|| f.api.upload_reference_for_namespace_checked(
+                &f.output(), &f.authority, &f.scope.request.session, false, hash, if wrong_size { 69 } else { 68 }));
+            assert!(result.is_err());
+            let requests = server.finish();
+            assert!(!requests.iter().any(|request| request.0.starts_with("POST ")),
+                "changed original bytes must be rejected before upload preparation");
+            assert_eq!(std::fs::read(f.output()).unwrap(), DELIVERY_PNG);
+        }
+    }
+
+    #[test]
+    fn core_prompt_checked_owned_upload_keeps_normal_and_paired_bytes_and_exact_upgrade() {
+        use std::io::Write;
+        use sha2::Digest;
+        for (paired,upgrade) in [(false,false),(true,false),(false,true)] {
+            let (listener,url)=backend_generation::billing_capture_test_support::listener();
+            let f=DeliveryFixture::new(&url);
+            let key=ManagedFileKey::new(ManagedUserArea::Output,&format!("{DELIVERY_FILE}.png")).unwrap();
+            let mut file=f.authority.create_new_regular(&key).unwrap();
+            f.authority.write_new_regular_from(&mut file,&mut &DELIVERY_PNG[..]).unwrap();
+            f.authority.sync_regular(&mut file).unwrap();drop(file);
+            let (normalized,filename,mime)=prepare_reference_upload_bytes(DELIVERY_PNG.to_vec(),paired).unwrap();
+            let base=url.clone();
+            let stop=Arc::new(AtomicBool::new(false));let stopped=stop.clone();
+            let worker=std::thread::spawn(move||{
+                listener.set_nonblocking(true).unwrap();
+                let deadline=Instant::now()+Duration::from_secs(10);let mut requests=Vec::new();
+                while !stopped.load(Ordering::SeqCst) && Instant::now()<deadline {
+                    let mut stream=match listener.accept(){
+                        Ok((stream,_))=>stream,
+                        Err(error) if error.kind()==std::io::ErrorKind::WouldBlock=>{std::thread::sleep(Duration::from_millis(2));continue;},
+                        Err(error)=>panic!("fixture listener failed: {error}"),
+                    };
+                    let bytes=backend_generation::billing_capture_test_support::read_request_bytes(&mut stream);
+                    let header_end=bytes.windows(4).position(|part|part==b"\r\n\r\n").unwrap()+4;
+                    let headers=String::from_utf8(bytes[..header_end].to_vec()).unwrap();
+                    let prepare=headers.starts_with("POST /v1/uploads/references ");
+                    let transfer=headers.starts_with("POST /fixture-upload ");
+                    if prepare {
+                        let request:serde_json::Value=serde_json::from_slice(&bytes[header_end..]).unwrap();
+                        assert_eq!(request["filename"],filename);assert_eq!(request["mime_type"],mime);
+                        assert_eq!(request["size_bytes"],normalized.len() as u64);
+                        assert_eq!(request["sha256"],format!("{:x}",sha2::Sha256::digest(&normalized)));
+                        assert!(!headers.to_ascii_lowercase().contains("x-account-group-id:"));
+                    } else if transfer {
+                        assert!(bytes[header_end..].windows(normalized.len()).any(|part|part==normalized.as_slice()));
+                    } else {assert!(headers.starts_with(&format!("POST /v1/uploads/references/{DELIVERY_FILE}/complete ")));}
+                    let (status,body)=if upgrade {
+                        ("426 Upgrade Required",serde_json::json!({"data":null,"error":{"code":"client_upgrade_required","message":"upgrade"},"request_id":"fixture"}))
+                    } else {
+                        ("200 OK",serde_json::json!({"data":if prepare {serde_json::json!({"file":{"id":DELIVERY_FILE},
+                            "upload":{"method":"POST","url":format!("{base}fixture-upload"),"fields":{},"file_field":"file"}})}
+                            else {serde_json::json!({})},"error":null,"request_id":"fixture"}))
+                    };
+                    let body=serde_json::to_vec(&body).unwrap();
+                    write!(stream,"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).unwrap();
+                    let _=stream.write_all(&body);requests.push((headers,false));
+                }
+                requests
+            });
+            let server=DeliveryServer{stop,worker:Some(worker)};
+            let result=run_owned_worker(||f.api.upload_reference_for_namespace_checked(&f.output(),&f.authority,
+                &f.scope.request.session,paired,"431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",68));
+            let requests=server.finish();
+            if upgrade {
+                assert!(result.unwrap_err().is_client_update_required());
+                assert!(f.client.upgrade_latch().is_tripped());assert_eq!(requests.len(),1);
+            } else {assert_eq!(result.unwrap(),DELIVERY_FILE);assert_eq!(requests.len(),3);}
+            assert_eq!(std::fs::read(f.output()).unwrap(),DELIVERY_PNG);
+        }
+    }
+
+    #[test]
+    fn core_delivery_ordered_enqueue_rejects_missing_or_foreign_store_before_any_write() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        for foreign in [false, true] {
+            let (listener, url) = backend_generation::billing_capture_test_support::listener();
+            let f = DeliveryFixture::new(&url);
+            let activity = UserActivityGate::default();
+            activity.activate(f.authority.lease().clone()).unwrap();
+            let persistence = PrivatePersistence::for_test(f.repo.writer.clone(), f.authority.lease().clone(),
+                activity, UpgradeLatch::default());
+            let other = Fixture::new(false, false);
+            let other_lease = other.lease(USER_B, 1, 1);
+            other.activate(other_lease.clone()).unwrap();
+            let other_activity = UserActivityGate::default();
+            other_activity.activate(other_lease.clone()).unwrap();
+            let mut store = Store::default();
+            if foreign {
+                store.private_persistence = Some(PrivatePersistence::for_test((*other).clone(),
+                    other_lease.clone(), other_activity, UpgradeLatch::default()));
+            }
+            let before = replacement_memory_snapshot(&store);
+            let server = DeliveryServer::start(listener, &url, &f, delivery_detail(), DELIVERY_PNG.to_vec(), true);
+            let prepared = f.prepare().unwrap();
+            let write = persistence.prepare_ordered_save().unwrap();
+            // Pure enqueue is exercised under the real short completion latch;
+            // the complete guard-owning failure is dropped after that latch.
+            let result = persistence.upgrade_latch().apply_if_open(|| {
+                write.enqueue_delivery(&app, &mut store, prepared, "fixture")
+            });
+            let result = result.unwrap();
+            assert!(result.is_err(), "missing/foreign Store must not write A");
+            drop(result);
+            f.repo.flush(&f.authority.lease().clone()).unwrap();
+            assert_eq!(replacement_memory_snapshot(&store), before);
+            assert!(f.repo.load_client_state_for_namespace(f.authority.lease()).unwrap().is_none());
+            assert!(other.load_client_state_for_namespace(&other_lease).unwrap().is_none());
+            assert_eq!(std::fs::read(f.output()).unwrap(), DELIVERY_PNG);
+            assert!(!server.finish().iter().any(|request| request.0.starts_with("POST ")));
+        }
+    }
+    #[test]
+    fn core_delivery_failed_sqlite_ack_preserves_staged_metadata_and_owned_file_for_retry() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let (listener, url) = backend_generation::billing_capture_test_support::listener();
+        let f = DeliveryFixture::new(&url);
+        let before = f.recovery();
+        let server = DeliveryServer::start(listener, &url, &f, delivery_detail(), DELIVERY_PNG.to_vec(), true);
+        let mut store = Store::default();
+        reject_notification_inserts(&f.repo);
+        let result = (|| -> Result<_> {
+            let prepared = f.prepare()?;
+            let failed = persist_namespace_delivery(&app, &mut store, &f.repo.writer, prepared, "first");
+            anyhow::ensure!(failed.is_err(), "fixture must refuse actual SQLite acknowledgment");
+            // A different already-queued full snapshot may retain these references.
+            // Failed acknowledgment cannot safely undo optimistic projection or remove bytes.
+            let staged = store.assets.len() == 1 && store.generations.len() == 1 && store.notifications.len() == 1;
+            let recovery = f.recovery();
+            let bytes = std::fs::read(f.output())?;
+            Ok((staged, recovery, bytes))
+        })();
+        let requests = server.finish();
+        let (staged, recovery, bytes) = result.unwrap();
+        assert!(staged, "ack failure must preserve staged Store metadata for an exact retry");
+        assert_eq!(recovery, before);
+        assert_eq!(bytes, DELIVERY_PNG);
+        assert!(!requests.iter().any(|request| request.0.starts_with("POST ")));
+    }
     #[test]
     fn namespace_delivery_sql_failure_retries_output_without_duplicate_metadata() {
         i_slint_backend_testing::init_no_event_loop();
@@ -2306,10 +3415,10 @@ mod tests {
             let prepared = f.prepare()?;
             let rejected =
                 persist_namespace_delivery(&app, &mut store, &f.repo.writer, prepared, "first");
-            let rolled_back = rejected.is_err()
-                && store.assets.is_empty()
-                && store.generations.is_empty()
-                && store.notifications.is_empty();
+            let staged = rejected.is_err()
+                && store.assets.len() == 1
+                && store.generations.len() == 1
+                && store.notifications.len() == 1;
             let recovery_after_failure = f.recovery();
             let published_after_failure = std::fs::read(f.output())?;
             f.repo
@@ -2330,12 +3439,12 @@ mod tests {
             )?;
             drop(first);
             run_owned_worker(|| acknowledge_namespace_delivery(second))?;
-            Ok((rolled_back, recovery_after_failure, published_after_failure))
+            Ok((staged, recovery_after_failure, published_after_failure))
         })();
         let requests = server.finish();
-        let (rolled_back, recovery_after_failure, published_after_failure) =
-            result.expect("SQL rollback must leave verified output reusable");
-        assert!(rolled_back);
+        let (staged, recovery_after_failure, published_after_failure) =
+            result.expect("SQL failure must leave staged metadata and verified output reusable");
+        assert!(staged);
         assert_eq!(recovery_after_failure, before);
         assert_eq!(published_after_failure, DELIVERY_PNG);
         assert_eq!(
@@ -2733,10 +3842,25 @@ mod tests {
             }
             assert!(!matches!(result, Ok(true)), "{case}");
             assert!(!requests.iter().any(|r| r.0.starts_with("POST ")), "{case}");
-            if case.ends_with("before-ui") || case == "stale-writer" {
+            if case.ends_with("before-ui") {
                 assert!(store.assets.is_empty(), "{case}");
             } else {
                 assert_eq!(store.assets.len(), 1, "{case}");
+            }
+            if case == "stale-writer" {
+                // The adapter stages metadata before the ordered writer can
+                // reject its retired lease. Staging is not a durable save or
+                // a delivery acknowledgement, and is retained for recovery.
+                assert_eq!(store.assets[0].id, DELIVERY_FILE);
+                assert_eq!(store.assets[0].source_path, f.output().to_string_lossy());
+                assert_eq!(store.generations.len(), 1);
+                assert_eq!(store.generations[0].id, DELIVERY_FILE);
+                assert_eq!(std::fs::read(f.output()).unwrap(), DELIVERY_PNG);
+                assert!(f.repo.load_client_state_for_namespace(f.authority.lease()).unwrap().is_none());
+                assert!(f.repo.load_client_state_for_namespace(&f.repo.lease(USER_B, 7, 2)).unwrap().is_none());
+                let pending = load_pending_generations_for_namespace(&f.authority).unwrap();
+                let original = pending.iter().find(|record| record.identity() == f.record.identity()).unwrap();
+                assert!(!original.deliveries.iter().any(|delivery| delivery.acknowledged));
             }
             if case.starts_with("leaf") || case.starts_with("ancestor") {
                 assert_eq!(std::fs::read(f.output()).unwrap(), b"replacement");
@@ -3016,13 +4140,13 @@ mod tests {
             key TEXT PRIMARY KEY NOT NULL,
             value_json TEXT NOT NULL
         );"#;
-    struct Fixture {
+    pub(in crate::runtime) struct Fixture {
         writer: ClientStateWriter,
-        directory: tempfile::TempDir,
         pause: Arc<(Mutex<bool>, Condvar)>,
         private_paused: Arc<AtomicBool>,
         stop: Arc<AtomicBool>,
         worker: Option<std::thread::JoinHandle<()>>,
+        directory: tempfile::TempDir,
     }
     impl std::ops::Deref for Fixture {
         type Target = ClientStateWriter;
@@ -3031,7 +4155,7 @@ mod tests {
         }
     }
     impl Fixture {
-        fn new(paused: bool, private_paused: bool) -> Self {
+        pub(crate) fn new(paused: bool, private_paused: bool) -> Self {
             let directory =
                 tempfile::tempdir_in(std::fs::canonicalize(std::env::temp_dir()).unwrap())
                     .unwrap();
@@ -3069,9 +4193,11 @@ mod tests {
                         let private = matches!(
                             &command.command,
                             ClientStateWrite::Wake(_)
+                                | ClientStateWrite::RetainedRedemptionRead { .. }
                                 | ClientStateWrite::LocalStoreChecked { .. }
                                 | ClientStateWrite::UserProfileChecked { .. }
                                 | ClientStateWrite::Flush { .. }
+                                | ClientStateWrite::FlushForRetirement { .. }
                         );
                         if pp.load(Ordering::SeqCst) && private {
                             held.push_back(command);
@@ -3100,10 +4226,19 @@ mod tests {
         fn connection(&self) -> Connection {
             open_client_state_connection(&self.path).unwrap()
         }
-        fn data_root_capability_arc(&self) -> Arc<DataRootCapability> {
+        pub(in crate::runtime) fn reject_custom_prompt_inserts_for_test(&self,reject:bool) {
+            let c=self.connection();
+            c.execute_batch(if reject {
+                "CREATE TRIGGER fixture_reject_custom_prompt_insert BEFORE INSERT ON custom_prompts BEGIN SELECT RAISE(ABORT,'fixture custom save failure'); END;"
+            } else {"DROP TRIGGER fixture_reject_custom_prompt_insert"}).unwrap();
+        }
+        pub(in crate::runtime) fn reject_notification_inserts_for_test(&self) {
+            reject_notification_inserts(self);
+        }
+        pub(crate) fn data_root_capability_arc(&self) -> Arc<DataRootCapability> {
             self.data_root.clone()
         }
-        fn lease(&self, user: &str, auth_epoch: u64, namespace_epoch: u64) -> NamespaceLease {
+        pub(crate) fn lease(&self, user: &str, auth_epoch: u64, namespace_epoch: u64) -> NamespaceLease {
             NamespaceLease {
                 namespace: UserNamespace::new(self.directory.path(), user).unwrap(),
                 auth_epoch,
@@ -3115,12 +4250,110 @@ mod tests {
         fn drop(&mut self) {
             self.stop.store(true, Ordering::SeqCst);
             self.resume_writer();
-            self.worker.take().unwrap().join().unwrap();
+            if let Some(worker) = self.worker.take() { worker.join().unwrap(); }
         }
     }
     fn test_repository_v2() -> Fixture {
         Fixture::new(false, false)
     }
+    #[test]
+    fn core_ordered_save_receiver_drop_keeps_real_activity_until_ack_and_preserves_queue_order() {
+        let r = paused_private_test_writer();
+        let lease = r.lease(USER_A, 1, 10); r.activate(lease.clone()).unwrap();
+        let activity = super::super::UserActivityGate::default();
+        activity.activate(lease.clone()).unwrap();
+        let latch = super::super::api::UpgradeLatch::default();
+        let first = r.enqueue_client_state_checked_for_namespace(&lease, store_with_asset("first"),
+            (activity.begin_recovery_unit(&lease).unwrap(), latch.begin_ordinary_durable_commit().unwrap())).unwrap();
+        let second = r.enqueue_client_state_checked_for_namespace(&lease, store_with_asset("second"),
+            (activity.begin_recovery_unit(&lease).unwrap(), latch.begin_ordinary_durable_commit().unwrap())).unwrap();
+        drop(first);
+        struct Resume(Arc<AtomicBool>);
+        impl Drop for Resume { fn drop(&mut self) { self.0.store(false, Ordering::SeqCst); } }
+        std::thread::scope(|threads| {
+            let _resume = Resume(r.private_paused.clone());
+            let (done, received) = mpsc::channel();
+            let captured = activity.clone(); let old = lease.clone();
+            let worker = threads.spawn(move || {
+                let quiesced = captured.begin_quiesce(&old).unwrap();
+                done.send(()).unwrap(); drop(quiesced);
+            });
+            assert!(received.recv_timeout(Duration::from_millis(50)).is_err(), "dropped receiver released admitted write early");
+            r.resume_private_writer();
+            second.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+            received.recv_timeout(Duration::from_secs(5)).unwrap(); worker.join().unwrap();
+        });
+        assert_eq!(r.load_client_state_for_namespace(&lease).unwrap().unwrap().assets[0].id, "second");
+    }
+    #[test]
+    fn core_ordered_save_disconnected_queue_returns_guard_ownership_outside_completion() {
+        let mut r = Fixture::new(false, false);
+        let lease = r.lease(USER_A, 1, 10); r.activate(lease.clone()).unwrap();
+        let activity = super::super::UserActivityGate::default(); activity.activate(lease.clone()).unwrap();
+        let latch = super::super::api::UpgradeLatch::default();
+        let mut admission = Some((activity.begin_recovery_unit(&lease).unwrap(), latch.begin_ordinary_durable_commit().unwrap()));
+        r.stop.store(true, Ordering::SeqCst);
+        r.worker.take().unwrap().join().unwrap();
+        let result = latch.apply_if_open(|| r.enqueue_client_state_checked_for_namespace(&lease, store_with_asset("never"),
+            admission.take().unwrap())).unwrap();
+        assert!(result.is_err());
+        // This exact return/drop order is required: errors own guards, so no
+        // counted guard is destroyed while the completion mutex is held.
+        drop(result); drop(admission);
+        let quiesced = activity.begin_quiesce(&lease).unwrap(); drop(quiesced);
+        assert!(r.load_client_state_for_namespace(&lease).unwrap().is_none());
+        // The actual fixture worker was explicitly joined before root release.
+    }
+    #[test]
+    fn core_ordered_profile_dropped_receiver_holds_admission_and_preserves_shared_queue_order(){
+        let r=paused_private_test_writer();let lease=r.lease(USER_A,1,10);r.activate(lease.clone()).unwrap();
+        let activity=UserActivityGate::default();activity.activate(lease.clone()).unwrap();let latch=api::UpgradeLatch::default();
+        let p=PrivatePersistence::for_test(r.writer.clone(),lease.clone(),activity.clone(),latch.clone());
+        let mut first=Some(p.prepare_ordered_save().unwrap());let mut second=Some(p.prepare_ordered_save().unwrap());
+        let first=latch.apply_if_open(||first.take().unwrap().enqueue_profile(UserProfileData{nickname:"first".into(),..Default::default()})).unwrap().unwrap();
+        let between=p.prepare_ordered_save().unwrap().enqueue(store_with_asset("between")).unwrap();
+        let last=latch.apply_if_open(||second.take().unwrap().enqueue_profile(UserProfileData{nickname:"last".into(),..Default::default()})).unwrap().unwrap();
+        drop(first);drop(between);
+        struct Resume(Arc<AtomicBool>);impl Drop for Resume{fn drop(&mut self){self.0.store(false,Ordering::SeqCst);}}
+        std::thread::scope(|threads|{
+            let _resume=Resume(r.private_paused.clone());let(done,received)=mpsc::channel();let gate=activity.clone();let old=lease.clone();
+            let worker=threads.spawn(move||{let retired=gate.begin_quiesce(&old).unwrap();done.send(()).unwrap();drop(retired);});
+            assert!(received.recv_timeout(Duration::from_millis(50)).is_err(),"profile receiver drop released real admission before writer ack");
+            r.resume_private_writer();last.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+            received.recv_timeout(Duration::from_secs(5)).unwrap();worker.join().unwrap();
+        });
+        assert_eq!(r.load_client_user_profile_for_namespace(&lease).unwrap().unwrap().nickname,"last");
+        assert_eq!(r.load_client_state_for_namespace(&lease).unwrap().unwrap().assets[0].id,"between");
+    }
+    #[test]
+    fn core_ordered_profile_disconnected_queue_returns_owned_guards_outside_completion(){
+        let mut r=test_repository_v2();let lease=r.lease(USER_A,1,10);r.activate(lease.clone()).unwrap();
+        let activity=UserActivityGate::default();activity.activate(lease.clone()).unwrap();let latch=api::UpgradeLatch::default();
+        let p=PrivatePersistence::for_test(r.writer.clone(),lease.clone(),activity.clone(),latch.clone());
+        let mut write=Some(p.prepare_ordered_save().unwrap());r.stop.store(true,Ordering::SeqCst);r.worker.take().unwrap().join().unwrap();
+        let result=latch.apply_if_open(||write.take().unwrap().enqueue_profile(UserProfileData{nickname:"never".into(),..Default::default()})).unwrap();
+        assert!(result.is_err());drop(result);drop(write);
+        let retired=activity.begin_quiesce(&lease).unwrap();drop(retired);
+        assert!(r.load_client_user_profile_for_namespace(&lease).unwrap().is_none());
+    }
+    #[test]
+    fn core_ordered_profile_sqlite_rejection_retains_prior_profile_and_retry_uses_real_ack(){
+        let r=test_repository_v2();let lease=r.lease(USER_A,1,10);r.activate(lease.clone()).unwrap();
+        let activity=UserActivityGate::default();activity.activate(lease.clone()).unwrap();let latch=api::UpgradeLatch::default();
+        let p=PrivatePersistence::for_test(r.writer.clone(),lease.clone(),activity.clone(),latch);
+        p.prepare_ordered_save().unwrap().enqueue_profile(UserProfileData{nickname:"original".into(),..Default::default()}).unwrap()
+            .recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        r.connection().execute_batch("CREATE TRIGGER reject_profile BEFORE INSERT ON user_settings WHEN NEW.key='user_profile' BEGIN SELECT RAISE(ABORT,'controlled profile failure'); END;").unwrap();
+        let result=p.prepare_ordered_save().unwrap().enqueue_profile(UserProfileData{nickname:"retry".into(),..Default::default()}).unwrap();
+        assert!(result.recv_timeout(Duration::from_secs(5)).unwrap().is_err());
+        assert_eq!(r.load_client_user_profile_for_namespace(&lease).unwrap().unwrap().nickname,"original");
+        r.connection().execute_batch("DROP TRIGGER reject_profile").unwrap();
+        p.prepare_ordered_save().unwrap().enqueue_profile(UserProfileData{nickname:"retry".into(),..Default::default()}).unwrap()
+            .recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        assert_eq!(r.load_client_user_profile_for_namespace(&lease).unwrap().unwrap().nickname,"retry");
+        let retired=activity.begin_quiesce(&lease).unwrap();drop(retired);
+    }
+
     fn paused_test_writer() -> Fixture {
         Fixture::new(true, false)
     }
@@ -4509,6 +5742,218 @@ mod tests {
             "before"
         );
     }
+    fn await_retirement_reservation(writer: &ClientStateWriter) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if writer.pending.lock().unwrap().retirement.is_some() {
+                return;
+            }
+            assert!(Instant::now() < deadline, "retirement did not reserve admission");
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn writer_retirement_drains_admitted_work_and_preserves_reserved_binding() {
+        let r = paused_private_test_writer();
+        let a = r.lease(USER_A, 1, 10);
+        let b = r.lease(USER_B, 2, 11);
+        r.activate(a.clone()).unwrap();
+        struct ResumePrivateOnDrop(Arc<AtomicBool>);
+        impl Drop for ResumePrivateOnDrop {
+            fn drop(&mut self) { self.0.store(false, Ordering::SeqCst); }
+        }
+        std::thread::scope(|threads| {
+        let _resume = ResumePrivateOnDrop(r.private_paused.clone());
+        r.queue_private(a.clone(), Some(store_with_asset("coalesced")), Some(UserProfileData {
+            nickname: "admitted-profile".into(), ..Default::default()
+        })).unwrap();
+        let start = r.pending.lock().unwrap().sequence;
+        let writer = r.writer.clone();
+        let old = a.clone();
+        let checked = threads.spawn(move || {
+            writer.persist_client_state_checked_for_namespace(&old, store_with_asset("checked"))
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while r.pending.lock().unwrap().sequence == start {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let writer = r.writer.clone();
+        let old = a.clone();
+        let retirement = threads.spawn(move || writer.flush_for_retirement(&old));
+        await_retirement_reservation(&r);
+        assert!(r.queue_private(a.clone(), Some(store_with_asset("rejected")), None).is_err());
+        assert!(r.persist_client_state_checked_for_namespace(&a, store_with_asset("rejected")).is_err());
+        assert!(r.activate(b.clone()).is_err());
+        assert!(r.deactivate(&a).is_err());
+        assert!(r.flush_for_retirement(&a).is_err());
+        r.persist_device_settings_checked(settings()).unwrap();
+        // A sibling of app data is required by the real export validator.
+        let external = tempfile::tempdir_in(std::fs::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+        let export = ExportDirectoryPreference { normalized_path: external.path().canonicalize().unwrap() };
+        r.persist_export_directory_checked(Some(export.clone())).unwrap();
+        assert!(r.load_client_state_for_namespace(&a).unwrap().is_none());
+        r.resume_private_writer();
+        checked.join().unwrap().unwrap();
+        let proof = retirement.join().unwrap().unwrap();
+        assert_eq!(r.load_client_state_for_namespace(&a).unwrap().unwrap().assets[0].id, "checked");
+        assert_eq!(r.load_client_user_profile_for_namespace(&a).unwrap().unwrap().nickname, "admitted-profile");
+        assert_eq!(r.load_device_settings().unwrap(), Some(settings()));
+        assert_eq!(r.load_export_directory().unwrap(), Some(export));
+        assert!(r.queue_private(a.clone(), Some(store_with_asset("after-proof")), None).is_err());
+        proof.retire_flushed();
+        assert_eq!(r.flush(&a), Err(ClientStateWriteError::StaleLease));
+        r.activate(b.clone()).unwrap();
+        r.persist_client_state_checked_for_namespace(&b, store_with_asset("B")).unwrap();
+        assert_eq!(r.load_client_state_for_namespace(&a).unwrap().unwrap().assets[0].id, "checked");
+        });
+    }
+
+    #[test]
+    fn writer_retirement_drop_and_consume_are_bound_to_original_instance() {
+        let r = test_repository_v2();
+        let other = test_repository_v2();
+        let a = r.lease(USER_A, 1, 10);
+        let b = other.lease(USER_A, 1, 10);
+        r.activate(a.clone()).unwrap();
+        other.activate(b.clone()).unwrap();
+        assert!(other.flush_for_retirement(&a).is_err());
+        for wrong in [r.lease(USER_B, 1, 10), r.lease(USER_A, 2, 10), r.lease(USER_A, 1, 11)] {
+            assert!(r.flush_for_retirement(&wrong).is_err());
+        }
+        let proof = r.flush_for_retirement(&a).unwrap();
+        std::thread::spawn(move || drop(proof)).join().unwrap();
+        r.persist_client_state_checked_for_namespace(&a, store_with_asset("after-drop")).unwrap();
+        let proof = r.flush_for_retirement(&a).unwrap();
+        std::thread::spawn(move || proof.retire_flushed()).join().unwrap();
+        assert!(r.flush_for_retirement(&a).is_err());
+        assert!(r.queue_private(a.clone(), Some(store_with_asset("stale")), None).is_err());
+        other.persist_client_state_checked_for_namespace(&b, store_with_asset("unrelated")).unwrap();
+        assert_eq!(r.load_client_state_for_namespace(&a).unwrap().unwrap().assets[0].id, "after-drop");
+        assert_eq!(other.load_client_state_for_namespace(&b).unwrap().unwrap().assets[0].id, "unrelated");
+    }
+
+    #[test]
+    fn writer_retirement_failure_debt_survives_ordinary_flush_and_empty_retries() {
+        let r = test_repository_v2();
+        let a = r.lease(USER_A, 1, 10);
+        r.activate(a.clone()).unwrap();
+        reject_notification_inserts(&r);
+        r.queue_private(a.clone(), Some(store_with_asset("undurable")), None).unwrap();
+        assert!(r.flush(&a).is_err());
+        // Ordinary flush retains its established one-shot error-reporting behavior.
+        r.flush(&a).unwrap();
+        for _ in 0..2 {
+            assert!(r.flush_for_retirement(&a).is_err());
+            assert_eq!(r.pending.lock().unwrap().active.as_ref(), Some(&a));
+            assert!(r.pending.lock().unwrap().retirement.is_none());
+        }
+        assert!(r.persist_client_state_checked_for_namespace(&a, store_with_asset("failed-checked")).is_err());
+        r.connection().execute_batch("DROP TRIGGER reject_fixture_notification").unwrap();
+        assert!(r.flush_for_retirement(&a).is_err());
+        r.persist_client_state_checked_for_namespace(&a, store_with_asset("covering")).unwrap();
+        r.flush_for_retirement(&a).unwrap().retire_flushed();
+        assert_eq!(r.load_client_state_for_namespace(&a).unwrap().unwrap().assets[0].id, "covering");
+    }
+
+    #[test]
+    fn writer_retirement_profile_and_device_failures_require_covering_writes() {
+        for slot in ["profile", "device", "export"] {
+            let r = test_repository_v2();
+            let a = r.lease(USER_A, 1, 10);
+            r.activate(a.clone()).unwrap();
+            let sql = match slot {
+                "profile" => "CREATE TRIGGER fail_retirement BEFORE INSERT ON user_settings BEGIN SELECT RAISE(ABORT, 'fixture'); END;",
+                "device" => "CREATE TRIGGER fail_retirement BEFORE INSERT ON device_settings WHEN NEW.key != 'export_directory' BEGIN SELECT RAISE(ABORT, 'fixture'); END;",
+                _ => "CREATE TRIGGER fail_retirement BEFORE INSERT ON device_settings WHEN NEW.key = 'export_directory' BEGIN SELECT RAISE(ABORT, 'fixture'); END;",
+            };
+            r.connection().execute_batch(sql).unwrap();
+            let external = tempfile::tempdir_in(std::fs::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+            let export = ExportDirectoryPreference { normalized_path: external.path().canonicalize().unwrap() };
+            let write = || match slot {
+                "profile" => r.persist_client_user_profile_checked_for_namespace(&a, UserProfileData { nickname: "covered".into(), ..Default::default() }),
+                "device" => r.persist_device_settings_checked(settings()),
+                _ => r.persist_export_directory_checked(Some(export.clone())),
+            };
+            assert!(write().is_err());
+            assert!(r.flush_for_retirement(&a).is_err());
+            r.connection().execute_batch("DROP TRIGGER fail_retirement").unwrap();
+            assert!(r.flush_for_retirement(&a).is_err());
+            write().unwrap();
+            r.flush_for_retirement(&a).unwrap().retire_flushed();
+        }
+    }
+
+    #[test]
+    fn writer_retirement_other_lease_success_does_not_discharge_private_debt() {
+        let r = test_repository_v2();
+        let a = r.lease(USER_A, 1, 10);
+        let b = r.lease(USER_B, 2, 11);
+        r.activate(a.clone()).unwrap();
+        reject_notification_inserts(&r);
+        assert!(r.persist_client_state_checked_for_namespace(&a, store_with_asset("A-failed")).is_err());
+        r.connection().execute_batch("DROP TRIGGER reject_fixture_notification").unwrap();
+        r.activate(b.clone()).unwrap();
+        r.persist_client_state_checked_for_namespace(&b, store_with_asset("B-success")).unwrap();
+        r.flush_for_retirement(&b).unwrap().retire_flushed();
+        r.activate(a.clone()).unwrap();
+        assert!(r.flush_for_retirement(&a).is_err());
+        r.persist_client_state_checked_for_namespace(&a, store_with_asset("A-covered")).unwrap();
+        r.flush_for_retirement(&a).unwrap().retire_flushed();
+    }
+
+    #[test]
+    fn writer_retirement_sequence_exhaustion_never_reuses_authority() {
+        let r = test_repository_v2();
+        let a = r.lease(USER_A, 1, 10);
+        r.activate(a.clone()).unwrap();
+        r.pending.lock().unwrap().sequence = u64::MAX;
+        assert!(r.flush_for_retirement(&a).is_err());
+        assert_eq!(r.pending.lock().unwrap().active.as_ref(), Some(&a));
+        assert!(r.pending.lock().unwrap().retirement.is_none());
+        assert!(r.queue_private(a.clone(), Some(store_with_asset("overflow")), None).is_err());
+        assert!(r.activate(r.lease(USER_B, 2, 11)).is_err());
+        assert_eq!(r.pending.lock().unwrap().sequence, u64::MAX);
+    }
+
+    #[test]
+    fn writer_retirement_proof_is_send_but_not_clone() {
+        fn assert_send<T: Send>() {}
+        assert_send::<FlushedWriterRetirement>();
+        trait AmbiguousIfClone<A> { fn check() {} }
+        impl<T: ?Sized> AmbiguousIfClone<()> for T {}
+        struct Cloned;
+        impl<T: ?Sized + Clone> AmbiguousIfClone<Cloned> for T {}
+        let _ = <FlushedWriterRetirement as AmbiguousIfClone<_>>::check;
+    }
+
+    #[test]
+    fn writer_retirement_disconnected_queue_or_ack_never_returns_proof() {
+        for disconnect_ack in [false, true] {
+            let root = tempfile::tempdir_in(std::fs::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+            let data_root = Arc::new(NamespaceFs::open_data_root(root.path()).unwrap());
+            let (writer, receiver) = ClientStateWriter::channel(root.path().join("fixture.sqlite3"), data_root);
+            let lease = NamespaceLease { namespace: UserNamespace::new(root.path(), USER_A).unwrap(), auth_epoch: 1, namespace_epoch: 1 };
+            writer.activate(lease.clone()).unwrap();
+            let worker = if disconnect_ack {
+                Some(std::thread::spawn(move || {
+                    // Actual receiver death after dequeue, before acknowledgement.
+                    let command = receiver.recv().unwrap();
+                    assert!(matches!(command.command, ClientStateWrite::FlushForRetirement { .. }));
+                    drop(command);
+                }))
+            } else { drop(receiver); None };
+            let result = writer.flush_for_retirement(&lease);
+            if let Some(worker) = worker { worker.join().unwrap(); }
+            assert!(result.is_err());
+            let pending = writer.pending.lock().unwrap();
+            assert_eq!(pending.active.as_ref(), Some(&lease));
+            assert!(pending.retirement.is_none());
+            drop(pending);
+            assert!(writer.flush_for_retirement(&lease).is_err());
+        }
+    }
     #[test]
     fn flush_device_drains_only_device_work_while_private_work_is_paused() {
         let r = paused_private_test_writer();
@@ -4541,7 +5986,7 @@ mod tests {
         let (ack, result) = mpsc::channel();
         {
             let mut p = r.pending.lock().unwrap();
-            let sequence = p.next_sequence();
+            let sequence = p.next_sequence().unwrap();
             r.sender
                 .send(QueuedWrite {
                     sequence,
@@ -4549,6 +5994,7 @@ mod tests {
                         lease: a.clone(),
                         data: store_with_asset("checked"),
                         acknowledgement: ack,
+                        admission: None,
                     },
                 })
                 .unwrap();
@@ -4578,7 +6024,7 @@ mod tests {
         let (ack, result) = mpsc::channel();
         {
             let mut p = r.pending.lock().unwrap();
-            let sequence = p.next_sequence();
+            let sequence = p.next_sequence().unwrap();
             r.sender
                 .send(QueuedWrite {
                     sequence,
@@ -4586,6 +6032,7 @@ mod tests {
                         lease: a.clone(),
                         data: store_with_asset("checked"),
                         acknowledgement: ack,
+                        admission: None,
                     },
                 })
                 .unwrap();
@@ -4616,7 +6063,7 @@ mod tests {
         let (ack, result) = mpsc::channel();
         {
             let mut p = r.pending.lock().unwrap();
-            let sequence = p.next_sequence();
+            let sequence = p.next_sequence().unwrap();
             r.sender
                 .send(QueuedWrite {
                     sequence,
@@ -4624,6 +6071,7 @@ mod tests {
                         lease: a.clone(),
                         data: store_with_asset("late"),
                         acknowledgement: ack,
+                        admission: None,
                     },
                 })
                 .unwrap();
@@ -4731,7 +6179,7 @@ mod tests {
         let (ack2, result2) = mpsc::channel();
         {
             let mut p = r.pending.lock().unwrap();
-            let sequence = p.next_sequence();
+            let sequence = p.next_sequence().unwrap();
             r.sender
                 .send(QueuedWrite {
                     sequence,
@@ -4741,7 +6189,7 @@ mod tests {
                     },
                 })
                 .unwrap();
-            let sequence = p.next_sequence();
+            let sequence = p.next_sequence().unwrap();
             r.sender
                 .send(QueuedWrite {
                     sequence,
@@ -4752,6 +6200,7 @@ mod tests {
                             ..Default::default()
                         },
                         acknowledgement: ack2,
+                        admission: None,
                     },
                 })
                 .unwrap();
@@ -4884,6 +6333,64 @@ mod tests {
                 .id,
             "retry"
         );
+    }
+    #[test]
+    fn core_credit_redemption_intent_survives_exact_owner_sqlite_round_trip() {
+        let repository = test_repository_v2();
+        let lease = repository.lease(USER_A, 1, 1);
+        repository.activate(lease.clone()).unwrap();
+        let data: LocalStoreData = serde_json::from_value(serde_json::json!({
+            "pending_credit_redemptions_by_owner": { (USER_A): {
+                "code": "original-code", "client_request_id": "original-key", "billing_account_group_id": "22222222-2222-4222-8222-222222222222"
+            }}
+        })).unwrap();
+        repository.persist_client_state_checked_for_namespace(&lease, data).unwrap();
+        let saved = repository.load_client_state_for_namespace(&lease).unwrap().unwrap();
+        let intent = saved.pending_credit_redemptions_by_owner.get(USER_A).unwrap();
+        assert_eq!(intent.code, "original-code");
+        assert_eq!(intent.client_request_id, "original-key");
+        assert_eq!(intent.billing_account_group_id, "22222222-2222-4222-8222-222222222222");
+        assert_eq!(saved.pending_credit_redemptions_by_owner.len(), 1);
+    }
+    #[test]
+    fn core_retained_redemption_read_uses_held_connection_and_exact_active_lease() {
+        let moved_root = tempfile::tempdir().unwrap();
+        let r = test_repository_v2();
+        let a = r.lease(USER_A, 1, 1);
+        r.activate(a.clone()).unwrap();
+        let data: LocalStoreData = serde_json::from_value(serde_json::json!({
+            "pending_credit_redemptions_by_owner": {(USER_A): {
+                "code":"retained-code","client_request_id":"retained-key",
+                "billing_account_group_id":"22222222-2222-4222-8222-222222222222"
+            }}
+        })).unwrap();
+        r.persist_client_state_checked_for_namespace(&a, data).unwrap();
+        let moved = moved_root.path().join("held");
+        fs::rename(r.directory.path(), &moved).unwrap();
+        fs::create_dir(r.directory.path()).unwrap();
+        assert!(!r.path.exists());
+        let retained = r.read_retained_redemption_checked(&a, "retained-key").unwrap().unwrap();
+        assert_eq!(retained.code, "retained-code");
+        assert!(!r.path.exists(), "a retained read must not create a substitute database");
+        fs::write(&r.path, b"sentinel: not a database").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&r.path, fs::Permissions::from_mode(0o444)).unwrap();
+        }
+        assert_eq!(r.read_retained_redemption_checked(&a, "retained-key").unwrap().unwrap().code, "retained-code");
+        assert_eq!(fs::read(&r.path).unwrap(), b"sentinel: not a database");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&r.path).unwrap().permissions().mode() & 0o777, 0o444);
+        }
+        assert!(r.read_retained_redemption_checked(&r.lease(USER_B, 1, 1), "retained-key").is_err());
+        assert!(r.read_retained_redemption_checked(&r.lease(USER_A, 2, 1), "retained-key").is_err());
+        assert!(r.read_retained_redemption_checked(&a, "different-key").unwrap().is_none());
+        r.flush_for_retirement(&a).unwrap().retire_flushed();
+        assert!(r.read_retained_redemption_checked(&a, "retained-key").is_err());
+        assert_eq!(fs::read(&r.path).unwrap(), b"sentinel: not a database");
     }
     #[test]
     fn video_prompt_draft_survives_sqlite_round_trip_without_changing_image_drafts() {

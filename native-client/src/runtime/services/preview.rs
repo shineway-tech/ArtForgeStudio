@@ -68,6 +68,21 @@ pub(super) fn prepare_delivery_preview_for_namespace(
     })
 }
 
+pub(super) fn prepare_owned_preview(persistence: &PrivatePersistence, path: &Path, purpose: PreviewPurpose) -> Result<PreparedDeliveryPreview> {
+    let _effect = persistence.begin_effect()?;
+    anyhow::ensure!(persistence.owns_path(path), "preview source is outside captured namespace");
+    let authority = persistence.storage_authority()?;
+    let decoded = decode_owned_reference_source(&authority, path)?;
+    let (width, height) = (decoded.width(), decoded.height());
+    let edge = purpose.longest_edge();
+    let rgba = if width.max(height) > edge { decoded.thumbnail(edge, edge) } else { decoded }.to_rgba8();
+    Ok(PreparedDeliveryPreview { width, height, preview_width: rgba.width(), preview_height: rgba.height(), rgba: rgba.into_raw() })
+}
+pub(super) fn load_owned_preview_image(persistence: &PrivatePersistence, path: &Path, purpose: PreviewPurpose) -> Result<Image> {
+    let _effect = persistence.begin_effect()?;
+    let prepared = prepare_owned_preview(persistence, path, purpose)?;
+    Ok(materialize_delivery_preview(&prepared))
+}
 pub(super) fn materialize_delivery_preview(preview: &PreparedDeliveryPreview) -> Image {
     let pixels = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
         &preview.rgba,

@@ -2,6 +2,154 @@ use super::*;
 use std::sync::{Mutex, OnceLock};
 
 const RECOVERY_SCHEMA_VERSION: u32 = 2;
+/// Exact retained request authority. Callers choose only a retained key, never a payer,
+/// body, request type, or borrowed billing epoch. It deliberately carries no new-work grant.
+pub(super) struct SavedReplayRequest {
+    authority: Option<Arc<NamespaceStorageAuthority>>, redemption: Option<PrivatePersistence>, session: SessionScope,
+    kind: SavedReplayKind, key: String, payer: String, source: serde_json::Value,
+    body: serde_json::Value, path: String,
+}
+#[derive(Clone, Copy)]
+enum SavedReplayKind { Generation, Prompt, Deep, Order, Redemption }
+impl SavedReplayRequest {
+    fn load(authority: Arc<NamespaceStorageAuthority>, session: &SessionScope, kind: SavedReplayKind, key: &str) -> Result<Self> {
+        anyhow::ensure!(authority.user_public_id() == session.owner_user_id && authority.lease().auth_epoch == session.auth_epoch, "saved replay creator/namespace mismatch");
+        let source = Self::source(&authority, kind, key)?;
+        let payer = source.get("billing_account_group_id").and_then(serde_json::Value::as_str).ok_or_else(|| anyhow!("saved payer missing"))?.to_owned();
+        let (path, body) = match kind {
+            SavedReplayKind::Redemption => anyhow::bail!("redemption requires retained SQLite authority"),
+            SavedReplayKind::Generation => {
+                let record: PendingGenerationRecord = serde_json::from_value(source.clone())?;
+                anyhow::ensure!(record.server_task_id.is_empty() && !record.canvas_ui_extraction && !record.cancel_requested, "accepted, cancelled or unsupported task cannot be replayed as new work");
+                (saved_generation_create_path(&record)?.into(), saved_generation_create_body(&record)?)
+            }
+            SavedReplayKind::Prompt => {
+                let record: PendingPromptTaskRecord = serde_json::from_value(source.clone())?;
+                anyhow::ensure!(record.server_task_id.is_empty() && record.uploaded_file_ids.len() == record.reference_paths.len(), "saved prompt uploads incomplete");
+                ("/v1/generation/tasks".into(), serde_json::to_value(prompt_task_create_request(&record))?)
+            }
+            SavedReplayKind::Deep => {
+                let record: PendingPromptOptimizationRecord = serde_json::from_value(source.clone())?;
+                anyhow::ensure!(record.server_job_id.is_empty(), "accepted prompt cannot be replayed as new work");
+                match record.operation {
+                    PendingPromptOptimizationOperation::Create { request } => {
+                        anyhow::ensure!(request.client_request_id == key, "saved prompt key mismatch");
+                        ("/v1/prompt-optimizations".into(), serde_json::to_value(request)?)
+                    }
+                    PendingPromptOptimizationOperation::Retry { source_job_id } =>
+                        (format!("/v1/prompt-optimizations/{source_job_id}/retry"), serde_json::json!({"client_request_id":key})),
+                }
+            }
+            SavedReplayKind::Order => {
+                let record: PendingOrderRecord = serde_json::from_value(source.clone())?;
+                anyhow::ensure!(record.order_id.is_empty(), "accepted order cannot be replayed as new work");
+                match record.kind.as_str() {
+                    "credit" => ("/v1/credits/orders".into(), serde_json::json!({"pack_code":record.product_code,"client_request_id":key})),
+                    "membership" => ("/v1/membership/orders".into(), serde_json::json!({"plan_code":record.product_code,"client_request_id":key})),
+                    "membership_upgrade" => {
+                        anyhow::ensure!(!record.upgrade_quote_id.is_empty(), "missing original quote; no replacement quote is allowed");
+                        ("/v1/membership/upgrade-orders".into(), serde_json::json!({"quote_id":record.upgrade_quote_id,"client_request_id":key}))
+                    }
+                    _ => anyhow::bail!("unsupported saved order type"),
+                }
+            }
+        };
+        Ok(Self { authority: Some(authority), redemption: None, session: session.clone(), kind, key: key.into(), payer, source, body, path })
+    }
+    fn source(authority: &NamespaceStorageAuthority, kind: SavedReplayKind, key: &str) -> Result<serde_json::Value> {
+        let rows = match kind {
+            SavedReplayKind::Redemption => anyhow::bail!("redemption requires retained SQLite authority"),
+            SavedReplayKind::Generation => load_pending_generations_for_namespace(authority)?.into_iter().map(serde_json::to_value).collect::<std::result::Result<Vec<_>, _>>()?,
+            SavedReplayKind::Prompt => load_pending_prompt_tasks_for_namespace(authority)?.into_iter().map(serde_json::to_value).collect::<std::result::Result<Vec<_>, _>>()?,
+            SavedReplayKind::Deep => load_pending_prompt_optimizations_for_namespace(authority)?.into_iter().map(serde_json::to_value).collect::<std::result::Result<Vec<_>, _>>()?,
+            SavedReplayKind::Order => load_pending_orders_for_namespace(authority)?.into_iter().map(serde_json::to_value).collect::<std::result::Result<Vec<_>, _>>()?,
+        };
+        rows.into_iter().find(|row| row.get("client_request_id").and_then(serde_json::Value::as_str) == Some(key)).ok_or_else(|| anyhow!("retained request not found"))
+    }
+    pub(super) fn generation(authority: Arc<NamespaceStorageAuthority>, session: &SessionScope, key: &str) -> Result<Self> { Self::load(authority, session, SavedReplayKind::Generation, key) }
+    pub(super) fn prompt(authority: Arc<NamespaceStorageAuthority>, session: &SessionScope, key: &str) -> Result<Self> { Self::load(authority, session, SavedReplayKind::Prompt, key) }
+    pub(super) fn deep(authority: Arc<NamespaceStorageAuthority>, session: &SessionScope, key: &str) -> Result<Self> { Self::load(authority, session, SavedReplayKind::Deep, key) }
+    pub(super) fn order(authority: Arc<NamespaceStorageAuthority>, session: &SessionScope, key: &str) -> Result<Self> { Self::load(authority, session, SavedReplayKind::Order, key) }
+    pub(super) fn redemption(persistence: PrivatePersistence, session: &SessionScope, key: &str) -> Result<Self> {
+        let record = persistence.read_retained_redemption(session, key)?;
+        let payer = record.billing_account_group_id.clone();
+        let body = serde_json::json!({"code": record.code, "client_request_id": record.client_request_id});
+        let source = serde_json::to_value(record)?;
+        Ok(Self { authority: None, redemption: Some(persistence), session: session.clone(), kind: SavedReplayKind::Redemption,
+            key: key.into(), payer, source, body, path: "/v1/credits/redemptions".into() })
+    }
+    pub(super) fn verify(&self) -> Result<()> {
+        let source = if let Some(persistence) = &self.redemption {
+            serde_json::to_value(persistence.read_retained_redemption(&self.session, &self.key)?)?
+        } else {
+            Self::source(self.authority.as_ref().ok_or_else(|| anyhow!("saved replay authority unavailable"))?, self.kind, &self.key)?
+        };
+        anyhow::ensure!(source == self.source, "retained replay request changed");
+        Ok(())
+    }
+    pub(super) fn session(&self) -> &SessionScope { &self.session }
+    pub(super) fn payer(&self) -> &str { &self.payer }
+    pub(super) fn key(&self) -> &str { &self.key }
+    pub(super) fn path(&self) -> &str { &self.path }
+    pub(super) fn body(&self) -> serde_json::Value { self.body.clone() }
+}
+fn saved_generation_create_path(record: &PendingGenerationRecord) -> Result<&'static str> {
+    Ok(match record.task_type.as_str() {
+        "image_watermark_removal" => "/v1/toolbox/watermark-removals",
+        "image_colorization" => "/v1/toolbox/image-colorizations",
+        "image_enhancement" => "/v1/toolbox/image-enhancements",
+        "image_cutout" => "/v1/toolbox/image-cutouts",
+        "image_generation" | "image_edit" | "image_upscale" | "image_to_video" => "/v1/generation/tasks",
+        _ => anyhow::bail!("unsupported saved generation type; record preserved"),
+    })
+}
+fn saved_generation_create_body(record: &PendingGenerationRecord) -> Result<serde_json::Value> {
+    anyhow::ensure!(record.uploaded_file_ids.len() == record.reference_paths.len() || record.reference_paths.is_empty(), "saved reference uploads incomplete");
+    Ok(match record.task_type.as_str() {
+        "image_to_video" => {
+            let request = record.video_request.as_ref().ok_or_else(|| anyhow!("original video quote/body missing; record preserved"))?;
+            request.validate()?;
+            anyhow::ensure!(request.client_request_id == record.client_request_id && request.task_type == record.task_type, "retained video request identity mismatch");
+            serde_json::to_value(request)?
+        }
+        "image_watermark_removal" | "image_colorization" | "image_enhancement" | "image_cutout" => {
+            anyhow::ensure!(record.uploaded_file_ids.len() == 1 && !record.uploaded_file_ids[0].trim().is_empty(), "saved toolbox source missing");
+            let reference_file_id = record.uploaded_file_ids[0].clone();
+            match record.task_type.as_str() {
+                "image_watermark_removal" => serde_json::to_value(CreateWatermarkRemoval { client_request_id: record.client_request_id.clone(), reference_file_id })?,
+                "image_colorization" => serde_json::to_value(CreateImageColorization { client_request_id: record.client_request_id.clone(), reference_file_id })?,
+                "image_enhancement" => {
+                    anyhow::ensure!(matches!(record.quality.as_str(), "2K" | "4K"), "saved enhancement quality invalid");
+                    serde_json::to_value(CreateImageEnhancement { client_request_id: record.client_request_id.clone(), reference_file_id, target_quality: record.quality.clone() })?
+                }
+                _ => {
+                    anyhow::ensure!(matches!(record.quality.as_str(), "general" | "portrait" | "avatar" | "skin" | "product" | "clothing" | "sky"), "saved cutout subject invalid");
+                    serde_json::to_value(CreateImageCutout { client_request_id: record.client_request_id.clone(), reference_file_id, subject_type: record.quality.clone() })?
+                }
+            }
+        }
+        "image_generation" => serde_json::to_value(CreateGenerationTask {
+            client_request_id: record.client_request_id.clone(), task_type: record.task_type.clone(),
+            model_code: record.model_code.clone(), prompt: record.generation_prompt.clone(),
+            quality: Some(record.quality.clone()), count: Some(record.count), aspect_ratio: Some(api_aspect_ratio(&record.ratio)),
+            reference_file_ids: Some(record.uploaded_file_ids.clone()), target_language: None,
+        })?,
+        "image_upscale" => serde_json::to_value(CreateUpscaleGenerationTask {
+            client_request_id: record.client_request_id.clone(), task_type: record.task_type.clone(),
+            model_code: record.model_code.clone(), prompt: record.generation_prompt.clone(), quality: record.quality.clone(),
+            reference_file_ids: record.uploaded_file_ids.clone(), target_width: record.target_width, target_height: record.target_height,
+        })?,
+        "image_edit" => {
+            anyhow::ensure!(record.uploaded_file_ids.len() == 2, "saved image edit inputs missing");
+            serde_json::to_value(CreateImageEditTask {
+                client_request_id: record.client_request_id.clone(), task_type: record.task_type.clone(), model_code: record.model_code.clone(),
+                prompt: record.generation_prompt.clone(), quality: record.quality.clone(), aspect_ratio: api_aspect_ratio(&record.ratio),
+                source_file_id: record.uploaded_file_ids[0].clone(), mask_file_id: record.uploaded_file_ids[1].clone(),
+            })?
+        }
+        _ => anyhow::bail!("unsupported saved generation type; record preserved"),
+    })
+}
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub(super) struct PendingDeliveryRecord {
@@ -21,7 +169,13 @@ pub(super) struct PendingDeliveryRecord {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct PendingGenerationRecord {
+    #[serde(default)]
+    pub(super) source_asset_id: String,
+    #[serde(default)]
+    pub(super) video_request: Option<CreateVideoGenerationTask>,
     pub(super) schema_version: u32,
+    #[serde(default)]
+    pub(super) cancel_requested: bool,
     #[serde(default)]
     pub(super) created_at_epoch_ms: i64,
     pub(super) client_request_id: String,
@@ -170,6 +324,8 @@ pub(super) struct PendingPromptOptimizationRecord {
     pub(super) auth_epoch: u64,
     pub(super) billing_account_group_id: String,
     pub(super) server_job_id: String,
+    #[serde(default)]
+    pub(super) presentation_dismissed: bool,
     pub(super) operation: PendingPromptOptimizationOperation,
 }
 
@@ -311,6 +467,7 @@ trait RecoveryEnvelope: Serialize + serde::de::DeserializeOwned {
     fn empty() -> Self;
     fn schema_version(&self) -> u32;
     fn rows(&self) -> Vec<(RowKind, &dyn RecoveryRow)>;
+    fn retained_request_bodies(&self) -> BTreeMap<String, serde_json::Value> { BTreeMap::new() }
     fn validate_extra(&self) -> Result<()> {
         Ok(())
     }
@@ -331,8 +488,23 @@ trait RecoveryEnvelope: Serialize + serde::de::DeserializeOwned {
         self.validate_extra()?;
         Ok(identities)
     }
+
 }
 impl RecoveryEnvelope for RecoveryFile {
+    fn validate_extra(&self) -> Result<()> {
+        for row in &self.generations {
+            if let Some(request) = &row.video_request {
+                request.validate()?;
+                anyhow::ensure!(request.client_request_id == row.client_request_id && request.task_type == row.task_type
+                    && row.task_type == "image_to_video", "retained video request identity mismatch");
+            }
+        }
+        Ok(())
+    }
+    fn retained_request_bodies(&self) -> BTreeMap<String, serde_json::Value> {
+        self.generations.iter().filter(|row| row.task_type == "image_to_video" || row.video_request.is_some())
+            .map(|row| (row.client_request_id.clone(), serde_json::json!({"task_type": row.task_type, "video_request": row.video_request, "source_asset_id": row.source_asset_id}))).collect()
+    }
     const DOCUMENT: RecoveryDocument = RecoveryDocument::Generations;
     fn empty() -> Self {
         Self {
@@ -393,6 +565,9 @@ impl RecoveryEnvelope for PromptTaskRecoveryFile {
     }
     fn validate_extra(&self) -> Result<()> {
         for row in &self.deep_optimizations {
+            if row.presentation_dismissed && row.server_job_id.is_empty() {
+                return Err(RecoveryError::InvalidDocument.into());
+            }
             if !row.server_job_id.is_empty() && !canonical_uuid(&row.server_job_id) {
                 return Err(RecoveryError::InvalidDocument.into());
             }
@@ -490,6 +665,7 @@ impl NamespaceRecoveryStore<'_> {
         permission: MutationPermission,
         mut update: impl FnMut(&mut D) -> Result<T>,
     ) -> Result<T> {
+        let _mutation = self.authority.begin_ordinary_mutation()?;
         let _guard = recovery_lock()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -497,9 +673,21 @@ impl NamespaceRecoveryStore<'_> {
         for attempt in 0..3 {
             let (mut document, retained) = self.read::<D>()?;
             let before = document.validate(self.authority)?;
+            let retained_bodies = document.retained_request_bodies();
             let tentative = update(&mut document)?;
             let after = document.validate(self.authority)?;
             validate_identity_delta(&before, &after, &permission)?;
+            let next_bodies = document.retained_request_bodies();
+            for key in next_bodies.keys() {
+                anyhow::ensure!(!before.iter().any(|(_, identity)| &identity.client_request_id == key)
+                    || retained_bodies.contains_key(key),
+                    "an existing request cannot become a different video operation");
+            }
+            for (key, body) in &retained_bodies {
+                if after.iter().any(|(_, identity)| &identity.client_request_id == key) {
+                    anyhow::ensure!(next_bodies.get(key) == Some(body), "retained video request body cannot be replaced or cleared");
+                }
+            }
             let bytes = serde_json::to_vec_pretty(&document)?;
             let mut temporary = self.authority.create_temporary_regular_for(&key)?;
             let write_result = self
@@ -794,6 +982,7 @@ pub(super) fn upsert_pending_prompt_optimization_for_namespace(
                 if serde_json::to_value(&saved.operation)?
                     != serde_json::to_value(&record.operation)?
                     || saved.server_job_id != record.server_job_id
+                    || (saved.presentation_dismissed && !record.presentation_dismissed)
                 {
                     return Err(RecoveryError::IdentityChanged.into());
                 }
@@ -801,6 +990,30 @@ pub(super) fn upsert_pending_prompt_optimization_for_namespace(
             upsert_row(&mut file.deep_optimizations, &record)
         },
     )
+}
+/// Presentation-only closure of an exact retained job. The caller separately
+/// verifies the server terminal state; this never rewrites historical authority.
+pub(super) fn mark_pending_prompt_optimization_presentation_dismissed_for_namespace(
+    authority: &NamespaceStorageAuthority,
+    expected: &RecoveryRecordIdentity,
+    expected_server_job_id: &str,
+) -> Result<bool> {
+    expected.require_authority(authority, false)?;
+    anyhow::ensure!(canonical_uuid(expected_server_job_id), "dismissal requires an exact canonical job");
+    let _unit = authority.begin_ordinary_mutation()?;
+    let store = NamespaceRecoveryStore { authority };
+    let retained = store.load_prompt_tasks()?;
+    let Some(index) = exact_index(&retained.deep_optimizations, expected) else { return Ok(false); };
+    let row = &retained.deep_optimizations[index];
+    if row.server_job_id != expected_server_job_id { return Ok(false); }
+    if row.presentation_dismissed { return Ok(true); }
+    store.mutate(MutationPermission::Preserve, |file: &mut PromptTaskRecoveryFile| {
+        let Some(index) = exact_index(&file.deep_optimizations, expected) else { return Ok(false); };
+        let row = &mut file.deep_optimizations[index];
+        if row.server_job_id != expected_server_job_id { return Ok(false); }
+        row.presentation_dismissed = true;
+        Ok(true)
+    })
 }
 pub(super) fn remove_pending_prompt_optimization_for_namespace(
     authority: &NamespaceStorageAuthority,
@@ -841,6 +1054,8 @@ pub(super) fn rebind_pending_prompt_optimization_epoch_for_namespace(
 
 #[derive(Clone)]
 pub(super) enum GenerationRecoveryPatch {
+    RequestCancellation,
+    BeginSubmission,
     UploadedFileIds(Vec<String>),
     UploadedAndReleaseInputs(Vec<String>),
     Accepted {
@@ -881,6 +1096,10 @@ pub(super) fn apply_generation_patch_for_namespace(
         };
         let record = &mut file.generations[index];
         match patch.clone() {
+            GenerationRecoveryPatch::RequestCancellation => record.cancel_requested = true,
+            GenerationRecoveryPatch::BeginSubmission => {
+                anyhow::ensure!(!record.cancel_requested, "cancelled generation cannot be submitted");
+            }
             GenerationRecoveryPatch::UploadedFileIds(ids) => record.uploaded_file_ids = ids,
             GenerationRecoveryPatch::UploadedAndReleaseInputs(ids) => {
                 record.uploaded_file_ids = ids;
@@ -1112,6 +1331,54 @@ fn settle_delivery(
         },
     )
 }
+pub(super) fn settle_acknowledged_cutout_delivery_for_namespace(
+    receipt: &AcknowledgedCutoutDelivery,
+) -> Result<bool> {
+    let authority = receipt.authority();
+    let original = receipt.record();
+    let expected = original.identity();
+    let confirmation = receipt.confirmation();
+    expected.require_authority(authority, true)?;
+    anyhow::ensure!(original.task_type == "image_cutout" && original.count == 1
+        && original.reference_paths.len() == 1 && original.reference_sha256.len() == 1
+        && original.reference_size_bytes.len() == 1
+        && confirmation.client_request_id == original.client_request_id
+        && confirmation.task_id == original.server_task_id && confirmation.item_index == 0,
+        "cutout acknowledgement provenance is incomplete");
+    NamespaceRecoveryStore { authority }.mutate(
+        MutationPermission::Remove(RowKind::Generation, expected.clone()),
+        |file: &mut RecoveryFile| {
+            let Some(index) = exact_index(&file.generations, &expected) else { return Ok(false); };
+            let record = &mut file.generations[index];
+            let stable = |record: &PendingGenerationRecord| -> Result<serde_json::Value> {
+                let mut record = record.clone();
+                record.deliveries.clear(); record.terminal = false; record.expected_success_count = 0;
+                Ok(serde_json::to_value(record)?)
+            };
+            anyhow::ensure!(stable(record)? == stable(original)?
+                && record.terminal && record.expected_success_count == 1 && record.deliveries.len() == 1,
+                "cutout acknowledgement retained body or terminal state changed");
+            let Some(item) = delivery_index(record, |item| item.file_id == confirmation.file_id
+                || item.item_index == confirmation.item_index)? else { return Ok(false); };
+            let delivery = &record.deliveries[item];
+            anyhow::ensure!(delivery.file_id == confirmation.file_id
+                && delivery.item_index == confirmation.item_index
+                && delivery.sha256 == confirmation.sha256
+                && delivery.size_bytes == confirmation.size_bytes
+                && delivery.local_path == receipt.remote_path() && !delivery.abandoned
+                && !delivery.acknowledged
+                && delivery.failed_asset_id.is_empty() && confirmation.failed_asset_id.is_none(),
+                "cutout acknowledgement original remote confirmation changed");
+            record.deliveries[item].acknowledged = true;
+            record.reference_paths.clear();
+            record.reference_sha256.clear();
+            record.reference_size_bytes.clear();
+            if generation_record_complete(record) { file.generations.remove(index); }
+            Ok(true)
+        },
+    )
+}
+
 pub(super) fn pending_delivery_acknowledged_for_namespace(
     authority: &NamespaceStorageAuthority,
     expected: &RecoveryRecordIdentity,
@@ -1446,12 +1713,328 @@ pub(super) fn pending_recovery_may_reference_files() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn core_deep_dismissal_preserves_exact_historical_identity_and_rejects_upsert_rollback() {
+        let (_root, authority, scope) = fixture(9);
+        let mut record = deep_record();
+        record.server_job_id = OTHER.into();
+        upsert_pending_prompt_optimization_for_namespace(&authority, &scope, record.clone()).unwrap();
+        let identity = record.identity();
+        assert!(!mark_pending_prompt_optimization_presentation_dismissed_for_namespace(&authority, &identity, PAYER).unwrap());
+        assert!(mark_pending_prompt_optimization_presentation_dismissed_for_namespace(&authority, &identity, OTHER).unwrap());
+        assert!(mark_pending_prompt_optimization_presentation_dismissed_for_namespace(&authority, &identity, OTHER).unwrap());
+        let saved = load_pending_prompt_optimizations_for_namespace(&authority).unwrap().remove(0);
+        let mut expected = serde_json::to_value(&record).unwrap();
+        expected["presentation_dismissed"] = serde_json::json!(true);
+        assert_eq!(serde_json::to_value(&saved).unwrap(), expected);
+        assert!(upsert_pending_prompt_optimization_for_namespace(&authority, &scope, record).is_err());
+        assert_eq!(serde_json::to_value(load_pending_prompt_optimizations_for_namespace(&authority).unwrap().remove(0)).unwrap(), expected);
+        let new_lease = NamespaceLease { auth_epoch: 10, namespace_epoch: 2, ..authority.lease().clone() };
+        let current = NamespaceStorageAuthority::open(Arc::new(NamespaceFs::open_data_root(_root.path()).unwrap()), &new_lease).unwrap();
+        assert!(mark_pending_prompt_optimization_presentation_dismissed_for_namespace(&current, &identity, OTHER).unwrap());
+        assert_eq!(serde_json::to_value(load_pending_prompt_optimizations_for_namespace(&current).unwrap().remove(0)).unwrap(), expected);
+    }
+    #[test]
+    fn core_deep_dismissal_refuses_missing_job_and_defaults_legacy_presentation_to_visible() {
+        let (_root, authority, scope) = fixture(9);
+        let record = deep_record();
+        upsert_pending_prompt_optimization_for_namespace(&authority, &scope, record.clone()).unwrap();
+        for id in ["", "not-a-job"] {
+            assert!(mark_pending_prompt_optimization_presentation_dismissed_for_namespace(&authority, &record.identity(), id).is_err());
+        }
+        let mut wire = serde_json::to_value(&record).unwrap();
+        wire.as_object_mut().unwrap().remove("presentation_dismissed");
+        let legacy: PendingPromptOptimizationRecord = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(legacy).unwrap()["presentation_dismissed"], false);
+        wire["presentation_dismissed"] = serde_json::json!(true);
+        let dismissed_without_job: PendingPromptOptimizationRecord = serde_json::from_value(wire).unwrap();
+        assert!(upsert_pending_prompt_optimization_for_namespace(&authority, &scope, dismissed_without_job).is_err());
+        assert!(load_pending_prompt_optimizations_for_namespace(&authority).unwrap()[0].server_job_id.is_empty());
+    }
+    #[test]
+    fn core_deep_dismissal_refuses_retired_or_upgrade_authority_without_changing_bytes() {
+        use backend_generation::billing_capture_test_support::fixture;
+        for retire in [false, true] {
+            let fixture = fixture("http://127.0.0.1:9");
+            let lease = fixture.authority.lease().clone();
+            let index = FileIndex::initialize(fixture.root.path().join("dismiss-index.sqlite3")).unwrap();
+            let root = fixture.context.data_root_capability.clone().unwrap();
+            let authority = NamespaceStorageAuthority::open_active(root, &lease, fixture.backend.api.clone(), index).unwrap();
+            let mut record = deep_record();
+            record.owner_user_id = fixture.scope.request.session.owner_user_id.clone();
+            record.auth_epoch = lease.auth_epoch;
+            record.billing_account_group_id = fixture.scope.request.account_group_id.clone();
+            record.server_job_id = OTHER.into();
+            upsert_pending_prompt_optimization_for_namespace(&authority, &fixture.scope, record.clone()).unwrap();
+            let before = bytes(&authority, RecoveryDocument::PromptTasks);
+            if retire { fixture.context.user_activity.begin_quiesce(&lease).unwrap().retire(); }
+            else { fixture.backend.api.upgrade_latch().trip(RequiredUpgrade { minimum_version: None }); }
+            assert!(mark_pending_prompt_optimization_presentation_dismissed_for_namespace(&authority, &record.identity(), OTHER).is_err());
+            assert_eq!(bytes(&authority, RecoveryDocument::PromptTasks), before);
+        }
+    }
+#[test]
+    fn core_runtime_recovery_mutations_reject_retired_namespace_and_exact_upgrade() {
+        use backend_generation::billing_capture_test_support::fixture;
+        for retire in [false, true] {
+            let fixture = fixture("http://127.0.0.1:9");
+            let lease = fixture.authority.lease().clone();
+            let index = FileIndex::initialize(fixture.root.path().join("runtime-index.sqlite3")).unwrap();
+            let root = fixture.context.data_root_capability.clone().unwrap();
+            let authority = NamespaceStorageAuthority::open_active(root.clone(), &lease, fixture.backend.api.clone(), index).unwrap();
+            let record = PendingOrderRecord { schema_version: 2, kind: "credit".into(), client_request_id: "exact-original-key".into(),
+                owner_user_id: fixture.scope.request.session.owner_user_id.clone(), billing_account_group_id: fixture.scope.request.account_group_id.clone(),
+                auth_epoch: lease.auth_epoch, order_id: String::new(), product_code: "original-pack".into(), upgrade_quote_id: String::new(), created_at: "fixture".into() };
+            upsert_pending_order_for_namespace(&authority, &fixture.scope, record.clone()).unwrap();
+            let before = serde_json::to_value(load_pending_orders_for_namespace(&authority).unwrap()).unwrap();
+            if retire {
+                fixture.context.user_activity.begin_quiesce(&lease).unwrap().retire();
+            } else {
+                fixture.backend.api.upgrade_latch().trip(RequiredUpgrade { minimum_version: Some("99.0.0".into()) });
+            }
+            assert!(update_pending_order_id_for_namespace(&authority, &record.identity(), "not-authorized").is_err());
+            assert!(remove_pending_order_for_namespace(&authority, &record.identity()).is_err());
+            assert_eq!(serde_json::to_value(load_pending_orders_for_namespace(&authority).unwrap()).unwrap(), before);
+            let preparation = NamespaceStorageAuthority::open_prepublication(root, &lease).unwrap();
+            assert!(preparation.begin_ordinary_mutation().is_err());
+        }
+    }
     const OWNER: &str = "11111111-1111-4111-8111-111111111111";
     const PAYER: &str = "22222222-2222-4222-8222-222222222222";
     const OTHER: &str = "33333333-3333-4333-8333-333333333333";
+    #[test]
+    fn core_cancelled_generation_is_durable_and_cannot_be_admitted_or_replayed() {
+        let (_root, authority, scope) = fixture(9);
+        let mut record = pending_record();
+        record.server_task_id.clear();
+        upsert_pending_generation_for_namespace(&authority, &scope, record.clone()).unwrap();
+        let captured = SavedReplayRequest::generation(authority.clone(), &scope.request.session, &record.client_request_id).unwrap();
+        assert!(apply_generation_patch_for_namespace(&authority, &record.identity(), GenerationRecoveryPatch::RequestCancellation).unwrap());
+        assert!(apply_generation_patch_for_namespace(&authority, &record.identity(), GenerationRecoveryPatch::BeginSubmission).is_err());
+        assert!(SavedReplayRequest::generation(authority.clone(), &scope.request.session, &record.client_request_id).is_err());
+        assert!(captured.verify().is_err());
+        let saved = load_pending_generations_for_namespace(&authority).unwrap();
+        assert!(serde_json::to_value(&saved[0]).unwrap()["cancel_requested"].as_bool().unwrap());
+        assert_eq!(saved[0].billing_account_group_id, PAYER);
+        assert_eq!(saved[0].client_request_id, "request_123");
+        assert_eq!(saved[0].generation_prompt, "prompt");
+    }
+    #[test]
+    fn core_saved_replay_binds_original_record_without_selected_billing_epoch() {
+        let (_root, authority, scope) = fixture(9);
+        let mut record = pending_record();
+        record.server_task_id.clear(); record.terminal = false; record.deliveries.clear();
+        upsert_pending_generation_for_namespace(&authority, &scope, record.clone()).unwrap();
+        let replay = SavedReplayRequest::generation(authority.clone(), &scope.request.session, &record.client_request_id).unwrap();
+        assert_eq!(replay.payer(), PAYER);
+        assert_eq!(replay.key(), "request_123");
+        assert_eq!(replay.path(), "/v1/generation/tasks");
+        assert_eq!(replay.body(), serde_json::json!({"client_request_id":"request_123","task_type":"image_generation","model_code":"openai_image","prompt":"prompt","quality":"1K","count":1,"aspect_ratio":"1:1","reference_file_ids":[]}));
+        assert!(replay.verify().is_ok());
+        assert!(SavedReplayRequest::generation(authority.clone(), &SessionScope { owner_user_id: OTHER.into(), auth_epoch: 9 }, &record.client_request_id).is_err());
+        assert!(SavedReplayRequest::generation(authority.clone(), &scope.request.session, "other-key").is_err());
+        record.generation_prompt = "changed body".into();
+        upsert_pending_generation_for_namespace(&authority, &scope, record).unwrap();
+        assert!(replay.verify().is_err());
+    }
+
+    fn core_retained_video_row() -> (PendingGenerationRecord, serde_json::Value) {
+        let request = serde_json::json!({"client_request_id":"request_123","task_type":"image_to_video",
+            "model_code":"video-original","prompt":"original video body","source_file_id":"original-file",
+            "aspect_ratio":"16:9","resolution":"720P","duration_secs":8,"quote_id":"original-quote"});
+        let mut row = serde_json::to_value(pending_record()).unwrap();
+        row["task_type"] = serde_json::json!("image_to_video");
+        row["server_task_id"] = serde_json::json!("");
+        row["video_request"] = request.clone();
+        row["terminal"] = serde_json::json!(false);
+        row["deliveries"] = serde_json::json!([]);
+        (serde_json::from_value(row).unwrap(), request)
+    }
+    #[test]
+    fn core_video_saved_replay_uses_complete_original_quote_body_and_payer() {
+        let (_root, authority, scope) = fixture(9);
+        let (record, request) = core_retained_video_row();
+        upsert_pending_generation_for_namespace(&authority, &scope, record.clone()).unwrap();
+        let replay = SavedReplayRequest::generation(authority.clone(), &scope.request.session, &record.client_request_id).unwrap();
+        assert_eq!(replay.body(), request);
+        assert_eq!(replay.payer(), PAYER);
+        assert_eq!(replay.key(), "request_123");
+        assert_eq!(replay.path(), "/v1/generation/tasks");
+        assert!(replay.verify().is_ok());
+        let saved = load_pending_generations_for_namespace(&authority).unwrap();
+        assert_eq!(serde_json::to_value(&saved[0]).unwrap()["video_request"], request);
+        assert!(SavedReplayRequest::generation(authority.clone(), &SessionScope { owner_user_id: OTHER.into(), auth_epoch: 9 }, "request_123").is_err());
+    }
+    #[test]
+    fn core_video_retained_source_association_survives_and_cannot_be_changed_by_same_key(){
+        let (_root,authority,scope)=fixture(9);
+        let (record,_)=core_retained_video_row();
+        let mut value=serde_json::to_value(record).unwrap();value["source_asset_id"]=serde_json::json!("source-A");
+        let record:PendingGenerationRecord=serde_json::from_value(value).unwrap();
+        upsert_pending_generation_for_namespace(&authority,&scope,record.clone()).unwrap();
+        let rows=load_pending_generations_for_namespace(&authority).unwrap();
+        assert_eq!(serde_json::to_value(&rows[0]).unwrap()["source_asset_id"],"source-A");
+        let before=bytes(&authority,RecoveryDocument::Generations);
+        let mut changed=serde_json::to_value(&rows[0]).unwrap();changed["source_asset_id"]=serde_json::json!("source-B");
+        assert!(upsert_pending_generation_for_namespace(&authority,&scope,serde_json::from_value(changed.clone()).unwrap()).is_err());
+        assert!(NamespaceRecoveryStore{authority:&authority}.mutate_generations(|file|{
+            file.generations[0]=serde_json::from_value(changed.clone())?;Ok(())
+        }).is_err());
+        assert_eq!(bytes(&authority,RecoveryDocument::Generations),before);
+    }
+    #[test]
+    fn core_video_legacy_empty_source_association_is_not_adopted_by_current_image(){
+        let (_root,authority,scope)=fixture(9);
+        let (record,_)=core_retained_video_row();
+        let mut value=serde_json::to_value(record).unwrap();value.as_object_mut().unwrap().remove("source_asset_id");
+        upsert_pending_generation_for_namespace(&authority,&scope,serde_json::from_value(value).unwrap()).unwrap();
+        let row=load_pending_generations_for_namespace(&authority).unwrap().remove(0);
+        assert_eq!(serde_json::to_value(&row).unwrap()["source_asset_id"],"");
+        let before=bytes(&authority,RecoveryDocument::Generations);
+        let mut changed=serde_json::to_value(row).unwrap();changed["source_asset_id"]=serde_json::json!("currently-open-image");
+        assert!(upsert_pending_generation_for_namespace(&authority,&scope,serde_json::from_value(changed).unwrap()).is_err());
+        assert_eq!(bytes(&authority,RecoveryDocument::Generations),before);
+    }
+    #[test]
+    fn core_video_retained_body_is_immutable_through_upsert_and_generic_mutation() {
+        let (_root, authority, scope) = fixture(9);
+        let (record, _) = core_retained_video_row();
+        upsert_pending_generation_for_namespace(&authority, &scope, record.clone()).unwrap();
+        let before = bytes(&authority, RecoveryDocument::Generations);
+        for replacement in [serde_json::Value::Null, {
+            let mut value = serde_json::to_value(&record).unwrap()["video_request"].clone();
+            value["quote_id"] = serde_json::json!("replacement-quote"); value
+        }] {
+            let mut changed = serde_json::to_value(&record).unwrap();
+            changed["video_request"] = replacement.clone();
+            assert!(upsert_pending_generation_for_namespace(&authority, &scope, serde_json::from_value(changed).unwrap()).is_err());
+            assert_eq!(bytes(&authority, RecoveryDocument::Generations), before);
+            assert!(NamespaceRecoveryStore { authority: &authority }.mutate_generations(|file| {
+                let mut changed = serde_json::to_value(&file.generations[0])?;
+                changed["video_request"] = replacement.clone();
+                file.generations[0] = serde_json::from_value(changed)?;
+                Ok(())
+            }).is_err());
+            assert_eq!(bytes(&authority, RecoveryDocument::Generations), before);
+        }
+    }
+    #[test]
+    fn core_video_cannot_replace_an_existing_image_operation_at_the_same_retained_key() {
+        let (_root, authority, scope) = fixture(9);
+        let mut image = pending_record();
+        image.server_task_id.clear(); image.terminal=false; image.deliveries.clear();
+        upsert_pending_generation_for_namespace(&authority,&scope,image).unwrap();
+        let before=bytes(&authority,RecoveryDocument::Generations);
+        let (video,_) = core_retained_video_row();
+        assert!(upsert_pending_generation_for_namespace(&authority,&scope,video.clone()).is_err());
+        assert_eq!(bytes(&authority,RecoveryDocument::Generations),before);
+        assert!(NamespaceRecoveryStore { authority:&authority }.mutate_generations(|file| {
+            file.generations[0]=video.clone();
+            Ok(())
+        }).is_err());
+        assert_eq!(bytes(&authority,RecoveryDocument::Generations),before);
+    }
+    #[test]
+    fn core_video_request_validation_refuses_changed_key_type_and_empty_original_quote() {
+        for (field, value) in [("client_request_id","other-key"), ("task_type","image_generation"), ("quote_id","")] {
+            let (_root, authority, scope) = fixture(9);
+            let (record, request) = core_retained_video_row();
+            let mut row = serde_json::to_value(record).unwrap();
+            row["video_request"] = request;
+            row["video_request"][field] = serde_json::json!(value);
+            assert!(upsert_pending_generation_for_namespace(&authority, &scope, serde_json::from_value(row).unwrap()).is_err(), "{field}");
+            assert!(load_pending_generations_for_namespace(&authority).unwrap().is_empty());
+        }
+    }
+    #[test]
+    fn core_video_missing_original_request_remains_blocked_and_old_images_stay_readable() {
+        let (_root, authority, scope) = fixture(9);
+        let mut legacy = serde_json::to_value(pending_record()).unwrap();
+        legacy.as_object_mut().unwrap().remove("video_request");
+        legacy["server_task_id"] = serde_json::json!("");
+        let image: PendingGenerationRecord = serde_json::from_value(legacy.clone()).unwrap();
+        upsert_pending_generation_for_namespace(&authority, &scope, image).unwrap();
+        assert!(SavedReplayRequest::generation(authority.clone(), &scope.request.session, "request_123").is_ok());
+        legacy["task_type"] = serde_json::json!("image_to_video");
+        put(&authority, RecoveryDocument::Generations, &serde_json::to_vec(&serde_json::json!({"schema_version":2,"generations":[legacy]})).unwrap());
+        let before = bytes(&authority, RecoveryDocument::Generations);
+        assert_eq!(load_pending_generations_for_namespace(&authority).unwrap().len(), 1);
+        assert!(SavedReplayRequest::generation(authority.clone(), &scope.request.session, "request_123").is_err());
+        assert_eq!(bytes(&authority, RecoveryDocument::Generations), before);
+    }
+    #[test]
+    fn core_toolbox_saved_body_dispatch_preserves_original_uploaded_source_and_payer() {
+        for (kind, path) in [("image_watermark_removal","/v1/toolbox/watermark-removals"), ("image_colorization","/v1/toolbox/image-colorizations")] {
+            let (_root, authority, scope) = fixture(9);
+            let mut record = pending_record();
+            record.task_type = kind.into(); record.server_task_id.clear();
+            record.uploaded_file_ids = vec!["original-source-file".into()];
+            upsert_pending_generation_for_namespace(&authority, &scope, record.clone()).unwrap();
+            let replay = SavedReplayRequest::generation(authority.clone(), &scope.request.session, &record.client_request_id).unwrap();
+            assert_eq!(replay.path(), path);
+            assert_eq!(replay.body(), serde_json::json!({"client_request_id":"request_123","reference_file_id":"original-source-file"}));
+            assert_eq!(replay.payer(), PAYER);
+        }
+    }
+
+    #[test]
+    fn core_saved_video_and_four_toolbox_http_replay_keeps_original_path_key_body_and_payer_after_selection() {
+        use backend_generation::billing_capture_test_support::{fixture as runtime_fixture, listener, capture_response, assert_capture};
+        for (kind, path, extra) in [
+            ("image_watermark_removal", "/v1/toolbox/watermark-removals", None),
+            ("image_colorization", "/v1/toolbox/image-colorizations", None),
+            ("image_enhancement", "/v1/toolbox/image-enhancements", Some(("target_quality", "2K"))),
+            ("image_cutout", "/v1/toolbox/image-cutouts", Some(("subject_type", "general"))),
+            ("image_to_video", "/v1/generation/tasks", None),
+        ] {
+            let (listener, url) = listener();
+            let fixture = runtime_fixture(&url);
+            let mut record = if kind == "image_to_video" { core_retained_video_row().0 } else { pending_record() };
+            record.task_type = kind.into(); record.server_task_id.clear();
+            record.auth_epoch = fixture.scope.request.session.auth_epoch;
+            record.uploaded_file_ids = vec!["original-source-file".into()];
+            if let Some((_, value)) = extra { record.quality = value.into(); }
+            upsert_pending_generation_for_namespace(&fixture.authority, &fixture.scope, record.clone()).unwrap();
+            let replay = SavedReplayRequest::generation(fixture.authority.clone(), &fixture.scope.request.session, &record.client_request_id).unwrap();
+            let manager = &fixture.context.billing_context;
+            manager.bind_authenticated_session(fixture.scope.request.session.clone()).unwrap();
+            for group in [PAYER, OTHER] {
+                let snapshot: AccountSnapshot = serde_json::from_value(serde_json::json!({
+                    "user":{"id":OWNER,"email_masked":"a***@example.com","nickname":null,"status":"active","registered_at":"2026-09-07T00:00:00Z"},
+                    "read_only":false,"capabilities":["bill"],"membership":null,"entitlement":{},"credits":null,"quota":null,
+                    "billing_group":{"group_id":group,"name":"selected","group_status":"active","role":"owner","member_id":null,
+                        "relationship_status":null,"readable_context":true,"selectable":true,"group_version":"1","membership_version":null,"capabilities":["bill"],"quota":null}
+                })).unwrap();
+                let ticket = manager.begin_switch(&fixture.scope.request.session, "fixture-device", group, PreviousBillingAuthority::StillValid).unwrap();
+                let staged = manager.stage_confirmation(&ticket, snapshot.billing_group.clone(), snapshot).unwrap();
+                manager.publish_persisted(ticket, staged);
+            }
+            let before = bytes(&fixture.authority, RecoveryDocument::Generations);
+            let (release, worker) = capture_response(listener, fixture.authority.clone(), "pending-generations.json", "403 Forbidden",
+                r#"{"request_id":"retained-admission","data":null,"error":{"code":"account_group_not_selectable","message":"original payer denied","details":null},"meta":null}"#);
+            release.send(()).unwrap();
+            let result = fixture.backend.api.replay_saved::<serde_json::Value>(&replay);
+            let captured = worker.join().unwrap();
+            assert!(result.is_err());
+            assert_capture(&captured, "generations");
+            assert!(captured.request.starts_with(&format!("POST {path} ")));
+            let header = captured.request.lines().find_map(|line| line.split_once(':').filter(|(name,_)| name.eq_ignore_ascii_case("idempotency-key")).map(|(_,value)|value.trim()));
+            assert_eq!(header, Some("request_123"));
+            let actual: serde_json::Value = serde_json::from_str(captured.request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+            let mut expected = if kind == "image_to_video" { core_retained_video_row().1 }
+                else { serde_json::json!({"client_request_id":"request_123","reference_file_id":"original-source-file"}) };
+            if let Some((key, value)) = extra { expected[key] = serde_json::json!(value); }
+            assert_eq!(actual, expected);
+            assert_eq!(bytes(&fixture.authority, RecoveryDocument::Generations), before);
+            assert_eq!(manager.confirmed_scope().unwrap().request.account_group_id, OTHER);
+        }
+    }
     fn pending_record() -> PendingGenerationRecord {
         PendingGenerationRecord {
+            source_asset_id: String::new(),            video_request: None,
             schema_version: 2,
+            cancel_requested: false,
             created_at_epoch_ms: Local::now().timestamp_millis(),
             client_request_id: "request_123".to_string(),
             owner_user_id: OWNER.to_owned(),
@@ -1732,6 +2315,7 @@ mod tests {
             auth_epoch: 9,
             billing_account_group_id: PAYER.into(),
             server_job_id: String::new(),
+            presentation_dismissed: false,
             operation: PendingPromptOptimizationOperation::Create {
                 request: CreatePromptOptimization {
                     client_request_id: "deep-request".into(),

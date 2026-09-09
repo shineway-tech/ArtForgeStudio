@@ -17,11 +17,407 @@ pub(crate) struct NamespaceStorageAuthority {
     lease: NamespaceLease,
     fs: NamespaceFs,
     directories: ManagedNamespaceDirectories,
+    access: NamespaceStorageAccess,
+}
+
+enum NamespaceStorageAccess {
+    Prepublication,
+    Runtime { client: super::api::ApiClient, scope: super::api::SessionScope, index: super::FileIndex },
+    #[cfg(test)]
+    Fixture,
 }
 
 pub(crate) struct NamespaceManagedFile {
     key: ManagedFileKey,
     capability: ManagedFileCapability,
+}
+
+/// Logical exclusion survives worker/UI handoffs; physical mutexes are short.
+#[derive(Clone, Default)]
+pub(crate) struct NamespaceOperationGate { inner: Arc<NamespaceOperationInner> }
+#[derive(Default)]
+struct NamespaceOperationInner {
+    state: std::sync::Mutex<NamespaceOperationState>,
+    changed: std::sync::Condvar,
+}
+#[derive(Default)]
+struct NamespaceOperationState {
+    sequence: u64,
+    active: Option<NamespaceLease>,
+    operation: Option<u64>,
+    transition: Option<u64>,
+    waiters: usize,
+    closed: bool,
+}
+impl NamespaceOperationState {
+    fn next(&mut self) -> Result<u64> {
+        ensure!(!self.closed, "namespace admission closed");
+        match self.sequence.checked_add(1) {
+            Some(next) => { self.sequence = next; Ok(next) }
+            None => { self.closed = true; anyhow::bail!("namespace authority exhausted") }
+        }
+    }
+}
+pub(crate) struct NamespaceOperationGuard {
+    inner: Arc<NamespaceOperationInner>, id: u64, lease: NamespaceLease,
+}
+pub(crate) struct NamespaceTransitionGuard {
+    inner: Arc<NamespaceOperationInner>, id: u64,
+}
+pub(crate) struct PrepublicationRecoveryAuthority<'a> {
+    transition: &'a NamespaceTransitionGuard,
+    lease: NamespaceLease,
+    checked: std::cell::Cell<bool>,
+}
+pub(crate) struct PrepublicationRecovered {
+    inner: Arc<NamespaceOperationInner>, id: u64, lease: NamespaceLease,
+}
+pub(crate) struct PreparedNamespacePublication {
+    transition: NamespaceTransitionGuard, lease: NamespaceLease,
+}
+impl NamespaceOperationGate {
+    pub(crate) fn begin_operation(&self, lease: &NamespaceLease) -> Result<NamespaceOperationGuard> {
+        let mut state = self.inner.state.lock().map_err(|_| anyhow::anyhow!("namespace state poisoned"))?;
+        ensure!(state.active.as_ref() == Some(lease) && state.transition.is_none()
+            && state.waiters == 0 && state.operation.is_none(), "namespace operation unavailable");
+        let id = state.next()?;
+        state.operation = Some(id);
+        Ok(NamespaceOperationGuard { inner: self.inner.clone(), id, lease: lease.clone() })
+    }
+    pub(crate) fn try_begin_transition(&self) -> Result<NamespaceTransitionGuard> {
+        let mut state = self.inner.state.lock().map_err(|_| anyhow::anyhow!("namespace state poisoned"))?;
+        ensure!(state.operation.is_none() && state.transition.is_none() && state.waiters == 0,
+            "namespace is busy");
+        let id = state.next()?;
+        state.transition = Some(id);
+        Ok(NamespaceTransitionGuard { inner: self.inner.clone(), id })
+    }
+    pub(crate) fn begin_transition(&self) -> Result<NamespaceTransitionGuard> {
+        let mut state = self.inner.state.lock().map_err(|_| anyhow::anyhow!("namespace state poisoned"))?;
+        state.waiters = match state.waiters.checked_add(1) {
+            Some(value) => value,
+            None => { state.closed = true; anyhow::bail!("namespace waiter count exhausted") }
+        };
+        while state.operation.is_some() || state.transition.is_some() {
+            state = self.inner.changed.wait(state).map_err(|_| anyhow::anyhow!("namespace state poisoned"))?;
+        }
+        state.waiters -= 1;
+        let id = state.next()?;
+        state.transition = Some(id);
+        Ok(NamespaceTransitionGuard { inner: self.inner.clone(), id })
+    }
+    pub(crate) fn active_lease(&self) -> Option<NamespaceLease> {
+        self.inner.state.lock().ok().and_then(|state| (!state.closed).then(|| state.active.clone()).flatten())
+    }
+}
+impl NamespaceOperationGuard {
+    pub(crate) fn validate(&self) -> Result<()> {
+        let state = self.inner.state.lock().map_err(|_| anyhow::anyhow!("namespace state poisoned"))?;
+        ensure!(!state.closed && state.operation == Some(self.id) && state.active.as_ref() == Some(&self.lease),
+            "namespace operation expired");
+        Ok(())
+    }
+}
+impl Drop for NamespaceOperationGuard {
+    fn drop(&mut self) {
+        let mut state = self.inner.state.lock().unwrap_or_else(|poisoned| {
+            let mut state = poisoned.into_inner(); state.closed = true; state
+        });
+        if state.operation == Some(self.id) { state.operation = None; }
+        self.inner.changed.notify_all();
+    }
+}
+impl NamespaceTransitionGuard {
+    pub(crate) fn begin_prepublication_recovery(&self, lease: &NamespaceLease) -> Result<PrepublicationRecoveryAuthority<'_>> {
+        let state = self.inner.state.lock().map_err(|_| anyhow::anyhow!("namespace state poisoned"))?;
+        ensure!(!state.closed && state.transition == Some(self.id) && state.active.is_none(),
+            "candidate namespace is not unpublished");
+        Ok(PrepublicationRecoveryAuthority { transition: self, lease: lease.clone(), checked: std::cell::Cell::new(false) })
+    }
+    pub(crate) fn prepare_publication(self, lease: &NamespaceLease, recovered: PrepublicationRecovered) -> Result<PreparedNamespacePublication> {
+        {
+            let state = self.inner.state.lock().map_err(|_| anyhow::anyhow!("namespace state poisoned"))?;
+            ensure!(!state.closed && state.transition == Some(self.id) && state.active.is_none()
+                && Arc::ptr_eq(&self.inner, &recovered.inner) && self.id == recovered.id && *lease == recovered.lease,
+                "candidate namespace proof does not match");
+        }
+        Ok(PreparedNamespacePublication { transition: self, lease: lease.clone() })
+    }
+    pub(crate) fn retire_flushed(&mut self, proof: super::client_state::FlushedWriterRetirement) -> Result<()> {
+        let mut state = self.inner.state.lock().map_err(|_| anyhow::anyhow!("namespace state poisoned"))?;
+        ensure!(!state.closed && state.transition == Some(self.id) && state.active.as_ref() == Some(proof.lease()),
+            "writer retirement does not match the active namespace");
+        proof.retire_flushed();
+        state.active = None;
+        Ok(())
+    }
+}
+impl Drop for NamespaceTransitionGuard {
+    fn drop(&mut self) {
+        let mut state = self.inner.state.lock().unwrap_or_else(|poisoned| {
+            let mut state = poisoned.into_inner(); state.closed = true; state
+        });
+        if state.transition == Some(self.id) { state.transition = None; }
+        self.inner.changed.notify_all();
+    }
+}
+impl PrepublicationRecoveryAuthority<'_> {
+    /// This build cannot import or compensate. Only a retained absence check
+    /// can issue this proof; detected state remains untouched and inaccessible.
+    pub(crate) fn verify_no_unsupported_imports(&self, storage: &NamespaceStorageAuthority) -> Result<()> {
+        ensure!(storage.lease() == &self.lease, "candidate storage does not match");
+        storage.verify_no_legacy_import_state()?;
+        self.checked.set(true);
+        Ok(())
+    }
+    pub(crate) fn finish(self) -> Result<PrepublicationRecovered> {
+        ensure!(self.checked.get(), "unsupported import state requires repair before loading");
+        Ok(PrepublicationRecovered { inner: self.transition.inner.clone(), id: self.transition.id, lease: self.lease.clone() })
+    }
+}
+impl PreparedNamespacePublication {
+    /// Owns the exclusive transition that was validated before durable save.
+    /// There is no argument that can substitute a different guard or candidate.
+    pub(crate) fn publish(self) {
+        let mut state = self.transition.inner.state.lock().unwrap_or_else(|poisoned| {
+            let mut state = poisoned.into_inner(); state.closed = true; state
+        });
+        if !state.closed { state.active = Some(self.lease.clone()); }
+    }
+}
+
+/// Closed inventory roots. None grants traversal of a configured output root.
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) enum LegacyOwnedRoot {
+    Input, Output, Prompt, Canvas, References, Cache, Toolbox, DeliveryStaging,
+}
+impl LegacyOwnedRoot {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Input => "input", Self::Output => "out", Self::Prompt => "prompt",
+            Self::Canvas => "canvas", Self::References => "references", Self::Cache => "cache",
+            Self::Toolbox => "toolbox", Self::DeliveryStaging => "delivery-staging",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "platform", content = "units", deny_unknown_fields)]
+pub(crate) enum LegacyNativeName { Unix(Vec<u8>), Windows(Vec<u16>) }
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LegacySourceLocator {
+    external: bool,
+    components: Vec<LegacyNativeName>,
+}
+impl LegacySourceLocator {
+    #[cfg(unix)]
+    fn child(&self, name: &OsStr) -> Self {
+        use std::os::unix::ffi::OsStrExt;
+        let mut next = self.clone();
+        next.components.push(LegacyNativeName::Unix(name.as_bytes().to_vec()));
+        next
+    }
+    #[cfg(all(test, unix))]
+    fn native_components(&self) -> Vec<Vec<u8>> {
+        self.components.iter().map(|name| match name {
+            LegacyNativeName::Unix(bytes) => bytes.clone(),
+            _ => panic!("wrong platform fixture"),
+        }).collect()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) enum LegacyRejection { LinkOrSpecial, MountOrCycle, Inaccessible, Missing }
+
+#[cfg(unix)]
+struct LegacyRetainedDirectory {
+    descriptor: OwnedFd,
+    identity: ObjectIdentity,
+    parent: Option<(Arc<LegacyRetainedDirectory>, OsString)>,
+    locator: LegacySourceLocator,
+}
+#[cfg(unix)]
+impl LegacyRetainedDirectory {
+    fn validate(&self) -> Result<()> {
+        ensure!(directory_identity(&self.descriptor)? == self.identity, "legacy directory identity changed");
+        if let Some((parent, name)) = &self.parent {
+            parent.validate()?;
+            let stat = rustix::fs::statat(&parent.descriptor, name, rustix::fs::AtFlags::SYMLINK_NOFOLLOW)?;
+            ensure!(rustix::fs::FileType::from_raw_mode(stat.st_mode).is_dir()
+                && stat.st_dev as u64 == self.identity.device && stat.st_ino as u64 == self.identity.inode,
+                "legacy directory binding changed");
+        }
+        Ok(())
+    }
+    fn child(self: &Arc<Self>, name: &OsStr) -> Result<Arc<Self>> {
+        self.validate()?;
+        let descriptor = checked_directory_at(&self.descriptor, name)?;
+        let identity = directory_identity(&descriptor)?;
+        let child = Arc::new(Self {
+            descriptor, identity, parent: Some((self.clone(), name.to_owned())),
+            locator: self.locator.child(name),
+        });
+        child.validate()?;
+        Ok(child)
+    }
+}
+
+#[cfg(unix)]
+pub(crate) struct LegacyStorageAuthority {
+    data_root: Arc<DataRootCapability>,
+    root: Arc<LegacyRetainedDirectory>,
+}
+#[cfg(unix)]
+pub(crate) struct LegacyRegularFile {
+    parent: Arc<LegacyRetainedDirectory>,
+    name: OsString,
+    file: std::fs::File,
+    identity: ObjectIdentity,
+    size: u64,
+    modified: std::time::SystemTime,
+}
+#[cfg(unix)]
+impl LegacyRegularFile {
+    fn validate(&self) -> Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        self.parent.validate()?;
+        let metadata = self.file.metadata()?;
+        ensure!(metadata.is_file() && metadata.dev() == self.identity.device
+            && metadata.ino() == self.identity.inode && metadata.len() == self.size
+            && metadata.modified()? == self.modified, "legacy source changed");
+        let stat = rustix::fs::statat(&self.parent.descriptor, &self.name, rustix::fs::AtFlags::SYMLINK_NOFOLLOW)?;
+        ensure!(rustix::fs::FileType::from_raw_mode(stat.st_mode).is_file()
+            && stat.st_dev as u64 == self.identity.device && stat.st_ino as u64 == self.identity.inode,
+            "legacy source binding changed");
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+struct LegacyInventoryFrame {
+    directory: Arc<LegacyRetainedDirectory>,
+    entries: rustix::fs::Dir,
+}
+#[cfg(unix)]
+pub(crate) struct LegacyInventoryCursor {
+    root: Arc<LegacyRetainedDirectory>,
+    frames: Vec<LegacyInventoryFrame>,
+    pending: Option<LegacyObservedEntry>,
+    observed: usize,
+}
+#[cfg(unix)]
+pub(crate) enum LegacyObservedEntry {
+    Regular(LegacySourceLocator, LegacyRegularFile),
+    Rejected(LegacySourceLocator, LegacyRejection),
+}
+
+#[cfg(unix)]
+impl LegacyStorageAuthority {
+    pub(crate) fn open(data_root: Arc<DataRootCapability>) -> Result<Self> {
+        ensure!(directory_identity(&data_root.descriptor)? == data_root.identity, "legacy root changed");
+        let root = Arc::new(LegacyRetainedDirectory {
+            descriptor: duplicate_descriptor(&data_root.descriptor)?, identity: data_root.identity,
+            parent: None, locator: LegacySourceLocator { external: false, components: Vec::new() },
+        });
+        Ok(Self { data_root, root })
+    }
+    pub(crate) fn inventory(&self, source: LegacyOwnedRoot) -> Result<LegacyInventoryCursor> {
+        let name = OsStr::new(source.name());
+        let mut cursor = LegacyInventoryCursor {
+            root: self.root.clone(), frames: Vec::new(), pending: None, observed: 0,
+        };
+        self.root.validate()?;
+        let stat = match rustix::fs::statat(&self.root.descriptor, name, rustix::fs::AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(stat) => stat,
+            Err(rustix::io::Errno::NOENT) => return Ok(cursor),
+            Err(error) => return Err(error.into()),
+        };
+        let locator = self.root.locator.child(name);
+        if !rustix::fs::FileType::from_raw_mode(stat.st_mode).is_dir() {
+            cursor.pending = Some(LegacyObservedEntry::Rejected(locator, LegacyRejection::LinkOrSpecial));
+        } else if stat.st_dev as u64 != self.root.identity.device || stat.st_ino as u64 == self.root.identity.inode {
+            cursor.pending = Some(LegacyObservedEntry::Rejected(locator, LegacyRejection::MountOrCycle));
+        } else {
+            let directory = self.root.child(name)?;
+            cursor.frames.push(LegacyInventoryFrame { entries: rustix::fs::Dir::read_from(&directory.descriptor)?, directory });
+        }
+        Ok(cursor)
+    }
+    pub(crate) fn next_entry(&self, cursor: &mut LegacyInventoryCursor) -> Result<Option<LegacyObservedEntry>> {
+        use std::os::unix::ffi::OsStrExt;
+        ensure!(Arc::ptr_eq(&cursor.root, &self.root), "foreign legacy inventory cursor");
+        if let Some(entry) = cursor.pending.take() { return Ok(Some(entry)); }
+        while let Some(frame) = cursor.frames.last_mut() {
+            frame.directory.validate()?;
+            let entry = match frame.entries.next() {
+                Some(entry) => entry?,
+                None => { cursor.frames.pop(); continue; }
+            };
+            let raw = entry.file_name().to_bytes();
+            if raw == b"." || raw == b".." { continue; }
+            // Exhaustion is explicit and retains the cursor; never reports complete.
+            ensure!(cursor.observed < 1_000_000, "legacy inventory resource limit reached");
+            cursor.observed += 1;
+            let name = OsStr::from_bytes(raw);
+            let parent = frame.directory.clone();
+            let locator = parent.locator.child(name);
+            let stat = match rustix::fs::statat(&parent.descriptor, name, rustix::fs::AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(stat) => stat,
+                Err(rustix::io::Errno::NOENT) => return Ok(Some(LegacyObservedEntry::Rejected(locator, LegacyRejection::Missing))),
+                Err(rustix::io::Errno::ACCESS) => return Ok(Some(LegacyObservedEntry::Rejected(locator, LegacyRejection::Inaccessible))),
+                Err(error) => return Err(error.into()),
+            };
+            let kind = rustix::fs::FileType::from_raw_mode(stat.st_mode);
+            if !(kind.is_file() || kind.is_dir()) {
+                return Ok(Some(LegacyObservedEntry::Rejected(locator, LegacyRejection::LinkOrSpecial)));
+            }
+            let identity = ObjectIdentity { device: stat.st_dev as u64, inode: stat.st_ino as u64 };
+            if identity.device != cursor.root.identity.device
+                || cursor.frames.iter().any(|frame| frame.directory.identity == identity)
+                || identity == cursor.root.identity {
+                return Ok(Some(LegacyObservedEntry::Rejected(locator, LegacyRejection::MountOrCycle)));
+            }
+            if kind.is_dir() {
+                ensure!(cursor.frames.len() < 128, "legacy inventory depth limit reached");
+                let directory = parent.child(name)?;
+                ensure!(directory.identity == identity, "legacy enumerated directory changed");
+                cursor.frames.push(LegacyInventoryFrame { entries: rustix::fs::Dir::read_from(&directory.descriptor)?, directory });
+                continue;
+            }
+            let descriptor = open_regular_at(&parent.descriptor, name)?;
+            ensure!(regular_file_identity(&descriptor)? == identity, "legacy enumerated file changed");
+            let file = std::fs::File::from(descriptor);
+            let metadata = file.metadata()?;
+            let source = LegacyRegularFile { parent, name: name.to_owned(), file, identity,
+                size: metadata.len(), modified: metadata.modified()? };
+            source.validate()?;
+            return Ok(Some(LegacyObservedEntry::Regular(locator, source)));
+        }
+        Ok(None)
+    }
+    pub(crate) fn read_regular_to(&self, source: &mut LegacyRegularFile, sink: &mut dyn std::io::Write) -> Result<u64> {
+        use std::io::{Read, Seek, SeekFrom};
+        source.validate()?;
+        source.file.seek(SeekFrom::Start(0))?;
+        let mut buffer = [0u8; 64 * 1024];
+        let mut size = 0u64;
+        loop {
+            source.validate()?;
+            let count = match source.file.read(&mut buffer) {
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                result => result?,
+            };
+            source.validate()?;
+            if count == 0 { break; }
+            sink.write_all(&buffer[..count])?;
+            size = size.checked_add(count as u64).ok_or_else(|| anyhow!("legacy file size overflow"))?;
+        }
+        source.validate()?;
+        ensure!(size == source.size, "legacy source size changed");
+        Ok(size)
+    }
 }
 
 pub(crate) trait ManagedReadSeek: std::io::Read + std::io::Seek {}
@@ -44,6 +440,33 @@ pub(crate) enum NamespaceManagedPublication<'a> {
 }
 
 impl NamespaceStorageAuthority {
+    pub(crate) fn read_image_source(&self, path: &Path, limit: u64) -> Result<Vec<u8>> {
+        let _unit = self.begin_ordinary_mutation()?;
+        ensure!(path.is_absolute() && limit > 0, "invalid image source");
+        if let Ok(relative) = path.strip_prefix(self.lease.namespace.root()) {
+            let mut areas = MANAGED_USER_AREAS.to_vec();
+            areas.sort_by_key(|area| std::cmp::Reverse(area.relative_path().len()));
+            let key = areas.into_iter().find_map(|area| {
+                relative.strip_prefix(area.relative_path()).ok().and_then(|name|
+                    name.to_str().and_then(|name| ManagedFileKey::new(area, name).ok()))
+            }).ok_or_else(|| anyhow::anyhow!("source is outside owned managed areas"))?;
+            let mut file = self.open_existing_regular(&key)?;
+            let metadata = self.inspect_regular(&file)?;
+            ensure!(metadata.link_count == 1 && metadata.byte_size <= limit, "image source is linked or too large");
+            return self.with_regular_reader(&mut file, |reader| {
+                use std::io::Read;
+                let mut bytes = Vec::new();
+                reader.take(limit + 1).read_to_end(&mut bytes)?;
+                ensure!(bytes.len() as u64 <= limit, "image source exceeds limit");
+                Ok(bytes)
+            });
+        }
+        self.data_root.read_external_source(path, limit)
+    }
+    fn verify_no_legacy_import_state(&self) -> Result<()> {
+        let directory = self.fs.open_managed_dir(&self.directories, ManagedUserArea::DeliveryStaging)?;
+        self.fs.verify_no_legacy_import_state(&directory)
+    }
     /// Worker-only local reading/seeking and decode. No network/UI/reentry;
     /// the returned value is accepted only after retained post-validation.
     pub(crate) fn with_regular_reader<T>(
@@ -53,7 +476,7 @@ impl NamespaceStorageAuthority {
         let directory = self.fs.open_managed_dir(&self.directories, file.key.area())?;
         self.fs.with_regular_reader(&directory, &mut file.capability, operation)
     }
-    pub(crate) fn open(data_root: Arc<DataRootCapability>, lease: &NamespaceLease) -> Result<Self> {
+    fn open_with_access(data_root: Arc<DataRootCapability>, lease: &NamespaceLease, access: NamespaceStorageAccess) -> Result<Self> {
         let fs = NamespaceFs::for_namespace(data_root.as_ref(), &lease.namespace)?;
         let directories = fs.ensure_managed_dirs()?;
         Ok(Self {
@@ -61,7 +484,35 @@ impl NamespaceStorageAuthority {
             lease: lease.clone(),
             fs,
             directories,
+            access,
         })
+    }
+    pub(crate) fn open_prepublication(data_root: Arc<DataRootCapability>, lease: &NamespaceLease) -> Result<Self> {
+        Self::open_with_access(data_root, lease, NamespaceStorageAccess::Prepublication)
+    }
+    pub(crate) fn open_active(data_root: Arc<DataRootCapability>, lease: &NamespaceLease, client: super::api::ApiClient, index: super::FileIndex) -> Result<Self> {
+        let scope = super::api::SessionScope { owner_user_id: lease.namespace.user_public_id().into(), auth_epoch: lease.auth_epoch };
+        let _activity = client.begin_user_work(&scope).map_err(|error| anyhow::anyhow!(error.user_message()))?;
+        Self::open_with_access(data_root, lease, NamespaceStorageAccess::Runtime { client, scope, index })
+    }
+    pub(crate) fn delivery_index(&self) -> Result<super::FileIndex> {
+        match &self.access { NamespaceStorageAccess::Runtime { index, .. } => Ok(index.clone()), _ => anyhow::bail!("runtime delivery index unavailable") }
+    }
+    #[cfg(test)]
+    pub(crate) fn open(data_root: Arc<DataRootCapability>, lease: &NamespaceLease) -> Result<Self> {
+        Self::open_with_access(data_root, lease, NamespaceStorageAccess::Fixture)
+    }
+    pub(crate) fn begin_ordinary_mutation(&self) -> Result<Option<(super::UserActivityPermit, super::api::OrdinaryDurableCommitPermit)>> {
+        match &self.access {
+            NamespaceStorageAccess::Prepublication => anyhow::bail!("prepublication storage is read-only"),
+            NamespaceStorageAccess::Runtime { client, scope, .. } => {
+                let activity = client.begin_user_work(scope).map_err(|error| anyhow::anyhow!(error.user_message()))?;
+                let durable = client.upgrade_latch().begin_ordinary_durable_commit().map_err(|required| anyhow::anyhow!(required.as_error().user_message()))?;
+                Ok(Some((activity, durable)))
+            }
+            #[cfg(test)]
+            NamespaceStorageAccess::Fixture => Ok(None),
+        }
     }
     pub(crate) fn lease(&self) -> &NamespaceLease {
         &self.lease
@@ -238,6 +689,120 @@ impl NamespaceStorageAuthority {
 mod namespace_authority_tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn core_reference_source_read_uses_owned_namespace_or_proven_external_regular_file() {
+        let (root, lease, authority) = authority_fixture(AUTHORITY_USER_A);
+        let external = tempfile::tempdir_in(fs::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+        let source = external.path().join("source.bin");
+        fs::write(&source, b"external unchanged").unwrap();
+        assert_eq!(authority.read_image_source(&source, 100).unwrap(), b"external unchanged");
+        assert!(authority.read_image_source(&source, 3).is_err());
+        let own = lease.namespace.path(ManagedUserArea::ReferencesLibrary).join("own.bin");
+        fs::write(&own, b"owned unchanged").unwrap();
+        assert_eq!(authority.read_image_source(&own, 100).unwrap(), b"owned unchanged");
+        let legacy = root.path().join("references");
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("ownerless.bin"), b"never adopt").unwrap();
+        assert!(authority.read_image_source(&legacy.join("ownerless.bin"), 100).is_err());
+        let other = UserNamespace::new(root.path(), "33333333-3333-4333-8333-333333333333").unwrap();
+        fs::create_dir_all(other.output_dir()).unwrap();
+        let private = other.output_dir().join("other.bin");
+        fs::write(&private, b"other owner").unwrap();
+        assert!(authority.read_image_source(&private, 100).is_err());
+        #[cfg(unix)] {
+            std::os::unix::fs::symlink(&private, external.path().join("alias.bin")).unwrap();
+            assert!(authority.read_image_source(&external.path().join("alias.bin"), 100).is_err());
+            fs::hard_link(&private, external.path().join("hardlink.bin")).unwrap();
+            assert!(authority.read_image_source(&external.path().join("hardlink.bin"), 100).is_err());
+            std::os::unix::fs::symlink(other.output_dir(), external.path().join("alias-dir")).unwrap();
+            assert!(authority.read_image_source(&external.path().join("alias-dir/other.bin"), 100).is_err());
+        }
+        assert_eq!(fs::read(&private).unwrap(), b"other owner");
+        assert_eq!(fs::read(legacy.join("ownerless.bin")).unwrap(), b"never adopt");
+        assert_eq!(fs::read(&source).unwrap(), b"external unchanged");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_inventory_preserves_native_names_links_and_hardlinked_sources() {
+        use std::os::unix::ffi::OsStringExt;
+        use std::os::unix::fs::symlink;
+        let temporary_parent = fs::canonicalize(std::env::temp_dir()).unwrap();
+        let root = tempfile::tempdir_in(temporary_parent).unwrap();
+        fs::create_dir(root.path().join("input")).unwrap();
+        fs::create_dir(root.path().join("outside")).unwrap();
+        fs::write(root.path().join("outside/sentinel"), b"never read target").unwrap();
+        // APFS rejects ill-formed UTF-8 at creation. Linux fixtures retain the
+        // invalid byte; Darwin still exercises the native (non-ASCII) spelling.
+        #[cfg(not(target_os = "macos"))]
+        let native = OsString::from_vec(vec![b'n', 0xff]);
+        #[cfg(target_os = "macos")]
+        let native = OsString::from_vec("原始文件".as_bytes().to_vec());
+        use std::os::unix::ffi::OsStrExt;
+        let expected_native = native.as_os_str().as_bytes().to_vec();
+        fs::write(root.path().join("input").join(&native), b"preserve native bytes").unwrap();
+        fs::hard_link(root.path().join("input").join(&native), root.path().join("hardlink")).unwrap();
+        symlink(root.path().join("outside"), root.path().join("input/link")).unwrap();
+        let data_root = Arc::new(NamespaceFs::open_data_root(root.path()).unwrap());
+        let legacy = LegacyStorageAuthority::open(data_root).unwrap();
+        let mut cursor = legacy.inventory(LegacyOwnedRoot::Input).unwrap();
+        let mut regular = Vec::new();
+        let mut rejected = Vec::new();
+        while let Some(entry) = legacy.next_entry(&mut cursor).unwrap() {
+            match entry {
+                LegacyObservedEntry::Regular(locator, mut file) => {
+                    let mut bytes = Vec::new();
+                    legacy.read_regular_to(&mut file, &mut bytes).unwrap();
+                    regular.push((locator.native_components(), bytes));
+                }
+                LegacyObservedEntry::Rejected(locator, _) => rejected.push(locator),
+            }
+        }
+        assert_eq!(regular, vec![(vec![b"input".to_vec(), expected_native], b"preserve native bytes".to_vec())]);
+        assert_eq!(rejected.len(), 1);
+        assert_eq!(fs::read(root.path().join("outside/sentinel")).unwrap(), b"never read target");
+        assert_eq!(fs::read(root.path().join("hardlink")).unwrap(), b"preserve native bytes");
+    }
+
+    #[test]
+    fn core_namespace_publication_requires_retained_absence_of_import_state() {
+        let (root, lease, storage) = authority_fixture(AUTHORITY_USER_A);
+        let gate = NamespaceOperationGate::default();
+        assert!(gate.begin_operation(&lease).is_err());
+        let transition = gate.begin_transition().unwrap();
+        let phase = transition.begin_prepublication_recovery(&lease).unwrap();
+        assert!(phase.finish().is_err(), "a skipped check cannot publish");
+        drop(transition);
+        let transition = gate.begin_transition().unwrap();
+        let phase = transition.begin_prepublication_recovery(&lease).unwrap();
+        fs::create_dir(lease.namespace.delivery_staging_dir().join("legacy-import-11111111-1111-4111-8111-111111111111")).unwrap();
+        assert!(phase.verify_no_unsupported_imports(&storage).is_err());
+        assert!(phase.finish().is_err());
+        drop(transition);
+        assert!(gate.begin_operation(&lease).is_err());
+        assert!(root.path().join("accounts").exists());
+    }
+
+    #[test]
+    fn core_namespace_prepared_publication_is_owned_and_operation_excludes_transition() {
+        let (_root, lease, storage) = authority_fixture(AUTHORITY_USER_A);
+        let gate = NamespaceOperationGate::default();
+        let transition = gate.begin_transition().unwrap();
+        let phase = transition.begin_prepublication_recovery(&lease).unwrap();
+        phase.verify_no_unsupported_imports(&storage).unwrap();
+        let recovered = phase.finish().unwrap();
+        let prepared = transition.prepare_publication(&lease, recovered).unwrap();
+        assert!(gate.begin_operation(&lease).is_err());
+        prepared.publish();
+        let operation = gate.begin_operation(&lease).unwrap();
+        assert!(gate.try_begin_transition().is_err());
+        let mut stale = lease.clone();
+        stale.namespace_epoch += 1;
+        assert!(gate.begin_operation(&stale).is_err());
+        drop(operation);
+        assert!(gate.try_begin_transition().is_ok());
+    }
 
     const AUTHORITY_USER_A: &str = "11111111-1111-4111-8111-111111111111";
 
@@ -806,6 +1371,43 @@ pub(crate) use windows::{
     ManagedNamespaceDirectories, NamespaceFs,
 };
 
+#[cfg(unix)]
+impl DataRootCapability {
+    fn read_external_source(&self, path: &Path, limit: u64) -> Result<Vec<u8>> {
+        use std::io::Read;
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::MetadataExt;
+        let raw = path.as_os_str().as_bytes();
+        ensure!(path.is_absolute() && !raw.contains(&0)
+            && raw[1..].split(|byte| *byte == b'/').all(|part| !part.is_empty() && part != b"." && part != b".."),
+            "unclean external image path");
+        ensure!(directory_identity(&self.descriptor)? == self.identity, "private root changed");
+        let parent = open_absolute_directory(path.parent().ok_or_else(|| anyhow!("image parent missing"))?)?;
+        reject_private_ancestry(&parent, self.identity)?;
+        let leaf = path.file_name().ok_or_else(|| anyhow!("image filename missing"))?;
+        let fd = open_regular_at(&parent, leaf)?;
+        let identity = regular_file_identity(&fd)?;
+        let mut file = std::fs::File::from(fd);
+        let before = file.metadata()?;
+        ensure!(before.nlink() == 1 && before.len() <= limit, "linked or oversized external image");
+        let mut bytes = Vec::new();
+        (&mut file).take(limit + 1).read_to_end(&mut bytes)?;
+        let after = file.metadata()?;
+        let binding = rustix::fs::statat(&parent, leaf, rustix::fs::AtFlags::SYMLINK_NOFOLLOW)?;
+        reject_private_ancestry(&parent, self.identity)?;
+        ensure!(rustix::fs::FileType::from_raw_mode(binding.st_mode).is_file()
+            && binding.st_dev as u64 == identity.device && binding.st_ino as u64 == identity.inode
+            && after.nlink() == 1 && after.len() == before.len() && after.modified()? == before.modified()?
+            && after.ctime() == before.ctime() && after.ctime_nsec() == before.ctime_nsec()
+            && bytes.len() as u64 == before.len() && bytes.len() as u64 <= limit,
+            "external image changed while copied");
+        Ok(bytes)
+    }
+}
+#[cfg(not(any(unix, windows)))]
+impl DataRootCapability {
+    fn read_external_source(&self, _: &Path, _: u64) -> Result<Vec<u8>> { unsupported_namespace_capabilities() }
+}
 // Kept platform independent so Windows name-policy tests execute on every host.
 fn validate_windows_relative_name(value: &str) -> Result<()> {
     ensure!(!value.is_empty(), "empty Windows relative name");
@@ -1839,6 +2441,20 @@ impl NamespaceFs {
         Ok(chain)
     }
 
+    fn verify_no_legacy_import_state(&self, directory: &ManagedDirectoryCapability) -> Result<()> {
+        let _lock = self.lock_mutations()?;
+        let chain = self.checked_directory_chain(directory)?;
+        let mut entries = rustix::fs::Dir::read_from(chain.last().unwrap())?;
+        for entry in &mut entries {
+            let entry = entry?;
+            let name = entry.file_name().to_bytes();
+            ensure!(!name.starts_with(b"legacy-import-") && name != b"import-plan.json",
+                "unsupported legacy import journal requires repair");
+        }
+        self.checked_directory_chain(directory)?;
+        Ok(())
+    }
+
     fn checked_file_chain(
         &self,
         directory: &ManagedDirectoryCapability,
@@ -2668,6 +3284,9 @@ fn open_regular_at(parent: &OwnedFd, leaf: &OsStr) -> Result<OwnedFd> {
 
 #[cfg(not(any(unix, windows)))]
 impl NamespaceFs {
+    fn verify_no_legacy_import_state(&self, _: &ManagedDirectoryCapability) -> Result<()> {
+        unsupported_namespace_capabilities()
+    }
     pub(crate) fn with_regular_reader<T>(
         &self, _directory: &ManagedDirectoryCapability, _file: &mut ManagedFileCapability,
         _operation: impl FnOnce(&mut dyn ManagedReadSeek) -> Result<T>,

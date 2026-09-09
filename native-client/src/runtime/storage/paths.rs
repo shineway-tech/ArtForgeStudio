@@ -314,6 +314,7 @@ pub(super) fn open_update_download(app: &AppWindow) {
 }
 
 pub(super) fn show_required_update_prompt(app: &AppWindow, minimum_version: &str) {
+    close_video_player_for_required_upgrade();
     let state = app.global::<AppState>();
     let minimum = minimum_version.trim();
     let latest = state.get_latest_version().to_string();

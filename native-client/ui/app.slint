@@ -5,6 +5,7 @@ import { Sidebar } from "components/sidebar.slint";
 import { TopBar } from "components/top-bar.slint";
 import { PromptExpandedEditor } from "components/prompt-expanded-editor.slint";
 import { AlipayPaymentDialog } from "dialogs/alipay-payment-dialog.slint";
+import { TeamRegistrationDialog } from "dialogs/team-registration-dialog.slint";
 import { AuthDialog } from "dialogs/auth-dialog.slint";
 import { CreditInsufficientDialog } from "dialogs/credit-insufficient-dialog.slint";
 import { CloseBehaviorDialog } from "dialogs/close-behavior-dialog.slint";
@@ -132,6 +133,7 @@ export component AppWindow inherits Window {
 
     AuthDialog { width: root.width; height: root.height; }
     ProfileDialog { width: root.width; height: root.height; }
+    TeamRegistrationDialog { width: root.width; height: root.height; }
     AgreementUpdateDialog { width: root.width; height: root.height; }
     AlipayPaymentDialog { width: root.width; height: root.height; }
     VersionCheckDialog { width: root.width; height: root.height; }

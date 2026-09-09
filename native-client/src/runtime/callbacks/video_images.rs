@@ -4,9 +4,10 @@ const MAX_VIDEO_IMAGE_BYTES: u64 = 100 * 1024 * 1024;
 
 struct PreparedVideoImage {
     id: String,
+    source_asset_id: String,
     title: String,
     path: String,
-    preview: preview::PreparedPreview,
+    preview: preview::PreparedDeliveryPreview,
 }
 
 struct PreparedVideoImages {
@@ -15,13 +16,9 @@ struct PreparedVideoImages {
 }
 
 fn video_image_key(path: &Path) -> String {
-    let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let key = path.to_string_lossy().into_owned();
-    if cfg!(windows) {
-        key.to_lowercase()
-    } else {
-        key
-    }
+    // Lexical identity only: validation and source I/O belong to the held worker.
+    let key=path.components().collect::<PathBuf>().to_string_lossy().into_owned();
+    if cfg!(windows) { key.to_lowercase() } else { key }
 }
 
 fn video_asset_candidates(store: &Store) -> Vec<(String, PathBuf)> {
@@ -33,40 +30,162 @@ fn video_asset_candidates(store: &Store) -> Vec<(String, PathBuf)> {
         .collect()
 }
 
-// Decode off the UI thread. Both import routes share validation and canonical-path deduplication.
-fn prepare_video_images(
-    candidates: Vec<(String, PathBuf)>,
-    should_continue: impl Fn() -> bool,
-) -> PreparedVideoImages {
-    let mut images = Vec::new();
-    let mut skipped = 0;
-    let mut seen = BTreeSet::new();
-    for (title, path) in candidates {
-        if !should_continue() {
-            break;
-        }
-        if !fs::metadata(&path)
-            .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= MAX_VIDEO_IMAGE_BYTES)
-        {
-            skipped += 1;
-            continue;
-        }
-        let id = video_image_key(&path);
-        if !seen.insert(id.clone()) {
-            continue;
-        }
-        match prepare_preview_image_if(&path, PreviewPurpose::Gallery, &should_continue) {
-            Ok(Some(preview)) => images.push(PreparedVideoImage {
-                id,
-                title,
-                path: path.to_string_lossy().into_owned(),
-                preview,
-            }),
-            Ok(None) => break,
-            Err(_) => skipped += 1,
+
+fn advance_video_image_epoch(epoch: &AtomicU64) -> Option<u64> {
+    epoch.fetch_update(Ordering::SeqCst,Ordering::SeqCst,|value| value.checked_add(1)).ok().and_then(|value| value.checked_add(1)).filter(|value| *value != u64::MAX)
+}
+fn captured_video_binding(store: &Rc<RefCell<Store>>, persistence: &PrivatePersistence) -> bool {
+    store.borrow().private_persistence.as_ref().is_some_and(|current| current.same_binding(persistence))
+}
+fn apply_video_input<R>(store: &Rc<RefCell<Store>>, persistence: &PrivatePersistence, apply: impl FnOnce()->R) -> Option<R> {
+    let _activity=persistence.begin_activity().ok()?;
+    if !captured_video_binding(store,persistence) { return None; }
+    // same_binding takes the latch internally; never call it inside this closure.
+    persistence.upgrade_latch().apply_if_open(apply).ok()
+}
+fn quote_current_video_image(state: &AppState, store: &Rc<RefCell<Store>>, persistence: &PrivatePersistence, quote_epoch: &AtomicU64) {
+    if quote_epoch.load(Ordering::SeqCst)==u64::MAX || !captured_video_binding(store,persistence)
+        || video_image_generation_error(state).is_some()
+        || !persistence.owns_path(Path::new(state.get_video_source_path().as_str())) { return; }
+    // The actual quote callback has its own captured billing/latch admission. Calling it
+    // while holding apply_if_open would recursively acquire that latch.
+    state.invoke_request_video_quote(state.get_video_aspect_ratio(),state.get_video_resolution(),state.get_video_duration_seconds());
+}
+fn validate_video_image_header(path:&Path, bytes:&[u8]) -> Result<()> {
+    let mut reader=image::ImageReader::new(Cursor::new(bytes));
+    if let Ok(format)=image::ImageFormat::from_path(path) { reader.set_format(format); }
+    match reader.with_guessed_format()?.into_dimensions() {
+        Ok((width,height)) => anyhow::ensure!(width>0 && height>0 && u64::from(width)*u64::from(height)<=100_000_000,"video image dimensions exceed policy"),
+        Err(error) => {
+            #[cfg(target_os="macos")]
+            if path.extension().and_then(|extension|extension.to_str()).is_some_and(|extension|matches!(extension.to_ascii_lowercase().as_str(),"heic"|"heif")) { return Ok(()); }
+            return Err(error.into());
         }
     }
-    PreparedVideoImages { images, skipped }
+    Ok(())
+}
+fn prepare_video_images(
+    persistence: &PrivatePersistence, candidates: Vec<(String,PathBuf)>, should_continue: impl Fn()->bool,
+) -> PreparedVideoImages {
+    let mut images=Vec::new();
+    let mut skipped=0;
+    let mut seen=BTreeSet::new();
+    for (title,path) in candidates {
+        if !should_continue() || !persistence.is_current() { break; }
+        let id=video_image_key(&path);
+        if !seen.insert(id.clone()) { continue; }
+        let prepared=(|| {
+            let authority=persistence.storage_authority()?;
+            let bytes=authority.read_image_source(&path,MAX_VIDEO_IMAGE_BYTES)?;
+            if !should_continue() || !persistence.is_current() { return Ok(None); }
+            // Header inspection bounds ordinary formats before allocation; native
+            // HEIC/HEIF decoding still uses the same captured bytes, never this path.
+            validate_video_image_header(&path,&bytes)?;
+            let decoded=decode_image_bytes(&path,&bytes)?.0;
+            anyhow::ensure!(decoded.width()>0 && decoded.height()>0 && u64::from(decoded.width())*u64::from(decoded.height())<=100_000_000,"video image dimensions exceed policy");
+            if !should_continue() || !persistence.is_current() { return Ok(None); }
+            let owned=persist_reference_image_for_namespace(&authority,&decoded)?;
+            if !should_continue() || !persistence.is_current() { return Ok(None); }
+            let preview=preview::prepare_owned_preview(persistence,&owned,PreviewPurpose::Gallery)?;
+            if !should_continue() || !persistence.is_current() { return Ok(None); }
+            Ok::<_,anyhow::Error>(Some(PreparedVideoImage { id,source_asset_id:String::new(),title,path:owned.to_string_lossy().into_owned(),preview }))
+        })();
+        match prepared { Ok(Some(image))=>images.push(image),Ok(None)=>break,Err(_)=>skipped+=1 }
+    }
+    PreparedVideoImages { images,skipped }
+}
+struct VideoImageImportWork {
+    receiver:mpsc::Receiver<std::result::Result<PreparedVideoImages,DeliveryRetryError>>,
+    cancel:Arc<std::sync::atomic::AtomicBool>,
+}
+fn poll_captured_video_images(
+    weak:Weak<AppWindow>,store:Rc<RefCell<Store>>,persistence:PrivatePersistence,asset_picker:bool,
+    epoch:Arc<AtomicU64>,expected:u64,quote_epoch:Arc<AtomicU64>,request_id:Arc<Mutex<String>>,work:VideoImageImportWork,
+) {
+    slint::Timer::single_shot(Duration::from_millis(50),move|| {
+        let Some(app)=weak.upgrade()else{work.cancel.store(true,Ordering::SeqCst);return;};
+        let state=app.global::<AppState>();
+        if !video_image_work_is_current(&state,&epoch,expected) || !captured_video_binding(&store,&persistence) {
+            work.cancel.store(true,Ordering::SeqCst);return;
+        }
+        let finished=finish_delivery_preparation(&work.cancel);
+        if matches!(finished,Ok(true)) {
+            poll_captured_video_images(weak,store,persistence,asset_picker,epoch,expected,quote_epoch,request_id,work);return;
+        }
+        let prepared=if finished.is_err(){None}else{match work.receiver.try_recv() {
+            Ok(Ok(value))=>Some(value),
+            Err(TryRecvError::Empty)=>{
+                poll_captured_video_images(weak,store,persistence,asset_picker,epoch,expected,quote_epoch,request_id,work);
+                return;
+            }
+            Ok(Err(_))|Err(TryRecvError::Disconnected)=>None,
+        }};
+        let changed=apply_video_input(&store,&persistence,|| {
+            if !video_image_work_is_current(&state,&epoch,expected) { return false; }
+            match prepared {
+                Some(prepared)=>finish_video_image_import(&state,prepared,asset_picker,&epoch,expected,&quote_epoch,&request_id),
+                None=>{ state.set_video_images_loading(false);state.set_video_images_status("图片读取未完成，原文件仍保留".into());false }
+            }
+        }).unwrap_or(false);
+        if changed { quote_current_video_image(&state,&store,&persistence,&quote_epoch); }
+    });
+}
+pub(super) fn start_captured_video_image_import(
+    app:&AppWindow,store:Rc<RefCell<Store>>,persistence:PrivatePersistence,candidates:Vec<(String,PathBuf)>,
+    asset_picker:bool,epoch:Arc<AtomicU64>,quote_epoch:Arc<AtomicU64>,request_id:Arc<Mutex<String>>,
+) {
+    let associations=if asset_picker {
+        let mut associations=BTreeMap::<String,String>::new();
+        for asset in &store.borrow().assets {
+            let key=video_image_key(Path::new(&asset.source_path));
+            associations.entry(key).and_modify(|id|{if *id!=asset.id{id.clear();}}).or_insert_with(||asset.id.clone());
+        }
+        associations
+    }else{BTreeMap::new()};
+    start_video_images_with_associations(app,store,persistence,candidates,asset_picker,epoch,quote_epoch,request_id,associations);
+}
+/// The viewer is the sole caller that carries its explicitly captured original
+/// item ID. Ordinary picker input never inherits an earlier viewer association.
+pub(super) fn start_captured_video_viewer_image_import(
+    app:&AppWindow,store:Rc<RefCell<Store>>,persistence:PrivatePersistence,candidate:(String,PathBuf),source_id:String,
+    epoch:Arc<AtomicU64>,quote_epoch:Arc<AtomicU64>,request_id:Arc<Mutex<String>>,
+) {
+    let mut associations=BTreeMap::new();associations.insert(video_image_key(&candidate.1),source_id);
+    start_video_images_with_associations(app,store,persistence,vec![candidate],false,epoch,quote_epoch,request_id,associations);
+}
+fn start_video_images_with_associations(
+    app:&AppWindow,store:Rc<RefCell<Store>>,persistence:PrivatePersistence,candidates:Vec<(String,PathBuf)>,
+    asset_picker:bool,epoch:Arc<AtomicU64>,quote_epoch:Arc<AtomicU64>,request_id:Arc<Mutex<String>>,associations:BTreeMap<String,String>,
+) {
+    let expected=apply_video_input(&store,&persistence,|| {
+        let state=app.global::<AppState>();
+        if state.get_page()!="video-generation" || state.get_video_generating()
+            || state.get_video_images().iter().any(|row|!persistence.owns_path(Path::new(row.source_path.as_str()))) { return None; }
+        let expected=advance_video_image_epoch(&epoch)?;
+        state.set_video_images_loading(true);
+        Some(expected)
+    }).flatten();
+    let Some(expected)=expected else { return; };
+    let worker_epoch=epoch.clone();
+    let launched=spawn_delivery_preparation(&persistence,move|captured,activity,cancel| {
+        let external=captured.upgrade_latch().begin_ordinary_external_worker()
+            .map_err(|required|anyhow!(required.as_error().user_message()))?;
+        let mut prepared=prepare_video_images(captured,candidates,|| !cancel.load(Ordering::SeqCst)
+            && !activity.is_quiescing() && !external.is_cancelled() && worker_epoch.load(Ordering::SeqCst)==expected);
+        for image in &mut prepared.images {image.source_asset_id=associations.get(&image.id).cloned().unwrap_or_default();}
+        if external.is_cancelled() || activity.is_quiescing() { prepared.images.clear(); }
+        drop(external);
+        Ok(prepared)
+    });
+    match launched {
+        Ok((cancel,receiver))=>poll_captured_video_images(app.as_weak(),store,persistence,asset_picker,epoch,expected,quote_epoch,request_id,
+            VideoImageImportWork { receiver,cancel }),
+        Err(_)=>{let _=apply_video_input(&store,&persistence,||{
+            let state=app.global::<AppState>();if video_image_work_is_current(&state,&epoch,expected){
+                state.set_video_images_loading(false);state.set_video_images_status("图片读取未能启动，请重试".into());
+            }
+        });},
+    }
 }
 
 fn materialize_video_images(prepared: PreparedVideoImages) -> (Vec<VideoImageItem>, usize) {
@@ -75,9 +194,10 @@ fn materialize_video_images(prepared: PreparedVideoImages) -> (Vec<VideoImageIte
         .into_iter()
         .map(|image| VideoImageItem {
             id: image.id.into(),
+            source_asset_id: image.source_asset_id.into(),
             title: image.title.into(),
             source_path: image.path.into(),
-            image: materialize_prepared_preview(image.preview),
+            image: preview::materialize_delivery_preview(&image.preview),
             selected: false,
             added: false,
         })
@@ -86,26 +206,15 @@ fn materialize_video_images(prepared: PreparedVideoImages) -> (Vec<VideoImageIte
 }
 
 pub(super) fn reset_video_images(state: &AppState, epoch: &AtomicU64) {
-    cancel_video_image_work(state, epoch);
-    let path = state.get_viewer_source_path();
-    let rows = if path.trim().is_empty() {
-        vec![]
-    } else {
-        vec![VideoImageItem {
-            id: video_image_key(Path::new(path.as_str())).into(),
-            title: state.get_viewer_title(),
-            source_path: path,
-            image: state.get_viewer_image(),
-            selected: false,
-            added: false,
-        }]
-    };
-    state.set_video_images(ModelRc::new(VecModel::from(rows)));
-    state.set_video_images_status("可继续添加图片；移除仅从本次列表移除，不删除原文件".into());
+    // Caller owns the current Store/latch guard. Its viewer seed must enter through
+    // start_captured_video_image_import AFTER page initialization and guard release.
+    cancel_video_image_work(state,epoch);
+    state.set_video_images(ModelRc::default());
+    state.set_video_images_status("正在安全读取首张图片…".into());
 }
 
 pub(super) fn cancel_video_image_work(state: &AppState, epoch: &AtomicU64) {
-    epoch.fetch_add(1, Ordering::SeqCst);
+    let _=advance_video_image_epoch(epoch);
     state.set_video_images_loading(false);
     state.set_video_image_dialog("".into());
     state.set_video_asset_choices(ModelRc::default());
@@ -128,9 +237,9 @@ fn update_video_image_source(
     state: &AppState,
     quote_epoch: &AtomicU64,
     request_id: &Mutex<String>,
-) {
+) -> bool {
     // Any collection change invalidates both an in-flight quote and its idempotency binding.
-    quote_epoch.fetch_add(1, Ordering::SeqCst);
+    let advanced=advance_video_image_epoch(quote_epoch).is_some();
     request_id
         .lock()
         .unwrap_or_else(|value| value.into_inner())
@@ -143,6 +252,7 @@ fn update_video_image_source(
     let only = (state.get_video_images().row_count() == 1)
         .then(|| state.get_video_images().row_data(0))
         .flatten();
+    state.set_video_source_id(only.as_ref().map(|row|row.source_asset_id.clone()).unwrap_or_default());
     state.set_video_source_path(
         only.as_ref()
             .map(|row| row.source_path.clone())
@@ -154,15 +264,12 @@ fn update_video_image_source(
             .unwrap_or_default(),
     );
     state.set_video_source_title(only.map(|row| row.title).unwrap_or_default());
-    if let Some(error) = video_image_generation_error(state) {
-        state.set_video_status(error.into());
-    } else {
-        state.invoke_request_video_quote(
-            state.get_video_aspect_ratio(),
-            state.get_video_resolution(),
-            state.get_video_duration_seconds(),
-        );
-    }
+    if !advanced {
+        state.set_video_status("请求计数已耗尽，请重启后继续".into());
+        false
+    } else if let Some(error)=video_image_generation_error(state) {
+        state.set_video_status(error.into());false
+    } else { true }
 }
 
 fn append_video_images(
@@ -171,7 +278,7 @@ fn append_video_images(
     skipped: usize,
     quote_epoch: &AtomicU64,
     request_id: &Mutex<String>,
-) {
+) -> bool {
     let mut images: Vec<_> = state.get_video_images().iter().collect();
     let mut ids: BTreeSet<_> = images.iter().map(|image| image.id.clone()).collect();
     let before = images.len();
@@ -183,9 +290,10 @@ fn append_video_images(
         }
     }
     let added = images.len() - before;
+    let mut changed=false;
     if added > 0 {
         state.set_video_images(ModelRc::new(VecModel::from(images)));
-        update_video_image_source(state, quote_epoch, request_id);
+        changed=update_video_image_source(state, quote_epoch, request_id);
     }
     state.set_video_images_status(
         if skipped > 0 {
@@ -197,6 +305,7 @@ fn append_video_images(
         }
         .into(),
     );
+    changed
 }
 
 fn video_image_work_is_current(state: &AppState, epoch: &AtomicU64, expected: u64) -> bool {
@@ -211,9 +320,9 @@ fn finish_video_image_import(
     expected: u64,
     quote_epoch: &AtomicU64,
     request_id: &Mutex<String>,
-) {
+) -> bool {
     if !video_image_work_is_current(state, epoch, expected) {
-        return;
+        return false;
     }
     state.set_video_images_loading(false);
     let (mut rows, skipped) = materialize_video_images(prepared);
@@ -234,197 +343,124 @@ fn finish_video_image_import(
             .into(),
         );
         state.set_video_asset_choices(ModelRc::new(VecModel::from(rows)));
+        false
     } else {
-        append_video_images(state, rows, skipped, quote_epoch, request_id);
+        append_video_images(state, rows, skipped, quote_epoch, request_id)
     }
-}
-
-fn start_video_image_import(
-    app: &AppWindow,
-    candidates: Vec<(String, PathBuf)>,
-    asset_picker: bool,
-    epoch: Arc<AtomicU64>,
-    quote_epoch: Arc<AtomicU64>,
-    request_id: Arc<Mutex<String>>,
-) {
-    let expected = epoch.fetch_add(1, Ordering::SeqCst) + 1;
-    app.global::<AppState>().set_video_images_loading(true);
-    let weak = app.as_weak();
-    std::thread::spawn(move || {
-        let prepared =
-            prepare_video_images(candidates, || epoch.load(Ordering::SeqCst) == expected);
-        let _ = weak.upgrade_in_event_loop(move |app| {
-            finish_video_image_import(
-                &app.global::<AppState>(),
-                prepared,
-                asset_picker,
-                &epoch,
-                expected,
-                &quote_epoch,
-                &request_id,
-            );
-        });
-    });
 }
 
 pub(super) fn wire_video_image_callbacks(
-    app: &AppWindow,
-    store: Rc<RefCell<Store>>,
-    quote_epoch: Arc<AtomicU64>,
-    request_id: Arc<Mutex<String>>,
+    app:&AppWindow,store:Rc<RefCell<Store>>,quote_epoch:Arc<AtomicU64>,request_id:Arc<Mutex<String>>,
 ) -> Arc<AtomicU64> {
-    let state = app.global::<AppState>();
-    let epoch = Arc::new(AtomicU64::new(0));
+    let state=app.global::<AppState>();
+    let epoch=Arc::new(AtomicU64::new(0));
+    let dialog_binding:Rc<RefCell<Option<PrivatePersistence>>>=Rc::new(RefCell::new(None));
     {
-        let weak = app.as_weak();
-        let epoch = epoch.clone();
-        let quote_epoch = quote_epoch.clone();
-        let request_id = request_id.clone();
-        state.on_open_video_asset_picker(move || {
-            let Some(app) = weak.upgrade() else {
-                return;
-            };
-            let state = app.global::<AppState>();
-            if state.get_video_generating() || state.get_video_images_loading() {
-                return;
-            }
-            state.set_video_image_dialog("assets".into());
-            state.set_video_asset_choices(ModelRc::default());
-            state.set_video_asset_selected_count(0);
-            state.set_video_images_status("正在读取我的资产…".into());
-            start_video_image_import(
-                &app,
-                video_asset_candidates(&store.borrow()),
-                true,
-                epoch.clone(),
-                quote_epoch.clone(),
-                request_id.clone(),
-            );
-        });
-    }
-    {
-        let weak = app.as_weak();
-        let epoch = epoch.clone();
-        let quote_epoch = quote_epoch.clone();
-        let request_id = request_id.clone();
-        state.on_upload_video_images(move || {
-            let Some(app) = weak.upgrade() else {
-                return;
-            };
-            let state = app.global::<AppState>();
-            if state.get_video_generating() || state.get_video_images_loading() {
-                return;
-            }
-            let files = rfd::FileDialog::new()
-                .set_title("选择图片（支持多选）")
-                .add_filter("Images", crate::image_formats::picker_image_extensions())
-                .pick_files();
-            let Some(files) = files.filter(|files| !files.is_empty()) else {
-                return;
-            };
-            state.set_video_image_dialog("".into());
-            let candidates = files
-                .into_iter()
-                .map(|path| {
-                    let title = path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned();
-                    (title, path)
-                })
-                .collect();
-            start_video_image_import(
-                &app,
-                candidates,
-                false,
-                epoch.clone(),
-                quote_epoch.clone(),
-                request_id.clone(),
-            );
-        });
-    }
-    {
-        let weak = app.as_weak();
-        let epoch = epoch.clone();
-        state.on_close_video_image_dialog(move || {
-            if let Some(app) = weak.upgrade() {
-                cancel_video_image_work(&app.global::<AppState>(), &epoch);
+        let (weak,store,epoch,quote_epoch,request_id,binding)=(app.as_weak(),store.clone(),epoch.clone(),quote_epoch.clone(),request_id.clone(),dialog_binding.clone());
+        state.on_open_video_asset_picker(move|| {
+            let Some(app)=weak.upgrade() else { return; };
+            let Some(persistence)=store.borrow().private_persistence.clone() else { return; };
+            let state=app.global::<AppState>();
+            let candidates=apply_video_input(&store,&persistence,|| {
+                if state.get_video_generating() || state.get_video_images_loading() { return None; }
+                *binding.borrow_mut()=Some(persistence.clone());
+                state.set_video_image_dialog("assets".into());
+                state.set_video_asset_choices(ModelRc::default());
+                state.set_video_asset_selected_count(0);
+                state.set_video_images_status("正在读取我的资产…".into());
+                Some(video_asset_candidates(&store.borrow()).into_iter().filter(|(_,path)|persistence.owns_path(path)).collect())
+            }).flatten();
+            if let Some(candidates)=candidates {
+                start_captured_video_image_import(&app,store.clone(),persistence,candidates,true,epoch.clone(),quote_epoch.clone(),request_id.clone());
             }
         });
     }
     {
-        let weak = app.as_weak();
-        state.on_toggle_video_asset(move |id| {
-            let Some(app) = weak.upgrade() else {
-                return;
-            };
-            let state = app.global::<AppState>();
-            if state.get_video_images_loading() || state.get_video_generating() {
-                return;
-            }
-            let mut rows: Vec<_> = state.get_video_asset_choices().iter().collect();
-            for row in &mut rows {
-                if row.id == id && !row.added {
-                    row.selected = !row.selected;
-                }
-            }
-            state.set_video_asset_selected_count(
-                rows.iter().filter(|row| row.selected && !row.added).count() as i32,
-            );
-            state.set_video_asset_choices(ModelRc::new(VecModel::from(rows)));
+        let (weak,store,epoch,quote_epoch,request_id)=(app.as_weak(),store.clone(),epoch.clone(),quote_epoch.clone(),request_id.clone());
+        state.on_upload_video_images(move|| {
+            let Some(app)=weak.upgrade() else { return; };
+            // Capture before the native picker can run a nested platform event loop.
+            let Some(persistence)=store.borrow().private_persistence.clone() else { return; };
+            let Ok((activity,effect))=persistence.begin_effect() else { return; };
+            if !captured_video_binding(&store,&persistence) { return; }
+            let state=app.global::<AppState>();
+            if state.get_video_generating() || state.get_video_images_loading() { return; }
+            let files=rfd::FileDialog::new().set_title("选择图片（支持多选）")
+                .add_filter("Images",crate::image_formats::picker_image_extensions()).pick_files();
+            if activity.is_quiescing() || !persistence.is_current() || !captured_video_binding(&store,&persistence) { return; }
+            drop(effect);
+            let Some(files)=files.filter(|files|!files.is_empty()) else { return; };
+            let candidates=files.into_iter().map(|path| {
+                let title=path.file_name().unwrap_or_default().to_string_lossy().into_owned();(title,path)
+            }).collect();
+            if apply_video_input(&store,&persistence,||state.set_video_image_dialog("".into())).is_none() { return; }
+            start_captured_video_image_import(&app,store.clone(),persistence,candidates,false,epoch.clone(),quote_epoch.clone(),request_id.clone());
         });
     }
     {
-        let weak = app.as_weak();
-        let epoch = epoch.clone();
-        let quote_epoch = quote_epoch.clone();
-        let request_id = request_id.clone();
-        state.on_confirm_video_assets(move || {
-            let Some(app) = weak.upgrade() else {
-                return;
-            };
-            let state = app.global::<AppState>();
-            if state.get_video_images_loading()
-                || state.get_video_generating()
-                || state.get_video_image_dialog() != "assets"
-            {
-                return;
-            }
-            let selected: Vec<_> = state
-                .get_video_asset_choices()
-                .iter()
-                .filter(|row| row.selected && !row.added)
-                .collect();
-            if selected.is_empty() {
-                return;
-            }
-            cancel_video_image_work(&state, &epoch);
-            append_video_images(&state, selected, 0, &quote_epoch, &request_id);
+        let (weak,store,epoch,binding)=(app.as_weak(),store.clone(),epoch.clone(),dialog_binding.clone());
+        state.on_close_video_image_dialog(move|| {
+            let Some(app)=weak.upgrade() else { return; };
+            let captured=binding.borrow().clone().or_else(||store.borrow().private_persistence.clone());
+            let Some(persistence)=captured else { return; };
+            let _=apply_video_input(&store,&persistence,|| {
+                cancel_video_image_work(&app.global::<AppState>(),&epoch);binding.borrow_mut().take();
+            });
         });
     }
     {
-        let weak = app.as_weak();
-        state.on_remove_video_image(move |id| {
-            let Some(app) = weak.upgrade() else {
-                return;
-            };
-            let state = app.global::<AppState>();
-            if state.get_video_generating() || state.get_video_images_loading() {
-                return;
-            }
-            let before = state.get_video_images().row_count();
-            let rows: Vec<_> = state
-                .get_video_images()
-                .iter()
-                .filter(|row| row.id != id)
-                .collect();
-            if rows.len() == before {
-                return;
-            }
-            state.set_video_images(ModelRc::new(VecModel::from(rows)));
-            state.set_video_images_status("已从本次列表移除，原文件仍保留".into());
-            update_video_image_source(&state, &quote_epoch, &request_id);
+        let (weak,store,binding)=(app.as_weak(),store.clone(),dialog_binding.clone());
+        state.on_toggle_video_asset(move|id| {
+            let Some(app)=weak.upgrade() else { return; };
+            let Some(persistence)=binding.borrow().clone() else { return; };
+            let _=apply_video_input(&store,&persistence,|| {
+                let state=app.global::<AppState>();
+                if state.get_video_images_loading() || state.get_video_generating() || state.get_video_image_dialog()!="assets" { return; }
+                let mut rows:Vec<_>=state.get_video_asset_choices().iter().collect();
+                if rows.iter().any(|row|!persistence.owns_path(Path::new(row.source_path.as_str()))) { return; }
+                for row in &mut rows { if row.id==id && !row.added { row.selected=!row.selected; } }
+                let Ok(count)=i32::try_from(rows.iter().filter(|row|row.selected&&!row.added).count()) else { return; };
+                state.set_video_asset_selected_count(count);
+                state.set_video_asset_choices(ModelRc::new(VecModel::from(rows)));
+            });
+        });
+    }
+    {
+        let (weak,store,epoch,quote_epoch,request_id,binding)=(app.as_weak(),store.clone(),epoch.clone(),quote_epoch.clone(),request_id.clone(),dialog_binding.clone());
+        state.on_confirm_video_assets(move|| {
+            let Some(app)=weak.upgrade() else { return; };
+            let Some(persistence)=binding.borrow().clone() else { return; };
+            let state=app.global::<AppState>();
+            let changed=apply_video_input(&store,&persistence,|| {
+                if state.get_video_images_loading() || state.get_video_generating() || state.get_video_image_dialog()!="assets" { return false; }
+                let selected:Vec<_>=state.get_video_asset_choices().iter().filter(|row|row.selected&&!row.added).collect();
+                if selected.is_empty() || selected.iter().chain(state.get_video_images().iter().collect::<Vec<_>>().iter())
+                    .any(|row|!persistence.owns_path(Path::new(row.source_path.as_str()))) { return false; }
+                cancel_video_image_work(&state,&epoch);
+                binding.borrow_mut().take();
+                append_video_images(&state,selected,0,&quote_epoch,&request_id)
+            }).unwrap_or(false);
+            if changed { quote_current_video_image(&state,&store,&persistence,&quote_epoch); }
+        });
+    }
+    {
+        let (weak,store,epoch,quote_epoch,request_id)=(app.as_weak(),store.clone(),epoch.clone(),quote_epoch.clone(),request_id.clone());
+        state.on_remove_video_image(move|id| {
+            let Some(app)=weak.upgrade() else { return; };
+            let Some(persistence)=store.borrow().private_persistence.clone() else { return; };
+            let state=app.global::<AppState>();
+            let changed=apply_video_input(&store,&persistence,|| {
+                if state.get_video_generating() || state.get_video_images_loading() { return false; }
+                let old:Vec<_>=state.get_video_images().iter().collect();
+                if old.iter().any(|row|!persistence.owns_path(Path::new(row.source_path.as_str()))) { return false; }
+                let rows:Vec<_>=old.iter().filter(|row|row.id!=id).cloned().collect();
+                if rows.len()==old.len() { return false; }
+                let _=advance_video_image_epoch(&epoch);
+                state.set_video_images(ModelRc::new(VecModel::from(rows)));
+                state.set_video_images_status("已从本次列表移除，原文件仍保留".into());
+                update_video_image_source(&state,&quote_epoch,&request_id)
+            }).unwrap_or(false);
+            if changed { quote_current_video_image(&state,&store,&persistence,&quote_epoch); }
         });
     }
     epoch
@@ -432,4 +468,4 @@ pub(super) fn wire_video_image_callbacks(
 
 #[cfg(test)]
 #[path = "video_images_tests.rs"]
-mod tests;
+pub(in crate::runtime) mod tests;

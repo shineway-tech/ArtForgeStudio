@@ -1,0 +1,62 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { TeamAction, TeamEmpty, TeamPager, TeamLabels, TeamTable, TeamTableCell } from "team-controls.slint";
+
+export component TeamMembersPanel {
+    property <length> status-width: 72px;
+    property <length> quota-width: 64px;
+    property <length> actions-width: AppState.en ? 242px : 224px;
+    property <length> column-gap: 12px;
+    property <length> table-padding: 16px;
+    preferred-height: content.preferred-height;
+    content := VerticalLayout {
+        spacing: 10px; alignment: start;
+        if AppState.team-members.length == 0 && !AppState.team-page-loading: TeamEmpty { title: (AppState.en ? "No team members yet" : "还没有团队成员"); detail: (AppState.en ? "Invite members to create using your team's credits." : "邀请成员加入，让团队使用你的积分创作。"); }
+        if AppState.team-members.length > 0: table := TeamTable {
+            // Share all seven column widths between the header and every member row.
+            property <length> member-width: self.table-width - 2 * root.table-padding - 6 * root.column-gap
+                - root.status-width - 4 * root.quota-width - root.actions-width;
+            minimum-table-width: AppState.en ? 900px : 840px;
+            content-height: 42px + AppState.team-members.length * 70px;
+            VerticalLayout {
+                width: table.table-width; spacing: 0px; alignment: start;
+                Rectangle {
+                    height: 42px; background: AppTheme.panel-soft;
+                    HorizontalLayout {
+                        padding-left: root.table-padding; padding-right: root.table-padding; spacing: root.column-gap;
+                        TeamTableCell { width: table.member-width; heading: true; text: AppState.en ? "Members" : "成员"; }
+                        TeamTableCell { width: root.status-width; heading: true; text: AppState.en ? "Status" : "状态"; }
+                        TeamTableCell { width: root.quota-width; heading: true; text: AppState.en ? "Monthly" : "月额度"; center-aligned: true; }
+                        TeamTableCell { width: root.quota-width; heading: true; text: AppState.en ? "Used" : "已用"; center-aligned: true; }
+                        TeamTableCell { width: root.quota-width; heading: true; text: AppState.en ? "Held" : "预留"; center-aligned: true; }
+                        TeamTableCell { width: root.quota-width; heading: true; text: AppState.en ? "Left" : "剩余"; center-aligned: true; }
+                        TeamTableCell { width: root.actions-width; heading: true; text: AppState.en ? "Actions" : "操作"; center-aligned: true; }
+                    }
+                }
+                for member in AppState.team-members: Rectangle {
+                    height: 70px; background: AppTheme.panel;
+                    HorizontalLayout {
+                        padding-left: root.table-padding; padding-right: root.table-padding; spacing: root.column-gap;
+                        TeamTableCell { width: table.member-width; text: member.display-name; detail: member.email-masked; strong: true; }
+                        TeamTableCell { width: root.status-width; text: TeamLabels.member-status(member.status); text-color: member.status == "active" ? AppTheme.success : AppTheme.muted; }
+                        TeamTableCell { width: root.quota-width; text: member.monthly-limit; center-aligned: true; }
+                        TeamTableCell { width: root.quota-width; text: member.settled; center-aligned: true; }
+                        TeamTableCell { width: root.quota-width; text: member.reserved; center-aligned: true; }
+                        TeamTableCell { width: root.quota-width; text: member.remaining; center-aligned: true; }
+                        Rectangle {
+                            width: root.actions-width;
+                            HorizontalLayout {
+                                y: (parent.height - 34px) / 2; width: parent.width; height: 34px; spacing: 8px; alignment: center;
+                                TeamAction { width: 78px; text: (AppState.en ? "Edit limit" : "设置额度"); disabled: AppState.team-page-loading || !AppState.team-can-manage-members || (member.status != "active" && member.status != "suspended"); clicked => { AppState.open-team-form("set_limit", member.member-id, member.version); } }
+                                TeamAction { width: AppState.en ? 64px : 48px; text: member.status == "suspended" ? (AppState.en ? "Resume" : "恢复") : (AppState.en ? "Suspend" : "暂停"); disabled: AppState.team-page-loading || !AppState.team-can-manage-members || (member.status != "active" && member.status != "suspended"); clicked => { AppState.open-team-form(member.status == "suspended" ? "resume" : "suspend", member.member-id, member.version); } }
+                                TeamAction { width: AppState.en ? 64px : 48px; text: (AppState.en ? "Remove" : "移除"); danger: true; disabled: AppState.team-page-loading || !AppState.team-can-manage-members || (member.status != "active" && member.status != "suspended"); clicked => { AppState.open-team-form("remove", member.member-id, member.version); } }
+                            }
+                        }
+                    }
+                    Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: AppTheme.border; }
+                }
+            }
+        }
+        TeamPager { noun: (AppState.en ? "Members" : "成员"); hide-empty-message: true; cursor: AppState.team-members-next-cursor; next => { AppState.load-team-members(AppState.team-members-next-cursor); } }
+    }
+}

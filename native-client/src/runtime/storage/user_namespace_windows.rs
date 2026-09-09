@@ -18,6 +18,49 @@ use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Storage::FileSystem::*;
 use windows_sys::Win32::System::IO::OVERLAPPED;
 
+impl DataRootCapability {
+    pub(super) fn read_external_source(&self, path: &Path, limit: u64) -> Result<Vec<u8>> {
+        use std::io::Read;
+        ensure!(path.is_absolute(), "image source must be absolute");
+        let mut components = path.components();
+        let prefix = match components.next() {
+            Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)) => prefix,
+            _ => anyhow::bail!("external image requires a provable local volume root"),
+        };
+        ensure!(matches!(components.next(), Some(Component::RootDir)), "image volume root missing");
+        let text = path.to_str().ok_or_else(|| anyhow!("invalid image Unicode"))?;
+        let prefix_text = prefix.as_os_str().to_str().ok_or_else(|| anyhow!("invalid prefix"))?;
+        validate_windows_relative_name(&text[prefix_text.len() + 1..])?;
+        let names = components.map(|part| match part {
+            Component::Normal(name) => { leaf_wide(name)?; Ok(name.to_owned()) },
+            _ => Err(anyhow!("unclean image source")),
+        }).collect::<Result<Vec<_>>>()?;
+        let (leaf, parents) = names.split_last().ok_or_else(|| anyhow!("image filename missing"))?;
+        let mut anchor = PathBuf::from(prefix.as_os_str()); anchor.push("\\");
+        let root = open_absolute_anchor(&anchor, TRAVERSE_ACCESS, SHARE_LOCK)?;
+        prove_external_volume_root(&root)?;
+        let mut chain = vec![root];
+        for name in parents {
+            chain.push(nt_open(chain.last().unwrap(), name, TRAVERSE_ACCESS, SHARE_LOCK, NT_OPEN, true)?);
+        }
+        ensure!(identify(&self.handle, true)? == self.identity, "private root changed");
+        reject_private_chain(&chain, self.identity)?;
+        let handle = nt_open(chain.last().unwrap(), leaf,
+            FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE, FILE_SHARE_READ, NT_OPEN, false)?;
+        identify(&handle, false)?;
+        ensure!(file_link_count(&handle)? == 1, "linked image source");
+        // Read-only sharing pins this exact regular object against write/delete; all
+        // ancestor handles deny deletion. No pathname is reopened for the bytes.
+        let mut file = std::fs::File::from(handle);
+        let before = file.metadata()?;
+        ensure!(before.len() <= limit, "image source too large");
+        let mut bytes = Vec::new();
+        (&mut file).take(limit + 1).read_to_end(&mut bytes)?;
+        reject_private_chain(&chain, self.identity)?;
+        ensure!(bytes.len() as u64 == before.len() && bytes.len() as u64 <= limit, "image source size changed");
+        Ok(bytes)
+    }
+}
 const LOCK_NAME: &str = ".namespace.lock";
 const SHARE_ALL: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 const SHARE_LOCK: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE;
@@ -411,6 +454,17 @@ fn reject_private_chain(chain: &[OwnedHandle], private: Identity) -> Result<()> 
 }
 
 impl NamespaceFs {
+    pub(super) fn verify_no_legacy_import_state(&self, directory: &ManagedDirectoryCapability) -> Result<()> {
+        let _lock = self.lock_mutations()?;
+        let chain = self.checked_directory_chain(directory)?;
+        for entry in managed_entries(chain.last().unwrap())? {
+            let name = entry.name.to_str().ok_or_else(|| anyhow!("unsupported staging entry requires repair"))?;
+            ensure!(!name.starts_with("legacy-import-") && name != "import-plan.json",
+                "unsupported legacy import journal requires repair");
+        }
+        self.checked_directory_chain(directory)?;
+        Ok(())
+    }
     pub(crate) fn open_optional_regular(
         &self,
         directory: &ManagedDirectoryCapability,

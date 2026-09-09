@@ -7,6 +7,461 @@ use std::sync::{Arc, Barrier};
 use std::time::Duration;
 use uuid::Uuid;
 
+#[derive(serde::Serialize)]
+#[serde(tag = "operation", rename_all = "snake_case")]
+enum JointControl<'a> {
+    SetGroupStatus { group_id: &'a str, status: &'a str },
+    SeedOwnerPages { group_id: &'a str, member_count: u32, invitation_count: u32, usage_event_count: u32 },
+    HoldGenerationAdmission { task_id: &'a str, user_public_id: &'a str, account_group_id: &'a str },
+    CompleteGenerationAdmission { task_id: &'a str, user_public_id: &'a str, account_group_id: &'a str, lease_handle: &'a str },
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JointFreeze { operation: String, group_id: String, status: String, group_version: String }
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JointSeed { operation: String, group_id: String, member_count: u32, invitation_count: u32, usage_event_count: u32 }
+#[derive(Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JointHeld { operation: String, task_id: String, user_public_id: String, account_group_id: String, outcome: String, task_status: String, lease_handle: String, lease_epoch: String, saved_ceiling: u32, live_count: u32 }
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JointRejected { operation: String, task_id: String, user_public_id: String, account_group_id: String, outcome: String, task_status: String, reason: String, lease_epoch: String, saved_ceiling: u32, live_count: u32 }
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JointCompleted { operation: String, task_id: String, user_public_id: String, account_group_id: String, outcome: String, task_status: String, lease_handle: String, lease_epoch: String, released: bool, replayed: bool }
+enum JointReceipt { Frozen(JointFreeze), Seeded(JointSeed), Held(JointHeld), Rejected(JointRejected), Completed(JointCompleted) }
+fn joint_control(request: JointControl<'_>) -> JointReceipt {
+    let base = base_url();
+    // Validate before reading or attaching the control credential.
+    assert_eq!(std::env::var("ARTFORGE_ENABLE_MOCK_API").as_deref(), Ok("1"));
+    assert_eq!(base.as_str(), "http://127.0.0.1:39091/");
+    assert!(base.username().is_empty() && base.password().is_none());
+    let request = serde_json::to_value(request).unwrap();
+    let token = std::env::var("ARTFORGE_MOCK_CONTROL_TOKEN").expect("isolated mock control credential");
+    assert!(token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
+    let response = reqwest::blocking::Client::new().post(base.join("__mock__/team-account-fixtures").unwrap())
+        .timeout(Duration::from_secs(10)).header("X-Mock-Control-Token", token).json(&request).send().unwrap();
+    assert_eq!(response.status().as_u16(), 200, "isolated fixture operation rejected");
+    let envelope: Value = response.json().unwrap();
+    let data = envelope.get("data").cloned().expect("fixture envelope data");
+    assert_eq!(data["operation"], request["operation"]);
+    match request["operation"].as_str().unwrap() {
+        "set_group_status" => JointReceipt::Frozen(serde_json::from_value(data).unwrap()),
+        "seed_owner_pages" => JointReceipt::Seeded(serde_json::from_value(data).unwrap()),
+        "hold_generation_admission" if data["outcome"] == "held" => JointReceipt::Held(serde_json::from_value(data).unwrap()),
+        "hold_generation_admission" => JointReceipt::Rejected(serde_json::from_value(data).unwrap()),
+        "complete_generation_admission" => JointReceipt::Completed(serde_json::from_value(data).unwrap()),
+        _ => unreachable!(),
+    }
+}
+fn joint_scope(client: &ApiClient, login: &LoginResponse) -> SessionScope {
+    client.session().scope_for_user(&login.user.id).unwrap()
+}
+fn joint_owned(client: &ApiClient, scope: &SessionScope) -> AccountGroupChoice {
+    TeamApi::new(client.clone()).list_groups(scope).unwrap().items.into_iter().find(|choice| choice.role == "owner").unwrap()
+}
+fn joint_billing(scope: &SessionScope, choice: &AccountGroupChoice) -> BillingScope {
+    BillingScope { request: GroupRequestScope { session: scope.clone(), account_group_id: choice.group_id.clone() }, context_epoch: 1 }
+}
+fn joint_confirm(client: &ApiClient, manager: &BillingContextManager, writer: &crate::runtime::ClientStateWriter, choice: AccountGroupChoice, scope: &SessionScope, rollback: PreviousBillingAuthority) -> BillingScope {
+    let ticket = manager.begin_switch(scope, &client.device().id, &choice.group_id, rollback).unwrap();
+    assert!(manager.confirmed_scope().is_none());
+    let snapshot = AccountApi::new(client.clone()).snapshot_billing(ticket.proposed_scope()).unwrap();
+    let staged = manager.stage_confirmation(&ticket, choice, snapshot.account).unwrap();
+    writer.save_selected_group(&scope.owner_user_id, &client.device().id, &ticket.proposed_scope().request.account_group_id).unwrap();
+    let confirmed = ticket.proposed_scope().clone();
+    manager.publish_persisted(ticket, staged);
+    assert_eq!(manager.confirmed_scope(), Some(confirmed.clone()));
+    assert_eq!(writer.load_selected_group(&scope.owner_user_id, &client.device().id).unwrap().as_deref(), Some(confirmed.request.account_group_id.as_str()));
+    confirmed
+}
+struct JointMembership {
+    owner: ApiClient, owner_scope: SessionScope, owner_group: AccountGroupChoice,
+    member: ApiClient, member_scope: SessionScope, personal_group: AccountGroupChoice, membership: MemberView,
+}
+fn joint_membership(prefix: &str) -> JointMembership {
+    let (owner, owner_login, _) = login_new_user_with_email(&format!("{prefix}-owner"));
+    let (member, member_login, email) = login_new_user_with_email(&format!("{prefix}-member"));
+    let owner_scope = joint_scope(&owner, &owner_login); let member_scope = joint_scope(&member, &member_login);
+    let owner_group = joint_owned(&owner, &owner_scope); let personal_group = joint_owned(&member, &member_scope);
+    let invitation = TeamApi::new(owner.clone()).create_invitation(&owner_group.group_id, &email, "500", &Uuid::new_v4().to_string(), &owner_scope).unwrap();
+    let membership = TeamApi::new(member.clone()).accept_invitation(&invitation.invitation_id, &invitation.version, &Uuid::new_v4().to_string(), &member_scope).unwrap();
+    JointMembership { owner, owner_scope, owner_group, member, member_scope, personal_group, membership }
+}
+fn joint_selected_member(fixture: &JointMembership) -> AccountGroupChoice {
+    TeamApi::new(fixture.member.clone()).list_groups(&fixture.member_scope).unwrap().items.into_iter()
+        .find(|choice| choice.group_id == fixture.owner_group.group_id).unwrap()
+}
+fn joint_exact_keys(value: &Value, keys: &[&str]) {
+    let actual = value.as_object().unwrap().keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>();
+    let expected = keys.iter().copied().collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+#[ignore = "requires the isolated team Mock API on 127.0.0.1:39091"]
+fn cross_stack_invited_registration_outcomes() {
+    for count in [1, 2] {
+        let client = new_client(); let auth = AuthApi::new(client.clone());
+        let email = format!("joint-invited-{count}-{}@example.com", Uuid::new_v4());
+        let mut owners = Vec::new();
+        for index in 0..count {
+            let (owner, login, _) = login_new_user_with_email(&format!("joint-inviter-{index}"));
+            let scope = joint_scope(&owner, &login); let choice = joint_owned(&owner, &scope);
+            let invitation = TeamApi::new(owner.clone()).create_invitation(&choice.group_id, &email, "123", &Uuid::new_v4().to_string(), &scope).unwrap();
+            owners.push((owner, scope, choice, invitation));
+        }
+        let acceptances = agreement_acceptances(&auth);
+        auth.request_email_code(&email).unwrap();
+        let outcome = auth.login_response(&email, &mock_code(), &acceptances).unwrap();
+        let EmailLoginOutcome::TeamRegistrationRequired { registration_continuation, pending_invitation_count, invitations, selection_state, .. } = outcome else { panic!("invited user must not receive session or grant"); };
+        assert_eq!(pending_invitation_count, count as u64); assert_eq!(invitations.len(), count);
+        assert!(client.session().access().is_none());
+        let key = Uuid::new_v4().to_string();
+        let body = serde_json::to_value(TeamRegistrationRequest {
+            registration_continuation: registration_continuation.expose(), password: PASSWORD_ALPHA,
+            agreement_acceptances: &acceptances, device_id: &client.device().id, device_name: &client.device().name,
+            platform: &client.device().platform, app_version: client.app_version(),
+        }).unwrap();
+        let first = client.public_json_idempotent::<Value>(Method::POST, "/v1/auth/team-registration", Some(body.clone()), &key).unwrap().data;
+        joint_exact_keys(&first, &["user","group_choices","selection_state","suggested_account_group_id","access_token","access_expires_in_seconds","refresh_token","refresh_expires_at","token_type"]);
+        let parsed: TeamRegistrationResult = serde_json::from_value(first.clone()).unwrap();
+        let TeamRegistrationSessionResult::Authenticated { tokens } = parsed.session else { panic!("first registration needs actual tokens"); };
+        let replay = client.public_json_idempotent::<Value>(Method::POST, "/v1/auth/team-registration", Some(body), &key).unwrap().data;
+        joint_exact_keys(&replay, &["user","group_choices","selection_state","suggested_account_group_id","session_login_required"]);
+        assert_eq!(replay["session_login_required"], true);
+        for field in ["user","group_choices","selection_state","suggested_account_group_id"] { assert_eq!(first[field], replay[field]); }
+        let typed_replay = auth.complete_team_registration(&registration_continuation, PASSWORD_ALPHA, &acceptances, &key).unwrap();
+        assert!(matches!(typed_replay.session, TeamRegistrationSessionResult::LoginRequired { session_login_required: true }));
+        // Same normal password request used by the replay callback, never synthetic tokens.
+        let login = auth.password_login_response(&email, PASSWORD_ALPHA, &acceptances).unwrap();
+        assert_eq!(login.user.id, parsed.user.id); assert!(!login.is_new_user);
+        let scope = client.session().install_tokens_for_user(&login.tokens, &login.user.id).unwrap();
+        let owned = joint_owned(&client, &scope);
+        let personal = AccountApi::new(client.clone()).snapshot_billing(&joint_billing(&scope, &owned)).unwrap();
+        assert_eq!(personal.account.credits.unwrap().lifetime_granted, "0");
+        assert!(!personal.account.user.invitation_code_submitted);
+        if count == 1 {
+            assert_eq!(selection_state, TeamRegistrationSelectionState::Unique);
+            assert_eq!(parsed.suggested_account_group_id.as_deref(), Some(owners[0].2.group_id.as_str()));
+        } else {
+            assert_eq!(selection_state, TeamRegistrationSelectionState::Multiple);
+            assert!(parsed.suggested_account_group_id.is_none());
+            let pending = TeamApi::new(client.clone()).list_pending_invitations(None, &scope).unwrap();
+            assert_eq!(pending.items.len(), 2);
+            let selected = &pending.items[0];
+            TeamApi::new(client.clone()).accept_invitation(&selected.invitation_id, &selected.version, &Uuid::new_v4().to_string(), &scope).unwrap();
+            assert!(TeamApi::new(client.clone()).list_pending_invitations(None, &scope).unwrap().items.is_empty());
+            let alternate = owners.iter().find(|(_,_,choice,_)| choice.group_id != selected.group_id).unwrap();
+            let rows = TeamApi::new(alternate.0.clone()).list_invitations(&alternate.2.group_id, None, &alternate.1).unwrap();
+            assert_eq!(rows.items.iter().find(|row| row.invitation_id == alternate.3.invitation_id).unwrap().status, "superseded");
+        }
+        drop(tokens);
+        auth.logout_scoped(false, &scope).unwrap();
+        for (owner, scope, _, _) in owners { AuthApi::new(owner).logout_scoped(false, &scope).unwrap(); }
+    }
+}
+#[test]
+#[ignore = "requires the isolated team Mock API on 127.0.0.1:39091"]
+fn cross_stack_team_selection_and_frozen_fallback() {
+    let fixture = joint_membership("joint-selection");
+    let writer = crate::runtime::client_state::tests::Fixture::new(false, false);
+    let manager = BillingContextManager::with_upgrade_latch(fixture.member.upgrade_latch().clone());
+    manager.bind_authenticated_session(fixture.member_scope.clone()).unwrap();
+    let personal = joint_confirm(&fixture.member, &manager, &writer, fixture.personal_group.clone(), &fixture.member_scope, PreviousBillingAuthority::StillValid);
+    let joined = joint_confirm(&fixture.member, &manager, &writer, joint_selected_member(&fixture), &fixture.member_scope, PreviousBillingAuthority::StillValid);
+    assert_ne!(personal.request.account_group_id, joined.request.account_group_id);
+    assert!(manager.current_scope(KnownCapability::ManageGroup).is_err());
+    TeamApi::new(fixture.owner.clone()).update_member(&fixture.owner_group.group_id, &fixture.membership.member_id, MemberPolicyAction::Suspend, &fixture.membership.version, &Uuid::new_v4().to_string(), &fixture.owner_scope).unwrap();
+    let groups = TeamApi::new(fixture.member.clone()).list_groups(&fixture.member_scope).unwrap();
+    assert!(!groups.items.iter().find(|choice| choice.group_id == fixture.owner_group.group_id).unwrap().selectable);
+    manager.invalidate_current_billing(); assert!(manager.billable_scope().is_err());
+    let fallback = BillingContextManager::choose_candidate(&groups.items, None, None).unwrap().clone();
+    joint_confirm(&fixture.member, &manager, &writer, fallback, &fixture.member_scope, PreviousBillingAuthority::Invalidated);
+    assert_eq!(manager.confirmed_scope().unwrap().request.account_group_id, fixture.personal_group.group_id);
+    let JointReceipt::Frozen(receipt) = joint_control(JointControl::SetGroupStatus { group_id: &fixture.personal_group.group_id, status: "frozen" }) else { panic!("freeze receipt"); };
+    assert_eq!(receipt.status, "frozen"); assert_eq!(receipt.group_id, fixture.personal_group.group_id); assert!(receipt.group_version.parse::<i64>().is_ok());
+    let groups = TeamApi::new(fixture.member.clone()).list_groups(&fixture.member_scope).unwrap();
+    let fallback = BillingContextManager::choose_candidate(&groups.items, None, None).unwrap().clone();
+    assert!(fallback.readable_context && !fallback.selectable);
+    let frozen = joint_confirm(&fixture.member, &manager, &writer, fallback, &fixture.member_scope, PreviousBillingAuthority::Invalidated);
+    assert!(manager.confirmed_snapshot().unwrap().read_only);
+    let before = fixture.member.test_request_receipts().len();
+    assert!(manager.billable_scope().is_err()); assert!(manager.current_scope(KnownCapability::Purchase).is_err());
+    assert_eq!(fixture.member.test_request_receipts().len(), before);
+    assert_http_error(GenerationApi::new(fixture.member.clone()).create_task_billing(&prompt_request(Uuid::new_v4().to_string(), "frozen"), &frozen), 409, "account_group_frozen");
+    AuthApi::new(fixture.member).logout_scoped(false, &fixture.member_scope).unwrap();
+    AuthApi::new(fixture.owner).logout_scoped(false, &fixture.owner_scope).unwrap();
+}
+#[test]
+#[ignore = "requires the isolated team Mock API on 127.0.0.1:39091"]
+fn cross_stack_team_privacy_and_pagination() {
+    let (owner, login, _) = login_new_user_with_email("joint-pages"); let scope = joint_scope(&owner, &login); let group = joint_owned(&owner, &scope);
+    let JointReceipt::Seeded(receipt) = joint_control(JointControl::SeedOwnerPages { group_id: &group.group_id, member_count: 51, invitation_count: 51, usage_event_count: 51 }) else { panic!("seed receipt"); };
+    assert_eq!((receipt.member_count, receipt.invitation_count, receipt.usage_event_count), (51,51,51));
+    let api = TeamApi::new(owner.clone());
+    let members = api.list_members(&group.group_id, None, &scope).unwrap(); assert_eq!(members.items.len(), 50);
+    let members2 = api.list_members(&group.group_id, members.next_cursor.as_deref(), &scope).unwrap(); assert_eq!(members2.items.len(), 1); assert!(members2.next_cursor.is_none());
+    let ids = members.items.iter().chain(&members2.items).map(|row| row.member_id.as_str()).collect::<HashSet<_>>(); assert_eq!(ids.len(), 51);
+    let invitations = api.list_invitations(&group.group_id, None, &scope).unwrap(); assert_eq!(invitations.items.len(), 50);
+    let invitations2 = api.list_invitations(&group.group_id, invitations.next_cursor.as_deref(), &scope).unwrap(); assert_eq!(invitations2.items.len(), 1); assert!(invitations2.next_cursor.is_none());
+    assert_eq!(invitations.items.iter().chain(&invitations2.items).map(|row| row.invitation_id.as_str()).collect::<HashSet<_>>().len(), 51);
+    let usage = api.usage_page(&group.group_id, None, &scope).unwrap(); assert_eq!(usage.items.len(), 50);
+    let usage2 = api.usage_page(&group.group_id, usage.next_cursor.as_deref(), &scope).unwrap(); assert_eq!(usage2.items.len(), 1); assert!(usage2.next_cursor.is_none());
+    assert_eq!(usage.items.iter().chain(&usage2.items).map(|row| row.usage_event_id.as_str()).collect::<HashSet<_>>().len(), 51);
+    let raw = owner.identity_json_scoped::<Value>(Method::GET, &format!("/v1/account-groups/{}/usage?page_size=50", group.group_id), None, None, &scope).unwrap().data;
+    for row in raw["items"].as_array().unwrap() {
+        joint_exact_keys(row, &["usage_event_id","member","occurred_at","period_start","period_end","operation_kind","model_label","credit_amount","phase","outcome"]);
+        joint_exact_keys(&row["member"], &["user_id","display_name","email_masked"]);
+    }
+    let fixture = joint_membership("joint-privacy");
+    let selected = joint_billing(&fixture.member_scope, &joint_selected_member(&fixture));
+    let raw = fixture.member.billing_json_scoped::<Value>(Method::GET, "/v1/account", None, None, &selected).unwrap().data;
+    for forbidden in ["credits","membership","orders","wallet","files","prompts"] { assert!(raw.get(forbidden).is_none()); }
+    assert!(raw["quota"].is_object()); assert_eq!(raw["user"]["id"], fixture.member_scope.owner_user_id);
+    assert!(raw["entitlement"].is_object()); assert_eq!(raw["read_only"], false);
+    for path in [format!("/v1/account-groups/{}/usage?page_size=50", fixture.owner_group.group_id), format!("/v1/account-groups/{}/billing-summary", fixture.owner_group.group_id)] {
+        assert!(matches!(fixture.member.identity_json_scoped::<Value>(Method::GET, &path, None, None, &fixture.member_scope), Err(ApiError::Http { status: 403, .. })));
+    }
+    AuthApi::new(owner).logout_scoped(false, &scope).unwrap();
+    AuthApi::new(fixture.owner).logout_scoped(false, &fixture.owner_scope).unwrap();
+    AuthApi::new(fixture.member).logout_scoped(false, &fixture.member_scope).unwrap();
+}
+
+#[test]
+#[ignore = "requires the isolated team Mock API on 127.0.0.1:39091"]
+fn cross_stack_team_header_matrix() {
+    let fixture = joint_membership("joint-headers");
+    let scope = joint_billing(&fixture.owner_scope, &fixture.owner_group);
+    for path in ["/v1/account", "/v1/credits/account", "/v1/credits/ledger?limit=8", "/v1/credits/packs", "/v1/membership/plans", "/v1/models", "/v1/orders?page_size=50"] {
+        assert_http_error(fixture.owner.identity_json_scoped::<Value>(Method::GET, path, None, None, &fixture.owner_scope), 400, "account_group_context_required");
+        fixture.owner.billing_json_scoped::<Value>(Method::GET, path, None, None, &scope).unwrap();
+    }
+    let request = prompt_request(Uuid::new_v4().to_string(), "joint header content");
+    assert_http_error(GenerationApi::new(fixture.owner.clone()).create_task_scoped(&request, &fixture.owner_scope), 400, "account_group_context_required");
+    let task = GenerationApi::new(fixture.owner.clone()).create_task_billing(&request, &scope).unwrap();
+    require_saved_group(&scope.request.account_group_id, &task.billing_account_group_id).unwrap();
+    GenerationApi::new(fixture.owner.clone()).task_scoped(&task.id, &fixture.owner_scope).unwrap();
+    GenerationApi::new(fixture.owner.clone()).cancel_scoped(&task.id, &fixture.owner_scope).unwrap();
+    TeamApi::new(fixture.owner.clone()).list_groups(&fixture.owner_scope).unwrap();
+    TeamApi::new(fixture.owner.clone()).list_members(&fixture.owner_group.group_id, None, &fixture.owner_scope).unwrap();
+    TeamApi::new(fixture.owner.clone()).list_invitations(&fixture.owner_group.group_id, None, &fixture.owner_scope).unwrap();
+    TeamApi::new(fixture.owner.clone()).usage_page(&fixture.owner_group.group_id, None, &fixture.owner_scope).unwrap();
+    TeamApi::new(fixture.owner.clone()).billing_summary(&fixture.owner_group.group_id, &fixture.owner_scope).unwrap();
+    TeamApi::new(fixture.member.clone()).own_membership(&fixture.owner_group.group_id, &fixture.member_scope).unwrap();
+    TeamApi::new(fixture.member.clone()).list_pending_invitations(None, &fixture.member_scope).unwrap();
+    let payment = PaymentApi::new(fixture.owner.clone());
+    let packs = payment.packs_billing(&scope).unwrap(); let pack = &packs[0];
+    let key = Uuid::new_v4().to_string();
+    assert_http_error(payment.create_credit_order_scoped(&pack.code, &key, &fixture.owner_scope), 400, "account_group_context_required");
+    let order = payment.create_credit_order_billing(&pack.code, &key, &scope).unwrap();
+    payment.order_scoped(&order.id, &fixture.owner_scope).unwrap(); payment.sync_order_scoped(&order.id, &fixture.owner_scope).unwrap();
+    let receipts = fixture.owner.test_request_receipts();
+    for receipt in receipts.iter().filter(|receipt| receipt.path.starts_with("/v1/account-groups") || receipt.path.starts_with("/v1/account/sessions") || receipt.path == format!("/v1/generation/tasks/{}", task.id) || receipt.path == format!("/v1/generation/tasks/{}/cancel", task.id) || receipt.path.starts_with(&format!("/v1/orders/{}", order.id))) {
+        assert!(receipt.selected_group.is_none()); assert!(receipt.has_auth);
+    }
+    assert!(receipts.iter().any(|receipt| receipt.path == "/v1/generation/tasks" && receipt.method == "POST" && receipt.selected_group.as_deref() == Some(scope.request.account_group_id.as_str())));
+    assert!(receipts.iter().filter(|receipt| receipt.path.starts_with("/v1/auth/email/")).all(|receipt| receipt.selected_group.is_none() && !receipt.has_auth));
+    AuthApi::new(fixture.owner).logout_scoped(false, &fixture.owner_scope).unwrap();
+    AuthApi::new(fixture.member).logout_scoped(false, &fixture.member_scope).unwrap();
+}
+struct JointClaims(Vec<JointHeld>);
+impl JointClaims {
+    fn complete(receipt: &JointHeld) -> JointCompleted {
+        let JointReceipt::Completed(completed) = joint_control(JointControl::CompleteGenerationAdmission {
+            task_id: &receipt.task_id, user_public_id: &receipt.user_public_id, account_group_id: &receipt.account_group_id, lease_handle: &receipt.lease_handle,
+        }) else { panic!("completion receipt"); };
+        assert_eq!(completed.operation, "complete_generation_admission");
+        assert_eq!(completed.task_id, receipt.task_id);
+        assert_eq!(completed.user_public_id, receipt.user_public_id);
+        assert_eq!(completed.account_group_id, receipt.account_group_id);
+        assert_eq!(completed.outcome, "completed");
+        assert_eq!(completed.task_status, "completed");
+        assert_eq!(completed.lease_handle, receipt.lease_handle);
+        assert_eq!(completed.lease_epoch, receipt.lease_epoch);
+        assert!(completed.released);
+        completed
+    }
+    fn finish(mut self) {
+        while let Some(receipt) = self.0.last() {
+            let completed = Self::complete(receipt);
+            assert!(!completed.replayed, "normal drain must release each remaining handle once");
+            self.0.pop();
+        }
+    }
+}
+impl Drop for JointClaims {
+    fn drop(&mut self) {
+        for receipt in self.0.drain(..) {
+            let _ = std::panic::catch_unwind(|| { let _ = Self::complete(&receipt); });
+        }
+    }
+}
+#[test]
+#[ignore = "requires the isolated team Mock API on 127.0.0.1:39091"]
+fn cross_stack_user_concurrency_across_groups() {
+    let fixture = joint_membership("joint-concurrency");
+    let personal = joint_billing(&fixture.member_scope, &fixture.personal_group);
+    let joined = joint_billing(&fixture.member_scope, &joint_selected_member(&fixture));
+    let api = GenerationApi::new(fixture.member.clone());
+    let create = |billing: &BillingScope| {
+        let task = api.create_task_billing(&prompt_request(Uuid::new_v4().to_string(), "queued joint task"), billing).unwrap();
+        assert_eq!(task.status, "queued"); task
+    };
+    let first = create(&personal);
+    let JointReceipt::Held(first_claim) = joint_control(JointControl::HoldGenerationAdmission {
+        task_id: &first.id, user_public_id: &fixture.member_scope.owner_user_id, account_group_id: &personal.request.account_group_id,
+    }) else { panic!("first user admission"); };
+    assert!(first_claim.saved_ceiling > 0 && first_claim.saved_ceiling <= 64);
+    let ceiling = first_claim.saved_ceiling; let epoch = first_claim.lease_epoch.clone();
+    let mut claims = JointClaims(vec![first_claim]);
+    for index in 1..ceiling {
+        let scope = if index % 2 == 0 { &personal } else { &joined }; let task = create(scope);
+        let JointReceipt::Held(receipt) = joint_control(JointControl::HoldGenerationAdmission { task_id: &task.id, user_public_id: &fixture.member_scope.owner_user_id, account_group_id: &scope.request.account_group_id }) else { panic!("admission below saved ceiling"); };
+        assert_eq!(receipt.lease_epoch, epoch); assert_eq!(receipt.saved_ceiling, ceiling); assert_eq!(receipt.live_count, index + 1);
+        claims.0.push(receipt);
+    }
+    let extra = create(&joined);
+    let JointReceipt::Rejected(rejected) = joint_control(JointControl::HoldGenerationAdmission { task_id: &extra.id, user_public_id: &fixture.member_scope.owner_user_id, account_group_id: &joined.request.account_group_id }) else { panic!("one user must share a ceiling across groups"); };
+    assert_eq!(rejected.reason, "user_concurrency_exceeded"); assert_eq!(rejected.task_status, "queued"); assert_eq!(rejected.live_count, ceiling); assert_eq!(rejected.lease_epoch, epoch);
+    let owner_billing = joint_billing(&fixture.owner_scope, &fixture.owner_group);
+    let other = GenerationApi::new(fixture.owner.clone()).create_task_billing(&prompt_request(Uuid::new_v4().to_string(), "other real user"), &owner_billing).unwrap();
+    let JointReceipt::Held(other_claim) = joint_control(JointControl::HoldGenerationAdmission { task_id: &other.id, user_public_id: &fixture.owner_scope.owner_user_id, account_group_id: &owner_billing.request.account_group_id }) else { panic!("second user independently admits"); };
+    claims.0.push(other_claim);
+    let writer = crate::runtime::client_state::tests::Fixture::new(false, false);
+    let manager = BillingContextManager::with_upgrade_latch(fixture.member.upgrade_latch().clone());
+    manager.bind_authenticated_session(fixture.member_scope.clone()).unwrap();
+    joint_confirm(&fixture.member, &manager, &writer, joint_selected_member(&fixture), &fixture.member_scope, PreviousBillingAuthority::StillValid);
+    let completed = JointClaims::complete(&claims.0[0]); assert!(!completed.replayed);
+    let replay = JointClaims::complete(&claims.0[0]); assert!(replay.replayed);
+    assert_eq!(completed.lease_epoch, replay.lease_epoch);
+    claims.0.remove(0);
+    let JointReceipt::Held(extra_claim) = joint_control(JointControl::HoldGenerationAdmission { task_id: &extra.id, user_public_id: &fixture.member_scope.owner_user_id, account_group_id: &joined.request.account_group_id }) else { panic!("released slot should admit once"); };
+    assert_eq!(extra_claim.lease_epoch, epoch); assert_eq!(extra_claim.live_count, ceiling);
+    claims.0.push(extra_claim);
+    claims.finish();
+    AuthApi::new(fixture.owner).logout_scoped(false, &fixture.owner_scope).unwrap();
+    AuthApi::new(fixture.member).logout_scoped(false, &fixture.member_scope).unwrap();
+}
+#[test]
+#[ignore = "requires the isolated team Mock API on 127.0.0.1:39091"]
+fn cross_stack_immutable_billing_recovery() {
+    use crate::runtime::*;
+    let fixture = joint_membership("joint-recovery");
+    let writer = client_state::tests::Fixture::new(false, false);
+    let manager = BillingContextManager::with_upgrade_latch(fixture.member.upgrade_latch().clone());
+    manager.bind_authenticated_session(fixture.member_scope.clone()).unwrap();
+    let a = joint_confirm(&fixture.member, &manager, &writer, fixture.personal_group.clone(), &fixture.member_scope, PreviousBillingAuthority::StillValid);
+    let lease = writer.lease(&fixture.member_scope.owner_user_id, fixture.member_scope.auth_epoch, 1);
+    let authority = NamespaceStorageAuthority::open(writer.data_root_capability_arc(), &lease).unwrap();
+    let request = prompt_request(Uuid::new_v4().to_string(), "immutable creation content");
+    let mut record: PendingGenerationRecord = serde_json::from_value(json!({
+        "schema_version":2,"client_request_id":request.client_request_id,"owner_user_id":fixture.member_scope.owner_user_id,
+        "billing_account_group_id":a.request.account_group_id,"auth_epoch":fixture.member_scope.auth_epoch,
+        "local_task_id":Uuid::new_v4().to_string(),"raw_prompt":request.prompt,"generation_prompt":request.prompt,
+        "task_type":request.task_type,"category":"game","mode":"game","ratio":"square","quality":"1K",
+        "model_code":request.model_code,"conversation_id":"","count":1,"create_conversation":false
+    })).unwrap();
+    upsert_pending_generation_for_namespace(&authority, &a, record.clone()).unwrap();
+    let generation = GenerationApi::new(fixture.member.clone()).create_task_billing(&request, &a).unwrap();
+    require_saved_group(&record.billing_account_group_id, &generation.billing_account_group_id).unwrap();
+    apply_generation_patch_for_namespace(&authority, &record.identity(), GenerationRecoveryPatch::Accepted { server_task_id: generation.id.clone(), uploaded_file_ids: Vec::new(), clear_reference_inputs: true }).unwrap();
+    record.server_task_id = generation.id.clone();
+    let deep_request = CreatePromptOptimization { client_request_id: Uuid::new_v4().to_string(), prompt: "a woodland village".into(), run_mode:"auto".into(),focus_mode:"system".into(),max_rounds:2,target_score:90 };
+    let deep_record = PendingPromptOptimizationRecord { schema_version:2,client_request_id:deep_request.client_request_id.clone(),owner_user_id:fixture.member_scope.owner_user_id.clone(),auth_epoch:fixture.member_scope.auth_epoch,billing_account_group_id:a.request.account_group_id.clone(),server_job_id:String::new(),presentation_dismissed:false,operation:PendingPromptOptimizationOperation::Create { request:deep_request.clone() } };
+    upsert_pending_prompt_optimization_for_namespace(&authority, &a, deep_record.clone()).unwrap();
+    let deep = PromptOptimizationApi::new(fixture.member.clone()).create_billing(&deep_request, &a).unwrap();
+    require_saved_group(&a.request.account_group_id, &deep.billing_account_group_id).unwrap();
+    let payment = PaymentApi::new(fixture.member.clone()); let pack = payment.packs_billing(&a).unwrap().remove(0); let key = Uuid::new_v4().to_string();
+    let order_record = PendingOrderRecord { schema_version:2,kind:"credit".into(),client_request_id:key.clone(),owner_user_id:fixture.member_scope.owner_user_id.clone(),billing_account_group_id:a.request.account_group_id.clone(),auth_epoch:fixture.member_scope.auth_epoch,order_id:String::new(),product_code:pack.code.clone(),upgrade_quote_id:String::new(),created_at:chrono::Utc::now().to_rfc3339() };
+    upsert_pending_order_for_namespace(&authority, &a, order_record).unwrap();
+    let order = payment.create_credit_order_billing(&pack.code, &key, &a).unwrap();
+    let b = joint_confirm(&fixture.member, &manager, &writer, joint_selected_member(&fixture), &fixture.member_scope, PreviousBillingAuthority::StillValid);
+    assert_ne!(a.request.account_group_id, b.request.account_group_id);
+    let detail = GenerationApi::new(fixture.member.clone()).task_scoped(&generation.id, &fixture.member_scope).unwrap();
+    require_saved_group(&record.billing_account_group_id, &detail.billing_account_group_id).unwrap();
+    let deep_detail = PromptOptimizationApi::new(fixture.member.clone()).get_scoped(&deep.id, &fixture.member_scope).unwrap();
+    require_saved_group(&a.request.account_group_id, &deep_detail.billing_account_group_id).unwrap();
+    for saved in [payment.order_scoped(&order.id, &fixture.member_scope).unwrap(), payment.sync_order_scoped(&order.id, &fixture.member_scope).unwrap()] {
+        require_saved_group(&a.request.account_group_id, &saved.billing_account_group_id).unwrap();
+    }
+    let before = load_pending_generations_for_namespace(&authority).unwrap();
+    let mut corrupt = before[0].clone(); corrupt.billing_account_group_id = b.request.account_group_id.clone();
+    assert!(require_saved_group(&corrupt.billing_account_group_id, &detail.billing_account_group_id).is_err());
+    assert!(upsert_pending_generation_for_namespace(&authority, &b, corrupt).is_err());
+    let after = load_pending_generations_for_namespace(&authority).unwrap();
+    assert_eq!(serde_json::to_value(&before).unwrap(), serde_json::to_value(&after).unwrap());
+    assert_eq!(load_pending_orders_for_namespace(&authority).unwrap()[0].billing_account_group_id, a.request.account_group_id);
+    assert_eq!(load_pending_prompt_optimizations_for_namespace(&authority).unwrap()[0].billing_account_group_id, a.request.account_group_id);
+    GenerationApi::new(fixture.member.clone()).cancel_scoped(&generation.id, &fixture.member_scope).unwrap();
+    PromptOptimizationApi::new(fixture.member.clone()).cancel_scoped(&deep.id, &fixture.member_scope).unwrap();
+    drop(authority);
+    AuthApi::new(fixture.member).logout_scoped(false, &fixture.member_scope).unwrap();
+    AuthApi::new(fixture.owner).logout_scoped(false, &fixture.owner_scope).unwrap();
+}
+#[test]
+#[ignore = "requires the isolated team Mock API on 127.0.0.1:39091"]
+fn cross_stack_account_reauthentication() {
+    let (client, login, email) = login_new_user_with_email("joint-reauth");
+    let scope = joint_scope(&client, &login); let before = client.session().access().unwrap();
+    let auth = AuthApi::new(client.clone());
+    let login_delivery = auth.request_email_code(&email).unwrap();
+    assert!((1..=60).contains(&login_delivery.resend_after_seconds), "bounded server resend interval");
+    assert!(login_delivery.expires_in_seconds > login_delivery.resend_after_seconds + 5,
+        "the unconsumed login-purpose code must remain valid beyond cooldown");
+    let login_code_received = std::time::Instant::now();
+    let cooldown = Duration::from_secs(login_delivery.resend_after_seconds + 1);
+    while login_code_received.elapsed() < cooldown {
+        std::thread::sleep(cooldown.saturating_sub(login_code_received.elapsed()).min(Duration::from_millis(250)));
+    }
+    let api = TeamApi::new(client.clone());
+    let delivery = api.request_reauthentication_code(&scope).unwrap();
+    assert!(delivery.expires_in_seconds > 0 && delivery.resend_after_seconds > 0);
+    let code = std::env::var("ARTFORGE_MOCK_REAUTH_CODE").unwrap_or_else(|_| MOCK_PASSWORD_CODE.to_string());
+    assert_ne!(mock_code(), code, "isolated login and reauthentication fixtures use distinct codes");
+    assert!(login_code_received.elapsed() < Duration::from_secs(login_delivery.expires_in_seconds - 1),
+        "the login code is still valid and has never been consumed");
+    // A real reauthentication challenge now exists; a valid login-purpose code
+    // must not satisfy it, and the rejection must not consume the correct proof.
+    assert_http_error(api.reauthenticate(ReauthenticationRequest::email_code(&mock_code()), &scope),
+        400, "email_code_invalid");
+    let proof = api.reauthenticate(ReauthenticationRequest::email_code(&code), &scope).unwrap();
+    assert_eq!(proof.user_id, scope.owner_user_id);
+    assert!(chrono::DateTime::parse_from_rfc3339(&proof.reauthenticated_at).unwrap() < chrono::DateTime::parse_from_rfc3339(&proof.expires_at).unwrap());
+    let after = client.session().access().unwrap();
+    assert_eq!(before.access_token, after.access_token); assert_eq!(before.auth_epoch, after.auth_epoch);
+    assert!(client.session().is_scope_current(&scope));
+    let receipts = client.test_request_receipts();
+    assert!(receipts.iter().filter(|receipt| receipt.path.starts_with("/v1/account/reauth")).all(|receipt| receipt.selected_group.is_none() && receipt.has_auth));
+    auth.logout_scoped(false, &scope).unwrap();
+}
+#[test]
+#[ignore = "requires the isolated team Mock API on 127.0.0.1:39091"]
+fn cross_stack_global_upgrade_required() {
+    let (current, login, _) = login_new_user_with_email("joint-upgrade");
+    let current_scope = joint_scope(&current, &login); let owned = joint_owned(&current, &current_scope);
+    for identity in [true, false] {
+        let old = new_client_with(current.device().id.clone(), "0.0.0");
+        let scope = old.session().install_tokens_for_user(&login.tokens, &login.user.id).unwrap();
+        let sibling = old.clone();
+        let error = if identity {
+            old.identity_json_scoped::<Value>(Method::GET, "/v1/account-groups", None, None, &scope).unwrap_err()
+        } else {
+            old.billing_json_scoped::<Value>(Method::GET, "/v1/account", None, None, &joint_billing(&scope, &owned)).unwrap_err()
+        };
+        assert!(matches!(error, ApiError::Http { status:426, ref code, .. } if code == "client_upgrade_required"));
+        assert!(old.upgrade_latch().is_tripped());
+        let before = old.test_request_receipts().len();
+        assert!(sibling.public_json::<Value>(Method::GET, "/v1/agreements", None).unwrap_err().is_client_update_required());
+        assert_eq!(old.test_request_receipts().len(), before);
+        assert!(old.upgrade_latch().begin_ordinary_durable_commit().is_err());
+        assert!(old.upgrade_latch().apply_if_open(|| panic!("late ordinary UI mutation")).is_err());
+    }
+    assert!(!current.upgrade_latch().is_tripped());
+    AuthApi::new(current).logout_scoped(false, &current_scope).unwrap();
+}
+
 const MOCK_PNG: [u8; 68] = [
     137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 4, 0,
     0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 100, 248, 15, 0, 1, 5, 1, 1,
@@ -148,6 +603,98 @@ fn login_new_user_with_email(prefix: &str) -> (ApiClient, LoginResponse, String)
         .parse::<u64>()
         .is_ok_and(|credits| credits > 0));
     (client, login, email)
+}
+
+#[test]
+#[ignore = "requires the isolated team Mock API with its control token on 127.0.0.1:39091"]
+fn cross_stack_selected_account_wire_owner_member_and_frozen() {
+    // This fixture mutates only the disposable mock schema. Never accept an
+    // arbitrary configured API endpoint or fall back to a normal service.
+    assert_eq!(std::env::var("ARTFORGE_ENABLE_MOCK_API").as_deref(), Ok("1"));
+    assert_eq!(base_url().as_str(), "http://127.0.0.1:39091/");
+    let control_token = std::env::var("ARTFORGE_MOCK_CONTROL_TOKEN").expect("mock control token");
+    assert!(control_token.len() == 64
+        && control_token.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
+    let login_fixture = || {
+        let client = new_client();
+        let auth = AuthApi::new(client.clone());
+        let email = format!("account-wire-{}@example.com", Uuid::new_v4());
+        auth.request_email_code(&email).expect("request isolated email code");
+        let login = login_and_install_authenticated_email(
+            &client, &auth, &email, &mock_code(), &agreement_acceptances(&auth),
+        ).expect("authenticate isolated account");
+        let session = client.session().scope_for_user(&login.user.id).unwrap();
+        let group = TeamApi::new(client.clone()).list_groups(&session).unwrap()
+            .items.into_iter().find(|group| group.role == "owner").unwrap();
+        let scope = BillingScope {
+            request: GroupRequestScope { session, account_group_id: group.group_id },
+            context_epoch: 1,
+        };
+        (client, email, scope)
+    };
+    let (owner, _, owner_scope) = login_fixture();
+    let (member, member_email, personal_scope) = login_fixture();
+    let owner_snapshot = AccountApi::new(owner.clone()).snapshot_billing(&owner_scope)
+        .expect("decode real owner snapshot and authorized sibling responses");
+    assert_eq!(owner_snapshot.account.billing_group.role, "owner");
+    assert_eq!(owner_snapshot.account.user.id, owner_scope.request.session.owner_user_id);
+    assert!(owner_snapshot.account.credits.is_some());
+    assert!(owner_snapshot.account.membership.is_some());
+    assert!(owner_snapshot.account.quota.is_none());
+    assert!(owner_snapshot.owner_billing.is_some());
+    assert!(owner_snapshot.orders.is_some());
+
+    let invitation = TeamApi::new(owner.clone()).create_invitation(
+        &owner_scope.request.account_group_id, &member_email, "500",
+        &Uuid::new_v4().to_string(), &owner_scope.request.session,
+    ).expect("invite existing isolated member");
+    TeamApi::new(member.clone()).accept_invitation(
+        &invitation.invitation_id, &invitation.version,
+        &Uuid::new_v4().to_string(), &personal_scope.request.session,
+    ).expect("accept team invitation");
+    let team_scope = BillingScope {
+        request: GroupRequestScope {
+            session: personal_scope.request.session.clone(),
+            account_group_id: owner_scope.request.account_group_id.clone(),
+        },
+        context_epoch: 2,
+    };
+    let team_snapshot = AccountApi::new(member.clone()).snapshot_billing(&team_scope)
+        .expect("decode real member snapshot without requesting owner finance");
+    assert_eq!(team_snapshot.account.billing_group.role, "member");
+    assert_eq!(team_snapshot.account.user.id, personal_scope.request.session.owner_user_id);
+    assert_eq!(team_snapshot.account.quota.unwrap().remaining, "500");
+    assert!(team_snapshot.account.credits.is_none());
+    assert!(team_snapshot.account.membership.is_none());
+    assert!(team_snapshot.owner_billing.is_none());
+    assert!(team_snapshot.orders.is_none());
+    assert!(team_snapshot.plans.is_none());
+    assert!(team_snapshot.packs.is_none());
+    assert!(team_snapshot.models.is_some());
+    let denied = AccountApi::new(member.clone()).credit_account_billing(&team_scope);
+    assert!(matches!(denied, Err(ApiError::Http { status: 403, .. })));
+    assert!(AccountApi::new(member.clone()).snapshot_billing(&personal_scope)
+        .expect("personal group remains independent").account.credits.is_some());
+
+    let frozen = reqwest::blocking::Client::new()
+        .post(base_url().join("__mock__/team-account-fixtures").unwrap())
+        .timeout(Duration::from_secs(10))
+        .header("X-Mock-Control-Token", control_token)
+        .json(&json!({"operation": "set_group_status",
+            "group_id": owner_scope.request.account_group_id, "status": "frozen"}))
+        .send().expect("freeze only the isolated fixture group");
+    assert_eq!(frozen.status().as_u16(), 200);
+    let frozen_snapshot = AccountApi::new(owner.clone()).snapshot_billing(&owner_scope)
+        .expect("frozen owner snapshot remains readable");
+    assert!(!frozen_snapshot.account.billing_group.selectable);
+    assert!(frozen_snapshot.account.billing_group.readable_context);
+    assert!(frozen_snapshot.owner_billing.is_some());
+    assert!(frozen_snapshot.models.is_none());
+    assert!(frozen_snapshot.orders.is_none());
+    assert!(frozen_snapshot.plans.is_none());
+    assert!(frozen_snapshot.packs.is_none());
+    AuthApi::new(member).logout_scoped(false, &personal_scope.request.session).unwrap();
+    AuthApi::new(owner).logout_scoped(false, &owner_scope.request.session).unwrap();
 }
 
 fn assert_http_error<T>(result: Result<T, ApiError>, expected_status: u16, expected_code: &str) {
@@ -3287,7 +3834,7 @@ fn cross_stack_password_preserves_agreement_and_client_version_errors() {
             &acceptances,
         ),
         426,
-        "client_update_required",
+        "client_upgrade_required",
     );
     let outdated_reset_client = new_client_with(
         format!("password-outdated-reset-{}", Uuid::new_v4()),
@@ -3301,7 +3848,7 @@ fn cross_stack_password_preserves_agreement_and_client_version_errors() {
             &acceptances,
         ),
         426,
-        "client_update_required",
+        "client_upgrade_required",
     );
 
     AuthApi::new(client)

@@ -1038,6 +1038,8 @@ mod file_store_platform {
 
 #[derive(Default)]
 struct SessionState {
+    // A failed startup read is unknown state, never an authorized empty slot.
+    startup_read_failure: Option<ApiError>,
     access_token: Option<String>,
     owner_user_id: Option<String>,
     persisted_owner_user_id: Option<String>,
@@ -1045,6 +1047,7 @@ struct SessionState {
     // mutation authority. A conflicting record is observed as metadata only.
     authorized_persisted_session: Option<PersistedRefreshSession>,
     scope_published: bool,
+    epoch_exhausted: bool,
     auth_epoch: u64,
     refreshing: bool,
     refresh_epoch: u64,
@@ -1071,7 +1074,10 @@ pub(crate) struct SessionManager {
 
 impl SessionManager {
     pub(crate) fn new(store: Arc<dyn RefreshTokenStore>) -> Self {
-        let authorized_persisted_session = store.load().ok().flatten();
+        let (authorized_persisted_session, startup_read_failure) = match store.load() {
+            Ok(record) => (record, None),
+            Err(error) => (None, Some(error)),
+        };
         let persisted_owner_user_id = authorized_persisted_session
             .as_ref()
             .map(|session| session.owner_user_id.clone());
@@ -1082,6 +1088,7 @@ impl SessionManager {
                 owner_user_id,
                 persisted_owner_user_id,
                 authorized_persisted_session,
+                startup_read_failure,
                 ..SessionState::default()
             }),
             refresh_finished: Condvar::new(),
@@ -1155,19 +1162,24 @@ impl SessionManager {
         owner_user_id: &str,
     ) -> Result<SessionScope, ApiError> {
         let mut state = self.lock_state();
+        if let Some(error) = &state.startup_read_failure { return Err(error.clone()); }
+        if state.authorized_persisted_session.is_none() && state.persisted_owner_user_id.is_some() {
+            return Err(ApiError::AuthenticationRequired);
+        }
+        let (next_auth, next_refresh) = self.next_epochs(&mut state, true)?;
         let persisted_session = PersistedRefreshSession {
             owner_user_id: owner_user_id.to_string(),
             refresh_token: tokens.refresh_token.clone(),
         };
         self.store.save(&persisted_session)?;
-        state.auth_epoch = state.auth_epoch.wrapping_add(1);
+        state.auth_epoch = next_auth;
         state.access_token = Some(tokens.access_token.clone());
         state.owner_user_id = Some(owner_user_id.to_string());
         state.persisted_owner_user_id = Some(owner_user_id.to_string());
         state.authorized_persisted_session = Some(persisted_session);
         state.scope_published = true;
         state.refreshing = false;
-        state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
+        state.refresh_epoch = next_refresh;
         state.last_refresh_result = Some(Ok(tokens.access_token.clone()));
         self.refresh_finished.notify_all();
         Ok(SessionScope {
@@ -1190,6 +1202,11 @@ impl SessionManager {
             .ok_or(ApiError::AuthenticationRequired)?;
         let (auth_epoch, refresh_session) = {
             let mut state = self.lock_state();
+            if let Some(error) = &state.startup_read_failure { return Err(error.clone()); }
+            if state.authorized_persisted_session.is_none() && state.persisted_owner_user_id.is_some() {
+                return Err(ApiError::AuthenticationRequired);
+            }
+            self.next_epochs(&mut state, true)?;
             if state.scope_published
                 || state.access_token.is_some()
                 || state.refreshing
@@ -1225,6 +1242,7 @@ impl SessionManager {
                 {
                     return Err(ApiError::AuthenticationRequired);
                 }
+                let (next_auth, next_refresh) = self.next_epochs(&mut state, true)?;
                 let replacement = PersistedRefreshSession {
                     owner_user_id: canonical_owner.clone(),
                     refresh_token: tokens.refresh_token.clone(),
@@ -1246,12 +1264,12 @@ impl SessionManager {
                         return Err(error);
                     }
                 }
-                state.auth_epoch = state.auth_epoch.wrapping_add(1);
+                state.auth_epoch = next_auth;
                 state.access_token = Some(tokens.access_token.clone());
                 state.owner_user_id = Some(canonical_owner.clone());
                 state.scope_published = true;
                 state.refreshing = false;
-                state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
+                state.refresh_epoch = next_refresh;
                 state.last_refresh_result = Some(Ok(tokens.access_token));
                 self.refresh_finished.notify_all();
                 Ok(SessionScope {
@@ -1267,7 +1285,7 @@ impl SessionManager {
                     && state.refreshing
                 {
                     state.refreshing = false;
-                    state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
+                    state.refresh_epoch = self.next_epochs(&mut state, false)?.1;
                     state.last_refresh_result = Some(Err(error.clone()));
                     self.refresh_finished.notify_all();
                     Err(error)
@@ -1439,6 +1457,7 @@ impl SessionManager {
                     .unwrap_or(Err(ApiError::AuthenticationRequired));
             }
 
+            self.next_epochs(&mut state, false)?;
             let expected = match state.authorized_persisted_session.clone() {
                 Some(record) if record.owner_user_id == scope.owner_user_id => record,
                 _ => {
@@ -1529,6 +1548,7 @@ impl SessionManager {
         if !scope_matches(&state, scope) {
             return Err(ApiError::AuthenticationRequired);
         }
+        let next_refresh = self.next_epochs(&mut state, false)?.1;
         let replacement = PersistedRefreshSession {
             owner_user_id: scope.owner_user_id.clone(),
             refresh_token: tokens.refresh_token.clone(),
@@ -1548,7 +1568,7 @@ impl SessionManager {
             }
         }
         state.refreshing = false;
-        state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
+        state.refresh_epoch = next_refresh;
         state.access_token = Some(tokens.access_token.clone());
         state.last_refresh_result = Some(Ok(tokens.access_token.clone()));
         self.refresh_finished.notify_all();
@@ -1556,9 +1576,15 @@ impl SessionManager {
     }
 
     fn clear_locked(&self, state: &mut SessionState) -> Result<(), ApiError> {
+        if let Some(error) = &state.startup_read_failure { return Err(error.clone()); }
         let Some(expected) = state.authorized_persisted_session.clone() else {
             invalidate_session_lease(state);
             self.refresh_finished.notify_all();
+            if state.persisted_owner_user_id.is_some() {
+                // A previously observed replacement is not an authorized empty slot.
+                // Never adopt, delete, or overwrite it on a later retry.
+                return Err(ApiError::AuthenticationRequired);
+            }
             return Ok(());
         };
         let result = self.store.clear_if_current(&expected);
@@ -1605,7 +1631,8 @@ impl SessionManager {
 
     fn record_refresh_failure(&self, state: &mut SessionState, error: ApiError) {
         state.refreshing = false;
-        state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
+        let Ok((_, next_refresh)) = self.next_epochs(state, false) else { return; };
+        state.refresh_epoch = next_refresh;
         state.last_refresh_result = Some(Err(error));
         self.refresh_finished.notify_all();
     }
@@ -1620,7 +1647,7 @@ impl SessionManager {
             return Err(ApiError::AuthenticationRequired);
         }
         state.refreshing = false;
-        state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
+        state.refresh_epoch = self.next_epochs(&mut state, false)?.1;
         state.access_token = result.clone().ok();
         state.last_refresh_result = Some(result.clone());
         self.refresh_finished.notify_all();
@@ -1637,6 +1664,18 @@ impl SessionManager {
             .unwrap_or_default()
     }
 
+    fn next_epochs(&self, state: &mut SessionState, advance_auth: bool) -> Result<(u64, u64), ApiError> {
+        let auth = if advance_auth { state.auth_epoch.checked_add(1) } else { Some(state.auth_epoch) };
+        if !state.epoch_exhausted {
+            if let (Some(auth), Some(refresh)) = (auth, state.refresh_epoch.checked_add(1)) {
+                return Ok((auth, refresh));
+            }
+        }
+        close_exhausted_session(state);
+        self.refresh_finished.notify_all();
+        Err(ApiError::AuthenticationRequired)
+    }
+
     fn lock_state(&self) -> std::sync::MutexGuard<'_, SessionState> {
         self.state
             .lock()
@@ -1645,23 +1684,38 @@ impl SessionManager {
 }
 
 fn scope_matches(state: &SessionState, scope: &SessionScope) -> bool {
-    state.scope_published
+    !state.epoch_exhausted && state.scope_published
         && state.auth_epoch == scope.auth_epoch
         && state.owner_user_id.as_deref() == Some(scope.owner_user_id.as_str())
 }
 
-fn invalidate_session_lease(state: &mut SessionState) {
-    state.auth_epoch = state.auth_epoch.wrapping_add(1);
+fn close_exhausted_session(state: &mut SessionState) {
+    state.epoch_exhausted = true;
     state.access_token = None;
     state.owner_user_id = None;
     state.scope_published = false;
     state.refreshing = false;
-    state.refresh_epoch = state.refresh_epoch.wrapping_add(1);
+    state.last_refresh_result = Some(Err(ApiError::AuthenticationRequired));
+}
+
+fn invalidate_session_lease(state: &mut SessionState) {
+    let next = state.auth_epoch.checked_add(1).zip(state.refresh_epoch.checked_add(1));
+    if state.epoch_exhausted || next.is_none() {
+        close_exhausted_session(state);
+        return;
+    }
+    let (auth, refresh) = next.unwrap();
+    state.auth_epoch = auth;
+    state.access_token = None;
+    state.owner_user_id = None;
+    state.scope_published = false;
+    state.refreshing = false;
+    state.refresh_epoch = refresh;
     state.last_refresh_result = None;
 }
 
 fn cleared_lease_matches_epoch(state: &SessionState, cleared_auth_epoch: u64) -> bool {
-    state.auth_epoch == cleared_auth_epoch.wrapping_add(1)
+    !state.epoch_exhausted && Some(state.auth_epoch) == cleared_auth_epoch.checked_add(1)
         && state.access_token.is_none()
         && state.owner_user_id.is_none()
         && !state.scope_published
@@ -1779,6 +1833,26 @@ mod tests {
 
     const USER_A: &str = "11111111-1111-4111-8111-111111111111";
     const USER_B: &str = "22222222-2222-4222-8222-222222222222";
+    #[test]
+    fn core_session_epoch_exhaustion_does_not_replace_credentials_or_reuse_scope() {
+        for auth_exhausted in [true, false] {
+            let store = Arc::new(MemoryRefreshTokenStore::default());
+            let manager = SessionManager::new(store.clone());
+            manager.install_tokens_for_user(&tokens("access-a", "refresh-a"), USER_A).unwrap();
+            {
+                let mut state = manager.lock_state();
+                if auth_exhausted { state.auth_epoch = u64::MAX; }
+                else { state.refresh_epoch = u64::MAX; }
+            }
+            assert!(manager.install_tokens_for_user(&tokens("access-b", "refresh-b"), USER_B).is_err());
+            let retained = store.load().unwrap().unwrap();
+            assert_eq!(retained.owner_user_id, USER_A);
+            assert_eq!(retained.refresh_token, "refresh-a");
+            assert!(manager.access().is_none());
+            assert!(manager.install_tokens_for_user(&tokens("access-c", "refresh-c"), USER_A).is_err());
+            assert!(manager.refresh_persisted_owner(USER_A, |_| panic!("exhausted authority cannot dispatch refresh")).is_err());
+        }
+    }
 
     fn tokens(access: &str, refresh: &str) -> TokenSet {
         TokenSet {
@@ -2357,7 +2431,8 @@ mod tests {
             Err(ApiError::AuthenticationRequired)
         ));
 
-        manager_a.clear().unwrap();
+        assert!(matches!(manager_a.clear(), Err(ApiError::AuthenticationRequired)));
+        assert!(manager_a.install_tokens_for_user(&tokens("forbidden","forbidden"), USER_A).is_err());
         let current = store_b.load().unwrap().unwrap();
         assert_eq!(current.owner_user_id, USER_B);
         assert!(current.refresh_token == "refresh-b");
@@ -2385,7 +2460,8 @@ mod tests {
             Err(ApiError::AuthenticationRequired)
         ));
 
-        manager_a.clear().unwrap();
+        assert!(matches!(manager_a.clear(), Err(ApiError::AuthenticationRequired)));
+        assert!(manager_a.install_tokens_for_user(&tokens("forbidden","forbidden"), USER_A).is_err());
         let current = store_b.load().unwrap().unwrap();
         assert_eq!(current.owner_user_id, USER_A);
         assert!(current.refresh_token == "refresh-new");
@@ -2460,7 +2536,8 @@ mod tests {
             Err(ApiError::AuthenticationRequired)
         ));
         let current_epoch = manager_a.auth_epoch();
-        manager_a.clear_epoch(current_epoch).unwrap();
+        assert!(matches!(manager_a.clear_epoch(current_epoch), Err(ApiError::AuthenticationRequired)));
+        assert!(manager_a.install_tokens_for_user(&tokens("forbidden","forbidden"), USER_A).is_err());
         let current = store_b.load().unwrap().unwrap();
         assert_eq!(current.owner_user_id, USER_B);
         assert!(current.refresh_token == "refresh-b");
@@ -2487,7 +2564,8 @@ mod tests {
         assert_eq!(current.owner_user_id, USER_B);
         assert!(current.refresh_token == "refresh-b");
 
-        manager_a.clear().unwrap();
+        assert!(matches!(manager_a.clear(), Err(ApiError::AuthenticationRequired)));
+        assert!(manager_a.install_tokens_for_user(&tokens("forbidden","forbidden"), USER_A).is_err());
         let current_after_retry = store_b.load().unwrap().unwrap();
         assert_eq!(current_after_retry.owner_user_id, USER_B);
         assert!(current_after_retry.refresh_token == "refresh-b");

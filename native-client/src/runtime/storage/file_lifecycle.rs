@@ -229,23 +229,26 @@ fn is_path_within(root: &Path, candidate: &Path) -> bool {
 
 pub(super) fn safe_managed_subdirectory(directory: &Path) -> bool {
     let output = configured_output_directory();
-    if !directory.starts_with(app_data_dir()) && (directory == output || directory.starts_with(&output)) {
+    safe_managed_subdirectory_at(&app_data_dir(), &output, directory)
+}
+
+pub(super) fn safe_managed_subdirectory_at(data: &Path, output: &Path, directory: &Path) -> bool {
+    if !directory.starts_with(data) && (directory == output || directory.starts_with(output)) {
         return crate::directory_migration::checked_directory(directory).is_ok();
     }
-    let data = app_data_dir();
-    let Ok(data_metadata) = fs::symlink_metadata(&data) else {
+    let Ok(data_metadata) = fs::symlink_metadata(data) else {
         return false;
     };
     if !data_metadata.file_type().is_dir() || data_metadata.file_type().is_symlink() {
         return false;
     }
-    let Ok(relative) = directory.strip_prefix(&data) else {
+    let Ok(relative) = directory.strip_prefix(data) else {
         return false;
     };
     if relative.as_os_str().is_empty() {
         return false;
     }
-    let mut current = data;
+    let mut current = data.to_path_buf();
     let Ok(mut canonical_parent) = current.canonicalize() else {
         return false;
     };
@@ -268,15 +271,19 @@ pub(super) fn safe_managed_subdirectory(directory: &Path) -> bool {
         }
         canonical_parent = canonical_child;
     }
-    is_path_within(&app_data_dir(), directory)
+    is_path_within(data, directory)
 }
 
 pub(super) fn ensure_managed_subdirectory(directory: &Path) -> bool {
     let output = configured_output_directory();
-    if !directory.starts_with(app_data_dir()) && (directory == output || directory.starts_with(&output)) {
-        if crate::directory_migration::checked_directory(&output).is_err() { return false; }
-        let Ok(relative) = directory.strip_prefix(&output) else { return false; };
-        let mut current = output;
+    ensure_managed_subdirectory_at(&app_data_dir(), &output, directory)
+}
+
+pub(super) fn ensure_managed_subdirectory_at(data: &Path, output: &Path, directory: &Path) -> bool {
+    if !directory.starts_with(data) && (directory == output || directory.starts_with(output)) {
+        if crate::directory_migration::checked_directory(output).is_err() { return false; }
+        let Ok(relative) = directory.strip_prefix(output) else { return false; };
+        let mut current = output.to_path_buf();
         for component in relative.components() {
             let std::path::Component::Normal(component) = component else { return false; };
             current.push(component);
@@ -289,14 +296,17 @@ pub(super) fn ensure_managed_subdirectory(directory: &Path) -> bool {
         }
         return true;
     }
-    let data = app_data_dir();
-    let Ok(relative) = directory.strip_prefix(&data) else {
+    let Ok(data_metadata) = fs::symlink_metadata(data) else { return false; };
+    if !data_metadata.file_type().is_dir() || data_metadata.file_type().is_symlink() {
+        return false;
+    }
+    let Ok(relative) = directory.strip_prefix(data) else {
         return false;
     };
     if relative.as_os_str().is_empty() {
         return false;
     }
-    let mut current = data;
+    let mut current = data.to_path_buf();
     let Ok(mut canonical_parent) = current.canonicalize() else {
         return false;
     };
@@ -323,7 +333,7 @@ pub(super) fn ensure_managed_subdirectory(directory: &Path) -> bool {
         }
         canonical_parent = canonical_child;
     }
-    safe_managed_subdirectory(directory)
+    safe_managed_subdirectory_at(data, output, directory)
 }
 
 fn canonical_or_absolute(path: &Path) -> Option<PathBuf> {
@@ -509,5 +519,64 @@ mod tests {
         assert!(usable_file_path("").is_none());
         assert!(usable_file_path("failed").is_none());
         assert!(usable_file_path("relative.png").is_none());
+    }
+
+    #[test]
+    fn managed_directory_explicit_roots_contain_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let data = root.join("data");
+        let output = root.join("output");
+        let unrelated = root.join("unrelated");
+        for directory in [&data, &output, &unrelated] {
+            fs::create_dir(directory).unwrap();
+        }
+        let sentinel = unrelated.join("preserve");
+        fs::write(&sentinel, b"untouched").unwrap();
+        for directory in [data.join("canvas/splits/fixture"), output.join("fixture/nested")] {
+            assert!(ensure_managed_subdirectory_at(&data, &output, &directory));
+            assert!(safe_managed_subdirectory_at(&data, &output, &directory));
+        }
+        for directory in [&data, &unrelated.join("escape"), &data.join("../escape")] {
+            assert!(!ensure_managed_subdirectory_at(&data, &output, directory));
+        }
+        assert_eq!(fs::read(sentinel).unwrap(), b"untouched");
+        assert_eq!(fs::read_dir(unrelated).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_directory_explicit_roots_reject_linked_descendants() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let data = root.join("data");
+        let target = root.join("unrelated");
+        fs::create_dir(&data).unwrap();
+        fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, data.join("linked")).unwrap();
+        let directory = data.join("linked/escape");
+        assert!(!ensure_managed_subdirectory_at(&data, &root.join("output"), &directory));
+        assert!(!safe_managed_subdirectory_at(&data, &root.join("output"), &directory));
+        assert_eq!(fs::read_dir(target).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_directory_explicit_roots_reject_linked_roots_before_creating_children() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let data = root.join("data");
+        let output = root.join("output");
+        let target = root.join("unrelated");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("preserve"), b"untouched").unwrap();
+        std::os::unix::fs::symlink(&target, &data).unwrap();
+        std::os::unix::fs::symlink(&target, &output).unwrap();
+        for directory in [data.join("escape/child"), output.join("escape/child")] {
+            assert!(!ensure_managed_subdirectory_at(&data, &output, &directory));
+            assert!(!safe_managed_subdirectory_at(&data, &output, &directory));
+        }
+        assert_eq!(fs::read_dir(&target).unwrap().count(), 1);
+        assert_eq!(fs::read(target.join("preserve")).unwrap(), b"untouched");
     }
 }

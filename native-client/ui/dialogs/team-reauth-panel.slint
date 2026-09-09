@@ -1,0 +1,57 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { Field } from "../components/field.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { SegmentedControl } from "../components/segmented-control.slint";
+
+export component TeamReauthPanel {
+    preferred-height: content.preferred-height;
+    content := VerticalLayout {
+        spacing: 16px; alignment: start;
+        Text { text: (AppState.en ? "Verify your identity" : "验证当前账号身份"); color: AppTheme.text; font-size: 20px; font-weight: 600; }
+        Text { text: (AppState.en ? "Verify with your current password or a code sent to your bound email." : "使用当前密码或绑定邮箱验证码确认身份。"); color: AppTheme.muted; font-size: 13px; wrap: word-wrap; }
+        if AppState.password-set && AppState.email-bound: SegmentedControl {
+            height: 40px; first-text: (AppState.en ? "Current password" : "当前密码"); second-text: (AppState.en ? "Email code" : "邮箱验证码");
+            first-active: AppState.team-reauth-mode == "current_password";
+            first-clicked => { AppState.team-reauth-mode = "current_password"; }
+            second-clicked => { AppState.team-reauth-mode = "email_code"; }
+        }
+        if !AppState.password-set && !AppState.email-bound: VerticalLayout {
+            spacing: 14px;
+            Text { text: (AppState.en ? "No password or bound email is available. Bind an email in Login methods first." : "当前账号尚无密码或已绑定邮箱，请先在登录方式中绑定邮箱。"); color: AppTheme.muted; wrap: word-wrap; }
+            PillButton { text: (AppState.en ? "Login methods" : "管理登录方式"); clicked => { AppState.account-center-section = "login"; } }
+        }
+        if AppState.team-reauth-mode == "current_password" && AppState.password-set: reauth-password := Field {
+            label: (AppState.en ? "Current password" : "当前密码"); placeholder: (AppState.en ? "Enter your current password" : "输入当前账号密码"); secret: true;
+            value <=> AppState.team-reauth-password;
+            enabled: !AppState.team-reauth-busy && !AppState.team-reauth-code-busy;
+            accepted => { AppState.confirm-team-reauth(); }
+        }
+        if AppState.team-reauth-mode == "email_code" && AppState.email-bound: VerticalLayout {
+            spacing: 12px;
+            Text { text: (AppState.en ? "Bound email: " : "已绑定邮箱：") + (AppState.team-reauth-email-mask == "" ? AppState.email-mask : AppState.team-reauth-email-mask); color: AppTheme.muted; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 12px;
+                reauth-code := Field { horizontal-stretch: 1; label: (AppState.en ? "Email code" : "邮箱验证码"); value <=> AppState.team-reauth-code; enabled: !AppState.team-reauth-busy && !AppState.team-reauth-code-busy; accepted => { AppState.confirm-team-reauth(); } }
+                reauth-send-code := PillButton {
+                    width: 160px;
+                    text: AppState.team-reauth-code-busy ? (AppState.en ? "Sending…" : "发送中…") : (AppState.team-reauth-countdown > 0 ? (AppState.en ? "Resend (" : "重新发送（") + AppState.team-reauth-countdown + (AppState.en ? "s)" : "秒）") : (AppState.en ? "Send code" : "发送验证码"));
+                    disabled: AppState.team-reauth-code-busy || AppState.team-reauth-busy || AppState.team-reauth-countdown > 0;
+                    clicked => { AppState.request-team-reauth-code(); }
+                }
+            }
+        }
+        if AppState.team-reauth-error != "": Text { text: AppState.team-reauth-error; color: AppTheme.danger; wrap: word-wrap; }
+        if AppState.team-reauth-status != "": Text { text: AppState.team-reauth-status; color: AppTheme.success; wrap: word-wrap; }
+        HorizontalLayout {
+            spacing: 12px; alignment: start; height: 36px;
+            if AppState.password-set || AppState.email-bound: reauth-confirm := PillButton {
+                width: 120px; primary: true;
+                text: AppState.team-reauth-busy ? (AppState.en ? "Verifying…" : "验证中…") : (AppState.en ? "Verify identity" : "确认身份");
+                disabled: AppState.team-reauth-busy || AppState.team-reauth-code-busy;
+                clicked => { AppState.confirm-team-reauth(); }
+            }
+            PillButton { width: 100px; text: (AppState.en ? "Back to team" : "返回团队"); clicked => { AppState.team-tab = "accounts"; } }
+        }
+    }
+}

@@ -162,7 +162,7 @@ struct ReferenceData {
     source_path: String,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct ReferenceGroups {
     character: Vec<ReferenceData>,
     scene: Vec<ReferenceData>,
@@ -204,6 +204,10 @@ enum GenerationOutcome {
     Progress {
         percent: i32,
     },
+    NamespaceImageSuccess {
+        prepared: Box<PreparedNamespaceDelivery>,
+        time: String,
+    },
     ImageSuccess {
         local_path: String,
         display_prompt: String,
@@ -218,7 +222,7 @@ enum GenerationOutcome {
     },
     Finished,
     CreditInsufficient {
-        message: String,
+        message: ApiError,
     },
     Failure {
         reason: String,
@@ -322,6 +326,7 @@ struct DeliveryDownloadReservation {
 
 #[derive(Clone)]
 struct ActiveGeneration {
+    registered_cancel_owner:Option<PrivatePersistence>,
     task_id: String,
     client_request_id: Option<String>,
     server_task_id: Option<String>,
@@ -346,6 +351,7 @@ struct ActiveGeneration {
 impl Default for ActiveGeneration {
     fn default() -> Self {
         Self {
+            registered_cancel_owner:None,
             task_id: String::new(),
             client_request_id: None,
             server_task_id: None,
@@ -410,8 +416,38 @@ struct CanvasWorkspaceData {
     references: Vec<ReferenceData>,
 }
 
+/// A namespace-owned video delivery. Its key and immutable server identity are
+/// persisted in the same transaction as the private Store; no image decoder is involved.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub(super) struct SavedVideoOutput {
+    #[serde(default)]
+    pub(super) source_asset_id: String,
+    pub(super) client_request_id: String,
+    pub(super) server_task_id: String,
+    pub(super) file_id: String,
+    pub(super) billing_account_group_id: String,
+    pub(super) sha256: String,
+    pub(super) size_bytes: u64,
+    pub(super) source_path: String,
+    pub(super) title: String,
+    pub(super) created_at: String,
+}
+impl SavedVideoOutput {
+    pub(super) fn key(&self) -> String { format!("{}:{}",self.server_task_id,self.file_id) }
+    fn validate(&self) -> Result<()> {
+        anyhow::ensure!(!self.client_request_id.trim().is_empty() && !self.source_path.is_empty() && self.size_bytes>0,
+            "saved video metadata incomplete");
+        for id in [&self.server_task_id,&self.file_id,&self.billing_account_group_id] {
+            anyhow::ensure!(api::uuid_path_segment(id).is_ok_and(|canonical| &canonical==id),"saved video identity invalid");
+        }
+        anyhow::ensure!(self.sha256.len()==64 && self.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()),"saved video digest invalid");
+        Ok(())
+    }
+}
 #[derive(Default)]
 struct Store {
+    video_outputs: BTreeMap<String,SavedVideoOutput>,
+    private_persistence: Option<PrivatePersistence>,
     model_groups: Vec<ModelGroupData>,
     generations: Vec<AssetData>,
     assets: Vec<AssetData>,
@@ -456,10 +492,11 @@ struct Store {
     contact_popup_dismissed: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct PendingCreditRedemption {
     code: String,
     client_request_id: String,
+    billing_account_group_id: String,
 }
 
 fn begin_credit_sync_epoch(store: &mut Store) -> u64 {
@@ -486,6 +523,7 @@ struct GenerationRegistry {
 #[derive(Clone)]
 struct ActivePaymentSession {
     client_request_id: String,
+    billing_account_group_id: String,
     checkout_url: Option<String>,
     session_scope: SessionScope,
 }
@@ -493,6 +531,13 @@ struct ActivePaymentSession {
 #[derive(Clone, Default)]
 struct AppContext {
     data_root_capability: Option<Arc<DataRootCapability>>,
+    file_index: Option<FileIndex>,
+    active_namespace: Arc<Mutex<Option<NamespaceLease>>>,
+    namespace_operations: NamespaceOperationGate,
+    user_activity: UserActivityGate,
+    billing_context: Arc<BillingContextManager>,
+    account_transition: Option<Rc<AccountTransitionCoordinator>>,
+    team_groups: Rc<RefCell<Vec<AccountGroupChoice>>>,
     store: Rc<RefCell<Store>>,
     canvas_history: Rc<RefCell<CanvasController>>,
     generations: Rc<GenerationRegistry>,
@@ -508,19 +553,49 @@ struct AppContext {
 }
 
 impl AppContext {
-    // TEMP(team-accounts): Task 10 replaces this explicit-lease bridge with
-    // active-owner/epoch validation. No active namespace is inferred here.
+    fn capture_billing_action(&self, capability: KnownCapability) -> std::result::Result<(BillingScope, Arc<NamespaceStorageAuthority>, UserActivityPermit), ApiError> {
+        let backend = self.backend.as_ref().ok_or(ApiError::AuthenticationRequired)?;
+        if let Some(required) = backend.api.upgrade_latch().snapshot() { return Err(required.as_error()); }
+        let scope = self.billing_context.current_scope(capability)?;
+        let lease = self.namespace_for(&scope.request.session)?;
+        let permit = self.user_activity.begin_recovery_unit(&lease).map_err(transition_error)?;
+        let authority = Arc::new(self.storage_authority_for(&lease)?);
+        if !self.billing_context.is_current(&scope) || permit.is_quiescing() { return Err(ApiError::AuthenticationRequired); }
+        Ok((scope, authority, permit))
+    }
+    fn namespace_for(&self, scope: &SessionScope) -> std::result::Result<NamespaceLease, ApiError> {
+        let backend = self.backend.as_ref().ok_or(ApiError::AuthenticationRequired)?;
+        if !backend.api.session().is_scope_current(scope) { return Err(ApiError::AuthenticationRequired); }
+        self.active_namespace.lock().map_err(transition_error)?.as_ref()
+            .filter(|lease| lease.auth_epoch == scope.auth_epoch && lease.namespace.user_public_id() == scope.owner_user_id)
+            .cloned().ok_or_else(|| ApiError::LocalState { message: "用户命名空间尚未激活".into() })
+    }
+    fn apply_user_completion<R>(&self, lease: &NamespaceLease, apply: impl FnOnce() -> R) -> std::result::Result<R, ApiError> {
+        let _permit = self.user_activity.begin_recovery_unit(lease).map_err(transition_error)?;
+        if self.active_namespace.lock().map_err(transition_error)?.as_ref() != Some(lease) { return Err(ApiError::AuthenticationRequired); }
+        let backend = self.backend.as_ref().ok_or(ApiError::AuthenticationRequired)?;
+        backend.api.upgrade_latch().apply_if_open(apply).map_err(|required| required.as_error())
+    }
     fn storage_authority(
         &self,
         lease: &NamespaceLease,
     ) -> std::result::Result<NamespaceStorageAuthority, ApiError> {
+        self.storage_authority_for(lease)
+    }
+    fn storage_authority_for(&self, lease: &NamespaceLease) -> std::result::Result<NamespaceStorageAuthority, ApiError> {
+        if self.active_namespace.lock().map_err(transition_error)?.as_ref() != Some(lease)
+            || self.namespace_operations.active_lease().as_ref() != Some(lease) {
+            return Err(ApiError::LocalState { message: "用户命名空间已失效或未激活".into() });
+        }
         let root = self
             .data_root_capability
             .as_ref()
             .ok_or_else(|| ApiError::LocalState {
                 message: "retained data-root capability is unavailable".into(),
             })?;
-        NamespaceStorageAuthority::open(Arc::clone(root), lease).map_err(|error| {
+        let client = self.backend.as_ref().ok_or(ApiError::AuthenticationRequired)?.api.clone();
+        let index = self.file_index.clone().ok_or_else(|| ApiError::LocalState { message: "文件索引尚未初始化".into() })?;
+        NamespaceStorageAuthority::open_active(Arc::clone(root), lease, client, index).map_err(|error| {
             ApiError::LocalState {
                 message: format!("cannot open captured namespace storage: {error:#}"),
             }
@@ -580,32 +655,24 @@ mod namespace_storage_authority_bridge_tests {
     }
     #[test]
     fn task8b_bridge_retains_explicit_user_and_epochs() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().canonicalize().unwrap();
-        let root = Arc::new(NamespaceFs::open_data_root(&path).unwrap());
-        let context = AppContext {
-            data_root_capability: Some(Arc::clone(&root)),
-            ..AppContext::default()
-        };
-        let lease = lease(&path);
-        let authority = context.storage_authority(&lease).unwrap();
-        assert_eq!(authority.lease(), &lease);
-        assert_eq!(Arc::strong_count(&root), 3);
-        assert!(context.current_user_id.lock().unwrap().is_none());
-        let changed = NamespaceLease {
-            auth_epoch: 99,
-            namespace_epoch: 27,
-            ..lease.clone()
-        };
-        assert_eq!(
-            context.storage_authority(&changed).unwrap().lease(),
-            &changed
-        );
-        authority
-            .create_new_regular(&ManagedFileKey::new(ManagedUserArea::Output, "proof").unwrap())
-            .unwrap();
+        let fixture = video_image_callbacks::tests::scoped_inputs::Fixture::new();
+        let lease = fixture.persistence.lease().clone();
+        assert!(fixture.context.storage_authority(&lease).is_err(),"unpublished namespace must refuse");
+        let transition=fixture.context.namespace_operations.try_begin_transition().unwrap();
+        let proof=transition.begin_prepublication_recovery(&lease).unwrap();
+        proof.verify_no_unsupported_imports(&fixture.authority).unwrap();
+        let recovered=proof.finish().unwrap();
+        transition.prepare_publication(&lease,recovered).unwrap().publish();
+        let authority=fixture.context.storage_authority(&lease).unwrap();
+        assert_eq!(authority.lease(),&lease);
+        assert_eq!(authority.user_public_id(),lease.namespace.user_public_id());
+        let changed=NamespaceLease { auth_epoch:lease.auth_epoch+1,namespace_epoch:lease.namespace_epoch+1,..lease.clone() };
+        assert!(fixture.context.storage_authority(&changed).is_err(),"caller cannot synthesize new epochs");
+        authority.create_new_regular(&ManagedFileKey::new(ManagedUserArea::Output,"proof").unwrap()).unwrap();
         assert!(lease.namespace.output_dir().join("proof").is_file());
+        fixture.drain();
     }
+
     #[test]
     fn task8b_bridge_wrong_root_does_not_reopen_or_create() {
         let first = tempfile::tempdir().unwrap();
@@ -648,6 +715,12 @@ mod namespace_storage_authority_bridge_tests {
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct LocalStoreData {
+    #[serde(default)]
+    video_outputs: BTreeMap<String,SavedVideoOutput>,
+    #[serde(default)]
+    references: ReferenceGroups,
+    #[serde(default)]
+    pending_credit_redemptions_by_owner: BTreeMap<String, PendingCreditRedemption>,
     #[serde(default)]
     generations: Vec<StoredAssetData>,
     #[serde(default)]

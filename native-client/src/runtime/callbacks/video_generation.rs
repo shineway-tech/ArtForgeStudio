@@ -1,5 +1,43 @@
 use super::*;
 
+/// Video connection is explicitly deferred for this release. Preserve the old
+/// implementation and retained data, but do not expose its billable front doors.
+pub(super) fn wire_deferred_video_generation_callbacks(app:&AppWindow,context:AppContext) {
+    wire_video_generation_callbacks(app,context.clone());
+    let state=app.global::<AppState>();state.set_video_service_available(false);
+    let unavailable=Rc::new({let weak=app.as_weak();let context=context.clone();move||{
+        let Some(app)=weak.upgrade()else{return;};
+        let Some(persistence)=context.store.borrow().private_persistence.clone()else{return;};
+        if !persistence.is_current(){return;}
+        let _=context.apply_user_completion(persistence.lease(),||{
+            if !context.store.borrow().private_persistence.as_ref().is_some_and(|current|current.same_binding_metadata(&persistence)){return;}
+            let state=app.global::<AppState>();
+            let message=if state.get_language()=="en"{"Video generation is not enabled in this release. Existing data is preserved."}
+                else{"视频生成本轮暂未开放，已有数据已保留"};
+            state.set_video_status(message.into());state.set_viewer_message(message.into());
+        });
+    }});
+    let action=unavailable.clone();state.on_viewer_generate_video(move||action());
+    let action=unavailable.clone();state.on_request_video_quote(move|_,_,_|action());
+    let action=unavailable.clone();state.on_submit_video_generation(move||action());
+    state.on_select_video_model(move|_|unavailable());
+    let weak=app.as_weak();
+    state.on_close_video_generation(move||{
+        let Some(app)=weak.upgrade()else{return;};
+        let Some(persistence)=context.store.borrow().private_persistence.clone()else{return;};
+        if !persistence.is_current(){return;}
+        let closed=context.apply_user_completion(persistence.lease(),||{
+            if !context.store.borrow().private_persistence.as_ref().is_some_and(|current|current.same_binding_metadata(&persistence)){return false;}
+            let state=app.global::<AppState>();
+            let page=state.get_video_return_page();
+            state.set_page(if page.is_empty(){"assets".into()}else{page});
+            state.set_video_prompt_expanded_open(false);state.set_video_quote_loading(false);
+            state.set_viewer_open(true);true
+        }).unwrap_or(false);
+        if closed{close_video_player();}
+    });
+}
+
 enum VideoGenerationOutcome {
     Success { local_path: String },
     Failure { message: String },
@@ -56,6 +94,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
 
     {
         let app_weak = app.as_weak();
+        let context = context.clone();
         state.on_sync_video_player(move |x, y, width, height| {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -70,8 +109,11 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
                 close_video_player();
                 return;
             }
-            if let Err(error) = sync_video_player(&app, &path, (x, y, width, height)) {
-                state.set_video_status(format!("播放器打开失败：{error}").into());
+            let Some(persistence)=context.store.borrow().private_persistence.clone() else { return; };
+            let Some(output)=context.store.borrow().video_outputs.values().find(|output|Path::new(&output.source_path)==path).cloned() else { return; };
+            let lease=persistence.lease().clone();
+            if let Err(error) = sync_video_player_captured(&app, &context, persistence, &output, (x, y, width, height)) {
+                let _=context.apply_user_completion(&lease,||state.set_video_status(format!("播放器打开失败：{error}").into()));
             }
         });
     }
@@ -87,20 +129,24 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
                 return;
             };
             let state = app.global::<AppState>();
-            quote_epoch.fetch_add(1, Ordering::SeqCst);
+            let Some(persistence) = context.store.borrow().private_persistence.clone() else { return; };
+            let Ok(_activity) = persistence.begin_activity() else { return; };
+            if !context.store.borrow().private_persistence.as_ref().is_some_and(|current| current.same_binding(&persistence)) { return; }
+            let candidate = (state.get_viewer_title().to_string(), PathBuf::from(state.get_viewer_source_path().to_string()));
+            let source_id = state.get_viewer_id().to_string();
+            let owner = persistence.lease().namespace.user_public_id().to_owned();
+            let initialized = context.apply_user_completion(persistence.lease(), || {
+            if quote_epoch.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| value.checked_add(1)).is_err() { return false; }
             reset_video_images(&state, &image_epoch);
-            close_video_player();
             pending_client_request_id
                 .lock()
                 .unwrap_or_else(|value| value.into_inner())
                 .clear();
             state.set_video_source_id(state.get_viewer_id());
-            state.set_video_source_path(state.get_viewer_source_path());
+            state.set_video_source_path("".into());
             state.set_video_source_file_id("".into());
-            state.set_video_source_image(state.get_viewer_image());
+            state.set_video_source_image(slint::Image::default());
             state.set_video_source_title(state.get_viewer_title());
-            let owner = context.current_user_id.lock()
-                .unwrap_or_else(|value| value.into_inner()).clone().unwrap_or_default();
             state.set_video_prompt(video_prompt_for_source(
                 &context.store.borrow().prompt_drafts,
                 &owner,
@@ -127,10 +173,13 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
                 "视频服务暂未开放".into()
             });
             state.set_viewer_open(false);
-            navigate_to(&app, "video-generation");
-            if state.get_video_service_available() {
-                state.invoke_request_video_quote("16:9".into(), "720P".into(), 4);
-            }
+            state.set_page("video-generation".into());
+            true
+            }).unwrap_or(false);
+            if !initialized { return; }
+            close_video_player();
+            start_captured_video_viewer_image_import(&app, context.store.clone(), persistence, candidate, source_id,
+                image_epoch.clone(), quote_epoch.clone(), pending_client_request_id.clone());
             recover_pending_prompt_tasks(&app, context.clone());
         });
     }
@@ -438,6 +487,40 @@ fn run_video_generation_task(
 mod tests {
     use super::*;
 
+    fn captured_video_fixture() -> (video_image_callbacks::tests::scoped_inputs::Fixture, tempfile::TempDir, PathBuf) {
+        let fixture = video_image_callbacks::tests::scoped_inputs::Fixture::new();
+        let source_root = tempfile::tempdir().unwrap();
+        let path = source_root.path().join("source.png");
+        image::RgbaImage::from_pixel(80,120,image::Rgba([40,90,120,255])).save(&path).unwrap();
+        (fixture,source_root,path)
+    }
+
+    #[test]
+    fn core_video_viewer_open_captures_owned_source_and_exact_upgrade_keeps_projection() {
+        i_slint_backend_testing::init_no_event_loop();
+        let (fixture,_source_root,path) = captured_video_fixture();
+        let app = AppWindow::new().unwrap();
+        wire_video_generation_callbacks(&app, fixture.context.clone());
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_page("assets".into());
+        state.set_viewer_source_path(path.to_string_lossy().into_owned().into());
+        state.set_viewer_title("Original source".into());
+        state.invoke_viewer_generate_video();
+        video_image_callbacks::tests::scoped_inputs::pump(|| !state.get_video_images_loading());
+        assert_eq!(state.get_video_images().row_count(),1);
+        let owned = PathBuf::from(state.get_video_source_path().to_string());
+        assert_ne!(owned,path);
+        assert!(fixture.persistence.owns_path(&owned));
+        fixture.persistence.upgrade_latch().trip(RequiredUpgrade { minimum_version:None });
+        state.set_page("upgrade-boundary".into());
+        state.set_video_source_title("unchanged".into());
+        state.invoke_viewer_generate_video();
+        assert_eq!(state.get_page(),"upgrade-boundary");
+        assert_eq!(state.get_video_source_title(),"unchanged");
+        fixture.drain();
+    }
+
     #[test]
     fn video_workspace_starts_with_a_thumbnail_and_offers_both_image_sources() {
         use i_slint_backend_testing::{ElementHandle, TestingBackend, TestingBackendOptions};
@@ -449,16 +532,18 @@ mod tests {
             ..Default::default()
         }))).unwrap();
         let app = AppWindow::new().unwrap();
-        wire_video_generation_callbacks(&app, AppContext::default());
+        let (fixture,_source_root,path) = captured_video_fixture();
+        wire_video_generation_callbacks(&app, fixture.context.clone());
         let state = app.global::<AppState>();
         state.set_logged_in(true);
         state.set_session_state("offline".into());
         state.set_page("assets".into());
         state.set_viewer_id("source".into());
-        state.set_viewer_source_path("source.png".into());
+        state.set_viewer_source_path(path.to_string_lossy().into_owned().into());
         state.set_viewer_title("Source image".into());
         state.set_viewer_prompt("Keep this prompt".into());
         state.invoke_viewer_generate_video();
+        video_image_callbacks::tests::scoped_inputs::pump(|| !state.get_video_images_loading());
         assert_eq!(state.get_page(), "video-generation");
         assert_eq!(state.get_video_images().row_count(), 1);
         app.show().unwrap();
@@ -481,7 +566,7 @@ mod tests {
     }
 
     #[test]
-    fn viewer_video_workspace_uses_full_width_and_restores_navigation_on_return() {
+    fn viewer_video_action_preserves_workspace_and_inputs_while_service_is_deferred() {
         use i_slint_backend_testing::{ElementHandle, TestingBackend, TestingBackendOptions};
         use slint::platform::PointerEventButton;
 
@@ -492,71 +577,76 @@ mod tests {
         })))
         .unwrap();
         let app = AppWindow::new().unwrap();
-        super::super::app::wire_callbacks(&app, AppContext::default());
+        let (fixture,_source_root,path) = captured_video_fixture();
+        // Exercise the production wrapper, not the retained unoffered implementation.
+        super::super::app::wire_callbacks(&app, fixture.context.clone());
+        let source_bytes = fs::read(&path).unwrap();
         let state = app.global::<AppState>();
         state.set_logged_in(true);
         state.set_session_state("offline".into());
         app.show().unwrap();
 
-        for (origin, collapsed, width, height, top_bar_back) in [
-            ("generation", false, 1180.0, 760.0, false),
-            ("assets", true, 1440.0, 900.0, true),
-            ("generation", true, 1920.0, 1080.0, true),
-            ("assets", false, 1440.0, 900.0, false),
+        for (origin, collapsed, width, height) in [
+            ("generation", false, 1180.0, 760.0),
+            ("assets", true, 1440.0, 900.0),
+            ("generation", true, 1920.0, 1080.0),
+            ("assets", false, 1440.0, 900.0),
         ] {
             app.window().set_size(slint::LogicalSize::new(width, height));
             state.set_page(origin.into());
             state.set_sidebar_collapsed(collapsed);
             state.set_viewer_source(origin.into());
             state.set_viewer_id("video-source-image".into());
+            state.set_viewer_source_path(path.to_string_lossy().into_owned().into());
             state.set_viewer_title("Source image".into());
             state.set_viewer_prompt("Keep the original scene and move the camera slowly.".into());
             state.set_viewer_open(true);
+            state.set_viewer_message("before video request".into());
+            state.set_video_status("before video request".into());
+            state.set_video_prompt("Retained video draft".into());
+            state.set_video_source_id("retained-source".into());
+            state.set_video_result_path("retained-video-result".into());
+            state.set_video_images(ModelRc::new(VecModel::from(vec![VideoImageItem {
+                id:"retained-input".into(),source_asset_id:"retained-source".into(),
+                source_path:path.to_string_lossy().into_owned().into(),..Default::default()
+            }])));
             let sidebar = ElementHandle::find_by_element_type_name(&app, "Sidebar")
-                .next().expect("navigation is available before entering the video page");
-            // Read the settled layout, not the sidebar's 160ms collapse animation.
+                .next().expect("original navigation remains available");
+            // Read settled navigation width, not its 160ms collapse animation.
             i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(200));
             let sidebar_width = sidebar.size().width;
 
             ElementHandle::find_by_element_type_name(&app, "ViewerFooterActionButton")
                 .nth(1).expect("generate video action in image details")
                 .mock_single_click(PointerEventButton::Left);
-
-            assert_eq!(state.get_page(), "video-generation");
-            assert!(!state.get_viewer_open());
-            assert_eq!(state.get_video_source_id(), "video-source-image");
-            assert_eq!(state.get_video_prompt(), "Keep the original scene and move the camera slowly.");
-            assert!(ElementHandle::find_by_element_type_name(&app, "Sidebar").next().is_none(),
-                "the video workspace must not show the main navigation sidebar");
-            let video_page = ElementHandle::find_by_element_type_name(&app, "VideoGenerationPage")
-                .next().expect("dedicated video generation page");
-            assert!(video_page.absolute_position().x.abs() < 1.0);
-            assert!((video_page.size().width - width).abs() < 1.0,
-                "hiding navigation must also reclaim its layout width");
-            let preview = ElementHandle::find_by_element_id(&app, "VideoGenerationPage::preview-card")
-                .next().unwrap();
-            let settings = ElementHandle::find_by_element_id(&app, "VideoGenerationPage::settings-card")
-                .next().unwrap();
-            assert!(preview.absolute_position().x + preview.size().width < settings.absolute_position().x);
-            assert!(settings.absolute_position().x + settings.size().width <= width);
-            assert!(settings.absolute_position().y + settings.size().height <= height);
-
-            let back_container = if top_bar_back {
-                ElementHandle::find_by_element_type_name(&app, "TopBar").next().unwrap()
-            } else {
-                video_page
-            };
-            back_container.query_descendants().match_inherits("PillButton")
-                .find_first().expect("back action")
-                .mock_single_click(PointerEventButton::Left);
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(200));
 
             assert_eq!(state.get_page().as_str(), origin);
-            assert!(state.get_viewer_open(), "return to the current image details");
+            assert!(state.get_viewer_open(), "deferred entry keeps original image details");
             assert_eq!(state.get_viewer_id(), "video-source-image");
+            assert_eq!(state.get_viewer_source().as_str(), origin);
+            assert_eq!(state.get_viewer_source_path().as_str(), path.to_str().unwrap());
+            assert_eq!(state.get_viewer_prompt(), "Keep the original scene and move the camera slowly.");
             assert_eq!(state.get_sidebar_collapsed(), collapsed);
-            let restored_sidebar = ElementHandle::find_by_element_type_name(&app, "Sidebar")
-                .next().expect("navigation must return after leaving the video page");
-            assert_eq!(restored_sidebar.size().width, sidebar_width);
+            let current_sidebar = ElementHandle::find_by_element_type_name(&app, "Sidebar")
+                .next().expect("deferred entry must not hide navigation");
+            assert_eq!(current_sidebar.size().width, sidebar_width);
+            assert!(ElementHandle::find_by_element_type_name(&app, "VideoGenerationPage").next().is_none());
+            assert!(!state.get_video_service_available());
+            assert!(!state.get_video_generating());
+            assert!(!state.get_video_images_loading());
+            assert!(!state.get_video_quote_loading());
+            assert_eq!(state.get_video_status(), "视频生成本轮暂未开放，已有数据已保留");
+            assert_eq!(state.get_viewer_message(), "视频生成本轮暂未开放，已有数据已保留");
+            assert_eq!(state.get_video_prompt(), "Retained video draft");
+            assert_eq!(state.get_video_source_id(), "retained-source");
+            assert_eq!(state.get_video_result_path(), "retained-video-result");
+            assert_eq!(state.get_video_images().row_count(), 1);
+            let input=state.get_video_images().row_data(0).unwrap();
+            assert_eq!(input.id, "retained-input");
+            assert_eq!(input.source_asset_id, "retained-source");
+            assert_eq!(input.source_path.as_str(), path.to_str().unwrap());
+            assert_eq!(fs::read(&path).unwrap(), source_bytes);
         }
     }
 
@@ -589,8 +679,18 @@ mod tests {
                 ..Default::default()
             },
         ))).unwrap();
+        let fixture=video_image_callbacks::tests::scoped_inputs::Fixture::new();
+        struct VideoPromptLayoutDrain<'a>(&'a video_image_callbacks::tests::scoped_inputs::Fixture);
+        impl Drop for VideoPromptLayoutDrain<'_> {fn drop(&mut self) {
+            let prompt=shutdown_prompt_workers();
+            let delivery=drain_delivery_commit_workers_for_lease_for_test(self.0.persistence.lease());
+            let previews=drain_activation_preview_workers_for_lease_for_test(self.0.persistence.lease());
+            let retired=self.0.context.user_activity.begin_quiesce(self.0.persistence.lease()).map(|guard|guard.retire());
+            if !std::thread::panicking(){prompt.unwrap();delivery.unwrap();previews.unwrap();retired.unwrap();}
+        }}
+        let _drain=VideoPromptLayoutDrain(&fixture);
         let app = AppWindow::new().unwrap();
-        wire_video_prompt_callbacks(&app, AppContext::default());
+        wire_video_prompt_callbacks(&app, fixture.context.clone());
         let state = app.global::<AppState>();
         state.set_page("video-generation".into());
         state.set_prompt("image prompt stays unchanged".into());
@@ -734,5 +834,75 @@ mod tests {
                 8,
             )]
         );
+    }
+
+    #[test]
+    fn core_video_production_deferred_entry_preserves_existing_inputs_and_retained_records() {
+        i_slint_backend_testing::init_no_event_loop();
+        let fixture=video_image_callbacks::tests::scoped_inputs::Fixture::new();
+        let app=AppWindow::new().unwrap();wire_deferred_video_generation_callbacks(&app,fixture.context.clone());
+        let state=app.global::<AppState>();state.set_page("assets".into());state.set_viewer_open(true);
+        state.set_video_prompt("saved draft".into());state.set_video_result_path("retained-video-result".into());
+        state.set_video_images(ModelRc::new(VecModel::from(vec![VideoImageItem{id:"old-input".into(),source_asset_id:"source".into(),source_path:"retained-input".into(),..Default::default()}])));
+        let scope=BillingScope{request:GroupRequestScope{session:fixture.context.current_account_session_scope().unwrap(),account_group_id:"22222222-2222-4222-8222-222222222222".into()},context_epoch:1};
+        let mut row=backend_generation::billing_capture_test_support::generation_record(&scope,"image_to_video");
+        row.uploaded_file_ids.clear();row.video_request=Some(CreateVideoGenerationTask{
+            client_request_id:row.client_request_id.clone(),task_type:"image_to_video".into(),model_code:"retained-model".into(),prompt:"saved draft".into(),
+            source_file_id:"55555555-5555-4555-8555-555555555555".into(),aspect_ratio:"16:9".into(),resolution:"720P".into(),duration_secs:4,quote_id:"original-quote".into(),
+        });
+        upsert_pending_generation_for_namespace(&fixture.authority,&scope,row).unwrap();
+        let before=serde_json::to_value(load_pending_generations_for_namespace(&fixture.authority).unwrap()).unwrap();
+        let store_before=serde_json::to_value(local_store_data(&app,&fixture.context.store.borrow())).unwrap();
+        state.invoke_viewer_generate_video();state.invoke_request_video_quote("9:16".into(),"1080P".into(),8);state.invoke_submit_video_generation();
+        assert!(!state.get_video_service_available());assert_eq!(state.get_page(),"assets");assert!(state.get_viewer_open());
+        assert_eq!(state.get_video_prompt(),"saved draft");assert_eq!(state.get_video_result_path(),"retained-video-result");
+        assert_eq!(state.get_video_images().row_count(),1);assert_eq!(state.get_video_images().row_data(0).unwrap().id,"old-input");
+        assert_eq!(state.get_video_status(),"视频生成本轮暂未开放，已有数据已保留");
+        assert_eq!(serde_json::to_value(local_store_data(&app,&fixture.context.store.borrow())).unwrap(),store_before);
+        assert_eq!(serde_json::to_value(load_pending_generations_for_namespace(&fixture.authority).unwrap()).unwrap(),before);
+        fixture.drain();
+    }
+    #[test]
+    fn core_video_quote_and_submit_refuse_missing_store_without_private_projection_changes() {
+        i_slint_backend_testing::init_no_event_loop();
+        let fixture=video_image_callbacks::tests::scoped_inputs::Fixture::new();
+        let app=AppWindow::new().unwrap();
+        wire_deferred_video_generation_callbacks(&app,fixture.context.clone());
+        fixture.context.store.borrow_mut().private_persistence=None;
+        let state=app.global::<AppState>();
+        state.set_video_status("unchanged".into());state.set_video_quote_ready(true);
+        state.set_video_quote_id("retained-original-quote".into());state.set_video_credit_cost("12".into());
+        state.invoke_request_video_quote("16:9".into(),"720P".into(),4);
+        assert_eq!(state.get_video_status(),"unchanged");
+        assert!(state.get_video_quote_ready());assert_eq!(state.get_video_quote_id(),"retained-original-quote");
+        state.invoke_submit_video_generation();
+        assert_eq!(state.get_video_status(),"unchanged");
+        assert!(!state.get_video_generating());
+        fixture.drain();
+    }
+    #[test]
+    fn core_video_ordinary_model_navigation_quote_and_submit_refuse_exact_upgrade() {
+        i_slint_backend_testing::init_no_event_loop();
+        let fixture=video_image_callbacks::tests::scoped_inputs::Fixture::new();
+        let app=AppWindow::new().unwrap();
+        wire_deferred_video_generation_callbacks(&app,fixture.context.clone());
+        let state=app.global::<AppState>();
+        state.set_catalog_models(ModelRc::new(VecModel::from(vec![
+            catalog_model("model-old","Old","video_generation"),catalog_model("model-new","New","video_generation")
+        ])));
+        state.set_video_model("model-old".into());state.set_page("video-generation".into());
+        state.set_video_return_page("assets".into());
+        state.set_video_status("upgrade-boundary".into());state.set_video_quote_ready(true);
+        state.set_video_quote_id("retained-original-quote".into());
+        fixture.persistence.upgrade_latch().trip(RequiredUpgrade{minimum_version:None});
+        state.invoke_select_video_model("model-new".into());
+        assert_eq!(state.get_video_model(),"model-old");
+        state.invoke_request_video_quote("9:16".into(),"1080P".into(),8);
+        state.invoke_submit_video_generation();
+        assert_eq!(state.get_video_status(),"upgrade-boundary");
+        assert!(state.get_video_quote_ready());assert_eq!(state.get_video_quote_id(),"retained-original-quote");
+        state.invoke_close_video_generation();
+        assert_eq!(state.get_page(),"video-generation");
+        fixture.drain();
     }
 }

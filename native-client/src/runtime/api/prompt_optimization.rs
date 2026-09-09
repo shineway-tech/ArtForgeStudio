@@ -291,14 +291,15 @@ impl PromptOptimizationApi {
     pub(crate) fn retry_billing(
         &self,
         id: &str,
+        client_request_id: &str,
         scope: &BillingScope,
     ) -> Result<PromptOptimizationDetail, ApiError> {
         self.client
             .billing_json_scoped::<PromptOptimizationDetail>(
                 Method::POST,
                 &format!("/v1/prompt-optimizations/{id}/retry"),
-                None,
-                None,
+                Some(serde_json::json!({"client_request_id":client_request_id})),
+                Some(client_request_id),
                 scope,
             )
             .map(|response| response.data)

@@ -1,6 +1,104 @@
-import { AccountSession, AssetGroup, AssetItem, BrushPoint, CanvasLink, CanvasNote, CatalogModelView, CompressionImageItem, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, GalleryHeader, GalleryLoadingPlacement, GalleryPlacement, InvitedUserView, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, PromptTextEdit, ReferenceItem, VideoImageItem } from "types.slint";
+import { TeamRegistrationInvitationView, AccountGroupCardView, TeamMemberRowView, TeamInvitationRowView, TeamUsageRowView, AccountSession, AssetGroup, AssetItem, BrushPoint, CanvasLink, CanvasNote, CatalogModelView, CompressionImageItem, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, GalleryHeader, GalleryLoadingPlacement, GalleryPlacement, InvitedUserView, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, PromptTextEdit, ReferenceItem, VideoImageItem } from "types.slint";
 
 export global AppState {
+    in-out property <bool> team-registration-open: false;
+    in-out property <[TeamRegistrationInvitationView]> team-registration-invitations: [];
+    in-out property <string> team-registration-selection-state: "";
+    in-out property <string> team-registration-expires-at: "";
+    in-out property <string> team-registration-password: "";
+    in-out property <string> team-registration-password-confirmation: "";
+    in-out property <bool> team-registration-busy: false;
+    in-out property <string> team-registration-error: "";
+    callback complete-team-registration();
+    callback cancel-team-registration();
+
+    in-out property <[AccountGroupCardView]> account-groups: [];
+    in-out property <string> pending-team-invitation-count: "0";
+    in-out property <string> selected-account-group-id: "";
+    in-out property <string> account-amount-label: "";
+    in-out property <bool> account-group-switching: false;
+    in-out property <string> account-group-error: "";
+    in-out property <bool> account-group-read-only: false;
+    in-out property <bool> team-can-manage-group: false;
+    in-out property <bool> team-can-manage-members: false;
+    in-out property <bool> team-can-manage-invitations: false;
+    in-out property <bool> team-can-read-usage: false;
+    in-out property <bool> team-can-read-finance: false;
+    in-out property <bool> team-can-leave: false;
+    in-out property <bool> team-can-purchase: false;
+    in-out property <bool> team-can-redeem: false;
+    in-out property <string> team-name-input: "";
+    in-out property <string> team-invite-email: "";
+    in-out property <string> team-limit-input: "0";
+    in-out property <string> team-invite-limit-input: "0";
+    in-out property <string> team-current-name: "";
+    in-out property <string> team-role-label: "";
+    in-out property <bool> team-has-own-quota: false;
+    in-out property <string> team-quota-monthly: "";
+    in-out property <string> team-quota-settled: "";
+    in-out property <string> team-quota-reserved: "";
+    in-out property <string> team-quota-remaining: "";
+    in-out property <bool> team-joined-slot-occupied: false;
+    in-out property <string> team-page-status: "";
+    in-out property <string> team-form-action: "";
+    in-out property <string> team-form-id: "";
+    in-out property <string> team-form-version: "";
+    in-out property <string> team-form-label: "";
+    in-out property <string> team-form-token: "";
+    in-out property <bool> team-form-needs-review: false;
+    out property <bool> team-panel-visible: logged-in && profile-open && account-center-section == "accounts-teams";
+    callback open-team-form(string, string, string);
+    callback confirm-team-form();
+    callback cancel-team-form();
+    callback review-team-form();
+    callback team-form-lifecycle-changed();
+    changed team-panel-visible => { AppState.team-form-lifecycle-changed(); }
+    changed selected-account-group-id => { AppState.credit-insufficient-open = false; AppState.team-form-lifecycle-changed(); }
+    changed account-group-switching => { AppState.team-form-lifecycle-changed(); }
+    in-out property <string> team-tab: "accounts";
+    in-out property <[TeamMemberRowView]> team-members: [];
+    in-out property <[TeamInvitationRowView]> team-invitations: [];
+    in-out property <[TeamInvitationRowView]> pending-team-invitations: [];
+    in-out property <[TeamUsageRowView]> team-usage: [];
+    in-out property <string> team-members-next-cursor: "";
+    in-out property <string> team-invitations-next-cursor: "";
+    in-out property <string> pending-team-invitations-next-cursor: "";
+    in-out property <string> team-usage-next-cursor: "";
+    in-out property <bool> team-page-loading: false;
+    in-out property <string> team-page-error: "";
+    in-out property <string> team-reauth-code: "";
+    in-out property <string> team-reauth-password: "";
+    in-out property <string> team-reauth-status: "";
+    in-out property <string> team-reauth-mode: "current_password";
+    in-out property <bool> team-reauth-code-busy: false;
+    in-out property <bool> team-reauth-busy: false;
+    in-out property <string> team-reauth-error: "";
+    in-out property <string> team-reauth-email-mask: "";
+    in-out property <int> team-reauth-countdown: 0;
+    out property <bool> team-reauth-visible: logged-in && profile-open
+        && account-center-section == "accounts-teams" && team-tab == "reauth";
+    callback team-reauth-lifecycle-changed();
+    changed team-reauth-visible => { AppState.team-reauth-lifecycle-changed(); }
+    changed team-reauth-mode => { AppState.team-reauth-lifecycle-changed(); }
+    changed password-set => { AppState.team-reauth-lifecycle-changed(); }
+    changed email-bound => { AppState.team-reauth-lifecycle-changed(); }
+    callback refresh-account-groups();
+    callback switch-account-group(string);
+    callback load-team-members(string);
+    callback load-team-invitations(string);
+    callback load-pending-team-invitations(string);
+    callback load-team-usage(string);
+    callback rename-team();
+    callback create-team-invitation();
+    callback resend-team-invitation(string, string);
+    callback revoke-team-invitation(string, string);
+    callback accept-team-invitation(string, string);
+    callback decline-team-invitation(string, string);
+    callback update-team-member(string, string, string);
+    callback leave-team();
+    callback request-team-reauth-code();
+    callback confirm-team-reauth();
+
     // The software renderer stays available for machines without a usable GPU. Expensive
     // decorative animation is reduced automatically when that fallback is active.
     in-out property <bool> reduced-motion: false;
@@ -77,6 +175,8 @@ export global AppState {
     in-out property <string> purchase-credit-rules-version: "";
     in-out property <string> purchase-credit-rules-url: "";
     in-out property <bool> credit-insufficient-open: false;
+    in-out property <string> credit-insufficient-kind: "";
+    in-out property <string> credit-insufficient-payer-id: "";
     in-out property <string> credit-insufficient-message: "积分不足以支持本次生图，请前往充值";
 
     in-out property <[ModelGroup]> model-groups: [];
@@ -387,6 +487,7 @@ export global AppState {
     in-out property <image> icon-wechat: @image-url("../assets/icons/wechat.svg");
     in-out property <image> icon-alipay: @image-url("../assets/icons/alipay-official.png");
     in-out property <image> icon-account-person: @image-url("../assets/icons/account-person.svg");
+    in-out property <image> icon-account-people: @image-url("../assets/icons/account-people.svg");
     in-out property <image> icon-account-shield-lock: @image-url("../assets/icons/account-shield-lock.svg");
     in-out property <image> icon-account-display: @image-url("../assets/icons/account-display.svg");
     in-out property <image> icon-account-envelope: @image-url("../assets/icons/account-envelope.svg");
@@ -453,7 +554,7 @@ export global AppState {
 
     in-out property <bool> profile-open: false;
     in-out property <string> profile-name: "";
-    in-out property <string> profile-section: "login";
+    in-out property <string> account-center-section: "login";
     in-out property <string> invitation-code: "";
     in-out property <bool> invitation-code-busy: false;
     in-out property <bool> invitation-code-success: false;

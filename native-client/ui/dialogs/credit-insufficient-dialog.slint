@@ -4,6 +4,10 @@ import { PillButton } from "../components/pill-button.slint";
 import { AppTheme } from "../theme.slint";
 
 export component CreditInsufficientDialog {
+    property <bool> can-recharge: AppState.credit-insufficient-kind == "owner-credits"
+        && AppState.credit-insufficient-payer-id != ""
+        && AppState.credit-insufficient-payer-id == AppState.selected-account-group-id
+        && AppState.team-can-purchase && !AppState.account-group-switching;
     if AppState.credit-insufficient-open: Rectangle {
         background: #00000055;
         TouchArea { width: parent.width; height: parent.height; }
@@ -21,7 +25,9 @@ export component CreditInsufficientDialog {
                 padding: 22px;
                 spacing: 14px;
                 Text {
-                    text: AppState.en ? "Insufficient credits" : "积分不足";
+                    text: AppState.credit-insufficient-kind == "member-limit"
+                        ? (AppState.en ? "Monthly limit insufficient" : "月额度不足")
+                        : (AppState.en ? "Insufficient credits" : "积分不足");
                     color: AppTheme.text;
                     font-size: 18px;
                     font-weight: 500;
@@ -29,7 +35,7 @@ export component CreditInsufficientDialog {
                 }
                 Text {
                     height: 54px;
-                    text: AppState.en ? "Your credits are insufficient. Please recharge." : AppState.credit-insufficient-message;
+                    text: AppState.credit-insufficient-message;
                     color: AppTheme.muted;
                     font-size: 13px;
                     font-weight: 400;
@@ -39,11 +45,11 @@ export component CreditInsufficientDialog {
                 }
                 PillButton {
                     horizontal-stretch: 1;
-                    text: AppState.en ? "Go to Recharge" : "前往充值";
+                    text: root.can-recharge ? (AppState.en ? "Go to Recharge" : "前往充值") : (AppState.en ? "Got it" : "我知道了");
                     primary: true;
                     clicked => {
                         AppState.credit-insufficient-open = false;
-                        AppState.navigate("credits");
+                        if root.can-recharge { AppState.navigate("credits"); }
                     }
                 }
             }

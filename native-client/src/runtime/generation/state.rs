@@ -353,13 +353,7 @@ mod scope_tests {
     struct ScopeFixture {
         context: AppContext,
         session: Arc<SessionManager>,
-        data_dir: PathBuf,
-    }
-
-    impl Drop for ScopeFixture {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.data_dir);
-        }
+        _data_dir: tempfile::TempDir,
     }
 
     fn token_set(access_token: &str, refresh_token: &str) -> TokenSet {
@@ -373,12 +367,8 @@ mod scope_tests {
     }
 
     fn scope_fixture(owner_user_id: &str) -> (ScopeFixture, SessionScope) {
-        let data_dir = std::env::temp_dir().join(format!(
-            "artforge-generation-scope-test-{}",
-            Uuid::new_v4().simple()
-        ));
-        fs::create_dir_all(&data_dir).unwrap();
-        let session = Arc::new(SessionManager::with_file_store(&data_dir));
+        let data_dir = tempfile::tempdir().expect("temporary generation scope directory");
+        let session = Arc::new(SessionManager::with_file_store(data_dir.path()));
         let scope = session
             .install_tokens_for_user(&token_set("access-a", "refresh-a"), owner_user_id)
             .unwrap();
@@ -405,7 +395,7 @@ mod scope_tests {
             ScopeFixture {
                 context,
                 session,
-                data_dir,
+                _data_dir: data_dir,
             },
             scope,
         )
@@ -413,7 +403,9 @@ mod scope_tests {
 
     #[test]
     fn terminal_auth_loss_is_distinct_from_a_stale_new_account() {
-        let (fixture, scope_a) = scope_fixture("user-a");
+        const USER_A: &str = "11111111-1111-4111-8111-111111111111";
+        const USER_B: &str = "22222222-2222-4222-8222-222222222222";
+        let (fixture, scope_a) = scope_fixture(USER_A);
         assert_eq!(
             generation_scope_disposition(&fixture.context, &scope_a),
             GenerationScopeDisposition::Current
@@ -427,13 +419,13 @@ mod scope_tests {
 
         let scope_b = fixture
             .session
-            .install_tokens_for_user(&token_set("access-b", "refresh-b"), "user-b")
+            .install_tokens_for_user(&token_set("access-b", "refresh-b"), USER_B)
             .unwrap();
         *fixture
             .context
             .current_user_id
             .lock()
-            .unwrap_or_else(|value| value.into_inner()) = Some("user-b".to_string());
+            .unwrap_or_else(|value| value.into_inner()) = Some(USER_B.to_string());
         assert_eq!(
             generation_scope_disposition(&fixture.context, &scope_a),
             GenerationScopeDisposition::Stale

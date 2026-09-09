@@ -60,6 +60,7 @@ fn terminate_generation_poll(
 pub(super) fn poll_generation_stream(
     app_weak: Weak<AppWindow>,
     context: AppContext,
+    original_persistence: PrivatePersistence,
     session_scope: SessionScope,
     delivery_download_reservations: Vec<DeliveryDownloadReservation>,
     receiver: Rc<RefCell<Option<mpsc::Receiver<GenerationOutcome>>>>,
@@ -81,6 +82,13 @@ pub(super) fn poll_generation_stream(
 ) {
     let store = context.store.clone();
     slint::Timer::single_shot(Duration::from_millis(80), move || {
+        if !original_persistence.is_current() || !context.store.borrow().private_persistence.as_ref()
+            .is_some_and(|current|current.same_binding_metadata(&original_persistence)) {
+            terminate_generation_poll(&context,None,&receiver,&delivery_download_reservations,GenerationPollTermination::ScopeRejected);
+            return;
+        }
+        let Some(backend) = context.backend.as_ref() else { receiver.borrow_mut().take(); return; };
+        let Ok(_effect) = backend.api.upgrade_latch().begin_ordinary_blocking_effect() else { receiver.borrow_mut().take(); return; };
         if !generation_scope_allows_polling(&app_weak, &context, &session_scope) {
             let app = app_weak.upgrade();
             terminate_generation_poll(
@@ -92,6 +100,7 @@ pub(super) fn poll_generation_stream(
             );
             return;
         }
+        let Ok(_activity) = backend.api.begin_user_work(&session_scope) else { receiver.borrow_mut().take(); return; };
         let Some(app) = app_weak.upgrade() else {
             terminate_generation_poll(
                 &context,
@@ -166,6 +175,7 @@ pub(super) fn poll_generation_stream(
             poll_generation_stream(
                 app_weak,
                 context,
+                original_persistence,
                 session_scope,
                 delivery_download_reservations,
                 receiver,
@@ -243,6 +253,28 @@ pub(super) fn poll_generation_stream(
                     percent.clamp(1, 99),
                     0,
                 );
+            }
+            GenerationOutcome::NamespaceImageSuccess { prepared, time } => {
+                start_image_delivery_commit_captured(&app,context.clone(),original_persistence.clone(),*prepared,time,move|app,result|{
+                    match result {
+                        Ok((preview,id,acknowledged))=>{
+                            if create_conversation {finish_conversation_placeholder(&app.global::<AppState>(),&conversation_id,Some(preview));}
+                            mark_active_generation_image_completed(&context,app,&category,&task_id,true,Some(id),None);
+                            if !acknowledged {set_generation_status_for_category(&context,app,&category,"图片已保存，远端交付确认待重试");}
+                        },
+                        Err(error)=>{
+                            let message=format!("本地交付尚未提交，原任务已保留：{error}");
+                            set_generation_status_for_category(&context,app,&category,&message);
+                            mark_active_generation_image_completed(&context,app,&category,&task_id,false,None,Some(&message));
+                        },
+                    }
+                    // Do not consume backend Finished/next image until the current
+                    // real Store acknowledgment and registered worker have completed.
+                    poll_generation_stream(app.as_weak(),context,original_persistence,session_scope,delivery_download_reservations,receiver,
+                        raw_prompt,category,mode,ratio,quality,image_model,result_origin,conversation_id,create_conversation,
+                        generation_reference_paths,original_references,original_quote,restore_inputs_on_failure,task_id,started_at);
+                });
+                return;
             }
             GenerationOutcome::ImageSuccess {
                 local_path,
@@ -548,7 +580,7 @@ pub(super) fn poll_generation_stream(
                     }
                 }
                 if context.backend.is_some() {
-                    refresh_backend_snapshot(&app, context.clone());
+                    refresh_backend_snapshot_captured(&app, context.clone(), original_persistence.clone());
                 }
             }
             GenerationOutcome::CreditInsufficient { message } => {
@@ -579,10 +611,9 @@ pub(super) fn poll_generation_stream(
                 }
                 context.generations.statuses.borrow_mut().remove(&category);
                 sync_generation_state_for_current_category(&context, &app);
-                state.set_credit_insufficient_message(message.into());
-                state.set_credit_insufficient_open(true);
+                show_credit_rejection(&state, &message);
                 if context.backend.is_some() {
-                    refresh_backend_snapshot(&app, context.clone());
+                    refresh_backend_snapshot_captured(&app, context.clone(), original_persistence.clone());
                 }
             }
             GenerationOutcome::Failure { reason, time } => {
@@ -650,7 +681,7 @@ pub(super) fn poll_generation_stream(
                     }
                 }
                 if context.backend.is_some() {
-                    refresh_backend_snapshot(&app, context.clone());
+                    refresh_backend_snapshot_captured(&app, context.clone(), original_persistence.clone());
                 }
             }
         }
@@ -659,6 +690,7 @@ pub(super) fn poll_generation_stream(
             poll_generation_stream(
                 app_weak,
                 context,
+                original_persistence,
                 session_scope,
                 delivery_download_reservations,
                 receiver,

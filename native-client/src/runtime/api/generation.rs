@@ -176,7 +176,7 @@ pub(crate) struct VideoQuote {
     pub(crate) duration_secs: i32,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct CreateVideoGenerationTask {
     pub(crate) client_request_id: String,
     pub(crate) task_type: String,
@@ -304,12 +304,14 @@ struct DeliveryAck<'a> {
 pub(crate) struct GenerationApi {
     client: ApiClient,
     download: reqwest::blocking::Client,
+    saved_group: Option<String>,
 }
 
 impl GenerationApi {
     pub(crate) fn new(client: ApiClient) -> Self {
         Self {
             client,
+            saved_group: None,
             download: reqwest::blocking::Client::builder()
                 .connect_timeout(REFERENCE_TRANSFER_CONNECT_TIMEOUT)
                 .timeout(GENERATION_DOWNLOAD_TIMEOUT)
@@ -318,12 +320,59 @@ impl GenerationApi {
         }
     }
 
+    pub(crate) fn with_saved_group(mut self, group: &str) -> Self {
+        self.saved_group = Some(group.to_owned());
+        self
+    }
+    fn checked_saved_detail(&self, detail: GenerationTaskDetail) -> Result<GenerationTaskDetail, ApiError> {
+        if let Some(group) = &self.saved_group { super::require_saved_group(group, &detail.billing_account_group_id)?; }
+        Ok(detail)
+    }
     pub(crate) fn upload_reference(&self, path: &Path) -> Result<String, ApiError> {
         let prepared =
             super::super::prepare_reference_for_upload(path).map_err(|_| ApiError::LocalState {
                 message: "无法在本地处理参考图，请更换图片后重试".to_string(),
             })?;
         self.upload_reference_file(prepared.path(), None)
+    }
+
+    pub(crate) fn upload_reference_for_namespace(&self, path: &Path, authority: &super::super::NamespaceStorageAuthority,
+        scope: &SessionScope, paired: bool,
+    ) -> Result<String, ApiError> {
+        if authority.lease().auth_epoch != scope.auth_epoch || authority.user_public_id() != scope.owner_user_id {
+            return Err(ApiError::AuthenticationRequired);
+        }
+        let _activity = self.client.begin_user_work(scope)?;
+        let read = self.client.upgrade_latch().begin_ordinary_blocking_effect().map_err(|required| required.as_error())?;
+        let (bytes, filename, mime) = super::super::prepare_reference_bytes_for_namespace(authority, path, paired)
+            .map_err(|_| ApiError::LocalState { message: "参考图不属于当前命名空间或无法安全读取".into() })?;
+        drop(read);
+        self.upload_reference_bytes(bytes, filename, mime, scope)
+    }
+
+    pub(crate) fn upload_reference_for_namespace_checked(&self, path: &Path,
+        authority: &super::super::NamespaceStorageAuthority, scope: &SessionScope, paired: bool,
+        expected_sha256: &str, expected_size_bytes: u64,
+    ) -> Result<String, ApiError> {
+        if authority.lease().auth_epoch != scope.auth_epoch || authority.user_public_id() != scope.owner_user_id {
+            return Err(ApiError::AuthenticationRequired);
+        }
+        let activity=self.client.begin_user_work(scope)?;
+        let read=self.client.upgrade_latch().begin_ordinary_blocking_effect().map_err(|required|required.as_error())?;
+        let prepared=(||->anyhow::Result<_>{
+            anyhow::ensure!(path.starts_with(authority.lease().namespace.root()),"reference outside original namespace");
+            anyhow::ensure!(expected_size_bytes>0 && expected_sha256.len()==64,"retained fingerprint incomplete");
+            // Exactly one held read. The bytes verified here are the same owned
+            // bytes normalized below; neither stage reopens the source path.
+            let bytes=authority.read_image_source(path,100*1024*1024)?;
+            anyhow::ensure!(bytes.len() as u64==expected_size_bytes && sha256_hex(&bytes)==expected_sha256,
+                "retained reference fingerprint changed");
+            super::super::prepare_reference_upload_bytes(bytes,paired)
+        })().map_err(|_|ApiError::LocalState{message:"原始参考图内容已变化或无法安全读取，任务记录已保留".into()});
+        drop(read);
+        if activity.is_quiescing(){return Err(ApiError::AuthenticationRequired);}
+        let(bytes,filename,mime)=prepared?;
+        self.upload_reference_bytes(bytes,filename,mime,scope)
     }
 
     pub(crate) fn upload_reference_scoped(
@@ -357,6 +406,9 @@ impl GenerationApi {
         path: &Path,
         scope: Option<&SessionScope>,
     ) -> Result<String, ApiError> {
+        let scope = scope.ok_or(ApiError::AuthenticationRequired)?;
+        let _activity = self.client.begin_user_work(scope)?;
+        let read_permit = self.client.upgrade_latch().begin_ordinary_blocking_effect().map_err(|required| required.as_error())?;
         let bytes = fs::read(path).map_err(|error| ApiError::LocalState {
             message: format!("无法读取参考图：{error}"),
         })?;
@@ -365,6 +417,12 @@ impl GenerationApi {
             .and_then(|value| value.to_str())
             .unwrap_or("reference.png");
         let mime = mime_for_path(path)?;
+        drop(read_permit);
+        self.upload_reference_bytes(bytes, filename, mime, scope)
+    }
+
+    fn upload_reference_bytes(&self, bytes: Vec<u8>, filename: &str, mime: &str, scope: &SessionScope) -> Result<String, ApiError> {
+        let _activity = self.client.begin_user_work(scope)?;
         let sha256 = sha256_hex(&bytes);
         let body = serde_json::to_value(PrepareUploadRequest {
             filename,
@@ -373,6 +431,7 @@ impl GenerationApi {
             sha256: &sha256,
         })
         .map_err(protocol_error)?;
+        let scope = Some(scope);
         let prepared = match scope {
             Some(scope) => self.client.identity_json_scoped::<PrepareUploadResponse>(
                 Method::POST,
@@ -409,6 +468,7 @@ impl GenerationApi {
         if let Some(scope) = scope {
             self.ensure_scope_active(scope)?;
         }
+        let transfer = self.client.upgrade_latch().begin_ordinary_transfer().map_err(|required| required.as_error())?;
         let response = self
             .download
             .post(&prepared.upload.url)
@@ -416,14 +476,33 @@ impl GenerationApi {
             .multipart(form)
             .send()?;
         if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let mut payload = Vec::new();
+            response.take(64 * 1024).read_to_end(&mut payload).map_err(|_| ApiError::Protocol {
+                message: "无法读取参考图上传响应".into(), request_id: None,
+            })?;
+            if status == 426 {
+                if let Ok(envelope) = serde_json::from_slice::<super::ApiEnvelope<Value>>(&payload) {
+                    if let Some(problem) = envelope.error {
+                        let error = ApiError::Http { status, code: problem.code, message: problem.message, request_id: None, details: problem.details };
+                        if let Some(required) = super::RequiredUpgrade::from_error(&error) {
+                            let safe = required.as_error();
+                            self.client.upgrade_latch().trip_from_ordinary_transfer(transfer, required, || drop(payload));
+                            return Err(safe);
+                        }
+                    }
+                }
+            }
             return Err(ApiError::Protocol {
-                message: format!("参考图上传失败（HTTP {}）", response.status().as_u16()),
+                message: format!("参考图上传失败（HTTP {status}）"),
                 request_id: None,
             });
         }
         if let Some(scope) = scope {
             self.ensure_scope_active(scope)?;
         }
+        drop(response);
+        drop(transfer);
         let complete_path = format!("/v1/uploads/references/{}/complete", prepared.file.id);
         match scope {
             Some(scope) => self.client.identity_json_scoped::<serde_json::Value>(
@@ -689,7 +768,10 @@ impl GenerationApi {
                 Some(&request.client_request_id),
                 scope,
             )
-            .map(|response| response.data)
+            .and_then(|response| {
+                super::require_saved_group(&scope.request.account_group_id, &response.data.billing_account_group_id)?;
+                self.checked_saved_detail(response.data)
+            })
     }
 
     // TEMP(team-accounts): remove in Task 10 after atomic caller migration
@@ -740,7 +822,10 @@ impl GenerationApi {
                 Some(&request.client_request_id),
                 scope,
             )
-            .map(|response| response.data)
+            .and_then(|response| {
+                super::require_saved_group(&scope.request.account_group_id, &response.data.billing_account_group_id)?;
+                self.checked_saved_detail(response.data)
+            })
     }
 
     // TEMP(team-accounts): remove in Task 10 after atomic caller migration
@@ -791,7 +876,10 @@ impl GenerationApi {
                 Some(&request.client_request_id),
                 scope,
             )
-            .map(|response| response.data)
+            .and_then(|response| {
+                super::require_saved_group(&scope.request.account_group_id, &response.data.billing_account_group_id)?;
+                self.checked_saved_detail(response.data)
+            })
     }
 
     // TEMP(team-accounts): remove in Task 10 after atomic caller migration
@@ -842,7 +930,10 @@ impl GenerationApi {
                 Some(&request.client_request_id),
                 scope,
             )
-            .map(|response| response.data)
+            .and_then(|response| {
+                super::require_saved_group(&scope.request.account_group_id, &response.data.billing_account_group_id)?;
+                self.checked_saved_detail(response.data)
+            })
     }
 
     // TEMP(team-accounts): remove in Task 10 after atomic caller migration
@@ -893,7 +984,10 @@ impl GenerationApi {
                 Some(client_request_id),
                 scope,
             )
-            .map(|response| response.data)
+            .and_then(|response| {
+                super::require_saved_group(&scope.request.account_group_id, &response.data.billing_account_group_id)?;
+                self.checked_saved_detail(response.data)
+            })
     }
 
     pub(crate) fn task(&self, task_id: &str) -> Result<GenerationTaskDetail, ApiError> {
@@ -920,7 +1014,7 @@ impl GenerationApi {
                 None,
                 scope,
             )
-            .map(|response| response.data)
+            .and_then(|response| self.checked_saved_detail(response.data))
     }
 
     pub(crate) fn list_tasks(&self, status: &str) -> Result<Vec<GenerationTaskSummary>, ApiError> {
@@ -989,6 +1083,8 @@ impl GenerationApi {
         authority: &super::super::NamespaceStorageAuthority,
         temporary: &mut super::super::NamespaceManagedFile,
     ) -> Result<(), ApiError> {
+        let _activity = self.client.begin_user_work(scope)?;
+        let _transfer = self.client.upgrade_latch().begin_ordinary_transfer().map_err(|required| required.as_error())?;
         self.ensure_scope_active(scope)?;
         if authority.user_public_id() != scope.owner_user_id
             || authority.lease().auth_epoch != scope.auth_epoch
@@ -1052,6 +1148,8 @@ impl GenerationApi {
         scope: &SessionScope,
         destination: &Path,
     ) -> Result<(), ApiError> {
+        let _activity = self.client.begin_user_work(scope)?;
+        let _transfer = self.client.upgrade_latch().begin_ordinary_transfer().map_err(|required| required.as_error())?;
         self.ensure_scope_active(scope)?;
         let url = file
             .download_url
@@ -1085,7 +1183,9 @@ impl GenerationApi {
             let mut total = 0_u64;
             let mut buffer = [0_u8; 64 * 1024];
             loop {
+                self.ensure_scope_active(scope)?;
                 let read = response.read(&mut buffer).map_err(local_download_error)?;
+                self.ensure_scope_active(scope)?;
                 if read == 0 {
                     break;
                 }
@@ -1129,6 +1229,10 @@ impl GenerationApi {
         file: &TaskOutputFile,
         scope: Option<&SessionScope>,
     ) -> Result<Vec<u8>, ApiError> {
+        let scope = scope.ok_or(ApiError::AuthenticationRequired)?;
+        let _activity = self.client.begin_user_work(scope)?;
+        let _transfer = self.client.upgrade_latch().begin_ordinary_transfer().map_err(|required| required.as_error())?;
+        let scope = Some(scope);
         if let Some(scope) = scope {
             self.ensure_scope_active(scope)?;
         }
@@ -1198,7 +1302,7 @@ impl GenerationApi {
     }
 
     pub(crate) fn ensure_scope_active(&self, scope: &SessionScope) -> Result<(), ApiError> {
-        if self.client.session().is_scope_current(scope) {
+        if self.client.user_work_is_current(scope) {
             Ok(())
         } else {
             Err(ApiError::AuthenticationRequired)

@@ -1,6 +1,6 @@
 use super::{
     ApiEnvelope, ApiError, ApiResponse, BillingScope, DeviceIdentity, RefreshRequest,
-    SessionManager, SessionScope, TokenSet,
+    SessionManager, SessionScope, TokenSet, UpgradeLatch, RequiredUpgrade,
 };
 use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::{Method, Url};
@@ -12,6 +12,13 @@ use uuid::Uuid;
 
 const DEFAULT_DEV_API_BASE_URL: &str = "https://artforge-api.honeykid.cn";
 const DEFAULT_PROD_API_BASE_URL: &str = "https://artforge-api.honeykid.cn";
+
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct TestRequestReceipt {
+    pub(crate) method: String, pub(crate) path: String,
+    pub(crate) selected_group: Option<String>, pub(crate) has_auth: bool,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct ApiClientConfig {
@@ -58,6 +65,10 @@ pub(crate) struct ApiClient {
     config: ApiClientConfig,
     device: DeviceIdentity,
     session: Arc<SessionManager>,
+    upgrade: UpgradeLatch,
+    user_work: Arc<std::sync::OnceLock<crate::runtime::UserWorkAdmission>>,
+    #[cfg(test)]
+    request_receipts: Arc<std::sync::Mutex<Vec<TestRequestReceipt>>>,
 }
 
 impl ApiClient {
@@ -75,6 +86,10 @@ impl ApiClient {
             config,
             device,
             session,
+            upgrade: UpgradeLatch::default(),
+            user_work: Arc::new(std::sync::OnceLock::new()),
+            #[cfg(test)]
+            request_receipts: Arc::new(std::sync::Mutex::new(Vec::new())),
         })
     }
 
@@ -92,6 +107,36 @@ impl ApiClient {
 
     pub(crate) fn session(&self) -> &Arc<SessionManager> {
         &self.session
+    }
+
+    pub(crate) fn upgrade_latch(&self) -> &UpgradeLatch { &self.upgrade }
+    pub(crate) fn bind_user_work(&self, admission: crate::runtime::UserWorkAdmission) -> Result<(), ApiError> {
+        self.user_work.set(admission).map_err(|_| ApiError::LocalState { message: "用户任务入口已绑定".into() })
+    }
+    pub(crate) fn begin_user_work(&self, scope: &SessionScope) -> Result<crate::runtime::UserActivityPermit, ApiError> {
+        if let Some(required) = self.upgrade.snapshot() { return Err(required.as_error()); }
+        if !self.session.is_scope_current(scope) { return Err(ApiError::AuthenticationRequired); }
+        self.user_work.get().ok_or_else(|| ApiError::LocalState { message: "用户任务入口尚未激活".into() })?
+            .begin(scope).map_err(crate::runtime::transition_error)
+    }
+    pub(crate) fn user_work_is_current(&self, scope: &SessionScope) -> bool {
+        !self.upgrade.is_tripped() && self.session.is_scope_current(scope)
+            && self.user_work.get().is_some_and(|admission| admission.is_current(scope))
+    }
+    pub(crate) fn replay_saved<T: DeserializeOwned>(&self, request: &crate::runtime::SavedReplayRequest) -> Result<ApiResponse<T>, ApiError> {
+        let _unit = self.begin_user_work(request.session())?;
+        request.verify().map_err(crate::runtime::transition_error)?;
+        self.authenticated_json_with_scope(Method::POST, request.path(), Some(request.body()),
+            Some(request.key()), request.session(), Some(request.payer()))
+            .map_err(|error| error.with_billing_payer(request.payer()))
+    }
+    #[cfg(test)]
+    pub(crate) fn test_request_receipts(&self) -> Vec<TestRequestReceipt> {
+        self.request_receipts.lock().unwrap().clone()
+    }
+
+    pub(crate) fn refresh_persisted_owner(&self, owner: &str) -> Result<SessionScope, ApiError> {
+        self.session.refresh_persisted_owner(owner, |token| self.request_refresh(token))
     }
 
     pub(crate) fn public_json<T: DeserializeOwned>(
@@ -200,6 +245,7 @@ impl ApiClient {
             &scope.request.session,
             Some(&scope.request.account_group_id),
         )
+        .map_err(|error| error.with_billing_payer(&scope.request.account_group_id))
     }
 
     fn authenticated_json_with_scope<T: DeserializeOwned>(
@@ -466,6 +512,19 @@ impl ApiClient {
         &self,
         request: RequestBuilder,
     ) -> Result<ApiResponse<T>, ApiError> {
+        let permit = self.upgrade.begin_ordinary_transfer().map_err(|required| required.as_error())?;
+        #[cfg(test)]
+        if let Some(Ok(prepared)) = request.try_clone().map(RequestBuilder::build) {
+            let receipt = TestRequestReceipt {
+                method: prepared.method().to_string(),
+                path: match prepared.url().query() { Some(query) => format!("{}?{query}", prepared.url().path()), None => prepared.url().path().into() },
+                selected_group: prepared.headers().get("X-Account-Group-ID").and_then(|value| value.to_str().ok()).map(str::to_owned),
+                has_auth: prepared.headers().contains_key("X-Token"),
+            };
+            let mut receipts = self.request_receipts.lock().unwrap();
+            assert!(receipts.len() < 4096, "test request receipt bound exceeded");
+            receipts.push(receipt);
+        }
         let response = request.send()?;
         let status = response.status();
         let response_request_id = response
@@ -474,7 +533,9 @@ impl ApiClient {
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
         let payload = response.bytes()?;
-        let envelope = serde_json::from_slice::<ApiEnvelope<T>>(&payload).map_err(|error| {
+        // Error authority is independent of the success DTO. A valid exact426
+        // must not be hidden by malformed, unrelated data for T.
+        let envelope = serde_json::from_slice::<ApiEnvelope<Value>>(&payload).map_err(|error| {
             ApiError::Protocol {
                 message: format!("无法解析服务端响应：{error}"),
                 request_id: response_request_id.clone(),
@@ -486,23 +547,36 @@ impl ApiClient {
                 message: format!("HTTP {}", status.as_u16()),
                 details: None,
             });
-            return Err(ApiError::Http {
+            let error = ApiError::Http {
                 status: status.as_u16(),
                 code: problem.code,
                 message: problem.message,
                 request_id: Some(envelope.request_id),
                 details: problem.details,
-            });
+            };
+            if let Some(required) = RequiredUpgrade::from_error(&error) {
+                let safe_error = required.as_error();
+                self.upgrade.trip_from_ordinary_transfer(permit, required, || drop((payload, envelope.data, envelope.meta, error)));
+                return Err(safe_error);
+            }
+            return Err(error);
         }
+        // Decode successful data from its original stream: a Value intermediate
+        // would erase duplicate security fields before their DTO visitors run.
+        let envelope = serde_json::from_slice::<ApiEnvelope<T>>(&payload).map_err(|error| ApiError::Protocol {
+            message: format!("无法解析服务端响应：{error}"),
+            request_id: Some(envelope.request_id.clone()),
+        })?;
         let data = envelope.data.ok_or_else(|| ApiError::Protocol {
             message: "成功响应缺少 data 字段".to_string(),
             request_id: Some(envelope.request_id.clone()),
         })?;
-        Ok(ApiResponse {
+        let result = ApiResponse {
             request_id: envelope.request_id,
             data,
             meta: envelope.meta,
-        })
+        };
+        self.upgrade.apply_if_open(|| result).map_err(|required| required.as_error())
     }
 
     fn endpoint(&self, path: &str) -> Result<Url, ApiError> {
@@ -540,6 +614,42 @@ mod tests {
     const TEST_PROMPT_ID: &str = "prompt-matrix";
     const TEST_ORDER_ID: &str = "order-matrix";
     const TEST_QUOTE_ID: &str = "quote-matrix";
+    #[test]
+    fn core_saved_generation_lookup_rejects_wrong_payer_without_selected_header() {
+        let captured = CapturedRequests::serve_json_values(vec![generation_detail_json()]);
+        let client = authenticated_test_client(captured.base_url.clone());
+        let scope = client.session().scope_for_user(TEST_USER_ID).unwrap();
+        let api = GenerationApi::new(client).with_saved_group("33333333-3333-4333-8333-333333333333");
+        assert!(api.task_scoped(TEST_TASK_ID, &scope).is_err());
+        let receipts = captured.finish();
+        assert_eq!(receipts.len(), 1);
+        assert!(receipts[0].header("X-Account-Group-ID").is_none());
+    }
+    #[test]
+    fn core_upgrade_error_is_recognized_before_unrelated_success_data_decoding() {
+        #[derive(Debug, serde::Deserialize)]
+        struct ExpectedSuccess { _expected_integer: u64 }
+        let captured = CapturedRequests::serve_sequence(vec![("426 Upgrade Required", r#"{"request_id":"upgrade-malformed-data","data":{"_expected_integer":"wrong-type"},"error":{"code":"client_upgrade_required","message":"untrusted","details":{"minimum_version":"1.2.3"}},"meta":null}"#)]);
+        let client = client_for(captured.base_url.clone(), Duration::from_secs(2));
+        let result = client.public_json::<ExpectedSuccess>(Method::GET, "/v1/agreements", None);
+        assert!(result.unwrap_err().is_client_update_required());
+        assert!(client.upgrade_latch().is_tripped());
+        assert_eq!(captured.finish().len(), 1);
+    }
+
+    #[test]
+    fn core_upgrade_transport_trips_all_clones_and_never_sends_a_later_request() {
+        let captured = CapturedRequests::serve_sequence(vec![("426 Upgrade Required", r#"{"request_id":"upgrade-fixture","data":null,"error":{"code":"client_upgrade_required","message":"untrusted-server-copy","details":{"minimum_version":"1.2.3"}},"meta":null}"#)]);
+        let client = client_for(captured.base_url.clone(), Duration::from_secs(2));
+        let sibling = client.clone();
+        let first = client.public_json::<Value>(Method::GET, "/v1/agreements", None).unwrap_err();
+        assert!(first.is_client_update_required());
+        assert!(sibling.upgrade_latch().is_tripped());
+        let second = sibling.public_json::<Value>(Method::GET, "/must-not-send", None).unwrap_err();
+        assert!(second.is_client_update_required());
+        assert!(!second.user_message().contains("untrusted-server-copy"));
+        assert_eq!(captured.finish().len(), 1);
+    }
 
     #[derive(Debug)]
     struct CapturedRequest {
@@ -1119,7 +1229,7 @@ mod tests {
         prompt_api
             .create_billing(&prompt_creation_request(), &scope)
             .unwrap();
-        prompt_api.retry_billing(TEST_PROMPT_ID, &scope).unwrap();
+        prompt_api.retry_billing(TEST_PROMPT_ID, "prompt-retry-key", &scope).unwrap();
         payment_api.order_scoped(TEST_ORDER_ID, &session).unwrap();
         payment_api.orders_billing(None, &scope).unwrap();
         account_api.credit_account_billing(&scope).unwrap();
@@ -1185,13 +1295,54 @@ mod tests {
             .create_order_billing("pro", "membership-order-key", &scope)
             .unwrap();
         membership_api
-            .create_upgrade_quote_billing("pro", &scope)
+            .create_upgrade_quote_billing("pro", "upgrade-order-key", &scope)
             .unwrap();
         membership_api
             .create_upgrade_order_billing(TEST_QUOTE_ID, "upgrade-order-key", &scope)
             .unwrap();
 
         capture.finish()
+    }
+
+    #[test]
+    fn upgrade_quote_identity_billing_api_sends_durable_key_and_exact_body() {
+        let capture = CapturedRequests::serve_json_values(vec![serde_json::json!({
+            "id": TEST_QUOTE_ID,
+            "target_plan_code": "pro",
+            "payable_amount_cents": "100",
+            "credit_delta": "500",
+            "expires_at": "2026-09-05T00:05:00Z"
+        })]);
+        let client = authenticated_test_client(capture.base_url());
+        let session = client.session().scope_for_user(TEST_USER_ID).unwrap();
+        let scope = BillingScope {
+            request: GroupRequestScope {
+                session,
+                account_group_id: TEST_GROUP_ID.to_string(),
+            },
+            context_epoch: 4,
+        };
+
+        MembershipApi::new(client)
+            .create_upgrade_quote_billing("pro", "upgrade-quote-key", &scope)
+            .unwrap();
+
+        let requests = capture.finish();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, "POST");
+        assert_eq!(requests[0].target, "/v1/membership/upgrade-quotes");
+        assert_eq!(
+            requests[0].header("x-account-group-id"),
+            Some(TEST_GROUP_ID)
+        );
+        assert_eq!(
+            requests[0].header("idempotency-key"),
+            Some("upgrade-quote-key")
+        );
+        assert_eq!(
+            requests[0].json_body(),
+            Some(&serde_json::json!({"target_plan_code": "pro"}))
+        );
     }
 
     #[test]
@@ -1210,6 +1361,7 @@ mod tests {
         ) -> Result<PromptOptimizationDetail, ApiError> = PromptOptimizationApi::create_billing;
         let _: fn(
             &PromptOptimizationApi,
+            &str,
             &str,
             &BillingScope,
         ) -> Result<PromptOptimizationDetail, ApiError> = PromptOptimizationApi::retry_billing;
@@ -1283,7 +1435,7 @@ mod tests {
             PaymentApi::create_credit_order_billing;
         let _: fn(&MembershipApi, &str, &str, &BillingScope) -> Result<OrderDetail, ApiError> =
             MembershipApi::create_order_billing;
-        let _: fn(&MembershipApi, &str, &BillingScope) -> Result<UpgradeQuote, ApiError> =
+        let _: fn(&MembershipApi, &str, &str, &BillingScope) -> Result<UpgradeQuote, ApiError> =
             MembershipApi::create_upgrade_quote_billing;
         let _: fn(&MembershipApi, &str, &str, &BillingScope) -> Result<OrderDetail, ApiError> =
             MembershipApi::create_upgrade_order_billing;
@@ -1318,8 +1470,8 @@ mod tests {
                 "POST",
                 &format!("/v1/prompt-optimizations/{TEST_PROMPT_ID}/retry"),
                 Some(TEST_GROUP_ID),
-                None,
-                None,
+                Some("prompt-retry-key"),
+                Some(serde_json::json!({"client_request_id":"prompt-retry-key"})),
             ),
             expected(
                 "GET",
@@ -1437,7 +1589,7 @@ mod tests {
                 "POST",
                 "/v1/membership/upgrade-quotes",
                 Some(TEST_GROUP_ID),
-                None,
+                Some("upgrade-order-key"),
                 Some(serde_json::json!({"target_plan_code": "pro"})),
             ),
             expected(

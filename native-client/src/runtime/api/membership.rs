@@ -143,6 +143,7 @@ impl MembershipApi {
     pub(crate) fn create_upgrade_quote_billing(
         &self,
         target_plan_code: &str,
+        client_request_id: &str,
         scope: &BillingScope,
     ) -> Result<UpgradeQuote, ApiError> {
         let body = serde_json::to_value(UpgradeQuoteRequest { target_plan_code })
@@ -152,7 +153,7 @@ impl MembershipApi {
                 Method::POST,
                 "/v1/membership/upgrade-quotes",
                 Some(body),
-                None,
+                Some(client_request_id),
                 scope,
             )
             .map(|response| response.data)

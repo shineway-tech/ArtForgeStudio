@@ -1,5 +1,391 @@
 use super::*;
 
+pub(super) struct PreparedActivationVisuals {
+    ui: PreparedUiProjection,
+    assets: GalleryVirtualSlot,
+    generations: GalleryVirtualSlot,
+    jobs: Vec<ActivationPreviewJob>,
+}
+#[derive(Clone, Copy)]
+enum ActivationPreviewKind { Gallery(PreviewCollection), Conversation, Reference }
+struct ActivationPreviewJob { kind: ActivationPreviewKind, id: String, path: String }
+pub(super) struct ActivationVisualEffects { persistence: PrivatePersistence, jobs: Vec<ActivationPreviewJob> }
+impl PreparedActivationVisuals {
+    pub(super) fn take_ui(&mut self) -> PreparedUiProjection { std::mem::take(&mut self.ui) }
+    pub(super) fn publish_metadata(mut self,app:&AppWindow,persistence:PrivatePersistence)->ActivationVisualEffects {
+        self.take_ui().publish(&app.global::<AppState>());
+        self.publish(persistence)
+    }
+    pub(super) fn publish(self, persistence: PrivatePersistence) -> ActivationVisualEffects {
+        GALLERY_VIRTUAL_STATE.with(|state| {
+            let mut state=state.borrow_mut();
+            state.assets=self.assets; state.generations=self.generations;
+        });
+        ActivationVisualEffects { persistence, jobs:self.jobs }
+    }
+}
+pub(super) fn prepare_activation_visuals(
+    store:&Store, category:&str, language:&str, asset_layout:&str, generation_layout:&str,
+) -> PreparedActivationVisuals {
+    prepare_private_visuals(store,category,language,asset_layout,generation_layout,None)
+}
+pub(super) fn prepare_delivery_visuals(app:&AppWindow,store:&Store)->PreparedActivationVisuals {
+    let state=app.global::<AppState>();
+    let category=resolve_category(&state.get_asset_type().to_string(),"");
+    prepare_private_visuals(store,&category,state.get_language().as_str(),state.get_asset_gallery_layout().as_str(),
+        state.get_generation_gallery_layout().as_str(),Some(&state))
+}
+fn prepare_private_visuals(
+    store:&Store,category:&str,language:&str,asset_layout:&str,generation_layout:&str,current:Option<&AppState>,
+)->PreparedActivationVisuals {
+    let mut ui=PreparedUiProjection::default();
+    let mut jobs=Vec::new();
+    let mut prepare_gallery=|collection, category:&str, layout:&str| {
+        let viewport=if current.is_some() {
+            GALLERY_VIRTUAL_STATE.with(|state|state.borrow_mut().slot_mut(collection).viewport)
+        } else { GalleryViewportState::default() };
+        let existing=current.map(|state|gallery_preview_images(&if collection==PreviewCollection::Assets{state.get_assets()}else{state.get_generations()})).unwrap_or_default();
+        let layout_mode=normalize_gallery_layout(layout).to_string();
+        let filtered=gallery_filtered_indices(store,collection,category);
+        let mut cache=build_gallery_layout(store,collection,&filtered,GalleryLayoutKey {
+            width_px:viewport.width.round() as i32,card_width_px:viewport.card_width.round() as i32,
+            layout_mode:layout_mode.clone(),category:category.into(),language:language.into(),loading_count:if collection==PreviewCollection::Generations{viewport.loading_count}else{0},
+        });
+        let window=select_gallery_window(&cache,viewport.top,viewport.height);
+        let source=gallery_collection_items(store,collection);
+        let mut items=Vec::new(); let mut placements=Vec::new();
+        for index in &window.rows {
+            let layout=&cache.rows[*index];
+            let asset=&source[layout.source_index];
+            let item_index=items.len() as i32;
+            items.push(to_asset_view_with_previews(asset,&existing));
+            placements.push(GalleryPlacement { item_index,x:layout.x,y:layout.y,width:layout.width,gap:layout.gap,masonry:layout.masonry });
+            if !asset.source_path.is_empty() && asset.source_path!="failed" && !existing.contains_key(&(asset.id.clone(),asset.source_path.clone())) {
+                jobs.push(ActivationPreviewJob { kind:ActivationPreviewKind::Gallery(collection),id:asset.id.clone(),path:asset.source_path.clone() });
+            }
+        }
+        let headers=window.headers.iter().map(|index| { let header=&cache.headers[*index];
+            GalleryHeader { title:header.title.clone().into(),y:header.y } }).collect::<Vec<_>>();
+        let items=ModelRc::new(VecModel::from(items));
+        let placements=ModelRc::new(VecModel::from(placements));
+        let headers=ModelRc::new(VecModel::from(headers));
+        let groups=ModelRc::new(VecModel::<AssetGroup>::default());
+        if collection==PreviewCollection::Generations {
+            ui.push(items,|state,value|state.set_generations(value));
+            ui.push(placements,|state,value|state.set_generation_layout_items(value));
+            ui.push(headers,|state,value|state.set_generation_layout_headers(value));
+            let loaders=window.loaders.iter().map(|index|{let loader=&cache.loaders[*index];
+                GalleryLoadingPlacement {sequence_index:loader.sequence_index,x:loader.x,y:loader.y,width:loader.width,gap:loader.gap}
+            }).collect::<Vec<_>>();
+            ui.push(ModelRc::new(VecModel::from(loaders)),|state,value|state.set_generation_layout_loaders(value));
+            ui.push(cache.content_height,|state,value|state.set_generation_layout_height(value));
+            ui.push(groups,|state,value|state.set_generation_groups(value));
+            ui.push(false,|state,value|state.set_generation_has_more(value));
+            ui.push(filtered.len().min(i32::MAX as usize) as i32,|state,value|state.set_generation_visible_limit(value));
+        } else {
+            ui.push(items,|state,value|state.set_assets(value));
+            ui.push(placements,|state,value|state.set_asset_layout_items(value));
+            ui.push(headers,|state,value|state.set_asset_layout_headers(value));
+            ui.push(cache.content_height,|state,value|state.set_asset_layout_height(value));
+            ui.push(groups,|state,value|state.set_asset_groups(value));
+            ui.push(false,|state,value|state.set_asset_has_more(value));
+            ui.push(filtered.len().min(i32::MAX as usize) as i32,|state,value|state.set_asset_visible_limit(value));
+        }
+        cache.published_window=Some(window);
+        GalleryVirtualSlot { viewport,layout_mode,cache:Some(cache) }
+    };
+    let asset_category=current.map(|state|state.get_asset_category_filter().to_string()).unwrap_or_else(||"all".into());
+    let assets=prepare_gallery(PreviewCollection::Assets,&asset_category,asset_layout);
+    let generations=prepare_gallery(PreviewCollection::Generations,category,generation_layout);
+    drop(prepare_gallery);
+    ui.push(asset_category.into(),|state,value|state.set_asset_category_filter(value));
+    ui.push(count_assets(store,"character"),|state,value|state.set_asset_character_count(value));
+    ui.push(count_assets(store,"scene"),|state,value|state.set_asset_scene_count(value));
+    ui.push(count_assets(store,"ui"),|state,value|state.set_asset_ui_count(value));
+    ui.push(count_assets(store,"effect"),|state,value|state.set_asset_effect_count(value));
+    ui.push(count_assets(store,"other"),|state,value|state.set_asset_other_count(value));
+    ui.push(store.assets.len().min(i32::MAX as usize) as i32,|state,value|state.set_asset_all_count(value));
+    let mut seen=BTreeSet::new(); let mut conversations=Vec::new();
+    for item in store.generations.iter().filter(|item|item.source_path!="failed" && !item.conversation_id.trim().is_empty()) {
+        if !seen.insert(item.conversation_id.clone()) { continue; }
+        conversations.push(ConversationItem { id:item.conversation_id.clone().into(),title:short_text(&item.title,10).into(),image:Image::default(),loading:false });
+        jobs.push(ActivationPreviewJob { kind:ActivationPreviewKind::Conversation,id:item.conversation_id.clone(),path:item.source_path.clone() });
+    }
+    if let Some(state)=current {
+        let placeholders=state.get_conversations().iter().filter(|row|row.loading && !seen.contains(row.id.as_str())).collect::<Vec<_>>();
+        conversations.splice(0..0,placeholders);
+    }
+    let current_conversation=current.map(|state|state.get_current_conversation_id()).filter(|id|conversations.iter().any(|row|row.id==*id))
+        .unwrap_or_else(||conversations.first().map(|row|row.id.clone()).unwrap_or_default());
+    ui.push(current_conversation,|state,value|state.set_current_conversation_id(value));
+    ui.push(ModelRc::new(VecModel::from(conversations)),|state,value|state.set_conversations(value));
+    for item in references_for_category(&store.references,category).iter().take(max_reference_images_for_category(category)) {
+        if !item.source_path.is_empty() { jobs.push(ActivationPreviewJob { kind:ActivationPreviewKind::Reference,id:item.id.clone(),path:item.source_path.clone() }); }
+    }
+    PreparedActivationVisuals { ui,assets,generations,jobs }
+}
+struct ActivationPreviewWorker { lease:NamespaceLease,cancel:Arc<std::sync::atomic::AtomicBool>,handle:std::thread::JoinHandle<()> }
+thread_local! {
+    static ACTIVATION_PREVIEW_WORKERS:RefCell<Vec<ActivationPreviewWorker>>=const { RefCell::new(Vec::new()) };
+    static ACTIVATION_PREVIEW_FAILURE:Cell<bool>=const { Cell::new(false) };
+    static ACTIVATION_PREVIEW_CLOSING:Cell<bool>=const { Cell::new(false) };
+}
+fn reap_activation_preview_workers() {
+    ACTIVATION_PREVIEW_WORKERS.with(|workers| {
+        let mut workers=workers.borrow_mut(); let mut index=0;
+        while index<workers.len() {
+            if workers[index].handle.is_finished() {
+                let worker=workers.swap_remove(index);
+                if worker.handle.join().is_err() { ACTIVATION_PREVIEW_FAILURE.with(|failed|failed.set(true)); }
+            } else { index+=1; }
+        }
+    });
+}
+pub(super) fn drain_activation_preview_workers_for_shutdown() -> Result<()> {
+    ACTIVATION_PREVIEW_CLOSING.with(|closing|closing.set(true));
+    let workers=ACTIVATION_PREVIEW_WORKERS.with(|workers|std::mem::take(&mut *workers.borrow_mut()));
+    for worker in &workers { worker.cancel.store(true,Ordering::SeqCst); }
+    for worker in workers { if worker.handle.join().is_err() { ACTIVATION_PREVIEW_FAILURE.with(|failed|failed.set(true)); } }
+    anyhow::ensure!(!ACTIVATION_PREVIEW_FAILURE.with(Cell::get),"activation preview worker failed");
+    Ok(())
+}
+#[cfg(test)]
+pub(super) fn drain_activation_preview_workers_for_lease_for_test(lease:&NamespaceLease)->Result<()> {
+    let workers=ACTIVATION_PREVIEW_WORKERS.with(|workers|{
+        let mut workers=workers.borrow_mut();let mut matching=Vec::new();let mut index=0;
+        while index<workers.len(){
+            if &workers[index].lease==lease {matching.push(workers.swap_remove(index));}else{index+=1;}
+        }
+        matching
+    });
+    for worker in &workers {worker.cancel.store(true,Ordering::SeqCst);}
+    for worker in workers {if worker.handle.join().is_err(){ACTIVATION_PREVIEW_FAILURE.with(|failed|failed.set(true));}}
+    anyhow::ensure!(!ACTIVATION_PREVIEW_FAILURE.with(Cell::get),"activation preview worker failed");
+    Ok(())
+}
+pub(super) fn start_activation_visual_effects(app:&AppWindow,context:AppContext,effects:ActivationVisualEffects) {
+    if ACTIVATION_PREVIEW_CLOSING.with(Cell::get) { return; }
+    let ActivationVisualEffects { persistence,jobs }=effects;
+    if jobs.is_empty() { return; }
+    let Ok(activity)=persistence.begin_activity() else { return; };
+    let cancel=Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_cancel=cancel.clone(); let captured=persistence.clone();
+    let (sender,receiver)=mpsc::sync_channel(4);
+    let worker=std::thread::Builder::new().name("activation-previews".into()).spawn(move || {
+        for job in jobs {
+            if worker_cancel.load(Ordering::SeqCst) || activity.is_quiescing() { break; }
+            let purpose=if matches!(job.kind,ActivationPreviewKind::Gallery(_)) { PreviewPurpose::Gallery } else { PreviewPurpose::Reference };
+            let Ok(preview)=prepare_owned_preview(&captured,Path::new(&job.path),purpose) else { continue; };
+            let mut value=(job,preview);
+            loop {
+                if worker_cancel.load(Ordering::SeqCst) || activity.is_quiescing() || !captured.is_current() { return; }
+                match sender.try_send(value) {
+                    Ok(())=>break,
+                    Err(mpsc::TrySendError::Disconnected(_))=>return,
+                    Err(mpsc::TrySendError::Full(pending))=>{ value=pending; std::thread::sleep(Duration::from_millis(5)); },
+                }
+            }
+        }
+        drop(activity);
+    });
+    let Ok(handle)=worker else { return; };
+    ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow_mut().push(ActivationPreviewWorker { lease:persistence.lease().clone(),cancel,handle }));
+    poll_activation_previews(app.as_weak(),context,persistence,receiver);
+}
+fn poll_activation_previews(weak:Weak<AppWindow>,context:AppContext,persistence:PrivatePersistence,receiver:mpsc::Receiver<(ActivationPreviewJob,PreparedDeliveryPreview)>) {
+    slint::Timer::single_shot(Duration::from_millis(50),move || {
+        reap_activation_preview_workers();
+        let Some(app)=weak.upgrade() else { return; };
+        loop {
+            let (job,preview)=match receiver.try_recv() {
+                Ok(value)=>value,
+                Err(TryRecvError::Empty)=>{ poll_activation_previews(weak,context,persistence,receiver); return; },
+                Err(TryRecvError::Disconnected)=>return,
+            };
+            if !context.store.borrow().private_persistence.as_ref().is_some_and(|current|current.same_binding(&persistence)) { return; }
+            let _=context.apply_user_completion(persistence.lease(),|| {
+                let state=app.global::<AppState>();
+                let image=materialize_delivery_preview(&preview);
+                match job.kind {
+                    ActivationPreviewKind::Gallery(collection)=>{
+                        let model=if collection==PreviewCollection::Assets { state.get_assets() } else { state.get_generations() };
+                        for index in 0..model.row_count() {
+                            if let Some(mut row)=model.row_data(index).filter(|row|row.id.as_str()==job.id && row.source_path.as_str()==job.path) {
+                                row.image=image; model.set_row_data(index,row); break;
+                            }
+                        }
+                    }
+                    ActivationPreviewKind::Reference=>{
+                        if state.get_page()!="generation" { return; }
+                        let model=state.get_references();
+                        for index in 0..model.row_count() {
+                            if let Some(mut row)=model.row_data(index).filter(|row|row.id.as_str()==job.id && row.source_path.as_str()==job.path) {
+                                row.image=image; model.set_row_data(index,row); break;
+                            }
+                        }
+                    }
+                    ActivationPreviewKind::Conversation=>{
+                        if state.get_page()!="generation" || !context.store.borrow().generations.iter()
+                            .find(|item|item.conversation_id==job.id && item.source_path!="failed")
+                            .is_some_and(|item|item.source_path==job.path) { return; }
+                        let model=state.get_conversations();
+                        for index in 0..model.row_count() {
+                            if let Some(mut row)=model.row_data(index).filter(|row|row.id.as_str()==job.id) {
+                                row.image=image; model.set_row_data(index,row); break;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+}
+
+
+pub(super) fn prepare_startup_projection(store:&Store,category:&str,initial_prompt:&str) -> PreparedUiProjection {
+    let mut ui=PreparedUiProjection::default();
+    let history = recent_prompt_history(
+        store
+            .generations
+            .iter()
+            .map(|item| item.prompt.as_str())
+            .filter(|prompt| !store.dismissed_prompt_history.contains(prompt.trim())),
+        20,
+    );
+    if history.is_empty() {
+        ui.push(false, |state, value| state.set_prompt_history_open(value));
+    }
+    ui.push(ModelRc::new(VecModel::from(
+        history
+            .iter()
+            .map(|prompt| SharedString::from(single_line_prompt_preview(prompt)))
+            .collect::<Vec<_>>(),
+    )), |state, value| state.set_prompt_history_previews(value));
+    ui.push(ModelRc::new(VecModel::from(
+        history
+            .into_iter()
+            .map(SharedString::from)
+            .collect::<Vec<_>>(),
+    )), |state, value| state.set_prompt_history(value));    let category = category.to_owned();
+    let items = store
+        .custom_prompts
+        .iter()
+        .map(|prompt| {
+            let profile = store.custom_prompt_profiles.get(prompt);
+            let preview = single_line_prompt_preview(prompt);
+            let name = profile
+                .map(|profile| profile.name.trim())
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| preview.chars().take(48).collect());
+            CustomPromptItem {
+                name: name.into(),
+                preview: preview.into(),
+                content: prompt.clone().into(),
+                selected: custom_prompt_selected_for_category(store, &category, prompt),
+                prefix: "".into(),
+                start_offset: -1,
+                end_offset: -1,
+                category: normalized_custom_prompt_category(
+                    profile
+                        .map(|profile| profile.category.as_str())
+                        .unwrap_or("default"),
+                )
+                .into(),
+                format: normalized_custom_prompt_format(
+                    profile
+                        .map(|profile| profile.format.as_str())
+                        .unwrap_or("json"),
+                )
+                .into(),
+                time: store
+                    .custom_prompt_times
+                    .get(prompt)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into(),
+            }
+        })
+        .collect::<Vec<_>>();
+    let replacements = selected_custom_prompt_replacements_for_category(store, &category);
+    let mut prompt = initial_prompt.to_owned();
+    let missing = replacements
+        .iter()
+        .filter(|(name, _)| !prompt.contains(&inline_custom_prompt_display_text(name)))
+        .map(|(name, _)| inline_custom_prompt_display_text(name))
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        let mut migrated = missing.join(" ");
+        if !prompt.is_empty() && prompt != "//" {
+            migrated.push(' ');
+            migrated.push_str(&prompt);
+        }
+        prompt = migrated;
+        ui.push(prompt.clone().into(), |state, value| state.set_prompt(value));
+    }
+    let selected_items = inline_custom_prompt_occurrences(&prompt, &replacements)
+        .into_iter()
+        .filter_map(|occurrence| {
+            let mut item = items
+                .iter()
+                .find(|item| item.content.as_str() == occurrence.content)
+                .cloned()?;
+            item.name = occurrence.name.into();
+            item.prefix = occurrence.prefix.into();
+            item.start_offset = occurrence.start_offset;
+            item.end_offset = occurrence.end_offset;
+            Some(item)
+        })
+        .collect::<Vec<_>>();
+    ui.push(ModelRc::new(VecModel::from(selected_items)), |state, value| state.set_selected_custom_prompt_items(value));
+    ui.push(ModelRc::new(VecModel::from(items)), |state, value| state.set_custom_prompt_items(value));
+    ui.push(ModelRc::new(VecModel::from(
+        store
+            .custom_prompts
+            .iter()
+            .map(|prompt| SharedString::from(single_line_prompt_preview(prompt)))
+            .collect::<Vec<_>>(),
+    )), |state, value| state.set_custom_prompt_previews(value));
+    ui.push(ModelRc::new(VecModel::from(
+        store
+            .custom_prompts
+            .iter()
+            .cloned()
+            .map(SharedString::from)
+            .collect::<Vec<_>>(),
+    )), |state, value| state.set_custom_prompts(value));    let has_unread = store.notifications.iter().any(|n| !n.read);
+    ui.push(has_unread, |state, value| state.set_has_unread(value));
+    ui.push(ModelRc::new(VecModel::from(
+        store
+            .notifications
+            .iter()
+            .map(|n| NotificationItem {
+                id: n.id.clone().into(),
+                title: n.title.clone().into(),
+                model: n.model.clone().into(),
+                time: n.time.clone().into(),
+                reason: n.reason.clone().into(),
+                success: n.success,
+                read: n.read,
+            })
+            .collect::<Vec<_>>(),
+    )), |state, value| state.set_notifications(value));
+    let references=references_for_category(&store.references,&category).iter().take(max_reference_images_for_category(&category))
+        .map(|reference|ReferenceItem { id:reference.id.clone().into(),source_path:reference.source_path.clone().into(),image:Image::default() }).collect::<Vec<_>>();
+    ui.push(ModelRc::new(VecModel::from(references)),|state,value|state.set_references(value));
+    ui
+}
+pub(super) fn prepare_model_groups_projection(groups:&[ModelGroupData]) -> PreparedUiProjection {
+    let mut ui=PreparedUiProjection::default();
+    let options=|kind|groups.iter().filter(|group|group.kind==kind).flat_map(|group|group.models.iter().map(|model|ModelOption {
+        code:model.code.clone().into(),name:format!("{} / {}",group.name,model.name).into()
+    })).collect::<Vec<_>>();
+    ui.push(ModelRc::new(VecModel::from(options("image"))),|state,value|state.set_model_image_options(value));
+    ui.push(ModelRc::new(VecModel::from(options("reasoning"))),|state,value|state.set_model_reasoning_options(value));
+    ui.push(ModelRc::new(VecModel::from(groups.iter().map(to_model_group_view).collect::<Vec<_>>())),|state,value|state.set_model_groups(value));
+    ui
+}
+
 const GALLERY_PAGE_SIZE: i32 = 24;
 const GALLERY_OVERSCAN_SCREENS: f32 = 1.0;
 const MAX_GALLERY_WINDOW_ITEMS: usize = 192;
@@ -112,6 +498,228 @@ impl GalleryVirtualState {
 
 thread_local! {
     static GALLERY_VIRTUAL_STATE: RefCell<GalleryVirtualState> = RefCell::new(GalleryVirtualState::default());
+}
+
+// Real owned-file tests for the pure projection/registered preview producer.
+#[cfg(test)]
+mod core_owned_viewer_projection_tests {
+    use super::*;
+    struct Fixture(video_image_callbacks::tests::scoped_inputs::Fixture);
+    impl std::ops::Deref for Fixture {type Target=video_image_callbacks::tests::scoped_inputs::Fixture;fn deref(&self)->&Self::Target{&self.0}}
+    impl Drop for Fixture {fn drop(&mut self) {
+        let preview=drain_activation_preview_workers_for_lease_for_test(self.persistence.lease());
+        let delivery=drain_delivery_commit_workers_for_lease_for_test(self.persistence.lease());
+        let retired=self.context.user_activity.begin_quiesce(self.persistence.lease()).map(|guard|guard.retire());
+        if !std::thread::panicking(){preview.unwrap();delivery.unwrap();retired.unwrap();}
+    }}
+    fn setup()->(Fixture,AppWindow) {
+        i_slint_backend_testing::init_no_event_loop();
+        let f=Fixture(video_image_callbacks::tests::scoped_inputs::Fixture::new());
+        let pixels=image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(80,120,image::Rgba([53,79,107,255])));
+        let path=persist_reference_image_for_namespace(&f.authority,&pixels).unwrap();
+        f.context.store.borrow_mut().assets.push(AssetData {
+            id:"original-viewer".into(),conversation_id:String::new(),title:"Owned viewer".into(),category:"character".into(),
+            kind:"game".into(),time:"2026-09-08 01:00".into(),prompt:"original prompt".into(),ratio:"2:3".into(),
+            quality:"1K".into(),model:"original model".into(),origin:"backend".into(),width:80,height:120,
+            source_path:path.to_string_lossy().into_owned(),reference_paths:Vec::new(),cutout_done:false,
+            remove_black_done:false,upscale_done:false,is_new:false,delivery_recoverable:false,delivery_downloading:false,
+        });
+        let app=AppWindow::new().unwrap();app.global::<AppState>().set_page("assets".into());
+        (f,app)
+    }
+    fn publish(f:&Fixture,app:&AppWindow)->ViewerPreviewEffects {
+        let prepared=prepare_viewer_projection(app,&f.context.store.borrow(),"original-viewer","asset").unwrap();
+        f.context.apply_user_completion(f.persistence.lease(),||prepared.publish_metadata(app)).unwrap()
+    }
+    fn pump(mut done:impl FnMut()->bool) {
+        let end=Instant::now()+Duration::from_secs(5);
+        while !done() && Instant::now()<end {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(50));
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(done(),"actual owned viewer preview boundary missing");
+    }
+    fn join_without_publishing(f:&Fixture) {
+        let end=Instant::now()+Duration::from_secs(3);
+        loop {
+            reap_activation_preview_workers();
+            if ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow().iter().all(|worker|&worker.lease!=f.persistence.lease())) {return;}
+            assert!(Instant::now()<end,"actual viewer preview worker did not exit");
+            std::thread::yield_now();
+        }
+    }
+    #[test]
+    fn core_viewer_projection_is_pure_and_registered_owned_preview_reaches_original_target() {
+        let(f,app)=setup();let effects=publish(&f,&app);
+        assert!(ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow().is_empty()));
+        assert!(app.global::<AppState>().get_viewer_open());
+        assert_eq!(app.global::<AppState>().get_viewer_title(),"Owned viewer");
+        assert_eq!(app.global::<AppState>().get_viewer_image().size().width,0);
+        start_viewer_preview_effects(&app,f.context.clone(),f.persistence.clone(),effects);
+        assert!(ACTIVATION_PREVIEW_WORKERS.with(|workers|!workers.borrow().is_empty()));
+        pump(||app.global::<AppState>().get_viewer_image().size().width>0);
+        assert_eq!(app.global::<AppState>().get_viewer_image().size().height,120);
+        assert!(ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow().is_empty()),"success follows actual join");
+    }
+    #[test]
+    fn core_viewer_preview_closed_presentation_rejects_already_prepared_original_pixels() {
+        let(f,app)=setup();let effects=publish(&f,&app);
+        start_viewer_preview_effects(&app,f.context.clone(),f.persistence.clone(),effects);
+        join_without_publishing(&f);
+        app.global::<AppState>().set_viewer_open(false);
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(100));
+        assert_eq!(app.global::<AppState>().get_viewer_image().size().width,0);
+        assert!(!app.global::<AppState>().get_viewer_open());
+    }
+    #[test]
+    fn core_viewer_preview_same_lease_replacement_binding_and_upgrade_never_publish() {
+        let(f,app)=setup();let effects=publish(&f,&app);
+        let original=f.persistence.clone();
+        start_viewer_preview_effects(&app,f.context.clone(),original.clone(),effects);
+        join_without_publishing(&f);
+        let replacement=PrivatePersistence::for_test_with_storage((*f.writer).clone(),original.lease().clone(),
+            f.context.user_activity.clone(),original.upgrade_latch().clone(),f.context.data_root_capability.clone().unwrap(),
+            f.context.backend.as_ref().unwrap().api.clone(),f.context.file_index.clone().unwrap());
+        f.context.store.borrow_mut().private_persistence=Some(replacement);
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(100));
+        assert_eq!(app.global::<AppState>().get_viewer_image().size().width,0);
+        f.context.store.borrow_mut().private_persistence=Some(original.clone());
+        let effects=publish(&f,&app);
+        original.upgrade_latch().trip(RequiredUpgrade{minimum_version:None});
+        start_viewer_preview_effects(&app,f.context.clone(),original,effects);
+        assert!(ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow().is_empty()));
+    }
+    #[test]
+    fn core_category_reference_projection_uses_exact_explicit_category_and_owned_preview() {
+        let(f,app)=setup();let path=f.context.store.borrow().assets[0].source_path.clone();
+        f.context.store.borrow_mut().references.character=vec![ReferenceData{id:"character-owned".into(),source_path:path}];
+        let prepared=prepare_category_reference_projection(&app,&f.context.store.borrow(),"character");
+        let effects=f.context.apply_user_completion(f.persistence.lease(),||prepared.publish_metadata(&app)).unwrap();
+        assert_eq!(app.global::<AppState>().get_references().row_data(0).unwrap().id,"character-owned");
+        app.global::<AppState>().set_page("generation".into());
+        start_canvas_reference_preview_effects(&app,f.persistence.clone(),effects);
+        pump(||app.global::<AppState>().get_references().row_data(0).unwrap().image.size().width>0);
+    }
+}
+
+// Pure viewer projection and original-namespace registered preview producer.
+pub(super) struct PreparedViewerProjection {
+    ui:PreparedUiProjection,
+    target:ViewerPreviewTarget,
+}
+#[derive(Clone)]
+struct ViewerPreviewTarget {
+    binding:PrivatePersistence,page:String,id:String,source:String,path:String,
+}
+pub(super) struct ViewerPreviewEffects {target:ViewerPreviewTarget,epoch:Option<u64>}
+impl PreparedViewerProjection {
+    /// Already-admitted publication only: no new permits, I/O, callbacks, or worker starts.
+    pub(super) fn publish_metadata(self,app:&AppWindow)->ViewerPreviewEffects {
+        let epoch=VIEWER_PREVIEW_EPOCH.fetch_update(Ordering::AcqRel,Ordering::Acquire,
+            |value|value.checked_add(1).filter(|next|*next<u64::MAX)).ok().map(|value|value+1);
+        if epoch.is_some(){self.ui.publish(&app.global::<AppState>());}
+        ViewerPreviewEffects{target:self.target,epoch}
+    }
+}
+impl ViewerPreviewTarget {
+    /// No admission acquisition: called again inside the original completion.
+    fn matches(&self,app:&AppWindow,context:&AppContext)->bool {
+        let store=context.store.borrow();
+        if !store.private_persistence.as_ref().is_some_and(|current|current.same_binding_metadata(&self.binding)) {return false;}
+        let state=app.global::<AppState>();
+        state.get_page()==self.page && state.get_viewer_open() && !state.get_cutout_open()
+            && state.get_viewer_id()==self.id && state.get_viewer_source()==self.source
+            && state.get_viewer_source_path()==self.path
+            && viewer_item(&store,&self.id,&self.source).is_some_and(|item|item.source_path==self.path)
+    }
+}
+pub(super) fn prepare_viewer_projection(app:&AppWindow,store:&Store,id:&str,source:&str)->Option<PreparedViewerProjection> {
+    if !matches!(source,"asset"|"generation"|"inspiration"){return None;}
+    let item=viewer_item(store,id,source)?;
+    let binding=store.private_persistence.clone()?;
+    let state=app.global::<AppState>();
+    let placeholders=match source {"asset"=>state.get_assets(),"inspiration"=>state.get_inspiration(),_=>state.get_generations()};
+    let image=placeholders.iter().find(|row|row.id.as_str()==id && row.source_path.as_str()==item.source_path)
+        .map(|row|row.image).unwrap_or_default();
+    let prompt=readable_deep_prompt(&item.prompt,&store.deep_prompt_bindings);
+    let(width,height)=if item.width>32 && item.height>32 {(item.width,item.height)}
+        else{pixel_dimensions_for(&item.ratio,&item.quality)};
+    let mut ui=PreparedUiProjection::default();
+    ui.push("".into(),|state,value|state.set_viewer_message(value));
+    ui.push(item.id.clone().into(),|state,value|state.set_viewer_id(value));
+    ui.push(source.into(),|state,value|state.set_viewer_source(value));
+    ui.push(item.category.clone().into(),|state,value|state.set_viewer_category(value));
+    ui.push(item.source_path.clone().into(),|state,value|state.set_viewer_source_path(value));
+    ui.push(image,|state,value|state.set_viewer_image(value));
+    ui.push(item.title.clone().into(),|state,value|state.set_viewer_title(value));
+    ui.push(estimated_prompt_lines(&prompt),|state,value|state.set_viewer_prompt_lines(value));
+    ui.push(prompt.into(),|state,value|state.set_viewer_prompt(value));
+    ui.push(item.time.clone().into(),|state,value|state.set_viewer_time(value));
+    ui.push(item.ratio.clone().into(),|state,value|state.set_viewer_ratio(value));
+    ui.push(item.quality.clone().into(),|state,value|state.set_viewer_quality(value));
+    ui.push(item.model.clone().into(),|state,value|state.set_viewer_model(value));
+    ui.push(!matches!(item.origin.as_str(),"watermark_removal"|"image_enhancement"|"image_colorization"|"image_crop"),
+        |state,value|state.set_viewer_repeat_enabled(value));
+    ui.push(item.cutout_done,|state,value|state.set_viewer_cutout_done(value));
+    ui.push(item.remove_black_done,|state,value|state.set_viewer_remove_black_done(value));
+    ui.push(item.upscale_done,|state,value|state.set_viewer_upscale_done(value));
+    ui.push(width,|state,value|state.set_viewer_width(value));
+    ui.push(height,|state,value|state.set_viewer_height(value));
+    ui.push(true,|state,value|state.set_viewer_open(value));
+    Some(PreparedViewerProjection {ui,target:ViewerPreviewTarget {
+        binding,page:state.get_page().into(),id:item.id.clone(),source:source.into(),path:item.source_path.clone(),
+    }})
+}
+pub(super) fn start_viewer_preview_effects(app:&AppWindow,context:AppContext,persistence:PrivatePersistence,effects:ViewerPreviewEffects) {
+    let Some(epoch)=effects.epoch else{return;};
+    let target=effects.target;
+    if target.path.trim().is_empty() || target.path=="failed" || !target.binding.same_binding_metadata(&persistence)
+        || !target.matches(app,&context) || !persistence.is_current()
+        || ACTIVATION_PREVIEW_CLOSING.with(Cell::get) || ACTIVATION_PREVIEW_FAILURE.with(Cell::get){return;}
+    let Ok(activity)=persistence.begin_activity()else{return;};
+    let captured=persistence.clone();let path=target.path.clone();
+    let cancel=Arc::new(std::sync::atomic::AtomicBool::new(false));let worker_cancel=cancel.clone();
+    let(sender,receiver)=mpsc::channel();
+    let worker=std::thread::Builder::new().name("owned-viewer-preview".into()).spawn(move||{
+        if worker_cancel.load(Ordering::Acquire) || activity.is_quiescing()
+            || VIEWER_PREVIEW_EPOCH.load(Ordering::Acquire)!=epoch{return;}
+        let result=prepare_owned_preview(&captured,Path::new(&path),PreviewPurpose::Viewer);
+        if !worker_cancel.load(Ordering::Acquire) && !activity.is_quiescing()
+            && VIEWER_PREVIEW_EPOCH.load(Ordering::Acquire)==epoch && captured.is_current() {
+            let _=sender.send(result);
+        }
+        drop(activity);
+    });
+    let Ok(handle)=worker else{return;};
+    ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow_mut().push(ActivationPreviewWorker {
+        lease:persistence.lease().clone(),cancel:cancel.clone(),handle,
+    }));
+    poll_owned_viewer_preview(app.as_weak(),context,persistence,target,epoch,cancel,receiver);
+}
+fn poll_owned_viewer_preview(weak:Weak<AppWindow>,context:AppContext,persistence:PrivatePersistence,
+    target:ViewerPreviewTarget,epoch:u64,cancel:Arc<std::sync::atomic::AtomicBool>,
+    receiver:mpsc::Receiver<Result<PreparedDeliveryPreview>>) {
+    slint::Timer::single_shot(Duration::from_millis(50),move||{
+        reap_activation_preview_workers();
+        let Some(app)=weak.upgrade()else{cancel.store(true,Ordering::Release);return;};
+        if !persistence.is_current() || VIEWER_PREVIEW_EPOCH.load(Ordering::Acquire)!=epoch
+            || !target.matches(&app,&context) || ACTIVATION_PREVIEW_FAILURE.with(Cell::get) {
+            cancel.store(true,Ordering::Release);return;
+        }
+        if ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow().iter().any(|worker|Arc::ptr_eq(&worker.cancel,&cancel))) {
+            poll_owned_viewer_preview(weak,context,persistence,target,epoch,cancel,receiver);return;
+        }
+        let Ok(Ok(preview))=receiver.try_recv()else{return;};
+        let image=materialize_delivery_preview(&preview);
+        let _=context.apply_user_completion(persistence.lease(),||{
+            if !cancel.load(Ordering::Acquire) && VIEWER_PREVIEW_EPOCH.load(Ordering::Acquire)==epoch
+                && target.matches(&app,&context) {app.global::<AppState>().set_viewer_image(image);}
+        });
+    });
+}
+pub(super) fn prepare_category_reference_projection(app:&AppWindow,store:&Store,category:&str)->PreparedCanvasReferenceProjection {
+    prepare_reference_projection(app,references_for_category(&store.references,category),
+        max_reference_images_for_category(category),store.private_persistence.clone())
 }
 
 pub(super) fn open_viewer(app: &AppWindow, store: &Store, id: &str, source: &str) {
@@ -379,6 +987,169 @@ pub(super) fn push_startup_state(app: &AppWindow, store: &Store) {
     push_notifications(app, store);
 }
 
+pub(super) fn clear_private_page_models(state: &AppState) {
+    release_inactive_page_images(state, "");
+}
+/// Account retirement clears private metadata and actionable paths, unlike navigation's
+/// preview eviction, which intentionally retains page rows for the same user.
+pub(super) fn clear_retired_private_projection(state: &AppState) {
+    clear_private_page_models(state);
+    state.set_video_model_options(ModelRc::new(VecModel::default()));
+    state.set_custom_prompt_recovered_request_id("".into());
+    state.set_prompt_history(ModelRc::new(VecModel::default()));
+    state.set_prompt_history_previews(ModelRc::new(VecModel::default()));
+    state.set_custom_prompts(ModelRc::new(VecModel::default()));
+    state.set_custom_prompt_previews(ModelRc::new(VecModel::default()));
+    state.set_custom_prompt_items(ModelRc::new(VecModel::default()));
+    state.set_selected_custom_prompt_items(ModelRc::new(VecModel::default()));
+    state.set_custom_prompt_name("".into());
+    state.set_custom_prompt_input("".into());
+    state.set_custom_prompt_editor_session_id("".into());
+    state.set_custom_prompt_category("default".into());
+    state.set_custom_prompt_format("json".into());
+    state.set_custom_prompt_negative("".into());
+    state.set_custom_prompt_reference_path("".into());
+    state.set_custom_prompt_reference_image(Image::default());
+    state.set_custom_prompt_reference_items(ModelRc::new(VecModel::default()));
+    state.set_custom_prompt_message("".into());
+    state.set_custom_prompt_analyzing(false);
+    state.set_custom_prompt_editing_original("".into());
+    state.set_custom_prompt_open(false);
+    state.set_custom_prompt_editor_open(false);
+    state.set_custom_prompt_editor_return_page("settings".into());
+    state.set_compression_images(ModelRc::new(VecModel::default()));
+    state.set_compression_processing(false);
+    state.set_compression_saving(false);
+    state.set_compression_has_results(false);
+    state.set_compression_message("".into());
+    state.set_conversion_images(ModelRc::new(VecModel::default()));
+    state.set_conversion_processing(false);
+    state.set_conversion_saving(false);
+    state.set_conversion_has_results(false);
+    state.set_conversion_message("".into());
+    state.set_crop_source_path("".into());
+    state.set_crop_source_name("".into());
+    state.set_crop_source_image(Image::default());
+    state.set_crop_transform_steps("".into());
+    state.set_crop_ratio("original".into());
+    state.set_crop_processing(false);
+    state.set_crop_message("".into());
+    state.set_enhance_source_path("".into());
+    state.set_enhance_source_name("".into());
+    state.set_enhance_source_image(Image::default());
+    state.set_enhance_result_path("".into());
+    state.set_enhance_result_name("".into());
+    state.set_enhance_result_image(Image::default());
+    state.set_enhance_quality("2K".into());
+    state.set_enhance_estimated_credits("20".into());
+    state.set_enhance_processing(false);
+    state.set_enhance_message("".into());
+    state.set_watermark_source_path("".into());
+    state.set_watermark_source_name("".into());
+    state.set_watermark_source_image(Image::default());
+    state.set_watermark_result_path("".into());
+    state.set_watermark_result_name("".into());
+    state.set_watermark_result_image(Image::default());
+    state.set_watermark_estimated_credits("20".into());
+    state.set_watermark_processing(false);
+    state.set_watermark_message("".into());
+    state.set_colorize_source_path("".into());
+    state.set_colorize_source_name("".into());
+    state.set_colorize_source_image(Image::default());
+    state.set_colorize_result_path("".into());
+    state.set_colorize_result_name("".into());
+    state.set_colorize_result_image(Image::default());
+    state.set_colorize_estimated_credits("20".into());
+    state.set_colorize_processing(false);
+    state.set_colorize_message("".into());
+    state.set_canvas_workflow_id("".into());
+    state.set_canvas_workflow_title("".into());
+    state.set_canvas_workflow_prompt("".into());
+    state.set_canvas_workflow_template("".into());
+    state.set_canvas_workflow_hint("".into());
+    state.set_canvas_workflow_artwork(Image::default());
+    state.set_canvas_node_info_open(false);
+    state.set_canvas_group_name_edit_id("".into());
+    state.set_canvas_group_name_edit_value("".into());
+    state.set_canvas_node_info_tab("info".into());
+    state.set_canvas_node_info_id("".into());
+    state.set_canvas_node_info_kind("".into());
+    state.set_canvas_node_info_status("idle".into());
+    state.set_canvas_node_info_json("".into());
+    state.set_quote_title("".into());
+    state.set_quote_prompt("".into());
+    state.set_quote_ratio("".into());
+    state.set_quote_quality("".into());
+    state.set_current_conversation_id("".into());
+    state.set_viewer_open(false);
+    state.set_viewer_source("".into());
+    state.set_viewer_category("".into());
+    state.set_viewer_id("".into());
+    state.set_viewer_source_path("".into());
+    state.set_viewer_image(Image::default());
+    state.set_viewer_title("".into());
+    state.set_viewer_prompt("".into());
+    state.set_viewer_time("".into());
+    state.set_viewer_ratio("".into());
+    state.set_viewer_quality("".into());
+    state.set_viewer_model("".into());
+    state.set_viewer_repeat_enabled(false);
+    state.set_viewer_message("".into());
+    state.set_viewer_processing(false);
+    state.set_viewer_processing_label("".into());
+    state.set_viewer_cutout_done(false);
+    state.set_viewer_remove_black_done(false);
+    state.set_viewer_upscale_done(false);
+    state.set_video_source_id("".into());
+    state.set_video_images(ModelRc::new(VecModel::default()));
+    state.set_video_asset_choices(ModelRc::new(VecModel::default()));
+    state.set_video_image_dialog("".into());
+    state.set_video_images_loading(false);
+    state.set_video_images_status("".into());
+    state.set_video_source_path("".into());
+    state.set_video_source_file_id("".into());
+    state.set_video_source_image(Image::default());
+    state.set_video_source_title("".into());
+    state.set_video_prompt("".into());
+    state.set_video_prompt_expanded_open(false);
+    state.set_video_prompt_request_id("".into());
+    state.set_video_prompt_status("".into());
+    state.set_video_aspect_ratio("16:9".into());
+    state.set_video_resolution("720P".into());
+    state.set_video_quote_loading(false);
+    state.set_video_quote_ready(false);
+    state.set_video_credit_cost("".into());
+    state.set_video_quote_id("".into());
+    state.set_video_model("".into());
+    state.set_video_model_name("".into());
+    state.set_video_model_description("".into());
+    state.set_video_service_available(false);
+    state.set_video_status("".into());
+    state.set_video_generating(false);
+    state.set_video_result_path("".into());
+    state.set_video_task_id("".into());
+    state.set_video_return_page("generation".into());
+    state.set_image_editor_image(Image::default());
+    state.set_image_editor_source_path("".into());
+    state.set_image_editor_brush_shape("circle".into());
+    state.set_image_editor_points(ModelRc::new(VecModel::default()));
+    state.set_image_editor_prompt("".into());
+    state.set_image_editor_status("".into());
+    state.set_image_editor_generating(false);
+    state.set_image_editor_return_page("generation".into());
+    state.set_image_editor_model("".into());
+    state.set_image_editor_model_name("".into());
+    state.set_image_editor_quality("1K".into());
+    state.set_cutout_open(false);
+    state.set_cutout_type("general".into());
+    state.set_cutout_message("".into());
+    state.set_cutout_processing(false);
+    state.set_cutout_result_path("".into());
+    state.set_cutout_result_name("".into());
+    state.set_cutout_result_image(Image::default());
+    state.set_cutout_estimated_credits("20".into());
+}
+
 fn release_inactive_page_images(state: &AppState, target_page: &str) {
     if target_page != "assets" {
         cancel_gallery_previews(PreviewCollection::Assets);
@@ -399,7 +1170,7 @@ fn release_inactive_page_images(state: &AppState, target_page: &str) {
         cancel_gallery_previews(PreviewCollection::Generations);
         invalidate_virtual_gallery(PreviewCollection::Generations);
         CONVERSATION_PREVIEW_EPOCH.fetch_add(1, Ordering::AcqRel);
-        REFERENCE_PREVIEW_EPOCH.fetch_add(1, Ordering::AcqRel);
+        let _ = REFERENCE_PREVIEW_EPOCH.fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| value.checked_add(1));
         state.set_generation_visible_limit(GALLERY_PAGE_SIZE);
         state.set_generations(ModelRc::new(VecModel::<AssetItem>::default()));
         state.set_generation_groups(ModelRc::new(VecModel::<AssetGroup>::default()));
@@ -773,9 +1544,38 @@ pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
     )));
 }
 
+pub(super) struct PreparedCanvasProjection {
+    notes: ModelRc<CanvasNote>,
+    links: ModelRc<CanvasLink>,
+    tasks: Vec<(String, String)>,
+}
+pub(super) struct CanvasPreviewEffects {
+    epoch: Option<u64>,
+    tasks: Vec<(String, String)>,
+}
+impl PreparedCanvasProjection {
+    /// Pure projection only. No filesystem access, worker admission or spawn.
+    pub(super) fn publish_metadata(self, app: &AppWindow) -> CanvasPreviewEffects {
+        let epoch = CANVAS_PREVIEW_EPOCH.fetch_update(Ordering::AcqRel, Ordering::Acquire,
+            |value| value.checked_add(1)).ok().map(|value| value + 1);
+        let state = app.global::<AppState>();
+        state.set_canvas_notes(self.notes);
+        state.set_canvas_links(self.links);
+        CanvasPreviewEffects { epoch, tasks: self.tasks }
+    }
+}
+
 pub(super) fn push_canvas_notes(app: &AppWindow, store: &Store) {
+    let Some(persistence) = store.private_persistence.clone() else { return; };
+    let Ok(activity) = persistence.begin_activity() else { return; };
+    let prepared = prepare_canvas_projection(app, store);
+    let effects = persistence.upgrade_latch().apply_if_open(|| prepared.publish_metadata(app));
+    drop(activity);
+    if let Ok(effects) = effects { start_canvas_preview_effects(app, persistence, effects); }
+}
+
+pub(super) fn prepare_canvas_projection(app: &AppWindow, store: &Store) -> PreparedCanvasProjection {
     let state = app.global::<AppState>();
-    let preview_epoch = CANVAS_PREVIEW_EPOCH.fetch_add(1, Ordering::AcqRel) + 1;
     let linked_inputs = canvas_linked_inputs(store);
     let existing_previews = state
         .get_canvas_notes()
@@ -842,9 +1642,8 @@ pub(super) fn push_canvas_notes(app: &AppWindow, store: &Store) {
             }
         })
         .collect::<Vec<_>>();
-    state.set_canvas_notes(ModelRc::new(VecModel::from(canvas_views)));
-    schedule_canvas_previews(app, preview_epoch, preview_tasks);
-    state.set_canvas_links(ModelRc::new(VecModel::from(
+    let notes = ModelRc::new(VecModel::from(canvas_views));
+    let links = ModelRc::new(VecModel::from(
         store
             .canvas_links
             .iter()
@@ -871,56 +1670,79 @@ pub(super) fn push_canvas_notes(app: &AppWindow, store: &Store) {
                 })
             })
             .collect::<Vec<_>>(),
-    )));
+    ));
+    PreparedCanvasProjection { notes, links, tasks: preview_tasks }
 }
 
-fn schedule_canvas_previews(
-    app: &AppWindow,
-    preview_epoch: u64,
-    tasks: Vec<(String, String)>,
-) {
-    if tasks.is_empty() {
-        return;
-    }
-    let weak = app.as_weak();
-    let _ = std::thread::Builder::new()
-        .name("canvas-preview-loader".to_string())
-        .spawn(move || {
-            for (note_id, source_path) in tasks {
-                if CANVAS_PREVIEW_EPOCH.load(Ordering::Acquire) != preview_epoch {
-                    return;
+pub(super) fn start_canvas_preview_effects(app: &AppWindow, persistence: PrivatePersistence, effects: CanvasPreviewEffects) {
+    let Some(epoch) = effects.epoch else { return; };
+    if effects.tasks.is_empty() || ACTIVATION_PREVIEW_CLOSING.with(Cell::get)
+        || ACTIVATION_PREVIEW_FAILURE.with(Cell::get) { return; }
+    let Ok(activity) = persistence.begin_activity() else { return; };
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_cancel = cancel.clone();
+    let captured = persistence.clone();
+    let (sender, receiver) = mpsc::sync_channel(4);
+    let worker = std::thread::Builder::new().name("owned-canvas-previews".into()).spawn(move || {
+        for (id, path) in effects.tasks {
+            if worker_cancel.load(Ordering::Acquire) || activity.is_quiescing()
+                || CANVAS_PREVIEW_EPOCH.load(Ordering::Acquire) != epoch { break; }
+            let Ok(preview) = prepare_owned_preview(&captured, Path::new(&path), PreviewPurpose::Canvas) else { continue; };
+            let mut value = (id, path, preview);
+            loop {
+                if worker_cancel.load(Ordering::Acquire) || activity.is_quiescing()
+                    || CANVAS_PREVIEW_EPOCH.load(Ordering::Acquire) != epoch || !captured.is_current() { return; }
+                match sender.try_send(value) {
+                    Ok(()) => break,
+                    Err(mpsc::TrySendError::Disconnected(_)) => return,
+                    Err(mpsc::TrySendError::Full(pending)) => {
+                        value = pending; std::thread::sleep(Duration::from_millis(5));
+                    }
                 }
-                let Ok(Some(prepared)) = prepare_original_image_if(
-                    Path::new(&source_path),
-                    || CANVAS_PREVIEW_EPOCH.load(Ordering::Acquire) == preview_epoch,
-                )
-                else {
-                    continue;
-                };
-                let weak = weak.clone();
-                let _ = weak.upgrade_in_event_loop(move |app| {
-                    if CANVAS_PREVIEW_EPOCH.load(Ordering::Acquire) != preview_epoch
-                        || app.global::<AppState>().get_page().as_str() != "canvas"
-                    {
-                        return;
-                    }
-                    let image = materialize_prepared_preview(prepared);
-                    let notes = app.global::<AppState>().get_canvas_notes();
-                    for row in 0..notes.row_count() {
-                        let Some(mut note) = notes.row_data(row) else {
-                            continue;
-                        };
-                        if note.id.as_str() == note_id
-                            && note.image_path.as_str() == source_path
-                        {
-                            note.preview_image = image.clone();
-                            notes.set_row_data(row, note);
-                            break;
-                        }
-                    }
-                });
             }
-        });
+        }
+        drop(activity);
+    });
+    let Ok(handle) = worker else { return; };
+    ACTIVATION_PREVIEW_WORKERS.with(|workers| workers.borrow_mut().push(ActivationPreviewWorker {
+        lease: persistence.lease().clone(), cancel, handle,
+    }));
+    poll_canvas_previews(app.as_weak(), persistence, epoch, receiver);
+}
+fn poll_canvas_previews(weak: Weak<AppWindow>, persistence: PrivatePersistence, epoch: u64,
+    receiver: mpsc::Receiver<(String, String, PreparedDeliveryPreview)>) {
+    slint::Timer::single_shot(Duration::from_millis(50), move || {
+        reap_activation_preview_workers();
+        let Some(app) = weak.upgrade() else { return; };
+        if CANVAS_PREVIEW_EPOCH.load(Ordering::Acquire) != epoch || !persistence.is_current() { return; }
+        loop {
+            let (id, path, preview) = match receiver.try_recv() {
+                Ok(value) => value,
+                Err(TryRecvError::Empty) => { poll_canvas_previews(weak, persistence, epoch, receiver); return; }
+                Err(TryRecvError::Disconnected) => return,
+            };
+            let Ok(activity) = persistence.begin_activity() else { return; };
+            let _ = persistence.upgrade_latch().apply_if_open(|| {
+                let state = app.global::<AppState>();
+                if CANVAS_PREVIEW_EPOCH.load(Ordering::Acquire) != epoch || state.get_page() != "canvas" { return; }
+                let model = state.get_canvas_notes();
+                for index in 0..model.row_count() {
+                    if let Some(mut row) = model.row_data(index)
+                        .filter(|row| row.id.as_str() == id && row.image_path.as_str() == path) {
+                        row.preview_image = materialize_delivery_preview(&preview);
+                        model.set_row_data(index, row); break;
+                    }
+                }
+            });
+            drop(activity);
+        }
+    });
+}
+#[cfg(test)]
+pub(super) fn drain_canvas_preview_workers_for_lease_for_test(lease: &NamespaceLease) -> Result<()> {
+    // Canvas workers are registered in this exact owned preview registry.
+    // This takes and joins all matching handles; it never resets or closes it.
+    drain_activation_preview_workers_for_lease_for_test(lease)
 }
 
 fn canvas_linked_inputs(store: &Store) -> BTreeMap<String, String> {
@@ -2407,98 +3229,213 @@ pub(super) fn push_references(app: &AppWindow, store: &Store) {
         app,
         references_for_category(&store.references, &category),
         max_references,
+        store.private_persistence.clone(),
     );
 }
 
-pub(super) fn push_canvas_references(app: &AppWindow, store: &Store) {
-    push_reference_items(app, &store.canvas_references, MAX_REFERENCE_IMAGES);
+pub(super) struct PreparedCanvasReferenceProjection {
+    model: ModelRc<ReferenceItem>, tasks: Vec<(String,String)>, binding: Option<PrivatePersistence>,
 }
-
-fn push_reference_items(
-    app: &AppWindow,
-    source: &[ReferenceData],
-    max_references: usize,
-) {
-    let state = app.global::<AppState>();
-    let preview_epoch = REFERENCE_PREVIEW_EPOCH.fetch_add(1, Ordering::AcqRel) + 1;
-    let existing_previews = state
-        .get_references()
-        .iter()
-        .filter(|item| item.image.size().width > 0 && item.image.size().height > 0)
-        .map(|item| {
-            (
-                (item.id.to_string(), item.source_path.to_string()),
-                item.image,
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    let mut preview_tasks = Vec::new();
-    let references = source
-        .iter()
-        .take(max_references)
-        .map(|item| {
-            let key = (item.id.clone(), item.source_path.clone());
-            let image = existing_previews.get(&key).cloned().unwrap_or_default();
-            if image.size().width == 0 && !item.source_path.trim().is_empty() {
-                preview_tasks.push((item.id.clone(), item.source_path.clone()));
-            }
-            ReferenceItem {
-                id: item.id.clone().into(),
-                image,
-                source_path: item.source_path.clone().into(),
-            }
-        })
-        .collect::<Vec<_>>();
-    state.set_references(ModelRc::new(VecModel::from(references)));
-    schedule_reference_previews(app, preview_epoch, preview_tasks);
+pub(super) struct CanvasReferencePreviewEffects {
+    model: ModelRc<ReferenceItem>, tasks: Vec<(String,String)>, epoch: Option<u64>, binding: Option<PrivatePersistence>,
 }
-
-fn schedule_reference_previews(
-    app: &AppWindow,
-    preview_epoch: u64,
-    tasks: Vec<(String, String)>,
-) {
-    if tasks.is_empty() {
-        return;
+impl PreparedCanvasReferenceProjection {
+    /// Already-admitted UI publication: only the prepared model and epoch change.
+    /// No authority acquisition, filesystem work, worker start or join occurs here.
+    pub(super) fn publish_metadata(self,app:&AppWindow)->CanvasReferencePreviewEffects {
+        let epoch=if self.binding.is_some(){
+            REFERENCE_PREVIEW_EPOCH.fetch_update(Ordering::AcqRel,Ordering::Acquire,
+                |value|value.checked_add(1).filter(|next|*next<u64::MAX)).ok().map(|value|value+1)
+        }else{None};
+        if epoch.is_some(){app.global::<AppState>().set_references(self.model.clone());}
+        CanvasReferencePreviewEffects{model:self.model,tasks:self.tasks,epoch,binding:self.binding}
     }
-    let weak = app.as_weak();
-    let _ = std::thread::Builder::new()
-        .name("reference-preview-loader".to_string())
-        .spawn(move || {
-            for (reference_id, source_path) in tasks {
-                let Ok(Some(prepared)) = prepare_preview_image_if(
-                    Path::new(&source_path),
-                    PreviewPurpose::Reference,
-                    || REFERENCE_PREVIEW_EPOCH.load(Ordering::Acquire) == preview_epoch,
-                ) else {
-                    continue;
-                };
-                let weak = weak.clone();
-                let _ = weak.upgrade_in_event_loop(move |app| {
-                    if REFERENCE_PREVIEW_EPOCH.load(Ordering::Acquire) != preview_epoch
-                        || !reference_preview_page_is_visible(
-                            app.global::<AppState>().get_page().as_str(),
-                        )
-                    {
-                        return;
-                    }
-                    let image = materialize_prepared_preview(prepared);
-                    let references = app.global::<AppState>().get_references();
-                    for row in 0..references.row_count() {
-                        let Some(mut item) = references.row_data(row) else {
-                            continue;
-                        };
-                        if item.id.as_str() == reference_id
-                            && item.source_path.as_str() == source_path
-                        {
-                            item.image = image.clone();
-                            references.set_row_data(row, item);
-                            break;
-                        }
-                    }
-                });
+}
+pub(super) fn prepare_canvas_reference_projection(app:&AppWindow,store:&Store)->PreparedCanvasReferenceProjection {
+    prepare_reference_projection(app,&store.canvas_references,MAX_REFERENCE_IMAGES,store.private_persistence.clone())
+}
+fn prepare_reference_projection(app:&AppWindow,source:&[ReferenceData],max_references:usize,
+    binding:Option<PrivatePersistence>)->PreparedCanvasReferenceProjection {
+    let existing=app.global::<AppState>().get_references().iter()
+        .filter(|item|item.image.size().width>0 && item.image.size().height>0)
+        .map(|item|((item.id.to_string(),item.source_path.to_string()),item.image)).collect::<BTreeMap<_,_>>();
+    let mut tasks=Vec::new();
+    let items=source.iter().take(max_references).map(|item|{
+        let image=existing.get(&(item.id.clone(),item.source_path.clone())).cloned().unwrap_or_default();
+        if image.size().width==0 && !item.source_path.trim().is_empty(){tasks.push((item.id.clone(),item.source_path.clone()));}
+        ReferenceItem{id:item.id.clone().into(),image,source_path:item.source_path.clone().into()}
+    }).collect::<Vec<_>>();
+    PreparedCanvasReferenceProjection{model:ModelRc::new(VecModel::from(items)),tasks,binding}
+}
+pub(super) fn push_canvas_references(app:&AppWindow,store:&Store){
+    push_reference_items(app,&store.canvas_references,MAX_REFERENCE_IMAGES,store.private_persistence.clone());
+}
+fn push_reference_items(app:&AppWindow,source:&[ReferenceData],max_references:usize,persistence:Option<PrivatePersistence>){
+    let Some(persistence)=persistence else{return;};
+    let projection=prepare_reference_projection(app,source,max_references,Some(persistence.clone()));
+    let Ok(activity)=persistence.begin_activity()else{return;};
+    let effects=persistence.upgrade_latch().apply_if_open(||projection.publish_metadata(app));
+    drop(activity);
+    if let Ok(effects)=effects{start_canvas_reference_preview_effects(app,persistence,effects);}
+}
+#[cfg(test)]
+thread_local! {
+    static REFERENCE_PREVIEW_WORKER_HOOK:RefCell<Option<Box<dyn FnOnce()+Send>>>=const{RefCell::new(None)};
+    static REFERENCE_PREVIEW_FULL_HOOK:RefCell<Option<Box<dyn FnOnce()+Send>>>=const{RefCell::new(None)};
+}
+pub(super) fn start_canvas_reference_preview_effects(app:&AppWindow,persistence:PrivatePersistence,effects:CanvasReferencePreviewEffects){
+    let Some(epoch)=effects.epoch else{return;};
+    if effects.tasks.is_empty() || ACTIVATION_PREVIEW_CLOSING.with(Cell::get)
+        || ACTIVATION_PREVIEW_FAILURE.with(Cell::get)
+        || !effects.binding.as_ref().is_some_and(|binding|binding.same_binding_metadata(&persistence))
+        || !persistence.is_current(){return;}
+    let Ok(activity)=persistence.begin_activity()else{return;};
+    let cancel=Arc::new(std::sync::atomic::AtomicBool::new(false));let worker_cancel=cancel.clone();let captured=persistence.clone();
+    let(sender,receiver)=mpsc::sync_channel(4);
+    #[cfg(test)]
+    let hook=REFERENCE_PREVIEW_WORKER_HOOK.with(|hook|hook.borrow_mut().take());
+    #[cfg(test)]
+    let mut full_hook=REFERENCE_PREVIEW_FULL_HOOK.with(|hook|hook.borrow_mut().take());
+    let worker=std::thread::Builder::new().name("owned-reference-previews".into()).spawn(move||{
+        #[cfg(test)]
+        if let Some(hook)=hook{hook();}
+        for(id,path)in effects.tasks{
+            if worker_cancel.load(Ordering::Acquire) || activity.is_quiescing()
+                || REFERENCE_PREVIEW_EPOCH.load(Ordering::Acquire)!=epoch{break;}
+            let Ok(preview)=prepare_owned_preview(&captured,Path::new(&path),PreviewPurpose::Reference)else{continue;};
+            let mut value=(id,path,preview);
+            loop{
+                if worker_cancel.load(Ordering::Acquire) || activity.is_quiescing()
+                    || REFERENCE_PREVIEW_EPOCH.load(Ordering::Acquire)!=epoch || !captured.is_current(){return;}
+                match sender.try_send(value){
+                    Ok(())=>break,Err(mpsc::TrySendError::Disconnected(_))=>return,
+                    Err(mpsc::TrySendError::Full(pending))=>{
+                        #[cfg(test)]
+                        if let Some(hook)=full_hook.take(){hook();}
+                        value=pending;std::thread::sleep(Duration::from_millis(5));
+                    },
+                }
             }
-        });
+        }
+        drop(activity);
+    });
+    let Ok(handle)=worker else{return;};
+    ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow_mut().push(ActivationPreviewWorker{
+        lease:persistence.lease().clone(),cancel:cancel.clone(),handle,
+    }));
+    poll_owned_reference_previews(app.as_weak(),persistence,epoch,effects.model,cancel,receiver);
+}
+fn poll_owned_reference_previews(weak:Weak<AppWindow>,persistence:PrivatePersistence,epoch:u64,
+    model:ModelRc<ReferenceItem>,cancel:Arc<std::sync::atomic::AtomicBool>,
+    receiver:mpsc::Receiver<(String,String,PreparedDeliveryPreview)>){
+    slint::Timer::single_shot(Duration::from_millis(50),move||{
+        reap_activation_preview_workers();
+        let Some(app)=weak.upgrade()else{cancel.store(true,Ordering::Release);return;};
+        if cancel.load(Ordering::Acquire) || ACTIVATION_PREVIEW_FAILURE.with(Cell::get)
+            || REFERENCE_PREVIEW_EPOCH.load(Ordering::Acquire)!=epoch || !persistence.is_current()
+            || app.global::<AppState>().get_references()!=model{
+            cancel.store(true,Ordering::Release);return;
+        }
+        loop{
+            let(id,path,preview)=match receiver.try_recv(){
+                Ok(value)=>value,
+                Err(TryRecvError::Empty)=>{poll_owned_reference_previews(weak,persistence,epoch,model,cancel,receiver);return;},
+                Err(TryRecvError::Disconnected)=>return,
+            };
+            let Ok(activity)=persistence.begin_activity()else{cancel.store(true,Ordering::Release);return;};
+            let _=persistence.upgrade_latch().apply_if_open(||{
+                let state=app.global::<AppState>();
+                if cancel.load(Ordering::Acquire) || REFERENCE_PREVIEW_EPOCH.load(Ordering::Acquire)!=epoch
+                    || !reference_preview_page_is_visible(state.get_page().as_str()) || state.get_references()!=model{return;}
+                for row in 0..model.row_count(){
+                    if let Some(mut item)=model.row_data(row).filter(|item|item.id.as_str()==id && item.source_path.as_str()==path){
+                        item.image=materialize_delivery_preview(&preview);model.set_row_data(row,item);break;
+                    }
+                }
+            });
+            drop(activity);
+        }
+    });
+}
+
+#[cfg(test)]
+mod core_owned_reference_projection_tests {
+    use super::*;
+    struct Fixture(video_image_callbacks::tests::scoped_inputs::Fixture);
+    impl std::ops::Deref for Fixture{type Target=video_image_callbacks::tests::scoped_inputs::Fixture;fn deref(&self)->&Self::Target{&self.0}}
+    impl Drop for Fixture{fn drop(&mut self){
+        let previews=drain_activation_preview_workers_for_lease_for_test(self.persistence.lease());
+        let delivery=drain_delivery_commit_workers_for_lease_for_test(self.persistence.lease());
+        let activity=self.context.user_activity.begin_quiesce(self.persistence.lease()).map(|guard|guard.retire());
+        if !std::thread::panicking(){previews.unwrap();delivery.unwrap();activity.unwrap();}
+    }}
+    fn setup()->(Fixture,AppWindow){
+        i_slint_backend_testing::init_no_event_loop();
+        let f=Fixture(video_image_callbacks::tests::scoped_inputs::Fixture::new());let app=AppWindow::new().unwrap();
+        app.global::<AppState>().set_page("canvas".into());
+        let pixels=image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(80,80,image::Rgba([71,83,97,255])));
+        let path=persist_reference_image_for_namespace(&f.authority,&pixels).unwrap();
+        f.context.store.borrow_mut().canvas_references.push(ReferenceData{id:"canvas-owned-reference".into(),source_path:path.to_str().unwrap().into()});
+        (f,app)
+    }
+    fn publish(f:&Fixture,app:&AppWindow)->CanvasReferencePreviewEffects{
+        let prepared=prepare_canvas_reference_projection(app,&f.context.store.borrow());
+        f.context.apply_user_completion(f.persistence.lease(),||prepared.publish_metadata(app)).unwrap()
+    }
+    fn pump(mut done:impl FnMut()->bool){
+        let end=Instant::now()+Duration::from_secs(5);
+        while !done() && Instant::now()<end{i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(50));std::thread::sleep(Duration::from_millis(2));}
+        assert!(done(),"owned reference preview did not reach expected boundary");
+    }
+    #[test]
+    fn core_canvas_reference_projection_is_pure_under_completion_and_joins_owned_preview(){
+        let(f,app)=setup();let effects=publish(&f,&app);
+        assert_eq!(app.global::<AppState>().get_references().row_count(),1);
+        assert_eq!(app.global::<AppState>().get_references().row_data(0).unwrap().image.size().width,0);
+        assert!(ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow().is_empty()));
+        start_canvas_reference_preview_effects(&app,f.persistence.clone(),effects);
+        assert!(ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow().iter().any(|worker|&worker.lease==f.persistence.lease())));
+        pump(||app.global::<AppState>().get_references().row_data(0).unwrap().image.size().width>0);
+        drain_activation_preview_workers_for_lease_for_test(f.persistence.lease()).unwrap();
+        assert!(ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow().is_empty()));
+    }
+    #[test]
+    fn core_canvas_reference_preview_rejects_foreign_binding_before_registered_worker(){
+        let(f,app)=setup();let effects=publish(&f,&app);
+        let other=PrivatePersistence::for_test((*f.writer).clone(),f.persistence.lease().clone(),f.context.user_activity.clone(),f.persistence.upgrade_latch());
+        start_canvas_reference_preview_effects(&app,other,effects);
+        assert!(ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow().is_empty()));
+        assert_eq!(app.global::<AppState>().get_references().row_data(0).unwrap().image.size().width,0);
+    }
+    #[test]
+    fn core_canvas_reference_replaced_ui_model_never_receives_held_old_preview(){
+        let(f,app)=setup();let effects=publish(&f,&app);
+        let(started,observed)=mpsc::channel();let(release,wait)=mpsc::channel();
+        struct Release(Option<mpsc::Sender<()>>);impl Drop for Release{fn drop(&mut self){if let Some(sender)=self.0.take(){let _=sender.send(());}}}
+        let mut release=Release(Some(release));
+        REFERENCE_PREVIEW_WORKER_HOOK.with(|hook|*hook.borrow_mut()=Some(Box::new(move||{started.send(()).unwrap();wait.recv().unwrap();})));
+        start_canvas_reference_preview_effects(&app,f.persistence.clone(),effects);observed.recv_timeout(Duration::from_secs(5)).unwrap();
+        let old=app.global::<AppState>().get_references();
+        app.global::<AppState>().set_references(ModelRc::new(VecModel::from(old.iter().collect::<Vec<_>>())));
+        release.0.take().unwrap().send(()).unwrap();
+        pump(||{reap_activation_preview_workers();ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow().is_empty())});
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(100));
+        assert_eq!(app.global::<AppState>().get_references().row_data(0).unwrap().image.size().width,0);
+    }
+    #[test]
+    fn core_canvas_reference_window_loss_drains_a_real_full_preview_queue_before_root_drop(){
+        let(f,app)=setup();let first=f.context.store.borrow().canvas_references[0].clone();
+        f.context.store.borrow_mut().canvas_references=(0..8).map(|index|ReferenceData{id:format!("owned-{index}"),source_path:first.source_path.clone()}).collect();
+        let(full,observed)=mpsc::channel();
+        REFERENCE_PREVIEW_FULL_HOOK.with(|hook|*hook.borrow_mut()=Some(Box::new(move||{let _=full.send(());})));
+        let effects=publish(&f,&app);assert_eq!(effects.tasks.len(),8);
+        start_canvas_reference_preview_effects(&app,f.persistence.clone(),effects);
+        assert!(ACTIVATION_PREVIEW_WORKERS.with(|workers|!workers.borrow().is_empty()));
+        observed.recv_timeout(Duration::from_secs(5)).expect("actual bounded queue must become full before cancellation");
+        drop(app);
+        drain_activation_preview_workers_for_lease_for_test(f.persistence.lease()).unwrap();
+        assert!(ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow().is_empty()));
+    }
 }
 
 fn reference_preview_page_is_visible(page: &str) -> bool {

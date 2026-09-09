@@ -345,7 +345,7 @@ impl FileIndex {
         if !mode.eq_ignore_ascii_case("wal") {
             return Err(FileIndexError::Damaged("WAL mode unavailable".into()));
         }
-        connection.pragma_update(None, "synchronous", "NORMAL")?;
+        connection.pragma_update(None, "synchronous", "FULL")?;
         migration_checkpoint(3)?;
         migrate_schema(&mut connection)?;
         Ok(Self {
@@ -1067,6 +1067,75 @@ impl FileIndex {
 }
 
 impl FileIndex {
+    /// Delivery-private reconciliation of immutable original server content.
+    /// Discovery never opens the obsolete physical file. The complete original
+    /// row is compared under the held-file namespace guard and SQLite transaction.
+    /// All row identity, retention, timestamps, flags and child links are preserved.
+    pub(super) fn reconcile_verified_delivery_content(
+        &self,
+        proof: &super::delivery_retry::VerifiedDeliveryIndexContent<'_>,
+    ) -> FileIndexResult<ManagedFileRecord> {
+        let authority = proof.authority();
+        let user = authority.user_public_id();
+        proof.require_current().map_err(capability_error)?;
+        let before = {
+            let c = self.lock_connection()?;
+            query_key(&c, user, proof.file().key())?
+        };
+        if before.as_ref().is_some_and(|row| row.kind != "generation"
+            || row.retention_policy != "durable" || !row.managed || row.pending_delete) {
+            return Err(identity_conflict());
+        }
+        #[cfg(test)]
+        AFTER_DISCOVERY.with(|slot| {
+            let hook = slot.borrow_mut().take();
+            if let Some(hook) = hook { hook(); }
+        });
+        proof.require_current().map_err(capability_error)?;
+        authority.with_current_regular_files(
+            &[NamespaceManagedFileCheck { file: proof.file(), expected: Some(proof.metadata().identity) }],
+            |metadata| {
+                if metadata[0] != *proof.metadata() || metadata[0].link_count != 1 {
+                    return Err(identity_conflict().into());
+                }
+                let mut c = self.lock_connection()?;
+                let tx = c.transaction()?;
+                let current = query_key(&tx, user, proof.file().key())?;
+                if current != before { return Err(FileIndexError::ConcurrentChange.into()); }
+                let physical = query_identity(&tx, user, metadata[0].identity)?;
+                if physical.as_ref().is_some_and(|row|
+                    current.as_ref().map(|current| current.id) != Some(row.id)) {
+                    return Err(identity_conflict().into());
+                }
+                let bytes = to_sql_i64("byte_size", metadata[0].byte_size)?;
+                if let Some(row) = &current {
+                    if row.physical_identity != metadata[0].identity || row.byte_size != metadata[0].byte_size {
+                        let changed = tx.execute(
+                            "UPDATE managed_files SET physical_identity=?3,byte_size=?4 WHERE user_public_id=?1 AND id=?2",
+                            params![user,row.id.0,metadata[0].identity.to_storage_bytes(),bytes])?;
+                        if changed != 1 { return Err(FileIndexError::ConcurrentChange.into()); }
+                    }
+                } else {
+                    let timestamp = now_millis();
+                    let key = proof.file().key();
+                    tx.execute("INSERT INTO managed_files(user_public_id,managed_area,path,physical_identity,kind,byte_size,managed,retention_policy,created_at,last_accessed_at,pending_delete) VALUES(?1,?2,?3,?4,'generation',?5,1,'durable',?6,?6,0)",
+                        params![user,key.area().storage_name(),key.relative_name().as_str(),
+                            metadata[0].identity.to_storage_bytes(),bytes,timestamp])?;
+                }
+                let result = query_key(&tx, user, proof.file().key())?
+                    .ok_or(FileIndexError::ConcurrentChange)?;
+                tx.commit()?;
+                Ok(result)
+            },
+        ).map_err(capability_error)
+    }
+    #[cfg(test)]
+    pub(super) fn delivery_reconcile_after_discovery_for_test(hook: impl FnOnce() + 'static) {
+        AFTER_DISCOVERY.with(|slot| {
+            assert!(slot.borrow().is_none(), "previous delivery discovery hook remains");
+            *slot.borrow_mut() = Some(Box::new(hook));
+        });
+    }
     pub(super) fn register_file_for_namespace(
         &self,
         authority: &NamespaceStorageAuthority,
@@ -2657,7 +2726,7 @@ mod tests {
         assert_eq!(
             c.query_row("PRAGMA synchronous", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            1
+            2
         );
         assert_eq!(
             c.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, i64>(0))

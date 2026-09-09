@@ -822,21 +822,10 @@ fn poll_password_reset_result(
                     state.set_password_reset_status("客户端服务尚未就绪，请重试".into());
                     return;
                 };
-                match backend
-                    .api
-                    .session()
-                    .install_tokens_for_user(&response.tokens, &response.user.id)
-                {
-                    Ok(_) => {
-                        clear_password_reset_state(&state);
-                        state.set_auth_password("".into());
-                        finish_login(&app, &context, response, None);
-                        refresh_backend_snapshot(&app, context);
-                    }
-                    Err(error) => {
-                        state.set_session_state("signed_out".into());
-                        state.set_password_reset_status(error.user_message().into());
-                    }
+                if let Some(coordinator) = context.account_transition.clone() {
+                    clear_password_reset_state(&state);
+                    state.set_auth_password("".into());
+                    coordinator.activate_authenticated(&app, context, response, LoginOrigin::Password, None);
                 }
             }
             Err(error) => {

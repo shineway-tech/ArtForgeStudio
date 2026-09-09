@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::atomic::AtomicBool;
 
 pub(super) fn viewer_item<'a>(store: &'a Store, id: &str, source: &str) -> Option<&'a AssetData> {
     match source {
@@ -430,6 +431,73 @@ pub(super) fn remove_black_pixels(rgba: &mut [u8]) {
         pixel[2] = lut[base + blue as usize];
         pixel[3] = ((original_alpha as u16 * alpha as u16) >> 8) as u8;
     }
+}
+
+pub(super) struct PreparedRemoveBlackImage {
+    pub(super) path: PathBuf,
+    pub(super) item: AssetData,
+    pub(super) preview_rgba: Vec<u8>,
+    pub(super) width: u32,
+    pub(super) height: u32,
+    lease: NamespaceLease,
+}
+
+impl PreparedRemoveBlackImage {
+    pub(super) fn lease(&self) -> &NamespaceLease { &self.lease }
+}
+
+pub(super) fn prepare_remove_black_image(
+    persistence: &PrivatePersistence,
+    original: &AssetData,
+    cancel: &AtomicBool,
+) -> Result<PreparedRemoveBlackImage> {
+    anyhow::ensure!(!cancel.load(Ordering::SeqCst), "viewer processing cancelled");
+    let authority = persistence.storage_authority()?;
+    anyhow::ensure!(authority.lease() == persistence.lease(), "viewer processing lease changed");
+    let source_path = Path::new(&original.source_path);
+    let bytes = authority.read_image_source(source_path, 100 * 1024 * 1024)?;
+    let (image, _) = decode_image_bytes(source_path, &bytes)?;
+    let (width, height) = (image.width(), image.height());
+    anyhow::ensure!(width > 0 && height > 0, "viewer source dimensions invalid");
+    let mut rgba = image.to_rgba8().into_raw();
+    remove_black_pixels(&mut rgba);
+    anyhow::ensure!(!cancel.load(Ordering::SeqCst), "viewer processing cancelled");
+    let image = image::RgbaImage::from_raw(width, height, rgba.clone())
+        .ok_or_else(|| anyhow!("viewer processed pixels invalid"))?;
+    let encoded = encode_png_rgba(&image, width, height)?;
+    let stem = sanitize_filename(&format!("{}-去黑", short_text(&original.title, 18)));
+    let leaf = format!("{}-remove-black-{}.png", stem, Uuid::new_v4());
+    let key = ManagedFileKey::new(ManagedUserArea::Output, &leaf)?;
+    let _mutation = authority.begin_ordinary_mutation()?;
+    let mut temporary = authority.create_temporary_regular_for(&key)?;
+    authority.write_new_regular_from(&mut temporary, &mut std::io::Cursor::new(&encoded))?;
+    authority.sync_regular(&mut temporary)?;
+    authority.publish_regular(&mut temporary, NamespaceManagedPublication::Absent(&key))?;
+    let file = authority.open_existing_regular(&key)?;
+    let registration = NamespacedManagedFileRegistration::new(&authority, file, "image", "user")
+        .map_err(anyhow::Error::from)?;
+    authority.delivery_index()?.register_file_for_namespace(&authority, &registration)
+        .map_err(anyhow::Error::from)?;
+    anyhow::ensure!(!cancel.load(Ordering::SeqCst), "viewer processing cancelled");
+    let path = authority.lease().namespace.path(ManagedUserArea::Output).join(&leaf);
+    let item = AssetData {
+        id: Uuid::new_v4().to_string(),
+        conversation_id: original.conversation_id.clone(),
+        title: format!("{} 去黑", original.title),
+        category: original.category.clone(), kind: original.kind.clone(),
+        time: Local::now().format("%Y-%m-%d %H:%M").to_string(),
+        prompt: original.prompt.clone(),
+        ratio: ratio_from_actual_dimensions(width as i32, height as i32),
+        quality: original.quality.clone(), model: "本地处理".into(),
+        origin: original.origin.clone(), width: width as i32, height: height as i32,
+        source_path: path.to_string_lossy().into_owned(), reference_paths: original.reference_paths.clone(),
+        cutout_done: original.cutout_done, remove_black_done: true,
+        upscale_done: original.upscale_done, is_new: false,
+        delivery_recoverable: false, delivery_downloading: false,
+    };
+    Ok(PreparedRemoveBlackImage {
+        path, item, preview_rgba: rgba, width, height, lease: persistence.lease().clone(),
+    })
 }
 
 fn unmult_lut() -> &'static [u8] {

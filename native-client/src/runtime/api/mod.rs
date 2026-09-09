@@ -16,6 +16,8 @@ mod prompt_optimization;
 mod session;
 mod team;
 mod types;
+mod upgrade;
+pub(crate) use upgrade::*;
 
 #[cfg(test)]
 mod cross_stack_tests;

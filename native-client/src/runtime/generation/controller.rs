@@ -1,185 +1,550 @@
 use super::*;
 
+struct DeliveryCommitWorker {
+    lease:NamespaceLease,cancel:Arc<std::sync::atomic::AtomicBool>,handle:std::thread::JoinHandle<()>,
+}
+thread_local! {
+    static DELIVERY_COMMIT_WORKERS:RefCell<Vec<DeliveryCommitWorker>>=const {RefCell::new(Vec::new())};
+    static DELIVERY_COMMIT_CLOSING:Cell<bool>=const {Cell::new(false)};
+    static DELIVERY_COMMIT_FAILED:Cell<bool>=const {Cell::new(false)};
+}
+#[cfg(test)]
+thread_local! {
+    static DELIVERY_PREPARATION_AFTER_SEND:RefCell<Option<Box<dyn FnOnce()+Send>>>=const {RefCell::new(None)};
+}
+/// Test-only final worker boundary, consumed by the next real preparation spawn.
+#[cfg(test)]
+pub(super) fn set_delivery_preparation_after_send_for_test(hook:impl FnOnce()+Send+'static) {
+    DELIVERY_PREPARATION_AFTER_SEND.with(|slot| {
+        assert!(slot.borrow().is_none(),"delivery after-send hook already installed");
+        *slot.borrow_mut()=Some(Box::new(hook));
+    });
+}
+pub(super) fn cancel_delivery_commit_workers(lease:&NamespaceLease) {
+    DELIVERY_COMMIT_WORKERS.with(|workers|for worker in workers.borrow().iter().filter(|worker|&worker.lease==lease) {
+        worker.cancel.store(true,Ordering::SeqCst);
+    });
+}
+fn reap_delivery_commit_workers() {
+    let ready=DELIVERY_COMMIT_WORKERS.with(|workers|{
+        let mut workers=workers.borrow_mut();let mut ready=Vec::new();let mut index=0;
+        while index<workers.len() {if workers[index].handle.is_finished(){ready.push(workers.swap_remove(index));}else{index+=1;}}
+        ready
+    });
+    for worker in ready {if worker.handle.join().is_err(){DELIVERY_COMMIT_FAILED.with(|failed|failed.set(true));}}
+}
+
+pub(super) fn spawn_delivery_preparation<T:Send+'static>(
+    persistence:&PrivatePersistence,
+    work:impl FnOnce(&PrivatePersistence,&UserActivityPermit,&Arc<std::sync::atomic::AtomicBool>)
+        -> std::result::Result<T,DeliveryRetryError> + Send+'static,
+)->Result<(Arc<std::sync::atomic::AtomicBool>,mpsc::Receiver<std::result::Result<T,DeliveryRetryError>>)> {
+    reap_delivery_commit_workers();
+    anyhow::ensure!(!DELIVERY_COMMIT_CLOSING.with(Cell::get),"delivery worker admission closed");
+    anyhow::ensure!(!DELIVERY_COMMIT_FAILED.with(Cell::get),"delivery worker previously failed");
+    let activity=persistence.begin_activity()?;
+    let captured=persistence.clone();
+    let cancel=Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_cancel=cancel.clone();
+    let (sender,receiver)=mpsc::channel();
+    #[cfg(test)]
+    let after_send=DELIVERY_PREPARATION_AFTER_SEND.with(|slot|slot.borrow_mut().take());
+    let handle=std::thread::Builder::new().name("delivery-prepare".into()).spawn(move||{
+        let result=if worker_cancel.load(Ordering::SeqCst) || activity.is_quiescing() || !captured.is_current() {
+            Err(DeliveryRetryError::AuthenticationRequired)
+        } else { work(&captured,&activity,&worker_cancel) };
+        let _=sender.send(result);
+        #[cfg(test)]
+        if let Some(after_send)=after_send {after_send();}
+        drop(activity);
+    })?;
+    DELIVERY_COMMIT_WORKERS.with(|workers|workers.borrow_mut().push(DeliveryCommitWorker {
+        lease:persistence.lease().clone(),cancel:cancel.clone(),handle,
+    }));
+    Ok((cancel,receiver))
+}
+pub(super) fn delivery_preparation_pending(cancel:&Arc<std::sync::atomic::AtomicBool>)->bool {
+    reap_delivery_commit_workers();
+    DELIVERY_COMMIT_WORKERS.with(|workers|workers.borrow().iter().any(|worker|Arc::ptr_eq(&worker.cancel,cancel)))
+}
+/// A sent payload is not a completed worker. Call outside short completion;
+/// only Ok(false) permits consuming a success. Sticky failure survives reaping.
+pub(super) fn finish_delivery_preparation(cancel:&Arc<std::sync::atomic::AtomicBool>)->Result<bool> {
+    reap_delivery_commit_workers();
+    anyhow::ensure!(!DELIVERY_COMMIT_FAILED.with(Cell::get),"delivery worker previously failed");
+    Ok(DELIVERY_COMMIT_WORKERS.with(|workers|workers.borrow().iter().any(|worker|Arc::ptr_eq(&worker.cancel,cancel))))
+}
+pub(super) fn drain_delivery_commit_workers_for_shutdown()->Result<()> {
+    DELIVERY_COMMIT_CLOSING.with(|closing|closing.set(true));
+    let workers=DELIVERY_COMMIT_WORKERS.with(|workers|std::mem::take(&mut *workers.borrow_mut()));
+    for worker in &workers {worker.cancel.store(true,Ordering::SeqCst);}
+    for worker in workers {if worker.handle.join().is_err(){DELIVERY_COMMIT_FAILED.with(|failed|failed.set(true));}}
+    anyhow::ensure!(!DELIVERY_COMMIT_FAILED.with(Cell::get),"delivery commit worker failed");
+    Ok(())
+}
+#[cfg(test)]
+pub(super) fn drain_delivery_commit_workers_for_lease_for_test(lease:&NamespaceLease)->Result<()> {
+    let workers=DELIVERY_COMMIT_WORKERS.with(|workers|{
+        let mut workers=workers.borrow_mut();let mut matching=Vec::new();let mut index=0;
+        while index<workers.len(){
+            if &workers[index].lease==lease {matching.push(workers.swap_remove(index));}else{index+=1;}
+        }
+        matching
+    });
+    for worker in &workers {worker.cancel.store(true,Ordering::SeqCst);}
+    for worker in workers {if worker.handle.join().is_err(){DELIVERY_COMMIT_FAILED.with(|failed|failed.set(true));}}
+    anyhow::ensure!(!DELIVERY_COMMIT_FAILED.with(Cell::get),"delivery commit worker failed");
+    Ok(())
+}
+/// Completion is UI-only and original-lease guarded; the result distinguishes
+/// actual local acknowledgment from remote acknowledgment without deleting either intent.
+pub(super) fn start_image_delivery_commit(
+    app:&AppWindow,context:AppContext,prepared:PreparedNamespaceDelivery,time:String,
+    complete:impl FnOnce(&AppWindow,Result<(Image,String,bool)>)+'static,
+) {
+    start_image_delivery_commit_with_binding(app,context,None,prepared,time,complete);
+}
+pub(super) fn start_image_delivery_commit_captured(
+    app:&AppWindow,context:AppContext,persistence:PrivatePersistence,prepared:PreparedNamespaceDelivery,time:String,
+    complete:impl FnOnce(&AppWindow,Result<(Image,String,bool)>)+'static,
+) {
+    start_image_delivery_commit_with_binding(app,context,Some(persistence),prepared,time,complete);
+}
+fn start_image_delivery_commit_with_binding(
+    app:&AppWindow,context:AppContext,expected:Option<PrivatePersistence>,prepared:PreparedNamespaceDelivery,time:String,
+    complete:impl FnOnce(&AppWindow,Result<(Image,String,bool)>)+'static,
+) {
+    let lease=prepared.lease().clone();
+    let mut complete=Some(complete);
+    let prepared_write=(||->Result<_>{
+        reap_delivery_commit_workers();
+        anyhow::ensure!(!DELIVERY_COMMIT_CLOSING.with(Cell::get),"delivery worker admission closed");
+        anyhow::ensure!(!DELIVERY_COMMIT_FAILED.with(Cell::get),"delivery worker previously failed");
+        let persistence=context.store.borrow().private_persistence.clone().ok_or_else(||anyhow!("Store not activated"))?;
+        anyhow::ensure!(persistence.lease()==&lease && persistence.is_current()
+            && expected.as_ref().is_none_or(|original|original.same_binding_metadata(&persistence)),"delivery Store changed");
+        let write=persistence.prepare_ordered_save()?;
+        let activity=persistence.begin_activity()?;
+        Ok((persistence,write,activity))
+    })();
+    let (persistence,write,activity)=match prepared_write {
+        Ok(value)=>value,
+        Err(error)=>{
+            let _=context.apply_user_completion(&lease,||{
+                if expected.as_ref().is_none_or(|original|context.store.borrow().private_persistence.as_ref()
+                    .is_some_and(|current|current.same_binding_metadata(original))){
+                    complete.take().unwrap()(app,Err(error));
+                }
+            });
+            return;
+        }
+    };
+    let canvas_target=(!prepared.record().canvas_source_node_id.is_empty()).then(||
+        (prepared.record().canvas_source_node_id.clone(),prepared.record().local_task_id.clone()));
+    let image=materialize_delivery_preview(prepared.preview());
+    let mut write=Some(write);let mut prepared=Some(prepared);
+    let outcome=context.apply_user_completion(&lease,||{
+        if !context.store.borrow().private_persistence.as_ref().is_some_and(|current|current.same_binding_metadata(&persistence)){return None;}
+        let history=canvas_target.as_ref().and_then(|(source,_)|{
+            let store=context.store.borrow();
+            (store.canvas_notes.iter().any(|note|note.id==*source)
+                && !store.assets.iter().any(|asset|asset.id==prepared.as_ref().unwrap().confirmation().file_id))
+                .then(||CanvasSnapshot{notes:store.canvas_notes.clone(),links:store.canvas_links.clone()})
+        });
+        let asset_id=prepared.as_ref().unwrap().confirmation().file_id.clone();
+        let outcome=write.take().unwrap().enqueue_delivery(app,&mut context.store.borrow_mut(),prepared.take().unwrap(),&time);
+        if let Some(history)=history {
+            if context.store.borrow().assets.iter().any(|asset|asset.id==asset_id){context.canvas_history.borrow_mut().record(history);}
+        }
+        Some(outcome)
+    });
+    drop(write);drop(prepared);
+    let pending=match outcome.ok().flatten() {
+        Some(Ok(pending))=>pending,
+        Some(Err(error))=>{
+            let message=error.to_string();drop(error);drop(activity);
+            let _=context.apply_user_completion(&lease,||complete.take().unwrap()(app,Err(anyhow!(message))));
+            return;
+        },
+        None=>return,
+    };
+    let id=pending.asset_id().to_owned();
+    let cancel=Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_cancel=cancel.clone();
+    let captured=persistence.clone();
+    let (sender,receiver)=mpsc::channel();
+    let spawned=std::thread::Builder::new().name("delivery-store-ack".into()).spawn(move||{
+        let result:std::result::Result<bool,DeliveryRetryError>=pending.wait().map_err(DeliveryRetryError::from).and_then(|receipt|{
+            if worker_cancel.load(Ordering::SeqCst) || activity.is_quiescing() || !captured.is_current() {return Ok(false);}
+            match acknowledge_namespace_delivery(receipt) {
+                Ok(acknowledged)=>Ok(acknowledged),
+                Err(DeliveryRetryError::Api(error)) if error.is_terminal_session_error()=>Err(error.into()),
+                Err(_)=>Ok(false), // Local save remains durable; remote retry retains original row.
+            }
+        });
+        let _=sender.send(result);
+        drop(activity);
+    });
+    match spawned {
+        Ok(handle)=>{
+            DELIVERY_COMMIT_WORKERS.with(|workers|workers.borrow_mut().push(DeliveryCommitWorker {lease:lease.clone(),cancel:cancel.clone(),handle}));
+            poll_image_delivery_commit(app.as_weak(),context,persistence,cancel,receiver,image,id,canvas_target,complete.take().unwrap());
+        },
+        Err(error)=>{
+            // Dropping the receiver never releases the queued writer command's guards.
+            let _=context.apply_user_completion(&lease,||complete.take().unwrap()(app,Err(anyhow!(error))));
+        },
+    }
+}
+fn poll_image_delivery_commit(
+    weak:Weak<AppWindow>,context:AppContext,persistence:PrivatePersistence,cancel:Arc<std::sync::atomic::AtomicBool>,
+    receiver:mpsc::Receiver<std::result::Result<bool,DeliveryRetryError>>,image:Image,id:String,canvas_target:Option<(String,String)>,
+    complete:impl FnOnce(&AppWindow,Result<(Image,String,bool)>)+'static,
+) {
+    slint::Timer::single_shot(Duration::from_millis(50),move||{
+        let finished=finish_delivery_preparation(&cancel);
+        if matches!(finished,Ok(true)) {
+            poll_image_delivery_commit(weak,context,persistence,cancel,receiver,image,id,canvas_target,complete);return;
+        }
+        let result=if let Err(error)=finished {Err(DeliveryRetryError::from(error))} else {match receiver.try_recv() {
+            Ok(result)=>result,
+            Err(TryRecvError::Empty)=>{poll_image_delivery_commit(weak,context,persistence,cancel,receiver,image,id,canvas_target,complete);return;},
+            Err(TryRecvError::Disconnected)=>Err(anyhow!("delivery commit worker disconnected").into()),
+        }};
+        let Some(app)=weak.upgrade()else{return;};
+        let bound=context.store.borrow().private_persistence.as_ref().is_some_and(|current|current.same_binding_metadata(&persistence));
+        if matches!(&result,Err(DeliveryRetryError::Api(error)) if error.is_terminal_session_error()) {
+            let original=SessionScope{owner_user_id:persistence.lease().namespace.user_public_id().into(),auth_epoch:persistence.lease().auth_epoch};
+            if bound && terminal_auth_scope_matches_context(&context,&original){drop(result);sign_out_locally(&app,&context,true,Some(original.auth_epoch));}
+            return;
+        }
+        if !bound || !persistence.is_current(){return;}
+        let mut effects=None;let mut canvas_effects=None;
+        let canvas_visuals=canvas_target.as_ref().filter(|_|result.is_ok()).map(|_|prepare_canvas_projection(&app,&context.store.borrow()));
+        let visuals=result.as_ref().ok().map(|_|prepare_delivery_visuals(&app,&context.store.borrow()));
+        let _=context.apply_user_completion(persistence.lease(),||{
+            if let Some(visuals)=visuals {
+                effects=Some(visuals.publish_metadata(&app,persistence.clone()));
+                push_notifications(&app,&context.store.borrow());
+                push_prompt_history(&app,&context.store.borrow());
+            }
+            if let Some(visuals)=canvas_visuals {
+                canvas_effects=Some(visuals.publish_metadata(&app));
+                let state=app.global::<AppState>();
+                if let Some((source,task_id))=&canvas_target {
+                    let filled={
+                        let store=context.store.borrow();
+                        store.assets.iter().find(|asset|asset.id==id).is_some_and(|asset|
+                            store.canvas_notes.iter().chain(store.canvas_workspaces.values().flat_map(|workspace|workspace.notes.iter()))
+                                .any(|note|note.id==*source && note.kind=="image" && note.image_path==asset.source_path))
+                    };
+                    if filled && context.generations.active.borrow().values().any(|task|task.task_id==*task_id)
+                        && state.get_canvas_generation_loading_node_id().as_str()==source {
+                        state.set_canvas_generation_loading_node_id("".into());
+                    }
+                }
+                state.set_canvas_can_undo(context.canvas_history.borrow().can_undo());
+                state.set_canvas_can_redo(context.canvas_history.borrow().can_redo());
+            }
+            complete(&app,result.map(|ack|(image,id,ack)).map_err(|_|anyhow!("original image delivery was not confirmed")));
+        });
+        // Includes enhancement/cutout/toolbox deliveries, which do not use the main generation poller.
+        refresh_backend_snapshot_captured(&app,context.clone(),persistence.clone());
+        if let Some(effects)=canvas_effects {start_canvas_preview_effects(&app,persistence,effects);}
+        if let Some(effects)=effects {start_activation_visual_effects(&app,context,effects);}
+    });
+}
+
+pub(super) struct PendingNamespaceDeliveryCommit {
+    receiver: mpsc::Receiver<client_state::WriteResult>,
+    proof: NamespaceDeliveryProof,
+    asset_id: String,
+}
+impl PendingNamespaceDeliveryCommit {
+    pub(super) fn asset_id(&self) -> &str { &self.asset_id }
+    /// Blocking wait belongs on a registered background worker, never in a
+    /// completion or while borrowing Store. Only the real writer ack grants a receipt.
+    pub(super) fn wait(self) -> Result<CommittedNamespaceDelivery> {
+        self.receiver.recv().map_err(|_| anyhow!("delivery writer acknowledgment disconnected"))??;
+        Ok(CommittedNamespaceDelivery { prepared: self.proof })
+    }
+}
+pub(super) enum DeliveryEnqueueOwnership {
+    Prepared(PreparedPrivateStoreWrite),
+    Queue(client_state::PreparedStoreEnqueueError),
+}
+pub(super) struct GuardedDeliveryEnqueueError {
+    error: anyhow::Error,
+    _ownership: DeliveryEnqueueOwnership,
+    _prepared: DeliveryEnqueueEvidence,
+}
+enum DeliveryEnqueueEvidence { Image(PreparedNamespaceDelivery),Video(PreparedNamespaceVideoDelivery) }
+impl std::fmt::Debug for GuardedDeliveryEnqueueError {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result { self.error.fmt(f) }
+}
+impl std::fmt::Display for GuardedDeliveryEnqueueError {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result { std::fmt::Display::fmt(&self.error,f) }
+}
+impl std::error::Error for GuardedDeliveryEnqueueError {}
+impl PreparedPrivateStoreWrite {
+    /// Call only within the ORIGINAL lease completion. Prepare this write and
+    /// all held-file/index validation/decoding outside it. Return the ENTIRE
+    /// result out of the completion: even a failure owns admission and proof.
+    pub(super) fn enqueue_delivery(self, app:&AppWindow, store:&mut Store,
+        prepared:PreparedNamespaceDelivery, time:&str)
+        -> std::result::Result<PendingNamespaceDeliveryCommit,GuardedDeliveryEnqueueError> {
+        let staged = if self.lease() != prepared.lease()
+            || !store.private_persistence.as_ref().is_some_and(|binding|binding.lease()==self.lease()) {
+            Err(anyhow!("delivery writer lease mismatch"))
+        } else if !prepared.record().canvas_source_node_id.is_empty() {
+            let loading=app.global::<AppState>().get_canvas_generation_loading_node_id();
+            stage_canvas_namespace_delivery(store,&prepared,time,loading.as_str())
+        } else {
+            stage_namespace_delivery(store,&prepared,time)
+        };
+        let asset_id = match staged {
+            Ok(id)=>id,
+            Err(error)=>return Err(GuardedDeliveryEnqueueError {error,_ownership:DeliveryEnqueueOwnership::Prepared(self),_prepared:DeliveryEnqueueEvidence::Image(prepared)}),
+        };
+        // Immediate ordered enqueue uses the current full Store projection.
+        // Never undo staging after queue/ack failure: another snapshot may
+        // already retain the same output. Its exact retry is idempotent.
+        match self.enqueue(local_store_data(app,store)) {
+            Ok(receiver)=>Ok(PendingNamespaceDeliveryCommit {receiver,proof:prepared.into_proof(),asset_id}),
+            Err(error)=>Err(GuardedDeliveryEnqueueError {
+                error:anyhow!("delivery Store enqueue refused"),
+                _ownership:DeliveryEnqueueOwnership::Queue(error),_prepared:DeliveryEnqueueEvidence::Image(prepared),
+            }),
+        }
+    }
+}
+/// Pure metadata projection only. The owned delivery proof was validated during
+/// preparation, and will be checked again by the post-ack delivery consumer.
+// Canvas output metadata stage. No filesystem/decoder/writer wait here.
+fn stage_canvas_namespace_delivery(
+    store: &mut Store, prepared: &PreparedNamespaceDelivery, time: &str, loading_node_id: &str,
+) -> Result<String> {
+    let record=prepared.record();let confirmation=prepared.confirmation();
+    anyhow::ensure!(record.task_type=="image_generation" && !record.canvas_source_node_id.is_empty()
+        && confirmation.failed_asset_id.is_none(),"invalid Canvas output identity");
+    let source_id=&record.canvas_source_node_id;
+    let active=normalize_canvas_workspace_id(&store.active_canvas_workspace_id);
+    let mut candidates=Vec::new();
+    let active_sources=store.canvas_notes.iter().filter(|note|note.id==*source_id).count();
+    anyhow::ensure!(active_sources<=1,"ambiguous Canvas source");
+    if active_sources==1{candidates.push(active.clone());}
+    for (workspace_id,workspace) in &store.canvas_workspaces {
+        if workspace_id==&active{continue;}
+        let count=workspace.notes.iter().filter(|note|note.id==*source_id).count();
+        anyhow::ensure!(count<=1,"ambiguous Canvas source");
+        if count==1{candidates.push(workspace_id.clone());}
+    }
+    let [target]=candidates.as_slice()else{anyhow::bail!("original Canvas workspace missing or ambiguous");};
+    let (mut notes,mut links)=if target==&active {(store.canvas_notes.clone(),store.canvas_links.clone())}
+        else {let workspace=&store.canvas_workspaces[target];(workspace.notes.clone(),workspace.links.clone())};
+    let source=notes.iter().find(|note|note.id==*source_id).cloned().ok_or_else(||anyhow!("Canvas source missing"))?;
+    let id=confirmation.file_id.clone();let path=prepared.source_path();
+    let node_id=format!("delivery-{}-{}",record.client_request_id,confirmation.item_index);
+    anyhow::ensure!(!store.generations.iter().any(|asset|asset.id==id || asset.source_path==path),"Canvas output cannot adopt generation history");
+    anyhow::ensure!(!store.assets.iter().any(|asset|asset.source_path==path && asset.id!=id),"Canvas output path conflict");
+    let assets=store.assets.iter().filter(|asset|asset.id==id).collect::<Vec<_>>();
+    anyhow::ensure!(assets.len()<=1,"Canvas output asset ambiguous");
+    if let [asset]=assets.as_slice(){
+        anyhow::ensure!(asset.source_path==path && asset.category=="other" && asset.origin=="generation"
+            && asset.conversation_id==record.conversation_id && asset.model==record.model_code
+            && !asset.delivery_recoverable && !asset.delivery_downloading,"Canvas output retry metadata changed");
+        let matching=notes.iter().filter(|note|note.kind=="image" && note.image_path==path
+            && (note.id==node_id || note.id==*source_id)).collect::<Vec<_>>();
+        anyhow::ensure!(matching.len()==1,"Canvas output retry node missing or ambiguous");
+        if matching[0].id==node_id {
+            anyhow::ensure!(links.iter().any(|link|link.source_id==*source_id && link.target_id==node_id),"Canvas output retry source link missing");
+        }
+        return Ok(id);
+    }
+    anyhow::ensure!(!notes.iter().any(|note|note.id==node_id || note.image_path==path),"Canvas output node collision");
+    let (width,height)=prepared.preview().dimensions();
+    let replaces=loading_node_id==source_id && source.kind=="image" && source.image_path.trim().is_empty();
+    anyhow::ensure!(replaces || (notes.len()<200 && links.len()<400),"Canvas capacity reached");
+    if !replace_canvas_generation_placeholder(&mut notes,source_id,loading_node_id,path,width as f32,height as f32,0) {
+        let mut node=CanvasNoteData{id:node_id.clone(),kind:"image".into(),image_path:path.into(),
+            width:340.0,height:250.0,z_index:notes.iter().map(|note|note.z_index).max().unwrap_or(0).saturating_add(1),
+            ..Default::default()};
+        fit_image_node_to_intrinsic_aspect(&mut node,width as f32,height as f32);
+        let (x,y)=generated_canvas_result_position(Some(&source),node.width,node.height,confirmation.item_index as i32,record.count);
+        (node.x,node.y)=nearest_free_canvas_position(&notes,x,y,node.width,node.height,None);
+        notes.push(node);
+        anyhow::ensure!(matches!(connect_nodes(&mut links,source_id,&node_id),CanvasConnectResult::Connected{..}),"Canvas output link could not be created");
+    }
+    let references=if !record.lineage_reference_paths.is_empty(){record.lineage_reference_paths.clone()}else{record.reference_paths.clone()};
+    let asset=AssetData{id:id.clone(),conversation_id:record.conversation_id.clone(),title:short_text(&record.raw_prompt,18),
+        category:"other".into(),kind:record.mode.clone(),time:time.into(),prompt:display_generation_prompt(&record.generation_prompt),
+        ratio:ratio_from_actual_dimensions(width as i32,height as i32),quality:record.quality.clone(),model:record.model_code.clone(),
+        origin:"generation".into(),width:width as i32,height:height as i32,source_path:path.into(),reference_paths:references,
+        cutout_done:false,remove_black_done:false,upscale_done:false,is_new:true,delivery_recoverable:false,delivery_downloading:false};
+    if target==&active {store.canvas_notes=notes;store.canvas_links=links;}
+    else {let workspace=store.canvas_workspaces.get_mut(target).unwrap();workspace.notes=notes;workspace.links=links;}
+    store.assets.insert(0,asset);
+    Ok(id)
+}
+
+fn stage_namespace_delivery(store:&mut Store, prepared:&PreparedNamespaceDelivery,time:&str)->Result<String> {
+    let record=prepared.record();
+    let confirmation=prepared.confirmation();
+    let toolbox=match record.task_type.as_str() {
+        "image_generation"|"image_edit"|"image_upscale"=>None,
+        "image_watermark_removal"=>Some(("watermark_removal","去水印")),
+        "image_colorization"=>Some(("image_colorization","老照片上色")),
+        "image_enhancement"=>Some(("image_enhancement","图片清晰")),
+        "image_cutout"=>Some(("image_cutout","智能抠图")),
+        _=>anyhow::bail!("unsupported image delivery metadata type"),
+    };
+    anyhow::ensure!(toolbox.is_none() || confirmation.failed_asset_id.is_none(),"toolbox output cannot replace an ordinary failed card");
+    let id=confirmation.failed_asset_id.as_deref().unwrap_or(&confirmation.file_id).to_owned();
+    let path=prepared.source_path();
+    let notification_id=format!("delivery-{}",confirmation.file_id);
+    let assets=store.assets.iter().filter(|asset|asset.id==id).collect::<Vec<_>>();
+    let generations=store.generations.iter().filter(|asset|asset.id==id).collect::<Vec<_>>();
+    let notifications=store.notifications.iter().filter(|item|item.id==notification_id).collect::<Vec<_>>();
+    anyhow::ensure!(assets.len()<=1 && generations.len()<=1,"delivery metadata is ambiguous");
+    anyhow::ensure!(!store.assets.iter().chain(&store.generations).any(|asset|asset.source_path==path && asset.id!=id),
+        "delivery path belongs to conflicting metadata");
+    if let [asset]=assets.as_slice() {
+        anyhow::ensure!(asset.source_path==path && !asset.delivery_recoverable && !asset.delivery_downloading,
+            "successful delivery asset conflicts");
+        if let Some((origin,_))=toolbox {
+            anyhow::ensure!(generations.is_empty() && asset.category=="other" && asset.origin==origin,
+                "toolbox delivery must remain Other-only");
+        } else {
+            let [generation]=generations.as_slice() else {anyhow::bail!("delivery generation projection missing");};
+            anyhow::ensure!(generation.source_path==path && !generation.delivery_recoverable && !generation.delivery_downloading,
+                "successful delivery generation conflicts");
+        }
+        anyhow::ensure!(notifications.len()==1 && notifications[0].success,"delivery success notification missing or conflicting");
+        return Ok(id);
+    }
+    anyhow::ensure!(notifications.is_empty(),"delivery notification conflicts");
+    let (width,height)=prepared.preview().dimensions();
+    let enhancement=record.task_type=="image_enhancement";
+    let cutout=record.task_type=="image_cutout";
+    let title=if enhancement {
+        let source=record.lineage_reference_paths.first().or_else(||record.reference_paths.first());
+        let stem=source.and_then(|source|Path::new(source).file_stem()).and_then(|stem|stem.to_str())
+            .filter(|stem|!stem.trim().is_empty()).unwrap_or("图片");
+        format!("{} 清晰增强",short_text(stem,18))
+    }else if cutout {format!("{} 抠图",short_text(record.raw_prompt.trim(),18))}
+    else{short_text(&record.raw_prompt,18)};
+    let notification=NotificationData {
+        id:notification_id,title:if enhancement{format!("图片清晰增强完成：{title}")}else if cutout{format!("智能抠图完成：{title}")}else{format!("{}：{}",toolbox.map(|(_,name)|name).unwrap_or("Generation succeeded"),short_text(&record.raw_prompt,24))},
+        model:toolbox.map(|(_,name)|name.to_owned()).unwrap_or_else(||record.model_code.clone()),
+        time:time.to_owned(),reason:String::new(),success:true,read:false,
+    };
+    if confirmation.failed_asset_id.is_some() {
+        let [failed]=generations.as_slice() else {anyhow::bail!("failed delivery card missing or ambiguous");};
+        anyhow::ensure!(failed.source_path=="failed" && failed.delivery_recoverable
+            && failed.conversation_id==record.conversation_id && failed.category==record.category
+            && failed.kind==record.mode && failed.model==record.model_code,"failed delivery card identity mismatch");
+        let mut completed=(*failed).clone();
+        completed.source_path=path.to_owned();completed.width=width as i32;completed.height=height as i32;
+        completed.ratio=ratio_from_actual_dimensions(width as i32,height as i32);
+        completed.time=time.to_owned();completed.is_new=true;completed.delivery_recoverable=false;completed.delivery_downloading=false;
+        let notification=NotificationData {title:format!("图片下载完成：{}",short_text(&completed.prompt,24)),..notification};
+        local_store::replace_failed_delivery_asset_with(store,&id,completed,notification,|_|Ok(()))?;
+    } else {
+        anyhow::ensure!(generations.is_empty(),"delivery generation identity conflicts");
+        let item=AssetData {
+            id:id.clone(),conversation_id:if toolbox.is_some(){String::new()}else{record.conversation_id.clone()},
+            title,category:if toolbox.is_some(){"other".into()}else{record.category.clone()},
+            kind:if enhancement || cutout{"game".into()}else{record.mode.clone()},time:time.to_owned(),prompt:if enhancement{"图片清晰增强".into()}else if cutout{
+                let label=match record.quality.as_str(){"portrait"=>"人像","avatar"=>"头像","skin"=>"皮肤","product"=>"商品","clothing"=>"服饰","sky"=>"天空",_=>"通用"};
+                format!("智能抠图（{label}）")
+            }else{display_generation_prompt(&record.generation_prompt)},
+            ratio:ratio_from_actual_dimensions(width as i32,height as i32),quality:if enhancement || cutout{match width.max(height){0..=1024=>"1K",1025..=2048=>"2K",_=>"4K"}.into()}else{record.quality.clone()},
+            model:toolbox.map(|(_,name)|name.to_owned()).unwrap_or_else(||record.model_code.clone()),
+            origin:toolbox.map(|(origin,_)|origin).unwrap_or(if record.task_type=="image_edit"{"image_edit"}else{"generation"}).into(),
+            width:width as i32,height:height as i32,source_path:path.to_owned(),
+            reference_paths:if !record.lineage_reference_paths.is_empty(){record.lineage_reference_paths.clone()}
+                else if matches!(record.task_type.as_str(),"image_edit"|"image_upscale"){Vec::new()}
+                else{record.reference_paths.clone()},
+            cutout_done:cutout,remove_black_done:false,upscale_done:record.task_type=="image_upscale" || enhancement,
+            is_new:toolbox.is_none(),delivery_recoverable:false,delivery_downloading:false,
+        };
+        if toolbox.is_none() {
+            reveal_prompt_history_entry(store,&item.prompt);
+            store.generations.insert(0,item.clone());
+        }
+        store.assets.insert(0,item);
+        store.notifications.insert(0,notification);
+    }
+    Ok(id)
+}
+
 pub(super) struct CommittedNamespaceDelivery {
-    prepared: PreparedNamespaceDelivery,
+    prepared: NamespaceDeliveryProof,
 }
 
 impl CommittedNamespaceDelivery {
-    pub(super) fn into_prepared(self) -> PreparedNamespaceDelivery {
+    pub(super) fn into_prepared(self) -> NamespaceDeliveryProof {
         self.prepared
     }
 }
 
+#[cfg(test)]
 pub(super) fn persist_namespace_delivery(
-    app: &AppWindow,
-    store: &mut Store,
-    writer: &ClientStateWriter,
-    prepared: PreparedNamespaceDelivery,
-    time: &str,
-) -> Result<(Image, String, CommittedNamespaceDelivery)> {
+    app:&AppWindow,store:&mut Store,writer:&ClientStateWriter,prepared:PreparedNamespaceDelivery,time:&str,
+)->Result<(Image,String,CommittedNamespaceDelivery)> {
+    // Test-only synchronous adapter exercises the same pure staging and actual
+    // held writer acknowledgment. Production callers use owned ordered enqueue.
     prepared.ensure_current()?;
-    let record = prepared.record();
-    let confirmation = prepared.confirmation();
-    let id = confirmation
-        .failed_asset_id
-        .as_deref()
-        .unwrap_or(&confirmation.file_id)
-        .to_owned();
-    let source_path = prepared.source_path();
-    let notification_id = format!("delivery-{}", confirmation.file_id);
-    let assets = store
-        .assets
-        .iter()
-        .filter(|asset| asset.id == id)
-        .collect::<Vec<_>>();
-    let generations = store
-        .generations
-        .iter()
-        .filter(|asset| asset.id == id)
-        .collect::<Vec<_>>();
-    anyhow::ensure!(
-        assets.len() <= 1 && generations.len() <= 1,
-        "delivery metadata is ambiguous"
-    );
-    anyhow::ensure!(
-        !store
-            .assets
-            .iter()
-            .chain(&store.generations)
-            .any(|asset| asset.source_path == source_path && asset.id != id),
-        "delivery path belongs to conflicting metadata"
-    );
-    let notifications = store
-        .notifications
-        .iter()
-        .filter(|item| item.id == notification_id)
-        .collect::<Vec<_>>();
-    if let ([asset], [generation]) = (assets.as_slice(), generations.as_slice()) {
-        anyhow::ensure!(
-            asset.source_path == source_path
-                && generation.source_path == source_path
-                && !asset.delivery_recoverable
-                && !generation.delivery_recoverable
-                && !asset.delivery_downloading
-                && !generation.delivery_downloading,
-            "successful delivery metadata conflicts"
-        );
-        anyhow::ensure!(
-            notifications.len() == 1 && notifications[0].success,
-            "delivery success notification is missing or conflicting"
-        );
-        // Preserve user edits and notification read state while requiring the
-        // actual complete projection to commit successfully for every receipt.
-        save_local_store_checked_for_namespace(app, store, writer, prepared.lease())?;
-    } else {
-        anyhow::ensure!(
-            notifications.is_empty(),
-            "delivery notification identity conflicts"
-        );
-        let (width, height) = prepared.preview().dimensions();
-        let notification = NotificationData {
-            id: notification_id,
-            title: format!(
-                "Generation succeeded: {}",
-                short_text(&record.raw_prompt, 24)
-            ),
-            model: record.model_code.clone(),
-            time: time.to_owned(),
-            reason: String::new(),
-            success: true,
-            read: false,
+    let id=stage_namespace_delivery(store,&prepared,time)?;
+    save_local_store_checked_for_namespace(app,store,writer,prepared.lease())?;
+    prepared.ensure_current()?;
+    let image=materialize_delivery_preview(prepared.preview());
+    Ok((image,id,CommittedNamespaceDelivery{prepared:prepared.into_proof()}))
+}
+
+impl PreparedPrivateStoreWrite {
+    pub(super) fn enqueue_video_delivery(self,app:&AppWindow,store:&mut Store,
+        prepared:PreparedNamespaceVideoDelivery,time:&str)
+        -> std::result::Result<PendingNamespaceDeliveryCommit,GuardedDeliveryEnqueueError> {
+        let staged=if self.lease()!=prepared.lease()
+            || !store.private_persistence.as_ref().is_some_and(|binding|binding.lease()==self.lease()) {
+            Err(anyhow!("video Store binding mismatch"))
+        } else { stage_video_delivery(store,&prepared,time) };
+        let asset_id=match staged {
+            Ok(id)=>id,
+            Err(error)=>return Err(GuardedDeliveryEnqueueError {error,_ownership:DeliveryEnqueueOwnership::Prepared(self),
+                _prepared:DeliveryEnqueueEvidence::Video(prepared)}),
         };
-        if confirmation.failed_asset_id.is_some() {
-            let [failed] = generations.as_slice() else {
-                anyhow::bail!("failed delivery card is missing or ambiguous");
-            };
-            anyhow::ensure!(
-                assets.is_empty()
-                    && failed.source_path == "failed"
-                    && failed.delivery_recoverable
-                    && failed.conversation_id == record.conversation_id
-                    && failed.category == record.category
-                    && failed.kind == record.mode
-                    && failed.model == record.model_code,
-                "failed delivery card identity mismatch"
-            );
-            let mut completed = (*failed).clone();
-            completed.source_path = source_path.to_owned();
-            completed.width = width as i32;
-            completed.height = height as i32;
-            completed.ratio = ratio_from_actual_dimensions(width as i32, height as i32);
-            completed.time = time.to_owned();
-            completed.is_new = true;
-            completed.delivery_recoverable = false;
-            completed.delivery_downloading = false;
-            let notification = NotificationData {
-                title: format!("图片下载完成：{}", short_text(&completed.prompt, 24)),
-                ..notification
-            };
-            local_store::replace_failed_delivery_asset_checked_for_namespace(
-                app,
-                store,
-                writer,
-                prepared.lease(),
-                &id,
-                completed,
-                notification,
-            )?;
-        } else {
-            anyhow::ensure!(
-                assets.is_empty() && generations.is_empty(),
-                "delivery asset identity conflicts"
-            );
-            let item = AssetData {
-                id: id.clone(),
-                conversation_id: record.conversation_id.clone(),
-                title: short_text(&record.raw_prompt, 18),
-                category: record.category.clone(),
-                kind: record.mode.clone(),
-                time: time.to_owned(),
-                prompt: display_generation_prompt(&record.generation_prompt),
-                ratio: ratio_from_actual_dimensions(width as i32, height as i32),
-                quality: record.quality.clone(),
-                model: record.model_code.clone(),
-                origin: if record.task_type == "image_edit" {
-                    "image_edit"
-                } else {
-                    "generation"
-                }
-                .into(),
-                width: width as i32,
-                height: height as i32,
-                source_path: source_path.to_owned(),
-                reference_paths: if !record.lineage_reference_paths.is_empty() {
-                    record.lineage_reference_paths.clone()
-                } else if matches!(record.task_type.as_str(), "image_edit" | "image_upscale") {
-                    Vec::new()
-                } else {
-                    record.reference_paths.clone()
-                },
-                cutout_done: false,
-                remove_black_done: false,
-                upscale_done: record.task_type == "image_upscale",
-                is_new: true,
-                delivery_recoverable: false,
-                delivery_downloading: false,
-            };
-            let history_prompt = item.prompt.clone();
-            persist_generated_asset_checked_for_namespace(
-                app,
-                store,
-                writer,
-                prepared.lease(),
-                item,
-                notification,
-                true,
-                Some(&history_prompt),
-            )?;
+        match self.enqueue(local_store_data(app,store)) {
+            Ok(receiver)=>Ok(PendingNamespaceDeliveryCommit {receiver,proof:prepared.into_proof(),asset_id}),
+            Err(error)=>Err(GuardedDeliveryEnqueueError {error:anyhow!("video Store enqueue refused"),
+                _ownership:DeliveryEnqueueOwnership::Queue(error),_prepared:DeliveryEnqueueEvidence::Video(prepared)}),
         }
     }
-    prepared.ensure_current()?;
-    let image = materialize_delivery_preview(prepared.preview());
-    Ok((image, id, CommittedNamespaceDelivery { prepared }))
+}
+fn stage_video_delivery(store:&mut Store,prepared:&PreparedNamespaceVideoDelivery,time:&str)->Result<String> {
+    let record=prepared.record();let confirmation=prepared.confirmation();
+    anyhow::ensure!(matches!(record.task_type.as_str(),"image_to_video"|"video_generation")
+        && record.video_request.is_some() && confirmation.failed_asset_id.is_none(),"video output identity incomplete");
+    let output=SavedVideoOutput {
+        source_asset_id:record.source_asset_id.clone(),
+        client_request_id:record.client_request_id.clone(),server_task_id:confirmation.task_id.clone(),
+        file_id:confirmation.file_id.clone(),billing_account_group_id:record.billing_account_group_id.clone(),
+        sha256:confirmation.sha256.clone(),size_bytes:confirmation.size_bytes,source_path:prepared.source_path().into(),
+        title:short_text(&record.raw_prompt,48),created_at:time.into(),
+    };
+    let key=output.key();
+    anyhow::ensure!(!store.video_outputs.iter().any(|(other,value)|other!=&key && value.source_path==output.source_path),
+        "video path belongs to another retained output");
+    if let Some(existing)=store.video_outputs.get(&key) {
+        anyhow::ensure!(existing.source_asset_id==output.source_asset_id && existing.client_request_id==output.client_request_id && existing.server_task_id==output.server_task_id
+            && existing.file_id==output.file_id && existing.billing_account_group_id==output.billing_account_group_id
+            && existing.sha256==output.sha256 && existing.size_bytes==output.size_bytes && existing.source_path==output.source_path,
+            "retained video output identity conflicts");
+    } else {
+        store.video_outputs.insert(key.clone(),output);
+    }
+    Ok(key)
 }
 
 pub(super) fn start_generation(
@@ -586,7 +951,77 @@ pub(super) fn retry_failed_generation(app: &AppWindow, context: AppContext, id: 
     );
 }
 
+fn start_registered_paid_stop(app:&AppWindow,context:&AppContext,task:ActiveGeneration,persistence:PrivatePersistence) {
+    if !persistence.is_current() || !paid_viewer_binding_matches(context,&persistence) { return; }
+    let Some(key)=task.client_request_id.clone() else { return; };
+    let worker_task=task.clone();let cancellations=context.cancelled_generation_requests.clone();
+    let launched=spawn_delivery_preparation(&persistence,move|captured,activity,cancel|{
+        if activity.is_quiescing() || cancel.load(Ordering::Acquire) { return Err(DeliveryRetryError::AuthenticationRequired); }
+        let authority=captured.storage_authority()?;
+        let row=load_pending_generations_for_namespace(&authority)?.into_iter()
+            .find(|row|row.client_request_id==key).ok_or_else(||anyhow!("original cancellation record not yet durable"))?;
+        if row.local_task_id!=worker_task.task_id
+            || row.owner_user_id!=worker_task.session_scope.owner_user_id
+            || row.auth_epoch!=worker_task.session_scope.auth_epoch {
+            return Err(anyhow!("original cancellation task changed").into());
+        }
+        if !row.cancel_requested {
+            if !apply_generation_patch_for_namespace(&authority,&row.identity(),GenerationRecoveryPatch::RequestCancellation)? {
+                return Err(anyhow!("original cancellation identity changed").into());
+            }
+        }
+        // The existing running checked worker is the sole remote-cancel owner.
+        // Shutdown may stop it locally; this acknowledged marker remains recoverable.
+        cancellations.lock().map_err(|_|anyhow!("cancellation ownership unavailable"))?.insert(key);
+        Ok(())
+    });
+    match launched {
+        Ok((cancel,receiver))=>poll_registered_paid_stop(app.as_weak(),context.clone(),persistence,task,cancel,receiver),
+        Err(_)=>{let _=context.apply_user_completion(persistence.lease(),||{
+            if paid_viewer_binding_matches(context,&persistence)
+                && active_generation_matches_scope(context,&task.category,&task.task_id,&task.session_scope) {
+                set_generation_status_for_category(context,app,&task.category,"无法保存停止请求；生成状态已保留，请重试");
+            }
+        });}
+    }
+}
+
+fn poll_registered_paid_stop(weak:Weak<AppWindow>,context:AppContext,persistence:PrivatePersistence,task:ActiveGeneration,
+    cancel:Arc<std::sync::atomic::AtomicBool>,receiver:mpsc::Receiver<std::result::Result<(),DeliveryRetryError>>,
+) {
+    slint::Timer::single_shot(Duration::from_millis(40),move||{
+        let Some(app)=weak.upgrade()else{cancel.store(true,Ordering::Release);return;};
+        if !persistence.is_current() || !paid_viewer_binding_matches(&context,&persistence) {
+            cancel.store(true,Ordering::Release);return;
+        }
+        let joined=finish_delivery_preparation(&cancel);
+        if matches!(joined,Ok(true)) {poll_registered_paid_stop(weak,context,persistence,task,cancel,receiver);return;}
+        let saved=matches!(joined,Ok(false)) && matches!(receiver.try_recv(),Ok(Ok(())));
+        let _=context.apply_user_completion(persistence.lease(),||{
+            if !paid_viewer_binding_matches(&context,&persistence)
+                || !active_generation_matches_scope(&context,&task.category,&task.task_id,&task.session_scope) {return;}
+            if !saved {
+                set_generation_status_for_category(&context,&app,&task.category,"无法保存停止请求；生成状态已保留，请重试");return;
+            }
+            remove_active_generation(&context,&task.category,&task.task_id);
+            set_generation_status_for_category(&context,&app,&task.category,"停止请求已保存；已提交的任务正在确认");
+            sync_generation_state_for_current_category(&context,&app);
+            let state=app.global::<AppState>();
+            if current_workspace_category(&app)==task.category {
+                if !task.prompt.trim().is_empty(){state.set_prompt(task.prompt.clone().into());}
+                finish_conversation_placeholder(&state,&task.conversation_id,None);
+            }
+        });
+    });
+}
+
 pub(super) fn stop_generation(app: &AppWindow, context: &AppContext) {
+    let paid_task=context.generations.active.borrow().get(&current_workspace_category(app)).cloned();
+    if let Some(task)=paid_task {
+        if let Some(persistence)=task.registered_cancel_owner.clone() {
+            start_registered_paid_stop(app,context,task,persistence);return;
+        }
+    }
     let store = &context.store;
     let state = app.global::<AppState>();
     let category = current_workspace_category(app);
@@ -600,13 +1035,28 @@ pub(super) fn stop_generation(app: &AppWindow, context: &AppContext) {
         sync_generation_state_for_current_category(context, app);
         return;
     };
+    let cancellation = (|| -> Result<()> {
+        let active = context.generations.active.borrow();
+        let task = active.get(&category).ok_or_else(|| anyhow!("active generation changed"))?;
+        if let Some(key) = task.client_request_id.as_ref() {
+            let authority = context.storage_authority_for(&context.namespace_for(&task.session_scope)?)?;
+            let row = load_pending_generations_for_namespace(&authority)?.into_iter()
+                .find(|row| row.client_request_id == *key).ok_or_else(|| anyhow!("retained cancellation record missing"))?;
+            anyhow::ensure!(apply_generation_patch_for_namespace(&authority, &row.identity(), GenerationRecoveryPatch::RequestCancellation)?, "retained cancellation identity changed");
+        }
+        Ok(())
+    })();
+    if cancellation.is_err() {
+        state.set_generation_status("无法保存停止请求；生成状态已保留，请重试".into());
+        return;
+    }
     let Some(task) = remove_active_generation(context, &category, &task_id) else {
         sync_generation_state_for_current_category(context, app);
         return;
     };
     discard_canvas_generation_placeholder(&state, &task.destination);
     refresh_delivery_download_flags(app, context);
-    set_generation_status_for_category(context, app, &category, "已停止生成");
+    set_generation_status_for_category(context, app, &category, "停止请求已保存；已提交的任务正在确认");
     sync_generation_state_for_current_category(context, app);
     if task.destination == GenerationDestination::Gallery {
         if !task.prompt.trim().is_empty() {
@@ -624,12 +1074,20 @@ pub(super) fn stop_generation(app: &AppWindow, context: &AppContext) {
         if let (Some(backend), Some(server_task_id)) =
             (context.backend.clone(), task.server_task_id)
         {
+            let Some(key) = task.client_request_id else { return; };
+            let Ok(lease) = context.namespace_for(&task.session_scope) else { return; };
+            let Ok(authority) = context.storage_authority_for(&lease) else { return; };
+            let Ok(activity) = backend.api.begin_user_work(&task.session_scope) else { return; };
+            let cancellations = context.cancelled_generation_requests.clone();
             let session_scope = task.session_scope;
             let worker_scope = session_scope.clone();
             let (sender, receiver) = mpsc::channel::<()>();
             std::thread::spawn(move || {
-                let _ = GenerationApi::new(backend.api.clone())
-                    .cancel_scoped(&server_task_id, &worker_scope);
+                if !activity.is_quiescing() {
+                    let api = GenerationApi::new(backend.api.clone());
+                    cleanup_cancelled_generation(&backend, &authority, &api, &worker_scope, &key, &[], Some(&server_task_id), &cancellations);
+                }
+                drop(activity);
                 let _ = sender.send(());
             });
             observe_detached_generation_scope(

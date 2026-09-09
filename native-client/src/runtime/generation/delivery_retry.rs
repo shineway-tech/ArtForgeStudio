@@ -8,7 +8,72 @@ macro_rules! ensure_delivery {
     };
 }
 
-pub(super) struct PreparedNamespaceDelivery {
+/// Constructed only by the real retained-delivery consumer after server task/payer
+/// verification and a complete read of the held canonical output. This is not a
+/// generic file-index repair capability and cannot be caller-constructed.
+pub(super) struct VerifiedDeliveryIndexContent<'a> {
+    authority: &'a NamespaceStorageAuthority,
+    api: &'a GenerationApi,
+    scope: &'a SessionScope,
+    record: &'a PendingGenerationRecord,
+    confirmation: &'a DeliveryConfirmation,
+    source_path: &'a str,
+    file: &'a NamespaceManagedFile,
+    metadata: ManagedFileMetadata,
+    derived: Option<DerivedCutoutIndexContent<'a>>,
+}
+struct DerivedCutoutIndexContent<'a> {
+    remote: &'a NamespaceDeliveryProof,
+    source: &'a NamespaceManagedFile,
+    source_metadata: &'a ManagedFileMetadata,
+    sha256: &'a str,
+    size: u64,
+}
+impl VerifiedDeliveryIndexContent<'_> {
+    pub(super) fn authority(&self) -> &NamespaceStorageAuthority { self.authority }
+    pub(super) fn file(&self) -> &NamespaceManagedFile { self.file }
+    pub(super) fn metadata(&self) -> &ManagedFileMetadata { &self.metadata }
+    pub(super) fn require_current(&self) -> Result<()> {
+        self.api.ensure_scope_active(self.scope)?;
+        ensure_delivery!(self.scope.owner_user_id == self.authority.user_public_id()
+            && self.scope.auth_epoch == self.authority.lease().auth_epoch
+            && self.record.owner_user_id == self.scope.owner_user_id
+            && self.record.auth_epoch == self.scope.auth_epoch,
+            "delivery reconciliation namespace changed");
+        let current = load_exact_delivery_record(self.authority, &self.record.identity())?;
+        ensure_delivery!(serde_json::to_value(&current)? == serde_json::to_value(self.record)?,
+            "delivery reconciliation retained record changed");
+        ensure_delivery!(self.record.client_request_id == self.confirmation.client_request_id
+            && self.record.server_task_id == self.confirmation.task_id
+            && self.confirmation.item_index < self.record.count as usize,
+            "delivery reconciliation task changed");
+        exact_saved_delivery(&current, self.confirmation)?;
+        let path = self.authority.lease().namespace.path(self.file.key().area())
+            .join(self.file.key().relative_name().as_str());
+        ensure_delivery!(path.to_str() == Some(self.source_path),
+            "delivery reconciliation canonical path changed");
+        let expected_size = if let Some(derived) = &self.derived {
+            ensure_delivery!(self.record.task_type == "image_cutout"
+                && self.file.key().area() == ManagedUserArea::Output
+                && self.file.key().relative_name().as_str() == format!("{}-cutout-v1.png", self.confirmation.file_id)
+                && derived.sha256.len() == 64
+                && derived.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "derived cutout index provenance changed");
+            derived.remote.ensure_current()?;
+            derived.remote.ensure_index_current()?;
+            ensure_delivery!(self.authority.inspect_regular(derived.source)? == *derived.source_metadata,
+                "derived cutout original input changed");
+            derived.size
+        } else { self.confirmation.size_bytes };
+        let metadata = self.authority.inspect_regular(self.file)?;
+        ensure_delivery!(metadata == self.metadata && metadata.link_count == 1
+            && metadata.byte_size == expected_size,
+            "delivery reconciliation held content changed");
+        Ok(())
+    }
+}
+
+pub(super) struct NamespaceDeliveryProof {
     authority: Arc<NamespaceStorageAuthority>,
     api: GenerationApi,
     index: FileIndex,
@@ -17,9 +82,36 @@ pub(super) struct PreparedNamespaceDelivery {
     confirmation: DeliveryConfirmation,
     file: NamespaceManagedFile,
     indexed: ManagedFileRecord,
-    preview: PreparedDeliveryPreview,
     source_path: String,
     terminal_success_count: Option<usize>,
+    derived_cutout: Option<DerivedCutoutDelivery>,
+}
+
+pub(super) struct PreparedNamespaceDelivery { proof: NamespaceDeliveryProof, preview: PreparedDeliveryPreview }
+pub(super) struct PreparedNamespaceVideoDelivery { proof: NamespaceDeliveryProof }
+impl std::ops::Deref for PreparedNamespaceDelivery {
+    type Target=NamespaceDeliveryProof;
+    fn deref(&self)->&Self::Target { &self.proof }
+}
+impl std::ops::Deref for PreparedNamespaceVideoDelivery {
+    type Target=NamespaceDeliveryProof;
+    fn deref(&self)->&Self::Target { &self.proof }
+}
+impl PreparedNamespaceDelivery {
+    pub(super) fn preview(&self)->&PreparedDeliveryPreview { &self.preview }
+    pub(super) fn into_proof(self)->NamespaceDeliveryProof { self.proof }
+}
+impl PreparedNamespaceVideoDelivery {
+    pub(super) fn into_proof(self)->NamespaceDeliveryProof { self.proof }
+}
+
+pub(super) fn prepare_runtime_image_delivery(
+    api: &GenerationApi, authority: Arc<NamespaceStorageAuthority>, key: &str, item: usize,
+) -> std::result::Result<Option<PreparedNamespaceDelivery>, DeliveryRetryError> {
+    let record = load_pending_generations_for_namespace(&authority)?.into_iter()
+        .find(|row| row.client_request_id == key).ok_or_else(|| anyhow!("original delivery record missing"))?;
+    let index = authority.delivery_index()?;
+    prepare_namespace_delivery(api, authority, index, &record.identity(), item).map(Some)
 }
 
 pub(super) fn prepare_namespace_delivery(
@@ -29,12 +121,30 @@ pub(super) fn prepare_namespace_delivery(
     expected: &RecoveryRecordIdentity,
     item_index: usize,
 ) -> std::result::Result<PreparedNamespaceDelivery, DeliveryRetryError> {
+    let (proof,preview)=prepare_namespace_delivery_proof(api,authority,index,expected,item_index,NamespaceDeliveryKind::Image)?;
+    Ok(PreparedNamespaceDelivery {proof,preview:preview.ok_or_else(||anyhow!("image delivery preview missing"))?})
+}
+pub(super) fn prepare_namespace_video_delivery(
+    api:&GenerationApi,authority:Arc<NamespaceStorageAuthority>,index:FileIndex,
+    expected:&RecoveryRecordIdentity,item_index:usize,
+)->std::result::Result<PreparedNamespaceVideoDelivery,DeliveryRetryError> {
+    let (proof,preview)=prepare_namespace_delivery_proof(api,authority,index,expected,item_index,NamespaceDeliveryKind::Video)?;
+    ensure_delivery!(preview.is_none(),"video delivery cannot carry an image presentation");
+    Ok(PreparedNamespaceVideoDelivery {proof})
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NamespaceDeliveryKind { Image, Video, Cutout }
+fn prepare_namespace_delivery_proof(
+    api:&GenerationApi,authority:Arc<NamespaceStorageAuthority>,index:FileIndex,
+    expected:&RecoveryRecordIdentity,item_index:usize,kind:NamespaceDeliveryKind,
+)->std::result::Result<(NamespaceDeliveryProof,Option<PreparedDeliveryPreview>),DeliveryRetryError> {
+    let video = kind == NamespaceDeliveryKind::Video;
     let scope = SessionScope {
         owner_user_id: authority.user_public_id().to_owned(),
         auth_epoch: authority.lease().auth_epoch,
     };
     api.ensure_scope_active(&scope)?;
-    let record = load_exact_delivery_record(&authority, expected)?;
+    let mut record = load_exact_delivery_record(&authority, expected)?;
     ensure_delivery!(
         record.auth_epoch == scope.auth_epoch,
         "delivery session mismatch"
@@ -44,11 +154,13 @@ pub(super) fn prepare_namespace_delivery(
         "invalid delivery item index"
     );
     ensure_delivery!(
-        record.canvas_source_node_id.is_empty()
-            && matches!(
-                record.task_type.as_str(),
-                "image_generation" | "image_edit" | "image_upscale"
-            ),
+        (record.canvas_source_node_id.is_empty() || (kind==NamespaceDeliveryKind::Image && record.task_type=="image_generation")) && if video {
+            matches!(record.task_type.as_str(),"image_to_video"|"video_generation")
+                && record.video_request.as_ref().is_some_and(|request| request.validate().is_ok()
+                    && request.client_request_id==record.client_request_id && request.task_type==record.task_type)
+        } else if kind == NamespaceDeliveryKind::Cutout { record.task_type == "image_cutout" && record.count == 1 }
+        else { matches!(record.task_type.as_str(),
+            "image_generation"|"image_edit"|"image_upscale"|"image_watermark_removal"|"image_colorization"|"image_enhancement") },
         "this delivery consumer requires an ordinary image task"
     );
     require_delivery_uuid(&record.server_task_id)?;
@@ -118,38 +230,45 @@ pub(super) fn prepare_namespace_delivery(
         confirmation.failed_asset_id =
             (!saved.failed_asset_id.is_empty()).then(|| saved.failed_asset_id.clone());
     }
-    let extension = match remote.mime_type.as_str() {
-        "image/jpeg" => "jpg",
-        "image/webp" => "webp",
-        _ => "png",
+    ensure_delivery!(kind != NamespaceDeliveryKind::Cutout || remote.mime_type == "image/png",
+        "cutout remote mask must be PNG");
+    let extension = match (video,remote.mime_type.as_str()) {
+        (false,"image/jpeg")=>"jpg",(false,"image/webp")=>"webp",(false,"image/png")=>"png",
+        (true,"video/mp4")=>"mp4",(true,"video/webm")=>"webm",(true,"video/quicktime")=>"mov",
+        _=>return Err(anyhow!("unsupported output MIME for retained task type").into()),
     };
+    let area=if video {ManagedUserArea::Videos}else{ManagedUserArea::Output};
     let destination = ManagedFileKey::new(
-        ManagedUserArea::Output,
+        area,
         &format!("{}.{extension}", remote.id),
     )?;
     let source_path = authority
         .lease()
         .namespace
-        .path(ManagedUserArea::Output)
+        .path(area)
         .join(destination.relative_name().as_str())
         .to_string_lossy()
         .into_owned();
-    if let Some(saved) = exact_saved_delivery(&record, &confirmation)? {
-        ensure_delivery!(
-            saved.local_path.is_empty() || saved.local_path == source_path,
-            "saved delivery output path mismatch"
-        );
+    if exact_saved_delivery(&record, &confirmation)?.is_some_and(|saved| !saved.local_path.is_empty() && saved.local_path != source_path) {
+        // The server task/file/payer and exact retained row have been verified.
+        // Discard only this stale display path; never open or adopt its target.
+        let ids = BTreeSet::from([confirmation.file_id.clone()]);
+        ensure_delivery!(apply_generation_patch_for_namespace(&authority, expected, GenerationRecoveryPatch::ClearDeliveryLocalPaths(ids))?, "saved delivery path changed concurrently");
+        for saved in &mut record.deliveries {
+            if saved.file_id == confirmation.file_id { saved.local_path.clear(); }
+        }
     }
     let (file, preview) = if let Some(mut file) = authority.open_optional_regular(&destination)? {
         verify_namespace_delivery_file(&authority, &mut file, &confirmation)?;
-        let preview = prepare_delivery_preview_for_namespace(&authority, &mut file)?;
+        let preview = if kind != NamespaceDeliveryKind::Image {None}else{Some(prepare_delivery_preview_for_namespace(&authority, &mut file)?)};
         (file, preview)
     } else {
         let mut temporary = authority.create_temporary_regular_for(&destination)?;
         let preparation = (|| -> std::result::Result<_, DeliveryRetryError> {
             api.download_verified_for_namespace(remote, &scope, &authority, &mut temporary)?;
-            let preview = prepare_delivery_preview_for_namespace(&authority, &mut temporary)?;
+            let preview = if kind != NamespaceDeliveryKind::Image {None}else{Some(prepare_delivery_preview_for_namespace(&authority, &mut temporary)?)};
             api.ensure_scope_active(&scope)?;
+            let _publication = authority.begin_ordinary_mutation()?;
             authority.sync_regular(&mut temporary)?;
             authority.publish_regular(
                 &mut temporary,
@@ -171,29 +290,32 @@ pub(super) fn prepare_namespace_delivery(
                 api.ensure_scope_active(&scope)?;
                 let mut winner = authority.open_existing_regular(&destination)?;
                 verify_namespace_delivery_file(&authority, &mut winner, &confirmation)?;
-                let preview = prepare_delivery_preview_for_namespace(&authority, &mut winner)?;
+                let preview = if kind != NamespaceDeliveryKind::Image {None}else{Some(prepare_delivery_preview_for_namespace(&authority, &mut winner)?)};
                 (winner, preview)
             }
         }
     };
     api.ensure_scope_active(&scope)?;
     let retained = authority.inspect_regular(&file)?;
-    let registration_file = authority.open_existing_regular(&destination)?;
-    ensure_delivery!(
-        authority.inspect_regular(&registration_file)?.identity == retained.identity,
-        "delivery changed before index registration"
-    );
-    let registration = NamespacedManagedFileRegistration::new(
-        &authority,
-        registration_file,
-        "generation",
-        "durable",
-    )
-    .map_err(anyhow::Error::from)?;
-    let indexed = index
-        .register_file_for_namespace(&authority, &registration)
-        .map_err(anyhow::Error::from)?;
-    let prepared = PreparedNamespaceDelivery {
+    let mut registration_file = authority.open_existing_regular(&destination)?;
+    let before_hash = authority.inspect_regular(&registration_file)?;
+    ensure_delivery!(before_hash == retained && before_hash.link_count == 1,
+        "delivery changed before index registration");
+    // The private reconciliation capability is minted from the complete held
+    // content, not from the path, suffix, size alone, or a generic registration.
+    verify_namespace_delivery_file(&authority, &mut registration_file, &confirmation)?;
+    let metadata = authority.inspect_regular(&registration_file)?;
+    ensure_delivery!(metadata == before_hash, "delivery changed during content verification");
+    let proof = VerifiedDeliveryIndexContent {
+        authority: &authority, api, scope: &scope, record: &record,
+        confirmation: &confirmation, source_path: &source_path,
+        file: &registration_file, metadata, derived: None,
+    };
+    let indexed = {
+        let _commit = authority.begin_ordinary_mutation()?;
+        index.reconcile_verified_delivery_content(&proof).map_err(anyhow::Error::from)?
+    };
+    let prepared = NamespaceDeliveryProof {
         authority,
         api: api.clone(),
         index,
@@ -202,12 +324,12 @@ pub(super) fn prepare_namespace_delivery(
         confirmation,
         file,
         indexed,
-        preview,
         source_path,
         terminal_success_count: detail.terminal().then_some(successes),
+        derived_cutout: None,
     };
     prepared.ensure_current()?;
-    Ok(prepared)
+    Ok((prepared,preview))
 }
 
 pub(super) fn acknowledge_namespace_delivery(
@@ -221,6 +343,12 @@ pub(super) fn acknowledge_namespace_delivery(
         &prepared.confirmation,
     )?;
     prepared.ensure_index_current()?;
+    if let Some(derived) = &mut prepared.derived_cutout {
+        read_cutout_held_bytes(&prepared.authority, &mut derived.output,
+            derived.output_metadata.byte_size, &derived.sha256)?;
+        read_cutout_held_bytes(&prepared.authority, &mut derived.source,
+            prepared.record.reference_size_bytes[0], &prepared.record.reference_sha256[0])?;
+    }
     let identity = prepared.record.identity();
     let current = load_exact_delivery_record(&prepared.authority, &identity)?;
     // Delivery rows and terminal progress can advance independently, but the
@@ -285,6 +413,11 @@ pub(super) fn acknowledge_namespace_delivery(
         &prepared.scope,
     )?;
     prepared.api.ensure_scope_active(&prepared.scope)?;
+    if prepared.derived_cutout.is_some() {
+        prepared.ensure_current()?;
+        prepared.ensure_index_current()?;
+        return settle_acknowledged_cutout_delivery_for_namespace(&AcknowledgedCutoutDelivery(prepared)).map_err(Into::into);
+    }
     pending_delivery_acknowledged_for_namespace(
         &prepared.authority,
         &identity,
@@ -293,18 +426,15 @@ pub(super) fn acknowledge_namespace_delivery(
     .map_err(Into::into)
 }
 
-impl PreparedNamespaceDelivery {
+impl NamespaceDeliveryProof {
     pub(super) fn record(&self) -> &PendingGenerationRecord {
         &self.record
     }
     pub(super) fn confirmation(&self) -> &DeliveryConfirmation {
         &self.confirmation
     }
-    pub(super) fn preview(&self) -> &PreparedDeliveryPreview {
-        &self.preview
-    }
     pub(super) fn source_path(&self) -> &str {
-        &self.source_path
+        self.derived_cutout.as_ref().map_or(self.source_path.as_str(), |derived| derived.source_path.as_str())
     }
     pub(super) fn lease(&self) -> &NamespaceLease {
         self.authority.lease()
@@ -317,6 +447,7 @@ impl PreparedNamespaceDelivery {
                 && retained.byte_size == self.confirmation.size_bytes,
             "retained delivery identity changed"
         );
+        if let Some(derived) = &self.derived_cutout { derived.ensure_current(&self.authority)?; }
         Ok(())
     }
     fn ensure_index_current(&self) -> Result<()> {
@@ -337,6 +468,7 @@ impl PreparedNamespaceDelivery {
                 && !indexed.pending_delete,
             "delivery index identity changed"
         );
+        if let Some(derived) = &self.derived_cutout { derived.ensure_index_current(&self.authority, &self.index)?; }
         Ok(())
     }
 }
@@ -423,6 +555,172 @@ fn verify_namespace_delivery_file(
         "delivery integrity mismatch"
     );
     Ok(())
+}
+
+// Minted only by delivery_retry after a real committed Store receipt and the
+// original remote mask acknowledgement. The constructor remains module-private.
+pub(super) struct AcknowledgedCutoutDelivery(NamespaceDeliveryProof);
+impl AcknowledgedCutoutDelivery {
+    pub(super) fn authority(&self) -> &NamespaceStorageAuthority { &self.0.authority }
+    pub(super) fn record(&self) -> &PendingGenerationRecord { &self.0.record }
+    pub(super) fn confirmation(&self) -> &DeliveryConfirmation { &self.0.confirmation }
+    pub(super) fn remote_path(&self) -> &str { &self.0.source_path }
+}
+
+
+// Remote acknowledgement always uses the enclosing
+// NamespaceDeliveryProof's original file/confirmation, never these output bytes.
+struct DerivedCutoutDelivery {
+    source: NamespaceManagedFile,
+    source_metadata: ManagedFileMetadata,
+    output: NamespaceManagedFile,
+    output_metadata: ManagedFileMetadata,
+    indexed: ManagedFileRecord,
+    source_path: String,
+    sha256: String,
+}
+
+impl DerivedCutoutDelivery {
+    fn ensure_current(&self, authority: &NamespaceStorageAuthority) -> Result<()> {
+        anyhow::ensure!(authority.inspect_regular(&self.source)? == self.source_metadata,
+            "original cutout input changed");
+        anyhow::ensure!(authority.inspect_regular(&self.output)? == self.output_metadata,
+            "derived cutout output changed");
+        Ok(())
+    }
+    fn ensure_index_current(&self, authority: &NamespaceStorageAuthority, index: &FileIndex) -> Result<()> {
+        let row = index.find_file_by_path_for_namespace(authority,
+            self.output.key().area(), self.output.key().relative_name().as_str())?
+            .ok_or_else(|| anyhow!("derived cutout index entry is missing"))?;
+        anyhow::ensure!(row.id == self.indexed.id
+            && row.physical_identity == self.output_metadata.identity
+            && row.byte_size == self.output_metadata.byte_size
+            && row.kind == "generation" && row.retention_policy == "durable"
+            && row.managed && !row.pending_delete,
+            "derived cutout index identity changed");
+        Ok(())
+    }
+}
+
+fn cutout_input_key(lease: &NamespaceLease, path: &Path) -> Result<ManagedFileKey> {
+    anyhow::ensure!(path.is_absolute(), "cutout input requires an owned absolute path");
+    let mut areas = vec![ManagedUserArea::Input, ManagedUserArea::Output,
+        ManagedUserArea::Prompt, ManagedUserArea::Canvas, ManagedUserArea::CanvasUploads,
+        ManagedUserArea::CanvasExports, ManagedUserArea::References,
+        ManagedUserArea::ReferencesLibrary, ManagedUserArea::ReferencesImports,
+        ManagedUserArea::Previews, ManagedUserArea::ToolboxCompressionInputs,
+        ManagedUserArea::ToolboxCompressionResults, ManagedUserArea::ToolboxConversionInputs,
+        ManagedUserArea::ToolboxConversionResults, ManagedUserArea::ToolboxCropInputs];
+    areas.sort_by_key(|area| std::cmp::Reverse(lease.namespace.path(*area).components().count()));
+    areas.into_iter().find_map(|area| path.strip_prefix(lease.namespace.path(area)).ok()
+        .and_then(|name| name.to_str()).and_then(|name| ManagedFileKey::new(area, name).ok()))
+        .ok_or_else(|| anyhow!("cutout input is outside owned image areas"))
+}
+
+fn read_cutout_held_bytes(authority: &NamespaceStorageAuthority,
+    file: &mut NamespaceManagedFile, size: u64, sha256: &str) -> Result<Vec<u8>> {
+    use sha2::Digest;
+    anyhow::ensure!(size > 0 && size <= 100 * 1024 * 1024,
+        "cutout input or output exceeds the owned image limit");
+    let metadata = authority.inspect_regular(file)?;
+    anyhow::ensure!(metadata.link_count == 1 && metadata.byte_size == size,
+        "cutout held image size changed");
+    let bytes = authority.with_regular_reader(file, |reader| {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        reader.take(size + 1).read_to_end(&mut bytes)?;
+        Ok(bytes)
+    })?;
+    anyhow::ensure!(bytes.len() as u64 == size
+        && format!("{:x}", sha2::Sha256::digest(&bytes)).eq_ignore_ascii_case(sha256)
+        && authority.inspect_regular(file)? == metadata,
+        "cutout held image fingerprint changed");
+    Ok(bytes)
+}
+
+pub(super) fn prepare_namespace_cutout_delivery(
+    api: &GenerationApi, authority: Arc<NamespaceStorageAuthority>, index: FileIndex,
+    expected: &RecoveryRecordIdentity, item_index: usize,
+) -> std::result::Result<PreparedNamespaceDelivery, DeliveryRetryError> {
+    use sha2::Digest;
+    // The private kind admits only image_cutout here. Its original PNG mask is
+    // separately verified/indexed; no ordinary image consumer can use this kind.
+    let (mut proof, _) = prepare_namespace_delivery_proof(api, authority, index,
+        expected, item_index, NamespaceDeliveryKind::Cutout)?;
+    let record = &proof.record;
+    ensure_delivery!(record.reference_paths.len() == 1
+        && record.reference_sha256.len() == 1 && record.reference_size_bytes.len() == 1,
+        "original cutout input fingerprint is missing");
+    let source_path = Path::new(&record.reference_paths[0]);
+    let mut source = proof.authority.open_existing_regular(
+        &cutout_input_key(proof.lease(), source_path)?)?;
+    let source_bytes = read_cutout_held_bytes(&proof.authority, &mut source,
+        record.reference_size_bytes[0], &record.reference_sha256[0])?;
+    let source_metadata = proof.authority.inspect_regular(&source)?;
+    let mask_bytes = read_cutout_held_bytes(&proof.authority, &mut proof.file,
+        proof.confirmation.size_bytes, &proof.confirmation.sha256)?;
+    let (derived_bytes, _, _) = image_cutout_callbacks::decode_cutout_result_bytes(
+        source_path, &source_bytes, &record.quality, &mask_bytes)?;
+    let sha256 = format!("{:x}", sha2::Sha256::digest(&derived_bytes));
+    let size = derived_bytes.len() as u64;
+    ensure_delivery!(size > 0 && size <= 100 * 1024 * 1024,
+        "derived cutout output exceeds the owned image limit");
+    proof.ensure_current()?;
+    ensure_delivery!(proof.authority.inspect_regular(&source)? == source_metadata,
+        "cutout input changed during derivation");
+    let key = ManagedFileKey::new(ManagedUserArea::Output,
+        &format!("{}-cutout-v1.png", proof.confirmation.file_id))?;
+    let output_path = proof.lease().namespace.path(ManagedUserArea::Output)
+        .join(key.relative_name().as_str()).to_str()
+        .ok_or_else(|| anyhow!("derived cutout path is not representable"))?.to_owned();
+    let mut output = if let Some(mut output) = proof.authority.open_optional_regular(&key)? {
+        read_cutout_held_bytes(&proof.authority, &mut output, size, &sha256)?;
+        output
+    } else {
+        let mut output = proof.authority.create_temporary_regular_for(&key)?;
+        let publication = (|| -> Result<()> {
+            let _mutation = proof.authority.begin_ordinary_mutation()?;
+            proof.authority.write_new_regular_from(&mut output, &mut derived_bytes.as_slice())?;
+            read_cutout_held_bytes(&proof.authority, &mut output, size, &sha256)?;
+            proof.authority.sync_regular(&mut output)?;
+            proof.authority.publish_regular(&mut output, NamespaceManagedPublication::Absent(&key))?;
+            Ok(())
+        })();
+        match publication {
+            Ok(()) => output,
+            Err(error) => {
+                let appeared = error.downcast_ref::<ManagedPublicationConflict>()
+                    == Some(&ManagedPublicationConflict::DestinationAppeared);
+                let _ = proof.authority.unlink_regular(output);
+                if !appeared { return Err(error.into()); }
+                let mut winner = proof.authority.open_existing_regular(&key)?;
+                read_cutout_held_bytes(&proof.authority, &mut winner, size, &sha256)?;
+                winner
+            }
+        }
+    };
+    let output_metadata = proof.authority.inspect_regular(&output)?;
+    let preview = prepare_delivery_preview_for_namespace(&proof.authority, &mut output)?;
+    // A private descriptor binds this computed content to the original mask and
+    // source proof. It is never exposed as a general index repair capability.
+    let verified = VerifiedDeliveryIndexContent {
+        authority: &proof.authority, api, scope: &proof.scope, record: &proof.record,
+        confirmation: &proof.confirmation, source_path: &output_path, file: &output,
+        metadata: output_metadata.clone(),
+        derived: Some(DerivedCutoutIndexContent { remote: &proof,
+            source: &source, source_metadata: &source_metadata,
+            sha256: &sha256, size }),
+    };
+    let indexed = {
+        let _mutation = proof.authority.begin_ordinary_mutation()?;
+        proof.index.reconcile_verified_delivery_content(&verified).map_err(anyhow::Error::from)?
+    };
+    drop(verified);
+    proof.derived_cutout = Some(DerivedCutoutDelivery { source, source_metadata,
+        output, output_metadata, indexed, source_path: output_path, sha256 });
+    proof.ensure_current()?;
+    proof.ensure_index_current()?;
+    Ok(PreparedNamespaceDelivery { proof, preview })
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -537,39 +835,50 @@ pub(super) fn release_delivery_downloads_for_scope(
     downloads.len() != previous_len
 }
 
-pub(super) fn refresh_delivery_download_flags(app: &AppWindow, context: &AppContext) {
-    let Some(scope) = current_generation_session_scope(context) else {
-        let mut store = context.store.borrow_mut();
-        for asset in &mut store.generations {
-            asset.delivery_downloading = false;
+pub(super) fn refresh_delivery_download_flags(app:&AppWindow,context:&AppContext) {
+    let Some(persistence)=context.store.borrow().private_persistence.clone()else{return;};
+    if !persistence.is_current(){return;}
+    let work=spawn_delivery_preparation(&persistence,move|captured,_,_|{
+        let authority=captured.storage_authority()?;
+        let rows=load_pending_generations_for_namespace(&authority)?;
+        Ok(rows.into_iter().flat_map(|record|{
+            let key=record.client_request_id;
+            record.deliveries.into_iter().filter(|delivery|!delivery.failed_asset_id.is_empty())
+                .map(move|delivery|(delivery.failed_asset_id,key.clone(),delivery.file_id))
+        }).collect::<Vec<_>>())
+    });
+    let Ok((cancel,receiver))=work else{return;};
+    poll_delivery_download_flags(app.as_weak(),context.clone(),persistence,cancel,receiver);
+}
+fn poll_delivery_download_flags(weak:Weak<AppWindow>,context:AppContext,persistence:PrivatePersistence,
+    cancel:Arc<std::sync::atomic::AtomicBool>,
+    receiver:mpsc::Receiver<std::result::Result<Vec<(String,String,String)>,DeliveryRetryError>>,
+){
+    slint::Timer::single_shot(Duration::from_millis(50),move||{
+        match finish_delivery_preparation(&cancel) {
+            Ok(true)=>{poll_delivery_download_flags(weak,context,persistence,cancel,receiver);return;},
+            Err(_)=>return,
+            Ok(false)=>{},
         }
-        push_generations(app, &store);
-        return;
-    };
-    let downloads = context.generations.delivery_downloads.borrow();
-    let mut store = context.store.borrow_mut();
-    for asset in &mut store.generations {
-        if !asset.delivery_recoverable {
-            asset.delivery_downloading = false;
-            continue;
-        }
-        asset.delivery_downloading = recoverable_delivery_for_failed_asset(
-            &scope.owner_user_id,
-            scope.auth_epoch,
-            &asset.id,
-        )
-        .ok()
-        .flatten()
-        .is_some_and(|(record, delivery)| {
-            downloads.contains_key(&DeliveryDownloadKey::new(
-                &scope,
-                &record.client_request_id,
-                &delivery.file_id,
-            ))
+        // A read failure never turns unknown recovery into an empty success.
+        let Ok(Ok(rows))=receiver.try_recv()else{return;};
+        let Some(app)=weak.upgrade()else{return;};
+        if !retry_binding_current(&context,&persistence){return;}
+        let lease=persistence.lease().clone();
+        let scope=SessionScope{owner_user_id:lease.namespace.user_public_id().into(),auth_epoch:lease.auth_epoch};
+        let _=context.apply_user_completion(&lease,||{
+            let flags={
+                let downloads=context.generations.delivery_downloads.borrow();
+                let store=context.store.borrow();
+                store.generations.iter().filter(|asset|asset.source_path=="failed").map(|asset|{
+                    let downloading=asset.delivery_recoverable && rows.iter().filter(|(id,_,_)|id==&asset.id)
+                        .any(|(_,request,file)|downloads.contains_key(&DeliveryDownloadKey::new(&scope,request,file)));
+                    (asset.id.clone(),downloading)
+                }).collect::<Vec<_>>()
+            };
+            for (id,downloading) in flags{set_failed_delivery_downloading(&app,&context,&id,downloading);}
         });
-    }
-    drop(downloads);
-    push_generations(app, &store);
+    });
 }
 
 fn set_failed_delivery_downloading(
@@ -586,7 +895,19 @@ fn set_failed_delivery_downloading(
     {
         asset.delivery_downloading = downloading;
     }
-    push_generations(app, &store);
+    drop(store);
+    let state=app.global::<AppState>();
+    let update=|model:ModelRc<AssetItem>|{
+        for row in 0..model.row_count(){
+            if let Some(mut item)=model.row_data(row){
+                if item.id.as_str()==failed_asset_id && item.source_path.as_str()=="failed"{
+                    item.delivery_downloading=downloading;model.set_row_data(row,item);
+                }
+            }
+        }
+    };
+    update(state.get_generations());
+    for group in state.get_generation_groups().iter(){update(group.items);}
 }
 
 fn clear_failed_delivery_recovery(app: &AppWindow, context: &AppContext, failed_asset_id: &str) {
@@ -793,212 +1114,134 @@ pub(super) fn run_failed_delivery_retry(
 }
 
 pub(super) fn retry_failed_delivery(app: &AppWindow, context: AppContext, failed_asset_id: String) {
-    let state = app.global::<AppState>();
-    let Some(backend) = context.backend.clone() else {
-        state.set_generation_status("服务端尚未初始化，请重启客户端后重试".into());
-        return;
-    };
-    let Some(scope) = current_generation_session_scope(&context) else {
-        state.set_generation_status("请先登录后再重新下载".into());
-        return;
-    };
-    let (record, delivery) = match recoverable_delivery_for_failed_asset(
-        &scope.owner_user_id,
-        scope.auth_epoch,
-        &failed_asset_id,
-    ) {
-        Ok(Some(value)) => value,
-        Ok(None) => {
-            clear_failed_delivery_recovery(app, &context, &failed_asset_id);
-            state.set_generation_status("文件已过期，请重新生成".into());
-            return;
-        }
-        Err(_) => {
-            state.set_generation_status("本地生成恢复记录无法读取，请重启后重试".into());
-            return;
-        }
-    };
-    let pair = (record.client_request_id.clone(), delivery.file_id.clone());
-    let Some(mut reservations) = try_reserve_delivery_download_pairs(
-        &context.generations,
-        &scope,
-        std::slice::from_ref(&pair),
-    ) else {
-        return;
-    };
-    let reservation = reservations
-        .pop()
-        .expect("a non-empty delivery pair reserves one key");
-    set_failed_delivery_downloading(app, &context, &failed_asset_id, true);
-    state.set_generation_status("正在重新下载图片...".into());
-
-    let worker_scope = scope.clone();
-    let (sender, receiver) = mpsc::channel();
-    std::thread::spawn(move || {
-        let api = GenerationApi::new(backend.api.clone());
-        let result = run_failed_delivery_retry(&api, &worker_scope, &record, &delivery);
-        let _ = sender.send(result);
+    let Some(persistence)=context.store.borrow().private_persistence.clone()else{return;};
+    let Some(backend)=context.backend.clone()else{return;};
+    if !persistence.is_current(){return;}
+    let original=context.store.borrow().generations.iter().find(|asset|asset.id==failed_asset_id
+        && asset.source_path=="failed" && asset.delivery_recoverable && !asset.delivery_downloading).cloned();
+    if original.is_none(){return;}
+    let lease=persistence.lease().clone();
+    if context.apply_user_completion(&lease,||{
+        set_failed_delivery_downloading(app,&context,&failed_asset_id,true);
+        app.global::<AppState>().set_generation_status("正在查找原始交付记录...".into());
+    }).is_err(){return;}
+    let id=failed_asset_id.clone();
+    let work=spawn_delivery_preparation(&persistence,move|captured,_,_|{
+        let authority=captured.storage_authority()?;
+        recoverable_delivery_for_failed_asset_for_namespace(&authority,&id)?
+            .ok_or_else(||DeliveryRetryError::Local(anyhow!("原始交付记录缺失，记录未删除")))
     });
-    poll_failed_delivery_retry(
-        app.as_weak(),
-        context,
-        scope,
-        failed_asset_id,
-        reservation,
-        Rc::new(RefCell::new(Some(receiver))),
-    );
+    match work {
+        Ok((cancel,receiver))=>poll_retry_discovery(app.as_weak(),context,persistence,backend,failed_asset_id,cancel,receiver),
+        Err(_)=>{let _=context.apply_user_completion(&lease,||{
+            set_failed_delivery_downloading(app,&context,&failed_asset_id,false);
+            app.global::<AppState>().set_generation_status("无法启动下载恢复，原交付已保留".into());
+        });}
+    }
 }
-
-fn poll_failed_delivery_retry(
-    app_weak: Weak<AppWindow>,
-    context: AppContext,
-    scope: SessionScope,
-    failed_asset_id: String,
-    reservation: DeliveryDownloadReservation,
-    receiver: Rc<
-        RefCell<Option<mpsc::Receiver<std::result::Result<RetrySuccess, DeliveryRetryError>>>>,
-    >,
+fn retry_binding_current(context:&AppContext,persistence:&PrivatePersistence)->bool {
+    context.store.borrow().private_persistence.as_ref().is_some_and(|current|current.same_binding(persistence))
+}
+fn poll_retry_discovery(weak:Weak<AppWindow>,context:AppContext,persistence:PrivatePersistence,
+    backend:Arc<BackendRuntime>,failed_asset_id:String,cancel:Arc<std::sync::atomic::AtomicBool>,
+    receiver:mpsc::Receiver<std::result::Result<(PendingGenerationRecord,PendingDeliveryRecord),DeliveryRetryError>>,
 ) {
-    slint::Timer::single_shot(Duration::from_millis(80), move || {
-        let result = {
-            let mut receiver = receiver.borrow_mut();
-            let Some(channel) = receiver.as_ref() else {
-                drop(receiver);
-                if let Some(app) = app_weak.upgrade() {
-                    complete_delivery_download(&app, &context, &reservation);
-                } else {
-                    release_delivery_download_reservations(
-                        &context,
-                        std::slice::from_ref(&reservation),
-                    );
-                }
-                return;
-            };
-            match channel.try_recv() {
-                Ok(result) => {
-                    receiver.take();
-                    Some(result)
-                }
-                Err(TryRecvError::Empty) => None,
-                Err(TryRecvError::Disconnected) => {
-                    receiver.take();
-                    Some(Err(DeliveryRetryError::Local(anyhow!(
-                        "delivery retry worker disconnected"
-                    ))))
-                }
-            }
-        };
-        let Some(result) = result else {
-            poll_failed_delivery_retry(
-                app_weak,
-                context,
-                scope,
-                failed_asset_id,
-                reservation,
-                receiver,
-            );
-            return;
-        };
-        let Some(app) = app_weak.upgrade() else {
-            release_delivery_download_reservations(
-                &context,
-                std::slice::from_ref(&reservation),
-            );
-            return;
-        };
-        if !generation_scope_matches_context(&context, &scope) {
-            complete_delivery_download(&app, &context, &reservation);
-            set_failed_delivery_downloading(&app, &context, &failed_asset_id, false);
-            return;
+    slint::Timer::single_shot(Duration::from_millis(50),move||{
+        let finished=finish_delivery_preparation(&cancel);
+        if matches!(finished,Ok(true)) {
+            poll_retry_discovery(weak,context,persistence,backend,failed_asset_id,cancel,receiver);return;
         }
+        let result=if let Err(error)=finished {Err(DeliveryRetryError::Local(error))}else{match receiver.try_recv(){
+            Ok(result)=>result,
+            Err(_)=>Err(DeliveryRetryError::Local(anyhow!("恢复读取线程已断开"))),
+        }};
+        let Some(app)=weak.upgrade()else{return;};
+        if !retry_binding_current(&context,&persistence){return;}
+        let lease=persistence.lease().clone();
+        let (record,delivery)=match result {
+            Ok(pair)=>pair,
+            Err(_)=>{let _=context.apply_user_completion(&lease,||{
+                set_failed_delivery_downloading(&app,&context,&failed_asset_id,false);
+                app.global::<AppState>().set_generation_status("原始交付记录无法读取，数据已保留".into());
+            });return;}
+        };
+        let scope=SessionScope{owner_user_id:lease.namespace.user_public_id().into(),auth_epoch:lease.auth_epoch};
+        let pair=(record.client_request_id.clone(),delivery.file_id.clone());
+        let reservation=context.apply_user_completion(&lease,||{
+            try_reserve_delivery_download_pairs(&context.generations,&scope,std::slice::from_ref(&pair))
+                .and_then(|mut values|values.pop())
+        }).ok().flatten();
+        let Some(reservation)=reservation else {
+            let _=context.apply_user_completion(&lease,||set_failed_delivery_downloading(&app,&context,&failed_asset_id,false));
+            return;
+        };
+        let work=spawn_delivery_preparation(&persistence,move|captured,activity,cancel|{
+            if activity.is_quiescing() || cancel.load(Ordering::SeqCst){return Err(DeliveryRetryError::AuthenticationRequired);}
+            let authority=captured.storage_authority()?;
+            let api=GenerationApi::new(backend.api.clone()).with_saved_group(&record.billing_account_group_id);
+            let index=authority.delivery_index()?;
+            prepare_namespace_delivery(&api,authority,index,&record.identity(),delivery.item_index)
+        });
+        match work {
+            Ok((cancel,receiver))=>poll_namespace_delivery_retry(app.as_weak(),context,persistence,failed_asset_id,reservation,cancel,receiver),
+            Err(_)=>{
+                release_delivery_download_reservations(&context,std::slice::from_ref(&reservation));
+                let _=context.apply_user_completion(&lease,||{
+                    set_failed_delivery_downloading(&app,&context,&failed_asset_id,false);
+                    app.global::<AppState>().set_generation_status("无法启动原文件下载，记录已保留".into());
+                });
+            }
+        }
+    });
+}
+fn poll_namespace_delivery_retry(
+    weak:Weak<AppWindow>,context:AppContext,persistence:PrivatePersistence,failed_asset_id:String,
+    reservation:DeliveryDownloadReservation,cancel:Arc<std::sync::atomic::AtomicBool>,
+    receiver:mpsc::Receiver<std::result::Result<PreparedNamespaceDelivery,DeliveryRetryError>>,
+) {
+    slint::Timer::single_shot(Duration::from_millis(50),move||{
+        let finished=finish_delivery_preparation(&cancel);
+        if matches!(finished,Ok(true)) {
+            poll_namespace_delivery_retry(weak,context,persistence,failed_asset_id,reservation,cancel,receiver);return;
+        }
+        let result=if let Err(error)=finished {Err(DeliveryRetryError::Local(error))}else{match receiver.try_recv(){
+            Ok(result)=>result,
+            Err(_)=>Err(DeliveryRetryError::Local(anyhow!("delivery retry worker disconnected"))),
+        }};
+        let Some(app)=weak.upgrade()else{
+            release_delivery_download_reservations(&context,std::slice::from_ref(&reservation));return;
+        };
+        if !retry_binding_current(&context,&persistence){
+            release_delivery_download_reservations(&context,std::slice::from_ref(&reservation));return;
+        }
+        let lease=persistence.lease().clone();
         match result {
-            Ok(success) => {
-                let time = Local::now().format("%Y-%m-%d %H:%M").to_string();
-                let delivery_for_persistence = success.delivery.clone();
-                let completion = local_save_then_record_and_acknowledge_with(
-                    || {
-                        replace_failed_delivery_asset_checked(
-                            &app,
-                            &context.store,
-                            &failed_asset_id,
-                            &success.staged_path,
-                            &time,
-                        )
-                        .map(|(source_path, _)| source_path)
-                    },
-                    |source_path| {
-                        pending_delivery_saved(
-                            &scope.owner_user_id,
-                            scope.auth_epoch,
-                            &delivery_for_persistence.client_request_id,
-                            &delivery_for_persistence,
-                            source_path,
-                        )
-                    },
-                    || {
-                        acknowledge_delivery_after_local_save(
-                            app.as_weak(),
-                            context.clone(),
-                            scope.clone(),
-                            success.delivery,
-                        );
-                    },
-                );
-                match completion {
-                    Ok((_, true)) => app
-                        .global::<AppState>()
-                        .set_generation_status("图片下载完成".into()),
-                    Ok((_, false)) | Err(DeliveryCompletionError::Recovery) => {
-                        app.global::<AppState>().set_generation_status(
-                            "图片已保存，但恢复记录更新失败；稍后将继续清理远端文件".into(),
-                        );
-                    }
-                    Err(DeliveryCompletionError::Local(error)) => {
-                        cleanup_failed_delivery_staging(&success.staged_path);
-                        set_failed_delivery_downloading(&app, &context, &failed_asset_id, false);
-                        app.global::<AppState>().set_generation_status(
-                            format!("图片下载失败：{}", zh_error(&error.to_string())).into(),
-                        );
-                    }
+            Ok(prepared) if prepared.confirmation().failed_asset_id.as_deref()==Some(failed_asset_id.as_str())=>{
+                start_image_delivery_commit(&app,context.clone(),prepared,Local::now().format("%Y-%m-%d %H:%M").to_string(),
+                    move|app,result|{
+                        release_delivery_download_reservations(&context,std::slice::from_ref(&reservation));
+                        set_failed_delivery_downloading(app,&context,&failed_asset_id,false);
+                        app.global::<AppState>().set_generation_status(match result {
+                            Ok((_,_,true))=>"图片已保存并确认交付",
+                            Ok((_,_,false))=>"图片已保存，远端交付确认待重试",
+                            Err(_)=>"本地保存尚未确认，原文件和交付记录已保留，请重试",
+                        }.into());
+                    });
+            },
+            other=>{
+                let terminal=matches!(&other,Err(DeliveryRetryError::Api(error)) if error.is_terminal_session_error());
+                drop(other);
+                release_delivery_download_reservations(&context,std::slice::from_ref(&reservation));
+                let _=context.apply_user_completion(&lease,||{
+                    set_failed_delivery_downloading(&app,&context,&failed_asset_id,false);
+                    app.global::<AppState>().set_generation_status("图片下载未完成，原交付记录已保留，请重试".into());
+                });
+                if terminal {
+                    let scope=SessionScope{owner_user_id:lease.namespace.user_public_id().into(),auth_epoch:lease.auth_epoch};
+                    if terminal_auth_scope_matches_context(&context,&scope){sign_out_locally(&app,&context,true,Some(scope.auth_epoch));}
                 }
-            }
-            Err(DeliveryRetryError::Expired) => {
-                if matches!(
-                    abandon_pending_delivery(
-                        &scope.owner_user_id,
-                        scope.auth_epoch,
-                        &failed_asset_id,
-                    ),
-                    Ok(true)
-                ) {
-                    clear_failed_delivery_recovery(&app, &context, &failed_asset_id);
-                    app.global::<AppState>()
-                        .set_generation_status("文件已过期，请重新生成".into());
-                } else {
-                    set_failed_delivery_downloading(&app, &context, &failed_asset_id, false);
-                    app.global::<AppState>()
-                        .set_generation_status("本地生成恢复记录无法更新，请重启后重试".into());
-                }
-            }
-            Err(DeliveryRetryError::AuthenticationRequired) => {
-                set_failed_delivery_downloading(&app, &context, &failed_asset_id, false);
-                app.global::<AppState>()
-                    .set_generation_status("登录状态已变化，请重新登录后下载".into());
-            }
-            Err(DeliveryRetryError::Api(error)) => {
-                set_failed_delivery_downloading(&app, &context, &failed_asset_id, false);
-                app.global::<AppState>().set_generation_status(
-                    format!("图片下载失败：{}", error.generation_message()).into(),
-                );
-            }
-            Err(DeliveryRetryError::Local(error)) => {
-                set_failed_delivery_downloading(&app, &context, &failed_asset_id, false);
-                app.global::<AppState>().set_generation_status(
-                    format!("图片下载失败：{}", zh_error(&error.to_string())).into(),
-                );
             }
         }
-        complete_delivery_download(&app, &context, &reservation);
     });
 }
 
@@ -1074,7 +1317,9 @@ mod tests {
 
     fn recoverable_record(scope: &SessionScope) -> PendingGenerationRecord {
         PendingGenerationRecord {
+            source_asset_id: String::new(),            video_request: None,
             schema_version: 2,
+            cancel_requested: false,
             created_at_epoch_ms: 0,
             client_request_id: "request-a".to_string(),
             owner_user_id: scope.owner_user_id.clone(),

@@ -13,9 +13,15 @@ fn trusted_recommendation_url(candidate: &str) -> Option<&'static str> {
     }
 }
 
-fn open_recommendation_link(candidate: &str) -> Result<()> {
+fn open_recommendation_link(candidate: &str, upgrade: &UpgradeLatch) -> Result<()> {
     let url = trusted_recommendation_url(candidate)
         .ok_or_else(|| anyhow!("untrusted recommendation link"))?;
+    let permit = upgrade.defer_external_effect().map_err(|required| anyhow!(required.as_error().user_message()))?;
+    upgrade.commit_deferred_external_effect_if_open(permit, || open_trusted_recommendation_link(url))
+        .map_err(|required| anyhow!(required.as_error().user_message()))?
+}
+
+fn open_trusted_recommendation_link(url: &str) -> Result<()> {
 
     #[cfg(target_os = "macos")]
     {
@@ -42,10 +48,11 @@ fn open_recommendation_link(candidate: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn wire_external_link_callbacks(app: &AppWindow) {
+pub(super) fn wire_external_link_callbacks(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
     state.on_open_external_link(move |candidate| {
-        if let Err(error) = open_recommendation_link(candidate.as_str()) {
+        let Some(backend) = context.backend.as_ref() else { return; };
+        if let Err(error) = open_recommendation_link(candidate.as_str(), backend.api.upgrade_latch()) {
             eprintln!("{error:#}");
         }
     });
@@ -54,6 +61,13 @@ pub(super) fn wire_external_link_callbacks(app: &AppWindow) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn core_required_upgrade_denies_actual_recommendation_launch_front_door() {
+        let latch = UpgradeLatch::default();
+        latch.trip(RequiredUpgrade { minimum_version: Some("99.0.0".into()) });
+        assert!(open_recommendation_link(AUDIO_SEPARATION_URL, &latch).is_err());
+    }
 
     #[test]
     fn only_known_https_recommendation_links_are_allowed() {

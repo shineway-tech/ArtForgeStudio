@@ -1,4 +1,32 @@
 use super::*;
+
+pub(super) fn prepare_activation_invitation_projection(dashboard:&InvitationDashboard) -> PreparedUiProjection {
+    let mut ui=PreparedUiProjection::default();
+    let overview = &dashboard.overview;
+    ui.push(overview.reward_rate_percent.clone().into(), |state, value| state.set_invitation_reward_rate(value));
+    ui.push(overview.invitation_count.to_string().into(), |state, value| state.set_invitation_count(value));
+    ui.push(overview.total_reward_credits.clone().into(), |state, value| state.set_invitation_history_reward(value));
+    ui.push(overview.invitation_code.clone().unwrap_or_default().into(), |state, value| state.set_invitation_own_code(value));
+    ui.push(overview.rule_description.clone().into(), |state, value| state.set_invitation_rule_description(value));
+    ui.push(ModelRc::new(VecModel::from(
+        dashboard
+            .users
+            .iter()
+            .map(invited_user_view)
+            .collect::<Vec<_>>(),
+    )), |state, value| state.set_invitation_users(value));
+    let next_cursor = dashboard.users_next_cursor.clone().unwrap_or_default();
+    ui.push(!next_cursor.is_empty(), |state, value| state.set_invitation_users_has_more(value));
+    ui.push(next_cursor.into(), |state, value| state.set_invitation_users_next_cursor(value));
+    ui.push(false, |state, value| state.set_invitation_users_loading(value));
+    ui.push("".into(), |state, value| state.set_invitation_users_message(value));
+    ui.push(if overview.enabled {
+        "".into()
+    } else {
+        "邀请返利当前未开放".into()
+    }, |state, value| state.set_invitation_rewards_status(value));
+    ui
+}
 use std::cell::Cell;
 
 enum InvitationSubmissionOutcome {

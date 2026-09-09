@@ -1,5 +1,5 @@
 use super::{
-    has_known_capability, AccountGroupChoice, ApiClient, ApiError, ApiResponse, BillingScope,
+    AccountGroupChoice, ApiClient, ApiError, ApiResponse, BillingScope,
     BillingSummary, CreditPack, KnownCapability, OrderDetail, PaymentApi, QuotaSummary,
     SessionManager, SessionScope, TeamApi, TeamPage,
 };
@@ -101,13 +101,13 @@ pub(crate) struct CreditRedemptionResult {
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct AccountSnapshot {
     pub(crate) user: AccountUser,
+    pub(crate) read_only: bool,
+    pub(crate) capabilities: Vec<String>,
     #[serde(default)]
     pub(crate) auth_methods: AccountAuthMethods,
     pub(crate) membership: Option<AccountMembership>,
     pub(crate) billing_group: AccountGroupChoice,
-    pub(crate) read_only: bool,
     pub(crate) entitlement: Value,
-    pub(crate) capabilities: Vec<String>,
     pub(crate) credits: Option<CreditAccount>,
     pub(crate) quota: Option<QuotaSummary>,
 }
@@ -550,12 +550,12 @@ impl AccountApi {
             .data;
         validate_snapshot_context(&account, scope)?;
 
-        let active = account.billing_group.selectable && !account.read_only;
-        let can_bill = active && has_known_capability(&account.capabilities, KnownCapability::Bill);
+        let active = account.billing_group.selectable;
+        let can_bill = active && account.billing_group.has_capability(KnownCapability::Bill);
         let can_purchase =
-            active && has_known_capability(&account.capabilities, KnownCapability::Purchase);
+            active && account.billing_group.has_capability(KnownCapability::Purchase);
         let can_read_finance =
-            has_known_capability(&account.capabilities, KnownCapability::ReadGroupFinance);
+            account.billing_group.has_capability(KnownCapability::ReadGroupFinance);
 
         std::thread::scope(|thread_scope| {
             let session_client = self.client.clone();
@@ -1317,24 +1317,31 @@ fn join_optional_snapshot<T>(
     }
 }
 
-fn validate_snapshot_context(
+pub(crate) fn validate_snapshot_context(
     account: &AccountSnapshot,
     scope: &BillingScope,
 ) -> Result<(), ApiError> {
     let identity_matches = account.user.id == scope.request.session.owner_user_id;
     let group_matches = account.billing_group.group_id == scope.request.account_group_id;
     let context_is_readable = account.billing_group.readable_context;
-    let active_is_selectable = !account.read_only
-        && account.billing_group.selectable
-        && account.billing_group.group_status == "active";
-    let frozen_owner_fallback = account.read_only
-        && account.billing_group.role == "owner"
+    let active_is_selectable = account.billing_group.selectable
+        && account.billing_group.group_status == "active"
+        && matches!(account.billing_group.role.as_str(), "owner" | "member")
+        && !account.read_only;
+    let frozen_owner_fallback = account.billing_group.role == "owner"
         && account.billing_group.group_status == "frozen"
         && context_is_readable
-        && !account.billing_group.selectable;
+        && !account.billing_group.selectable
+        && account.read_only
+        && !account.billing_group.has_capability(KnownCapability::Bill)
+        && !account.billing_group.has_capability(KnownCapability::Purchase)
+        && !account.billing_group.has_capability(KnownCapability::Redeem);
+    let capabilities_match = account.capabilities.iter().collect::<std::collections::BTreeSet<_>>()
+        == account.billing_group.capabilities.iter().collect::<std::collections::BTreeSet<_>>();
     if identity_matches
         && group_matches
         && context_is_readable
+        && capabilities_match
         && (active_is_selectable || frozen_owner_fallback)
     {
         return Ok(());
@@ -1370,7 +1377,8 @@ mod tests {
         ApiClientConfig, ApiMeta, ApiResponse, DeviceIdentity, GroupRequestScope, SessionManager,
         TokenSet,
     };
-    use std::io::{Read, Write};
+    use crate::runtime::backend_generation::billing_capture_test_support::read_request_bytes;
+    use std::io::Write;
     use std::net::TcpListener;
     use std::sync::{Arc, Mutex};
     use std::thread::{self, JoinHandle};
@@ -1380,15 +1388,46 @@ mod tests {
     const TEST_USER_ID: &str = "11111111-1111-4111-8111-111111111111";
     const TEST_GROUP_ID: &str = "22222222-2222-4222-8222-222222222222";
 
+    #[test]
+    fn core_snapshot_requires_authoritative_flags_and_rejects_contradictions() {
+        let mut wire = member_account_snapshot_json(vec!["bill", "future_read"]);
+        wire["read_only"] = serde_json::json!(false);
+        wire["capabilities"] = serde_json::json!(["bill", "future_read"]);
+        let scope = BillingScope { request: GroupRequestScope {
+            session: SessionScope { owner_user_id: TEST_USER_ID.into(), auth_epoch: 1 },
+            account_group_id: TEST_GROUP_ID.into(),
+        }, context_epoch: 1 };
+        let parsed: AccountSnapshot = serde_json::from_value(wire.clone()).unwrap();
+        assert!(!parsed.read_only);
+        assert_eq!(parsed.capabilities, ["bill", "future_read"]);
+        validate_snapshot_context(&parsed, &scope).unwrap();
+        for field in ["read_only", "capabilities"] {
+            let mut missing = wire.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<AccountSnapshot>(missing).is_err());
+        }
+        for invalid in [serde_json::json!(null), serde_json::json!("false"), serde_json::json!(0)] {
+            let mut invalid_wire = wire.clone(); invalid_wire["read_only"] = invalid;
+            assert!(serde_json::from_value::<AccountSnapshot>(invalid_wire).is_err());
+        }
+        wire["read_only"] = serde_json::json!(true);
+        assert!(validate_snapshot_context(&serde_json::from_value(wire.clone()).unwrap(), &scope).is_err());
+        wire["read_only"] = serde_json::json!(false);
+        wire["capabilities"] = serde_json::json!(["bill", "manage_group"]);
+        assert!(validate_snapshot_context(&serde_json::from_value(wire).unwrap(), &scope).is_err());
+    }
+
     fn member_account_snapshot_json(capabilities: Vec<&str>) -> Value {
-        let group_capabilities = capabilities.clone();
         serde_json::json!({
+            "read_only": false,
+            "capabilities": capabilities,
             "user": {
                 "id": TEST_USER_ID,
                 "email_masked": "m***@example.com",
                 "nickname": "Member",
                 "status": "active",
-                "registered_at": "2026-09-05T00:00:00Z"
+                "registered_at": "2026-09-05T00:00:00.000Z",
+                "invitation_code_submitted": false
             },
             "auth_methods": {
                 "email": {"bound": true},
@@ -1406,19 +1445,14 @@ mod tests {
                 "selectable": true,
                 "group_version": "4",
                 "membership_version": "8",
-                "capabilities": group_capabilities,
-                "quota": {
-                    "period_start": "2026-09-01T00:00:00Z",
-                    "period_end": "2026-10-01T00:00:00Z",
-                    "monthly_limit": "500",
-                    "settled": "120",
-                    "reserved": "30",
-                    "remaining": "350"
-                }
+                "capabilities": capabilities,
+                "quota": null
             },
-            "read_only": false,
-            "entitlement": {},
-            "capabilities": capabilities,
+            "entitlement": {
+                "plan_code": "free", "tier_rank": 0, "max_quality": "4K",
+                "max_concurrent_tasks": 5, "membership_period_public_id": null,
+                "expires_at": null
+            },
             "quota": {
                 "period_start": "2026-09-01T00:00:00Z",
                 "period_end": "2026-10-01T00:00:00Z",
@@ -1438,7 +1472,7 @@ mod tests {
         assert!(snapshot.quota.is_some());
         assert!(snapshot.credits.is_none());
         assert!(snapshot.membership.is_none());
-        assert!(!snapshot.read_only);
+        assert!(snapshot.billing_group.selectable);
         let wire = member_account_snapshot_json(vec!["bill"]);
         assert!(wire.get("membership").is_none());
         assert!(!wire.to_string().contains("ends_at"));
@@ -1448,17 +1482,18 @@ mod tests {
     fn owner_account_snapshot_json(
         group_status: &str,
         selectable: bool,
-        read_only: bool,
         capabilities: Vec<&str>,
     ) -> Value {
-        let group_capabilities = capabilities.clone();
         serde_json::json!({
+            "read_only": !selectable,
+            "capabilities": capabilities,
             "user": {
                 "id": TEST_USER_ID,
                 "email_masked": "o***@example.com",
                 "nickname": "Owner",
                 "status": "active",
-                "registered_at": "2026-09-05T00:00:00Z"
+                "registered_at": "2026-09-05T00:00:00.000Z",
+                "invitation_code_submitted": false
             },
             "auth_methods": {
                 "email": {"bound": true},
@@ -1483,29 +1518,30 @@ mod tests {
                 "selectable": selectable,
                 "group_version": "4",
                 "membership_version": null,
-                "capabilities": group_capabilities,
+                "capabilities": capabilities,
                 "quota": null
             },
-            "read_only": read_only,
-            "entitlement": {},
-            "capabilities": capabilities,
+            "entitlement": {
+                "plan_code": "free", "tier_rank": 0, "max_quality": "4K",
+                "max_concurrent_tasks": 5, "membership_period_public_id": null,
+                "expires_at": null
+            },
             "credits": {
                 "available": "1000",
                 "reserved": "10",
                 "lifetime_granted": "1200",
                 "lifetime_spent": "190",
                 "version": "8"
-            },
-            "quota": null
+            }
         })
     }
 
     fn active_owner_snapshot_json(capabilities: Vec<&str>) -> Value {
-        owner_account_snapshot_json("active", true, false, capabilities)
+        owner_account_snapshot_json("active", true, capabilities)
     }
 
     fn frozen_owner_snapshot_json(capabilities: Vec<&str>) -> Value {
-        owner_account_snapshot_json("frozen", false, true, capabilities)
+        owner_account_snapshot_json("frozen", false, capabilities)
     }
 
     #[derive(Debug)]
@@ -1559,9 +1595,12 @@ mod tests {
                         }
                         Err(error) => panic!("snapshot capture accept failed: {error}"),
                     };
-                    let mut raw = [0_u8; 16 * 1024];
-                    let received = stream.read(&mut raw).unwrap();
-                    let request = SnapshotRequest::parse(&raw[..received]);
+                    // Accepted sockets can inherit nonblocking mode on macOS.
+                    // Reuse the bounded recorder that also waits for complete,
+                    // possibly fragmented headers instead of a single read.
+                    let raw = read_request_bytes(&mut stream);
+                    stream.set_write_timeout(Some(Duration::from_secs(2))).unwrap();
+                    let request = SnapshotRequest::parse(&raw);
                     let target = request.target.clone();
                     captured.lock().unwrap().push(request);
                     let (data, meta) = snapshot_response(&target, &account);
@@ -1735,8 +1774,9 @@ mod tests {
             },
             context_epoch: 4,
         };
-        let snapshot = AccountApi::new(client).snapshot_billing(&scope).unwrap();
+        let snapshot = AccountApi::new(client).snapshot_billing(&scope);
         let requests = capture.finish();
+        let snapshot = snapshot.unwrap();
         assert_eq!(requests.len(), maximum_requests);
         assert_eq!(requests[0].target, "/v1/account");
         assert_eq!(requests[0].account_group_id.as_deref(), Some(TEST_GROUP_ID));
@@ -1788,6 +1828,12 @@ mod tests {
                 )
                 || request.target == format!("/v1/account-groups/{TEST_GROUP_ID}/billing-summary")
         }));
+
+        let unknown = capture_snapshot(member_account_snapshot_json(vec!["future_capability"]), 4);
+        assert_eq!(unknown.billing_paths(), ["/v1/account"]);
+        assert!(unknown.snapshot.models.is_none());
+        assert!(unknown.snapshot.account.credits.is_none());
+        assert_eq!(unknown.snapshot.account.quota.unwrap().remaining, "350");
     }
 
     #[test]

@@ -88,6 +88,12 @@ pub(crate) fn generation_content_policy_message(message: &str) -> String {
 
 #[derive(Clone, Debug, thiserror::Error)]
 pub(crate) enum ApiError {
+    // Local request context, never inferred from whichever team is selected later.
+    #[error("{source}")]
+    BillingRejected {
+        source: Box<ApiError>,
+        account_group_id: String,
+    },
     #[error("网络请求失败：{message}")]
     Network { message: String, timeout: bool },
     #[error("接口返回错误 {code}：{message}")]
@@ -116,6 +122,7 @@ pub(crate) enum ApiError {
 impl ApiError {
     pub(crate) fn code(&self) -> Option<&str> {
         match self {
+            Self::BillingRejected { source, .. } => source.code(),
             Self::Http { code, .. } => Some(code),
             Self::AuthenticationRequired => Some("authentication_required"),
             _ => None,
@@ -124,6 +131,7 @@ impl ApiError {
 
     pub(crate) fn request_id(&self) -> Option<&str> {
         match self {
+            Self::BillingRejected { source, .. } => source.request_id(),
             Self::Http { request_id, .. } | Self::Protocol { request_id, .. } => {
                 request_id.as_deref()
             }
@@ -153,7 +161,7 @@ impl ApiError {
     }
 
     pub(crate) fn is_client_update_required(&self) -> bool {
-        self.code() == Some("client_update_required")
+        matches!(self, Self::Http { status: 426, code, .. } if code == "client_upgrade_required")
     }
 
     pub(crate) fn is_network_error(&self) -> bool {
@@ -162,6 +170,25 @@ impl ApiError {
 
     pub(crate) fn is_insufficient_credits(&self) -> bool {
         self.code() == Some("insufficient_credits")
+    }
+
+    pub(crate) fn is_billing_rejection(&self) -> bool {
+        matches!(self.code(), Some("insufficient_credits" | "membership_limit_exceeded"))
+    }
+
+    pub(crate) fn with_billing_payer(self, account_group_id: &str) -> Self {
+        if self.is_billing_rejection() && !matches!(&self, Self::BillingRejected { .. }) {
+            Self::BillingRejected { source: Box::new(self), account_group_id: account_group_id.into() }
+        } else {
+            self
+        }
+    }
+
+    pub(crate) fn billing_payer(&self) -> Option<&str> {
+        match self {
+            Self::BillingRejected { account_group_id, .. } => Some(account_group_id),
+            _ => None,
+        }
     }
 
     pub(crate) fn is_invitation_code_already_submitted(&self) -> bool {
@@ -176,9 +203,18 @@ impl ApiError {
     }
 
     pub(crate) fn should_preserve_generation_recovery(&self) -> bool {
+        // An upgrade rejection says nothing about an earlier attempt with this
+        // idempotency key. Keep its immutable payer and recovery identity.
+        if self.is_client_update_required() {
+            return true;
+        }
         match self {
             Self::Network { .. } | Self::Protocol { .. } => true,
-            Self::Http { status, .. } => *status >= 500 || matches!(*status, 408 | 425 | 429),
+            Self::Http { status, code, .. } => {
+                // The server's identical-request lock is ambiguous, not a new intent.
+                *status >= 500 || matches!(*status, 408 | 425 | 429)
+                    || (*status == 409 && code == "request_in_progress")
+            }
             _ => false,
         }
     }
@@ -196,6 +232,9 @@ impl ApiError {
     }
 
     pub(crate) fn user_message(&self) -> String {
+        if self.is_client_update_required() {
+            return "当前客户端版本过旧，请更新后重试".to_string();
+        }
         match self.code() {
             Some("email_code_invalid" | "verification_code_invalid") => {
                 "验证码不正确或已失效".to_string()
@@ -220,6 +259,7 @@ impl ApiError {
                 "操作过于频繁，请稍后再试".to_string()
             }
             Some("email_already_bound") => "当前账号已经绑定邮箱".to_string(),
+            Some("invitation_self_target") => "不能邀请自己加入团队，请填写其他成员的邮箱".to_string(),
             Some(
                 "invitation_code_already_submitted"
                 | "invitation_code_already_used"
@@ -243,7 +283,6 @@ impl ApiError {
             }
             Some("wechat_not_bound") => "当前账号尚未绑定微信".to_string(),
             Some("agreement_acceptance_required") => "请阅读并同意最新协议后重试".to_string(),
-            Some("client_update_required") => "当前客户端版本过旧，请更新后重试".to_string(),
             Some("account_disabled" | "account_unavailable") => {
                 "当前账号暂不可用，请联系客服".to_string()
             }
@@ -256,6 +295,7 @@ impl ApiError {
                 | "refresh_token_reused",
             ) => "登录状态已失效，请重新登录".to_string(),
             Some("insufficient_credits") => "积分不足，请充值后重试".to_string(),
+            Some("membership_limit_exceeded") => "本月可用额度不足，请联系主账号调整额度。".to_string(),
             Some("membership_quality_forbidden") => {
                 "当前会员不支持所选清晰度，请降低清晰度或升级会员".to_string()
             }
@@ -341,9 +381,11 @@ impl ApiError {
             }
             Some("payment_amount_mismatch") => "支付金额校验失败，请重新下单".to_string(),
             Some("order_not_found") => "订单不存在或已失效，请重新操作".to_string(),
+            Some("account_group_capability_denied") => "当前账号没有此操作权限，请切换账号后重试".to_string(),
             Some("validation_error") => "提交内容有误，请检查后重试".to_string(),
             Some(_) => "服务暂时异常，请稍后重试".to_string(),
             None => match self {
+                Self::BillingRejected { source, .. } => source.user_message(),
                 Self::Http { .. } => "服务暂时异常，请稍后重试".to_string(),
                 Self::Network { timeout: true, .. } => "请求超时，请稍后重试".to_string(),
                 Self::Network { .. } => "无法连接服务端，请检查网络后重试".to_string(),
@@ -365,6 +407,9 @@ impl ApiError {
             };
         }
         let chinese = match self.code() {
+            Some("account_group_capability_denied") => {
+                "当前团队不支持兑换，请切换到“自己的团队”后兑换。".to_string()
+            }
             Some("redemption_code_unavailable") => {
                 "兑换码无效、已使用或当前不可用，请检查后重试".to_string()
             }
@@ -390,6 +435,9 @@ impl ApiError {
             return chinese;
         }
         match self.code() {
+            Some("account_group_capability_denied") => {
+                "Redemption is unavailable in this team. Switch to My Team to redeem a code.".to_string()
+            }
             Some("redemption_code_unavailable") => {
                 "The code is invalid, already used, or currently unavailable.".to_string()
             }
@@ -437,11 +485,15 @@ impl ApiError {
                     "The redemption task was interrupted. Please try again.".to_string()
                 }
                 Self::Http { .. } => "The service is temporarily unavailable.".to_string(),
+                Self::BillingRejected { source, .. } => source.redemption_message(english),
             },
         }
     }
 
     pub(crate) fn generation_message(&self) -> String {
+        if self.is_client_update_required() {
+            return self.user_message();
+        }
         if let Self::Http { code, message, .. } = self {
             if is_generation_content_policy_blocked(code, message) {
                 return generation_content_policy_message(message);
@@ -522,7 +574,6 @@ impl ApiError {
                 "请求恢复信息与服务端记录冲突，请重新发起生成".to_string()
             }
             Some("delivery_checksum_mismatch") => "生成文件完整性校验失败，请重新下载".to_string(),
-            _ if self.is_client_update_required() => "当前客户端版本过旧，请更新后重试".to_string(),
             _ if self.is_terminal_session_error() => "登录状态已失效，请重新登录".to_string(),
             _ => self.user_message(),
         }
@@ -582,10 +633,73 @@ mod tests {
     }
 
     #[test]
-    fn update_and_access_token_errors_are_classified_without_revoking_offline_state() {
-        assert!(http_error("client_update_required").is_client_update_required());
+    fn access_token_rejection_is_not_terminal_session_revocation() {
         assert!(http_error("access_token_invalid").is_access_token_rejected());
         assert!(!http_error("access_token_invalid").is_terminal_session_error());
+    }
+
+    #[test]
+    fn forced_upgrade_requires_the_exact_http_status_and_stable_code() {
+        for (status, code, expected) in [
+            (426, "client_upgrade_required", true),
+            (401, "client_upgrade_required", false),
+            (400, "client_upgrade_required", false),
+            (503, "client_upgrade_required", false),
+            (426, "client_update_required", false),
+            (426, "CLIENT_UPGRADE_REQUIRED", false),
+            (426, "client_upgrade_required ", false),
+            (426, "unexpected_error", false),
+        ] {
+            let error = ApiError::Http {
+                status,
+                code: code.into(),
+                message: "content_policy_violation: sensitive provider response".into(),
+                request_id: Some("private-upgrade-request".into()),
+                details: Some(serde_json::json!({"minimum_version": "9.9.9"})),
+            };
+            assert_eq!(error.is_client_update_required(), expected, "{status}/{code}");
+            assert!(!error.is_terminal_session_error());
+            assert!(!error.is_access_token_rejected());
+            assert_eq!(
+                error.user_message(),
+                if expected { "当前客户端版本过旧，请更新后重试" }
+                else { "服务暂时异常，请稍后重试" },
+            );
+            if expected {
+                assert_eq!(error.generation_message(), error.user_message());
+            }
+        }
+    }
+
+    #[test]
+    fn forced_upgrade_preserves_recovery_without_reclassifying_definitive_rejections() {
+        for (status, code, expected) in [
+            (426, "client_upgrade_required", true),
+            (400, "client_upgrade_required", false),
+            (426, "unexpected_error", false),
+            (400, "insufficient_credits", false),
+            (404, "task_not_found", false),
+            (409, "client_request_conflict", false),
+            (409, "idempotency_key_conflict", false),
+            (409, "request_in_progress", true),
+            (409, "unexpected_error", false),
+            (400, "request_in_progress", false),
+            (408, "request_timeout", true),
+            (425, "request_in_progress", true),
+            (429, "rate_limited", true),
+            (503, "service_unavailable", true),
+        ] {
+            let error = ApiError::Http {
+                status, code: code.into(), message: "fixture".into(),
+                request_id: None, details: None,
+            };
+            assert_eq!(error.should_preserve_generation_recovery(), expected, "{status}/{code}");
+        }
+    }
+
+    #[test]
+    fn self_team_invitation_has_an_actionable_message() {
+        assert_eq!(http_error("invitation_self_target").user_message(), "不能邀请自己加入团队，请填写其他成员的邮箱");
     }
 
     #[test]
@@ -631,6 +745,10 @@ mod tests {
     #[test]
     fn redemption_errors_have_stable_actionable_messages() {
         let cases = [
+            (
+                "account_group_capability_denied",
+                "当前团队不支持兑换，请切换到“自己的团队”后兑换。",
+            ),
             (
                 "redemption_code_unavailable",
                 "兑换码无效、已使用或当前不可用，请检查后重试",
