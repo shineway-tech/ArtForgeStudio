@@ -2368,7 +2368,10 @@ mod tests {
         assert!(submitted.contains("主要通过服装等级、武器、装备、护甲"));
         assert!(submitted.contains("若主体是怪物、机械生物或其他生物"));
         assert!(submitted.contains("允许随等级逐步改变体型、身体比例、轮廓和形态"));
-        assert!(submitted.contains("若主体是武器、道具、载具、植物或建筑"));
+        assert!(submitted.contains("若主体是建筑"));
+        assert!(submitted.contains("不得保持建筑形状不变"));
+        assert!(submitted.contains("每升一级都必须增加可见的实体附加元素"));
+        assert!(submitted.contains("不能仅靠换色、发光或粒子效果表示升级"));
         assert!(submitted.contains("白、绿、蓝、紫、橙、红"));
         assert!(submitted.contains("等级色只能作为局部品质标识"));
         assert!(submitted.contains("不得给整个主体统一染色"));
@@ -2555,7 +2558,9 @@ mod tests {
         assert!(template.contains("先自动识别参考图中的主体类型"));
         assert!(template.contains("若主体是人类或类人角色"));
         assert!(template.contains("若主体是怪物、机械生物或其他生物"));
-        assert!(template.contains("若主体是武器、道具、载具、植物或建筑"));
+        assert!(template.contains("若主体是建筑"));
+        assert!(template.contains("不得保持建筑形状不变"));
+        assert!(template.contains("每升一级都必须增加可见的实体附加元素"));
         let submitted = compose_canvas_workflow_prompt(&template, "", 8, false);
         assert!(submitted.contains("白、绿、蓝、紫、橙、红"));
         assert!(submitted.contains("等级色只能作为局部品质标识"));
