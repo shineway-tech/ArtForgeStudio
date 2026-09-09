@@ -150,6 +150,22 @@ mod tests {
     }
 
     #[test]
+    fn image_size_choosers_exclude_two_to_one_ratios() {
+        let inline = include_str!("../../ui/components/inline-card-chooser.slint");
+        let canvas = include_str!("../../ui/pages/infinite-canvas-page.slint");
+
+        for forbidden in [
+            "value: \"2:1\"",
+            "value: \"1:2\"",
+            "text: \"2:1\"",
+            "text: \"1:2\"",
+        ] {
+            assert!(!inline.contains(forbidden), "inline image settings still expose {forbidden}");
+            assert!(!canvas.contains(forbidden), "canvas image settings still expose {forbidden}");
+        }
+    }
+
+    #[test]
     fn bigint_balances_and_cursors_remain_decimal_strings() {
         let value = "9007199254740993123";
         let credits: CreditAccount = serde_json::from_value(serde_json::json!({
@@ -3878,7 +3894,7 @@ mod tests {
         assert!(
             chooser.contains("border-color: root.selected ? AppTheme.accent : AppTheme.border;")
         );
-        assert_eq!(chooser.matches("ImageRatioOption { value:").count(), 11);
+        assert_eq!(chooser.matches("ImageRatioOption { value:").count(), 9);
         assert_eq!(chooser.matches("ImageSettingPill { text:").count(), 7);
         assert!(panel.contains("settings-row := HorizontalLayout"));
         assert!(panel.contains("y: negative-editor.y + negative-editor.height + 12px"));

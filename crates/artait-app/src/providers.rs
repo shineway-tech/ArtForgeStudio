@@ -301,8 +301,8 @@ fn aspect_options_for_model_and_quality(
         ]
     } else if model.contains("nano-banana") {
         [
-            "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9", "9:21", "2:1",
-            "1:2", "3:1", "1:3",
+            "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9", "9:21",
+            "3:1", "1:3",
         ]
         .into_iter()
         .map(|aspect| image_option(aspect, aspect, nano_banana_pixel_size(quality, aspect)))
@@ -357,8 +357,6 @@ fn gpt_image_2_aspect_options(api_style: &str, quality: &str) -> Vec<WorkspaceSe
         "4K" => vec![
             option("16:9"),
             option("9:16"),
-            option("2:1"),
-            option("1:2"),
             option("21:9"),
             option("9:21"),
         ],
@@ -372,8 +370,6 @@ fn gpt_image_2_aspect_options(api_style: &str, quality: &str) -> Vec<WorkspaceSe
             option("4:5"),
             option("16:9"),
             option("9:16"),
-            option("2:1"),
-            option("1:2"),
             option("21:9"),
             option("9:21"),
         ],
@@ -704,13 +700,17 @@ mod tests {
         assert_eq!(aspect_ids("gpt-image-2", "1K"), ["1:1", "3:2", "2:3"]);
         assert_eq!(
             aspect_ids("gpt-image-2", "4K"),
-            ["16:9", "9:16", "2:1", "1:2", "21:9", "9:21"]
+            ["16:9", "9:16", "21:9", "9:21"]
         );
         assert!(aspect_ids("gpt-image-2", "2K").contains(&"21:9".to_string()));
         assert!(aspect_ids("gpt-image-2", "2K").contains(&"4:5".to_string()));
+        assert!(!aspect_ids("gpt-image-2", "2K").contains(&"2:1".to_string()));
+        assert!(!aspect_ids("gpt-image-2", "2K").contains(&"1:2".to_string()));
+        assert!(!aspect_ids("nano-banana-pro-vt", "4K").contains(&"2:1".to_string()));
+        assert!(!aspect_ids("nano-banana-pro-vt", "4K").contains(&"1:2".to_string()));
         assert_eq!(
             aspect_ids_for_style("gpt-image-2", "newapi", "4K"),
-            ["16:9", "9:16", "2:1", "1:2", "21:9", "9:21"]
+            ["16:9", "9:16", "21:9", "9:21"]
         );
     }
 }
