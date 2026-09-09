@@ -2593,6 +2593,22 @@ export component InfiniteCanvasPage {
         root.pan-y = canvas.height / 2 - (AppState.canvas-focus-y + AppState.canvas-focus-height / 2) * 1px * root.zoom-percent / 100;
     }
 
+    function focus-generation-card(source-id: string) {
+        // Creation selects the actual collision-free placement, not the requested position.
+        if AppState.canvas-selected-id != source-id
+            || AppState.canvas-focus-width <= 0 || AppState.canvas-focus-height <= 0 {
+            return;
+        }
+        let view-top = 48px;
+        let view-bottom = max(view-top + 1px, canvas-workflow-dock.y - 12px);
+        let view-height = view-bottom - view-top;
+        let fit-x = max(1px, canvas.width - 64px) / 1px / AppState.canvas-focus-width * 100;
+        let fit-y = view-height / 1px / AppState.canvas-focus-height * 100;
+        root.zoom-percent = max(5, min(100, floor(min(fit-x, fit-y))));
+        root.pan-x = canvas.width / 2 - (AppState.canvas-focus-x + AppState.canvas-focus-width / 2) * 1px * root.zoom-percent / 100;
+        root.pan-y = (view-top + view-bottom) / 2 - (AppState.canvas-focus-y + AppState.canvas-focus-height / 2) * 1px * root.zoom-percent / 100;
+    }
+
     function node-type-label(kind: string) -> string {
         if kind == "image" { return AppState.en ? "Image node" : "图片节点"; }
         if kind == "video" { return AppState.en ? "Video node" : "视频节点"; }
@@ -2749,6 +2765,9 @@ export component InfiniteCanvasPage {
         if source-id != "" {
             AppState.canvas-generation-loading-node-id = source-id;
             AppState.generate-canvas-node(AppState.canvas-generation-loading-node-id, submitted-prompt);
+            if AppState.generating {
+                root.focus-generation-card(AppState.canvas-generation-loading-node-id);
+            }
             if !AppState.generating && AppState.canvas-generation-loading-node-id != "" {
                 AppState.remove-canvas-node(AppState.canvas-generation-loading-node-id);
                 AppState.canvas-generation-loading-node-id = "";

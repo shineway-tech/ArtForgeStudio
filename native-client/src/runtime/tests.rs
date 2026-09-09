@@ -2583,6 +2583,77 @@ mod tests {
     }
 
     #[test]
+    fn starting_canvas_generation_centers_the_displaced_card_above_the_composer() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.on_normalize_canvas_workflow_prompt(|prompt| prompt);
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_page("canvas".into());
+        state.set_canvas_workflow_prompt("a building".into());
+        state.set_image_model("test-model".into());
+        // Simulate the placement boundary returning a card displaced by occupied space.
+        // Keep disk persistence and the paid generation service outside this UI test.
+        let weak = app.as_weak();
+        state.on_create_canvas_generation_source(move |_, _, _| {
+            let app = weak.upgrade().unwrap();
+            let mut store = Store::default();
+            store.canvas_notes.push(CanvasNoteData {
+                id: "displaced-source".into(), kind: "image".into(),
+                x: 6000.0, y: -4000.0, width: 340.0, height: 250.0,
+                selected: true, ..CanvasNoteData::default()
+            });
+            push_canvas_notes(&app, &store);
+            let state = app.global::<AppState>();
+            state.set_canvas_selected_id("displaced-source".into());
+            state.set_canvas_focus_x(6000.0);
+            state.set_canvas_focus_y(-4000.0);
+            state.set_canvas_focus_width(340.0);
+            state.set_canvas_focus_height(250.0);
+            "displaced-source".into()
+        });
+        let weak = app.as_weak();
+        state.on_generate_canvas_node(move |_, _| {
+            weak.upgrade().unwrap().global::<AppState>().set_generating(true);
+        });
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        app.show().expect("show window");
+        state.set_canvas_workflow_prompt("a building".into());
+        ElementHandle::find_by_element_id(&app, "InfiniteCanvasPage::workflow-generate-button")
+            .next().unwrap().mock_single_click(PointerEventButton::Left);
+        assert!(state.get_generating(), "generation must start before checking focus");
+        assert_eq!(state.get_canvas_notes().row_count(), 1);
+
+        let canvas = ElementHandle::find_by_element_id(&app, "InfiniteCanvasPage::canvas").next().unwrap();
+        let dock = ElementHandle::find_by_element_id(&app, "InfiniteCanvasPage::canvas-workflow-dock").next().unwrap();
+        let card = ElementHandle::find_by_element_type_name(&app, "CanvasNodeCard").next()
+            .expect("the generated card must be brought into the visible canvas");
+        let p = card.absolute_position();
+        let size = card.size();
+        let center_x = canvas.absolute_position().x + canvas.size().width / 2.0;
+        let center_y = (canvas.absolute_position().y + 48.0 + dock.absolute_position().y - 12.0) / 2.0;
+        assert!((p.x + size.width / 2.0 - center_x).abs() < 2.0, "new card must be horizontally centered");
+        assert!((p.y + size.height / 2.0 - center_y).abs() < 2.0, "new card must be centered above the composer");
+        assert!(p.y >= canvas.absolute_position().y + 48.0);
+        assert!(p.y + size.height <= dock.absolute_position().y - 12.0);
+
+        // Moving the card and updating progress must not cause another auto-focus.
+        let model = state.get_canvas_notes();
+        let mut moved = model.row_data(0).unwrap();
+        moved.x += 100.0;
+        model.set_row_data(0, moved);
+        let moved_x = card.absolute_position().x;
+        state.set_generation_status("任务已提交，正在排队...".into());
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1000));
+        slint::platform::update_timers_and_animations();
+        assert!((card.absolute_position().x - moved_x).abs() < 1.0);
+    }
+
+    #[test]
     fn upgrade_evolution_requires_a_reference_but_not_an_extra_description() {
         use i_slint_backend_testing::ElementHandle;
         use slint::platform::PointerEventButton;
