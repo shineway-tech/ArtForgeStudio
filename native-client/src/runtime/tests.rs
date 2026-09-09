@@ -4806,41 +4806,17 @@ mod tests {
     }
 
     #[test]
-    fn enabled_generation_actions_show_a_moving_border_highlight() {
-        i_slint_backend_testing::init_no_event_loop();
-        let app = AppWindow::new().expect("create app window");
-        let state = app.global::<AppState>();
-        state.set_logged_in(true);
-        state.set_page("generation".into());
-        state.set_reasoning_model("GPT-5.5".into());
-        state.set_reduced_motion(false);
-        app.show().expect("show app window");
-        slint::platform::update_timers_and_animations();
-
-        let starts = i_slint_backend_testing::ElementHandle::find_by_element_id(
-            &app, "GenerateGlowBorder::moving-highlight",
-        )
-        .map(|highlight| highlight.absolute_position())
-        .collect::<Vec<_>>();
-        assert!(!starts.is_empty(), "generation actions should expose border highlights");
-
-        // The first tick changes the target position and starts Slint's transition;
-        // the second advances into that transition so the rendered position moves.
-        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(80));
-        slint::platform::update_timers_and_animations();
-        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(40));
-        slint::platform::update_timers_and_animations();
-        let moved = i_slint_backend_testing::ElementHandle::find_by_element_id(
-            &app, "GenerateGlowBorder::moving-highlight",
-        )
-        .map(|highlight| highlight.absolute_position())
-        .collect::<Vec<_>>();
-
-        assert_eq!(starts.len(), moved.len(), "generation highlights should remain mounted");
-        assert!(
-            starts.iter().zip(&moved).any(|(start, end)| start != end),
-            "at least one enabled generation border highlight should travel over time"
-        );
+    fn enabled_generation_actions_show_a_soft_continuous_border_sweep() {
+        let glow = include_str!("../../ui/components/generate-glow-border.slint");
+        assert!(glow.contains("@conic-gradient("));
+        assert!(glow.contains("property <angle> rotation-angle: root.step * 3deg"));
+        assert!(glow.contains("interval: 40ms"));
+        assert!(glow.contains("Math.mod(root.step + 1, 120)"));
+        assert!(glow.contains("#ffffff82"));
+        assert!(!glow.contains("#f6ffff"));
+        assert!(!glow.contains("vertical-edge"));
+        assert!(!glow.contains("highlight-x"));
+        assert!(!glow.contains("highlight-y"));
     }
 
     #[test]

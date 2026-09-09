@@ -8,11 +8,12 @@ export component GenerateGlowBorder {
     in property <bool> active: true;
     in property <length> radius: root.height / 2;
     in-out property <int> step: 0;
+    property <angle> rotation-angle: root.step * 3deg;
 
     Timer {
-        interval: 75ms;
+        interval: 40ms;
         running: root.active && !AppState.reduced-motion;
-        triggered => { root.step = Math.mod(root.step + 1, 24); }
+        triggered => { root.step = Math.mod(root.step + 1, 120); }
     }
 
     Rectangle {
@@ -21,49 +22,28 @@ export component GenerateGlowBorder {
         background: transparent;
         border-radius: root.radius;
         border-width: root.active ? 1px : 0px;
-        border-color: AppTheme.accent.with-alpha(AppState.reduced-motion ? 0.7 : 0.48);
+        border-color: AppTheme.accent.with-alpha(AppState.reduced-motion ? 0.50 : 0.28);
     }
 
     moving-highlight := Rectangle {
-        visible: root.active && !AppState.reduced-motion;
-        x: root.highlight-x();
-        y: root.highlight-y();
-        width: root.vertical-edge() ? 3px : 24px;
-        height: root.vertical-edge() ? 10px : 3px;
-        border-radius: 2px;
-        background: #f6ffff;
-        drop-shadow-blur: 8px;
-        drop-shadow-color: #91edffff;
-        animate x, y { duration: 70ms; easing: linear; }
-    }
-
-    function vertical-edge() -> bool {
-        return (root.step >= 8 && root.step <= 11) || root.step >= 20;
-    }
-
-    function highlight-x() -> length {
-        if root.step <= 7 {
-            return 14px + (root.width - 52px) * root.step / 7;
-        }
-        if root.step <= 11 {
-            return root.width - 3px;
-        }
-        if root.step <= 19 {
-            return root.width - 38px - (root.width - 52px) * (root.step - 12) / 7;
-        }
-        return 0px;
-    }
-
-    function highlight-y() -> length {
-        if root.step <= 7 {
-            return 0px;
-        }
-        if root.step <= 11 {
-            return 5px + (root.height - 20px) * (root.step - 8) / 3;
-        }
-        if root.step <= 19 {
-            return root.height - 3px;
-        }
-        return root.height - 15px - (root.height - 20px) * (root.step - 20) / 3;
+        width: root.width;
+        height: root.height;
+        background: transparent;
+        border-radius: root.radius;
+        border-width: root.active ? 1.5px : 0px;
+        border-color: AppState.reduced-motion
+            ? AppTheme.accent.with-alpha(0.50)
+            : @conic-gradient(
+                from root.rotation-angle,
+                AppTheme.accent.with-alpha(0.10) 0deg,
+                AppTheme.accent.with-alpha(0.10) 205deg,
+                #b8edff1f 238deg,
+                #c9f2ff3d 265deg,
+                #e5fbff70 292deg,
+                #ffffff82 306deg,
+                #d7f7ff5c 323deg,
+                #b8edff2b 342deg,
+                AppTheme.accent.with-alpha(0.10) 360deg
+            );
     }
 }
