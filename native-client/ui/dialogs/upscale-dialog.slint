@@ -125,6 +125,7 @@ export component UpscaleDialog {
                         horizontal-stretch: 1;
                         text: AppState.en ? "Start" : "开始放大";
                         primary: true;
+                        generate-effect: true;
                         disabled: AppState.viewer-processing || AppState.viewer-upscale-done;
                         clicked => { AppState.start-upscale-image(AppState.upscale-scale, AppState.upscale-quality); }
                     }

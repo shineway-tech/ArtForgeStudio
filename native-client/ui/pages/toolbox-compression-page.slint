@@ -673,7 +673,7 @@ export component ToolboxCompressionPage {
                         single-line: true;
                         input-type: number;
                         color: AppTheme.text;
-                        font-size: 13px;
+                        font-size: 14px;
                         font-weight: 400;
                         vertical-alignment: center;
                         edited => {
@@ -721,6 +721,7 @@ export component ToolboxCompressionPage {
                         ? (AppState.en ? "Compress again" : "重新压缩")
                         : (AppState.en ? "Start compression" : "开始压缩"));
                 primary: true;
+                generate-effect: true;
                 disabled: AppState.compression-images.length == 0 || root.busy;
                 clicked => { AppState.start-compression(); }
             }

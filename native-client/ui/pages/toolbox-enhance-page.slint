@@ -316,6 +316,7 @@ export component ToolboxEnhancePage {
                 ? (AppState.en ? "Enhancing..." : "处理中...")
                 : (AppState.en ? "Enhance image" : "一键变清晰");
             primary: true;
+            generate-effect: true;
             disabled: AppState.enhance-source-path == "" || AppState.enhance-processing;
             clicked => { AppState.start-enhance(AppState.enhance-quality); }
         }

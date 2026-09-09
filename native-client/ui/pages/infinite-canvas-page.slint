@@ -3,6 +3,7 @@ import { CharacterAgePreset } from "../components/character-age-preset.slint";
 import { CanvasSplitGuides } from "../components/canvas-split-guides.slint";
 import { DialogCloseButton } from "../components/dialog-close-button.slint";
 import { LoadingDots } from "../components/loading-dots.slint";
+import { GenerateGlowBorder } from "../components/generate-glow-border.slint";
 import { CanvasLink, CanvasNote } from "../types.slint";
 import { AppTheme } from "../theme.slint";
 import { BuildingDerivationPreset } from "../components/building-derivation-preset.slint";
@@ -396,6 +397,7 @@ component CanvasMediaAction {
     in property <image> icon;
     in property <string> text;
     in property <bool> danger: false;
+    in property <bool> generate-effect: false;
     in property <float> scale-factor: 1;
     property <length> action-label-width: min(
         action-label.preferred-width,
@@ -428,6 +430,11 @@ component CanvasMediaAction {
             vertical-alignment: center;
             wrap: no-wrap;
             overflow: elide;
+        }
+        if root.generate-effect: GenerateGlowBorder {
+            width: parent.width;
+            height: parent.height;
+            radius: parent.border-radius;
         }
         action-touch := TouchArea {
             width: parent.width;
@@ -496,7 +503,7 @@ component CanvasSplitNumberField {
             single-line: true;
             input-type: number;
             color: #302c29;
-            font-size: 13px * root.scale-factor;
+            font-size: 14px * root.scale-factor;
             font-weight: 500;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -1522,6 +1529,11 @@ component CanvasNodeCard {
             border-radius: self.height / 2;
             border-width: 1px;
             border-color: root.dark-background ? #514c48 : AppTheme.border;
+            GenerateGlowBorder {
+                width: parent.width;
+                height: parent.height;
+                radius: parent.border-radius;
+            }
             Image {
                 x: 9px * root.node-scale();
                 y: (parent.height - 14px * root.node-scale()) / 2;
@@ -1826,7 +1838,7 @@ component CanvasNodeCard {
                 CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
                 CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/assets.svg"); text: AppState.en ? "Save asset" : "存素材"; clicked => { root.save-content(); if root.current-content != "" { AppState.save-custom-prompt("", root.current-content); AppState.generation-status = AppState.en ? "Text asset saved locally" : "文字素材已保存到本地"; } } }
                 CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/edit.svg"); text: AppState.en ? "Edit" : "编辑"; clicked => { root.current-content = root.is-default-text-prompt() ? "" : root.note.content; root.editing = true; text-editor.focus(); } }
-                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/image.svg"); text: AppState.en ? "Generate" : "生图"; clicked => { root.generate-from-text(); } }
+                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/image.svg"); text: AppState.en ? "Generate" : "生图"; generate-effect: true; clicked => { root.generate-from-text(); } }
                 CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/minus.svg"); text: AppState.en ? "Smaller" : "缩小"; clicked => { AppState.adjust-canvas-text-font-size(root.note.id, -1); } }
                 CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/plus.svg"); text: AppState.en ? "Larger" : "放大"; clicked => { AppState.adjust-canvas-text-font-size(root.note.id, 1); } }
             }
@@ -1957,7 +1969,7 @@ component CanvasNodeCard {
                     single-line: false;
                     wrap: word-wrap;
                     color: root.dark-background ? #eee9e4 : AppTheme.text;
-                    font-size: 13px * root.node-scale();
+                    font-size: 14px * root.node-scale();
                     key-pressed(event) => {
                         if event.text == Key.Return {
                             if event.modifiers.alt { return reject; }
@@ -2472,7 +2484,7 @@ component CanvasNodeCard {
                             border-radius: 10px;
                             border-width: 1px;
                             border-color: #514c48;
-                            audio-instruction-input := TextInput { x: 10px; y: 8px; width: parent.width - 20px; height: parent.height - 16px; text <=> root.audio-instruction; single-line: false; wrap: word-wrap; color: #eee9e4; font-size: 12px; key-pressed(event) => { if event.text == Key.Return && !event.modifiers.alt { return accept; } return reject; } }
+                            audio-instruction-input := TextInput { x: 10px; y: 8px; width: parent.width - 20px; height: parent.height - 16px; text <=> root.audio-instruction; single-line: false; wrap: word-wrap; color: #eee9e4; font-size: 14px; key-pressed(event) => { if event.text == Key.Return && !event.modifiers.alt { return accept; } return reject; } }
                             if root.audio-instruction == "" && !audio-instruction-input.has-focus: Text { x: 10px; y: 8px; width: parent.width - 20px; height: 22px; text: AppState.en ? "e.g. Natural, warm, suitable for narration." : "例如：自然、温暖、适合旁白。"; color: #8f8882; font-size: 12px; vertical-alignment: center; }
                         }
                     }
@@ -3516,7 +3528,7 @@ export component InfiniteCanvasPage {
                         single-line: true;
                         wrap: no-wrap;
                         color: #f4f1fb;
-                        font-size: 13px;
+                        font-size: 14px;
                         font-weight: 400;
                         vertical-alignment: center;
                         edited => {
@@ -3910,6 +3922,12 @@ export component InfiniteCanvasPage {
                     border-radius: 8px;
                     border-width: 1px;
                     border-color: self.disabled ? #5c5a60 : #8177ff;
+                    GenerateGlowBorder {
+                        width: parent.width;
+                        height: parent.height;
+                        radius: parent.border-radius;
+                        active: !workflow-generate-button.disabled;
+                    }
 
                     Image {
                         x: 9px;
@@ -4212,7 +4230,7 @@ export component InfiniteCanvasPage {
                     text <=> root.node-search-query;
                     single-line: true;
                     color: AppTheme.text;
-                    font-size: 13px;
+                    font-size: 14px;
                     edited => {
                         AppState.search-canvas-node-types(self.text);
                         root.node-search-index = 0;

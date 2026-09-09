@@ -8,6 +8,7 @@ import { ViewerNavButton } from "../components/viewer-nav-button.slint";
 import { AppTheme } from "../theme.slint";
 import { FreeCanvasPage } from "../pages/free-canvas-page.slint";
 import { DialogCloseButton } from "../components/dialog-close-button.slint";
+import { GenerateGlowBorder } from "../components/generate-glow-border.slint";
 
 component ViewerInfoText inherits Text {
     in property <string> value;
@@ -25,6 +26,7 @@ component ViewerFooterActionButton inherits Rectangle {
     in property <image> icon;
     in property <string> label;
     in property <color> foreground: AppTheme.text;
+    in property <bool> generate-effect: false;
     height: 44px;
     background: action-touch.has-hover ? root.foreground.with-alpha(0.12) : root.foreground.with-alpha(0.045);
     border-radius: 8px;
@@ -53,6 +55,11 @@ component ViewerFooterActionButton inherits Rectangle {
         vertical-alignment: center;
         overflow: elide;
     }
+    if root.generate-effect: GenerateGlowBorder {
+        width: parent.width;
+        height: parent.height;
+        radius: parent.border-radius;
+    }
     action-touch := TouchArea {
         width: parent.width;
         height: parent.height;
@@ -65,6 +72,7 @@ component ViewerToolActionButton inherits Rectangle {
     in property <image> icon;
     in property <string> label;
     in property <bool> disabled: false;
+    in property <bool> generate-effect: false;
     callback clicked();
     height: 44px;
     opacity: root.disabled ? 0.42 : 1;
@@ -90,6 +98,12 @@ component ViewerToolActionButton inherits Rectangle {
         font-weight: 400;
         vertical-alignment: center;
         overflow: elide;
+    }
+    if root.generate-effect: GenerateGlowBorder {
+        width: parent.width;
+        height: parent.height;
+        radius: parent.border-radius;
+        active: !root.disabled;
     }
     tool-touch := TouchArea {
         width: parent.width;
@@ -369,6 +383,7 @@ export component ViewerOverlay {
                     horizontal-stretch: 1;
                     icon: @image-url("../../assets/icons/video.svg");
                     label: AppState.en ? "Generate Video" : "生成视频";
+                    generate-effect: true;
                     foreground: AppTheme.custom-prompt-name;
                     clicked => { AppState.viewer-generate-video(); }
                 }
@@ -457,7 +472,7 @@ export component ViewerOverlay {
                         height: parent.viewport-height;
                         text: AppState.viewer-prompt;
                         color: AppTheme.text;
-                        font-size: 13px;
+                        font-size: 14px;
                         font-weight: 400;
                         single-line: false;
                         wrap: word-wrap;
@@ -522,6 +537,7 @@ export component ViewerOverlay {
                             horizontal-stretch: 1;
                             icon: @image-url("../../assets/icons/redo.svg");
                             label: AppState.en ? "Generate Again" : "再次生成";
+                            generate-effect: true;
                             clicked => { AppState.viewer-regenerate(); }
                         }
                     }

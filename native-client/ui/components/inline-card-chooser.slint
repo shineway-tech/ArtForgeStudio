@@ -196,8 +196,7 @@ export component InlineCardChooser {
     }
 
     function settings-summary() -> string {
-        return (AppState.en ? "Image settings · " : "图片设置 · ")
-            + AppState.ratio + " · " + AppState.quality + " · " + AppState.count
+        return AppState.ratio + " · " + AppState.quality + " · " + AppState.count
             + (AppState.en ? " images" : "张");
     }
 

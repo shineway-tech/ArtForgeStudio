@@ -1,5 +1,6 @@
 import { AppState } from "../app-state.slint";
 import { AppTheme } from "../theme.slint";
+import { GenerateGlowBorder } from "generate-glow-border.slint";
 
 export component PillButton {
     in property <string> text;
@@ -8,6 +9,7 @@ export component PillButton {
     in property <bool> primary: false;
     in property <bool> danger: false;
     in property <bool> disabled: false;
+    in property <bool> generate-effect: false;
     in property <length> label-font-size: AppState.settings-font-size * 1px;
     in property <float> visual-opacity: 1.0;
     callback clicked();
@@ -48,6 +50,12 @@ export component PillButton {
             horizontal-alignment: center;
             vertical-alignment: center;
             overflow: elide;
+        }
+        if root.generate-effect: GenerateGlowBorder {
+            width: parent.width;
+            height: parent.height;
+            radius: parent.border-radius;
+            active: !root.disabled;
         }
         touch := TouchArea {
             width: parent.width;

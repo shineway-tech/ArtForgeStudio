@@ -3859,8 +3859,8 @@ mod tests {
             1
         );
         assert!(chooser.contains("text: root.settings-summary();"));
-        assert!(chooser.contains("Image settings · "));
-        assert!(chooser.contains("图片设置 · "));
+        assert!(!chooser.contains("Image settings · "));
+        assert!(!chooser.contains("图片设置 · "));
         assert!(chooser.contains("text: AppState.en ? \"Image settings\" : \"图片设置\""));
         assert!(chooser.contains("text: AppState.en ? \"Quality\" : \"质量\""));
         assert!(chooser.contains("text: AppState.en ? \"Aspect ratio\" : \"宽高比\""));
@@ -4771,6 +4771,76 @@ mod tests {
         assert!(callbacks.contains("inspect_image_dimensions(&source_path)"));
         assert!(ops.contains("fn resize_image_node_proportionally"));
         assert!(ops.contains("fn fit_image_node_to_intrinsic_aspect"));
+    }
+
+    #[test]
+    fn studio_uses_fourteen_point_default_text_and_a_compact_image_settings_summary() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+
+        assert_eq!(state.get_settings_font_size(), 14);
+
+        state.set_logged_in(true);
+        state.set_page("generation".into());
+        app.show().expect("show app window");
+
+        assert!(
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                &app,
+                "1:1 · 2K · 1张",
+            )
+            .next()
+            .is_some(),
+            "image settings control should show only the selected values"
+        );
+        assert!(
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                &app,
+                "图片设置 · 1:1 · 2K · 1张",
+            )
+            .next()
+            .is_none(),
+            "the redundant image settings label should stay hidden"
+        );
+    }
+
+    #[test]
+    fn enabled_generation_actions_show_a_moving_border_highlight() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_page("generation".into());
+        state.set_reasoning_model("GPT-5.5".into());
+        state.set_reduced_motion(false);
+        app.show().expect("show app window");
+        slint::platform::update_timers_and_animations();
+
+        let starts = i_slint_backend_testing::ElementHandle::find_by_element_id(
+            &app, "GenerateGlowBorder::moving-highlight",
+        )
+        .map(|highlight| highlight.absolute_position())
+        .collect::<Vec<_>>();
+        assert!(!starts.is_empty(), "generation actions should expose border highlights");
+
+        // The first tick changes the target position and starts Slint's transition;
+        // the second advances into that transition so the rendered position moves.
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(80));
+        slint::platform::update_timers_and_animations();
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(40));
+        slint::platform::update_timers_and_animations();
+        let moved = i_slint_backend_testing::ElementHandle::find_by_element_id(
+            &app, "GenerateGlowBorder::moving-highlight",
+        )
+        .map(|highlight| highlight.absolute_position())
+        .collect::<Vec<_>>();
+
+        assert_eq!(starts.len(), moved.len(), "generation highlights should remain mounted");
+        assert!(
+            starts.iter().zip(&moved).any(|(start, end)| start != end),
+            "at least one enabled generation border highlight should travel over time"
+        );
     }
 
     #[test]

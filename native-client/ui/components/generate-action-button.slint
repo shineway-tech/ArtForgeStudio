@@ -1,5 +1,6 @@
 import { AppState } from "../app-state.slint";
 import { AppTheme } from "../theme.slint";
+import { GenerateGlowBorder } from "generate-glow-border.slint";
 
 export component GenerateActionButton {
     in property <bool> disabled: false;
@@ -36,6 +37,12 @@ export component GenerateActionButton {
             horizontal-alignment: center;
             vertical-alignment: center;
             overflow: elide;
+        }
+        GenerateGlowBorder {
+            width: parent.width;
+            height: parent.height;
+            radius: parent.border-radius;
+            active: !root.disabled;
         }
         touch := TouchArea {
             width: parent.width;

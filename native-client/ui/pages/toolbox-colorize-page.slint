@@ -230,6 +230,7 @@ export component ToolboxColorizePage {
                 ? (AppState.en ? "Processing..." : "处理中...")
                 : (AppState.en ? "Colorize photo" : "开始上色");
             primary: true;
+            generate-effect: true;
             disabled: AppState.colorize-source-path == "" || AppState.colorize-processing;
             clicked => { AppState.start-colorize(); }
         }

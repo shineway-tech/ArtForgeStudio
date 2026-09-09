@@ -411,6 +411,7 @@ export component ToolboxConversionPage {
                         ? (AppState.en ? "Convert again" : "重新转换")
                         : (AppState.en ? "Start conversion" : "开始转换"));
                 primary: true;
+                generate-effect: true;
                 disabled: AppState.conversion-images.length == 0
                     || AppState.conversion-processing
                     || AppState.conversion-saving;

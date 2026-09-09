@@ -248,6 +248,7 @@ export component ToolboxWatermarkPage {
                     ? (AppState.en ? "Remove black" : "去黑")
                     : (AppState.en ? "Remove watermark" : "去水印");
             primary: true;
+            generate-effect: true;
             disabled: AppState.watermark-source-path == "" || AppState.watermark-processing;
             clicked => {
                 if root.remove-black-mode {

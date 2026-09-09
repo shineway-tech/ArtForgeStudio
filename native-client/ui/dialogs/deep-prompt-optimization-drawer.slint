@@ -167,7 +167,7 @@ export component DeepPromptOptimizationDrawer {
                                     height: max(current-prompt-scroll.visible-height, self.preferred-height);
                                     text: AppState.prompt;
                                     color: AppTheme.muted;
-                                    font-size: 12px;
+                                    font-size: 14px;
                                     wrap: word-wrap;
                                     vertical-alignment: top;
                                 }
@@ -237,6 +237,7 @@ export component DeepPromptOptimizationDrawer {
                                 ? "Up to " + AppState.deep-optimization-maximum-credits + " credits"
                                 : "本次最多消耗 " + AppState.deep-optimization-maximum-credits + " 积分";
                             primary: true;
+                            generate-effect: true;
                             disabled: AppState.prompt == "";
                             clicked => { AppState.start-deep-optimization(); }
                         }
@@ -320,7 +321,7 @@ export component DeepPromptOptimizationDrawer {
                             if AppState.deep-optimization-result-tab == "english": TextInput {
                                 x: 14px; y: 12px; width: parent.width - 28px; height: parent.height - 24px;
                                 text: AppState.deep-optimization-english-prompt;
-                                color: AppTheme.text; font-size: 12px;
+                                color: AppTheme.text; font-size: 14px;
                                 single-line: false; wrap: word-wrap; read-only: true;
                             }
                             if AppState.deep-optimization-result-tab != "english" && AppState.deep-optimization-can-apply: Rectangle {
@@ -360,14 +361,14 @@ export component DeepPromptOptimizationDrawer {
                             clip: true;
                             TextInput {
                                 x: 14px; y: 10px; width: parent.width - 28px; height: parent.height - 20px;
-                                text: AppState.deep-optimization-change-summary; color: AppTheme.muted; font-size: 12px;
+                                text: AppState.deep-optimization-change-summary; color: AppTheme.muted; font-size: 14px;
                                 single-line: false; wrap: word-wrap; read-only: true;
                             }
                         }
                         Text { x: 0px; y: 506px; width: parent.width; height: 22px; text: AppState.en ? "Optional direction for next round" : "下一轮希望怎么调整（可选）"; color: AppTheme.text; font-size: 13px; font-weight: 600; }
                         Rectangle {
                             x: 0px; y: 536px; width: parent.width; height: 70px; background: AppTheme.panel; border-radius: 10px; border-width: 1px; border-color: AppTheme.border;
-                            feedback-input := TextInput { x: 12px; y: 10px; width: parent.width - 24px; height: parent.height - 20px; text <=> AppState.deep-optimization-feedback; color: AppTheme.text; font-size: 12px; single-line: false; wrap: word-wrap; }
+                            feedback-input := TextInput { x: 12px; y: 10px; width: parent.width - 24px; height: parent.height - 20px; text <=> AppState.deep-optimization-feedback; color: AppTheme.text; font-size: 14px; single-line: false; wrap: word-wrap; }
                             if AppState.deep-optimization-feedback == "" && !feedback-input.has-focus: Text { x: 12px; y: 10px; width: parent.width - 24px; height: 20px; text: AppState.en ? "e.g. warmer light, wider view" : "例如：更仙气、背景更远、减少花瓣"; color: AppTheme.weak; font-size: 11px; }
                         }
                         Rectangle {
@@ -412,7 +413,7 @@ export component DeepPromptOptimizationDrawer {
                             clip: true;
                             TextInput {
                                 x: 14px; y: 12px; width: parent.width - 28px; height: parent.height - 24px;
-                                text: AppState.deep-optimization-change-summary; color: AppTheme.muted; font-size: 12px;
+                                text: AppState.deep-optimization-change-summary; color: AppTheme.muted; font-size: 14px;
                                 single-line: false; wrap: word-wrap; read-only: true;
                             }
                         }
@@ -433,7 +434,7 @@ export component DeepPromptOptimizationDrawer {
                             TextInput {
                                 width: parent.width; height: parent.height;
                                 text: AppState.deep-optimization-error != "" ? AppState.deep-optimization-error : AppState.deep-optimization-status-message;
-                                color: AppTheme.muted; font-size: 12px; horizontal-alignment: center;
+                                color: AppTheme.muted; font-size: 14px; horizontal-alignment: center;
                                 single-line: false; wrap: word-wrap; read-only: true;
                             }
                         }
