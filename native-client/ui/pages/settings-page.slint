@@ -254,9 +254,9 @@ export component SettingsPage {
                         width: 240px;
                         height: 36px;
                         spacing: 12px;
-                        FontStepButton { horizontal-stretch: 0; text: "-"; clicked => { AppState.settings-font-size = max(10, AppState.settings-font-size - 1); } }
+                        FontStepButton { horizontal-stretch: 0; text: "-"; clicked => { AppState.set-settings-font-size(max(10, AppState.settings-font-size - 1)); } }
                         Text { width: 28px; horizontal-stretch: 0; text: AppState.settings-font-size; color: AppTheme.accent-dark; font-size: 16px; font-weight: 400; vertical-alignment: center; }
-                        FontStepButton { horizontal-stretch: 0; text: "+"; clicked => { AppState.settings-font-size = min(24, AppState.settings-font-size + 1); } }
+                        FontStepButton { horizontal-stretch: 0; text: "+"; clicked => { AppState.set-settings-font-size(min(24, AppState.settings-font-size + 1)); } }
                         Text { width: 72px; horizontal-stretch: 0; text: "10 - 24"; color: AppTheme.muted; font-size: 13px; font-weight: 400; vertical-alignment: center; }
                     }
                 }

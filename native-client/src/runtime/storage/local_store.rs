@@ -99,7 +99,7 @@ pub(super) fn load_user_profile(app: &AppWindow) {
     apply_user_profile(app, profile);
 }
 
-fn apply_user_profile(app: &AppWindow, profile: UserProfileData) {
+pub(super) fn apply_user_profile(app: &AppWindow, profile: UserProfileData) {
     let state = app.global::<AppState>();
     // Legacy local login and credit values are deliberately not trusted. A backend
     // refresh or an explicit offline choice establishes the runtime session.
@@ -140,6 +140,8 @@ fn apply_user_profile(app: &AppWindow, profile: UserProfileData) {
     state.set_inspiration_gallery_layout(
         normalize_gallery_layout(&profile.ui_preferences.inspiration_gallery_layout).into(),
     );
+    state.set_settings_font_family(profile.ui_preferences.font_family.into());
+    state.set_settings_font_size(normalize_settings_font_size(profile.ui_preferences.font_size));
 }
 
 pub(super) fn save_user_profile(app: &AppWindow) {
@@ -172,6 +174,8 @@ fn user_profile_data(app: &AppWindow) -> UserProfileData {
         close_behavior: normalize_close_behavior(&state.get_close_behavior().to_string())
             .to_string(),
         ui_preferences: UiPreferencesData {
+            font_family: state.get_settings_font_family().to_string(),
+            font_size: normalize_settings_font_size(state.get_settings_font_size()),
             generation_gallery_layout: normalize_gallery_layout(
                 &state.get_generation_gallery_layout().to_string(),
             )
@@ -728,6 +732,10 @@ pub(super) fn references_for_category_mut<'a>(
         "effect" => &mut references.effect,
         _ => &mut references.character,
     }
+}
+
+pub(super) fn normalize_settings_font_size(value: i32) -> i32 {
+    value.clamp(10, 24)
 }
 
 pub(super) fn normalize_close_behavior(value: &str) -> &'static str {

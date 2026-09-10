@@ -374,6 +374,28 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
+        state.on_set_settings_font_family(move |font_family| {
+            if let Some(app) = app_weak.upgrade() {
+                app.global::<AppState>()
+                    .set_settings_font_family(font_family);
+                save_user_profile(&app);
+            }
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_set_settings_font_size(move |font_size| {
+            if let Some(app) = app_weak.upgrade() {
+                app.global::<AppState>()
+                    .set_settings_font_size(normalize_settings_font_size(font_size));
+                save_user_profile(&app);
+            }
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
         state.on_save_gallery_layout(move |scope, layout| {
             let Some(app) = app_weak.upgrade() else {
                 return;

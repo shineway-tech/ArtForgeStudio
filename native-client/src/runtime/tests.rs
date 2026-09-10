@@ -2039,6 +2039,7 @@ mod tests {
                 generation_gallery_layout: "waterfall".to_string(),
                 asset_gallery_layout: "waterfall".to_string(),
                 inspiration_gallery_layout: "waterfall".to_string(),
+                ..UiPreferencesData::default()
             },
             ..UserProfileData::default()
         };
@@ -2051,6 +2052,56 @@ mod tests {
         );
         assert_eq!(normalize_gallery_layout(" WATERFALL "), "waterfall");
         assert_eq!(normalize_gallery_layout("unsupported"), "grid");
+    }
+
+    #[test]
+    fn font_preferences_are_backward_compatible_normalized_and_restored() {
+        let legacy: UserProfileData =
+            serde_json::from_str("{}").expect("deserialize legacy user profile");
+        assert_eq!(legacy.ui_preferences.font_family, "");
+        assert_eq!(legacy.ui_preferences.font_size, 14);
+
+        let saved = UserProfileData {
+            ui_preferences: UiPreferencesData {
+                font_family: "Microsoft YaHei UI".to_string(),
+                font_size: 18,
+                ..UiPreferencesData::default()
+            },
+            ..UserProfileData::default()
+        };
+        let serialized = serde_json::to_string(&saved).expect("serialize user profile");
+        let restored: UserProfileData =
+            serde_json::from_str(&serialized).expect("restore user profile");
+        assert_eq!(restored.ui_preferences.font_family, "Microsoft YaHei UI");
+        assert_eq!(restored.ui_preferences.font_size, 18);
+        assert_eq!(normalize_settings_font_size(9), 10);
+        assert_eq!(normalize_settings_font_size(18), 18);
+        assert_eq!(normalize_settings_font_size(25), 24);
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        apply_user_profile(&app, restored);
+        let state = app.global::<AppState>();
+        assert_eq!(state.get_settings_font_family(), "Microsoft YaHei UI");
+        assert_eq!(state.get_settings_font_size(), 18);
+    }
+
+    #[test]
+    fn font_controls_save_preferences_through_runtime_callbacks() {
+        let state = include_str!("../../ui/app-state.slint");
+        let settings = include_str!("../../ui/pages/settings-page.slint");
+        let picker = include_str!("../../ui/components/font-picker.slint");
+        let runtime = include_str!("app.rs");
+        let profile = include_str!("storage/local_store.rs");
+
+        assert!(state.contains("callback set-settings-font-size(int)"));
+        assert!(state.contains("callback set-settings-font-family(string)"));
+        assert!(settings.contains("AppState.set-settings-font-size("));
+        assert!(picker.contains("AppState.set-settings-font-family("));
+        assert!(runtime.contains("state.on_set_settings_font_size"));
+        assert!(runtime.contains("state.on_set_settings_font_family"));
+        assert!(profile.contains("font_family: state.get_settings_font_family().to_string()"));
+        assert!(profile.contains("font_size: normalize_settings_font_size("));
     }
 
     #[test]

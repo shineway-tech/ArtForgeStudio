@@ -64,7 +64,7 @@ export component FontPicker {
                         text: AppState.en ? "System Default" : "系统默认";
                         active: AppState.settings-font-family == "";
                         clicked => {
-                            AppState.settings-font-family = "";
+                            AppState.set-settings-font-family("");
                             root.open = false;
                             popup.close();
                         }
@@ -74,7 +74,7 @@ export component FontPicker {
                         text: font;
                         active: AppState.settings-font-family == font;
                         clicked => {
-                            AppState.settings-font-family = font;
+                            AppState.set-settings-font-family(font);
                             root.open = false;
                             popup.close();
                         }

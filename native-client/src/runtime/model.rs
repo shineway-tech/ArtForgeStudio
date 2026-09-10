@@ -695,6 +695,10 @@ struct UserProfileData {
 
 #[derive(Clone, Serialize, Deserialize)]
 struct UiPreferencesData {
+    #[serde(default)]
+    font_family: String,
+    #[serde(default = "default_settings_font_size")]
+    font_size: i32,
     #[serde(default = "default_gallery_layout")]
     generation_gallery_layout: String,
     #[serde(default = "default_gallery_layout")]
@@ -706,11 +710,17 @@ struct UiPreferencesData {
 impl Default for UiPreferencesData {
     fn default() -> Self {
         Self {
+            font_family: String::new(),
+            font_size: default_settings_font_size(),
             generation_gallery_layout: default_gallery_layout(),
             asset_gallery_layout: default_gallery_layout(),
             inspiration_gallery_layout: default_gallery_layout(),
         }
     }
+}
+
+fn default_settings_font_size() -> i32 {
+    14
 }
 
 fn default_gallery_layout() -> String {
