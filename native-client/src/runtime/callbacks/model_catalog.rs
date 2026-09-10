@@ -227,6 +227,9 @@ mod tests {
             price_2k: 0,
             price_4k: 0,
             price_standard: price_standard.into(),
+            video_price_480: String::new().into(),
+            video_price_720: String::new().into(),
+            video_price_1080: String::new().into(),
             supports_image_edit: false,
             supports_style_analysis,
         }

@@ -6395,14 +6395,14 @@ mod tests {
 
     #[test]
     fn video_generation_callbacks_use_server_models_quotes_and_stable_requests() {
-        let callbacks = include_str!("callbacks/video_generation.rs");
+        let callbacks = concat!(include_str!("callbacks/video_generation.rs"), include_str!("callbacks/video_pricing.rs"));
         let runtime = include_str!("mod.rs");
         let app = include_str!("app.rs");
         let auth = include_str!("callbacks/auth.rs");
         let state = include_str!("../../ui/app-state.slint");
 
         assert!(runtime.contains("mod video_generation_callbacks;"));
-        assert!(app.contains("wire_deferred_video_generation_callbacks(app, context.clone());"));
+        assert!(app.contains("wire_video_generation_callbacks(app, context.clone());"));
         assert!(auth.contains("purpose == \"video_generation\""));
         assert!(state.contains("property <string> video-model:"));
         assert!(state.contains("property <bool> video-service-available:"));
@@ -6411,7 +6411,7 @@ mod tests {
         assert!(callbacks.contains("state.set_video_source_image"));
         assert!(callbacks.contains("state.on_request_video_quote"));
         assert!(callbacks.contains("CreateVideoQuote"));
-        assert!(callbacks.contains("quote_video_scoped"));
+        assert!(callbacks.contains("quote_video_billing"));
         assert!(callbacks.contains("state.set_video_quote_ready(false)"));
         assert!(callbacks.contains("视频服务暂未开放"));
         assert!(callbacks.contains("state.on_submit_video_generation"));
@@ -7278,9 +7278,9 @@ mod tests {
     }
 
     #[test]
-    fn prompt_model_fallback_preserves_openai_prompt_as_the_default() {
+    fn prompt_model_fallback_uses_gpt_5_6_sol_as_the_default() {
         let auth = include_str!("callbacks/auth.rs");
-        // Both publication and refresh retain the same saved -> OpenAI -> first order.
+        // Both publication and refresh retain the same saved -> GPT-5.6 -> first order.
         for (start, end) in [
             ("fn prepare_activation_catalog_projection(", "fn prepare_activation_image_model("),
             ("fn apply_model_catalog_projection(", "fn model_group("),
@@ -7289,7 +7289,7 @@ mod tests {
             let selection = producer.split_once("let selected_prompt = available_models").unwrap().1
                 .split_once("let selected_video_code").unwrap().0;
             let saved_selection = selection.find("item.code == selected_prompt_code").unwrap();
-            let preferred_fallback = selection.find("item.code == \"openai_prompt\"").unwrap();
+            let preferred_fallback = selection.find("item.code == \"gpt_5_6_sol\"").unwrap();
             let generic_fallback = selection.rfind("item.purpose == \"prompt_processing\"").unwrap();
             assert!(saved_selection < preferred_fallback, "{start}");
             assert!(preferred_fallback < generic_fallback, "{start}");
@@ -7467,6 +7467,7 @@ mod tests {
         assert!(discovery.contains("context.namespace_for(&scope)"));
         assert!(discovery.contains("context.storage_authority_for(&lease)"));
         assert!(discovery.contains("load_pending_generations_for_namespace(&authority)"));
+        assert!(discovery.contains("| \"image_to_video\""));
         assert!(discovery.contains("activity.is_quiescing() || !backend.api.user_work_is_current(&worker_scope)"));
         assert!(discovery.contains("bind_generation_recovery_candidate(&backend, &authority, &worker_scope, record)"));
         assert!(discovery.contains("blocked += 1"));

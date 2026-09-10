@@ -204,6 +204,7 @@ enum GenerationOutcome {
     Progress {
         percent: i32,
     },
+    NamespaceVideoSuccess { prepared: Box<PreparedNamespaceVideoDelivery>, time: String },
     NamespaceImageSuccess {
         prepared: Box<PreparedNamespaceDelivery>,
         time: String,
@@ -421,7 +422,15 @@ struct CanvasWorkspaceData {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub(super) struct SavedVideoOutput {
     #[serde(default)]
+    pub(super) model: String,
+    #[serde(default)]
+    pub(super) resolution: String,
+    #[serde(default)]
+    pub(super) duration_secs: i32,
+    #[serde(default)]
     pub(super) source_asset_id: String,
+    #[serde(default)]
+    pub(super) prompt: String,
     pub(super) client_request_id: String,
     pub(super) server_task_id: String,
     pub(super) file_id: String,

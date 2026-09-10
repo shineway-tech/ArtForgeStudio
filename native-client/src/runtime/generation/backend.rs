@@ -7,9 +7,9 @@ pub(super) struct CapturedImageEditRequest {
     pub prompt:String,pub model_code:String,pub quality:String,
     pub estimated_credit_cost:i32,pub category:String,pub mode:String,pub conversation_id:String,
 }
-struct PreparedPaidImageFile {
+pub(super) struct PreparedPaidImageFile {
     authority:Arc<NamespaceStorageAuthority>,
-    file:NamespaceManagedFile,path:PathBuf,indexed:ManagedFileRecord,sha256:String,size:u64,
+    file:NamespaceManagedFile,path:PathBuf,indexed:ManagedFileRecord,pub(super) sha256:String,pub(super) size:u64,
 }
 impl PreparedPaidImageFile {
     // Worker-only. The held physical identity, index row and full immutable
@@ -57,7 +57,7 @@ fn paid_image_key(lease:&NamespaceLease,path:&Path)->Result<ManagedFileKey> {
         .and_then(|name|name.to_str()).and_then(|name|ManagedFileKey::new(area,name).ok()))
         .ok_or_else(||anyhow!("paid image source is outside owned image areas"))
 }
-fn capture_paid_image_file(authority:&Arc<NamespaceStorageAuthority>,path:&Path)->Result<(PreparedPaidImageFile,Vec<u8>)> {
+pub(super) fn capture_paid_image_file(authority:&Arc<NamespaceStorageAuthority>,path:&Path)->Result<(PreparedPaidImageFile,Vec<u8>)> {
     use std::io::Read;
     let key=paid_image_key(authority.lease(),path)?;
     let mut file=authority.open_existing_regular(&key)?;
@@ -197,6 +197,46 @@ pub(super) fn start_asset_regeneration_with_prepared_inputs(
     };
     start_paid_viewer_record(app,context,persistence,authority,billing_scope,record,0,validate)
 }
+pub(super) fn start_backend_video(
+    app: &AppWindow,
+    context: AppContext,
+    persistence: PrivatePersistence,
+    authority: Arc<NamespaceStorageAuthority>,
+    scope: &BillingScope,
+    request: CreateVideoGenerationTask,
+    source_id: String,
+) -> bool {
+    let mut record = paid_viewer_record(
+        scope,
+        request.prompt.clone(),
+        request.model_code.clone(),
+        request.resolution.clone(),
+        "other".into(),
+        "game".into(),
+        request.aspect_ratio.clone(),
+        Uuid::new_v4().to_string(),
+        "image_to_video",
+        0,
+        0,
+        &[],
+        vec![],
+        source_id,
+    );
+    record.client_request_id = request.client_request_id.clone();
+    record.uploaded_file_ids = request.reference_file_ids.clone();
+    record.video_request = Some(request);
+    start_paid_viewer_record(
+        app,
+        context,
+        persistence,
+        authority,
+        scope,
+        record,
+        0,
+        |_| Ok(()),
+    )
+}
+
 fn start_paid_viewer_record(
     app:&AppWindow,context:AppContext,persistence:PrivatePersistence,authority:Arc<NamespaceStorageAuthority>,
     scope:&BillingScope,record:PendingGenerationRecord,credit_cost:i32,
@@ -221,7 +261,9 @@ fn start_paid_viewer_record(
         });
         let state=app.global::<AppState>();state.set_viewer_open(false);state.set_viewer_message("".into());
         state.set_image_editor_generating(false);
-        state.set_page("generation".into());state.set_asset_type(record.category.clone().into());
+        state.set_page(if record.video_request.is_some() { "video-generation" } else { "generation" }.into());
+        if record.video_request.is_some() { state.set_video_generating(true); state.set_video_status("正在提交视频任务…".into()); }
+        state.set_asset_type(record.category.clone().into());
         state.set_current_conversation_id(record.conversation_id.clone().into());
         state.set_ratio(record.ratio.clone().into());state.set_quality(record.quality.clone().into());state.set_mode(record.mode.clone().into());
         state.set_image_model(record.model_code.clone().into());
@@ -240,6 +282,7 @@ fn start_paid_viewer_record(
             drop(error);
             let _=context.apply_user_completion(persistence.lease(),||{
                 remove_active_generation(&context,&record.category,&record.local_task_id);
+                if record.video_request.is_some() { app.global::<AppState>().set_video_generating(false); }
                 sync_generation_state_for_current_category(&context,app);
                 set_generation_status_for_category(&context,app,&record.category,"原输入保存未确认，尚未提交收费请求");
             });return false;
@@ -275,6 +318,7 @@ fn start_paid_viewer_record(
         Ok((cancel,finished))=>poll_paid_viewer_record(app.as_weak(),context,persistence,record,cancel,finished,outcomes,Vec::new(),Instant::now()),
         Err(_)=>{let _=context.apply_user_completion(persistence.lease(),||{
             remove_active_generation(&context,&record.category,&record.local_task_id);
+                if record.video_request.is_some() { app.global::<AppState>().set_video_generating(false); }
             sync_generation_state_for_current_category(&context,app);
             set_generation_status_for_category(&context,app,&record.category,"原请求工作未能启动，请重试");
         });return false;}
@@ -303,6 +347,7 @@ fn poll_paid_viewer_record(
                 match outcome {
                     GenerationOutcome::Progress{percent}=>latest=Some(percent),
                     GenerationOutcome::Accepted{task_id}=>{
+                        if record.video_request.is_some() { app.global::<AppState>().set_video_task_id(task_id.clone().into()); app.global::<AppState>().set_video_status("视频任务已提交，正在生成…".into()); }
                         let _=context.apply_user_completion(persistence.lease(),||{
                             if let Some(active)=context.generations.active.borrow_mut().get_mut(&record.category){
                                 if active.task_id==record.local_task_id {active.server_task_id=Some(task_id);}
@@ -312,7 +357,7 @@ fn poll_paid_viewer_record(
                     other=>retained.push(other),
                 }
             }
-            if let Some(percent)=latest {let _=context.apply_user_completion(persistence.lease(),||
+            if let Some(percent)=latest { if record.video_request.is_some() { app.global::<AppState>().set_video_progress(percent.clamp(1,99)); } let _=context.apply_user_completion(persistence.lease(),||
                 update_active_generation_progress(&context,app,&record.category,&record.local_task_id,percent.clamp(1,99),0));}
         }
         if matches!(joined,Ok(true)){
@@ -359,6 +404,24 @@ fn finish_paid_viewer_results(
         if !active_generation_matches_scope(&context,&record.category,&record.local_task_id,&scope){return;}
         let outcome=if outcomes.is_empty(){GenerationOutcome::Finished}else{outcomes.remove(0)};
         match outcome {
+            GenerationOutcome::NamespaceVideoSuccess { prepared, time } => {
+                let original = persistence.clone(); let original_record = record.clone();
+                start_video_delivery_commit_with_binding(&app, context.clone(), Some(persistence), *prepared, time, move |app, result| {
+                    if !paid_viewer_binding_matches(&context, &original) { return; }
+                    let state = app.global::<AppState>(); state.set_video_generating(false);
+                    match result {
+                        Ok((_, id, acknowledged)) => {
+                            if let Some(output) = context.store.borrow().video_outputs.get(&id) { state.set_video_result_path(output.source_path.clone().into()); }
+                            state.set_video_progress(100);
+                            state.set_video_status(if acknowledged { "视频已生成并保存" } else { "视频已保存，交付确认待重试" }.into());
+                            mark_active_generation_image_completed(&context, app, &record.category, &record.local_task_id, true, Some(id), None);
+                            push_video_assets(app, &context.store.borrow());
+                        }
+                        Err(_) => { state.set_video_status("视频保存尚未完成，恢复记录已保留".into()); }
+                    }
+                    finish_paid_viewer_results(app.as_weak(), context, original, original_record, outcomes);
+                });
+            },
             GenerationOutcome::NamespaceImageSuccess{prepared,time}=>{
                 let original=persistence.clone();let original_record=record.clone();
                 start_image_delivery_commit_captured(&app,context.clone(),persistence,*prepared,time,move|app,result|{
@@ -394,11 +457,14 @@ fn finish_paid_viewer_results(
                     if !paid_viewer_binding_matches(&context,&persistence) || !paid_viewer_task_matches(&context,&record){return;}
                     remove_active_generation(&context,&record.category,&record.local_task_id);
                     sync_generation_state_for_current_category(&context,&app);
-                    let state=app.global::<AppState>();show_credit_rejection(&state,&message);
+                    let state=app.global::<AppState>();
+                    if record.video_request.is_some() { state.set_video_generating(false); state.set_video_status(message.user_message().into()); }
+                    show_credit_rejection(&state,&message);
                 });
                 if persistence.is_current() && paid_viewer_binding_matches(&context,&persistence){refresh_backend_snapshot_captured(&app,context,persistence.clone());}
             },
             GenerationOutcome::Finished=>{
+                if record.video_request.is_some() { let state=app.global::<AppState>(); state.set_video_generating(false); if state.get_video_result_path().is_empty() { state.set_video_status("服务端任务已结束；视频交付尚未完成时将保留恢复记录".into()); } }
                 let latest=context.generations.active.borrow().get(&record.category).and_then(|active|
                     (active.task_id==record.local_task_id).then(||active.latest_success_id.clone())).flatten();
                 let viewer=latest.as_ref().and_then(|id|prepare_viewer_projection(&app,&context.store.borrow(),id,"generation"));
@@ -422,6 +488,16 @@ fn stage_paid_viewer_failure(
     app:&AppWindow,context:AppContext,persistence:PrivatePersistence,record:PendingGenerationRecord,
     reason:String,time:String,failed_id:Option<String>,remaining:Vec<GenerationOutcome>,
 ){
+    if record.video_request.is_some() {
+        let _ = context.apply_user_completion(persistence.lease(), || {
+            if !paid_viewer_binding_matches(&context, &persistence) { return; }
+            let state = app.global::<AppState>(); state.set_video_generating(false); state.set_video_status(reason.clone().into());
+            remove_active_generation(&context, &record.category, &record.local_task_id);
+            sync_generation_state_for_current_category(&context, app);
+        });
+        return;
+    }
+
     let write=match persistence.prepare_ordered_save(){Ok(write)=>write,Err(_)=>{
         finish_paid_viewer_save_failure(app,&context,&persistence,&record);return;
     }};
@@ -2661,11 +2737,11 @@ pub(super) fn start_backend_upscale_with_billing_scope(
     }
     .to_string();
     let target_long_edge = upscale_quality_long_edge(&selected_quality);
-    if source_width.max(source_height) > target_long_edge {
+    if source_width.max(source_height) >= target_long_edge {
         let message = if target_long_edge >= 4096 {
-            "当前图片尺寸已超过 4K，暂不支持继续放大"
+            "当前图片尺寸已达到或超过 4K，暂不支持继续放大"
         } else {
-            "当前图片已超过 2K，请选择 4K 放大"
+            "当前图片已达到或超过 2K，请选择 4K 放大"
         };
         state.set_viewer_message(message.into());
         return;
@@ -2676,6 +2752,10 @@ pub(super) fn start_backend_upscale_with_billing_scope(
         scale.clamp(2, 4),
         target_long_edge,
     );
+    if target_width <= source_width || target_height <= source_height {
+        state.set_viewer_message("当前档位无法增大原图尺寸，请选择更高档位".into());
+        return;
+    }
     let billing_quality = quality_for_target_dimensions(target_width, target_height);
     let upload_path = match upscale_upload_path(app, &state, &source) {
         Ok(path) => path,
@@ -2958,18 +3038,13 @@ fn build_upscale_prompt(
     scale: u32,
     quality: &str,
 ) -> String {
-    let source_hint = if original_prompt.trim().is_empty() {
-        "无额外原始描述".to_string()
-    } else {
-        format!("原始描述：{}", original_prompt.trim())
-    };
+    let _ = original_prompt; // Creation instructions must not compete with the source pixels.
     format!(
-        "请基于参考图进行清晰放大和细节增强，保持原图构图、主体、颜色、材质和整体风格不变，不新增主体，不改变画面比例。放大倍率：{}X，目标清晰度：{}，输出尺寸必须为 {}x{}。{}",
+        "请仅以参考图为依据进行保真清晰放大。整张画面等比例放大，保持主体数量、各视图位置、相对尺寸、构图、颜色、材质、笔触、光照、背景和留白不变；仅改善清晰度与现有纹理。禁止扩图、裁切、重新设计；禁止新增边框、装饰、文字、云纹或背景。放大倍率：{}X，目标清晰度：{}，输出尺寸必须为 {}x{}。",
         scale.clamp(2, 4),
         quality,
         target_width,
         target_height,
-        source_hint,
     )
 }
 
@@ -3149,7 +3224,8 @@ pub(super) fn recover_pending_generations(app: &AppWindow, context: AppContext) 
             for record in records {
                 if activity.is_quiescing() || !backend.api.user_work_is_current(&worker_scope) { break; }
                 if !matches!(record.task_type.as_str(), "image_generation" | "image_edit" | "image_upscale"
-                    | "image_watermark_removal" | "image_colorization" | "image_enhancement" | "image_cutout")
+                    | "image_watermark_removal" | "image_colorization" | "image_enhancement" | "image_cutout"
+                    | "image_to_video")
                     || record.canvas_ui_extraction { blocked += 1; continue; }
                 if let Ok(Some(record)) = bind_generation_recovery_candidate(&backend, &authority, &worker_scope, record) {
                     recovered.push(record);
@@ -3747,7 +3823,9 @@ fn run_generation_record_checked(
     let mut detail = if record.server_task_id.is_empty() {
         let Some(billing_scope) = billing_scope.as_ref() else { return Ok(()); };
         if begin_generation_submission(&authority, &record.client_request_id).is_err() { return Ok(()); }
-        let created = if task_type == "image_upscale" {
+        let created = if task_type == "image_to_video" {
+            api.create_video_task_billing(record.video_request.as_ref().ok_or_else(|| anyhow!("video request missing"))?, billing_scope)
+        } else if task_type == "image_upscale" {
             let request = CreateUpscaleGenerationTask {
                 client_request_id: record.client_request_id.clone(),
                 task_type: "image_upscale".to_string(),
@@ -3932,6 +4010,14 @@ fn run_generation_record_checked(
             if cancelled(){return Ok(());}
             if item.status == "succeeded" && !handled_success.contains(&item.index) {
                 if let Some(file) = item.file.as_ref() {
+                    if record.video_request.is_some() {
+                        let index = authority.delivery_index()?;
+                        match prepare_namespace_video_delivery(&api, authority.clone(), index, &record.identity(), item.index) {
+                            Ok(prepared) => { sender.send(GenerationOutcome::NamespaceVideoSuccess { prepared: Box::new(prepared), time: Local::now().format("%Y-%m-%d %H:%M").to_string() }).ok(); handled_success.insert(item.index); }
+                            Err(error) => { if matches!(&error, DeliveryRetryError::Api(api) if api.is_terminal_session_error()) { return Err(error); } }
+                        }
+                        continue;
+                    }
                     match prepare_runtime_image_delivery(&api, authority.clone(), &record.client_request_id, item.index) {
                         Ok(Some(prepared)) => {
                             if sender.send(GenerationOutcome::NamespaceImageSuccess { prepared: Box::new(prepared), time: Local::now().format("%Y-%m-%d %H:%M").to_string() }).is_err() { return Ok(()); }
@@ -4067,6 +4153,16 @@ fn run_generation_record_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upscale_prompt_uses_image_as_authority_without_creation_instructions() {
+        let prompt = build_upscale_prompt("添加华丽边框与云纹背景", 3840, 2160, 2, "4K");
+        assert!(!prompt.contains("添加华丽边框与云纹背景"));
+        assert!(!prompt.contains("原始描述"));
+        assert!(prompt.contains("3840x2160"));
+        assert!(prompt.contains("禁止扩图"));
+        assert!(prompt.contains("留白"));
+    }
 
     #[test]
     fn retry_recovery_upsert_failure_keeps_the_old_delivery_recoverable() {

@@ -2,6 +2,7 @@ import { AppState } from "../app-state.slint";
 import { AssetGallery } from "../components/asset-gallery.slint";
 import { CategoryTabs } from "../components/category-tabs.slint";
 import { GalleryLayoutToggle } from "../components/gallery-layout-toggle.slint";
+import { VideoGallery } from "../components/video-gallery.slint";
 import { AppTheme } from "../theme.slint";
 
 export component AssetsPage {
@@ -29,13 +30,14 @@ export component AssetsPage {
                 height: 64px;
                 for-assets: true;
             }
-            GalleryLayoutToggle {
+            if AppState.asset-category-filter != "video": GalleryLayoutToggle {
                 x: parent.width - 112px;
                 y: 20px;
                 mode <=> AppState.asset-gallery-layout;
                 preference-key: "assets";
             }
-            AssetGallery {
+            if AppState.asset-category-filter == "video": VideoGallery { x: 0px; y: 116px; width: parent.width; height: parent.height - 116px; }
+            if AppState.asset-category-filter != "video": AssetGallery {
                 x: 0px;
                 y: 116px;
                 width: parent.width;

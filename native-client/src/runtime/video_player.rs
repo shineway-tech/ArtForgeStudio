@@ -673,6 +673,51 @@ fn poll_video_export(
     });
 }
 
+pub(super) fn reveal_saved_video_folder(
+    context: &AppContext,
+    persistence: PrivatePersistence,
+    output: SavedVideoOutput,
+) -> Result<()> {
+    anyhow::ensure!(
+        player_output_is_current(context, &persistence, &output),
+        "video owner changed"
+    );
+    let (activity, effect) = persistence.begin_effect()?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let worker_cancel = cancel.clone();
+    spawn_video_player_worker(persistence.lease().clone(), cancel, move || {
+        let _effect = effect;
+        let result = (|| -> Result<()> {
+            let authority = persistence.storage_authority()?;
+            let directory = persistence.lease().namespace.path(ManagedUserArea::Videos);
+            let path = Path::new(&output.source_path);
+            let relative = path.strip_prefix(directory)?;
+            let key = ManagedFileKey::new(
+                ManagedUserArea::Videos,
+                relative
+                    .to_str()
+                    .ok_or_else(|| anyhow!("invalid video path"))?,
+            )?;
+            let file = authority.open_existing_regular(&key)?;
+            let metadata = authority.inspect_regular(&file)?;
+            anyhow::ensure!(
+                metadata.link_count == 1 && metadata.byte_size == output.size_bytes,
+                "video file changed"
+            );
+            anyhow::ensure!(
+                persistence.is_current()
+                    && !activity.is_quiescing()
+                    && !worker_cancel.load(Ordering::SeqCst),
+                "video owner changed"
+            );
+            reveal_path_in_file_manager(path)
+        })();
+        drop(result);
+    })?;
+    schedule_video_worker_reap();
+    Ok(())
+}
+
 fn start_captured_video_reveal(
     app: &AppWindow, context: &AppContext, persistence: &PrivatePersistence, output: &SavedVideoOutput,
 ) {
@@ -924,8 +969,8 @@ mod core_player_tests {
                 authority.write_new_regular_from(&mut file, &mut &bytes[..]).unwrap();
                 authority.sync_regular(&mut file).unwrap();
             }).join().unwrap());
-            let output = SavedVideoOutput {
-                source_asset_id:String::new(),
+            let output = SavedVideoOutput { model: String::new(), resolution: String::new(), duration_secs: 0,
+                source_asset_id:String::new(),prompt:String::new(),
                 client_request_id: "44444444-4444-4444-8444-444444444444".into(), server_task_id: "55555555-5555-4555-8555-555555555555".into(),
                 file_id: "66666666-6666-4666-8666-666666666666".into(), billing_account_group_id: "33333333-3333-4333-8333-333333333333".into(),
                 sha256: format!("{:x}", Sha256::digest(bytes)), size_bytes: bytes.len() as u64,

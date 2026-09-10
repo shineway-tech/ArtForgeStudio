@@ -1568,6 +1568,7 @@ mod core_custom_effect_tests{
             code:"fixture-style-model".into(),name:"Fixture style".into(),purpose:"prompt_processing".into(),version:1,
             capabilities:"".into(),pricing:"".into(),price_1k:0,price_2k:0,price_4k:0,price_standard:"13".into(),
             supports_image_edit:false,supports_style_analysis:true,
+            video_price_480:"".into(),video_price_720:"".into(),video_price_1080:"".into(),
         }])));
         app.global::<AppState>().set_reasoning_model("fixture-style-model".into());
     }

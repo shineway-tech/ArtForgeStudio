@@ -1468,7 +1468,7 @@ mod tests {
             "client_request_id":"original-video-key","server_task_id":task,"file_id":file,
             "billing_account_group_id":"22222222-2222-4222-8222-222222222222",
             "sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size_bytes":24,
-            "source_path":path.to_string_lossy(),"title":"Saved video","created_at":"2026-09-08T00:00:00Z"
+            "model":"","resolution":"","duration_secs":0,"source_path":path.to_string_lossy(),"title":"Saved video","created_at":"2026-09-08T00:00:00Z"
         }}})
     }
     #[test]

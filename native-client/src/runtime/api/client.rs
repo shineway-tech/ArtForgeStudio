@@ -991,7 +991,7 @@ mod tests {
     fn video_quote_request() -> CreateVideoQuote {
         CreateVideoQuote {
             model_code: "video-model".to_string(),
-            source_file_id: "source-video".to_string(),
+            source_file_id: "source-video".to_string(), reference_file_ids: vec!["source-video".to_string()],
             aspect_ratio: "16:9".to_string(),
             resolution: "720P".to_string(),
             duration_secs: 8,
@@ -1002,6 +1002,7 @@ mod tests {
         serde_json::json!({
             "model_code": "video-model",
             "source_file_id": "source-video",
+            "reference_file_ids": ["source-video"],
             "aspect_ratio": "16:9",
             "resolution": "720P",
             "duration_secs": 8
@@ -1014,7 +1015,7 @@ mod tests {
             task_type: "image_to_video".to_string(),
             model_code: "video-model".to_string(),
             prompt: "slow camera move".to_string(),
-            source_file_id: "source-video".to_string(),
+            source_file_id: "source-video".to_string(), reference_file_ids: vec!["source-video".to_string()],
             aspect_ratio: "16:9".to_string(),
             resolution: "720P".to_string(),
             duration_secs: 8,
@@ -1029,6 +1030,7 @@ mod tests {
             "model_code": "video-model",
             "prompt": "slow camera move",
             "source_file_id": "source-video",
+            "reference_file_ids": ["source-video"],
             "aspect_ratio": "16:9",
             "resolution": "720P",
             "duration_secs": 8,

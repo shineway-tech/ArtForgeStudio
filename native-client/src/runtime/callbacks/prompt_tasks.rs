@@ -342,6 +342,10 @@ fn launch_prompt_record(
         if inserted && visible{set_prompt_task_activity(app,&record,true);}inserted
     }).unwrap_or(false);
     if !reserved{return;}
+    let (progress_sender, progress_receiver) = mpsc::channel();
+    if visible && record.target_kind == "video_prompt" {
+        poll_video_prompt_progress(app.as_weak(), context.clone(), capture.clone(), record.clone(), progress_receiver);
+    }
     let work_record=record.clone();
     let release=Rc::new(PromptActiveRequest{active:context.active_prompt_task_requests.clone(),key,released:std::cell::Cell::new(false)});
     PROMPT_ACTIVE_RESERVATIONS.with(|reservations|{
@@ -372,7 +376,7 @@ fn launch_prompt_record(
             upsert_pending_prompt_task_for_namespace(&worker.capture.authority,billing_scope.as_ref().ok_or(ApiError::AuthenticationRequired)?,record.clone()).map_err(transition_error)?;
         }
         prepared.store(true, Ordering::Release);
-        run_prompt_record(worker,record,billing_scope.as_ref())
+        run_prompt_record(worker,record,billing_scope.as_ref(), &progress_sender)
     });
     match job{
         Ok(job)=>poll_prompt_job(app.as_weak(),context,capture,job,move|app,context,capture,result|{
@@ -468,7 +472,55 @@ fn revalidate_prompt_epoch(worker:&PromptWorker,mut record:PendingPromptTaskReco
     Ok(record)
 }
 
-fn run_prompt_record(worker:&PromptWorker,mut record:PendingPromptTaskRecord,billing:Option<&BillingScope>)
+#[derive(Clone, Copy)]
+enum VideoPromptProgress { Queued, Processing, Reconnecting }
+impl VideoPromptProgress {
+    fn message(self) -> &'static str {
+        match self {
+            Self::Queued => "视频提示词优化已提交，正在排队，请稍候…",
+            Self::Processing => "正在优化视频提示词，请稍候…",
+            Self::Reconnecting => "连接暂时中断，正在重新查询原优化任务，请勿重复提交…",
+        }
+    }
+}
+fn apply_video_prompt_progress(app: &AppWindow, context: &AppContext, record: &PendingPromptTaskRecord, progress: VideoPromptProgress) {
+    let state = app.global::<AppState>();
+    if record.target_kind == "video_prompt" && state.get_optimizing_video_prompt()
+        && state.get_video_prompt_request_id().as_str() == record.client_request_id
+        && prompt_target_matches(app, context, record) {
+        state.set_video_prompt_status(progress.message().into());
+    }
+}
+fn poll_video_prompt_progress(
+    app: Weak<AppWindow>, context: AppContext, capture: PromptCapture,
+    record: PendingPromptTaskRecord, receiver: mpsc::Receiver<VideoPromptProgress>,
+) {
+    slint::Timer::single_shot(Duration::from_millis(100), move || {
+        let Some(window) = app.upgrade() else { return; };
+        if !capture.is_current(&context) { return; }
+        let mut latest = None;
+        let connected = loop {
+            match receiver.try_recv() {
+                Ok(progress) => latest = Some(progress),
+                Err(TryRecvError::Empty) => break true,
+                Err(TryRecvError::Disconnected) => break false,
+            }
+        };
+        if let Some(progress) = latest {
+            capture.apply(&context, || apply_video_prompt_progress(&window, &context, &record, progress));
+        }
+        if connected { poll_video_prompt_progress(app, context, capture, record, receiver); }
+    });
+}
+fn prompt_terminal_failure_message(code: Option<&str>) -> &'static str {
+    match code {
+        Some("INSUFFICIENT_BALANCE" | "provider_credentials_unavailable" | "provider_disabled") =>
+            "提示词优化服务暂时不可用，请稍后重试；原始提示词已保留",
+        _ => "服务端提示词任务未完成，原始记录已保留",
+    }
+}
+
+fn run_prompt_record(worker:&PromptWorker,mut record:PendingPromptTaskRecord,billing:Option<&BillingScope>, progress:&mpsc::Sender<VideoPromptProgress>)
     ->std::result::Result<PromptTaskOutcome,ApiError>{
     let capture=&worker.capture;worker.ensure()?;
     if record.owner_user_id!=capture.scope.owner_user_id || !valid_pending_prompt_task(&record){
@@ -509,6 +561,7 @@ fn run_prompt_record(worker:&PromptWorker,mut record:PendingPromptTaskRecord,bil
         let detail=match result{
             Ok(detail)=>detail,
             Err(error) if prompt_task_api_error_is_transient(&error)=>{
+                let _ = progress.send(VideoPromptProgress::Reconnecting);
                 if !worker.wait(Duration::from_millis(retry)){return Err(ApiError::AuthenticationRequired);}
                 retry=next_prompt_task_retry_ms(retry);continue;
             }
@@ -537,11 +590,16 @@ fn run_prompt_record(worker:&PromptWorker,mut record:PendingPromptTaskRecord,bil
                     require_prompt_patch(capture,&record,PromptTaskRecoveryPatch::TerminalError(message.clone()))?;record.terminal_error=message;
                 }
             }else{
-                let message="服务端提示词任务未完成，原始记录已保留".to_string();
+                let message=prompt_terminal_failure_message(detail.failure.as_ref().map(|failure| failure.code.as_str())).to_string();
                 require_prompt_patch(capture,&record,PromptTaskRecoveryPatch::TerminalError(message.clone()))?;record.terminal_error=message;
             }
             return finish_prompt_terminal(worker,&api,record);
         }
+        let _ = progress.send(if detail.status == "queued" {
+            VideoPromptProgress::Queued
+        } else {
+            VideoPromptProgress::Processing
+        });
         retry=PROMPT_TASK_RETRY_MIN_MS;
         if !worker.wait(Duration::from_millis(IMAGE_POLL_INTERVAL_MS)){return Err(ApiError::AuthenticationRequired);}
     }
@@ -1614,6 +1672,51 @@ mod tests {
     }
 
     #[test]
+    fn prompt_terminal_service_failure_never_displays_provider_details() {
+        for code in ["INSUFFICIENT_BALANCE", "provider_credentials_unavailable", "provider_disabled"] {
+            let message = prompt_terminal_failure_message(Some(code));
+            assert!(message.contains("服务暂时不可用"));
+            assert!(!message.contains(code));
+            assert!(!message.contains("积分"));
+        }
+        assert_eq!(prompt_terminal_failure_message(Some("unknown secret response")), prompt_terminal_failure_message(None));
+    }
+
+    #[test]
+    fn video_prompt_progress_only_updates_the_active_original_target() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let context = AppContext::default();
+        let state = app.global::<AppState>();
+        let mut record = pending_record("video_prompt");
+        record.activity_kind = "video_optimize".into();
+        record.target_id = "original-source".into();
+        state.set_page("video-generation".into());
+        state.set_video_source_id(record.target_id.clone().into());
+        state.set_video_prompt(record.target_input.clone().into());
+        state.set_video_status("quote ready".into());
+        set_prompt_task_activity(&app, &record, true);
+        for progress in [VideoPromptProgress::Queued, VideoPromptProgress::Processing, VideoPromptProgress::Reconnecting] {
+            apply_video_prompt_progress(&app, &context, &record, progress);
+            assert_eq!(state.get_video_prompt_status(), progress.message());
+            assert_eq!(state.get_video_status(), "quote ready");
+            assert!(state.get_optimizing_video_prompt());
+        }
+        state.set_video_prompt_status("new editor status".into());
+        state.set_video_prompt("edited input".into());
+        apply_video_prompt_progress(&app, &context, &record, VideoPromptProgress::Queued);
+        assert_eq!(state.get_video_prompt_status(), "new editor status");
+        state.set_video_prompt(record.target_input.clone().into());
+        state.set_video_prompt_request_id("successor".into());
+        apply_video_prompt_progress(&app, &context, &record, VideoPromptProgress::Queued);
+        assert_eq!(state.get_video_prompt_status(), "new editor status");
+        state.set_video_prompt_request_id(record.client_request_id.clone().into());
+        state.set_optimizing_video_prompt(false);
+        apply_video_prompt_progress(&app, &context, &record, VideoPromptProgress::Queued);
+        assert_eq!(state.get_video_prompt_status(), "new editor status");
+    }
+
+    #[test]
     fn video_prompt_activity_is_independent_and_only_the_owning_request_can_clear_it() {
         i_slint_backend_testing::init_no_event_loop();
         let app = AppWindow::new().unwrap();
@@ -2348,6 +2451,46 @@ mod core_prompt_tests {
         fn drop(&mut self){if let Some(handle)=self.0.take(){let joined=handle.join();if !std::thread::panicking(){assert!(joined.is_ok(),"fixture trip panicked");}}}
     }
 
+
+    #[test]
+    fn video_prompt_worker_reports_queue_processing_reconnect_and_safe_failure() {
+        i_slint_backend_testing::init_no_event_loop();
+        let mut transport=Transport::new(4);let f=fixture(&transport.url);let app=app(&f);
+        let state=app.global::<AppState>();
+        state.set_page("video-generation".into());
+        state.set_video_source_id("source-a".into());
+        state.set_video_prompt("original input".into());
+        state.set_video_status("quote ready".into());
+        let mut task=request();
+        task.target=PromptResultTarget::Video{source_id:"source-a".into(),input:"original input".into()};
+        start_backend_prompt_task(&app,f.context.clone(),task);
+        for (index, status, progress) in [
+            (0,"queued",VideoPromptProgress::Queued),
+            (1,"running",VideoPromptProgress::Processing),
+        ] {
+            transport.wait();
+            transport.reply(index,response(200,serde_json::json!({"id":TASK,"billing_account_group_id":PAYER,
+                "status":status,"progress_percent":0,"success_count":0,"failure_count":0,
+                "failure":null,"prompt":"original input","result_prompt":null,"items":[]}),""));
+            pump(||state.get_video_prompt_status()==progress.message());
+            assert!(state.get_optimizing_video_prompt());
+        }
+        transport.wait();transport.reply(2,response(503,Value::Null,"temporary_failure"));
+        pump(||state.get_video_prompt_status()==VideoPromptProgress::Reconnecting.message());
+        transport.wait();transport.reply(3,response(200,serde_json::json!({"id":TASK,"billing_account_group_id":PAYER,
+            "status":"failed","progress_percent":0,"success_count":0,"failure_count":1,
+            "failure":{"code":"INSUFFICIENT_BALANCE","message":"private provider response"},
+            "prompt":"original input","result_prompt":null,"items":[]}),""));
+        pump(||!state.get_optimizing_video_prompt());
+        pump(||state.get_recovered_prompt_result_open());join_prompt_workers().unwrap();
+        assert!(state.get_recovered_prompt_error().contains("服务暂时不可用"));
+        assert!(!state.get_recovered_prompt_error().contains("private provider response"));
+        assert!(!state.get_recovered_prompt_error().contains("INSUFFICIENT_BALANCE"));
+        assert_eq!(state.get_video_prompt(),"original input");
+        assert_eq!(state.get_video_status(),"quote ready");
+        let requests=transport.finish();
+        assert_eq!(requests.iter().filter(|request|request.starts_with("POST /v1/generation/tasks ")).count(),1);
+    }
 
     #[test]
     fn core_prompt_real_start_late_upgrade_result_cannot_clear_activity_or_status() {

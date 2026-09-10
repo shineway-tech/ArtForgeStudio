@@ -387,6 +387,10 @@ pub(crate) struct AccountApi {
 }
 
 impl AccountApi {
+    pub(crate) fn video_model_catalog(&self, scope: &BillingScope) -> Result<Vec<ModelCatalogItem>, ApiError> {
+        self.client.billing_json_scoped::<ModelCatalog>(Method::GET, "/v1/models", None, None, scope).map(|response| response.data.items)
+    }
+
     pub(crate) fn new(client: ApiClient) -> Self {
         Self { client }
     }

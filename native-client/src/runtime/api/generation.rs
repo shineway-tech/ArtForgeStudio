@@ -140,6 +140,7 @@ pub(crate) struct CreateGenerationTask {
 pub(crate) struct CreateVideoQuote {
     pub(crate) model_code: String,
     pub(crate) source_file_id: String,
+    pub(crate) reference_file_ids: Vec<String>,
     pub(crate) aspect_ratio: String,
     pub(crate) resolution: String,
     pub(crate) duration_secs: i32,
@@ -147,7 +148,9 @@ pub(crate) struct CreateVideoQuote {
 
 impl CreateVideoQuote {
     pub(crate) fn validate(&self) -> Result<(), ApiError> {
-        if self.model_code.trim().is_empty() || self.source_file_id.trim().is_empty() {
+        if self.model_code.trim().is_empty() || self.source_file_id.trim().is_empty()
+            || self.reference_file_ids.is_empty() || !self.reference_file_ids.contains(&self.source_file_id)
+            || self.reference_file_ids.iter().any(|id| id.trim().is_empty()) {
             return Err(video_parameter_error("视频模型或源图片无效"));
         }
         if !matches!(
@@ -177,16 +180,41 @@ pub(crate) struct VideoQuote {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(from = "LegacyCompatibleVideoTask")]
 pub(crate) struct CreateVideoGenerationTask {
     pub(crate) client_request_id: String,
     pub(crate) task_type: String,
     pub(crate) model_code: String,
     pub(crate) prompt: String,
     pub(crate) source_file_id: String,
+    pub(crate) reference_file_ids: Vec<String>,
     pub(crate) aspect_ratio: String,
     pub(crate) resolution: String,
     pub(crate) duration_secs: i32,
     pub(crate) quote_id: String,
+}
+#[derive(Deserialize)]
+struct LegacyCompatibleVideoTask {
+    pub(crate) client_request_id: String,
+    pub(crate) task_type: String,
+    pub(crate) model_code: String,
+    pub(crate) prompt: String,
+    pub(crate) source_file_id: String,
+    #[serde(default)]
+    pub(crate) reference_file_ids: Option<Vec<String>>,
+    pub(crate) aspect_ratio: String,
+    pub(crate) resolution: String,
+    pub(crate) duration_secs: i32,
+    pub(crate) quote_id: String,
+}
+
+impl From<LegacyCompatibleVideoTask> for CreateVideoGenerationTask {
+    fn from(value: LegacyCompatibleVideoTask) -> Self {
+        Self { reference_file_ids: value.reference_file_ids.unwrap_or_else(|| vec![value.source_file_id.clone()]),
+            client_request_id: value.client_request_id, task_type: value.task_type, model_code: value.model_code, prompt: value.prompt,
+            source_file_id: value.source_file_id, aspect_ratio: value.aspect_ratio, resolution: value.resolution,
+            duration_secs: value.duration_secs, quote_id: value.quote_id }
+    }
 }
 
 impl CreateVideoGenerationTask {
@@ -194,6 +222,7 @@ impl CreateVideoGenerationTask {
         CreateVideoQuote {
             model_code: self.model_code.clone(),
             source_file_id: self.source_file_id.clone(),
+            reference_file_ids: self.reference_file_ids.clone(),
             aspect_ratio: self.aspect_ratio.clone(),
             resolution: self.resolution.clone(),
             duration_secs: self.duration_secs,
@@ -1535,13 +1564,32 @@ mod tests {
     }
 
     #[test]
+    fn retained_legacy_video_request_restores_source_but_explicit_empty_images_remain_invalid() {
+        let mut body=serde_json::json!({"client_request_id":"key","task_type":"image_to_video","model_code":"legacy","prompt":"move","source_file_id":"source","aspect_ratio":"16:9","resolution":"720P","duration_secs":4,"quote_id":"quote"});
+        let legacy:CreateVideoGenerationTask=serde_json::from_value(body.clone()).unwrap();
+        assert_eq!(legacy.reference_file_ids, vec!["source"]); assert!(legacy.validate().is_ok());
+        body["reference_file_ids"]=serde_json::json!([]);
+        assert!(serde_json::from_value::<CreateVideoGenerationTask>(body).unwrap().validate().is_err());
+    }
+
+    #[test]
+    fn video_quote_requires_ordered_images_and_source_membership() {
+        let mut request = CreateVideoQuote { model_code: "seedance_2_0_mini".into(), source_file_id: "first".into(), reference_file_ids: vec!["first".into(), "second".into()], aspect_ratio: "16:9".into(), resolution: "480P".into(), duration_secs: 4 };
+        assert!(request.validate().is_ok());
+        assert_eq!(serde_json::to_value(&request).unwrap()["reference_file_ids"], serde_json::json!(["first", "second"]));
+        request.reference_file_ids.clear(); assert!(request.validate().is_err());
+        request.reference_file_ids = vec!["second".into()]; assert!(request.validate().is_err());
+        request.reference_file_ids = vec!["first".into()]; request.duration_secs=16; assert!(request.validate().is_err());
+    }
+
+    #[test]
     fn video_quote_accepts_only_supported_parameters_and_serializes_decimal_credits() {
         for ratio in ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] {
             for resolution in ["480P", "720P", "1080P"] {
                 for duration_secs in [4, 15] {
                     let request = CreateVideoQuote {
                         model_code: "seedance".to_string(),
-                        source_file_id: "source-file".to_string(),
+                        source_file_id: "source-file".to_string(), reference_file_ids: vec!["source-file".to_string()],
                         aspect_ratio: ratio.to_string(),
                         resolution: resolution.to_string(),
                         duration_secs,
@@ -1559,7 +1607,7 @@ mod tests {
         ] {
             assert!(CreateVideoQuote {
                 model_code: "seedance".to_string(),
-                source_file_id: "source-file".to_string(),
+                source_file_id: "source-file".to_string(), reference_file_ids: vec!["source-file".to_string()],
                 aspect_ratio: ratio.to_string(),
                 resolution: resolution.to_string(),
                 duration_secs,
@@ -1588,7 +1636,7 @@ mod tests {
             task_type: "image_to_video".to_string(),
             model_code: "seedance".to_string(),
             prompt: "slow camera move".to_string(),
-            source_file_id: "source-file".to_string(),
+            source_file_id: "source-file".to_string(), reference_file_ids: vec!["source-file".to_string()],
             aspect_ratio: "16:9".to_string(),
             resolution: "1080P".to_string(),
             duration_secs: 15,

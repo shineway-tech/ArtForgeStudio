@@ -196,6 +196,189 @@ fn start_image_delivery_commit_with_binding(
         },
     }
 }
+pub(super) fn start_video_delivery_commit_with_binding(
+    app: &AppWindow,
+    context: AppContext,
+    expected: Option<PrivatePersistence>,
+    prepared: PreparedNamespaceVideoDelivery,
+    time: String,
+    complete: impl FnOnce(&AppWindow, Result<(Image, String, bool)>) + 'static,
+) {
+    let lease = prepared.lease().clone();
+    let mut complete = Some(complete);
+    let prepared_write = (|| -> Result<_> {
+        reap_delivery_commit_workers();
+        anyhow::ensure!(
+            !DELIVERY_COMMIT_CLOSING.with(Cell::get),
+            "delivery worker admission closed"
+        );
+        anyhow::ensure!(
+            !DELIVERY_COMMIT_FAILED.with(Cell::get),
+            "delivery worker previously failed"
+        );
+        let persistence = context
+            .store
+            .borrow()
+            .private_persistence
+            .clone()
+            .ok_or_else(|| anyhow!("Store not activated"))?;
+        anyhow::ensure!(
+            persistence.lease() == &lease
+                && persistence.is_current()
+                && expected
+                    .as_ref()
+                    .is_none_or(|original| original.same_binding_metadata(&persistence)),
+            "delivery Store changed"
+        );
+        let write = persistence.prepare_ordered_save()?;
+        let activity = persistence.begin_activity()?;
+        Ok((persistence, write, activity))
+    })();
+    let (persistence, write, activity) = match prepared_write {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = context.apply_user_completion(&lease, || {
+                if expected.as_ref().is_none_or(|original| {
+                    context
+                        .store
+                        .borrow()
+                        .private_persistence
+                        .as_ref()
+                        .is_some_and(|current| current.same_binding_metadata(original))
+                }) {
+                    complete.take().unwrap()(app, Err(error));
+                }
+            });
+            return;
+        }
+    };
+    let canvas_target = (!prepared.record().canvas_source_node_id.is_empty()).then(|| {
+        (
+            prepared.record().canvas_source_node_id.clone(),
+            prepared.record().local_task_id.clone(),
+        )
+    });
+    let image = Image::default();
+    let mut write = Some(write);
+    let mut prepared = Some(prepared);
+    let outcome = context.apply_user_completion(&lease, || {
+        if !context
+            .store
+            .borrow()
+            .private_persistence
+            .as_ref()
+            .is_some_and(|current| current.same_binding_metadata(&persistence))
+        {
+            return None;
+        }
+        let history = canvas_target.as_ref().and_then(|(source, _)| {
+            let store = context.store.borrow();
+            (store.canvas_notes.iter().any(|note| note.id == *source)
+                && !store
+                    .assets
+                    .iter()
+                    .any(|asset| asset.id == prepared.as_ref().unwrap().confirmation().file_id))
+            .then(|| CanvasSnapshot {
+                notes: store.canvas_notes.clone(),
+                links: store.canvas_links.clone(),
+            })
+        });
+        let asset_id = prepared.as_ref().unwrap().confirmation().file_id.clone();
+        let outcome = write.take().unwrap().enqueue_video_delivery(
+            app,
+            &mut context.store.borrow_mut(),
+            prepared.take().unwrap(),
+            &time,
+        );
+        if let Some(history) = history {
+            if context
+                .store
+                .borrow()
+                .assets
+                .iter()
+                .any(|asset| asset.id == asset_id)
+            {
+                context.canvas_history.borrow_mut().record(history);
+            }
+        }
+        Some(outcome)
+    });
+    drop(write);
+    drop(prepared);
+    let pending = match outcome.ok().flatten() {
+        Some(Ok(pending)) => pending,
+        Some(Err(error)) => {
+            let message = error.to_string();
+            drop(error);
+            drop(activity);
+            let _ = context.apply_user_completion(&lease, || {
+                complete.take().unwrap()(app, Err(anyhow!(message)))
+            });
+            return;
+        }
+        None => return,
+    };
+    let id = pending.asset_id().to_owned();
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_cancel = cancel.clone();
+    let captured = persistence.clone();
+    let (sender, receiver) = mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("delivery-store-ack".into())
+        .spawn(move || {
+            let result: std::result::Result<bool, DeliveryRetryError> = pending
+                .wait()
+                .map_err(DeliveryRetryError::from)
+                .and_then(|receipt| {
+                    if worker_cancel.load(Ordering::SeqCst)
+                        || activity.is_quiescing()
+                        || !captured.is_current()
+                    {
+                        return Ok(false);
+                    }
+                    match acknowledge_namespace_delivery(receipt) {
+                        Ok(acknowledged) => Ok(acknowledged),
+                        Err(DeliveryRetryError::Api(error))
+                            if error.is_terminal_session_error() =>
+                        {
+                            Err(error.into())
+                        }
+                        Err(_) => Ok(false), // Local save remains durable; remote retry retains original row.
+                    }
+                });
+            let _ = sender.send(result);
+            drop(activity);
+        });
+    match spawned {
+        Ok(handle) => {
+            DELIVERY_COMMIT_WORKERS.with(|workers| {
+                workers.borrow_mut().push(DeliveryCommitWorker {
+                    lease: lease.clone(),
+                    cancel: cancel.clone(),
+                    handle,
+                })
+            });
+            poll_image_delivery_commit(
+                app.as_weak(),
+                context,
+                persistence,
+                cancel,
+                receiver,
+                image,
+                id,
+                canvas_target,
+                complete.take().unwrap(),
+            );
+        }
+        Err(error) => {
+            // Dropping the receiver never releases the queued writer command's guards.
+            let _ = context.apply_user_completion(&lease, || {
+                complete.take().unwrap()(app, Err(anyhow!(error)))
+            });
+        }
+    }
+}
+
 fn poll_image_delivery_commit(
     weak:Weak<AppWindow>,context:AppContext,persistence:PrivatePersistence,cancel:Arc<std::sync::atomic::AtomicBool>,
     receiver:mpsc::Receiver<std::result::Result<bool,DeliveryRetryError>>,image:Image,id:String,canvas_target:Option<(String,String)>,
@@ -527,7 +710,9 @@ fn stage_video_delivery(store:&mut Store,prepared:&PreparedNamespaceVideoDeliver
     anyhow::ensure!(matches!(record.task_type.as_str(),"image_to_video"|"video_generation")
         && record.video_request.is_some() && confirmation.failed_asset_id.is_none(),"video output identity incomplete");
     let output=SavedVideoOutput {
+        model: record.model_code.clone(), resolution: record.quality.clone(), duration_secs: record.video_request.as_ref().map(|request| request.duration_secs).unwrap_or(0),
         source_asset_id:record.source_asset_id.clone(),
+        prompt:record.raw_prompt.clone(),
         client_request_id:record.client_request_id.clone(),server_task_id:confirmation.task_id.clone(),
         file_id:confirmation.file_id.clone(),billing_account_group_id:record.billing_account_group_id.clone(),
         sha256:confirmation.sha256.clone(),size_bytes:confirmation.size_bytes,source_path:prepared.source_path().into(),

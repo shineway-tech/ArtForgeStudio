@@ -1841,7 +1841,7 @@ mod tests {
 
     fn core_retained_video_row() -> (PendingGenerationRecord, serde_json::Value) {
         let request = serde_json::json!({"client_request_id":"request_123","task_type":"image_to_video",
-            "model_code":"video-original","prompt":"original video body","source_file_id":"original-file",
+            "model_code":"video-original","prompt":"original video body","source_file_id":"original-file","reference_file_ids":["original-file"],
             "aspect_ratio":"16:9","resolution":"720P","duration_secs":8,"quote_id":"original-quote"});
         let mut row = serde_json::to_value(pending_record()).unwrap();
         row["task_type"] = serde_json::json!("image_to_video");

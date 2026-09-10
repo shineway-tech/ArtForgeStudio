@@ -1,6 +1,12 @@
 import { TeamRegistrationInvitationView, AccountGroupCardView, TeamMemberRowView, TeamInvitationRowView, TeamUsageRowView, AccountSession, AssetGroup, AssetItem, BrushPoint, CanvasLink, CanvasNote, CatalogModelView, CompressionImageItem, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, GalleryHeader, GalleryLoadingPlacement, GalleryPlacement, InvitedUserView, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, PromptTextEdit, ReferenceItem, VideoImageItem } from "types.slint";
 
 export global AppState {
+    in-out property <[VideoImageItem]> saved-videos: [];
+    in-out property <bool> video-480-available: true;
+    in-out property <bool> video-720-available: true;
+    in-out property <bool> video-1080-available: true;
+    callback play-saved-video(string);
+    callback reveal-saved-video(string);
     in-out property <bool> team-registration-open: false;
     in-out property <[TeamRegistrationInvitationView]> team-registration-invitations: [];
     in-out property <string> team-registration-selection-state: "";
@@ -988,6 +994,7 @@ export global AppState {
     callback viewer-generate-video();
     callback close-video-generation();
     callback select-video-model(string);
+    callback refresh-video-prices();
     callback request-video-quote(string, string, int);
     callback submit-video-generation();
     callback sync-video-player(float, float, float, float);

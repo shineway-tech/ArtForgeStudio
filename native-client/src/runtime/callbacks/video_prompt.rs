@@ -24,7 +24,6 @@ pub(super) fn wire_video_prompt_callbacks(app: &AppWindow, context: AppContext) 
                 match video_prompt_task(&state) {
                     Ok(task) => {
                         state.set_video_prompt_status("正在按时间线整理视频提示词的五项内容...".into());
-                        state.set_optimizing_video_prompt(true);
                         Some(task)
                     }
                     Err(reason) => {

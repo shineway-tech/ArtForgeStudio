@@ -139,8 +139,8 @@ fn imports_append_without_overwriting_prompt_and_removal_never_deletes_files() {
     assert_eq!(quote_epoch.load(Ordering::SeqCst), 9);
     assert_eq!(*request_id.lock().unwrap(), "");
     assert!(
-        video_image_generation_error(&state).is_some(),
-        "multiple images must not silently submit just the first"
+        video_image_generation_error(&state).is_none(),
+        "all selected images are eligible and the quote binds their complete order"
     );
     state.invoke_remove_video_image(video_image_key(&first).into());
     assert_eq!(state.get_video_images().row_count(), 1);
@@ -276,23 +276,13 @@ fn cancelled_asset_selection_does_not_add_images() {
 }
 
 #[test]
-fn multi_image_submit_is_blocked_even_when_a_stale_quote_is_marked_ready() {
+fn video_images_require_at_least_one_and_allow_complete_multi_image_input() {
     let (_fixture, app) = app();
     let state = app.global::<AppState>();
-    state.set_video_images(ModelRc::new(VecModel::from(vec![
-        VideoImageItem::default();
-        2
-    ])));
-    state.set_video_quote_ready(true);
-    state.set_video_quote_id("stale-quote".into());
-    state.set_video_prompt("Video prompt".into());
-    state.invoke_submit_video_generation();
-    assert!(!state.get_video_generating());
-    assert!(state.get_video_status().contains("单图"));
-    state.invoke_request_video_quote("16:9".into(), "720P".into(), 4);
-    assert!(!state.get_video_quote_ready());
-    assert_eq!(state.get_video_quote_id(), "");
-    assert!(!state.get_video_quote_loading());
+    state.set_video_images(ModelRc::default());
+    assert_eq!(video_image_generation_error(&state), Some("请先添加图片"));
+    state.set_video_images(ModelRc::new(VecModel::from(vec![VideoImageItem::default(); 2])));
+    assert_eq!(video_image_generation_error(&state), None);
 }
 
 pub(in crate::runtime) mod scoped_inputs {
@@ -339,8 +329,8 @@ pub(in crate::runtime) mod scoped_inputs {
         }
         pub(super) fn owned(&self, path: &Path) -> PathBuf {
             let authority=self.authority.clone();
+            let bytes=fs::read(path).unwrap();
             std::thread::scope(|threads| threads.spawn(move || {
-                let bytes = authority.read_image_source(path, MAX_VIDEO_IMAGE_BYTES).unwrap();
                 persist_reference_image_for_namespace(&authority,&decode_reference_bytes(&bytes).unwrap()).unwrap()
             }).join().unwrap())
         }
@@ -413,6 +403,23 @@ pub(in crate::runtime) mod scoped_inputs {
         f.drain();
     }
     #[test]
+    fn core_video_asset_picker_publishes_owned_assets_without_precopying_every_original() {
+        let (f,app,_epoch,_quote,_key)=setup();
+        let authority=f.authority.clone();
+        let original=std::thread::scope(|threads|threads.spawn(move||
+            persist_reference_image_for_namespace(&authority,&image::DynamicImage::new_rgb8(80,120)).unwrap()
+        ).join().unwrap());
+        let mut saved=asset(&original);saved.id="saved-asset".into();
+        f.context.store.borrow_mut().assets.push(saved);
+        let state=app.global::<AppState>();
+        state.invoke_open_video_asset_picker();
+        assert!(!state.get_video_images_loading());
+        let row=state.get_video_asset_choices().row_data(0).expect("saved asset should be immediately selectable");
+        assert_eq!(row.source_asset_id.as_str(),"saved-asset");
+        assert_eq!(Path::new(row.source_path.as_str()),original.as_path());
+        f.drain();
+    }
+    #[test]
     fn video_image_remove_is_denied_after_exact_upgrade_without_invalidating_quote() {
         let (f,app,_epoch,quote,key)=setup();
         let input=tempfile::tempdir().unwrap();
@@ -451,17 +458,25 @@ pub(in crate::runtime) mod scoped_inputs {
         f.drain();
     }
     #[test]
-    fn core_video_input_sent_success_then_panic_never_publishes_owned_rows() {
+    fn core_video_local_import_sent_success_then_panic_never_publishes_owned_rows() {
         let (f,app,_epoch,_quote,_key)=setup();
         let input=tempfile::tempdir().unwrap();
         let original=f.owned(&png(input.path(),"sent-then-panic.png"));
-        f.context.store.borrow_mut().assets.push(asset(&original));
         let (sent,observed)=mpsc::channel();
         set_delivery_preparation_after_send_for_test(move|| {
             let _=sent.send(());
             panic!("controlled video input failure after sending pixels");
         });
-        app.global::<AppState>().invoke_open_video_asset_picker();
+        start_captured_video_image_import(
+            &app,
+            f.context.store.clone(),
+            f.persistence.clone(),
+            vec![("sent-then-panic.png".into(),original.clone())],
+            false,
+            _epoch.clone(),
+            _quote.clone(),
+            _key.clone(),
+        );
         let reached=observed.recv_timeout(Duration::from_secs(5));
         let deadline=Instant::now()+Duration::from_secs(5);
         while app.global::<AppState>().get_video_images_loading() && Instant::now()<deadline {
@@ -478,7 +493,7 @@ pub(in crate::runtime) mod scoped_inputs {
         assert!(original.is_file());
     }
     #[test]
-    fn video_asset_import_copies_into_owned_namespace_and_quotes_outside_the_latch() {
+    fn video_asset_picker_reuses_owned_asset_and_quotes_outside_the_latch() {
         let (f,app,_epoch,_quote,_key)=setup();
         let input=tempfile::tempdir().unwrap();
         let original=f.owned(&png(input.path(),"source.png"));
@@ -493,7 +508,7 @@ pub(in crate::runtime) mod scoped_inputs {
         app.global::<AppState>().invoke_open_video_asset_picker();
         pump(|| !app.global::<AppState>().get_video_images_loading());
         let row=app.global::<AppState>().get_video_asset_choices().row_data(0).expect("owned image row");
-        assert_ne!(Path::new(row.source_path.as_str()),original.as_path(),"source must be copied before publication");
+        assert_eq!(Path::new(row.source_path.as_str()),original.as_path(),"saved assets must be selectable without another copy");
         assert!(f.persistence.owns_path(Path::new(row.source_path.as_str())));
         assert!(row.image.path().is_none(),"preview must own pixels, not lazily reopen a path");
         app.global::<AppState>().invoke_toggle_video_asset(row.id.clone());

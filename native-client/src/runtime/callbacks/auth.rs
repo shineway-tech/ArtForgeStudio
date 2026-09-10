@@ -177,6 +177,9 @@ fn prepare_activation_catalog_projection(ui:&mut PreparedUiProjection,available_
             price_2k: model_price(model, "2K"),
             price_4k: model_price(model, "4K"),
             price_standard: model_credit_cost(model, "standard").into(),
+            video_price_480: model_credit_cost(model, "480P").into(),
+            video_price_720: model_credit_cost(model, "720P").into(),
+            video_price_1080: model_credit_cost(model, "1080P").into(),
             supports_image_edit: model_supports_task_type(model, "image_edit")
                 && model_capability_enabled(model, "supports_masks"),
             supports_style_analysis: model_supports_task_type(model, "image_style_analysis")
@@ -230,7 +233,7 @@ fn prepare_activation_catalog_projection(ui:&mut PreparedUiProjection,available_
         .or_else(|| {
             available_models
                 .iter()
-                .find(|item| item.code == "openai_prompt")
+                .find(|item| item.code == "gpt_5_6_sol")
         })
         .or_else(|| {
             available_models
@@ -276,7 +279,7 @@ fn prepare_activation_catalog_projection(ui:&mut PreparedUiProjection,available_
         ui.push(model.code.clone().into(), |state, value| state.set_video_model(value));
         ui.push(model_display_name(model).into(), |state, value| state.set_video_model_name(value));
         ui.push(model_capabilities_text(model).into(), |state, value| state.set_video_model_description(value));
-        ui.push(false, |state, value| state.set_video_service_available(value));
+        ui.push(true, |state, value| { state.set_video_service_available(value); sync_video_resolutions(state); });
     } else {
         ui.push("".into(), |state, value| state.set_video_model(value));
         ui.push("".into(), |state, value| state.set_video_model_name(value));
@@ -2537,7 +2540,7 @@ fn apply_backend_snapshot_projection(
         .unwrap_or_else(|value| value.into_inner()) = Some(snapshot_scope);
 }
 
-fn apply_model_catalog_projection(
+pub(super) fn apply_model_catalog_projection(
     app: &AppWindow,
     context: &AppContext,
     available_models: &[ModelCatalogItem],
@@ -2568,6 +2571,9 @@ fn apply_model_catalog_projection(
             price_2k: model_price(model, "2K"),
             price_4k: model_price(model, "4K"),
             price_standard: model_credit_cost(model, "standard").into(),
+            video_price_480: model_credit_cost(model, "480P").into(),
+            video_price_720: model_credit_cost(model, "720P").into(),
+            video_price_1080: model_credit_cost(model, "1080P").into(),
             supports_image_edit: model_supports_task_type(model, "image_edit")
                 && model_capability_enabled(model, "supports_masks"),
             supports_style_analysis: model_supports_task_type(model, "image_style_analysis")
@@ -2620,7 +2626,7 @@ fn apply_model_catalog_projection(
         .or_else(|| {
             available_models
                 .iter()
-                .find(|item| item.code == "openai_prompt")
+                .find(|item| item.code == "gpt_5_6_sol")
         })
         .or_else(|| {
             available_models
@@ -2670,7 +2676,8 @@ fn apply_model_catalog_projection(
         state.set_video_model(model.code.clone().into());
         state.set_video_model_name(model_display_name(model).into());
         state.set_video_model_description(model_capabilities_text(model).into());
-        state.set_video_service_available(false);
+        state.set_video_service_available(true);
+        sync_video_resolutions(&state);
     } else {
         state.set_video_model("".into());
         state.set_video_model_name("".into());
@@ -3294,13 +3301,13 @@ mod tests {
     }
 
     #[test]
-    fn core_prompt_catalog_projection_preserves_saved_openai_first_fallback() {
+    fn core_prompt_catalog_projection_preserves_saved_gpt_5_6_first_fallback() {
         i_slint_backend_testing::init_no_event_loop();
         // Deliberately place the generic model before both preferred candidates.
         // Literal expectations catch saved-selection loss and wrong fallback priority.
         for (saved, codes, expected) in [
-            ("saved_prompt", vec!["first_prompt", "openai_prompt", "saved_prompt"], "saved_prompt"),
-            ("missing_prompt", vec!["first_prompt", "openai_prompt"], "openai_prompt"),
+            ("saved_prompt", vec!["first_prompt", "gpt_5_6_sol", "saved_prompt"], "saved_prompt"),
+            ("missing_prompt", vec!["first_prompt", "gpt_5_6_sol"], "gpt_5_6_sol"),
             ("missing_prompt", vec!["first_prompt", "second_prompt"], "first_prompt"),
         ] {
             let models = codes.into_iter().map(|code| ModelCatalogItem {

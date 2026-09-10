@@ -3,6 +3,16 @@ import { PillButton } from "../components/pill-button.slint";
 import { AppTheme } from "../theme.slint";
 
 export component UpscaleDialog {
+    function can-upscale(target-edge: int) -> bool {
+        if AppState.viewer-width <= 0 || AppState.viewer-height <= 0 {
+            return false;
+        }
+        let source-edge = max(AppState.viewer-width, AppState.viewer-height);
+        let factor = min(AppState.upscale-scale * 1.0, target-edge * 1.0 / source-edge);
+        return floor(AppState.viewer-width * factor) > AppState.viewer-width
+            && floor(AppState.viewer-height * factor) > AppState.viewer-height;
+    }
+    property <bool> selected-size-valid: root.can-upscale(AppState.upscale-quality == "4K" ? 4096 : 2048);
     function dialog-width() -> length {
         return min(920px, root.width - 80px);
     }
@@ -100,15 +110,25 @@ export component UpscaleDialog {
                     Text { text: AppState.en ? "Scale" : "放大倍数"; color: AppTheme.muted; font-size: 13px; font-weight: 400; }
                     HorizontalLayout {
                         spacing: 8px;
-                        PillButton { horizontal-stretch: 1; text: "2X"; active: AppState.upscale-scale == 2; clicked => { AppState.upscale-scale = 2; } }
-                        PillButton { horizontal-stretch: 1; text: "3X"; active: AppState.upscale-scale == 3; clicked => { AppState.upscale-scale = 3; } }
-                        PillButton { horizontal-stretch: 1; text: "4X"; active: AppState.upscale-scale == 4; clicked => { AppState.upscale-scale = 4; } }
+                        PillButton { horizontal-stretch: 1; text: "2X"; active: AppState.upscale-scale == 2; disabled: AppState.viewer-processing || (!root.can-upscale(2048) && !root.can-upscale(4096)); clicked => { AppState.upscale-scale = 2; } }
+                        PillButton { horizontal-stretch: 1; text: "3X"; active: AppState.upscale-scale == 3; disabled: AppState.viewer-processing || (!root.can-upscale(2048) && !root.can-upscale(4096)); clicked => { AppState.upscale-scale = 3; } }
+                        PillButton { horizontal-stretch: 1; text: "4X"; active: AppState.upscale-scale == 4; disabled: AppState.viewer-processing || (!root.can-upscale(2048) && !root.can-upscale(4096)); clicked => { AppState.upscale-scale = 4; } }
                     }
                     Text { text: AppState.en ? "Quality" : "清晰度"; color: AppTheme.muted; font-size: 13px; font-weight: 400; }
                     HorizontalLayout {
                         spacing: 8px;
-                        PillButton { horizontal-stretch: 1; text: "2K"; active: AppState.upscale-quality == "2K"; clicked => { AppState.upscale-quality = "2K"; } }
-                        PillButton { horizontal-stretch: 1; text: "4K"; active: AppState.upscale-quality == "4K"; clicked => { AppState.upscale-quality = "4K"; } }
+                        PillButton { horizontal-stretch: 1; text: "2K"; active: AppState.upscale-quality == "2K"; disabled: AppState.viewer-processing || !root.can-upscale(2048); clicked => { AppState.upscale-quality = "2K"; } }
+                        PillButton { horizontal-stretch: 1; text: "4K"; active: AppState.upscale-quality == "4K"; disabled: AppState.viewer-processing || !root.can-upscale(4096); clicked => { AppState.upscale-quality = "4K"; } }
+                    }
+                    if !root.selected-size-valid: Text {
+                        text: AppState.viewer-width <= 0 || AppState.viewer-height <= 0
+                            ? (AppState.en ? "Image dimensions are unavailable." : "无法读取原图尺寸，暂不能放大")
+                            : (root.can-upscale(4096)
+                                ? (AppState.en ? "The selected size cannot enlarge this image. Select 4K." : "当前档位无法放大这张图片，请选择 4K")
+                                : (AppState.en ? "This image cannot be enlarged within the supported sizes." : "原图已达到支持的放大尺寸上限"));
+                        color: AppTheme.muted;
+                        font-size: 12px;
+                        wrap: word-wrap;
                     }
                     Rectangle { vertical-stretch: 1; }
                     if AppState.viewer-processing: Text {
@@ -125,7 +145,7 @@ export component UpscaleDialog {
                         horizontal-stretch: 1;
                         text: AppState.en ? "Start" : "开始放大";
                         primary: true;
-                        disabled: AppState.viewer-processing || AppState.viewer-upscale-done;
+                        disabled: AppState.viewer-processing || AppState.viewer-upscale-done || !root.selected-size-valid;
                         clicked => { AppState.start-upscale-image(AppState.upscale-scale, AppState.upscale-quality); }
                     }
                 }

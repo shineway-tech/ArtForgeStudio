@@ -254,6 +254,18 @@ pub(super) fn poll_generation_stream(
                     0,
                 );
             }
+            GenerationOutcome::NamespaceVideoSuccess { prepared, time } => {
+                start_video_delivery_commit_with_binding(&app, context.clone(), Some(original_persistence.clone()), *prepared, time, move |app, result| {
+                    if let Ok((_, id, _)) = result {
+                        mark_active_generation_image_completed(&context, app, &category, &task_id, true, Some(id), None);
+                        push_video_assets(app, &context.store.borrow());
+                    }
+                    poll_generation_stream(app.as_weak(),context,original_persistence,session_scope,delivery_download_reservations,receiver,
+                        raw_prompt,category,mode,ratio,quality,image_model,result_origin,conversation_id,create_conversation,
+                        generation_reference_paths,original_references,original_quote,restore_inputs_on_failure,task_id,started_at);
+                });
+                return;
+            }
             GenerationOutcome::NamespaceImageSuccess { prepared, time } => {
                 start_image_delivery_commit_captured(&app,context.clone(),original_persistence.clone(),*prepared,time,move|app,result|{
                     match result {

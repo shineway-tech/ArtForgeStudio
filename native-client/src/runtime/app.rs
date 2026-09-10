@@ -321,7 +321,9 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
         let context = context.clone();
         state.on_navigate(move |page| {
             if let Some(app) = app_weak.upgrade() {
+                let entering_video = page.as_str() == "video-generation" && app.global::<AppState>().get_page() != "video-generation";
                 navigate_to_with_store(&app, &store.borrow(), &page);
+                if entering_video { app.global::<AppState>().invoke_refresh_video_prices(); }
                 if page.as_str() == "credits"
                     && app.global::<AppState>().get_session_state().as_str() == "online"
                 {
@@ -521,7 +523,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
     wire_generation_callbacks(app, context.clone());
     wire_prompt_task_recovery_callbacks(app, context.clone());
     wire_viewer_callbacks(app, context.clone());
-    wire_deferred_video_generation_callbacks(app, context.clone());
+    wire_video_generation_callbacks(app, context.clone());
     wire_notification_callbacks(app, context);
 }
 

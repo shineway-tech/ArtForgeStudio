@@ -7,7 +7,7 @@ pub(super) struct PreparedActivationVisuals {
     jobs: Vec<ActivationPreviewJob>,
 }
 #[derive(Clone, Copy)]
-enum ActivationPreviewKind { Gallery(PreviewCollection), Conversation, Reference }
+enum ActivationPreviewKind { Gallery(PreviewCollection), Conversation, Reference, Video }
 struct ActivationPreviewJob { kind: ActivationPreviewKind, id: String, path: String }
 pub(super) struct ActivationVisualEffects { persistence: PrivatePersistence, jobs: Vec<ActivationPreviewJob> }
 impl PreparedActivationVisuals {
@@ -40,6 +40,22 @@ fn prepare_private_visuals(
 )->PreparedActivationVisuals {
     let mut ui=PreparedUiProjection::default();
     let mut jobs=Vec::new();
+    let existing_videos=current.map(|state|state.get_saved_videos().iter().map(|row|(row.id.to_string(),row.image)).collect::<BTreeMap<_,_>>()).unwrap_or_default();
+    let videos = store.video_outputs.values().rev().map(|output| {
+        let key=output.key();
+        let image=existing_videos.get(&key).cloned().unwrap_or_default();
+        let has_preview=image.size().width>0 && image.size().height>0;
+        if !has_preview {
+            if let Some(source)=video_source_asset(store,output).filter(|source|!source.source_path.is_empty() && source.source_path!="failed") {
+                jobs.push(ActivationPreviewJob { kind:ActivationPreviewKind::Video,id:key.clone(),path:source.source_path.clone() });
+            }
+        }
+        VideoImageItem { id:key.into(), image, has_preview,
+            title:output.title.clone().into(),
+            subtitle:format!("{} · {} · {}s",output.model,output.resolution,output.duration_secs).into(),
+            ..Default::default() }
+    }).collect::<Vec<_>>();
+    ui.push(videos, |state, rows| state.set_saved_videos(ModelRc::new(VecModel::from(rows))));
     let mut prepare_gallery=|collection, category:&str, layout:&str| {
         let viewport=if current.is_some() {
             GALLERY_VIRTUAL_STATE.with(|state|state.borrow_mut().slot_mut(collection).viewport)
@@ -235,6 +251,14 @@ fn poll_activation_previews(weak:Weak<AppWindow>,context:AppContext,persistence:
                             }
                         }
                     }
+                    ActivationPreviewKind::Video=>{
+                        let model=state.get_saved_videos();
+                        for index in 0..model.row_count() {
+                            if let Some(mut row)=model.row_data(index).filter(|row|row.id.as_str()==job.id) {
+                                row.image=image; row.has_preview=true; model.set_row_data(index,row); break;
+                            }
+                        }
+                    }
                 }
             });
         }
@@ -378,7 +402,7 @@ pub(super) fn prepare_startup_projection(store:&Store,category:&str,initial_prom
 pub(super) fn prepare_model_groups_projection(groups:&[ModelGroupData]) -> PreparedUiProjection {
     let mut ui=PreparedUiProjection::default();
     let options=|kind|groups.iter().filter(|group|group.kind==kind).flat_map(|group|group.models.iter().map(|model|ModelOption {
-        code:model.code.clone().into(),name:format!("{} / {}",group.name,model.name).into()
+        code:model.code.clone().into(),name:model.name.clone().into()
     })).collect::<Vec<_>>();
     ui.push(ModelRc::new(VecModel::from(options("image"))),|state,value|state.set_model_image_options(value));
     ui.push(ModelRc::new(VecModel::from(options("reasoning"))),|state,value|state.set_model_reasoning_options(value));
@@ -1114,6 +1138,7 @@ pub(super) fn clear_retired_private_projection(state: &AppState) {
     state.set_viewer_remove_black_done(false);
     state.set_viewer_upscale_done(false);
     state.set_video_source_id("".into());
+    state.set_saved_videos(ModelRc::default());
     state.set_video_images(ModelRc::new(VecModel::default()));
     state.set_video_asset_choices(ModelRc::new(VecModel::default()));
     state.set_video_image_dialog("".into());
@@ -2690,7 +2715,37 @@ mod virtual_gallery_tests {
     }
 }
 
+pub(super) fn push_video_assets(app: &AppWindow, store: &Store) {
+    let state=app.global::<AppState>();
+    let existing=state.get_saved_videos().iter().map(|row|(row.id.to_string(),row.image)).collect::<BTreeMap<_,_>>();
+    let source_images=state.get_assets().iter().chain(state.get_generations().iter())
+        .filter(|row|row.image.size().width>0 && row.image.size().height>0)
+        .map(|row|(row.id.to_string(),row.image)).collect::<BTreeMap<_,_>>();
+    let rows = store
+        .video_outputs
+        .values()
+        .rev()
+        .map(|output| {
+            let key=output.key();
+            let image=existing.get(&key).or_else(||source_images.get(&output.source_asset_id)).cloned().unwrap_or_default();
+            VideoImageItem {
+            id: key.into(),
+            image:image.clone(),
+            has_preview:image.size().width>0 && image.size().height>0,
+            title: output.title.clone().into(),
+            subtitle: format!("{} · {} · {}s",output.model,output.resolution,output.duration_secs).into(),
+            ..Default::default()
+        }})
+        .collect::<Vec<_>>();
+    state.set_saved_videos(ModelRc::new(VecModel::from(rows)));
+}
+
+pub(super) fn video_source_asset<'a>(store:&'a Store,output:&SavedVideoOutput)->Option<&'a AssetData> {
+    store.assets.iter().chain(store.generations.iter()).find(|asset|asset.id==output.source_asset_id)
+}
+
 pub(super) fn push_assets(app: &AppWindow, store: &Store) {
+    push_video_assets(app, store);
     let state = app.global::<AppState>();
     state.set_asset_character_count(count_assets(store, "character"));
     state.set_asset_scene_count(count_assets(store, "scene"));
