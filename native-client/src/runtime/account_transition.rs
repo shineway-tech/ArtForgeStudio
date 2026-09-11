@@ -232,12 +232,32 @@ impl AccountTransitionCoordinator {
     }
     fn start(self: &Rc<Self>, app: &AppWindow, context: AppContext, input: ActivationInput) {
         self.reap_finished_workers();
-        if self.pending.borrow().is_some() { return; }
         let login_origin = match &input {
             ActivationInput::Login { origin, .. } => Some(*origin),
             _ => None,
         };
-        let ticket = match self.core.admission.begin() { Ok(ticket) => ticket, Err(error) => { app.global::<AppState>().set_auth_error(error.to_string().into()); return; } };
+        let explicit_login = matches!(&input, ActivationInput::Login { .. });
+        if self.pending.borrow().is_some() {
+            if explicit_login {
+                let state = app.global::<AppState>();
+                state.set_auth_busy(false);
+                state.set_session_state("signed_out".into());
+                state.set_auth_error("账号数据正在切换，请稍后重试".into());
+            }
+            return;
+        }
+        let ticket = match self.core.admission.begin() {
+            Ok(ticket) => ticket,
+            Err(error) => {
+                let state = app.global::<AppState>();
+                if explicit_login {
+                    state.set_auth_busy(false);
+                    state.set_session_state("signed_out".into());
+                }
+                state.set_auth_error(error.to_string().into());
+                return;
+            }
+        };
         let input = match input {
             ActivationInput::Switch { scope, choice, rollback } => {
                 let proposed = self.core.backend.api.upgrade_latch().apply_if_open(|| self.core.billing.begin_switch(&scope, &self.core.backend.api.device().id, &choice.group_id, rollback));
