@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(any(windows, test))]
+use crate::directory_migration::MigrationPlan;
 
 const DEFAULT_UPDATE_MANIFEST_URL: &str =
     "https://static.honeykid.cn/public/art_forge/update-manifest.json";
@@ -406,26 +408,96 @@ pub(super) fn resource_base_dirs() -> Vec<PathBuf> {
     bases
 }
 
+#[cfg(windows)]
+const WINDOWS_INSTALL_MARKER: &str = "elunvi-installed.marker";
+
+#[cfg(any(windows, test))]
+fn windows_data_dir(
+    executable_dir: &Path,
+    local_app_data: Option<&Path>,
+    installed: bool,
+) -> PathBuf {
+    if installed {
+        if let Some(local_app_data) = local_app_data {
+            return local_app_data.join("ElunviCanvas").join("data");
+        }
+    }
+    executable_dir.join("data")
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_data_dir(
+    executable_dir: &Path,
+    home: Option<&Path>,
+    resources_dir: Option<&Path>,
+) -> PathBuf {
+    if let Some(home) = home {
+        return home
+            .join("Library")
+            .join("Application Support")
+            .join("ElunviCanvas")
+            .join("data");
+    }
+    resources_dir.unwrap_or(executable_dir).join("data")
+}
+
+#[cfg(any(windows, test))]
+fn migrate_legacy_windows_data(source: &Path, destination: &Path) -> std::io::Result<()> {
+    if !source.is_dir() || source == destination {
+        return Ok(());
+    }
+    fs::create_dir_all(destination)?;
+    if fs::read_dir(destination)?.next().transpose()?.is_some() {
+        return Ok(());
+    }
+    let plan = MigrationPlan::prepare(source, destination, &[])?;
+    plan.execute(|| Ok(()), |_, _| {})?;
+    Ok(())
+}
+
+#[cfg(windows)]
+pub(super) fn prepare_app_data_dir() -> Result<()> {
+    let executable_dir = app_dir();
+    if !executable_dir.join(WINDOWS_INSTALL_MARKER).is_file() {
+        return Ok(());
+    }
+    let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    let destination = windows_data_dir(&executable_dir, local_app_data.as_deref(), true);
+    let source = executable_dir.join("data");
+    if let Err(error) = migrate_legacy_windows_data(&source, &destination) {
+        eprintln!("legacy Windows data migration skipped: {error}");
+    }
+    fs::create_dir_all(destination).context("无法创建本地应用数据目录")?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub(super) fn prepare_app_data_dir() -> Result<()> {
+    Ok(())
+}
+
 pub(super) fn app_data_dir() -> PathBuf {
-    #[cfg(target_os = "macos")]
+    let executable_dir = app_dir();
+
+    #[cfg(windows)]
     {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join("ElunviCanvas")
-                .join("data");
-        }
+        let installed = executable_dir.join(WINDOWS_INSTALL_MARKER).is_file();
+        let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+        return windows_data_dir(&executable_dir, local_app_data.as_deref(), installed);
     }
 
     #[cfg(target_os = "macos")]
     {
-        if let Some(resources_dir) = macos_resources_dir() {
-            return resources_dir.join("data");
-        }
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        return macos_data_dir(
+            &executable_dir,
+            home.as_deref(),
+            macos_resources_dir().as_deref(),
+        );
     }
 
-    macos_resources_dir().unwrap_or_else(app_dir).join("data")
+    #[cfg(not(any(windows, target_os = "macos")))]
+    executable_dir.join("data")
 }
 
 pub(super) fn init_portable_dirs(app: &AppWindow) -> Result<()> {
@@ -892,6 +964,82 @@ mod update_state_tests {
             assert_eq!(state.get_update_download_message(), "保留本次更新结果");
             assert!(state.get_update_available());
         }
+    }
+}
+
+#[cfg(test)]
+mod application_data_directory_tests {
+    use super::*;
+
+    #[test]
+    fn installed_windows_build_uses_user_local_data_directory() {
+        assert_eq!(
+            windows_data_dir(
+                Path::new("/unavailable/Elunvi Canvas"),
+                Some(Path::new("/users/tester/AppData/Local")),
+                true,
+            ),
+            PathBuf::from("/users/tester/AppData/Local/ElunviCanvas/data")
+        );
+    }
+
+    #[test]
+    fn portable_windows_build_keeps_data_next_to_executable() {
+        assert_eq!(
+            windows_data_dir(
+                Path::new("/portable/Elunvi Canvas"),
+                Some(Path::new("/users/tester/AppData/Local")),
+                false,
+            ),
+            PathBuf::from("/portable/Elunvi Canvas/data")
+        );
+    }
+
+    #[test]
+    fn macos_build_keeps_data_in_application_support() {
+        assert_eq!(
+            macos_data_dir(
+                Path::new("/Applications/ElunviCanvas.app/Contents/MacOS"),
+                Some(Path::new("/Users/tester")),
+                Some(Path::new(
+                    "/Applications/ElunviCanvas.app/Contents/Resources",
+                )),
+            ),
+            PathBuf::from("/Users/tester/Library/Application Support/ElunviCanvas/data")
+        );
+    }
+
+    #[test]
+    fn legacy_windows_data_moves_only_into_an_empty_destination() {
+        let temporary_root = fs::canonicalize(std::env::temp_dir()).unwrap();
+        let fixture = tempfile::tempdir_in(temporary_root).unwrap();
+        let legacy = fixture.path().join("program").join("data");
+        let destination = fixture.path().join("local").join("data");
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("session.json"), b"legacy session").unwrap();
+
+        migrate_legacy_windows_data(&legacy, &destination).unwrap();
+
+        assert_eq!(
+            fs::read(destination.join("session.json")).unwrap(),
+            b"legacy session"
+        );
+        assert!(!legacy.join("session.json").exists());
+
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("session.json"), b"do not overwrite").unwrap();
+        fs::write(destination.join("client-state.sqlite3"), b"current").unwrap();
+
+        migrate_legacy_windows_data(&legacy, &destination).unwrap();
+
+        assert_eq!(
+            fs::read(destination.join("session.json")).unwrap(),
+            b"legacy session"
+        );
+        assert_eq!(
+            fs::read(legacy.join("session.json")).unwrap(),
+            b"do not overwrite"
+        );
     }
 }
 

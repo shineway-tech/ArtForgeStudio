@@ -20,6 +20,7 @@ AppId={{DB6417C1-ACF9-41D6-956F-898E69F7CE3E}
 AppName={#AppName}
 AppVersion={#AppVersion}
 DefaultDirName={localappdata}\Programs\{#AppName}
+UsePreviousAppDir=no
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
@@ -45,11 +46,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 [Files]
 Source: "{#PackageDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PackageDir}\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
-
-[Dirs]
-Name: "{app}\data\input"; Flags: uninsneveruninstall
-Name: "{app}\data\out"; Flags: uninsneveruninstall
-Name: "{app}\data\prompt"; Flags: uninsneveruninstall
+Source: "{#SourcePath}\installed.marker"; DestDir: "{app}"; DestName: "elunvi-installed.marker"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"
