@@ -1192,6 +1192,18 @@ mod tests {
                         Ok(guard) => guard.retire(), Err(error) => failures.push(error.to_string()),
                     }
                 }
+                // Release callback-owned HTTP clients before Windows runs TLS
+                // destructors under the loader lock. Dropping Slint's timer list
+                // there would join reqwest's runtime while its exit needs that lock.
+                let deadline = Instant::now() + Duration::from_secs(8);
+                while let Some(delay) = slint::platform::duration_until_next_timer_update() {
+                    i_slint_backend_testing::mock_elapsed_time(delay + Duration::from_millis(1));
+                    slint::platform::update_timers_and_animations();
+                    if Instant::now() >= deadline {
+                        failures.push("matrix callbacks did not drain before thread exit".into());
+                        break;
+                    }
+                }
                 if !std::thread::panicking() { assert!(failures.is_empty(), "matrix drain failures: {failures:?}"); }
             }
         }
