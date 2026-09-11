@@ -248,7 +248,7 @@ export component AuthDialog {
                                     height: 48px;
                                     text: AppState.auth-error == ""
                                         ? (AppState.en ? "Confirm sign-in in WeChat on your phone" : "请在手机微信中确认登录")
-                                        : AppState.auth-wechat-status;
+                                        : AppState.auth-error;
                                     color: AppState.auth-error == "" ? AppTheme.muted : AppTheme.danger;
                                     font-size: 13px;
                                     wrap: word-wrap;
@@ -260,7 +260,9 @@ export component AuthDialog {
                                 x: 28px;
                                 width: parent.width - 56px;
                                 height: parent.height;
-                                text: AppState.auth-wechat-busy
+                                text: AppState.auth-busy
+                                    ? AppState.auth-wechat-status
+                                    : AppState.auth-wechat-busy
                                     ? (AppState.en ? "Loading QR code..." : "正在获取二维码...")
                                     : (AppState.en ? "Click to get a new QR code" : "点击重新获取二维码");
                                 color: AppTheme.muted;
@@ -272,16 +274,16 @@ export component AuthDialog {
                             TouchArea {
                                 width: parent.width;
                                 height: parent.height;
-                                mouse-cursor: AppState.auth-wechat-busy ? default : pointer;
-                                clicked => { if !AppState.auth-wechat-busy && !AppState.auth-wechat-qr-ready { AppState.start-wechat-login(); } }
+                                mouse-cursor: AppState.auth-wechat-busy || AppState.auth-busy ? default : pointer;
+                                clicked => { if !AppState.auth-busy && !AppState.auth-wechat-busy && !AppState.auth-wechat-qr-ready { AppState.start-wechat-login(); } }
                             }
                         }
                     }
                     Text {
-                        height: 28px;
-                        text: AppState.auth-wechat-scanned
-                            ? AppState.auth-wechat-status
-                            : AppState.auth-error != ""
+                        height: AppState.auth-error != "" ? 56px : 28px;
+                        text: AppState.auth-error != ""
+                            ? AppState.auth-error
+                            : AppState.auth-wechat-scanned || AppState.auth-busy
                             ? AppState.auth-wechat-status
                             : (AppState.en ? "First login creates an account automatically" : "首次登录将自动注册");
                         color: AppState.auth-error != ""
@@ -309,18 +311,20 @@ export component AuthDialog {
                     Rectangle { height: 1px; background: AppTheme.border; }
                     Text {
                         height: 38px;
-                        text: AppState.auth-wechat-busy
+                        text: AppState.auth-busy
+                            ? (AppState.en ? "Completing sign-in..." : "正在完成登录...")
+                            : AppState.auth-wechat-busy
                             ? (AppState.en ? "Refreshing..." : "正在刷新...")
                             : (AppState.auth-wechat-qr-ready
                                 ? (AppState.en ? "QR code expires in \{AppState.auth-wechat-expires-in}s · Refresh" : "二维码 \{AppState.auth-wechat-expires-in} 秒后失效 · 点击刷新")
                                 : (AppState.en ? "QR code expired? Refresh" : "二维码已失效？ 点击刷新"));
-                        color: AppState.auth-wechat-busy ? AppTheme.weak : AppTheme.accent;
+                        color: AppState.auth-wechat-busy || AppState.auth-busy ? AppTheme.weak : AppTheme.accent;
                         font-size: 14px;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                         TouchArea {
-                            mouse-cursor: AppState.auth-wechat-busy ? default : pointer;
-                            clicked => { if !AppState.auth-wechat-busy { AppState.start-wechat-login(); } }
+                            mouse-cursor: AppState.auth-wechat-busy || AppState.auth-busy ? default : pointer;
+                            clicked => { if !AppState.auth-busy && !AppState.auth-wechat-busy { AppState.start-wechat-login(); } }
                         }
                     }
                     if AppState.offline-available: Text {

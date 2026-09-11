@@ -497,7 +497,7 @@ mod file_store_platform {
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
         FILE_READ_DATA, FILE_RENAME_INFO, FILE_SHARE_DELETE,
         FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, FILE_WRITE_DATA, FileAttributeTagInfo,
-        FileDispositionInfo, FileRenameInfo, LOCKFILE_EXCLUSIVE_LOCK, OPEN_EXISTING, SYNCHRONIZE,
+        FileDispositionInfo, LOCKFILE_EXCLUSIVE_LOCK, OPEN_EXISTING, SYNCHRONIZE,
         UnlockFileEx,
     };
     use windows_sys::Win32::System::IO::OVERLAPPED;
@@ -511,6 +511,7 @@ mod file_store_platform {
     const FILE_NON_DIRECTORY_FILE: u32 = 0x0000_0040;
     const FILE_OPEN_REPARSE_POINT_NT: u32 = 0x0020_0000;
     const OBJ_CASE_INSENSITIVE: u32 = 0x0000_0040;
+    const FILE_RENAME_INFORMATION: u32 = 10;
     const ANCESTOR_DIRECTORY_ACCESS: u32 = FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
     const DATA_ROOT_DIRECTORY_ACCESS: u32 =
         ANCESTOR_DIRECTORY_ACCESS | FILE_ADD_SUBDIRECTORY;
@@ -555,6 +556,13 @@ mod file_store_platform {
             create_options: u32,
             ea_buffer: *mut c_void,
             ea_length: u32,
+        ) -> i32;
+        fn NtSetInformationFile(
+            file_handle: HANDLE,
+            io_status_block: *mut IoStatusBlock,
+            file_information: *const c_void,
+            length: u32,
+            information_class: u32,
         ) -> i32;
         fn RtlNtStatusToDosError(status: i32) -> u32;
     }
@@ -941,7 +949,8 @@ mod file_store_platform {
         let header_length = offset_of!(FILE_RENAME_INFO, FileName);
         let total_length = header_length
             .checked_add(byte_length as usize)
-            .ok_or_else(|| std::io::Error::new(ErrorKind::InvalidInput, "name is too long"))?;
+            .ok_or_else(|| std::io::Error::new(ErrorKind::InvalidInput, "name is too long"))?
+            .max(size_of::<FILE_RENAME_INFO>());
         let word_count = total_length.div_ceil(size_of::<usize>());
         let mut storage = vec![0usize; word_count];
         let info = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();
@@ -955,16 +964,21 @@ mod file_store_platform {
                 wide.len(),
             );
         }
-        let success = unsafe {
-            SetFileInformationByHandle(
+        // Win32 FileRenameInfo requires a null RootDirectory. The native class
+        // accepts our retained parent handle, keeping replacement atomic without
+        // reopening a pathname that could have been redirected.
+        let mut io_status: IoStatusBlock = unsafe { std::mem::zeroed() };
+        let status = unsafe {
+            NtSetInformationFile(
                 file.as_raw_handle() as HANDLE,
-                FileRenameInfo,
+                &mut io_status,
                 info.cast(),
                 total_length as u32,
+                FILE_RENAME_INFORMATION,
             )
         };
-        if success == 0 {
-            Err(std::io::Error::last_os_error())
+        if status < 0 {
+            Err(std::io::Error::from_raw_os_error(unsafe { RtlNtStatusToDosError(status) } as i32))
         } else {
             Ok(())
         }

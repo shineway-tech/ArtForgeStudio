@@ -80,7 +80,7 @@ impl ActivationMailbox {
 }
 struct ActivationUi {
     mailbox: Arc<ActivationMailbox>, models: Option<PreparedPrivateModels>,
-    worker: Option<std::thread::JoinHandle<()>>,
+    worker: Option<std::thread::JoinHandle<()>>, login_origin: Option<LoginOrigin>,
 }
 impl Drop for ActivationUi {
     fn drop(&mut self) { self.mailbox.cancel(); }
@@ -233,6 +233,10 @@ impl AccountTransitionCoordinator {
     fn start(self: &Rc<Self>, app: &AppWindow, context: AppContext, input: ActivationInput) {
         self.reap_finished_workers();
         if self.pending.borrow().is_some() { return; }
+        let login_origin = match &input {
+            ActivationInput::Login { origin, .. } => Some(*origin),
+            _ => None,
+        };
         let ticket = match self.core.admission.begin() { Ok(ticket) => ticket, Err(error) => { app.global::<AppState>().set_auth_error(error.to_string().into()); return; } };
         let input = match input {
             ActivationInput::Switch { scope, choice, rollback } => {
@@ -256,7 +260,7 @@ impl AccountTransitionCoordinator {
         };
         let mailbox = Arc::new(ActivationMailbox::new());
         // The consumer, cancellation owner and pending-model slot precede the worker.
-        *self.pending.borrow_mut() = Some(ActivationUi { mailbox: mailbox.clone(), models: None, worker: None });
+        *self.pending.borrow_mut() = Some(ActivationUi { mailbox: mailbox.clone(), models: None, worker: None, login_origin });
         let core = self.core.clone();
         let worker_mailbox = mailbox.clone();
         let worker_failed=self.worker_failed.clone();
@@ -435,7 +439,9 @@ impl AccountTransitionCoordinator {
                 return self.reap_finished_workers();
             }
             ActivationMailboxPhase::Failed(error) => {
-                self.retired_workers.borrow_mut().push(slot.take().unwrap());drop(slot);
+                let failed = slot.take().unwrap();
+                let login_origin = failed.login_origin;
+                self.retired_workers.borrow_mut().push(failed);drop(slot);
                 let state = app.global::<AppState>(); state.set_auth_busy(false); state.set_account_group_switching(false);
                 state.set_account_group_error(error.user_message().into());
                 render_team_context(app, context);
@@ -445,10 +451,11 @@ impl AccountTransitionCoordinator {
                     show_required_update_prompt(app, required.minimum_version.as_deref().unwrap_or_default());
                 } else if context.active_namespace.lock().unwrap_or_else(|poison| poison.into_inner()).is_none() { state.set_logged_in(false); state.set_session_state("signed_out".into()); }
                 let cleanup = self.core.cleanup_failure.lock().unwrap_or_else(|poison| poison.into_inner()).clone();
-                state.set_auth_error(match cleanup {
+                let message = match cleanup {
                     Some(cleanup) => format!("{}；{}", error.user_message(), cleanup).into(),
                     None => error.user_message().into(),
-                });
+                };
+                present_activation_failure(&state, login_origin, message);
                 return self.reap_finished_workers();
             }
             _ => {},
@@ -466,6 +473,22 @@ impl AccountTransitionCoordinator {
         }
         anyhow::ensure!(!self.worker_failed.load(Ordering::SeqCst),"账号切换线程异常，切换未完成");
         Ok(())
+    }
+}
+
+fn present_activation_failure(state: &AppState, origin: Option<LoginOrigin>, message: SharedString) {
+    let message = if origin.is_some() {
+        format!("登录验证已通过，但客户端未能完成登录：{message}").into()
+    } else {
+        message
+    };
+    state.set_auth_error(message.clone());
+    if matches!(origin, Some(LoginOrigin::Email)) {
+        state.set_auth_code("".into());
+        state.set_auth_error(format!("{message}；请重新获取验证码后重试").into());
+    }
+    if matches!(origin, Some(LoginOrigin::Wechat)) {
+        state.set_auth_wechat_status(message);
     }
 }
 
@@ -929,6 +952,27 @@ impl Drop for QuiescedUserActivity {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn login_activation_failure_replaces_the_wechat_success_placeholder() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+
+        present_activation_failure(
+            &state,
+            Some(LoginOrigin::Wechat),
+            "服务响应异常，请稍后重试".into(),
+        );
+
+        assert_eq!(state.get_auth_error(), state.get_auth_wechat_status());
+        assert!(state.get_auth_error().starts_with("登录验证已通过，但客户端未能完成登录："));
+        assert!(!state.get_auth_wechat_status().contains("登录成功"));
+        state.set_auth_code("123456".into());
+        present_activation_failure(&state, Some(LoginOrigin::Email), "无法保存登录状态".into());
+        assert!(state.get_auth_code().is_empty());
+        assert!(state.get_auth_error().contains("请重新获取验证码"));
+    }
 
     // Real coordinator entry points, HTTP snapshots, writer acknowledgements,
     // timers and private publication; no fabricated Saved mailbox.
@@ -1427,7 +1471,7 @@ mod tests {
             let mailbox=Arc::new(ActivationMailbox::new());
             mailbox.put(ActivationMailboxPhase::Saved(Box::new(persisted)));
             let coordinator=AccountTransitionCoordinator { core:core.clone(),
-                pending:RefCell::new(Some(ActivationUi { mailbox,models:Some(models),worker:None })),
+                pending:RefCell::new(Some(ActivationUi { mailbox,models:Some(models),worker:None,login_origin:None })),
                 retired_workers:RefCell::new(Vec::new()),worker_failed:Arc::new(false.into()) };
             assert!(!coordinator.advance(&app,&context));
             let state=app.global::<AppState>();
@@ -1990,7 +2034,7 @@ fn select_finance_fixture_group(context: &AppContext, session: &SessionScope, pa
             let app = AppWindow::new().unwrap();
             let mailbox = Arc::new(ActivationMailbox::new());
             mailbox.put(ActivationMailboxPhase::Failed(error));
-            let coordinator = AccountTransitionCoordinator { core: core.clone(), pending: RefCell::new(Some(ActivationUi { mailbox, models: None, worker: None })),
+            let coordinator = AccountTransitionCoordinator { core: core.clone(), pending: RefCell::new(Some(ActivationUi { mailbox, models: None, worker: None, login_origin: None })),
                 retired_workers:RefCell::new(Vec::new()),worker_failed:Arc::new(false.into()) };
             assert!(!coordinator.advance(&app, &AppContext::default()));
             let message = app.global::<AppState>().get_auth_error();

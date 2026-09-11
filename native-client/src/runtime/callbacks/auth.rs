@@ -1446,7 +1446,8 @@ fn poll_wechat_status_result(
                 state.set_auth_wechat_login_id("".into());
                 state.set_auth_wechat_qr_ready(false);
                 state.set_auth_wechat_scanned(false);
-                state.set_auth_wechat_status("登录成功".into());
+                state.set_auth_wechat_status("验证成功，正在加载账号数据...".into());
+                state.set_auth_error("".into());
                 if let Some(coordinator) = context.account_transition.clone() {
                     coordinator.activate_authenticated(&app, context, response, LoginOrigin::Wechat, None);
                 }

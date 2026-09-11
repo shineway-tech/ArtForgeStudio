@@ -80,6 +80,7 @@ const NT_SYNCHRONOUS: u32 = 0x20;
 const NT_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 const RENAME_REPLACE: u32 = 1;
 const RENAME_POSIX: u32 = 2;
+const FILE_RENAME_INFORMATION_EX: u32 = 65;
 static BINDING_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[repr(C)]
@@ -116,6 +117,13 @@ extern "system" {
         options: u32,
         ea: *mut c_void,
         ea_length: u32,
+    ) -> i32;
+    fn NtSetInformationFile(
+        handle: HANDLE,
+        status: *mut IoStatusBlock,
+        information: *const c_void,
+        length: u32,
+        information_class: u32,
     ) -> i32;
     fn RtlNtStatusToDosError(status: i32) -> u32;
 }
@@ -1730,12 +1738,21 @@ fn rename_handle(
             std::ptr::addr_of_mut!((*info).FileName).cast::<u16>(),
             wide.len(),
         );
-        check_bool(SetFileInformationByHandle(
+        // Native extended rename supports a retained RootDirectory; the Win32
+        // wrapper rejects that handle with ERROR_INVALID_PARAMETER.
+        let mut io_status: IoStatusBlock = std::mem::zeroed();
+        let status = NtSetInformationFile(
             source.as_raw_handle(),
-            FileRenameInfoEx,
+            &mut io_status,
             info.cast(),
             bytes as u32,
-        ))
+            FILE_RENAME_INFORMATION_EX,
+        );
+        if status < 0 {
+            Err(std::io::Error::from_raw_os_error(RtlNtStatusToDosError(status) as i32))
+        } else {
+            Ok(())
+        }
     }
     .context("rename retained managed file (native extended semantics required)")
 }
