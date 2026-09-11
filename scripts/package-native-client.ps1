@@ -116,6 +116,9 @@ function Build-Client {
         $args += @("--target", $RustTarget)
     }
     & cargo @args
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cargo build failed with exit code $LASTEXITCODE. Packaging stopped."
+    }
 }
 
 function Package-Windows {

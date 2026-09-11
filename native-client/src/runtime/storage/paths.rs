@@ -451,7 +451,8 @@ fn migrate_legacy_windows_data(source: &Path, destination: &Path) -> std::io::Re
         return Ok(());
     }
     let plan = MigrationPlan::prepare(source, destination, &[])?;
-    plan.execute(|| Ok(()), |_, _| {})?;
+    // Startup migration must use the production copy API and keep recovery originals.
+    plan.copy_retaining_source(|| Ok(()), |_, _| {})?;
     Ok(())
 }
 
@@ -1010,7 +1011,7 @@ mod application_data_directory_tests {
     }
 
     #[test]
-    fn legacy_windows_data_moves_only_into_an_empty_destination() {
+    fn legacy_windows_data_copies_only_into_an_empty_destination_and_retains_source() {
         let temporary_root = fs::canonicalize(std::env::temp_dir()).unwrap();
         let fixture = tempfile::tempdir_in(temporary_root).unwrap();
         let legacy = fixture.path().join("program").join("data");
@@ -1024,7 +1025,7 @@ mod application_data_directory_tests {
             fs::read(destination.join("session.json")).unwrap(),
             b"legacy session"
         );
-        assert!(!legacy.join("session.json").exists());
+        assert_eq!(fs::read(legacy.join("session.json")).unwrap(), b"legacy session");
 
         fs::create_dir_all(&legacy).unwrap();
         fs::write(legacy.join("session.json"), b"do not overwrite").unwrap();
