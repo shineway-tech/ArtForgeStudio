@@ -9,10 +9,19 @@ pub(crate) struct ApiProblem {
     pub(crate) details: Option<Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ApiMeta {
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     pub(crate) next_cursor: Option<String>,
+}
+
+fn deserialize_required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
 }
 
 #[derive(Clone, Debug, Deserialize)]

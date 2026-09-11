@@ -83,7 +83,7 @@ fn bottom_account_controls_keep_routes_and_menu_fits_collapsed_and_expanded_side
     state.set_logged_in(true);
     state.set_page("generation".into());
     state.set_nickname("Very long display name for layout".into());
-    state.set_credit_balance("197950".into());
+    state.set_account_amount_label("197950 积分".into());
     state.set_has_unread(true);
     state.set_update_available(true);
     let destination = Rc::new(RefCell::new(String::new()));

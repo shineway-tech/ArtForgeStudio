@@ -1,0 +1,72 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { TeamAction, TeamLabels } from "team-controls.slint";
+import { PillButton } from "../components/pill-button.slint";
+
+export component TeamGroupChoices {
+    height: 88px;
+    HorizontalLayout {
+        spacing: 12px;
+        for group in AppState.account-groups: Rectangle {
+            horizontal-stretch: 1; border-width: 1px; border-radius: 8px;
+            border-color: group.selected ? AppTheme.accent : AppTheme.border;
+            background: group.selected ? AppTheme.accent.with-alpha(0.06) : AppTheme.panel;
+            Rectangle {
+                x: 16px; y: 31px; width: 18px; height: 18px; border-radius: 9px;
+                border-width: 1px; border-color: group.selected ? AppTheme.accent : AppTheme.weak;
+                if group.selected: Rectangle { x: 4px; y: 4px; width: 10px; height: 10px; border-radius: 5px; background: AppTheme.accent; }
+            }
+            VerticalLayout {
+                x: 46px; y: 13px; width: parent.width - 134px; spacing: 6px; alignment: start;
+                Text { text: group.owned ? (AppState.en ? "My team" : "自己的团队") : (AppState.en ? "Joined team" : "加入的团队"); color: group.selected ? AppTheme.accent : AppTheme.text; font-size: 14px; font-weight: 600; }
+                Text { text: group.name + " · " + (group.owned ? (AppState.en ? "Owner" : "主账号") : (AppState.en ? "Member" : "成员")); color: AppTheme.text; font-size: 12px; overflow: elide; }
+                Text { text: group.group-status != "active" ? (AppState.en ? "Team frozen / unavailable" : "团队已冻结 / 不可用") : group.relationship-status == "suspended" ? (AppState.en ? "Membership suspended" : "成员已暂停") : !group.selectable ? (AppState.en ? "Cannot switch now" : "当前不可切换") : (group.amount-label == "" ? (AppState.en ? "Available" : "账号可用") : group.amount-label); color: AppTheme.muted; font-size: 11px; overflow: elide; }
+            }
+            if group.selected: Rectangle {
+                x: parent.width - 86px; y: 27px; width: 74px; height: 28px; border-radius: 14px; background: AppTheme.accent.with-alpha(0.1);
+                Text { width: parent.width; height: parent.height; text: AppState.en ? "Selected" : "当前使用"; color: AppTheme.accent; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+            }
+            if !group.selected: TeamAction { x: parent.width - 86px; y: 25px; width: 80px; text: AppState.en ? "Switch" : "切换"; disabled: !group.selectable || AppState.account-group-switching || AppState.team-page-loading; clicked => { AppState.switch-account-group(group.group-id); } }
+        }
+        if AppState.account-groups.length < 2: Rectangle {
+            horizontal-stretch: 1; border-width: 1px; border-color: AppTheme.border; border-radius: 8px;
+            VerticalLayout {
+                padding: 16px; spacing: 8px; alignment: center;
+                Text { text: (AppState.en ? "No joined team" : "尚未加入其他团队"); color: AppTheme.text; font-size: 14px; }
+                Text { text: (AppState.en ? "Accept an email invitation to switch teams here." : "接受邮箱邀请后，可以在这里切换。"); color: AppTheme.muted; font-size: 12px; wrap: word-wrap; }
+            }
+        }
+    }
+}
+
+export component TeamOverviewPanel {
+    preferred-height: content.preferred-height;
+    content := VerticalLayout {
+        spacing: 8px; alignment: start;
+        HorizontalLayout {
+            height: 36px; spacing: 10px;
+            Text { height: 36px; vertical-alignment: center; horizontal-stretch: 0; max-width: max(160px, parent.width - 260px); text: AppState.team-current-name == "" ? (AppState.en ? "Current team" : "当前团队") : AppState.team-current-name; color: AppTheme.text; font-size: 21px; font-weight: 600; overflow: elide; }
+            if AppState.team-can-manage-group: TeamAction { width: 80px; height: 36px; text: (AppState.en ? "Rename" : "修改名称"); disabled: AppState.team-page-loading; clicked => { AppState.open-team-form("rename", "", ""); } }
+            Rectangle { horizontal-stretch: 1; }
+            if AppState.team-can-read-finance: Text { text: AppState.account-amount-label; color: AppTheme.accent; font-size: 22px; font-weight: 700; vertical-alignment: center; }
+        }
+        Text { text: AppState.team-has-own-quota ? (AppState.en ? "Member · The team owner pays. Your tasks require both your remaining quota and available team credits." : "成员 · 团队主账号提供积分；你的创作同时受个人额度和团队可用积分约束。") : TeamLabels.role-label(AppState.team-role-label) + (AppState.en ? " · My credits pay for this team's tasks." : " · 使用我的积分，为团队成员支付。"); color: AppTheme.muted; font-size: 13px; wrap: word-wrap; }
+        if AppState.account-group-read-only: Text { text: (AppState.en ? "This team is read-only. New billed tasks are unavailable." : "当前团队为只读状态，无法在此团队创建新的计费任务。"); color: AppTheme.danger; font-size: 13px; wrap: word-wrap; }
+        if AppState.team-has-own-quota: Rectangle {
+            height: 96px; background: AppTheme.panel-soft; border-radius: 8px;
+            HorizontalLayout {
+                padding: 16px; spacing: 16px;
+                for item in [{name: (AppState.en ? "My monthly limit" : "我的月额度"), value: AppState.team-quota-monthly}, {name: (AppState.en ? "Settled" : "已结算"), value: AppState.team-quota-settled}, {name: (AppState.en ? "Reserved" : "预留"), value: AppState.team-quota-reserved}, {name: (AppState.en ? "My remaining credits" : "我的剩余额度"), value: AppState.team-quota-remaining}]: VerticalLayout {
+                    horizontal-stretch: 1; spacing: 8px; alignment: center;
+                    Text { text: item.name; color: AppTheme.muted; font-size: 12px; }
+                    Text { text: item.value == "" ? (AppState.en ? "Sync pending" : "待同步") : item.value; color: AppTheme.accent; font-size: 20px; font-weight: 600; overflow: elide; }
+                }
+            }
+        }
+        if AppState.team-can-leave: HorizontalLayout {
+            spacing: 16px; height: 38px;
+            Text { horizontal-stretch: 1; text: (AppState.en ? "Leaving removes access to team credits. Your own team and files remain." : "退出后将不能使用该团队积分；自己的团队和个人文件保留。"); color: AppTheme.muted; font-size: 12px; wrap: word-wrap; vertical-alignment: center; }
+            PillButton { width: 110px; text: (AppState.en ? "Leave team" : "退出团队"); danger: true; disabled: AppState.team-page-loading; clicked => { AppState.open-team-form("leave", "", ""); } }
+        }
+    }
+}

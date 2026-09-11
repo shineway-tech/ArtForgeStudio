@@ -1,0 +1,64 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { PillButton } from "../components/pill-button.slint";
+import { TeamAction, TeamLabels } from "team-controls.slint";
+import { TeamGroupChoices, TeamOverviewPanel } from "team-overview-panel.slint";
+import { TeamMembersPanel } from "team-members-panel.slint";
+import { TeamInvitationsPanel } from "team-invitations-panel.slint";
+import { TeamUsagePanel } from "team-usage-panel.slint";
+import { TeamReauthPanel } from "team-reauth-panel.slint";
+import { TeamFormDialog } from "team-form-dialog.slint";
+
+export component AccountsTeamsPanel inherits Rectangle {
+    property <bool> joined-team: AppState.team-role-label == "成员" || AppState.team-role-label == "Member";
+    clip: true;
+    Flickable {
+        width: parent.width; height: parent.height;
+        viewport-width: self.width;
+        viewport-height: max(self.height, content.preferred-height);
+        content := VerticalLayout {
+            width: parent.width; padding: 24px; spacing: 18px; alignment: start;
+            HorizontalLayout {
+                height: 32px; spacing: 12px;
+                Text { horizontal-stretch: 1; text: AppState.en ? "Accounts and Teams" : "账号与团队"; color: AppTheme.text; font-size: 24px; font-weight: 700; vertical-alignment: center; }
+                TeamAction { width: 48px; text: AppState.en ? "Refresh" : "刷新"; disabled: AppState.team-page-loading || AppState.account-group-switching; clicked => { root.refresh(); } }
+            }
+            if AppState.account-group-error != "": Text { text: AppState.account-group-error; color: AppTheme.danger; font-size: 13px; wrap: word-wrap; }
+            if AppState.team-page-error != "" && AppState.team-form-action == "": Text { text: AppState.team-page-error; color: AppTheme.danger; font-size: 13px; wrap: word-wrap; }
+            if AppState.team-page-status != "": Text { text: TeamLabels.notice(AppState.team-page-status); color: AppTheme.success; font-size: 13px; wrap: word-wrap; }
+            if AppState.team-tab != "reauth": TeamGroupChoices {}
+            if AppState.team-tab != "reauth": TeamOverviewPanel {}
+            if AppState.team-tab != "reauth" && !root.joined-team: Rectangle {
+                height: 44px;
+                Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: AppTheme.border; }
+                HorizontalLayout {
+                    height: 44px; spacing: 14px;
+                    if AppState.team-can-manage-members: TeamAction { height: 44px; tab-style: true; width: 82px; text: AppState.en ? "Members" : "成员"; active: AppState.team-tab == "accounts" || AppState.team-tab == "members"; disabled: AppState.team-page-loading; clicked => { AppState.team-tab = "members"; AppState.load-team-members(""); } }
+                    if AppState.team-can-manage-invitations: TeamAction { height: 44px; tab-style: true; width: 112px; text: AppState.en ? "Sent invitations" : "发出的邀请"; active: AppState.team-tab == "invitations"; disabled: AppState.team-page-loading; clicked => { AppState.team-tab = "invitations"; AppState.load-team-invitations(""); } }
+                    TeamAction { height: 44px; tab-style: true; width: 136px; text: (AppState.en ? "Received " : "收到的邀请 ") + AppState.pending-team-invitation-count; active: AppState.team-tab == "pending"; disabled: AppState.team-page-loading; clicked => { AppState.team-tab = "pending"; AppState.load-pending-team-invitations(""); } }
+                    if AppState.team-can-read-usage: TeamAction { height: 44px; tab-style: true; width: 92px; text: AppState.en ? "Usage" : "用量记录"; active: AppState.team-tab == "usage"; disabled: AppState.team-page-loading; clicked => { AppState.team-tab = "usage"; AppState.load-team-usage(""); } }
+                    Rectangle { horizontal-stretch: 1; }
+                    if AppState.team-can-manage-invitations: Rectangle {
+                        width: 124px;
+                        PillButton { y: (parent.height - self.height) / 2; width: parent.width; primary: true; text: AppState.en ? "Invite member" : "邀请成员"; disabled: AppState.team-page-loading || AppState.account-group-switching; clicked => { AppState.open-team-form("create", "", ""); } }
+                    }
+                }
+            }
+            if AppState.team-page-loading || AppState.account-group-switching: Text { text: AppState.account-group-switching ? (AppState.en ? "Switching account…" : "正在切换账号…") : (AppState.en ? "Loading…" : "正在加载…"); color: AppTheme.muted; font-size: 13px; }
+            if AppState.team-can-manage-members && (AppState.team-tab == "members" || AppState.team-tab == "accounts"): TeamMembersPanel {}
+            if AppState.team-can-manage-invitations && AppState.team-tab == "invitations": TeamInvitationsPanel {}
+            if !root.joined-team && AppState.team-tab == "pending": TeamInvitationsPanel { received: true; }
+            if AppState.team-can-read-usage && AppState.team-tab == "usage": TeamUsagePanel {}
+            if AppState.team-tab == "reauth": TeamReauthPanel {}
+        }
+    }
+    if AppState.team-form-action != "": TeamFormDialog { width: parent.width; height: parent.height; }
+    function refresh() {
+        AppState.team-page-status = "";
+        AppState.refresh-account-groups();
+        if !root.joined-team && AppState.team-tab == "pending" { AppState.load-pending-team-invitations(""); }
+        else if AppState.team-tab == "invitations" && AppState.team-can-manage-invitations { AppState.load-team-invitations(""); }
+        else if AppState.team-tab == "usage" && AppState.team-can-read-usage { AppState.load-team-usage(""); }
+        else if AppState.team-tab == "members" && AppState.team-can-manage-members { AppState.load-team-members(""); }
+    }
+}

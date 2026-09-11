@@ -135,6 +135,9 @@ export struct CatalogModelView {
     price-2k: int,
     price-4k: int,
     price-standard: string,
+    video-price-480: string,
+    video-price-720: string,
+    video-price-1080: string,
     supports-image-edit: bool,
     supports-style-analysis: bool,
 }
@@ -164,9 +167,12 @@ export struct ReferenceItem {
 
 export struct VideoImageItem {
     id: string,
+    source-asset-id: string,
     title: string,
+    subtitle: string,
     source-path: string,
     image: image,
+    has-preview: bool,
     selected: bool,
     added: bool,
 }
@@ -237,4 +243,30 @@ export struct CanvasLink {
     end-y: float,
     source-selected: bool,
     target-selected: bool,
+}
+
+export struct TeamRegistrationInvitationView {
+    invitation-id: string, group-id: string, team-name: string,
+    owner-display-name: string, recipient-email-masked: string, monthly-limit: string,
+    status: string, expires-at: string, version: string,
+}
+export struct AccountGroupCardView {
+    group-id: string, name: string, group-status: string, role-label: string,
+    relationship-status: string, entitlement-label: string, amount-label: string,
+    selected: bool, selectable: bool, read-only: bool, owned: bool,
+}
+export struct TeamMemberRowView {
+    member-id: string, display-name: string, email-masked: string, status: string,
+    monthly-limit: string, settled: string, reserved: string, remaining: string,
+    joined-at: string, version: string,
+}
+export struct TeamInvitationRowView {
+    invitation-id: string, team-name: string, owner-display-name: string,
+    recipient-email-masked: string, monthly-limit: string, status: string,
+    expires-at: string, version: string, delivery-status: string, actionable: bool,
+}
+export struct TeamUsageRowView {
+    usage-event-id: string, member-display-name: string, occurred-at: string,
+    period-start: string, period-end: string, operation-kind: string,
+    model-label: string, credit-amount: string, phase: string, outcome: string,
 }

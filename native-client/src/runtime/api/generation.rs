@@ -3,7 +3,7 @@ use super::super::{
 };
 use super::{
     generation_content_policy_message, is_generation_content_policy_blocked, ApiClient, ApiError,
-    SessionScope,
+    BillingScope, SessionScope,
 };
 use reqwest::blocking::multipart::{Form, Part};
 use reqwest::Method;
@@ -68,6 +68,7 @@ pub(crate) struct GenerationTaskItem {
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct GenerationTaskDetail {
     pub(crate) id: String,
+    pub(crate) billing_account_group_id: String,
     pub(crate) status: String,
     pub(crate) progress_percent: i32,
     pub(crate) success_count: i32,
@@ -98,6 +99,7 @@ pub(crate) struct TaskModel {
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct GenerationTaskSummary {
     pub(crate) id: String,
+    pub(crate) billing_account_group_id: String,
     #[serde(rename = "type")]
     pub(crate) task_type: String,
 }
@@ -138,6 +140,7 @@ pub(crate) struct CreateGenerationTask {
 pub(crate) struct CreateVideoQuote {
     pub(crate) model_code: String,
     pub(crate) source_file_id: String,
+    pub(crate) reference_file_ids: Vec<String>,
     pub(crate) aspect_ratio: String,
     pub(crate) resolution: String,
     pub(crate) duration_secs: i32,
@@ -145,7 +148,9 @@ pub(crate) struct CreateVideoQuote {
 
 impl CreateVideoQuote {
     pub(crate) fn validate(&self) -> Result<(), ApiError> {
-        if self.model_code.trim().is_empty() || self.source_file_id.trim().is_empty() {
+        if self.model_code.trim().is_empty() || self.source_file_id.trim().is_empty()
+            || self.reference_file_ids.is_empty() || !self.reference_file_ids.contains(&self.source_file_id)
+            || self.reference_file_ids.iter().any(|id| id.trim().is_empty()) {
             return Err(video_parameter_error("视频模型或源图片无效"));
         }
         if !matches!(
@@ -174,17 +179,42 @@ pub(crate) struct VideoQuote {
     pub(crate) duration_secs: i32,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(from = "LegacyCompatibleVideoTask")]
 pub(crate) struct CreateVideoGenerationTask {
     pub(crate) client_request_id: String,
     pub(crate) task_type: String,
     pub(crate) model_code: String,
     pub(crate) prompt: String,
     pub(crate) source_file_id: String,
+    pub(crate) reference_file_ids: Vec<String>,
     pub(crate) aspect_ratio: String,
     pub(crate) resolution: String,
     pub(crate) duration_secs: i32,
     pub(crate) quote_id: String,
+}
+#[derive(Deserialize)]
+struct LegacyCompatibleVideoTask {
+    pub(crate) client_request_id: String,
+    pub(crate) task_type: String,
+    pub(crate) model_code: String,
+    pub(crate) prompt: String,
+    pub(crate) source_file_id: String,
+    #[serde(default)]
+    pub(crate) reference_file_ids: Option<Vec<String>>,
+    pub(crate) aspect_ratio: String,
+    pub(crate) resolution: String,
+    pub(crate) duration_secs: i32,
+    pub(crate) quote_id: String,
+}
+
+impl From<LegacyCompatibleVideoTask> for CreateVideoGenerationTask {
+    fn from(value: LegacyCompatibleVideoTask) -> Self {
+        Self { reference_file_ids: value.reference_file_ids.unwrap_or_else(|| vec![value.source_file_id.clone()]),
+            client_request_id: value.client_request_id, task_type: value.task_type, model_code: value.model_code, prompt: value.prompt,
+            source_file_id: value.source_file_id, aspect_ratio: value.aspect_ratio, resolution: value.resolution,
+            duration_secs: value.duration_secs, quote_id: value.quote_id }
+    }
 }
 
 impl CreateVideoGenerationTask {
@@ -192,6 +222,7 @@ impl CreateVideoGenerationTask {
         CreateVideoQuote {
             model_code: self.model_code.clone(),
             source_file_id: self.source_file_id.clone(),
+            reference_file_ids: self.reference_file_ids.clone(),
             aspect_ratio: self.aspect_ratio.clone(),
             resolution: self.resolution.clone(),
             duration_secs: self.duration_secs,
@@ -302,12 +333,14 @@ struct DeliveryAck<'a> {
 pub(crate) struct GenerationApi {
     client: ApiClient,
     download: reqwest::blocking::Client,
+    saved_group: Option<String>,
 }
 
 impl GenerationApi {
     pub(crate) fn new(client: ApiClient) -> Self {
         Self {
             client,
+            saved_group: None,
             download: reqwest::blocking::Client::builder()
                 .connect_timeout(REFERENCE_TRANSFER_CONNECT_TIMEOUT)
                 .timeout(GENERATION_DOWNLOAD_TIMEOUT)
@@ -316,12 +349,59 @@ impl GenerationApi {
         }
     }
 
+    pub(crate) fn with_saved_group(mut self, group: &str) -> Self {
+        self.saved_group = Some(group.to_owned());
+        self
+    }
+    fn checked_saved_detail(&self, detail: GenerationTaskDetail) -> Result<GenerationTaskDetail, ApiError> {
+        if let Some(group) = &self.saved_group { super::require_saved_group(group, &detail.billing_account_group_id)?; }
+        Ok(detail)
+    }
     pub(crate) fn upload_reference(&self, path: &Path) -> Result<String, ApiError> {
         let prepared =
             super::super::prepare_reference_for_upload(path).map_err(|_| ApiError::LocalState {
                 message: "无法在本地处理参考图，请更换图片后重试".to_string(),
             })?;
         self.upload_reference_file(prepared.path(), None)
+    }
+
+    pub(crate) fn upload_reference_for_namespace(&self, path: &Path, authority: &super::super::NamespaceStorageAuthority,
+        scope: &SessionScope, paired: bool,
+    ) -> Result<String, ApiError> {
+        if authority.lease().auth_epoch != scope.auth_epoch || authority.user_public_id() != scope.owner_user_id {
+            return Err(ApiError::AuthenticationRequired);
+        }
+        let _activity = self.client.begin_user_work(scope)?;
+        let read = self.client.upgrade_latch().begin_ordinary_blocking_effect().map_err(|required| required.as_error())?;
+        let (bytes, filename, mime) = super::super::prepare_reference_bytes_for_namespace(authority, path, paired)
+            .map_err(|_| ApiError::LocalState { message: "参考图不属于当前命名空间或无法安全读取".into() })?;
+        drop(read);
+        self.upload_reference_bytes(bytes, filename, mime, scope)
+    }
+
+    pub(crate) fn upload_reference_for_namespace_checked(&self, path: &Path,
+        authority: &super::super::NamespaceStorageAuthority, scope: &SessionScope, paired: bool,
+        expected_sha256: &str, expected_size_bytes: u64,
+    ) -> Result<String, ApiError> {
+        if authority.lease().auth_epoch != scope.auth_epoch || authority.user_public_id() != scope.owner_user_id {
+            return Err(ApiError::AuthenticationRequired);
+        }
+        let activity=self.client.begin_user_work(scope)?;
+        let read=self.client.upgrade_latch().begin_ordinary_blocking_effect().map_err(|required|required.as_error())?;
+        let prepared=(||->anyhow::Result<_>{
+            anyhow::ensure!(path.starts_with(authority.lease().namespace.root()),"reference outside original namespace");
+            anyhow::ensure!(expected_size_bytes>0 && expected_sha256.len()==64,"retained fingerprint incomplete");
+            // Exactly one held read. The bytes verified here are the same owned
+            // bytes normalized below; neither stage reopens the source path.
+            let bytes=authority.read_image_source(path,100*1024*1024)?;
+            anyhow::ensure!(bytes.len() as u64==expected_size_bytes && sha256_hex(&bytes)==expected_sha256,
+                "retained reference fingerprint changed");
+            super::super::prepare_reference_upload_bytes(bytes,paired)
+        })().map_err(|_|ApiError::LocalState{message:"原始参考图内容已变化或无法安全读取，任务记录已保留".into()});
+        drop(read);
+        if activity.is_quiescing(){return Err(ApiError::AuthenticationRequired);}
+        let(bytes,filename,mime)=prepared?;
+        self.upload_reference_bytes(bytes,filename,mime,scope)
     }
 
     pub(crate) fn upload_reference_scoped(
@@ -355,6 +435,9 @@ impl GenerationApi {
         path: &Path,
         scope: Option<&SessionScope>,
     ) -> Result<String, ApiError> {
+        let scope = scope.ok_or(ApiError::AuthenticationRequired)?;
+        let _activity = self.client.begin_user_work(scope)?;
+        let read_permit = self.client.upgrade_latch().begin_ordinary_blocking_effect().map_err(|required| required.as_error())?;
         let bytes = fs::read(path).map_err(|error| ApiError::LocalState {
             message: format!("无法读取参考图：{error}"),
         })?;
@@ -363,6 +446,12 @@ impl GenerationApi {
             .and_then(|value| value.to_str())
             .unwrap_or("reference.png");
         let mime = mime_for_path(path)?;
+        drop(read_permit);
+        self.upload_reference_bytes(bytes, filename, mime, scope)
+    }
+
+    fn upload_reference_bytes(&self, bytes: Vec<u8>, filename: &str, mime: &str, scope: &SessionScope) -> Result<String, ApiError> {
+        let _activity = self.client.begin_user_work(scope)?;
         let sha256 = sha256_hex(&bytes);
         let body = serde_json::to_value(PrepareUploadRequest {
             filename,
@@ -371,16 +460,15 @@ impl GenerationApi {
             sha256: &sha256,
         })
         .map_err(protocol_error)?;
+        let scope = Some(scope);
         let prepared = match scope {
-            Some(scope) => self
-                .client
-                .authenticated_json_scoped::<PrepareUploadResponse>(
-                    Method::POST,
-                    "/v1/uploads/references",
-                    Some(body.clone()),
-                    None,
-                    scope,
-                ),
+            Some(scope) => self.client.identity_json_scoped::<PrepareUploadResponse>(
+                Method::POST,
+                "/v1/uploads/references",
+                Some(body.clone()),
+                None,
+                scope,
+            ),
             None => self.client.authenticated_json::<PrepareUploadResponse>(
                 Method::POST,
                 "/v1/uploads/references",
@@ -409,6 +497,7 @@ impl GenerationApi {
         if let Some(scope) = scope {
             self.ensure_scope_active(scope)?;
         }
+        let transfer = self.client.upgrade_latch().begin_ordinary_transfer().map_err(|required| required.as_error())?;
         let response = self
             .download
             .post(&prepared.upload.url)
@@ -416,17 +505,36 @@ impl GenerationApi {
             .multipart(form)
             .send()?;
         if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let mut payload = Vec::new();
+            response.take(64 * 1024).read_to_end(&mut payload).map_err(|_| ApiError::Protocol {
+                message: "无法读取参考图上传响应".into(), request_id: None,
+            })?;
+            if status == 426 {
+                if let Ok(envelope) = serde_json::from_slice::<super::ApiEnvelope<Value>>(&payload) {
+                    if let Some(problem) = envelope.error {
+                        let error = ApiError::Http { status, code: problem.code, message: problem.message, request_id: None, details: problem.details };
+                        if let Some(required) = super::RequiredUpgrade::from_error(&error) {
+                            let safe = required.as_error();
+                            self.client.upgrade_latch().trip_from_ordinary_transfer(transfer, required, || drop(payload));
+                            return Err(safe);
+                        }
+                    }
+                }
+            }
             return Err(ApiError::Protocol {
-                message: format!("参考图上传失败（HTTP {}）", response.status().as_u16()),
+                message: format!("参考图上传失败（HTTP {status}）"),
                 request_id: None,
             });
         }
         if let Some(scope) = scope {
             self.ensure_scope_active(scope)?;
         }
+        drop(response);
+        drop(transfer);
         let complete_path = format!("/v1/uploads/references/{}/complete", prepared.file.id);
         match scope {
-            Some(scope) => self.client.authenticated_json_scoped::<serde_json::Value>(
+            Some(scope) => self.client.identity_json_scoped::<serde_json::Value>(
                 Method::POST,
                 &complete_path,
                 None,
@@ -457,7 +565,7 @@ impl GenerationApi {
         file_id: &str,
         scope: &SessionScope,
     ) -> Result<(), ApiError> {
-        self.client.authenticated_json_scoped::<serde_json::Value>(
+        self.client.identity_json_scoped::<serde_json::Value>(
             Method::DELETE,
             &format!("/v1/uploads/references/{file_id}"),
             None,
@@ -467,6 +575,7 @@ impl GenerationApi {
         Ok(())
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_task(
         &self,
         request: &CreateGenerationTask,
@@ -475,6 +584,7 @@ impl GenerationApi {
         self.create_task_body(&request.client_request_id, body)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_task_scoped(
         &self,
         request: &CreateGenerationTask,
@@ -492,10 +602,17 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
-    pub(crate) fn quote_video(
+    pub(crate) fn create_task_billing(
         &self,
-        request: &CreateVideoQuote,
-    ) -> Result<VideoQuote, ApiError> {
+        request: &CreateGenerationTask,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.create_task_body_billing(&request.client_request_id, body, scope)
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
+    pub(crate) fn quote_video(&self, request: &CreateVideoQuote) -> Result<VideoQuote, ApiError> {
         request.validate()?;
         let body = serde_json::to_value(request).map_err(protocol_error)?;
         self.client
@@ -508,6 +625,7 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn quote_video_scoped(
         &self,
         request: &CreateVideoQuote,
@@ -526,6 +644,25 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn quote_video_billing(
+        &self,
+        request: &CreateVideoQuote,
+        scope: &BillingScope,
+    ) -> Result<VideoQuote, ApiError> {
+        request.validate()?;
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .billing_json_scoped::<VideoQuote>(
+                Method::POST,
+                "/v1/generation/video-quotes",
+                Some(body),
+                None,
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_video_task(
         &self,
         request: &CreateVideoGenerationTask,
@@ -535,6 +672,7 @@ impl GenerationApi {
         self.create_task_body(&request.client_request_id, body)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_video_task_scoped(
         &self,
         request: &CreateVideoGenerationTask,
@@ -545,6 +683,17 @@ impl GenerationApi {
         self.create_task_body_scoped(&request.client_request_id, body, scope)
     }
 
+    pub(crate) fn create_video_task_billing(
+        &self,
+        request: &CreateVideoGenerationTask,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        request.validate()?;
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.create_task_body_billing(&request.client_request_id, body, scope)
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_upscale_task(
         &self,
         request: &CreateUpscaleGenerationTask,
@@ -553,6 +702,7 @@ impl GenerationApi {
         self.create_task_body(&request.client_request_id, body)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_upscale_task_scoped(
         &self,
         request: &CreateUpscaleGenerationTask,
@@ -562,6 +712,16 @@ impl GenerationApi {
         self.create_task_body_scoped(&request.client_request_id, body, scope)
     }
 
+    pub(crate) fn create_upscale_task_billing(
+        &self,
+        request: &CreateUpscaleGenerationTask,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.create_task_body_billing(&request.client_request_id, body, scope)
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_image_edit_task(
         &self,
         request: &CreateImageEditTask,
@@ -570,6 +730,7 @@ impl GenerationApi {
         self.create_task_body(&request.client_request_id, body)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_image_edit_task_scoped(
         &self,
         request: &CreateImageEditTask,
@@ -579,6 +740,16 @@ impl GenerationApi {
         self.create_task_body_scoped(&request.client_request_id, body, scope)
     }
 
+    pub(crate) fn create_image_edit_task_billing(
+        &self,
+        request: &CreateImageEditTask,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.create_task_body_billing(&request.client_request_id, body, scope)
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_watermark_removal(
         &self,
         request: &CreateWatermarkRemoval,
@@ -594,6 +765,7 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_watermark_removal_scoped(
         &self,
         request: &CreateWatermarkRemoval,
@@ -611,6 +783,27 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn create_watermark_removal_billing(
+        &self,
+        request: &CreateWatermarkRemoval,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .billing_json_scoped::<GenerationTaskDetail>(
+                Method::POST,
+                "/v1/toolbox/watermark-removals",
+                Some(body),
+                Some(&request.client_request_id),
+                scope,
+            )
+            .and_then(|response| {
+                super::require_saved_group(&scope.request.account_group_id, &response.data.billing_account_group_id)?;
+                self.checked_saved_detail(response.data)
+            })
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_image_colorization(
         &self,
         request: &CreateImageColorization,
@@ -626,6 +819,7 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_image_colorization_scoped(
         &self,
         request: &CreateImageColorization,
@@ -643,6 +837,27 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn create_image_colorization_billing(
+        &self,
+        request: &CreateImageColorization,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .billing_json_scoped::<GenerationTaskDetail>(
+                Method::POST,
+                "/v1/toolbox/image-colorizations",
+                Some(body),
+                Some(&request.client_request_id),
+                scope,
+            )
+            .and_then(|response| {
+                super::require_saved_group(&scope.request.account_group_id, &response.data.billing_account_group_id)?;
+                self.checked_saved_detail(response.data)
+            })
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_image_enhancement(
         &self,
         request: &CreateImageEnhancement,
@@ -658,6 +873,7 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_image_enhancement_scoped(
         &self,
         request: &CreateImageEnhancement,
@@ -675,6 +891,27 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn create_image_enhancement_billing(
+        &self,
+        request: &CreateImageEnhancement,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .billing_json_scoped::<GenerationTaskDetail>(
+                Method::POST,
+                "/v1/toolbox/image-enhancements",
+                Some(body),
+                Some(&request.client_request_id),
+                scope,
+            )
+            .and_then(|response| {
+                super::require_saved_group(&scope.request.account_group_id, &response.data.billing_account_group_id)?;
+                self.checked_saved_detail(response.data)
+            })
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_image_cutout(
         &self,
         request: &CreateImageCutout,
@@ -690,6 +927,7 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_image_cutout_scoped(
         &self,
         request: &CreateImageCutout,
@@ -707,6 +945,27 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn create_image_cutout_billing(
+        &self,
+        request: &CreateImageCutout,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        let body = serde_json::to_value(request).map_err(protocol_error)?;
+        self.client
+            .billing_json_scoped::<GenerationTaskDetail>(
+                Method::POST,
+                "/v1/toolbox/image-cutouts",
+                Some(body),
+                Some(&request.client_request_id),
+                scope,
+            )
+            .and_then(|response| {
+                super::require_saved_group(&scope.request.account_group_id, &response.data.billing_account_group_id)?;
+                self.checked_saved_detail(response.data)
+            })
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     fn create_task_body(
         &self,
         client_request_id: &str,
@@ -722,6 +981,7 @@ impl GenerationApi {
             .map(|response| response.data)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     fn create_task_body_scoped(
         &self,
         client_request_id: &str,
@@ -737,6 +997,26 @@ impl GenerationApi {
                 scope,
             )
             .map(|response| response.data)
+    }
+
+    fn create_task_body_billing(
+        &self,
+        client_request_id: &str,
+        body: serde_json::Value,
+        scope: &BillingScope,
+    ) -> Result<GenerationTaskDetail, ApiError> {
+        self.client
+            .billing_json_scoped::<GenerationTaskDetail>(
+                Method::POST,
+                "/v1/generation/tasks",
+                Some(body),
+                Some(client_request_id),
+                scope,
+            )
+            .and_then(|response| {
+                super::require_saved_group(&scope.request.account_group_id, &response.data.billing_account_group_id)?;
+                self.checked_saved_detail(response.data)
+            })
     }
 
     pub(crate) fn task(&self, task_id: &str) -> Result<GenerationTaskDetail, ApiError> {
@@ -756,14 +1036,14 @@ impl GenerationApi {
         scope: &SessionScope,
     ) -> Result<GenerationTaskDetail, ApiError> {
         self.client
-            .authenticated_json_scoped::<GenerationTaskDetail>(
+            .identity_json_scoped::<GenerationTaskDetail>(
                 Method::GET,
                 &format!("/v1/generation/tasks/{task_id}"),
                 None,
                 None,
                 scope,
             )
-            .map(|response| response.data)
+            .and_then(|response| self.checked_saved_detail(response.data))
     }
 
     pub(crate) fn list_tasks(&self, status: &str) -> Result<Vec<GenerationTaskSummary>, ApiError> {
@@ -783,7 +1063,7 @@ impl GenerationApi {
         scope: &SessionScope,
     ) -> Result<Vec<GenerationTaskSummary>, ApiError> {
         self.client
-            .authenticated_json_scoped::<GenerationTaskList>(
+            .identity_json_scoped::<GenerationTaskList>(
                 Method::GET,
                 &format!("/v1/generation/tasks?limit=20&status={status}"),
                 None,
@@ -809,7 +1089,7 @@ impl GenerationApi {
         scope: &SessionScope,
     ) -> Result<(), ApiError> {
         self.client
-            .authenticated_json_scoped::<GenerationTaskDetail>(
+            .identity_json_scoped::<GenerationTaskDetail>(
                 Method::POST,
                 &format!("/v1/generation/tasks/{task_id}/cancel"),
                 None,
@@ -821,6 +1101,66 @@ impl GenerationApi {
 
     pub(crate) fn download_verified(&self, file: &TaskOutputFile) -> Result<Vec<u8>, ApiError> {
         self.download_verified_inner(file, None)
+    }
+
+    /// Streams into the caller's exclusive temporary. Publication and cleanup
+    /// remain the caller's responsibility; no identity headers reach the blob host.
+    pub(crate) fn download_verified_for_namespace(
+        &self,
+        file: &TaskOutputFile,
+        scope: &SessionScope,
+        authority: &super::super::NamespaceStorageAuthority,
+        temporary: &mut super::super::NamespaceManagedFile,
+    ) -> Result<(), ApiError> {
+        let _activity = self.client.begin_user_work(scope)?;
+        let _transfer = self.client.upgrade_latch().begin_ordinary_transfer().map_err(|required| required.as_error())?;
+        self.ensure_scope_active(scope)?;
+        if authority.user_public_id() != scope.owner_user_id
+            || authority.lease().auth_epoch != scope.auth_epoch
+        {
+            return Err(ApiError::AuthenticationRequired);
+        }
+        let expected = file
+            .size_bytes
+            .parse::<u64>()
+            .ok()
+            .filter(|size| *size > 0 && size.to_string() == file.size_bytes)
+            .ok_or_else(capability_integrity_error)?;
+        if file.sha256.len() != 64 || !file.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(capability_integrity_error());
+        }
+        authority
+            .inspect_regular(temporary)
+            .map_err(capability_download_error)?;
+        let url = file
+            .download_url
+            .as_deref()
+            .filter(|url| !url.is_empty())
+            .ok_or_else(capability_integrity_error)?;
+        let response = self
+            .download
+            .get(url)
+            .send()
+            .and_then(|response| response.error_for_status())
+            .map_err(|_| capability_transfer_error())?;
+        self.ensure_scope_active(scope)?;
+        let mut verified = NamespaceVerifiedReader {
+            api: self,
+            scope,
+            response,
+            expected,
+            sha256: &file.sha256,
+            total: 0,
+            hasher: Sha256::new(),
+            api_error: None,
+        };
+        match authority.write_new_regular_from(temporary, &mut verified) {
+            Ok(_) => Ok(()),
+            Err(error) => Err(verified
+                .api_error
+                .take()
+                .unwrap_or_else(|| capability_download_error(error))),
+        }
     }
 
     pub(crate) fn download_verified_scoped(
@@ -837,6 +1177,8 @@ impl GenerationApi {
         scope: &SessionScope,
         destination: &Path,
     ) -> Result<(), ApiError> {
+        let _activity = self.client.begin_user_work(scope)?;
+        let _transfer = self.client.upgrade_latch().begin_ordinary_transfer().map_err(|required| required.as_error())?;
         self.ensure_scope_active(scope)?;
         let url = file
             .download_url
@@ -870,7 +1212,9 @@ impl GenerationApi {
             let mut total = 0_u64;
             let mut buffer = [0_u8; 64 * 1024];
             loop {
+                self.ensure_scope_active(scope)?;
                 let read = response.read(&mut buffer).map_err(local_download_error)?;
+                self.ensure_scope_active(scope)?;
                 if read == 0 {
                     break;
                 }
@@ -914,6 +1258,10 @@ impl GenerationApi {
         file: &TaskOutputFile,
         scope: Option<&SessionScope>,
     ) -> Result<Vec<u8>, ApiError> {
+        let scope = scope.ok_or(ApiError::AuthenticationRequired)?;
+        let _activity = self.client.begin_user_work(scope)?;
+        let _transfer = self.client.upgrade_latch().begin_ordinary_transfer().map_err(|required| required.as_error())?;
+        let scope = Some(scope);
         if let Some(scope) = scope {
             self.ensure_scope_active(scope)?;
         }
@@ -972,7 +1320,7 @@ impl GenerationApi {
     ) -> Result<(), ApiError> {
         let body =
             serde_json::to_value(DeliveryAck { sha256, size_bytes }).map_err(protocol_error)?;
-        self.client.authenticated_json_scoped::<serde_json::Value>(
+        self.client.identity_json_scoped::<serde_json::Value>(
             Method::POST,
             &format!("/v1/generation/tasks/{task_id}/deliveries/{file_id}/ack"),
             Some(body),
@@ -982,12 +1330,81 @@ impl GenerationApi {
         Ok(())
     }
 
-    fn ensure_scope_active(&self, scope: &SessionScope) -> Result<(), ApiError> {
-        if self.client.session().is_scope_current(scope) {
+    pub(crate) fn ensure_scope_active(&self, scope: &SessionScope) -> Result<(), ApiError> {
+        if self.client.user_work_is_current(scope) {
             Ok(())
         } else {
             Err(ApiError::AuthenticationRequired)
         }
+    }
+}
+
+fn capability_integrity_error() -> ApiError {
+    ApiError::Protocol {
+        message: "生成文件完整性校验失败".into(),
+        request_id: None,
+    }
+}
+fn capability_transfer_error() -> ApiError {
+    ApiError::Protocol {
+        message: "生成文件下载失败".into(),
+        request_id: None,
+    }
+}
+fn capability_download_error(_error: anyhow::Error) -> ApiError {
+    ApiError::LocalState {
+        message: "生成文件无法安全写入本地".into(),
+    }
+}
+struct NamespaceVerifiedReader<'a> {
+    api: &'a GenerationApi,
+    scope: &'a SessionScope,
+    response: reqwest::blocking::Response,
+    expected: u64,
+    sha256: &'a str,
+    total: u64,
+    hasher: Sha256,
+    api_error: Option<ApiError>,
+}
+impl NamespaceVerifiedReader<'_> {
+    fn fail(&mut self, error: ApiError) -> std::io::Error {
+        self.api_error = Some(error);
+        std::io::Error::other("verified namespace download failed")
+    }
+}
+impl Read for NamespaceVerifiedReader<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if let Err(error) = self.api.ensure_scope_active(self.scope) {
+            return Err(self.fail(error));
+        }
+        let result = self.response.read(buffer);
+        if let Err(error) = self.api.ensure_scope_active(self.scope) {
+            return Err(self.fail(error));
+        }
+        let count = match result {
+            Ok(count) => count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => return Err(error),
+            Err(_) => return Err(self.fail(capability_transfer_error())),
+        };
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        if count == 0 {
+            if self.total != self.expected
+                || !format!("{:x}", self.hasher.clone().finalize())
+                    .eq_ignore_ascii_case(self.sha256)
+            {
+                return Err(self.fail(capability_integrity_error()));
+            }
+        } else {
+            self.total = self
+                .total
+                .checked_add(count as u64)
+                .filter(|total| *total <= self.expected)
+                .ok_or_else(|| self.fail(capability_integrity_error()))?;
+            self.hasher.update(&buffer[..count]);
+        }
+        Ok(count)
     }
 }
 
@@ -1044,9 +1461,30 @@ fn verify_downloaded_bytes(
 mod tests {
     use super::*;
 
+    #[test]
+    fn generation_projections_require_billing_account_group_id() {
+        let detail = serde_json::json!({
+            "id": "task-1", "status": "queued", "progress_percent": 0,
+            "success_count": 0, "failure_count": 0, "failure": null,
+            "prompt": null, "result_prompt": null, "items": []
+        });
+        let summary = serde_json::json!({
+            "id": "task-1", "type": "image_generation"
+        });
+        assert!(serde_json::from_value::<GenerationTaskDetail>(detail.clone()).is_err());
+        assert!(serde_json::from_value::<GenerationTaskSummary>(summary.clone()).is_err());
+        let mut detail_null = detail;
+        detail_null["billing_account_group_id"] = serde_json::Value::Null;
+        let mut summary_null = summary;
+        summary_null["billing_account_group_id"] = serde_json::Value::Null;
+        assert!(serde_json::from_value::<GenerationTaskDetail>(detail_null).is_err());
+        assert!(serde_json::from_value::<GenerationTaskSummary>(summary_null).is_err());
+    }
+
     fn task(status: &str) -> GenerationTaskDetail {
         GenerationTaskDetail {
             id: "task-1".to_string(),
+            billing_account_group_id: "11111111-1111-4111-8111-111111111111".to_string(),
             status: status.to_string(),
             progress_percent: 0,
             success_count: 0,
@@ -1126,13 +1564,32 @@ mod tests {
     }
 
     #[test]
+    fn retained_legacy_video_request_restores_source_but_explicit_empty_images_remain_invalid() {
+        let mut body=serde_json::json!({"client_request_id":"key","task_type":"image_to_video","model_code":"legacy","prompt":"move","source_file_id":"source","aspect_ratio":"16:9","resolution":"720P","duration_secs":4,"quote_id":"quote"});
+        let legacy:CreateVideoGenerationTask=serde_json::from_value(body.clone()).unwrap();
+        assert_eq!(legacy.reference_file_ids, vec!["source"]); assert!(legacy.validate().is_ok());
+        body["reference_file_ids"]=serde_json::json!([]);
+        assert!(serde_json::from_value::<CreateVideoGenerationTask>(body).unwrap().validate().is_err());
+    }
+
+    #[test]
+    fn video_quote_requires_ordered_images_and_source_membership() {
+        let mut request = CreateVideoQuote { model_code: "seedance_2_0_mini".into(), source_file_id: "first".into(), reference_file_ids: vec!["first".into(), "second".into()], aspect_ratio: "16:9".into(), resolution: "480P".into(), duration_secs: 4 };
+        assert!(request.validate().is_ok());
+        assert_eq!(serde_json::to_value(&request).unwrap()["reference_file_ids"], serde_json::json!(["first", "second"]));
+        request.reference_file_ids.clear(); assert!(request.validate().is_err());
+        request.reference_file_ids = vec!["second".into()]; assert!(request.validate().is_err());
+        request.reference_file_ids = vec!["first".into()]; request.duration_secs=16; assert!(request.validate().is_err());
+    }
+
+    #[test]
     fn video_quote_accepts_only_supported_parameters_and_serializes_decimal_credits() {
         for ratio in ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] {
             for resolution in ["480P", "720P", "1080P"] {
                 for duration_secs in [4, 15] {
                     let request = CreateVideoQuote {
                         model_code: "seedance".to_string(),
-                        source_file_id: "source-file".to_string(),
+                        source_file_id: "source-file".to_string(), reference_file_ids: vec!["source-file".to_string()],
                         aspect_ratio: ratio.to_string(),
                         resolution: resolution.to_string(),
                         duration_secs,
@@ -1150,7 +1607,7 @@ mod tests {
         ] {
             assert!(CreateVideoQuote {
                 model_code: "seedance".to_string(),
-                source_file_id: "source-file".to_string(),
+                source_file_id: "source-file".to_string(), reference_file_ids: vec!["source-file".to_string()],
                 aspect_ratio: ratio.to_string(),
                 resolution: resolution.to_string(),
                 duration_secs,
@@ -1179,7 +1636,7 @@ mod tests {
             task_type: "image_to_video".to_string(),
             model_code: "seedance".to_string(),
             prompt: "slow camera move".to_string(),
-            source_file_id: "source-file".to_string(),
+            source_file_id: "source-file".to_string(), reference_file_ids: vec!["source-file".to_string()],
             aspect_ratio: "16:9".to_string(),
             resolution: "1080P".to_string(),
             duration_secs: 15,

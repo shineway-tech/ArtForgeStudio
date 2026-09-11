@@ -1,53 +1,37 @@
 #[cfg(target_os = "windows")]
 use std::path::Path;
 use std::path::PathBuf;
+use crate::runtime::native_drag::CapturedNativeFileDrag;
 
-#[cfg(target_os = "windows")]
-pub fn start_thumbnail_drag_preview(path: PathBuf) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    std::thread::spawn(move || {
-        let _ = windows_preview::run(path);
-    });
-    true
+/// Synchronous: the caller's registered worker owns activity, external-worker
+/// admission and cancellation through the entire native preview loop.
+pub(crate) fn run_thumbnail_drag_preview_owned(
+    pixels: image::RgbaImage, keep_running: impl Fn() -> bool,
+) -> bool {
+    if !keep_running() { return false; }
+    #[cfg(target_os = "windows")]
+    { windows_preview::run_owned(pixels, keep_running).is_some() }
+    #[cfg(not(target_os = "windows"))]
+    { let _ = pixels; false }
 }
 
 #[cfg(target_os = "windows")]
-pub fn start_thumbnail_file_drag(path: PathBuf) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    // OLE drag-and-drop must begin on the STA/UI thread that received the
-    // pointer event. The winit GPU backend captures the mouse while dragging,
-    // so release that capture before handing control to DoDragDrop.
-    unsafe {
-        windows_sys::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture();
-    }
-    let result = windows_file_drag::run(path).is_ok();
-    unsafe {
-        windows_sys::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture();
-    }
-    result
+pub(crate) fn start_thumbnail_file_drag_captured(drag: CapturedNativeFileDrag) -> bool {
+    drag.consume(|path| {
+        // No OS effect before consumption has admitted the captured source.
+        unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture(); }
+        let result = windows_file_drag::run(path.to_owned()).is_ok();
+        unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture(); }
+        result
+    }).unwrap_or(false)
 }
-
 #[cfg(target_os = "macos")]
-pub fn start_thumbnail_file_drag(path: PathBuf) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    crate::platform::queue_macos_file_drag(path)
+pub(crate) fn start_thumbnail_file_drag_captured(drag: CapturedNativeFileDrag) -> bool {
+    crate::platform::queue_macos_file_drag(drag)
 }
-
-#[cfg(not(target_os = "windows"))]
-pub fn start_thumbnail_drag_preview(_path: PathBuf) -> bool {
-    false
-}
-
 #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-pub fn start_thumbnail_file_drag(_path: PathBuf) -> bool {
-    false
-}
+pub(crate) fn start_thumbnail_file_drag_captured(_drag: CapturedNativeFileDrag) -> bool { false }
+
 
 #[cfg(target_os = "windows")]
 mod windows_preview {
@@ -110,10 +94,11 @@ mod windows_preview {
         }
     }
 
-    pub fn run(path: PathBuf) -> Option<()> {
-        let pixels = preview_pixels(&path, PREVIEW_SIZE as u32)?;
+    pub(super) fn run_owned(image: image::RgbaImage, keep_running: impl Fn() -> bool) -> Option<()> {
+        if !keep_running() { return None; }
+        let pixels = preview_pixels(image, PREVIEW_SIZE as u32)?;
         unsafe {
-            if !left_button_down() {
+            if !keep_running() || !left_button_down() {
                 return None;
             }
             let preview = create_dib_preview(&pixels, PREVIEW_SIZE)?;
@@ -124,7 +109,7 @@ mod windows_preview {
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             let start = Instant::now();
             loop {
-                if !left_button_down() || start.elapsed() > Duration::from_secs(MAX_PREVIEW_SECONDS)
+                if !keep_running() || !left_button_down() || start.elapsed() > Duration::from_secs(MAX_PREVIEW_SECONDS)
                 {
                     break;
                 }
@@ -153,9 +138,9 @@ mod windows_preview {
         Some(())
     }
 
-    fn preview_pixels(path: &Path, size: u32) -> Option<Vec<u8>> {
-        let image = image::open(path).ok()?.to_rgba8();
+    fn preview_pixels(image: image::RgbaImage, size: u32) -> Option<Vec<u8>> {
         let (width, height) = image.dimensions();
+        if width == 0 || height == 0 { return None; }
         let side = width.min(height);
         let x = (width - side) / 2;
         let y = (height - side) / 2;

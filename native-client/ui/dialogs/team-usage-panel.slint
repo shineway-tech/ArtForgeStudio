@@ -1,0 +1,53 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { TeamEmpty, TeamPager, TeamLabels, TeamTable, TeamTableCell } from "team-controls.slint";
+
+export component TeamUsagePanel {
+    property <length> operation-width: 192px;
+    property <length> time-width: 136px;
+    property <length> amount-width: 90px;
+    property <length> status-width: 128px;
+    property <length> column-gap: 12px;
+    property <length> table-padding: 16px;
+    preferred-height: content.preferred-height;
+    content := VerticalLayout {
+        spacing: 12px; alignment: start;
+        if AppState.team-usage.length == 0 && !AppState.team-page-loading: TeamEmpty {
+            title: (AppState.en ? "No usage records" : "暂无用量记录");
+            detail: (AppState.en ? "Billing summaries will appear after the team uses credits." : "团队产生积分使用后，这里会显示计费摘要。");
+        }
+        if AppState.team-usage.length > 0: table := TeamTable {
+            property <length> member-width: self.table-width - 2 * root.table-padding - 4 * root.column-gap
+                - root.operation-width - root.time-width - root.amount-width - root.status-width;
+            minimum-table-width: 780px;
+            content-height: 42px + AppState.team-usage.length * 68px;
+            VerticalLayout {
+                width: table.table-width; spacing: 0px; alignment: start;
+                Rectangle {
+                    height: 42px; background: AppTheme.panel-soft;
+                    HorizontalLayout {
+                        padding-left: root.table-padding; padding-right: root.table-padding; spacing: root.column-gap;
+                        TeamTableCell { width: table.member-width; heading: true; text: AppState.en ? "Member" : "成员"; }
+                        TeamTableCell { width: root.operation-width; heading: true; text: AppState.en ? "Operation / Model" : "操作 / 模型"; }
+                        TeamTableCell { width: root.time-width; heading: true; text: AppState.en ? "Time" : "时间"; }
+                        TeamTableCell { width: root.amount-width; heading: true; text: AppState.en ? "Credits" : "积分"; center-aligned: true; }
+                        TeamTableCell { width: root.status-width; heading: true; text: AppState.en ? "Settlement / Result" : "结算状态 / 结果"; }
+                    }
+                }
+                for usage in AppState.team-usage: Rectangle {
+                    height: 68px; background: AppTheme.panel;
+                    HorizontalLayout {
+                        padding-left: root.table-padding; padding-right: root.table-padding; spacing: root.column-gap;
+                        TeamTableCell { width: table.member-width; text: usage.member-display-name; strong: true; }
+                        TeamTableCell { width: root.operation-width; text: TeamLabels.operation(usage.operation-kind); detail: usage.model-label; }
+                        TeamTableCell { width: root.time-width; text: usage.occurred-at; }
+                        TeamTableCell { width: root.amount-width; text: usage.credit-amount; strong: true; center-aligned: true; text-color: AppTheme.accent; }
+                        TeamTableCell { width: root.status-width; text: TeamLabels.phase(usage.phase); detail: TeamLabels.outcome(usage.outcome); }
+                    }
+                    Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: AppTheme.border; }
+                }
+            }
+        }
+        TeamPager { hide-empty-message: true; noun: (AppState.en ? "records" : "记录"); cursor: AppState.team-usage-next-cursor; next => { AppState.load-team-usage(AppState.team-usage-next-cursor); } }
+    }
+}

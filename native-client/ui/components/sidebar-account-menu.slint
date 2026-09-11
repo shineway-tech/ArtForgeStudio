@@ -1,5 +1,6 @@
 import { AppState } from "../app-state.slint";
 import { AppTheme } from "../theme.slint";
+import { NavGlyph } from "nav-glyph.slint";
 import { PillButton } from "pill-button.slint";
 
 component AccountAvatar inherits Rectangle {
@@ -47,29 +48,40 @@ component AccountMenuRow inherits Rectangle {
 
 export component SidebarCreditsButton inherits Rectangle {
     in property <bool> collapsed: false;
-    width: root.collapsed ? 56px : 80px;
-    height: 54px;
-    horizontal-stretch: 0;
+    width: root.collapsed ? 56px : 176px;
+    height: 38px;
     accessible-role: button;
-    accessible-label: (AppState.en ? "Credits " : "积分 ") + AppState.credit-balance;
+    accessible-label: AppState.account-amount-label;
     accessible-action-default => { AppState.navigate("credits"); }
-    border-radius: 10px;
-    border-width: 1px;
-    border-color: AppTheme.border;
-    background: credit-touch.has-hover ? AppTheme.panel-soft : AppTheme.panel;
-    Text {
-        x: 6px; y: 7px; width: parent.width - 12px; height: 20px;
-        text: AppState.credit-balance;
-        color: AppTheme.text;
-        font-size: root.collapsed ? 11px : 15px;
-        font-weight: 500; horizontal-alignment: center; vertical-alignment: center;
-        overflow: elide;
+    border-radius: 7px;
+    border-width: AppState.page == "credits" ? 1px : 0px;
+    border-color: AppTheme.accent;
+    background: AppState.page == "credits" || credit-touch.has-hover
+        ? AppTheme.panel-soft
+        : transparent;
+    Rectangle {
+        x: root.collapsed ? (parent.width - self.width) / 2 : 9px;
+        y: 8px;
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        background: AppTheme.panel-soft;
+        NavGlyph {
+            kind: "credits";
+            glyph-color: AppTheme.accent-dark;
+            width: parent.width;
+            height: parent.height;
+        }
     }
-    Text {
-        x: 4px; y: 30px; width: parent.width - 8px; height: 16px;
-        text: AppState.en ? "Credits" : "积分";
-        color: AppTheme.muted; font-size: root.collapsed ? 10px : 11px;
-        font-weight: 400; horizontal-alignment: center; vertical-alignment: center;
+    if !root.collapsed: Text {
+        x: 42px;
+        width: parent.width - 52px;
+        height: parent.height;
+        text: AppState.account-amount-label;
+        color: AppTheme.text;
+        font-size: AppState.settings-font-size * 1px;
+        font-weight: 500;
+        vertical-alignment: center;
         overflow: elide;
     }
     credit-touch := TouchArea {
@@ -137,7 +149,7 @@ export component SidebarAccountButton inherits Rectangle {
             }
             if AppState.logged-in: Text {
                 x: 162px; y: 64px; width: parent.width - 178px; height: 22px;
-                text: AppState.credit-balance; color: AppTheme.text; font-size: 12px;
+                text: AppState.account-amount-label; color: AppTheme.text; font-size: 12px;
                 horizontal-alignment: right; vertical-alignment: center; overflow: elide;
             }
             account-membership := PillButton {
@@ -162,7 +174,7 @@ export component SidebarAccountButton inherits Rectangle {
                 clicked => {
                     account-popup.close();
                     if AppState.logged-in {
-                        AppState.profile-section = "login";
+                        AppState.account-center-section = "login";
                         AppState.profile-name = AppState.nickname;
                         AppState.profile-open = true;
                     } else { root.login(); }

@@ -21,7 +21,11 @@ static EXTERNAL_IMAGE_DROP_WAKEUP: OnceLock<Mutex<Option<ExternalImageDropWakeup
     OnceLock::new();
 
 #[cfg(target_os = "macos")]
-static PENDING_MACOS_FILE_DRAG: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+thread_local! {
+    // Native dragging belongs to AppKit's original UI thread. A queued payload
+    // owns its context/file but no ordinary permit and performs no TLS in Drop.
+    static PENDING_MACOS_FILE_DRAG: std::cell::RefCell<Option<crate::runtime::native_drag::CapturedNativeFileDrag>> = const { std::cell::RefCell::new(None) };
+}
 
 fn external_image_drops() -> &'static Mutex<Vec<ExternalImageDrop>> {
     EXTERNAL_IMAGE_DROPS.get_or_init(|| Mutex::new(Vec::new()))
@@ -58,27 +62,28 @@ pub(crate) fn take_external_image_drops() -> Vec<ExternalImageDrop> {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn queue_macos_file_drag(path: PathBuf) -> bool {
-    if !path.is_file() {
-        return false;
+pub(crate) fn queue_macos_file_drag(drag: crate::runtime::native_drag::CapturedNativeFileDrag) -> bool {
+    // Drop a displaced held payload only after releasing the RefCell borrow.
+    match PENDING_MACOS_FILE_DRAG.try_with(|pending| pending.replace(Some(drag))) {
+        Ok(old) => { drop(old); true },
+        Err(_) => false,
     }
-    PENDING_MACOS_FILE_DRAG
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .map(|mut pending| {
-            *pending = Some(path);
-            true
-        })
-        .unwrap_or(false)
 }
 
 #[cfg(target_os = "macos")]
-fn take_macos_file_drag() -> Option<PathBuf> {
-    PENDING_MACOS_FILE_DRAG
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .ok()
-        .and_then(|mut pending| pending.take())
+fn take_macos_file_drag() -> Option<crate::runtime::native_drag::CapturedNativeFileDrag> {
+    PENDING_MACOS_FILE_DRAG.try_with(|pending| pending.take()).ok().flatten()
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn discard_macos_file_drag_if(
+    predicate: impl FnOnce(&crate::runtime::native_drag::CapturedNativeFileDrag) -> bool,
+) {
+    let old = PENDING_MACOS_FILE_DRAG.try_with(|pending| {
+        let mut pending = pending.borrow_mut();
+        if pending.as_ref().map(predicate).unwrap_or(false) { pending.take() } else { None }
+    }).ok().flatten();
+    drop(old);
 }
 
 #[cfg(windows)]
@@ -328,7 +333,7 @@ mod macos_drop_target {
     extern "C-unwind" fn mouse_dragged(view: &AnyObject, command: Sel, event: *mut AnyObject) {
         let native_drag_started = (unsafe { event.as_ref() })
             .and_then(|event| take_macos_file_drag().map(|path| (event, path)))
-            .map(|(event, path)| start_native_file_drag(view, event, path))
+            .map(|(event, drag)| drag.consume(|path| start_native_file_drag(view, event, path.to_owned())).unwrap_or(false))
             .unwrap_or(false);
         if native_drag_started {
             return;
@@ -358,9 +363,8 @@ mod macos_drop_target {
 
     #[allow(deprecated)]
     fn start_native_file_drag(view: &AnyObject, event: &AnyObject, path: PathBuf) -> bool {
-        let Ok(path) = std::fs::canonicalize(&path) else {
-            return false;
-        };
+        // The captured held source was checked at this actual consumption point.
+        // No canonicalize/re-adoption or ordinary lock may surround AppKit reentry.
         // SAFETY: This hook is installed exclusively on winit's NSView class and
         // receives AppKit's NSEvent argument for `mouseDragged:`.
         let view = unsafe { &*(view as *const AnyObject).cast::<NSView>() };

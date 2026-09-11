@@ -1,0 +1,95 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { TeamAction, TeamEmpty, TeamPager, TeamLabels, TeamTable, TeamTableCell } from "team-controls.slint";
+
+export component TeamInvitationsPanel {
+    in property <bool> received: false;
+    property <int> row-count: root.received ? AppState.pending-team-invitations.length : AppState.team-invitations.length;
+    property <length> quota-width: AppState.en ? 80px : 64px;
+    property <length> expires-width: 136px;
+    property <length> status-width: AppState.en ? 124px : 84px;
+    property <length> actions-width: AppState.en ? 188px : 148px;
+    property <length> recipient-width: AppState.en ? 148px : 124px;
+    property <length> delivery-width: 90px;
+    property <length> column-gap: 12px;
+    property <length> table-padding: 16px;
+    preferred-height: content.preferred-height;
+    content := VerticalLayout {
+        spacing: 12px; alignment: start;
+        if root.row-count == 0 && !AppState.team-page-loading: TeamEmpty {
+            title: root.received ? (AppState.en ? "No pending invitations" : "没有待处理的邀请") : (AppState.en ? "No sent invitations" : "还没有发出的邀请");
+            detail: root.received ? (AppState.en ? "Bind and verify the invited email to see team invitations here." : "绑定并验证受邀邮箱后，可在这里查看团队邀请。") : (AppState.en ? "Choose Invite member and enter an email and monthly credit limit." : "点击“邀请成员”，填写邮箱和成员月额度。");
+        }
+        if root.row-count > 0: table := TeamTable {
+            // Both header and rows use the same six-column width calculation.
+            property <length> identity-width: self.table-width - 2 * root.table-padding - 5 * root.column-gap
+                - root.quota-width - root.expires-width - root.status-width - root.actions-width
+                - (root.received ? root.recipient-width : root.delivery-width);
+            minimum-table-width: AppState.en ? 1020px : 840px;
+            content-height: 42px + root.row-count * 68px;
+            VerticalLayout {
+                width: table.table-width; spacing: 0px; alignment: start;
+                Rectangle {
+                    height: 42px; background: AppTheme.panel-soft;
+                    HorizontalLayout {
+                        padding-left: root.table-padding; padding-right: root.table-padding; spacing: root.column-gap;
+                        TeamTableCell { width: table.identity-width; heading: true; text: root.received ? (AppState.en ? "Team / Inviter" : "团队 / 邀请人") : (AppState.en ? "Recipient email" : "受邀邮箱"); }
+                        if root.received: TeamTableCell { width: root.recipient-width; heading: true; text: AppState.en ? "Recipient email" : "受邀邮箱"; }
+                        TeamTableCell { width: root.quota-width; heading: true; text: AppState.en ? "Monthly limit" : "月额度"; center-aligned: true; }
+                        TeamTableCell { width: root.expires-width; heading: true; text: AppState.en ? "Expires" : "到期时间"; }
+                        TeamTableCell { width: root.status-width; heading: true; text: AppState.en ? "Status" : "邀请状态"; }
+                        if !root.received: TeamTableCell { width: root.delivery-width; heading: true; text: AppState.en ? "Delivery" : "投递状态"; }
+                        TeamTableCell { width: root.actions-width; heading: true; text: AppState.en ? "Actions" : "操作"; center-aligned: true; }
+                    }
+                }
+                for invitation in (root.received ? AppState.pending-team-invitations : AppState.team-invitations): Rectangle {
+                    height: 68px; background: AppTheme.panel;
+                    HorizontalLayout {
+                        padding-left: root.table-padding; padding-right: root.table-padding; spacing: root.column-gap;
+                        TeamTableCell {
+                            width: table.identity-width; strong: true;
+                            text: root.received ? invitation.team-name : invitation.recipient-email-masked;
+                            detail: root.received ? invitation.owner-display-name : "";
+                        }
+                        if root.received: TeamTableCell { width: root.recipient-width; text: invitation.recipient-email-masked; }
+                        TeamTableCell { width: root.quota-width; text: invitation.monthly-limit; detail: AppState.en ? "credits" : "积分"; center-aligned: true; }
+                        TeamTableCell { width: root.expires-width; text: invitation.expires-at; }
+                        TeamTableCell {
+                            width: root.status-width;
+                            text: invitation.status == "pending" && !invitation.actionable ? (AppState.en ? "Unavailable" : "已过期 / 不可操作") : TeamLabels.invitation-status(invitation.status);
+                            text-color: invitation.actionable ? AppTheme.accent : AppTheme.muted;
+                        }
+                        if !root.received: TeamTableCell {
+                            width: root.delivery-width; text: TeamLabels.delivery-status(invitation.delivery-status);
+                            text-color: invitation.delivery-status == "failed" ? AppTheme.danger : AppTheme.muted;
+                        }
+                        Rectangle {
+                            width: root.actions-width;
+                            HorizontalLayout {
+                                y: (parent.height - 34px) / 2; height: 34px; alignment: center; spacing: 8px;
+                                if invitation.actionable: TeamAction {
+                                    width: AppState.en ? (root.received ? 116px : 90px) : 82px;
+                                    text: root.received ? (AppState.en ? "Accept invitation" : "接受邀请") : (AppState.en ? "Resend" : "重新发送");
+                                    disabled: AppState.team-page-loading || AppState.account-group-switching || (root.received ? AppState.team-joined-slot-occupied : !AppState.team-can-manage-invitations);
+                                    clicked => { AppState.open-team-form(root.received ? "accept" : "resend", invitation.invitation-id, invitation.version); }
+                                }
+                                if invitation.actionable: TeamAction {
+                                    width: AppState.en ? 62px : 58px; text: root.received ? (AppState.en ? "Decline" : "拒绝") : (AppState.en ? "Revoke" : "撤销"); danger: true;
+                                    disabled: AppState.team-page-loading || AppState.account-group-switching || (!root.received && !AppState.team-can-manage-invitations);
+                                    clicked => { AppState.open-team-form(root.received ? "decline" : "revoke", invitation.invitation-id, invitation.version); }
+                                }
+                                if !invitation.actionable: TeamTableCell { width: 62px; text: "—"; center-aligned: true; text-color: AppTheme.weak; }
+                            }
+                        }
+                    }
+                    Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: AppTheme.border; }
+                }
+            }
+        }
+        TeamPager {
+            hide-empty-message: true;
+            noun: (AppState.en ? "invitations" : "邀请"); cursor: root.received ? AppState.pending-team-invitations-next-cursor : AppState.team-invitations-next-cursor;
+            next => { if root.received { AppState.load-pending-team-invitations(AppState.pending-team-invitations-next-cursor); } else { AppState.load-team-invitations(AppState.team-invitations-next-cursor); } }
+        }
+    }
+}

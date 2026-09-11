@@ -14,7 +14,8 @@ export component DeleteConfirm {
 
     function confirm-pending-delete-local-file() {
         AppState.confirm-delete-local-file();
-        root.close-dialog();
+        // The asynchronous completion owns the pending deletion identity.
+        AppState.delete-confirm-open = false;
     }
 
     function confirm-pending-delete() {
@@ -34,6 +35,8 @@ export component DeleteConfirm {
             AppState.remove-canvas-link(AppState.pending-delete-id);
         } else {
             AppState.confirm-delete();
+            AppState.delete-confirm-open = false;
+            return;
         }
         root.close-dialog();
     }

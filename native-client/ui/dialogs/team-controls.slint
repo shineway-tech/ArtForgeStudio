@@ -1,0 +1,193 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { PillButton } from "../components/pill-button.slint";
+
+export component TeamAction inherits Rectangle {
+    in property <string> text;
+    in property <bool> disabled: false;
+    in property <bool> danger: false;
+    in property <bool> active: false;
+    in property <bool> tab-style: false;
+    property <bool> keyboard-focus: false;
+    callback clicked();
+    min-width: 44px;
+    height: 34px;
+    background: touch.has-hover && !root.disabled ? AppTheme.panel-soft : transparent;
+    border-radius: 6px;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: !root.disabled;
+    accessible-action-default => { if !root.disabled { root.clicked(); } }
+    forward-focus: focus;
+    Text {
+        width: parent.width; height: parent.height; text: root.text;
+        color: root.disabled ? AppTheme.weak : root.danger ? AppTheme.danger : root.tab-style && !root.active ? AppTheme.muted : AppTheme.accent;
+        font-size: 13px; font-weight: root.active ? 600 : 400;
+        horizontal-alignment: center; vertical-alignment: center; overflow: elide;
+        accessible-role: none;
+    }
+    if root.active: Rectangle { y: parent.height - 2px; height: 2px; width: parent.width; background: AppTheme.accent; }
+    touch := TouchArea { enabled: !root.disabled; mouse-cursor: root.disabled ? default : pointer; clicked => { root.keyboard-focus = false; focus.focus(); root.clicked(); } }
+    focus := FocusScope {
+        enabled: !root.disabled;
+        focus-on-click: false;
+        focus-gained(reason) => { root.keyboard-focus = reason == FocusReason.tab-navigation; }
+        key-pressed(event) => {
+            root.keyboard-focus = true;
+            if event.text == " " || event.text == "\n" { root.clicked(); return accept; }
+            return reject;
+        }
+    }
+    if focus.has-focus && (!root.tab-style || root.keyboard-focus): Rectangle { width: parent.width; height: parent.height; background: transparent; border-radius: 6px; border-width: 1px; border-color: AppTheme.accent; }
+}
+
+export component TeamEmpty {
+    in property <string> title;
+    in property <string> detail;
+    height: 130px;
+    Rectangle {
+        background: AppTheme.panel-soft; border-radius: 8px;
+        VerticalLayout {
+            padding: 22px; spacing: 10px; alignment: center;
+            Text { text: root.title; color: AppTheme.text; font-size: 16px; horizontal-alignment: center; }
+            Text { text: root.detail; color: AppTheme.muted; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
+        }
+    }
+}
+
+// Shared cells and horizontal viewport keep table columns aligned at smaller widths.
+export component TeamTable inherits Rectangle {
+    in property <length> minimum-table-width: 840px;
+    in property <length> content-height;
+    out property <length> table-width: max(root.width - 2px, root.minimum-table-width);
+    property <bool> scrollable: root.table-width > root.width - 2px;
+    property <length> scroll-x: 0px;
+    height: root.content-height + 2px + (root.scrollable ? 12px : 0px);
+    Rectangle {
+        width: parent.width; height: root.content-height + 2px;
+        background: AppTheme.panel; border-color: AppTheme.border; border-width: 1px;
+        border-radius: 8px; clip: true;
+        viewport := Flickable {
+            x: 1px; y: 1px; width: parent.width - 2px; height: root.content-height;
+            viewport-width: root.table-width; viewport-height: self.height;
+            viewport-x <=> root.scroll-x;
+            @children
+        }
+    }
+    if root.scrollable: track := Rectangle {
+        y: root.content-height + 5px; width: root.width; height: 6px;
+        background: AppTheme.panel-soft; border-radius: 3px;
+        Rectangle {
+            x: min(parent.width - self.width, max(0px, -root.scroll-x / root.table-width * parent.width));
+            width: parent.width * (root.width - 2px) / root.table-width;
+            height: parent.height; background: AppTheme.weak; border-radius: 3px;
+        }
+        TouchArea {
+            mouse-cursor: pointer;
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    root.scroll-x = -min(root.table-width - root.width + 2px, max(0px, self.mouse-x / self.width * root.table-width - root.width / 2));
+                }
+            }
+            moved => {
+                if self.pressed {
+                    root.scroll-x = -min(root.table-width - root.width + 2px, max(0px, self.mouse-x / self.width * root.table-width - root.width / 2));
+                }
+            }
+        }
+    }
+}
+
+export component TeamTableCell inherits Rectangle {
+    in property <string> text;
+    in property <string> detail;
+    in property <bool> heading: false;
+    in property <bool> strong: false;
+    in property <bool> right-aligned: false;
+    in property <bool> center-aligned: false;
+    in property <color> text-color: root.heading ? AppTheme.muted : AppTheme.text;
+    clip: true;
+    Text {
+        y: root.detail == "" ? 0px : (parent.height - 40px) / 2;
+        width: parent.width; height: root.detail == "" ? parent.height : 21px;
+        text: root.text; color: root.text-color; font-size: root.heading ? 12px : 13px;
+        font-weight: root.heading || root.strong ? 600 : 400;
+        vertical-alignment: center;
+        horizontal-alignment: root.center-aligned ? center : root.right-aligned ? right : left; overflow: elide;
+    }
+    if root.detail != "": Text {
+        y: (parent.height - 40px) / 2 + 22px; width: parent.width; height: 18px;
+        text: root.detail; color: AppTheme.muted; font-size: 12px;
+        vertical-alignment: center;
+        horizontal-alignment: root.center-aligned ? center : root.right-aligned ? right : left; overflow: elide;
+    }
+}
+
+export component TeamPager {
+    in property <string> cursor;
+    in property <string> noun;
+    in property <bool> hide-empty-message: false;
+    callback next();
+    height: 40px;
+    HorizontalLayout {
+        spacing: 10px; alignment: end;
+        if root.cursor != "" || !root.hide-empty-message: Text { text: root.cursor == "" ? (AppState.en ? "No more " : "没有更多") + root.noun : (AppState.en ? "More records available" : "本页已加载，可继续查看"); color: AppTheme.muted; font-size: 12px; vertical-alignment: center; }
+        PillButton { width: 84px; text: (AppState.en ? "Next" : "下一页"); disabled: root.cursor == "" || AppState.team-page-loading; clicked => { root.next(); } }
+    }
+}
+
+export global TeamLabels {
+    pure public function role-label(value: string) -> string {
+        return value == "主账号" || value == "Owner" ? (AppState.en ? "Owner" : "主账号")
+            : value == "成员" || value == "Member" ? (AppState.en ? "Member" : "成员") : value;
+    }
+    pure public function operation(value: string) -> string {
+        return value == "图片生成" ? (AppState.en ? "Image generation" : value)
+            : value == "视频生成" ? (AppState.en ? "Video generation" : value)
+            : value == "提示词优化" ? (AppState.en ? "Prompt optimization" : value)
+            : value == "图片增强" ? (AppState.en ? "Image enhancement" : value)
+            : value == "图片编辑" ? (AppState.en ? "Image editing" : value)
+            : value == "智能抠图" ? (AppState.en ? "Image cutout" : value)
+            : value == "移除背景" ? (AppState.en ? "Background removal" : value)
+            : value == "创作任务" ? (AppState.en ? "Creative task" : value) : value;
+    }
+    pure public function phase(value: string) -> string {
+        return value == "预留" ? (AppState.en ? "Reserved" : value)
+            : value == "已结算" ? (AppState.en ? "Settled" : value)
+            : value == "已释放" ? (AppState.en ? "Released" : value)
+            : value == "已退回" ? (AppState.en ? "Returned" : value)
+            : value == "处理中" ? (AppState.en ? "Processing" : value) : value;
+    }
+    pure public function outcome(value: string) -> string {
+        return value == "成功" ? (AppState.en ? "Succeeded" : value)
+            : value == "失败" ? (AppState.en ? "Failed" : value)
+            : value == "已取消" ? (AppState.en ? "Cancelled" : value)
+            : value == "处理中" ? (AppState.en ? "Processing" : value)
+            : value == "已过期" ? (AppState.en ? "Expired" : value)
+            : value == "待确认" ? (AppState.en ? "Pending" : value) : value;
+    }
+    pure public function notice(value: string) -> string {
+        return !AppState.en ? value
+            : value == "团队名称已更新" ? "Team name updated"
+            : value == "邀请已发送" ? "Invitation sent"
+            : value == "邀请已重新发送" ? "Invitation resent"
+            : value == "邀请已撤销" ? "Invitation revoked"
+            : value == "已加入团队，可在上方账号卡片中切换" ? "Team joined. Use the account cards above to switch."
+            : value == "已拒绝邀请" ? "Invitation declined"
+            : value == "成员额度已更新" ? "Member limit updated"
+            : value == "成员已暂停" ? "Member suspended"
+            : value == "成员已恢复" ? "Member resumed"
+            : value == "成员已移除" ? "Member removed"
+            : value == "已退出团队" ? "Team left"
+            : value == "操作已完成" ? "Action completed" : value;
+    }
+    pure public function member-status(status: string) -> string {
+        return status == "active" ? (AppState.en ? "Active" : "正常") : status == "suspended" ? (AppState.en ? "Suspended" : "已暂停") : status == "removed" ? (AppState.en ? "Removed" : "已移除") : status == "left" ? (AppState.en ? "Left" : "已退出") : (AppState.en ? "Unavailable" : "不可用");
+    }
+    pure public function invitation-status(status: string) -> string {
+        return status == "pending" ? (AppState.en ? "Pending" : "待处理") : status == "accepted" ? (AppState.en ? "Accepted" : "已接受") : status == "declined" ? (AppState.en ? "Declined" : "已拒绝") : status == "revoked" ? (AppState.en ? "Revoked" : "已撤销") : status == "expired" ? (AppState.en ? "Expired" : "已过期") : status == "superseded" ? (AppState.en ? "Superseded" : "已失效") : (AppState.en ? "Unavailable" : "不可用");
+    }
+    pure public function delivery-status(status: string) -> string {
+        return status == "delivered" ? (AppState.en ? "Delivered" : "已投递") : status == "sent" ? (AppState.en ? "Sent" : "已发送") : status == "failed" ? (AppState.en ? "Delivery failed" : "投递失败") : status == "retry_pending" ? (AppState.en ? "Retry queued" : "等待重试") : status == "processing" ? (AppState.en ? "Sending" : "发送中") : (AppState.en ? "Queued" : "等待投递");
+    }
+}

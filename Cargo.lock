@@ -178,7 +178,7 @@ checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
 name = "artforge-studio-native"
-version = "1.0.22"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -196,6 +196,7 @@ dependencies = [
  "reqwest",
  "rfd",
  "rusqlite",
+ "rustix 1.1.4",
  "serde",
  "serde_json",
  "sha2",
@@ -210,6 +211,7 @@ dependencies = [
  "windows-sys 0.61.2",
  "winresource",
  "wry",
+ "zeroize",
 ]
 
 [[package]]

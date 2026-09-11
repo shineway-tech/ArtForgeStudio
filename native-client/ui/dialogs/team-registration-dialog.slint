@@ -1,0 +1,38 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { Field } from "../components/field.slint";
+import { PillButton } from "../components/pill-button.slint";
+
+export component TeamRegistrationDialog {
+    if AppState.team-registration-open: Rectangle {
+        width: parent.width; height: parent.height; background: #00000066;
+        TouchArea { width: parent.width; height: parent.height; }
+        Rectangle {
+            width: min(620px, parent.width - 40px); height: min(660px, parent.height - 40px);
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            background: AppTheme.panel; border-radius: 16px;
+            ScrollView {
+                width: parent.width; height: parent.height;
+                VerticalLayout {
+                    padding: 28px; spacing: 16px;
+                    Text { text: "完成团队邀请注册"; font-size: 24px; color: AppTheme.text; }
+                    Text { text: AppState.team-registration-selection-state == "multiple" ? "你有多个团队邀请。注册后请在账号中心选择要加入的团队。" : "设置登录密码后完成注册，并确认邀请团队。"; color: AppTheme.muted; wrap: word-wrap; }
+                    for invitation in AppState.team-registration-invitations: Text {
+                        text: invitation.team-name + " · " + invitation.owner-display-name + " · 月额度 " + invitation.monthly-limit;
+                        color: AppTheme.text; wrap: word-wrap;
+                    }
+                    Text { text: "验证有效期至 " + AppState.team-registration-expires-at; color: AppTheme.muted; }
+                    Field { label: "密码（8–20 字符，含大小写字母和数字）"; secret: true; value <=> AppState.team-registration-password; enabled: !AppState.team-registration-busy; }
+                    Field { label: "确认密码"; secret: true; value <=> AppState.team-registration-password-confirmation; enabled: !AppState.team-registration-busy; }
+                    Text { text: AppState.team-registration-error; color: AppTheme.danger; wrap: word-wrap; }
+                    HorizontalLayout {
+                        spacing: 12px;
+                        PillButton { text: "取消"; clicked => { AppState.cancel-team-registration(); } }
+                        PillButton { text: AppState.team-registration-busy ? "正在完成…" : "完成注册"; primary: true; disabled: AppState.team-registration-busy; clicked => { AppState.complete-team-registration(); } }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -17,6 +17,81 @@ const PREVIEW_QUEUE_CAPACITY: usize = 256;
 const DISK_CLEANUP_WRITE_BYTES: u64 = 8 * 1024 * 1024;
 const PREVIEW_RETRY_ATTEMPTS: u8 = 20;
 
+pub(super) struct PreparedDeliveryPreview {
+    width: u32,
+    height: u32,
+    preview_width: u32,
+    preview_height: u32,
+    rgba: Vec<u8>,
+}
+
+impl PreparedDeliveryPreview {
+    pub(super) fn dimensions(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+}
+
+pub(super) fn prepare_delivery_preview_for_namespace(
+    authority: &NamespaceStorageAuthority,
+    file: &mut NamespaceManagedFile,
+) -> Result<PreparedDeliveryPreview> {
+    use image::ImageDecoder;
+    authority.with_regular_reader(file, |stream| {
+        let reader =
+            image::ImageReader::new(std::io::BufReader::new(stream)).with_guessed_format()?;
+        let mut decoder = reader.into_decoder()?;
+        let (width, height) = decoder.dimensions();
+        anyhow::ensure!(
+            width > 0
+                && height > 0
+                && u64::from(width) * u64::from(height) <= MAX_PREVIEW_SOURCE_PIXELS,
+            "delivery image dimensions exceed preview policy"
+        );
+        let orientation = decoder.orientation()?;
+        let mut decoded = image::DynamicImage::from_decoder(decoder)?;
+        decoded.apply_orientation(orientation);
+        let (width, height) = (decoded.width(), decoded.height());
+        let edge = PreviewPurpose::Reference.longest_edge();
+        let rgba = if width.max(height) > edge {
+            decoded.thumbnail(edge, edge)
+        } else {
+            decoded
+        }
+        .to_rgba8();
+        Ok(PreparedDeliveryPreview {
+            width,
+            height,
+            preview_width: rgba.width(),
+            preview_height: rgba.height(),
+            rgba: rgba.into_raw(),
+        })
+    })
+}
+
+pub(super) fn prepare_owned_preview(persistence: &PrivatePersistence, path: &Path, purpose: PreviewPurpose) -> Result<PreparedDeliveryPreview> {
+    let _effect = persistence.begin_effect()?;
+    anyhow::ensure!(persistence.owns_path(path), "preview source is outside captured namespace");
+    let authority = persistence.storage_authority()?;
+    let decoded = decode_owned_reference_source(&authority, path)?;
+    let (width, height) = (decoded.width(), decoded.height());
+    let edge = purpose.longest_edge();
+    let rgba = if width.max(height) > edge { decoded.thumbnail(edge, edge) } else { decoded }.to_rgba8();
+    Ok(PreparedDeliveryPreview { width, height, preview_width: rgba.width(), preview_height: rgba.height(), rgba: rgba.into_raw() })
+}
+pub(super) fn load_owned_preview_image(persistence: &PrivatePersistence, path: &Path, purpose: PreviewPurpose) -> Result<Image> {
+    let _effect = persistence.begin_effect()?;
+    let prepared = prepare_owned_preview(persistence, path, purpose)?;
+    Ok(materialize_delivery_preview(&prepared))
+}
+pub(super) fn materialize_delivery_preview(preview: &PreparedDeliveryPreview) -> Image {
+    let pixels = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+        &preview.rgba,
+        preview.preview_width,
+        preview.preview_height,
+    );
+    Image::from_rgba8(pixels)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PreviewPurpose {
     Gallery,

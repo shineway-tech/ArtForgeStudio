@@ -1,6 +1,6 @@
 [package]
 name = "artforge-studio-native"
-version = "1.0.22"
+version = "2.0.0"
 edition = "2021"
 
 [[bin]]
@@ -29,6 +29,10 @@ sha2 = "0.10"
 slint = { version = "=1.17.1", default-features = false, features = ["compat-1-2", "std", "backend-winit", "renderer-femtovg", "renderer-software", "raw-window-handle-06", "system-tray"] }
 thiserror = { workspace = true }
 uuid = { version = "1", features = ["v4", "serde"] }
+zeroize = "1"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
@@ -52,8 +56,13 @@ windows = { version = "0.61.3", features = [
 windows-core = "=0.61.2"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_Graphics_Gdi",
+    "Win32_Storage_FileSystem",
     "Win32_System_LibraryLoader",
+    "Win32_System_IO",
+    "Win32_System_WindowsProgramming",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }

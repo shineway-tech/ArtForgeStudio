@@ -454,7 +454,7 @@ fn poll_binding_status_result(
                 state.set_wechat_bound_name(nickname.clone().into());
                 if !nickname.trim().is_empty() {
                     state.set_nickname(nickname.into());
-                    save_user_profile(&app);
+                    save_user_profile(&app, &context.store.borrow());
                 }
                 state.set_wechat_bind_login_id("".into());
                 state.set_wechat_bind_qr_ready(false);

@@ -1,6 +1,5 @@
 use super::*;
 use crate::directory_migration::remap_path;
-use std::sync::OnceLock;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub(super) struct DirectoryLocations {
@@ -22,20 +21,16 @@ pub(super) struct DirectoryRelocation {
     pub destination: PathBuf,
 }
 
-fn locations_slot() -> &'static Mutex<DirectoryLocations> {
-    static LOCATIONS: OnceLock<Mutex<DirectoryLocations>> = OnceLock::new();
-    LOCATIONS.get_or_init(|| Mutex::new(DirectoryLocations::default()))
-}
-
+// TEMP(team-accounts): read-only defaults for callers removed in Task 10.
+// Persisted v1 locations are decoded only from quarantine; no mutable global
+// owns private roots or export preferences.
 pub(super) fn directory_locations() -> DirectoryLocations {
-    locations_slot()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
+    DirectoryLocations::default()
 }
 
-pub(super) fn set_directory_locations(locations: DirectoryLocations) {
-    *locations_slot().lock().unwrap_or_else(|e| e.into_inner()) = locations;
+// TEMP(team-accounts): unreachable legacy worker compile bridge, removed in Task 10.
+pub(super) fn persist_directory_locations_checked(_locations: DirectoryLocations) -> Result<()> {
+    anyhow::bail!("目录迁移暂不可用")
 }
 
 impl DirectoryLocations {

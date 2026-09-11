@@ -1,8 +1,94 @@
 use super::*;
 
-enum CreditRedemptionOutcome {
+
+pub(super) fn prepare_activation_credit_ledger(packs:&[CreditPackView],items:&[CreditLedgerItem],next_cursor:Option<String>) -> (PreparedUiProjection,CreditLedgerPagination) {
+    let mut ui=PreparedUiProjection::default();
+    let records=items.iter().map(credit_record).collect::<Vec<_>>();
+    let orders=items.iter().filter_map(|item|invoice_order(item,packs)).collect::<Vec<_>>();
+    let mut pagination=CreditLedgerPagination::default();
+    pagination.reset(next_cursor);
+    let (page,has_previous,has_next)=pagination_view(&pagination);
+    ui.push(ModelRc::new(VecModel::from(records)),|state,value|state.set_credit_records(value));
+    ui.push(ModelRc::new(VecModel::from(orders)),|state,value|state.set_invoice_orders(value));
+    ui.push(page,|state,value|state.set_credit_ledger_page(value));
+    ui.push(has_previous,|state,value|state.set_credit_ledger_has_previous(value));
+    ui.push(has_next,|state,value|state.set_credit_ledger_has_next(value));
+    ui.push(false,|state,value|state.set_credit_ledger_loading(value));
+    ui.push("".into(),|state,value|state.set_credit_ledger_message(value));
+    (ui,pagination)
+}
+#[cfg(test)]
+#[test]
+fn core_redemption_retains_exact_payer_key_and_body_across_selection_changes() {
+    let scope = BillingScope { request: GroupRequestScope {
+        session: SessionScope { owner_user_id: "11111111-1111-4111-8111-111111111111".into(), auth_epoch: 9 },
+        account_group_id: "22222222-2222-4222-8222-222222222222".into(),
+    }, context_epoch: 4 };
+    let mut pending = BTreeMap::new();
+    assert_eq!(credit_redemption_request_id_for_billing(&mut pending, &scope, "CODE-A", || "request-a".into()).unwrap(), "request-a");
+    assert_eq!(credit_redemption_request_id_for_billing(&mut pending, &scope, "CODE-A", || panic!("must reuse the retained key")).unwrap(), "request-a");
+    let mut other = scope.clone(); other.request.account_group_id = "33333333-3333-4333-8333-333333333333".into(); other.context_epoch = 5;
+    assert!(credit_redemption_request_id_for_billing(&mut pending, &other, "CODE-A", || panic!("cannot create another payer")).is_err());
+    assert!(credit_redemption_request_id_for_billing(&mut pending, &scope, "CODE-B", || panic!("cannot replace an ambiguous body")).is_err());
+    assert_eq!(pending.get(&scope.request.session.owner_user_id).unwrap().client_request_id, "request-a");
+}
+
+pub(super) enum CreditRedemptionOutcome {
     Redeemed(CreditRedemptionResult),
     Failed(ApiError),
+}
+#[derive(Clone)]
+pub(super) struct CreditRedemptionReceipt {
+    session: SessionScope, payer: String, code: String, key: String,
+    visible_scope: Option<BillingScope>, retained_replay: bool,
+}
+pub(super) struct PreparedCreditRedemption {
+    receipt: CreditRedemptionReceipt,
+    billing: Option<BillingScope>,
+    replay: Option<SavedReplayRequest>,
+}
+impl PreparedCreditRedemption {
+    pub(super) fn run(self, backend: &BackendRuntime) -> (CreditRedemptionReceipt, CreditRedemptionOutcome) {
+        let result = (|| {
+            let _activity = backend.api.begin_user_work(&self.receipt.session)?;
+            if let Some(scope) = &self.billing {
+                AccountApi::new(backend.api.clone()).redeem_credit_code_billing(&self.receipt.code, &self.receipt.key, scope)
+            } else {
+                backend.api.replay_saved(self.replay.as_ref().ok_or(ApiError::AuthenticationRequired)?).map(|response| response.data)
+            }
+        })();
+        let outcome = match result { Ok(value) => CreditRedemptionOutcome::Redeemed(value), Err(error) => CreditRedemptionOutcome::Failed(error) };
+        (self.receipt, outcome)
+    }
+}
+pub(super) fn prepare_credit_redemption(app: &AppWindow, context: &AppContext, code: &str) -> Result<PreparedCreditRedemption, ApiError> {
+    let session = context.current_account_session_scope().ok_or(ApiError::AuthenticationRequired)?;
+    let existing = context.store.borrow().pending_credit_redemptions_by_owner.get(&session.owner_user_id).cloned();
+    if let Some(existing) = existing {
+        if existing.code != code { return Err(transition_error("原兑换请求尚未确认，请重试原兑换码")); }
+        let persistence = context.store.borrow().private_persistence.clone().ok_or(ApiError::AuthenticationRequired)?;
+        let replay = SavedReplayRequest::redemption(persistence, &session, &existing.client_request_id).map_err(transition_error)?;
+        if replay.payer() != existing.billing_account_group_id || replay.body() != serde_json::json!({"code": existing.code, "client_request_id": existing.client_request_id}) {
+            return Err(transition_error("原兑换请求记录不一致，未发送"));
+        }
+        let visible_scope = context.billing_context.confirmed_scope().filter(|scope|
+            scope.request.session == session && scope.request.account_group_id == existing.billing_account_group_id);
+        return Ok(PreparedCreditRedemption {
+            receipt: CreditRedemptionReceipt { session, payer: existing.billing_account_group_id, code: existing.code, key: existing.client_request_id, visible_scope, retained_replay: true },
+            billing: None, replay: Some(replay),
+        });
+    }
+    let (billing, _authority, _activity) = context.capture_billing_action(KnownCapability::Redeem)?;
+    let before = context.store.borrow().pending_credit_redemptions_by_owner.clone();
+    let key = credit_redemption_request_id_for_billing(&mut context.store.borrow_mut().pending_credit_redemptions_by_owner, &billing, code, || Uuid::new_v4().to_string())?;
+    if let Err(error) = save_local_store_checked(app, &context.store.borrow()) {
+        context.store.borrow_mut().pending_credit_redemptions_by_owner = before;
+        return Err(transition_error(error));
+    }
+    Ok(PreparedCreditRedemption {
+        receipt: CreditRedemptionReceipt { session, payer: billing.request.account_group_id.clone(), code: code.into(), key, visible_scope: Some(billing.clone()), retained_replay: false },
+        billing: Some(billing), replay: None,
+    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -30,9 +116,25 @@ fn credit_redemption_request_id(
         PendingCreditRedemption {
             code: code.to_string(),
             client_request_id: client_request_id.clone(),
+            billing_account_group_id: String::new(),
         },
     );
     client_request_id
+}
+fn credit_redemption_request_id_for_billing(
+    pending: &mut BTreeMap<String, PendingCreditRedemption>, scope: &BillingScope, code: &str,
+    create_request_id: impl FnOnce() -> String,
+) -> std::result::Result<String, ApiError> {
+    let owner = &scope.request.session.owner_user_id;
+    if let Some(saved) = pending.get(owner) {
+        if saved.code != code || saved.billing_account_group_id != scope.request.account_group_id {
+            return Err(ApiError::LocalState { message: "之前的兑换请求尚未确认，原付款账号和兑换码已保留，请切回原账号重试".into() });
+        }
+        return Ok(saved.client_request_id.clone());
+    }
+    let key = create_request_id();
+    pending.insert(owner.clone(), PendingCreditRedemption { code: code.into(), client_request_id: key.clone(), billing_account_group_id: scope.request.account_group_id.clone() });
+    Ok(key)
 }
 
 fn settle_credit_redemption(
@@ -219,23 +321,17 @@ pub(super) fn wire_credit_callbacks(app: &AppWindow, context: AppContext) {
             };
             state.set_credit_redemption_code(code.clone().into());
 
-            let Some(session_scope) = context.current_account_session_scope() else {
-                state.set_credit_redemption_message(if state.get_en() {
-                    "Your session has expired. Please sign in again.".into()
-                } else {
-                    "登录状态已失效，请重新登录".into()
-                });
-                return;
-            };
-
-            let client_request_id = {
-                let mut store = context.store.borrow_mut();
-                credit_redemption_request_id(
-                    &mut store.pending_credit_redemptions_by_owner,
-                    &session_scope.owner_user_id,
-                    &code,
-                    || Uuid::new_v4().to_string(),
-                )
+            let prepared = match prepare_credit_redemption(&app, &context, &code) {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    let message = if matches!(&error, ApiError::LocalState { .. }) {
+                        error.user_message()
+                    } else {
+                        error.redemption_message(state.get_en())
+                    };
+                    state.set_credit_redemption_message(message.into());
+                    return;
+                }
             };
             state.set_credit_redemption_busy(true);
             state.set_credit_redemption_message(if state.get_en() {
@@ -244,25 +340,17 @@ pub(super) fn wire_credit_callbacks(app: &AppWindow, context: AppContext) {
                 "正在兑换…".into()
             });
 
-            let api = AccountApi::new(backend.api.clone());
-            let submitted_code = code.clone();
-            let submitted_request_id = client_request_id.clone();
-            let worker_scope = session_scope.clone();
+            let receipt = prepared.receipt.clone();
+            let worker_backend = backend.clone();
             let (sender, receiver) = mpsc::channel();
             std::thread::spawn(move || {
-                let outcome =
-                    match api.redeem_credit_code_scoped(&code, &client_request_id, &worker_scope) {
-                        Ok(result) => CreditRedemptionOutcome::Redeemed(result),
-                        Err(error) => CreditRedemptionOutcome::Failed(error),
-                    };
+                let (_, outcome) = prepared.run(&worker_backend);
                 let _ = sender.send(outcome);
             });
             poll_credit_redemption(
                 app.as_weak(),
                 context.clone(),
-                session_scope,
-                submitted_code,
-                submitted_request_id,
+                receipt,
                 Rc::new(RefCell::new(Some(receiver))),
             );
         });
@@ -324,18 +412,16 @@ pub(super) fn wire_credit_callbacks(app: &AppWindow, context: AppContext) {
 fn poll_credit_redemption(
     app_weak: Weak<AppWindow>,
     context: AppContext,
-    session_scope: SessionScope,
-    submitted_code: String,
-    submitted_request_id: String,
+    receipt: CreditRedemptionReceipt,
     receiver: Rc<RefCell<Option<mpsc::Receiver<CreditRedemptionOutcome>>>>,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
+        let Some(backend) = context.backend.as_ref() else { return; };
+        let Ok(_effect) = backend.api.upgrade_latch().begin_ordinary_blocking_effect() else { receiver.borrow_mut().take(); return; };
         if !redemption_poll_is_current(
             &app_weak,
             &context,
-            &session_scope,
-            &submitted_code,
-            &submitted_request_id,
+            &receipt,
             &receiver,
         ) {
             return;
@@ -363,9 +449,7 @@ fn poll_credit_redemption(
             poll_credit_redemption(
                 app_weak,
                 context,
-                session_scope,
-                submitted_code,
-                submitted_request_id,
+                receipt,
                 receiver,
             );
             return;
@@ -373,9 +457,7 @@ fn poll_credit_redemption(
         if !redemption_poll_is_current(
             &app_weak,
             &context,
-            &session_scope,
-            &submitted_code,
-            &submitted_request_id,
+            &receipt,
             &receiver,
         ) {
             return;
@@ -383,8 +465,22 @@ fn poll_credit_redemption(
         let Some(app) = app_weak.upgrade() else {
             return;
         };
+        complete_credit_redemption(&app, &context, &receipt, outcome);
+    });
+}
+
+pub(super) fn complete_credit_redemption(app: &AppWindow, context: &AppContext, receipt: &CreditRedemptionReceipt, outcome: CreditRedemptionOutcome) {
+        let Some(backend) = context.backend.as_ref() else { return; };
+        let Ok(_effect) = backend.api.upgrade_latch().begin_ordinary_blocking_effect() else { return; };
+        let Ok(_activity) = backend.api.begin_user_work(&receipt.session) else { return; };
+        if !redemption_receipt_is_current(context, receipt) { return; }
+        let session_scope = receipt.session.clone();
+        let submitted_code = &receipt.code;
+        let submitted_request_id = &receipt.key;
+        let visible = receipt.visible_scope.as_ref().is_some_and(|scope| context.billing_context.is_current(scope));
         let state = app.global::<AppState>();
         state.set_credit_redemption_busy(false);
+        let pending_before = context.store.borrow().pending_credit_redemptions_by_owner.clone();
         match outcome {
             CreditRedemptionOutcome::Redeemed(result) => {
                 settle_credit_redemption(
@@ -397,6 +493,15 @@ fn poll_credit_redemption(
                     &submitted_request_id,
                     CreditRedemptionSettlement::Succeeded,
                 );
+                if save_local_store_checked(&app, &context.store.borrow()).is_err() {
+                    context.store.borrow_mut().pending_credit_redemptions_by_owner = pending_before;
+                    state.set_credit_redemption_message("兑换结果已收到，但本地确认失败；原请求已保留，请重试".into());
+                    return;
+                }
+                if !visible {
+                    state.set_credit_redemption_message("原付款账号组的兑换已确认；当前账号组余额未更改".into());
+                    return;
+                }
                 state.set_credit_redemption_code("".into());
                 state.set_credit_redemption_success(true);
                 state.set_credit_redemption_message(
@@ -434,7 +539,7 @@ fn poll_credit_redemption(
                 );
             }
             CreditRedemptionOutcome::Failed(error) => {
-                let settlement = if error.should_preserve_redemption_retry() {
+                let settlement = if receipt.retained_replay || error.should_preserve_redemption_retry() {
                     CreditRedemptionSettlement::AmbiguousFailure
                 } else {
                     CreditRedemptionSettlement::DefinitiveFailure
@@ -449,12 +554,14 @@ fn poll_credit_redemption(
                     &submitted_request_id,
                     settlement,
                 );
+                if save_local_store_checked(&app, &context.store.borrow()).is_err() {
+                    context.store.borrow_mut().pending_credit_redemptions_by_owner = pending_before;
+                }
                 state.set_credit_redemption_success(false);
                 state
                     .set_credit_redemption_message(error.redemption_message(state.get_en()).into());
             }
         }
-    });
 }
 
 fn request_authoritative_credit_account(
@@ -472,17 +579,20 @@ fn request_authoritative_credit_account(
     let Some(backend) = context.backend.clone() else {
         return;
     };
+    let Ok((billing_scope, _authority, activity)) = context.capture_billing_action(KnownCapability::ReadGroupFinance) else { return; };
+    if billing_scope.request.session != session_scope { return; }
     let request_epoch = begin_credit_account_refresh(&mut context.store.borrow_mut());
-    let worker_scope = session_scope.clone();
+    let worker_scope = billing_scope.clone();
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
-        let result = AccountApi::new(backend.api.clone()).credit_account_scoped(&worker_scope);
+        let result = if activity.is_quiescing() { Err(ApiError::AuthenticationRequired) } else { AccountApi::new(backend.api.clone()).credit_account_billing(&worker_scope) };
+        drop(activity);
         let _ = sender.send(result);
     });
     poll_authoritative_credit_account(
         app.as_weak(),
         context,
-        session_scope,
+        billing_scope,
         credit_sync_epoch,
         request_epoch,
         Rc::new(RefCell::new(Some(receiver))),
@@ -492,13 +602,15 @@ fn request_authoritative_credit_account(
 fn poll_authoritative_credit_account(
     app_weak: Weak<AppWindow>,
     context: AppContext,
-    session_scope: SessionScope,
+    billing_scope: BillingScope,
     credit_sync_epoch: u64,
     request_epoch: u64,
     receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<CreditAccount, ApiError>>>>>,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
-        if !credit_poll_is_current(&app_weak, &context, &session_scope, &receiver) {
+        let Some(backend) = context.backend.as_ref() else { return; };
+        let Ok(_effect) = backend.api.upgrade_latch().begin_ordinary_blocking_effect() else { receiver.borrow_mut().take(); return; };
+        if !credit_poll_is_current(&app_weak, &context, &billing_scope, &receiver) {
             return;
         }
         if !credit_sync_epoch_is_current(&context.store.borrow(), credit_sync_epoch)
@@ -528,14 +640,14 @@ fn poll_authoritative_credit_account(
             poll_authoritative_credit_account(
                 app_weak,
                 context,
-                session_scope,
+                billing_scope,
                 credit_sync_epoch,
                 request_epoch,
                 receiver,
             );
             return;
         };
-        if !credit_poll_is_current(&app_weak, &context, &session_scope, &receiver)
+        if !credit_poll_is_current(&app_weak, &context, &billing_scope, &receiver)
             || !credit_sync_epoch_is_current(&context.store.borrow(), credit_sync_epoch)
             || !credit_account_refresh_is_current(&context.store.borrow(), request_epoch)
         {
@@ -558,26 +670,29 @@ fn poll_authoritative_credit_account(
 fn redemption_poll_is_current<T>(
     app_weak: &Weak<AppWindow>,
     context: &AppContext,
-    session_scope: &SessionScope,
-    submitted_code: &str,
-    submitted_request_id: &str,
+    receipt: &CreditRedemptionReceipt,
     receiver: &Rc<RefCell<Option<mpsc::Receiver<T>>>>,
 ) -> bool {
-    if !credit_poll_is_current(app_weak, context, session_scope, receiver) {
+    if context.account_scope_disposition(&receipt.session) == AccountScopeDisposition::CapturedTerminal {
+        receiver.borrow_mut().take();
+        if let Some(app) = app_weak.upgrade() { sign_out_locally(&app, context, true, Some(receipt.session.auth_epoch)); }
         return false;
     }
-    let request_is_current = context
+    let current = redemption_receipt_is_current(context, receipt);
+    if !current { receiver.borrow_mut().take(); }
+    current
+}
+fn redemption_receipt_is_current(context: &AppContext, receipt: &CreditRedemptionReceipt) -> bool {
+    if !context.backend.as_ref().is_some_and(|backend| backend.api.user_work_is_current(&receipt.session)) { return false; }
+    context
         .store
         .borrow()
         .pending_credit_redemptions_by_owner
-        .get(&session_scope.owner_user_id)
+        .get(&receipt.session.owner_user_id)
         .is_some_and(|pending| {
-            pending.code == submitted_code && pending.client_request_id == submitted_request_id
-        });
-    if !request_is_current {
-        receiver.borrow_mut().take();
-    }
-    request_is_current
+            pending.code == receipt.code && pending.client_request_id == receipt.key
+                && pending.billing_account_group_id == receipt.payer
+        })
 }
 
 fn local_redemption_validation_message(message: &str, english: bool) -> &str {
@@ -639,9 +754,9 @@ fn request_credit_ledger_page(
     credit_sync_epoch: Option<u64>,
 ) {
     let state = app.global::<AppState>();
-    let Some(session_scope) = context.current_account_session_scope() else {
-        state.set_credit_ledger_message("登录状态已失效，请重新登录".into());
-        return;
+    let (billing_scope, _authority, activity) = match context.capture_billing_action(KnownCapability::ReadGroupFinance) {
+        Ok(captured) => captured,
+        Err(error) => { state.set_credit_ledger_message(error.user_message().into()); return; }
     };
     let Some(backend) = context.backend.clone() else {
         return;
@@ -660,21 +775,22 @@ fn request_credit_ledger_page(
     state.set_credit_ledger_message("".into());
 
     let request_cursor = cursor.clone();
-    let worker_scope = session_scope.clone();
+    let worker_scope = billing_scope.clone();
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
-        let result = AccountApi::new(backend.api.clone()).ledger_page_scoped(
+        let result = if activity.is_quiescing() { Err(ApiError::AuthenticationRequired) } else { AccountApi::new(backend.api.clone()).ledger_page_billing(
             request_cursor.as_deref(),
             CREDIT_LEDGER_PAGE_SIZE,
             &worker_scope,
-        );
+        ) };
+        drop(activity);
         let _ = sender.send(result);
     });
     poll_credit_ledger_page(
         app.as_weak(),
         context,
         store,
-        session_scope,
+        billing_scope,
         credit_sync_epoch,
         request_epoch,
         target_index,
@@ -687,7 +803,7 @@ fn poll_credit_ledger_page(
     app_weak: Weak<AppWindow>,
     context: AppContext,
     store: Rc<RefCell<Store>>,
-    session_scope: SessionScope,
+    billing_scope: BillingScope,
     credit_sync_epoch: u64,
     request_epoch: u64,
     target_index: usize,
@@ -695,7 +811,9 @@ fn poll_credit_ledger_page(
     receiver: Rc<RefCell<Option<mpsc::Receiver<std::result::Result<CreditLedgerPage, ApiError>>>>>,
 ) {
     slint::Timer::single_shot(Duration::from_millis(80), move || {
-        if !credit_poll_is_current(&app_weak, &context, &session_scope, &receiver) {
+        let Some(backend) = context.backend.as_ref() else { return; };
+        let Ok(_effect) = backend.api.upgrade_latch().begin_ordinary_blocking_effect() else { receiver.borrow_mut().take(); return; };
+        if !credit_poll_is_current(&app_weak, &context, &billing_scope, &receiver) {
             return;
         }
         if !credit_sync_epoch_is_current(&store.borrow(), credit_sync_epoch)
@@ -731,7 +849,7 @@ fn poll_credit_ledger_page(
                 app_weak,
                 context,
                 store,
-                session_scope,
+                billing_scope,
                 credit_sync_epoch,
                 request_epoch,
                 target_index,
@@ -740,7 +858,7 @@ fn poll_credit_ledger_page(
             );
             return;
         };
-        if !credit_poll_is_current(&app_weak, &context, &session_scope, &receiver)
+        if !credit_poll_is_current(&app_weak, &context, &billing_scope, &receiver)
             || !credit_sync_epoch_is_current(&store.borrow(), credit_sync_epoch)
             || !store
                 .borrow()
@@ -786,11 +904,17 @@ fn poll_credit_ledger_page(
 fn credit_poll_is_current<T>(
     app_weak: &Weak<AppWindow>,
     context: &AppContext,
-    session_scope: &SessionScope,
+    billing_scope: &BillingScope,
     receiver: &Rc<RefCell<Option<mpsc::Receiver<T>>>>,
 ) -> bool {
+    let session_scope = &billing_scope.request.session;
     match context.account_scope_disposition(session_scope) {
-        AccountScopeDisposition::Current => true,
+        AccountScopeDisposition::Current => {
+            let current = context.billing_context.is_current(billing_scope)
+                && context.backend.as_ref().is_some_and(|backend| backend.api.user_work_is_current(session_scope));
+            if !current { receiver.borrow_mut().take(); }
+            current
+        }
         AccountScopeDisposition::CapturedTerminal => {
             receiver.borrow_mut().take();
             if let Some(app) = app_weak.upgrade() {

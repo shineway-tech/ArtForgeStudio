@@ -273,7 +273,7 @@ fn poll_email_binding_result(
         match result {
             Ok(response) if response.bound => {
                 apply_email_binding_success(&state, &email, response);
-                save_user_profile(&app);
+                save_user_profile(&app, &context.store.borrow());
             }
             Ok(_) => state.set_email_bind_status("邮箱绑定未完成，请重试".into()),
             Err(error) => state.set_email_bind_status(error.user_message().into()),

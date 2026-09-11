@@ -1,4 +1,4 @@
-use super::{ApiClient, ApiError, OrderDetail, SessionScope};
+use super::{ApiClient, ApiError, BillingScope, OrderDetail, SessionScope};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +38,7 @@ impl MembershipApi {
         Self { client }
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_order(
         &self,
         plan_code: &str,
@@ -58,6 +59,7 @@ impl MembershipApi {
             .map(|response| response.data)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_order_scoped(
         &self,
         plan_code: &str,
@@ -80,6 +82,29 @@ impl MembershipApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn create_order_billing(
+        &self,
+        plan_code: &str,
+        client_request_id: &str,
+        scope: &BillingScope,
+    ) -> Result<OrderDetail, ApiError> {
+        let body = serde_json::to_value(MembershipOrderRequest {
+            plan_code,
+            client_request_id,
+        })
+        .map_err(protocol_error)?;
+        self.client
+            .billing_json_scoped::<OrderDetail>(
+                Method::POST,
+                "/v1/membership/orders",
+                Some(body),
+                Some(client_request_id),
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_upgrade_quote(
         &self,
         target_plan_code: &str,
@@ -96,6 +121,7 @@ impl MembershipApi {
             .map(|response| response.data)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_upgrade_quote_scoped(
         &self,
         target_plan_code: &str,
@@ -114,6 +140,26 @@ impl MembershipApi {
             .map(|response| response.data)
     }
 
+    pub(crate) fn create_upgrade_quote_billing(
+        &self,
+        target_plan_code: &str,
+        client_request_id: &str,
+        scope: &BillingScope,
+    ) -> Result<UpgradeQuote, ApiError> {
+        let body = serde_json::to_value(UpgradeQuoteRequest { target_plan_code })
+            .map_err(protocol_error)?;
+        self.client
+            .billing_json_scoped::<UpgradeQuote>(
+                Method::POST,
+                "/v1/membership/upgrade-quotes",
+                Some(body),
+                Some(client_request_id),
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_upgrade_order(
         &self,
         quote_id: &str,
@@ -134,6 +180,7 @@ impl MembershipApi {
             .map(|response| response.data)
     }
 
+    // TEMP(team-accounts): remove in Task 10 after atomic caller migration
     pub(crate) fn create_upgrade_order_scoped(
         &self,
         quote_id: &str,
@@ -147,6 +194,28 @@ impl MembershipApi {
         .map_err(protocol_error)?;
         self.client
             .authenticated_json_scoped::<OrderDetail>(
+                Method::POST,
+                "/v1/membership/upgrade-orders",
+                Some(body),
+                Some(client_request_id),
+                scope,
+            )
+            .map(|response| response.data)
+    }
+
+    pub(crate) fn create_upgrade_order_billing(
+        &self,
+        quote_id: &str,
+        client_request_id: &str,
+        scope: &BillingScope,
+    ) -> Result<OrderDetail, ApiError> {
+        let body = serde_json::to_value(UpgradeOrderRequest {
+            quote_id,
+            client_request_id,
+        })
+        .map_err(protocol_error)?;
+        self.client
+            .billing_json_scoped::<OrderDetail>(
                 Method::POST,
                 "/v1/membership/upgrade-orders",
                 Some(body),

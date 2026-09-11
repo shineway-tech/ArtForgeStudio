@@ -1,5 +1,16 @@
 use super::*;
 
+
+pub(super) fn prepare_activation_style_projection(models:Vec<CatalogModelView>,preferred:&str) -> PreparedUiProjection {
+    let selection=select_style_analysis_model(models,preferred);
+    let mut ui=PreparedUiProjection::default();
+    ui.push(selection.available,|state,value|state.set_style_analysis_available(value));
+    ui.push(selection.model_code.into(),|state,value|state.set_style_analysis_model_code(value));
+    ui.push(selection.display_name.into(),|state,value|state.set_style_analysis_display_name(value));
+    ui.push(selection.credit_cost.into(),|state,value|state.set_style_analysis_credit_cost(value));
+    ui
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct StyleAnalysisSelection {
     pub(super) available: bool,
@@ -216,6 +227,9 @@ mod tests {
             price_2k: 0,
             price_4k: 0,
             price_standard: price_standard.into(),
+            video_price_480: String::new().into(),
+            video_price_720: String::new().into(),
+            video_price_1080: String::new().into(),
             supports_image_edit: false,
             supports_style_analysis,
         }

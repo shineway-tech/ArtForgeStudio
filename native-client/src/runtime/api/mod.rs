@@ -4,6 +4,7 @@
 
 mod account;
 mod auth;
+mod billing_context;
 mod client;
 mod device;
 mod error;
@@ -13,13 +14,18 @@ mod notifications;
 mod payment;
 mod prompt_optimization;
 mod session;
+mod team;
 mod types;
+mod upgrade;
+pub(crate) use upgrade::*;
 
 #[cfg(test)]
 mod cross_stack_tests;
 
 pub(crate) use account::*;
 pub(crate) use auth::*;
+pub(crate) use billing_context::*;
+// Payer selection enters through ApiClient::billing_json_scoped; identity transport never adds it.
 pub(crate) use client::*;
 pub(crate) use device::*;
 pub(crate) use error::*;
@@ -28,7 +34,11 @@ pub(crate) use membership::*;
 pub(crate) use notifications::*;
 pub(crate) use payment::*;
 pub(crate) use prompt_optimization::*;
+// Session exports are owner-bound; no API may persist a refresh token without its user.
 pub(crate) use session::*;
+// Team, owner-admin, finance-summary, and reauthentication routes are identity scoped.
+#[allow(unused_imports)]
+pub(crate) use team::*;
 pub(crate) use types::*;
 
 use std::path::Path;

@@ -44,7 +44,17 @@ component InvitationGiftButton {
 }
 
 export component TopBar {
-    height: 58px;
+    property <length> action-gap: 8px;
+    property <length> gift-width: 48px;
+    property <length> language-width: 94px;
+    property <length> theme-width: 94px;
+    property <length> balance-width: 150px;
+    property <length> profile-width: 128px;
+    property <length> payment-width: 112px;
+    property <length> login-width: 112px;
+    property <bool> models-on-second-row: AppState.page == "generation"
+        && root.width < root.actions-width() + 36px + 2 * 240px + 38px;
+    height: root.models-on-second-row ? 112px : 58px;
     Rectangle {
         width: root.width;
         height: root.height;
@@ -67,9 +77,9 @@ export component TopBar {
         }
         Rectangle {
             x: 18px;
-            y: 0px;
-            width: max(360px, parent.width - 18px - root.actions-width() - 32px);
-            height: parent.height;
+            y: root.models-on-second-row ? 58px : 0px;
+            width: root.models-on-second-row ? parent.width - 36px : parent.width - root.actions-width() - 56px;
+            height: 54px;
             background: transparent;
             clip: true;
             if AppState.page == "generation": Rectangle {
@@ -98,23 +108,23 @@ export component TopBar {
             x: parent.width - root.actions-width() - 18px;
             y: 0px;
             width: root.actions-width();
-            height: parent.height;
+            height: 58px;
             background: transparent;
             HorizontalLayout {
                 width: parent.width;
                 y: (parent.height - 36px) / 2;
                 height: 36px;
-                spacing: 8px;
+                spacing: root.action-gap;
                 alignment: center;
                 if AppState.payment-active: PillButton {
-                    width: 112px;
+                    width: root.payment-width;
                     text: AppState.en ? "Payment status" : "查看支付状态";
                     clicked => { AppState.payment-dialog-open = true; }
                 }
                 if AppState.logged-in: InvitationGiftButton {}
                 PillButton { width: 94px; text: AppState.language == "zh" ? "中文" : "English"; clicked => { AppState.set-language(AppState.language == "zh" ? "en" : "zh"); } }
                 if !AppState.logged-in && AppState.page != "welcome": PillButton {
-                    width: 112px;
+                    width: root.login-width;
                     text: AppState.en ? "Login" : "登录/注册";
                     primary: true;
                     clicked => {
@@ -128,9 +138,12 @@ export component TopBar {
         }
     }
     function actions-width() -> length {
-        return (AppState.logged-in ? (AppState.en ? 214px : 200px) : 214px) + (AppState.payment-active ? 120px : 0px);
+        let count = 1 + (AppState.logged-in || AppState.page != "welcome" ? 1 : 0) + (AppState.payment-active ? 1 : 0);
+        return root.language-width
+            + (AppState.logged-in ? (AppState.en ? 112px : 98px) : (AppState.page != "welcome" ? root.login-width : 0px))
+            + (AppState.payment-active ? root.payment-width : 0px) + (count - 1) * root.action-gap;
     }
     function model-picker-width() -> length {
-        return min(280px, max(180px, (root.width - 18px - root.actions-width() - 70px) / 2));
+        return min(280px, (root.width - (root.models-on-second-row ? 36px : root.actions-width() + 56px) - 18px) / 2);
     }
 }

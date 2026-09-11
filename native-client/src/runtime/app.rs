@@ -20,53 +20,86 @@ pub(super) fn run() -> Result<()> {
     init_version_state(&app);
     cleanup_stale_update_dirs();
     apply_theme(&app, "light");
-    init_portable_dirs(&app)?;
-    initialize_client_state_repository().context("无法初始化本地元数据库")?;
-    set_directory_locations(load_directory_locations().context("无法加载目录设置")?);
-    sync_directory_locations(&app);
-    initialize_storage_index();
-    initialize_preview_cache();
-    cleanup_stale_reference_imports();
-    cleanup_stale_toolbox_files();
-    load_user_profile(&app);
-    load_showcase_images(&app);
+    fs::create_dir_all(app_data_dir())?;
+    let data_root_capability = Arc::new(NamespaceFs::open_data_root(&app_data_dir())?);
+    initialize_client_state_repository(Arc::clone(&data_root_capability))
+        .context("无法初始化本地元数据库")?;
+    apply_startup_device_state(
+        &app,
+        load_device_settings()?.unwrap_or_default(),
+        load_export_directory()?,
+    );
     let tray = AppTray::new()?;
 
-    let context = AppContext {
+    let mut context = AppContext {
+        data_root_capability: Some(data_root_capability),
         backend: Some(Arc::new(BackendRuntime::new(&app_data_dir())?)),
         ..AppContext::default()
     };
-    let store = context.store.clone();
-    let local_store_loaded = load_local_store(&app, &store);
-    seed_inspiration(&app, &store)?;
-    let reference_index_healthy = rebuild_storage_references(&store.borrow());
-    if local_store_loaded && reference_index_healthy {
-        cleanup_orphaned_durable_copies_at_startup();
-    }
-    push_startup_state(&app, &store.borrow());
 
+    AccountTransitionCoordinator::initialize(&mut context, app_data_dir())?;
     wire_callbacks(&app, context.clone());
     wire_close_behavior(&app, &tray);
     restore_update_installation_result(&app);
     begin_update_check(&app, false);
     initialize_auth(&app, context.clone());
     tray.show()?;
-    app.run()?;
-    store_current_prompt_draft(
-        &app,
-        &store,
-        &resolve_category(&app.global::<AppState>().get_asset_type().to_string(), ""),
-    );
-    let _ = save_user_profile_checked(&app);
-    if local_store_loaded && save_local_store_checked(&app, &store.borrow()).is_ok() {
-        rebuild_storage_references(&store.borrow());
-        cleanup_orphaned_durable_copies_at_shutdown();
-    } else {
-        // Still persist a recovered/new store when possible, but keep durable reference and
-        // canvas copies for the whole session if startup could not prove the JSON was healthy.
-        let _ = save_local_store_checked(&app, &store.borrow());
-    }
+    let result = app.run();
+    drop(platform::take_external_image_drops());
+    dispose_pending_native_file_drag_for_shutdown();
+    // Stop and join playback even if the event loop returned an error. It must
+    // precede account quiescence so no private video stream can delay retirement.
+    let player_shutdown = drain_video_player_workers_for_shutdown();
+    let toolbox_shutdown = drain_toolbox_workers_for_shutdown();
+    let preview_shutdown = drain_activation_preview_workers_for_shutdown();
+    let notification_shutdown = notification_callbacks::shutdown_notification_workers();
+    let payment_shutdown = payment_callbacks::shutdown_payment_workers();
+    let delivery_shutdown = drain_delivery_commit_workers_for_shutdown();
+    let prompt_shutdown = shutdown_prompt_workers();
+    let team_shutdown = shutdown_team_workers();
+    let reference_shutdown = shutdown_reference_workers();
+    let enhancement_shutdown = shutdown_enhancement_workers();
+    let cutout_shutdown = shutdown_cutout_workers();
+    let canvas_shutdown = drain_canvas_workers_for_shutdown();
+    let activation_shutdown=match &context.account_transition {
+        Some(coordinator)=>coordinator.shutdown(),None=>Ok(()),
+    };
+    player_shutdown?;
+    toolbox_shutdown?;
+    preview_shutdown?;
+    notification_shutdown.map_err(|error| anyhow!(error))?;
+    payment_shutdown.map_err(|error| anyhow!(error))?;
+    delivery_shutdown?;
+    prompt_shutdown.map_err(|error| anyhow!(error))?;
+    team_shutdown.map_err(|error| anyhow!(error))?;
+    reference_shutdown?;
+    enhancement_shutdown?;
+    cutout_shutdown?;
+    canvas_shutdown?;
+    activation_shutdown?;
+    result?;
+    save_device_settings_checked(&app)?;
+    flush_device()?;
     Ok(())
+}
+
+pub(super) fn apply_startup_device_state(
+    app: &AppWindow,
+    settings: DeviceSettings,
+    export: Option<ExportDirectoryPreference>,
+) {
+    // TEMP(team-accounts): private services start only after Task 10 publishes
+    // a namespace lease. These presentation values confer no filesystem authority.
+    apply_device_settings(app, settings);
+    let state = app.global::<AppState>();
+    state.set_input_dir("".into());
+    state.set_prompt_dir("".into());
+    state.set_output_dir(
+        export
+            .map(|value| display_directory_path(&value.normalized_path))
+            .unwrap_or_default()
+            .into(),
+    );
 }
 
 fn wire_close_behavior(app: &AppWindow, tray: &AppTray) {
@@ -125,7 +158,7 @@ fn wire_close_behavior(app: &AppWindow, tray: &AppTray) {
                     return;
                 }
                 app.global::<AppState>().set_close_behavior(behavior.into());
-                if let Err(error) = save_user_profile_checked(&app) {
+                if let Err(error) = save_device_settings_checked(&app) {
                     eprintln!("failed to save close behavior: {error}");
                 }
             });
@@ -145,7 +178,7 @@ fn wire_close_behavior(app: &AppWindow, tray: &AppTray) {
                 let state = app.global::<AppState>();
                 state.set_close_behavior(behavior.into());
                 state.set_close_choice_open(false);
-                if let Err(error) = save_user_profile_checked(&app) {
+                if let Err(error) = save_device_settings_checked(&app) {
                     eprintln!("failed to save confirmed close behavior: {error}");
                 }
                 if behavior == "tray" {
@@ -221,10 +254,12 @@ fn register_external_image_drop_wakeup(app: &AppWindow) {
 }
 
 pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
+    observe_required_upgrade(app.as_weak(), context.clone());
     let state = app.global::<AppState>();
     let store = context.store.clone();
 
     wire_auth_callbacks(app, context.clone());
+    wire_team_callbacks(app, context.clone());
     wire_password_callbacks(app, context.clone());
     wire_wechat_binding_callbacks(app, context.clone());
     wire_email_binding_callbacks(app, context.clone());
@@ -237,8 +272,8 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
     wire_toolbox_callbacks(app, context.clone());
     wire_image_enhancement_callbacks(app, context.clone());
     wire_image_cutout_callbacks(app, context.clone());
-    wire_contact_callbacks(app, store.clone());
-    wire_external_link_callbacks(app);
+    wire_contact_callbacks(app, context.clone());
+    wire_external_link_callbacks(app, context.clone());
 
     {
         let app_weak = app.as_weak();
@@ -268,13 +303,14 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
+        let profile_context = context.clone();
         state.on_save_profile(move || {
             if let Some(app) = app_weak.upgrade() {
                 let state = app.global::<AppState>();
                 let name = state.get_profile_name().trim().to_string();
                 state.set_nickname(name.into());
                 state.set_profile_open(false);
-                save_user_profile(&app);
+                save_user_profile(&app, &profile_context.store.borrow());
             }
         });
     }
@@ -285,7 +321,9 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
         let context = context.clone();
         state.on_navigate(move |page| {
             if let Some(app) = app_weak.upgrade() {
+                let entering_video = page.as_str() == "video-generation" && app.global::<AppState>().get_page() != "video-generation";
                 navigate_to_with_store(&app, &store.borrow(), &page);
+                if entering_video { app.global::<AppState>().invoke_refresh_video_prices(); }
                 if page.as_str() == "credits"
                     && app.global::<AppState>().get_session_state().as_str() == "online"
                 {
@@ -342,7 +380,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
                 let state = app.global::<AppState>();
                 state.set_theme_id(theme.clone());
                 apply_theme(&app, &theme);
-                save_user_profile(&app);
+                save_device_settings(&app);
             }
         });
     }
@@ -357,7 +395,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
                     "rounded"
                 };
                 app.global::<AppState>().set_card_style(style.into());
-                save_user_profile(&app);
+                save_device_settings(&app);
             }
         });
     }
@@ -367,7 +405,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
         state.on_set_language(move |lang| {
             if let Some(app) = app_weak.upgrade() {
                 app.global::<AppState>().set_language(lang);
-                save_user_profile(&app);
+                save_device_settings(&app);
             }
         });
     }
@@ -378,7 +416,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
             if let Some(app) = app_weak.upgrade() {
                 app.global::<AppState>()
                     .set_settings_font_family(font_family);
-                save_user_profile(&app);
+                save_device_settings(&app);
             }
         });
     }
@@ -389,7 +427,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
             if let Some(app) = app_weak.upgrade() {
                 app.global::<AppState>()
                     .set_settings_font_size(normalize_settings_font_size(font_size));
-                save_user_profile(&app);
+                save_device_settings(&app);
             }
         });
     }
@@ -408,7 +446,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
                 "inspiration" => state.set_inspiration_gallery_layout(layout),
                 _ => return,
             }
-            save_user_profile(&app);
+            save_device_settings(&app);
         });
     }
 
@@ -448,7 +486,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
             push_custom_prompts(&app, &store.borrow());
             push_references(&app, &store.borrow());
             save_local_store(&app, &store.borrow());
-            save_user_profile(&app);
+            save_user_profile(&app, &context.store.borrow());
             reset_generation_gallery_page(&app);
             push_generations(&app, &store.borrow());
             sync_generation_state_for_current_category(&context, &app);
@@ -502,13 +540,47 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
 
     wire_model_catalog_callbacks(app, store.clone());
     wire_storage_callbacks(app);
-    wire_reference_callbacks(app, store.clone());
+    wire_reference_callbacks(app, context.clone());
     wire_prompt_preview_callbacks(app);
     wire_generation_callbacks(app, context.clone());
     wire_prompt_task_recovery_callbacks(app, context.clone());
     wire_viewer_callbacks(app, context.clone());
     wire_video_generation_callbacks(app, context.clone());
     wire_notification_callbacks(app, context);
+}
+
+fn observe_required_upgrade(weak: Weak<AppWindow>, context: AppContext) {
+    slint::Timer::single_shot(Duration::from_millis(100), move || {
+        let Some(app) = weak.upgrade() else { return; };
+        let required = context.backend.as_ref().and_then(|backend| backend.api.upgrade_latch().snapshot());
+        let Some(required) = required else { observe_required_upgrade(weak, context); return; };
+        drop(platform::take_external_image_drops());
+        dispose_pending_native_file_drag_for_shutdown();
+        cancel_reference_workers_for_upgrade();
+        cancel_enhancement_workers_for_upgrade();
+        cancel_cutout_workers_for_upgrade();
+        // Revocation UI is outside ordinary admission and outside the latch lock.
+        // The process-wide upgrade applies to the identity currently published,
+        // never a late request's owner or an inferred logout target.
+        let lease = context.active_namespace.lock().unwrap_or_else(|poison| poison.into_inner()).clone();
+        if let Some(lease) = lease {
+            close_video_player_for_retirement(&lease);
+            notification_callbacks::cancel_notification_workers_for_retirement(&lease);
+            payment_callbacks::cancel_payment_workers_for_retirement(&lease);
+            cancel_delivery_commit_workers(&lease);
+            cancel_prompt_workers_for_retirement(&lease);
+            cancel_team_workers_for_upgrade();
+            cancel_toolbox_workers_for_lease(&lease);
+            cancel_canvas_workers_for_lease(&lease);
+        }
+        let state = app.global::<AppState>();
+        state.set_session_state("update_required".into());
+        state.set_auth_busy(false);
+        state.set_account_group_switching(false);
+        state.set_auth_password("".into());
+        state.set_auth_code("".into());
+        show_required_update_prompt(&app, required.minimum_version.as_deref().unwrap_or_default());
+    });
 }
 
 pub(super) fn wire_prompt_preview_callbacks(app: &AppWindow) {

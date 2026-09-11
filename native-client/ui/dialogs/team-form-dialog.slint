@@ -1,0 +1,61 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { Field } from "../components/field.slint";
+import { PillButton } from "../components/pill-button.slint";
+
+export component TeamFormDialog inherits Rectangle {
+    background: AppTheme.text.with-alpha(0.16);
+    property <bool> credit-form: AppState.team-form-action == "set_limit" || AppState.team-form-action == "resend";
+    property <bool> destructive: AppState.team-form-action == "remove" || AppState.team-form-action == "suspend" || AppState.team-form-action == "leave" || AppState.team-form-action == "revoke" || AppState.team-form-action == "decline";
+    TouchArea {}
+    FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape && !AppState.team-page-loading { AppState.cancel-team-form(); return accept; }
+            return reject;
+        }
+    }
+    Rectangle {
+        width: min(480px, parent.width - 40px);
+        height: min(parent.height - 32px, form-content.preferred-height + 48px);
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+        background: AppTheme.panel; border-radius: 12px; border-width: 1px; border-color: AppTheme.border;
+        Flickable {
+            x: 24px; y: 24px; width: parent.width - 48px; height: parent.height - 48px;
+            viewport-width: self.width; viewport-height: max(self.height, form-content.preferred-height);
+            form-content := VerticalLayout {
+                width: parent.width; spacing: 16px; alignment: start;
+                Text { text: root.title(); color: AppTheme.text; font-size: 21px; font-weight: 600; }
+                if AppState.team-form-action != "rename" && AppState.team-form-action != "set_limit": Text { text: AppState.team-form-label; color: AppTheme.muted; font-size: 13px; wrap: word-wrap; }
+                if AppState.team-form-action != "rename" && AppState.team-form-action != "set_limit" && AppState.team-form-version != "": Text { text: (AppState.en ? "Reviewed version: " : "当前确认版本：") + AppState.team-form-version; color: AppTheme.muted; font-size: 12px; }
+                if AppState.team-form-action != "rename": Text { text: root.description(); color: AppTheme.muted; font-size: 13px; wrap: word-wrap; }
+                if AppState.team-form-action == "rename": Field { label: AppState.en ? "Team name" : "团队名称"; value <=> AppState.team-name-input; enabled: !AppState.team-page-loading; accepted => { AppState.confirm-team-form(); } }
+                if AppState.team-form-action == "create": Field { label: (AppState.en ? "Invitation email" : "邀请邮箱"); placeholder: "name@example.com"; value <=> AppState.team-invite-email; enabled: !AppState.team-page-loading; }
+                if AppState.team-form-action == "create": Field { label: (AppState.en ? "Monthly limit (integer; 0 means no credits)" : "月额度（非负整数，0 为零额度）"); value <=> AppState.team-invite-limit-input; enabled: !AppState.team-page-loading; accepted => { AppState.confirm-team-form(); } }
+                if root.credit-form: Field { label: (AppState.en ? "Monthly limit (integer; 0 means no credits)" : "月额度（非负整数，0 为零额度）"); value <=> AppState.team-limit-input; enabled: !AppState.team-page-loading; accepted => { AppState.confirm-team-form(); } }
+                if AppState.team-page-error != "": Text { text: AppState.team-page-error; color: AppTheme.danger; wrap: word-wrap; font-size: 13px; }
+                if AppState.team-form-needs-review: PillButton { width: 144px; text: AppState.en ? "Review latest" : "查看最新版本"; disabled: AppState.team-page-loading; clicked => { AppState.review-team-form(); } }
+                HorizontalLayout {
+                    spacing: 12px; alignment: end; height: 36px;
+                    PillButton { width: 90px; text: (AppState.en ? "Cancel" : "取消"); disabled: AppState.team-page-loading; clicked => { AppState.cancel-team-form(); } }
+                    PillButton { width: 124px; text: AppState.team-page-loading ? (AppState.en ? "Submitting…" : "提交中…") : AppState.team-form-action == "rename" ? (AppState.en ? "Save" : "保存") : root.title(); primary: !root.destructive; danger: root.destructive; disabled: AppState.team-page-loading || AppState.account-group-switching || AppState.team-form-needs-review; clicked => { AppState.confirm-team-form(); } }
+                }
+            }
+        }
+    }
+    function title() -> string {
+        if AppState.team-form-action == "rename" { return AppState.en ? "Rename team" : "修改团队名称"; }
+        return AppState.team-form-action == "create" ? (AppState.en ? "Send invitation" : "发送邀请") : AppState.team-form-action == "resend" ? (AppState.en ? "Resend" : "重新发送") : AppState.team-form-action == "set_limit" ? (AppState.en ? "Save limit" : "保存额度") : AppState.team-form-action == "suspend" ? (AppState.en ? "Suspend member" : "确认暂停") : AppState.team-form-action == "resume" ? (AppState.en ? "Resume member" : "确认恢复") : AppState.team-form-action == "remove" ? (AppState.en ? "Remove member" : "确认移除") : AppState.team-form-action == "leave" ? (AppState.en ? "Leave team" : "确认退出") : AppState.team-form-action == "revoke" ? (AppState.en ? "Revoke invitation" : "撤销邀请") : AppState.team-form-action == "accept" ? (AppState.en ? "Accept invitation" : "接受邀请") : (AppState.en ? "Decline invitation" : "拒绝邀请");
+    }
+    function description() -> string {
+        if AppState.team-form-action == "rename" { return AppState.en ? "The new name is visible to team members. Credits and membership remain unchanged." : "新名称将显示给团队成员，不影响积分和成员关系。"; }
+        return AppState.team-form-action == "create" || AppState.team-form-action == "resend" ? (AppState.en ? "An invitation will be emailed to the recipient. Membership is free; you set the monthly credit limit." : "邮件邀请将发送至受邀邮箱。成员免费加入，使用额度由你设置。")
+            : AppState.team-form-action == "set_limit" ? (AppState.en ? "Remaining credits equal the limit minus settled and reserved credits, with a minimum of 0. Changing a limit does not refund settled credits." : "剩余额度按月额度减去已结算和预留计算，最低为 0。修改不会退回已结算的积分。")
+            : AppState.team-form-action == "suspend" ? (AppState.en ? "This member cannot use team credits while suspended. Their joined-team slot remains occupied." : "暂停后，该成员不能继续使用团队积分，但仍占用其加入团队的位置。")
+            : AppState.team-form-action == "resume" ? (AppState.en ? "This member can resume creating within their monthly limit and the team's available credits." : "恢复后，该成员可在个人月额度和团队积分允许的范围内继续创作。")
+            : AppState.team-form-action == "remove" ? (AppState.en ? "The member loses access to team credits and their joined-team slot is released. Personal files remain." : "移除后，该成员无法继续使用团队积分，并释放其加入团队的位置。个人创作文件不会被删除。")
+            : AppState.team-form-action == "leave" ? (AppState.en ? "You will lose access to this team's credits and return to your own team. Your own team and personal files remain." : "退出后将无法使用该团队积分，并切回自己的团队。个人创作文件和自有团队保留。")
+            : AppState.team-form-action == "revoke" ? (AppState.en ? "The invitation can no longer be accepted. A new invitation is needed to join." : "撤销后，该邀请将无法再被接受。如需加入，需要重新发出邀请。")
+            : AppState.team-form-action == "accept" ? (AppState.en ? "Accepting joins this team and may invalidate older invitations. You will not be automatically removed from an existing team." : "接受后将加入此团队。其他旧邀请可能失效；不会自动退出已有团队。")
+            : (AppState.en ? "This invitation will be removed from your pending invitations." : "拒绝后，这条邀请将不再出现在待处理列表中。");
+    }
+}

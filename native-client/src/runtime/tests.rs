@@ -172,7 +172,8 @@ mod tests {
             "available": value,
             "reserved": "0",
             "lifetime_granted": value,
-            "lifetime_spent": "1"
+            "lifetime_spent": "1",
+            "version": value
         }))
         .unwrap();
         let meta: ApiMeta = serde_json::from_value(serde_json::json!({
@@ -793,9 +794,35 @@ mod tests {
         );
         assert!(local_store.contains("custom_prompt_times: store.custom_prompt_times.clone()"));
         assert!(local_store.contains("normalize_custom_prompts(data.custom_prompts)"));
-        assert!(callbacks.contains("save_local_store(&app, &store.borrow())"));
+        // The current callback keeps local persistence, now through captured
+        // ordered Store enqueue and an actual acknowledgment before editor close.
+        let save_entry = core_toolbox_contract_block(callbacks,
+            "state.on_save_custom_prompt(", "state.on_remove_custom_prompt(");
+        assert!(save_entry.contains("start_custom_prompt_save(&app,context.clone(),save_state.clone(),original.to_string(),prompt.to_string())"));
+        let save = core_toolbox_contract_block(callbacks,
+            "fn start_custom_prompt_save(", "\nfn poll_custom_prompt_save(");
+        assert!(save.contains("captured_custom_editor(&context)"));
+        assert!(save.find("persistence.prepare_ordered_save()").unwrap()
+            < save.find("save_custom_prompt_to_store(").unwrap());
+        assert!(save.find("save_custom_prompt_to_store(").unwrap()
+            < save.find("enqueue(local_store_data(app,&store))").unwrap());
+        assert!(save.contains("receiver.recv().map_err("));
+        assert!(!save.contains("save_local_store("));
+        let saved = core_toolbox_contract_block(callbacks,
+            "fn poll_custom_prompt_save(", "\n#[cfg(test)]\nthread_local!");
+        assert!(saved.find("finish_delivery_preparation(&cancel)").unwrap()
+            < saved.find("receiver.try_recv()").unwrap());
+        assert!(saved.find("let identity=match result").unwrap()
+            < saved.find("state.set_custom_prompt_editor_open(false)").unwrap());
         assert!(callbacks.contains("state.on_save_custom_prompt"));
-        assert!(callbacks.contains("navigate_to(app, \"custom-prompt-editor\")"));
+        let open = core_toolbox_contract_block(callbacks,
+            "fn custom_open_editor_metadata(", "\nfn custom_flush_or_mutate");
+        assert!(open.contains("state.set_custom_prompt_editor_open(true)"));
+        assert!(open.contains("state.set_page(\"custom-prompt-editor\".into())"));
+        let begin = core_toolbox_contract_block(callbacks,
+            "state.on_begin_new_custom_prompt(", "state.on_begin_edit_custom_prompt(");
+        assert!(begin.contains("capture.apply(&app,"));
+        assert!(begin.contains("custom_open_editor_metadata(&app)"));
         assert!(callbacks.contains("state.set_custom_prompt_editor_open(false)"));
         assert!(callbacks.contains("state.on_begin_new_custom_prompt"));
         assert!(callbacks.contains("state.on_begin_edit_custom_prompt"));
@@ -829,8 +856,15 @@ mod tests {
         assert!(state.contains("in-out property <[CustomPromptItem]> selected-custom-prompt-items"));
         assert!(state.contains("callback toggle-custom-prompt-selection(string)"));
         assert!(callbacks.contains("state.on_toggle_custom_prompt_selection"));
-        assert!(callbacks.contains("current_workspace_category(&app)"));
-        assert!(callbacks.contains("toggle_custom_prompt_selection_for_category"));
+        let target = core_toolbox_contract_block(callbacks,
+            "impl CustomEffectTarget{", "\n#[derive(Clone)]\nstruct CustomEffectCapture");
+        assert!(target.contains("category:current_workspace_category(app)"));
+        let toggle = core_toolbox_contract_block(callbacks,
+            "state.on_toggle_custom_prompt_selection(", "state.on_begin_new_custom_prompt(");
+        assert!(toggle.find("CustomEffectCapture::capture(&app,&context)").unwrap()
+            < toggle.find("slint::Timer::single_shot(Duration::ZERO").unwrap());
+        assert!(toggle.contains("CustomStoreMutation::Toggle(prompt.to_string())"));
+        assert!(toggle.contains("toggle_custom_prompt_selection_for_category(store,&capture.target.category,&prompt)"));
         assert!(local_store.contains("let was_selected = store"));
         assert!(local_store.contains("selected.insert(prompt.to_string());"));
         assert!(!local_store.contains("selected.clear();"));
@@ -1348,6 +1382,12 @@ mod tests {
         let state = include_str!("../../ui/app-state.slint");
         let callbacks = include_str!("callbacks/custom_prompt.rs");
         let prompt_tasks = include_str!("callbacks/prompt_tasks.rs");
+        let picker = callbacks.split_once("fn start_custom_picker(").unwrap().1
+            .split_once("fn prepare_custom_existing_previews(").unwrap().0;
+        let run = prompt_tasks.split_once("fn run_prompt_record(").unwrap().1
+            .split_once("fn require_prompt_patch(").unwrap().0;
+        let request = prompt_tasks.split_once("fn prompt_task_create_request(").unwrap().1
+            .split_once("fn prompt_task_api_error_is_transient(").unwrap().0;
 
         for field in [
             "custom-prompt-name",
@@ -1388,17 +1428,21 @@ mod tests {
         assert!(callbacks.contains("state.on_analyze_custom_prompt_reference"));
         assert!(callbacks.contains("state.on_remove_custom_prompt_reference"));
         assert!(callbacks.contains("state.on_open_custom_prompt_reference"));
-        assert!(callbacks.contains(".pick_files()"));
+        assert!(picker.contains(".pick_files()"));
         assert!(callbacks.contains("MAX_CUSTOM_PROMPT_REFERENCES: usize = 8"));
         assert!(!page.contains("Analyzed locally; the image is not uploaded"));
         assert!(!page.contains("由本地客户端分析，不会上传参考图"));
         assert!(state.contains("custom-prompt-analyzing"));
         assert!(callbacks.contains("sync_style_analysis_selection(&state)"));
         assert!(callbacks.contains("start_backend_prompt_task("));
-        assert!(prompt_tasks.contains("GenerationApi::new(backend.api.clone())"));
-        assert!(prompt_tasks.contains("api.upload_reference_scoped(&path, &session_scope)"));
-        assert!(prompt_tasks.contains("reference_file_ids: (!record.uploaded_file_ids.is_empty())"));
-        assert!(prompt_tasks.contains("result_prompt"));
+        // Structure only: original held namespace input replaces the retired
+        // raw-path/scoped-upload adapter; this does not prove successful upload.
+        assert!(run.contains("GenerationApi::new(capture.backend.api.clone())"));
+        assert!(run.contains("api.upload_reference_for_namespace_checked("));
+        assert!(run.contains("&capture.authority,&capture.scope"));
+        assert!(run.contains("&record.reference_sha256[index],record.reference_size_bytes[index]"));
+        assert!(request.contains("reference_file_ids: (!record.uploaded_file_ids.is_empty())"));
+        assert!(run.contains("detail.result_prompt"));
         assert!(!callbacks.contains("analyze_reference_style("));
     }
 
@@ -1407,13 +1451,25 @@ mod tests {
         let callbacks = include_str!("callbacks/custom_prompt.rs");
         let prompt_tasks = include_str!("callbacks/prompt_tasks.rs");
 
-        assert!(callbacks.contains("task_type: \"image_style_analysis\""));
-        assert!(callbacks.contains("model_code"));
-        assert!(prompt_tasks.contains("task_type: record.task_type.clone()"));
-        assert!(prompt_tasks.contains("model_code: record.model_code.clone()"));
-        assert!(prompt_tasks.contains("reference_file_ids: (!record.uploaded_file_ids.is_empty())"));
-        assert!(prompt_tasks.contains("api.create_task_scoped(&request, &session_scope)"));
-        assert!(prompt_tasks.contains("IMAGE_POLL_INTERVAL_MS"));
+        let analysis = callbacks.split_once("state.on_analyze_custom_prompt_reference(").unwrap().1
+            .split_once("state.on_save_custom_prompt(").unwrap().0;
+        let request = prompt_tasks.split_once("fn prompt_task_create_request(").unwrap().1
+            .split_once("fn prompt_task_api_error_is_transient(").unwrap().0;
+        let run = prompt_tasks.split_once("fn run_prompt_record(").unwrap().1
+            .split_once("fn require_prompt_patch(").unwrap().0;
+        assert!(analysis.contains("selection=sync_style_analysis_selection(&state)"));
+        assert!(analysis.contains("if !selection.available"));
+        assert!(analysis.contains("model_code:selection.model_code,task_type:\"image_style_analysis\""));
+        assert!(analysis.contains("reference_paths:paths"));
+        assert!(analysis.contains("start_backend_prompt_task(&app,context.clone(),request)"));
+        assert!(request.contains("task_type: record.task_type.clone()"));
+        assert!(request.contains("model_code: record.model_code.clone()"));
+        assert!(request.contains("reference_file_ids: (!record.uploaded_file_ids.is_empty())"));
+        assert!(request.contains("record.uploaded_file_ids.clone()"));
+        // New submission and retained replay consume the original saved representation.
+        assert!(run.contains("api.create_task_billing(&prompt_task_create_request(&record),&scope)"));
+        assert!(run.contains("SavedReplayRequest::prompt(capture.authority.clone(),&capture.scope,&record.client_request_id)"));
+        assert!(run.contains("worker.wait(Duration::from_millis(IMAGE_POLL_INTERVAL_MS))"));
     }
 
     #[test]
@@ -1471,6 +1527,14 @@ mod tests {
         let viewer = include_str!("callbacks/viewer.rs");
         let platform = include_str!("../platform.rs");
         let app = include_str!("app.rs");
+        let picker = callbacks.split_once("state.on_add_reference(").unwrap().1
+            .split_once("state.on_paste_reference(").unwrap().0;
+        let transfer = callbacks.split_once("state.on_add_reference_from_transfer(").unwrap().1
+            .split_once("state.on_remove_reference(").unwrap().0;
+        let import = callbacks.split_once("fn start_reference_import(").unwrap().1
+            .split_once("fn start_reference_url_for_context(").unwrap().0;
+        let external = callbacks.split_once("fn process_captured_external_image_drops(").unwrap().1
+            .split_once("fn external_drop_inside_reference_input(").unwrap().0;
 
         assert!(composer.contains("label: AppState.en ? \"Add image\" : \"添加图片\""));
         assert!(upload_card.contains("in property <string> label"));
@@ -1478,7 +1542,8 @@ mod tests {
         assert!(upload_card.contains("border-radius: 10px"));
         assert!(composer.contains("width: 88px"));
         assert!(composer.contains("return 8;"));
-        assert!(callbacks.contains("add_reference_from_path(&app, &store, &path)"));
+        assert!(picker.contains("ReferenceCapture::new(&app,&context)"));
+        assert!(picker.contains("start_reference_import(&app,context,capture,ReferenceSource::Paths(paths))"));
         assert!(composer.contains("reference-drop := DropArea"));
         let drop_layer_position = composer
             .find("reference-drop := DropArea")
@@ -1503,16 +1568,23 @@ mod tests {
             .contains("AppState.reference-drop-x = reference-drop.absolute-position.x / 1px"));
         assert!(composer.contains("changed width => { root.sync-reference-drop-bounds(); }"));
         assert!(!composer.contains("interval: 50ms;\n        running: true;"));
-        assert!(callbacks.contains("transfer.plain_text()"));
-        assert!(callbacks.contains("external_image_url(data.as_str())"));
-        assert!(callbacks.contains("start_external_reference_import"));
-        assert!(callbacks.contains("download_external_reference"));
-        assert!(callbacks.contains("take_external_image_drops"));
+        assert!(transfer.contains("transfer.plain_text()"));
+        assert!(transfer.contains("external_image_url(data.as_str())"));
+        assert!(transfer.contains("ReferenceSource::Url(url)"));
+        assert!(transfer.contains("drag_data_to_paths(data.as_str())"));
+        assert!(transfer.contains("ReferenceSource::Paths(paths)"));
+        assert!(import.contains("spawn_reference_work(app,context,capture"));
+        assert!(import.contains("download_captured_reference_bytes(&url,persistence)"));
+        assert!(import.contains("decode_owned_reference_source(&authority,&path)"));
+        assert!(import.contains("persist_reference_image_for_namespace(&authority,&image)"));
+        assert!(external.contains("platform::take_external_image_drops()"));
         assert!(callbacks.contains("on_process_external_image_drops"));
         assert!(!callbacks.contains("poll_external_image_drops"));
-        assert!(callbacks.contains("ExternalImageDrop::Paths"));
-        assert!(callbacks.contains("ExternalImageDrop::Text"));
-        assert!(callbacks.contains("external_drop_inside_reference_input"));
+        assert!(external.contains("ExternalImageDrop::Paths"));
+        assert!(external.contains("ExternalImageDrop::Text"));
+        assert!(external.contains("external_drop_inside_reference_input"));
+        assert!(external.contains("start_reference_paths_for_context(app,context.clone(),paths)"));
+        assert!(external.contains("start_reference_url_for_context(app,context.clone(),url)"));
         assert!(callbacks.contains("position.physical"));
         assert!(viewer.contains("pub(super) fn external_image_url"));
         assert!(viewer.contains("pub(super) fn drag_data_to_paths"));
@@ -1656,40 +1728,70 @@ mod tests {
     #[test]
     fn windows_file_drag_runs_on_the_pointer_thread_after_releasing_capture() {
         let drag = include_str!("../drag_preview.rs");
-        let runtime = include_str!("mod.rs");
         let references = include_str!("callbacks/reference.rs");
         let viewer = include_str!("callbacks/viewer.rs");
         let handler = drag
-            .split("pub fn start_thumbnail_file_drag(path: PathBuf) -> bool")
+            .split("pub(crate) fn start_thumbnail_file_drag_captured(drag: CapturedNativeFileDrag) -> bool")
             .nth(1)
-            .and_then(|value| value.split("#[cfg(not(target_os = \"windows\"))]").next())
+            .and_then(|value| value.split("#[cfg(target_os = \"macos\")]").next())
             .expect("Windows file drag handler");
+        let reset = references.split_once("fn reference_reset_pointer(").unwrap().1
+            .split_once("fn start_reference_native_drag(").unwrap().0;
+        let pointer = references.split_once("fn reference_pointer_exit(").unwrap().1
+            .split_once("fn reference_path_in_store(").unwrap().0;
+        let native = references.split_once("fn start_reference_native_drag(").unwrap().1
+            .split_once("fn wire_reference_callbacks(").unwrap().0;
+        let viewer_drag = viewer.split_once("state.on_start_viewer_file_drag(").unwrap().1
+            .split_once("state.on_viewer_cutout_image(").unwrap().0;
 
         assert_eq!(handler.matches("ReleaseCapture()").count(), 2);
-        assert!(handler.contains("windows_file_drag::run(path).is_ok()"));
+        assert!(handler.contains("drag.consume(|path|"));
+        assert!(handler.contains("windows_file_drag::run(path.to_owned()).is_ok()"));
         assert!(!handler.contains("std::thread::spawn"));
         assert!(drag
             .contains("DoDragDrop(&data_object, &drop_source, DROPEFFECT_COPY, &mut effect).ok()"));
-        assert!(runtime.contains("fn reset_pointer_after_native_drag"));
-        assert!(runtime.contains("WindowEvent::PointerExited"));
-        assert!(references.contains("reset_pointer_after_native_drag(&app)"));
-        assert!(viewer.contains("reset_pointer_after_native_drag(&app)"));
+        // The shared captured completion, not either old unbound caller, owns reset.
+        assert!(pointer.contains("WindowEvent::PointerExited"));
+        assert!(reset.contains("slint::Timer::single_shot(Duration::ZERO"));
+        assert!(reset.contains("ticket.current() && capture.current(&app,&context)"));
+        assert!(reset.contains("reference_pointer_exit(&app)"));
+        assert!(native.contains("reference_reset_pointer(app,context.clone(),capture.clone(),completion)"));
+        assert!(viewer_drag.contains("state.invoke_start_thumbnail_file_drag("));
     }
 
     #[test]
     fn macos_file_drag_exposes_the_local_image_to_finder() {
         let drag = include_str!("../drag_preview.rs");
         let platform = include_str!("../platform.rs");
+        let authority = include_str!("native_drag.rs");
+        let queued = platform.split_once("fn queue_macos_file_drag(").unwrap().1
+            .split_once("fn take_macos_file_drag(").unwrap().0;
+        let mouse = platform.split_once("fn mouse_dragged(").unwrap().1
+            .split_once("fn mouse_up(").unwrap().0;
+        let native = platform.split_once("fn start_native_file_drag(").unwrap().1
+            .split_once("fn extract_image_paths(").unwrap().0;
+        let prepare = authority.split_once("fn prepare_native_file_drag_source(").unwrap().1
+            .split_once("fn require_drag_binding(").unwrap().0;
+        let consume = authority.split_once("fn consume<R>(").unwrap().1
+            .split_once("fn cancel_native_file_drag_for_retirement(").unwrap().0;
 
-        assert!(drag.contains("crate::platform::queue_macos_file_drag(path)"));
-        assert!(platform.contains("PENDING_MACOS_FILE_DRAG"));
+        assert!(drag.contains("crate::platform::queue_macos_file_drag(drag)"));
+        assert!(queued.contains("CapturedNativeFileDrag"));
+        assert!(queued.contains("PENDING_MACOS_FILE_DRAG.try_with"));
         assert!(platform.contains("sel!(mouseDragged:)"));
         assert!(platform.contains("ORIGINAL_MOUSE_DRAGGED"));
         assert!(platform.contains("sel!(mouseUp:)"));
         assert!(platform.contains("ORIGINAL_MOUSE_UP"));
-        assert!(platform.contains("start_native_file_drag(view, event, path)"));
-        assert!(platform.contains("dragFile_fromRect_slideBack_event"));
-        assert!(platform.contains("std::fs::canonicalize(&path)"));
+        assert!(mouse.contains("take_macos_file_drag()"));
+        assert!(mouse.contains("drag.consume(|path| start_native_file_drag(view, event, path.to_owned()))"));
+        assert!(native.contains("NSString::from_str(&path.to_string_lossy())"));
+        assert!(native.contains("dragFile_fromRect_slideBack_event"));
+        // The original regular file is held/inspected before AppKit consumes it;
+        // canonicalizing an arbitrary late pathname is no longer the authority.
+        assert!(prepare.contains("authority.open_existing_regular(&key)"));
+        assert!(prepare.contains("authority.inspect_regular(&file)"));
+        assert!(consume.contains("self.source.authority.inspect_regular(&self.source.file)? == self.source.metadata"));
+        assert!(consume.contains("Ok(native(&self.source.path))"));
     }
 
     #[test]
@@ -1894,8 +1996,8 @@ mod tests {
         assert!(inspiration.contains("preference-key: \"inspiration\";"));
         assert!(state.contains("callback save-gallery-layout(string, string);"));
         assert!(app.contains("state.on_save_gallery_layout"));
-        assert!(app.contains("save_user_profile(&app);"));
-        assert!(profile.contains("ui_preferences: UiPreferencesData"));
+        assert!(app.contains("save_device_settings(&app);"));
+        assert!(profile.contains("fn device_settings_data"));
         assert!(profile.contains("state.set_generation_gallery_layout"));
         assert!(thumbnail.contains("in property <bool> masonry: false;"));
         assert!(thumbnail.contains("root.item.height / root.item.width"));
@@ -2028,59 +2130,56 @@ mod tests {
 
     #[test]
     fn gallery_layout_preferences_are_backward_compatible_and_normalized() {
-        let legacy: UserProfileData =
+        let legacy: LegacyUserProfileData =
             serde_json::from_str("{}").expect("deserialize legacy user profile");
         assert_eq!(legacy.ui_preferences.generation_gallery_layout, "grid");
         assert_eq!(legacy.ui_preferences.asset_gallery_layout, "grid");
         assert_eq!(legacy.ui_preferences.inspiration_gallery_layout, "grid");
 
-        let saved = UserProfileData {
-            ui_preferences: UiPreferencesData {
-                generation_gallery_layout: "waterfall".to_string(),
-                asset_gallery_layout: "waterfall".to_string(),
-                inspiration_gallery_layout: "waterfall".to_string(),
-                ..UiPreferencesData::default()
-            },
-            ..UserProfileData::default()
+        let saved = DeviceSettings {
+            generation_gallery_layout: "waterfall".to_string(),
+            asset_gallery_layout: "waterfall".to_string(),
+            inspiration_gallery_layout: "waterfall".to_string(),
+            ..DeviceSettings::default()
         };
         let serialized = serde_json::to_string(&saved).expect("serialize user profile");
-        let restored: UserProfileData =
-            serde_json::from_str(&serialized).expect("restore user profile");
-        assert_eq!(
-            restored.ui_preferences.generation_gallery_layout,
-            "waterfall"
-        );
+        let restored: DeviceSettings = serde_json::from_str(&serialized).expect("restore user profile");
+        assert_eq!(restored.generation_gallery_layout, "waterfall");
         assert_eq!(normalize_gallery_layout(" WATERFALL "), "waterfall");
         assert_eq!(normalize_gallery_layout("unsupported"), "grid");
     }
 
     #[test]
     fn font_preferences_are_backward_compatible_normalized_and_restored() {
-        let legacy: UserProfileData =
+        let legacy: LegacyUserProfileData =
             serde_json::from_str("{}").expect("deserialize legacy user profile");
         assert_eq!(legacy.ui_preferences.font_family, "");
         assert_eq!(legacy.ui_preferences.font_size, 14);
 
-        let saved = UserProfileData {
-            ui_preferences: UiPreferencesData {
-                font_family: "Microsoft YaHei UI".to_string(),
-                font_size: 18,
-                ..UiPreferencesData::default()
-            },
-            ..UserProfileData::default()
+        let saved = DeviceSettings {
+            font_family: "Microsoft YaHei UI".to_string(),
+            font_size: 18,
+            ..DeviceSettings::default()
         };
         let serialized = serde_json::to_string(&saved).expect("serialize user profile");
-        let restored: UserProfileData =
+        let restored: DeviceSettings =
             serde_json::from_str(&serialized).expect("restore user profile");
-        assert_eq!(restored.ui_preferences.font_family, "Microsoft YaHei UI");
-        assert_eq!(restored.ui_preferences.font_size, 18);
+        assert_eq!(restored.font_family, "Microsoft YaHei UI");
+        assert_eq!(restored.font_size, 18);
         assert_eq!(normalize_settings_font_size(9), 10);
         assert_eq!(normalize_settings_font_size(18), 18);
         assert_eq!(normalize_settings_font_size(25), 24);
 
+        let migrated: LegacyUserProfileData = serde_json::from_str(
+            r#"{"ui_preferences":{"font_family":"Microsoft YaHei UI","font_size":18}}"#,
+        )
+        .expect("deserialize legacy font preferences");
+        assert_eq!(migrated.device_settings().font_family, "Microsoft YaHei UI");
+        assert_eq!(migrated.device_settings().font_size, 18);
+
         i_slint_backend_testing::init_no_event_loop();
         let app = AppWindow::new().expect("create app window");
-        apply_user_profile(&app, restored);
+        apply_device_settings(&app, restored);
         let state = app.global::<AppState>();
         assert_eq!(state.get_settings_font_family(), "Microsoft YaHei UI");
         assert_eq!(state.get_settings_font_size(), 18);
@@ -2100,26 +2199,26 @@ mod tests {
         assert!(picker.contains("AppState.set-settings-font-family("));
         assert!(runtime.contains("state.on_set_settings_font_size"));
         assert!(runtime.contains("state.on_set_settings_font_family"));
+        assert!(runtime.contains("save_device_settings(&app);"));
         assert!(profile.contains("font_family: state.get_settings_font_family().to_string()"));
         assert!(profile.contains("font_size: normalize_settings_font_size("));
     }
 
     #[test]
     fn close_behavior_preferences_are_backward_compatible_and_normalized() {
-        let legacy: UserProfileData =
+        let legacy: LegacyUserProfileData =
             serde_json::from_str("{}").expect("deserialize legacy user profile");
         assert_eq!(normalize_close_behavior(&legacy.close_behavior), "ask");
         assert_eq!(normalize_close_behavior(" EXIT "), "exit");
         assert_eq!(normalize_close_behavior("tray"), "tray");
         assert_eq!(normalize_close_behavior("unsupported"), "ask");
 
-        let saved = UserProfileData {
+        let saved = DeviceSettings {
             close_behavior: "tray".to_string(),
-            ..UserProfileData::default()
+            ..DeviceSettings::default()
         };
         let serialized = serde_json::to_string(&saved).expect("serialize user profile");
-        let restored: UserProfileData =
-            serde_json::from_str(&serialized).expect("restore user profile");
+        let restored: DeviceSettings = serde_json::from_str(&serialized).expect("restore user profile");
         assert_eq!(restored.close_behavior, "tray");
     }
 
@@ -2156,6 +2255,73 @@ mod tests {
         assert!(runtime.contains("slint::quit_event_loop()"));
         assert!(profile.contains("state.set_close_behavior"));
         assert!(profile.contains("close_behavior: normalize_close_behavior"));
+    }
+
+    #[test]
+    fn task7_startup_and_shutdown_leave_private_services_unloaded() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let private = directory.path().join("private-existing");
+        fs::create_dir(&private).unwrap();
+        fs::write(private.join("user-profile.json"), b"preserve-private").unwrap();
+        let state = app.global::<AppState>();
+        state.set_input_dir(private.display().to_string().into());
+        state.set_prompt_dir(private.display().to_string().into());
+        state.set_output_dir(private.display().to_string().into());
+        let context = AppContext::default();
+        super::app::apply_startup_device_state(
+            &app,
+            DeviceSettings {
+                theme_id: "dark".into(),
+                language: "en".into(),
+                ..Default::default()
+            },
+            None,
+        );
+        assert_eq!(state.get_theme_id(), "dark");
+        assert_eq!(state.get_language(), "en");
+        assert!(state.get_input_dir().is_empty());
+        assert!(state.get_prompt_dir().is_empty());
+        assert!(state.get_output_dir().is_empty());
+        assert!(context.store.borrow().assets.is_empty());
+        assert!(context.store.borrow().generations.is_empty());
+        assert!(context.store.borrow().inspiration.is_empty());
+        assert_eq!(
+            fs::read(private.join("user-profile.json")).unwrap(),
+            b"preserve-private"
+        );
+        assert_eq!(fs::read_dir(&private).unwrap().count(), 1);
+        // The whole executable cannot run in a fixture: it owns the process UI,
+        // tray, global repository and session. Keep its wiring assertion beside
+        // the actual isolated startup-presentation behavior above.
+        let run = include_str!("app.rs")
+            .split("pub(super) fn apply_startup_device_state")
+            .next()
+            .unwrap();
+        for private_service in [
+            "init_portable_dirs(",
+            "initialize_storage_index(",
+            "initialize_preview_cache(",
+            "cleanup_stale_reference_imports(",
+            "cleanup_stale_toolbox_files(",
+            "load_showcase_images(",
+            "seed_inspiration(",
+            "load_user_profile(",
+            "load_local_store(",
+            "rebuild_storage_references(",
+            "push_startup_state(",
+            "save_local_store_checked(",
+            "save_user_profile_checked(",
+            "cleanup_orphaned_durable_copies_",
+        ] {
+            assert!(
+                !run.contains(private_service),
+                "private service still starts without a namespace: {private_service}"
+            );
+        }
+        assert!(run.contains("save_device_settings_checked(&app)?"));
+        assert!(run.contains("flush_device()?"));
     }
 
     #[test]
@@ -2320,10 +2486,22 @@ mod tests {
         assert!(!page.contains("AppState.navigate(\"generation\")"));
         assert!(page.contains("AppState.navigate(\"canvas\")"));
         assert!(page.contains("opens-canvas: true"));
-        assert!(runtime.contains(
-            "if page == \"canvas\" {\n                    navigate_to_with_store(&app, &store.borrow(), \"free-canvas\")"
-        ));
-        assert!(viewer.contains("navigate_to_with_store(&app, &store.borrow(), \"canvas\")"));
+        let back = core_toolbox_contract_block(runtime, "state.on_back(", "state.on_set_theme(");
+        let back: String = back.split_whitespace().collect();
+        assert!(back.contains("ifpage==\"canvas\"{navigate_to_with_store(&app,&store.borrow(),\"free-canvas\");return;"));
+        let shortcut = core_toolbox_contract_block(viewer,
+            "state.on_viewer_open_creation_workflow(", "state.on_request_delete_asset(");
+        assert!(shortcut.contains("start_captured_viewer_reference(&app, context.clone(), CapturedViewerReferenceIntent::Creation"));
+        let saved = core_toolbox_contract_block(viewer,
+            "fn poll_captured_reference_store_ack(", "\nfn retry_captured_reference_save(");
+        let character = saved.split_once("CapturedViewerReferenceIntent::Creation { workflow_id, title, template, hint, .. } =>")
+            .expect("actual saved character-workflow branch").1;
+        assert!(saved.find("finish_delivery_preparation(&cancel)").unwrap()
+            < saved.find("if !matches!(receiver.try_recv(), Ok(Ok(())))").unwrap());
+        assert!(character.contains("viewer_reference_source_after_target("));
+        assert!(character.contains("context.apply_user_completion(persistence.lease()"));
+        assert!(character.contains("state.set_page(\"canvas\".into())"));
+        assert!(character.contains("start_canvas_preview_effects(&app, persistence.clone(), canvas)"));
 
         for image in [
             "plant-growth.png",
@@ -3162,16 +3340,22 @@ mod tests {
     fn reference_picker_does_not_block_the_slint_event_loop() {
         let callbacks = include_str!("callbacks/reference.rs");
         let add_reference = callbacks
-            .split("state.on_add_reference")
+            .split("state.on_add_reference(")
             .nth(1)
-            .and_then(|block| block.split("state.on_paste_reference").next())
+            .and_then(|block| block.split("state.on_paste_reference(").next())
             .expect("add-reference callback implementation");
 
-        assert!(add_reference.contains("drop(app);"));
-        assert!(add_reference.contains("slint::spawn_local(async move"));
-        assert!(add_reference.contains("rfd::AsyncFileDialog::new()"));
-        assert!(add_reference.contains(".pick_files()"));
-        assert!(add_reference.contains(".await"));
+        let picker = callbacks.split_once("fn reference_pick_files(").unwrap().1
+            .split_once("fn reference_clipboard_image(").unwrap().0;
+        // Scheduling shape only: the callback passes a weak-window completion;
+        // actual rfd/OS modal behavior is not established by this source test.
+        assert!(add_reference.contains("let weak=app.as_weak()"));
+        assert!(add_reference.contains("reference_pick_files(Box::new(move|paths|"));
+        assert!(add_reference.contains("weak.upgrade()"));
+        assert!(picker.contains("slint::spawn_local(async move"));
+        assert!(picker.contains("rfd::AsyncFileDialog::new()"));
+        assert!(picker.contains(".pick_files().await"));
+        assert!(!picker.contains("rfd::FileDialog::new()"));
         assert!(!add_reference.contains("rfd::FileDialog::new()"));
     }
 
@@ -3322,6 +3506,24 @@ mod tests {
         assert!(launcher.contains("Never form a continuous soil strip, shared ground, or connected soil"));
     }
 
+    // Structural wiring checks only. Runtime/SQLite behavior is covered by the
+    // owned toolbox and delivery tests; a source token is not a runtime receipt.
+    fn core_toolbox_contract_block<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+        source.split_once(start).expect("current producer start").1
+            .split_once(end).expect("current producer end").0
+    }
+
+    fn core_toolbox_drop_dispatch(source: &str) -> String {
+        core_toolbox_contract_block(source, "fn process_captured_external_image_drops(",
+            "\nfn external_drop_inside_reference_input(").split_whitespace().collect()
+    }
+
+    fn core_toolbox_delivery_metadata() -> String {
+        core_toolbox_contract_block(include_str!("generation/controller.rs"),
+            "fn stage_namespace_delivery(", "\npub(super) struct CommittedNamespaceDelivery")
+            .split_whitespace().collect()
+    }
+
     #[test]
     fn toolbox_conversion_reuses_the_batch_upload_layout() {
         let toolbox = include_str!("../../ui/pages/toolbox-page.slint");
@@ -3383,8 +3585,12 @@ mod tests {
         assert!(callbacks.contains("rfd::AsyncFileDialog::new()"));
         assert!(callbacks.contains("copy_and_release_managed_toolbox_result("));
         assert!(callbacks.contains("conversion_source_format"));
-        assert!(reference.contains("page.as_str() == \"toolbox-convert\""));
-        assert!(reference.contains("toolbox_callbacks::add_conversion_paths"));
+        let drops = core_toolbox_drop_dispatch(reference);
+        assert!(drops.contains("\"toolbox-convert\"=>toolbox_callbacks::add_conversion_paths_for_store("));
+        let import = core_toolbox_contract_block(callbacks, "pub(super) fn add_conversion_paths_for_store(",
+            "\npub(super) fn add_conversion_drag_for_store(");
+        assert!(import.contains("capture_toolbox_effect(store)"));
+        assert!(import.contains("add_conversion_paths_captured"));
     }
 
     #[test]
@@ -3415,22 +3621,31 @@ mod tests {
         assert!(callbacks.contains("state.on_add_colorize_source_from_drag"));
         assert!(callbacks.contains("add_colorization_from_drag_data"));
         assert!(callbacks.contains("start_external_colorization_import"));
-        assert!(callbacks.contains("persist_colorization_source(&source)"));
+        let start = core_toolbox_contract_block(callbacks, "pub(super) fn start_image_colorization_with_billing_scope(",
+            "\npub(super) fn resume_pending_image_colorization(");
+        assert!(start.contains("set_colorization_source_for_authority"));
+        assert!(start.contains("persist_reference_image_for_namespace(&authority, &image)"));
+        assert!(start.contains("upsert_pending_generation_for_namespace"));
         assert!(callbacks.contains("state.on_start_colorize"));
         assert!(callbacks.contains("state.on_reveal_colorize_result"));
         assert!(callbacks.contains("start_image_colorization"));
         assert!(callbacks.contains("CreateImageColorization"));
         assert!(callbacks.contains("create_image_colorization"));
         assert!(callbacks.contains("model_code: \"aliyun_image_colorization\""));
-        assert!(callbacks.contains("origin: \"image_colorization\".to_string()"));
-        assert!(callbacks.contains("model: \"老照片上色\".to_string()"));
-        assert!(callbacks.contains("本次老照片上色需要 20 积分"));
+        let metadata = core_toolbox_delivery_metadata();
+        assert!(metadata.contains("\"image_colorization\"=>Some((\"image_colorization\",\"老照片上色\"))"));
+        assert!(metadata.contains("category:iftoolbox.is_some(){\"other\".into()}"));
+        let worker = core_toolbox_contract_block(callbacks, "fn run_image_colorization_worker(",
+            "\nfn poll_image_colorization_outcomes(");
+        assert!(worker.contains("create_image_colorization_billing"));
+        assert!(worker.contains("SavedReplayRequest::generation"));
+        assert!(callbacks.contains("show_credit_rejection"));
         assert!(!callbacks.contains("老照片上色能力等待后端配置"));
         assert!(api.contains("/v1/toolbox/image-colorizations"));
         assert!(recovery.contains("resume_pending_image_colorization"));
         assert!(viewer.contains("item.origin != \"image_colorization\""));
-        assert!(reference_callbacks.contains("page.as_str() == \"toolbox-colorize\""));
-        assert!(reference_callbacks.contains("toolbox_callbacks::add_colorization_paths"));
+        let drops = core_toolbox_drop_dispatch(reference_callbacks);
+        assert!(drops.contains("\"toolbox-colorize\"=>{toolbox_callbacks::add_colorization_paths_for_store("));
         assert!(page.contains("text: AppState.en ? \"Change image\" : \"更换图片\""));
         assert!(page.contains("drop-enabled: !AppState.colorize-processing"));
     }
@@ -3469,8 +3684,14 @@ mod tests {
         assert!(callbacks.contains("origin: \"image_crop\""));
         assert!(callbacks.contains("category: \"other\""));
         assert!(callbacks.contains("store.assets.insert(0, item)"));
-        assert!(reference.contains("page.as_str() == \"toolbox-crop\""));
-        assert!(reference.contains("toolbox_callbacks::add_crop_paths"));
+        let drops = core_toolbox_drop_dispatch(reference);
+        assert!(drops.contains("\"toolbox-crop\"=>{toolbox_callbacks::add_crop_paths_for_store("));
+        let projection = core_toolbox_contract_block(callbacks, "fn enqueue_toolbox_asset_projection(",
+            "\nfn poll_toolbox_asset_ack");
+        assert!(projection.contains("store.assets.insert(0, item)"));
+        assert!(projection.contains("prepare_ordered_save"));
+        assert!(projection.contains(".enqueue(local_store_data(app, &store))"));
+        assert!(!projection.contains("store.generations.insert"));
     }
 
     #[test]
@@ -3546,16 +3767,16 @@ mod tests {
         assert!(!callbacks.contains("set_compression_estimated_credits"));
         assert!(!callbacks.contains("图片压缩能力等待后端配置"));
         assert!(callbacks.contains("crate::image_formats::picker_image_extensions()"));
-        let compression_import = callbacks
-            .split("pub(super) fn add_compression_paths")
-            .nth(1)
-            .and_then(|block| block.split("fn paste_compression_image").next())
-            .expect("compression import implementation");
-        assert!(compression_import.contains("compression_source_extension(&canonical)"));
-        assert!(compression_import
-            .contains("load_preview_image(&canonical, PreviewPurpose::Toolbox)"));
+        let compression_import = core_toolbox_contract_block(callbacks,
+            "fn add_compression_paths_captured(", "\npub(super) fn add_compression_paths(");
+        assert!(compression_import.contains("persistence.storage_authority()"));
+        assert!(compression_import.contains("load_toolbox_preview_for_authority(&authority, &path, PreviewPurpose::Toolbox)"));
+        let preview = core_toolbox_contract_block(callbacks, "fn load_toolbox_preview_for_authority(",
+            "\nfn write_toolbox_owned_output(");
+        assert!(preview.contains("authority.read_image_source"));
+        assert!(preview.contains("decode_image_bytes(path, &bytes)"));
         assert!(!compression_import.contains("is_compression_image_path"));
-        assert!(!compression_import.contains("image::open(&canonical)"));
+        assert!(!compression_import.contains("image::open("));
         assert!(image_processing.contains("ImageCompressionMode::Quality"));
         assert!(image_processing.contains("ImageCompressionMode::TargetBytes"));
         assert!(image_processing.contains("resize_image_by_scale"));
@@ -3563,8 +3784,8 @@ mod tests {
         assert!(image_processing.contains("CompressionFormat::Png"));
         assert!(image_processing.contains("CompressionFormat::WebP"));
         assert!(image_processing.contains("CompressionFormat::Bmp"));
-        assert!(reference.contains("page.as_str() == \"toolbox-compress\""));
-        assert!(reference.contains("toolbox_callbacks::add_compression_paths"));
+        let drops = core_toolbox_drop_dispatch(reference);
+        assert!(drops.contains("\"toolbox-compress\"=>toolbox_callbacks::add_compression_paths_for_store("));
         assert!(formats.contains("\"bmp\""));
         assert!(formats.contains("\"gif\""));
         assert!(formats.contains("\"tiff\""));
@@ -3621,26 +3842,49 @@ mod tests {
         assert!(callbacks.contains("state.on_start_enhance"));
         assert!(callbacks.contains("state.on_reveal_enhance_result"));
         assert!(callbacks.contains("normalized_enhancement_quality"));
-        assert!(callbacks.contains("ENHANCEMENT_MAX_INPUT_BYTES: u64 = 20 * 1024 * 1024"));
-        assert!(callbacks.contains("ENHANCEMENT_MIN_EDGE: u32 = 64"));
-        assert!(callbacks.contains("ENHANCEMENT_MAX_LONG_EDGE: u32 = 5000"));
+        let compact: String = callbacks.split_whitespace().collect();
+        assert!(compact.contains("ENHANCEMENT_MAX_INPUT_BYTES:u64=20*1024*1024;"));
+        assert!(compact.contains("ENHANCEMENT_MIN_EDGE:u32=64;"));
+        assert!(compact.contains("ENHANCEMENT_MAX_LONG_EDGE:u32=5000;"));
         assert!(!callbacks.contains("ENHANCEMENT_MAX_SHORT_EDGE"));
-        assert!(callbacks.contains("ENHANCEMENT_MAX_ASPECT_RATIO: u32 = 2"));
+        assert!(compact.contains("ENHANCEMENT_MAX_ASPECT_RATIO:u32=2;"));
         assert!(callbacks.contains("state.set_enhance_estimated_credits(\"20\""));
         assert!(!callbacks.contains("state.set_enhance_estimated_credits(\"10\""));
-        assert!(callbacks.contains("model: \"图片清晰\".to_string()"));
+        let metadata = core_toolbox_delivery_metadata();
+        assert!(metadata.contains("\"image_enhancement\"=>Some((\"image_enhancement\",\"图片清晰\"))"));
         assert!(callbacks.contains("target_quality:"));
         assert!(callbacks.contains("CreateImageEnhancement"));
         assert!(callbacks.contains("image_enhancement"));
-        assert!(callbacks.contains("category: \"other\".to_string()"));
-        assert!(callbacks.contains("origin: \"image_enhancement\".to_string()"));
-        assert!(callbacks.contains("upscale_done: true"));
+        assert!(metadata.contains("category:iftoolbox.is_some(){\"other\".into()}"));
+        assert!(metadata.contains("origin:toolbox.map(|(origin,_)|origin)"));
+        assert!(metadata.contains("upscale_done:record.task_type==\"image_upscale\"||enhancement"));
+        let finish = core_toolbox_contract_block(callbacks, "fn finish_enhancement_work(",
+            "\nfn enhancement_worker_current(");
+        assert!(finish.contains("start_image_delivery_commit"));
+        assert!(finish.contains("original.binding_matches()"));
+        assert!(finish.contains("original.presentation_matches(app)"));
         assert!(api.contains("/v1/toolbox/image-enhancements"));
         assert!(api.contains("pub(crate) target_quality: String"));
-        assert!(reference_callbacks.contains("page.as_str() == \"toolbox-enhance\""));
-        assert!(reference_callbacks.contains("image_enhancement_callbacks::add_enhancement_paths"));
+        let drops = core_toolbox_drop_dispatch(reference_callbacks);
+        assert!(drops.contains("\"toolbox-enhance\"=>{image_enhancement_callbacks::add_enhancement_paths_for_store("));
         assert!(recovery.contains("resume_pending_image_enhancement"));
-        assert!(recovery.contains("model.code == \"aliyun_super_resolution\""));
+        // The fixed model is retained by the real new-request producer; local
+        // recovery dispatches that original row, not today's catalog selection.
+        let new_record = core_toolbox_contract_block(callbacks,
+            "fn new_enhancement_record(", "\npub(super) fn resume_pending_image_enhancement(");
+        assert!(new_record.contains("model_code:\"aliyun_super_resolution\".into()"));
+        assert!(new_record.contains("task_type:\"image_enhancement\".into()"));
+        let submit = core_toolbox_contract_block(callbacks,
+            "pub(super) fn start_image_enhancement_with_billing_scope(", "\nfn new_enhancement_record(");
+        assert!(submit.find("let record=new_enhancement_record(").unwrap()
+            < submit.find("upsert_pending_generation_for_namespace(&authority,&billing,record.clone())?").unwrap());
+        assert!(submit.contains("run_enhancement_record(&backend,&authority,Some(&billing),&billing.request.session,record,cancel,progress)"));
+        let resume = core_toolbox_contract_block(callbacks,
+            "pub(super) fn resume_pending_image_enhancement(", "\nfn finish_enhancement_work(");
+        assert!(resume.contains("run_enhancement_record(&backend,&authority,None,&session,record,cancel,progress)"));
+        let dispatch = core_toolbox_contract_block(recovery,
+            "if record.task_type == \"image_enhancement\" {", "if record.task_type == \"image_cutout\" {");
+        assert!(dispatch.contains("resume_pending_image_enhancement(&app, context.clone(), record)"));
         assert!(viewer.contains("item.origin != \"image_enhancement\""));
     }
 
@@ -3685,17 +3929,22 @@ mod tests {
         assert!(callbacks.contains("set_watermark_source_from_path"));
         assert!(callbacks.contains("external_image_url(data)"));
         assert!(callbacks.contains("start_external_watermark_import"));
-        assert!(reference_callbacks.contains("page.as_str() == \"toolbox-watermark\""));
-        assert!(reference_callbacks.contains("toolbox_callbacks::add_watermark_paths"));
+        let drops = core_toolbox_drop_dispatch(reference_callbacks);
+        assert!(drops.contains("\"toolbox-watermark\"=>{toolbox_callbacks::add_watermark_paths_for_store("));
         assert!(callbacks.contains("reveal_path_in_file_manager(&path)"));
         assert!(callbacks.contains("CreateWatermarkRemoval"));
         assert!(callbacks.contains("image_watermark_removal"));
         assert!(callbacks.contains("category: \"other\".to_string()"));
-        assert!(callbacks.contains("origin: \"watermark_removal\".to_string()"));
-        assert!(callbacks.contains("model: \"去水印\".to_string()"));
-        assert!(callbacks.contains("store.assets.insert(0, item)"));
-        assert!(callbacks.contains("save_local_store(app, &store)"));
-        assert!(!callbacks.contains("store.generations.insert"));
+        let metadata = core_toolbox_delivery_metadata();
+        assert!(metadata.contains("\"image_watermark_removal\"=>Some((\"watermark_removal\",\"去水印\"))"));
+        assert!(metadata.contains("category:iftoolbox.is_some(){\"other\".into()}"));
+        assert!(metadata.contains("iftoolbox.is_none(){reveal_prompt_history_entry(store,&item.prompt);store.generations.insert(0,item.clone());}"));
+        assert!(metadata.contains("store.assets.insert(0,item)"));
+        let delivery = core_toolbox_contract_block(callbacks, "fn enqueue_toolbox_remote_delivery(",
+            "\n#[derive");
+        assert!(delivery.contains("prepared.ensure_current()"));
+        assert!(delivery.contains("start_image_delivery_commit"));
+        assert!(delivery.contains("ToolboxRemoteKind::Watermark"));
         assert!(state.contains("viewer-repeat-enabled"));
         assert!(include_str!("../../ui/dialogs/viewer-overlay.slint")
             .contains("AppState.viewer-repeat-enabled"));
@@ -4112,17 +4361,35 @@ mod tests {
 
     #[test]
     fn generation_model_pickers_are_left_aligned() {
-        let top_bar = include_str!("../../ui/components/top-bar.slint").replace("\r\n", "\n");
-
-        assert!(top_bar.contains("x: 18px;\n            y: 0px;"));
-        assert!(top_bar
-            .contains("width: max(360px, parent.width - 18px - root.actions-width() - 32px);"));
-        assert!(top_bar.contains("(root.width - 18px - root.actions-width() - 70px) / 2"));
-        assert!(top_bar.contains(
-            "x: 0px;\n                    y: 6px;\n                    kind: \"image\";"
-        ));
-        assert!(top_bar.contains("x: root.model-picker-width() + 18px;\n                    y: 6px;\n                    kind: \"reasoning\";"));
-        assert!(!top_bar.contains("root.models-width()"));
+        use i_slint_backend_testing::ElementHandle;
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_page("generation".into());
+        state.set_logged_in(true);
+        app.show().unwrap();
+        for width in [1180.0, 1364.0, 1600.0] {
+            for payment in [false, true] {
+                state.set_payment_active(payment);
+                app.window().set_size(slint::LogicalSize::new(width, 928.0));
+                let bar = ElementHandle::find_by_element_type_name(&app, "TopBar").next().unwrap();
+                let mut pickers = bar.query_descendants().match_inherits("ModelPicker").find_all();
+                assert_eq!(pickers.len(), 2, "both model selectors must remain available");
+                pickers.sort_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x));
+                assert!((pickers[0].absolute_position().x - bar.absolute_position().x - 18.0).abs() <= 1.0);
+                assert!((pickers[1].absolute_position().x - pickers[0].absolute_position().x
+                    - pickers[0].size().width - 18.0).abs() <= 1.0);
+                assert!((pickers[0].absolute_position().y - pickers[1].absolute_position().y).abs() <= 1.0,
+                    "selectors must move together when the toolbar wraps");
+                for picker in pickers {
+                    assert!(picker.size().width >= 220.0);
+                    assert!(picker.absolute_position().x + picker.size().width
+                        <= bar.absolute_position().x + bar.size().width + 1.0);
+                    assert!(picker.absolute_position().y + picker.size().height
+                        <= bar.absolute_position().y + bar.size().height + 1.0);
+                }
+            }
+        }
     }
 
     #[test]
@@ -4151,8 +4418,12 @@ mod tests {
         assert!(api.contains("Method::DELETE"));
         assert!(api.contains("/v1/notifications/{id}"));
         assert!(api.contains("/v1/notifications"));
-        assert!(callbacks.contains("store.notifications.retain(|item| item.id != id)"));
-        assert!(callbacks.contains("store.notifications.clear()"));
+        let actions = callbacks.split_once("impl NotificationAction {").unwrap().1
+            .split_once("fn wire_notification_callbacks(").unwrap().0;
+        assert!(actions.contains("Self::Delete(id) => api.delete_scoped(&id, scope)"));
+        assert!(actions.contains("Self::Clear => api.delete_all_scoped(scope)"));
+        assert!(actions.contains("Self::Delete(id) => store.notifications.retain(|item| &item.id != id)"));
+        assert!(actions.contains("Self::Clear => store.notifications.clear()"));
 
         let failed = ServerNotification {
             id: "failed-generation".to_string(),
@@ -4228,6 +4499,13 @@ mod tests {
             assert!(source.contains("AppState.navigate(\"settings\")"));
             assert!(!source.contains("AppState.navigate(\"models\")"));
         }
+    }
+
+    // These retained checks describe the current wiring, not native UI or
+    // SQLite acceptance; the actual canvas callback tests cover those boundaries.
+    fn core_canvas_contract_block<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+        source.split_once(start).expect("current canvas producer start").1
+            .split_once(end).expect("current canvas producer end").0
     }
 
     #[test]
@@ -4319,7 +4597,16 @@ mod tests {
         assert!(callbacks.contains("state.on_undo_canvas"));
         assert!(callbacks.contains("state.on_redo_canvas"));
         assert!(callbacks.contains("CanvasController"));
-        assert!(callbacks.contains("save_local_store"));
+        let prepare = core_canvas_contract_block(&callbacks, "fn prepare_canvas_edit(",
+            "\nfn apply_canvas_edit<R>");
+        let commit = core_canvas_contract_block(&callbacks, "fn apply_canvas_edit_checked<R>",
+            "\nfn start_canvas_edit_preview(");
+        assert!(prepare.contains("capture.persistence.prepare_ordered_save()"));
+        assert!(prepare.contains("prepare_canvas_store_ack_worker"));
+        assert!(commit.contains("capture.apply(store"));
+        assert!(commit.contains("local_store_data(app, &store)"));
+        assert!(commit.contains(".enqueue(data)"));
+        assert!(commit.contains("prepare_canvas_projection"));
         assert!(local_store.contains("canvas_notes: store.canvas_notes.clone()"));
         assert!(local_store.contains("canvas_links: store.canvas_links.clone()"));
         assert!(local_store.contains("let mut canvas_workspaces = store.canvas_workspaces.clone()"));
@@ -4801,12 +5088,24 @@ mod tests {
         assert!(types.contains("preview-image: image"));
         assert!(model.contains("image_path: String"));
         assert!(callbacks.contains("state.on_choose_canvas_node_image"));
-        assert!(callbacks.contains("app_data_dir().join(\"canvas\").join(\"uploads\")"));
-        assert!(callbacks.contains("atomic_write_file(&destination, &bytes)"));
-        assert!(callbacks.contains("path: destination.display().to_string()"));
+        let import = core_canvas_contract_block(callbacks, "fn start_canvas_image_import(",
+            "\nfn poll_canvas_image_import(");
+        let persist = core_canvas_contract_block(callbacks, "fn persist_canvas_managed_image(",
+            "\n#[derive(Clone, Debug)]");
+        assert!(import.contains("spawn_canvas_worker"));
+        assert!(import.contains("authority.read_image_source"));
+        assert!(import.contains("persist_canvas_managed_image"));
+        assert!(import.contains("ManagedUserArea::CanvasUploads"));
+        assert!(persist.contains("authority.sync_regular"));
+        assert!(persist.contains("NamespaceManagedPublication::Absent"));
+        assert!(persist.contains("register_file_for_namespace"));
+        assert!(persist.contains("authority.lease().namespace.path(key.area())"));
         assert!(callbacks.contains("image_path = image.path"));
-        assert!(sync.contains("prepare_original_image_if("));
-        assert!(sync.contains("CANVAS_PREVIEW_EPOCH.load(Ordering::Acquire) == preview_epoch"));
+        let previews = core_canvas_contract_block(sync, "pub(super) fn start_canvas_preview_effects(",
+            "\n#[cfg(test)]");
+        assert!(previews.contains("prepare_owned_preview(&captured, Path::new(&path), PreviewPurpose::Canvas)"));
+        assert!(previews.contains("CANVAS_PREVIEW_EPOCH.load(Ordering::Acquire) != epoch"));
+        assert!(previews.contains("row.id.as_str() == id && row.image_path.as_str() == path"));
         assert!(!sync.contains(
             "load_preview_image(Path::new(&note.image_path), PreviewPurpose::Canvas)"
         ));
@@ -4835,9 +5134,67 @@ mod tests {
         assert!(page.contains("root.resize-preview-height = self.start-height * scale"));
         assert!(callbacks.contains("state.on_resize_canvas_image_node"));
         assert!(callbacks.contains("fit_image_node_to_intrinsic_aspect"));
-        assert!(callbacks.contains("inspect_image_dimensions(&source_path)"));
+        let imported = core_canvas_contract_block(callbacks, "fn poll_canvas_image_import(",
+            "\n#[cfg(test)]");
+        assert!(imported.contains("fit_image_node_to_intrinsic_aspect"));
+        assert!(imported.contains("image.width, image.height"));
+        let resize = core_canvas_contract_block(callbacks, "state.on_resize_canvas_image_node(",
+            "state.on_prepare_canvas_focus(");
+        assert!(resize.contains("apply_canvas_edit"));
+        assert!(resize.contains("resize_image_node_proportionally"));
+        assert!(!resize.contains("inspect_image_dimensions"));
         assert!(ops.contains("fn resize_image_node_proportionally"));
         assert!(ops.contains("fn fit_image_node_to_intrinsic_aspect"));
+    }
+
+    struct IntegratedViewerFixture {
+        scoped: video_image_callbacks::tests::scoped_inputs::Fixture,
+        source_path: PathBuf,
+    }
+    impl IntegratedViewerFixture {
+        fn new(app: &AppWindow) -> Self {
+            let scoped = video_image_callbacks::tests::scoped_inputs::Fixture::new();
+            let transition = scoped.context.namespace_operations.try_begin_transition().unwrap();
+            let recovery = transition.begin_prepublication_recovery(scoped.persistence.lease()).unwrap();
+            recovery.verify_no_unsupported_imports(&scoped.authority).unwrap();
+            let recovered = recovery.finish().unwrap();
+            transition.prepare_publication(scoped.persistence.lease(), recovered).unwrap().publish();
+            let source_path = persist_reference_image_for_namespace(&scoped.authority,
+                &image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(32, 20, image::Rgba([22,44,66,255])))).unwrap();
+            scoped.context.store.borrow_mut().assets.push(AssetData {
+                id: "integration-original".into(), conversation_id: String::new(), title: "Original".into(),
+                category: "other".into(), kind: "game".into(), time: "fixture".into(), prompt: String::new(),
+                ratio: "1:1".into(), quality: "1K".into(), model: "fixture".into(), origin: "generation".into(),
+                width: 32, height: 20, source_path: source_path.to_string_lossy().into_owned(), reference_paths: vec![],
+                cutout_done: false, remove_black_done: false, upscale_done: false, is_new: false,
+                delivery_recoverable: false, delivery_downloading: false,
+            });
+            wire_viewer_callbacks(app, scoped.context.clone());
+            let state = app.global::<AppState>();
+            state.set_session_state("online".into());
+            state.set_viewer_id("integration-original".into());
+            state.set_viewer_source("asset".into());
+            Self { scoped, source_path }
+        }
+        fn assert_owned_copy(&self, path: &str) {
+            assert!(self.scoped.persistence.owns_path(Path::new(path)));
+            assert_ne!(Path::new(path), self.source_path);
+            assert_eq!(decode_image_file(Path::new(path)).unwrap().0.to_rgba8(),
+                decode_image_file(&self.source_path).unwrap().0.to_rgba8());
+        }
+    }
+    impl Drop for IntegratedViewerFixture {
+        fn drop(&mut self) {
+            let lease = self.scoped.persistence.lease();
+            let delivery = drain_delivery_commit_workers_for_lease_for_test(lease);
+            let references = drain_activation_preview_workers_for_lease_for_test(lease);
+            let previews = drain_canvas_preview_workers_for_lease_for_test(lease);
+            let canvas = drain_canvas_workers_for_lease_for_test(lease);
+            let retired = self.scoped.context.user_activity.begin_quiesce(lease).map(|guard| guard.retire());
+            if !std::thread::panicking() {
+                delivery.unwrap(); references.unwrap(); previews.unwrap(); canvas.unwrap(); retired.unwrap();
+            }
+        }
     }
 
     #[test]
@@ -4893,13 +5250,9 @@ mod tests {
 
         i_slint_backend_testing::init_no_event_loop();
         let app = AppWindow::new().expect("create app window");
-        let context = AppContext::default();
-        wire_viewer_callbacks(&app, context.clone());
-        let source_path = std::env::temp_dir().join(format!(
-            "elunvi-canvas-detail-{}.png",
-            Uuid::new_v4()
-        ));
-        fs::write(&source_path, b"canvas image fixture").expect("write canvas image fixture");
+        let fixture = IntegratedViewerFixture::new(&app);
+        let context = fixture.scoped.context.clone();
+        let source_path = fixture.source_path.clone();
         context.store.borrow_mut().canvas_notes.push(CanvasNoteData {
             id: "generated-image".into(),
             kind: "image".into(),
@@ -4947,7 +5300,7 @@ mod tests {
         assert_eq!(state.get_viewer_source_path(), source_path.display().to_string());
         assert_eq!(state.get_viewer_prompt(), "机械生物逐级进化");
         assert_eq!(state.get_viewer_title(), "升级进化");
-        let _ = fs::remove_file(source_path);
+
     }
 
     #[test]
@@ -4966,7 +5319,12 @@ mod tests {
         assert!(page.contains("!root.is-board-image() && root.zoom-percent >= 30"));
         assert!(callbacks.contains("state.on_add_canvas_uploaded_image"));
         assert!(callbacks.contains("kind: \"board-image\".into()"));
-        assert!(callbacks.contains("pick_canvas_image(&app, &id)"));
+        let upload = core_canvas_contract_block(callbacks, "state.on_add_canvas_uploaded_image(",
+            "state.on_create_canvas_generation_source(");
+        assert!(upload.contains("CanvasActionCapture::capture"));
+        assert!(upload.contains("choose_canvas_image_for_capture"));
+        assert!(upload.contains("start_canvas_image_import"));
+        assert!(upload.contains("CanvasImageImportTarget::New { id, center_x, center_y }"));
     }
 
     #[test]
@@ -4980,7 +5338,13 @@ mod tests {
         assert!(callbacks.contains("state.on_paste_canvas_content"));
         assert!(callbacks.contains("clipboard.get_image()"));
         assert!(callbacks.contains("clipboard.get_text()"));
-        assert!(callbacks.contains("persist_canvas_clipboard_image"));
+        let paste = core_canvas_contract_block(callbacks, "state.on_paste_canvas_content(",
+            "state.on_duplicate_canvas_selection(");
+        assert!(paste.contains("capture.begin_effect(&store)"));
+        assert!(paste.contains("read_canvas_system_clipboard()"));
+        assert!(paste.contains("start_canvas_image_import"));
+        assert!(paste.contains("CanvasImageImportSource::Clipboard { width, height, bytes }"));
+        assert!(paste.contains("CanvasImageImportTarget::New { id, center_x, center_y }"));
         assert!(callbacks.contains("kind: \"board-image\".into()"));
         assert!(callbacks.contains("kind: \"text\".into()"));
         assert!(callbacks.contains("invoke_paste_canvas_selection(24.0, 24.0)"));
@@ -5337,7 +5701,10 @@ mod tests {
         assert!(state.contains("canvas-extraction-loading-node-id"));
         assert!(state.contains("callback save-canvas-image(string)"));
         assert!(callbacks.contains("state.set_canvas_split_loading_node_id(source.id.clone().into())"));
-        assert!(callbacks.contains("extract_canvas_elements_to_directory(&source_path, &output_dir)"));
+        let compact_callbacks = callbacks.split_whitespace().collect::<String>();
+        assert!(compact_callbacks.contains(
+            "extract_canvas_elements_to_directory(&source_path,&output_dir,&data_root,&configured_output_root,)"
+        ));
         assert!(callbacks.contains("kind: \"board-image\".to_string()"));
         assert!(callbacks.contains("正在从当前图片提取透明 PNG 元素"));
         assert!(!callbacks.contains("start_canvas_ui_extraction"));
@@ -5697,19 +6064,28 @@ mod tests {
         assert!(payment_checkout.contains("Command::new(\"rundll32.exe\")"));
         assert!(payment_checkout.contains("Command::new(\"xdg-open\")"));
         assert!(!payment_checkout.contains("WebViewBuilder"));
-        assert!(callbacks.contains("open_payment_checkout"));
-        assert!(callbacks.contains("Duration::from_secs(3)"));
-        assert!(
-            callbacks.contains("continue_payment_order(&app, context, backend, started, false)")
-        );
+        let launch = callbacks.split_once("fn launch_payment_checkout(").unwrap().1
+            .split_once("fn begin_payment_session(").unwrap().0;
+        let poll = callbacks.split_once("fn poll_payment_order(").unwrap().1
+            .split_once("fn continue_payment_order(").unwrap().0;
+        let recovery = callbacks.split_once("fn recover_pending_orders(").unwrap().1
+            .split_once("fn start_credit_order_with_billing_scope(").unwrap().0;
+        let create = callbacks.split_once("fn create_payment_worker(").unwrap().1
+            .split_once("fn create_upgrade_order_checked(").unwrap().0;
+        assert!(launch.contains("find_saved_payment(capture,key)"));
+        assert!(launch.contains("open_payment_checkout(&checkout,capture.backend.api.base_url(),&capture.persistence,&record.order_id)"));
+        assert!(poll.contains("Duration::from_secs(3)"));
+        assert!(recovery.contains("PaymentPoll::Initial{launch:false}"));
         assert!(callbacks.contains("暂时无法确认支付结果，请稍后查看订单状态"));
         assert!(membership.contains("PurchaseAgreements"));
         assert!(credit_page.contains("PurchaseAgreements"));
         assert!(purchase_agreements.contains("purchase-membership-accepted"));
         assert!(purchase_agreements.contains("purchase-credit-rules-accepted"));
-        assert!(callbacks.contains(
-            "agreements_api.accept_agreements_scoped(&acceptances, &worker_scope)?;"
-        ));
+        let agreements = create.find("accept_agreements_scoped(&acceptances,&worker.capture.session)?").unwrap();
+        let credit_order = create.find("create_credit_order_billing(").unwrap();
+        let membership_order = create.find("create_order_billing(").unwrap();
+        assert!(agreements < credit_order);
+        assert!(agreements < membership_order);
         assert!(callbacks.contains("apply_agreements_from_payment_error"));
         assert!(callbacks.contains("agreement_acceptance_required"));
         assert!(!callbacks.contains("cancel_active_payment"));
@@ -5763,15 +6139,33 @@ mod tests {
         assert!(!credits.contains("INVALID"));
         assert!(!credits.contains("USED"));
         assert!(!credits.contains("成功状态预览"));
-        assert!(callbacks.contains("state.on_redeem_credits"));
-        assert!(callbacks.contains("redeem_credit_code_scoped"));
-        assert!(callbacks.contains("ledger_page_scoped"));
-        assert!(callbacks.contains("reset_credit_ledger"));
-        assert!(account_api.contains("/v1/credits/redemptions"));
-        assert!(account_api.contains("Some(client_request_id)"));
+        // Structural wiring only: each assertion is bounded to its real producer.
+        let wire = callbacks.split_once("fn wire_credit_callbacks(").unwrap().1
+            .split_once("fn poll_credit_redemption(").unwrap().0;
+        let prepare = callbacks.split_once("fn prepare_credit_redemption(").unwrap().1
+            .split_once("enum CreditRedemptionSettlement").unwrap().0;
+        let run = callbacks.split_once("impl PreparedCreditRedemption {").unwrap().1
+            .split_once("fn prepare_credit_redemption(").unwrap().0;
+        let ledger = callbacks.split_once("fn request_credit_ledger_page(").unwrap().1
+            .split_once("fn poll_credit_ledger_page(").unwrap().0;
+        let redeem_api = account_api.split_once("fn redeem_credit_code_billing(").unwrap().1
+            .split_once("fn revoke_session(").unwrap().0;
+        assert!(wire.contains("state.on_redeem_credits"));
+        assert!(wire.contains("prepare_credit_redemption(&app, &context, &code)"));
+        assert!(wire.contains("prepared.run(&worker_backend)"));
+        assert!(prepare.contains("capture_billing_action(KnownCapability::Redeem)"));
+        assert!(prepare.contains("SavedReplayRequest::redemption(persistence, &session, &existing.client_request_id)"));
+        assert!(run.contains("redeem_credit_code_billing(&self.receipt.code, &self.receipt.key, scope)"));
+        assert!(run.contains("backend.api.replay_saved("));
+        assert!(ledger.contains("capture_billing_action(KnownCapability::ReadGroupFinance)"));
+        assert!(ledger.contains("ledger_page_billing("));
+        assert!(ledger.contains("&worker_scope"));
+        assert!(callbacks.contains("fn reset_credit_ledger("));
+        assert!(redeem_api.contains("/v1/credits/redemptions"));
+        assert!(redeem_api.contains("Some(client_request_id)"));
         assert!(auth_callbacks.contains("clear_credit_redemption_state"));
         assert!(credits.contains("CreditLedgerSection"));
-        assert!(credits.contains("兑换成功后，积分将自动到账当前账号"));
+        assert!(credits.contains("兑换成功后，积分将自动到账你自己的主账号。"));
         assert!(credits.contains("if AppState.credits-tab == \"recharge\": CreditLedgerSection"));
         let redeem_section = credits
             .split("if AppState.credits-tab == \"redeem\": VerticalLayout {")
@@ -5900,14 +6294,39 @@ mod tests {
         let notifications = include_str!("../../ui/pages/notifications-page.slint");
         let settings = include_str!("../../ui/pages/settings-page.slint");
 
-        assert!(profile.contains("height: min(650px, root.height - 48px);"));
+        // Verify the selected native shell in real geometry, not the dimensions
+        // of the superseded design. Other pages retain their existing contracts.
+        use i_slint_backend_testing::ElementHandle;
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_profile_open(true);
+        state.set_account_center_section("accounts-teams".into());
+        app.show().unwrap();
+        for (width, height) in [(1180.0, 760.0), (1364.0, 928.0), (1600.0, 1000.0)] {
+            app.window().set_size(slint::LogicalSize::new(width, height));
+            let root = ElementHandle::find_by_element_type_name(&app, "ProfileDialog").next().unwrap();
+            let dialog = ElementHandle::find_by_element_id(&app, "ProfileDialog::dialog").next().unwrap();
+            let panel = ElementHandle::find_by_element_type_name(&app, "AccountsTeamsPanel").next().unwrap();
+            assert!((dialog.size().width - (root.size().width - 48.0).min(1120.0)).abs() <= 1.0);
+            assert!((dialog.size().height - (root.size().height - 48.0).min(720.0)).abs() <= 1.0);
+            assert!((dialog.absolute_position().x - root.absolute_position().x
+                - (root.size().width - dialog.size().width) / 2.0).abs() <= 1.0);
+            assert!((dialog.absolute_position().y - root.absolute_position().y
+                - (root.size().height - dialog.size().height) / 2.0).abs() <= 1.0);
+            assert!(panel.absolute_position().x >= dialog.absolute_position().x);
+            assert!(panel.absolute_position().y >= dialog.absolute_position().y);
+            assert!(panel.absolute_position().x + panel.size().width
+                <= dialog.absolute_position().x + dialog.size().width + 1.0);
+            assert!(panel.absolute_position().y + panel.size().height
+                <= dialog.absolute_position().y + dialog.size().height + 1.0);
+        }
         assert!(profile.contains(
             "viewport-height: max(self.height, AppState.account-sessions.length * 68px);"
         ));
-        assert!(profile.contains("width: min(920px, root.width - 48px);"));
         assert!(profile.contains("x: parent.width - 128px;"));
         assert!(profile.contains("x: parent.width - 158px;"));
-        assert!(profile.contains("x: parent.width - 186px;"));
         assert!(profile.contains("clip: true;"));
 
         assert!(auth.contains("height: min(700px, root.height - 40px);"));
@@ -6023,7 +6442,13 @@ mod tests {
         assert!(state.contains("callback viewer-import-to-canvas();"));
         assert!(callbacks.contains("state.on_viewer_open_image"));
         assert!(callbacks.contains("state.on_viewer_import_to_canvas"));
-        assert!(callbacks.contains("import_viewer_image_to_canvas"));
+        let import = callbacks.split_once("state.on_viewer_import_to_canvas(").unwrap().1
+            .split_once("state.on_viewer_open_creation_workflow(").unwrap().0;
+        let bridge = callbacks.split_once("fn start_or_retry_viewer_canvas_import(").unwrap().1
+            .split_once("#[cfg(test)]").unwrap().0;
+        assert!(import.contains("start_or_retry_viewer_canvas_import("));
+        assert!(bridge.contains("start_captured_viewer_image_import_to_canvas_with_stage("));
+        assert!(bridge.contains("retry_staged_viewer_canvas_import("));
         assert!(callbacks.contains("open_viewer_image(&app, &store.borrow())"));
         assert!(feature.contains("pub(super) fn open_viewer_image"));
         assert!(feature.contains("open_path_with_default_app(&source)"));
@@ -6163,7 +6588,7 @@ mod tests {
 
     #[test]
     fn video_generation_callbacks_use_server_models_quotes_and_stable_requests() {
-        let callbacks = include_str!("callbacks/video_generation.rs");
+        let callbacks = concat!(include_str!("callbacks/video_generation.rs"), include_str!("callbacks/video_pricing.rs"));
         let runtime = include_str!("mod.rs");
         let app = include_str!("app.rs");
         let auth = include_str!("callbacks/auth.rs");
@@ -6179,7 +6604,7 @@ mod tests {
         assert!(callbacks.contains("state.set_video_source_image"));
         assert!(callbacks.contains("state.on_request_video_quote"));
         assert!(callbacks.contains("CreateVideoQuote"));
-        assert!(callbacks.contains("quote_video_scoped"));
+        assert!(callbacks.contains("quote_video_billing"));
         assert!(callbacks.contains("state.set_video_quote_ready(false)"));
         assert!(callbacks.contains("视频服务暂未开放"));
         assert!(callbacks.contains("state.on_submit_video_generation"));
@@ -6190,29 +6615,36 @@ mod tests {
         let window = AppWindow::new().unwrap();
         let context = AppContext::default();
         *context.current_user_id.lock().unwrap() = Some("user-a".into());
-        wire_video_generation_callbacks(&window, context.clone());
+        wire_deferred_video_generation_callbacks(&window, context.clone());
         let state = window.global::<AppState>();
         state.set_logged_in(true);
         state.set_session_state("offline".into());
         state.set_viewer_id("image-a".into());
         state.set_viewer_prompt("original image prompt".into());
         state.set_prompt("unrelated workspace prompt".into());
+        state.set_video_prompt("retained video draft".into());
+        // This release deliberately does not offer video connection. A raw user
+        // label without a published namespace must not mutate private UI either.
+        let original_page=state.get_page();
         state.invoke_viewer_generate_video();
-        assert_eq!(state.get_page(), "video-generation");
-        assert_eq!(state.get_video_prompt(), "original image prompt");
+        assert_eq!(state.get_page(), original_page);
+        assert_eq!(state.get_video_prompt(), "retained video draft");
+        assert!(!state.get_video_service_available());
 
         store_video_prompt_draft(
             &mut context.store.borrow_mut().prompt_drafts,
             "user-a", "image-a", "edited video prompt",
         );
         state.invoke_viewer_generate_video();
-        assert_eq!(state.get_video_prompt(), "edited video prompt");
+        assert_eq!(state.get_video_prompt(), "retained video draft");
+        assert_eq!(video_prompt_for_source(&context.store.borrow().prompt_drafts,"user-a","image-a","original image prompt"),"edited video prompt");
         assert_eq!(state.get_viewer_prompt(), "original image prompt");
         assert_eq!(state.get_prompt(), "unrelated workspace prompt");
 
         *context.current_user_id.lock().unwrap() = Some("user-b".into());
         state.invoke_viewer_generate_video();
-        assert_eq!(state.get_video_prompt(), "original image prompt");
+        assert_eq!(state.get_video_prompt(), "retained video draft");
+        assert_eq!(video_prompt_for_source(&context.store.borrow().prompt_drafts,"user-b","image-a","original image prompt"),"original image prompt");
     }
 
     #[test]
@@ -6253,11 +6685,23 @@ mod tests {
     #[test]
     fn canvas_import_uses_board_image_nodes_and_focuses_selection() {
         let canvas = include_str!("callbacks/infinite_canvas.rs");
+        let callbacks = include_str!("callbacks/viewer.rs");
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let bridge = callbacks.split_once("fn start_or_retry_viewer_canvas_import(").unwrap().1
+            .split_once("#[cfg(test)]").unwrap().0;
+        let import = canvas.split_once("fn start_captured_viewer_image_import_to_canvas_with_stage(").unwrap().1
+            .split_once("type ViewerCanvasImportCompletion").unwrap().0;
+        let commit = canvas.split_once("fn poll_viewer_canvas_import(").unwrap().1
+            .split_once("fn target_at_input(").unwrap().0;
 
-        assert!(canvas.contains("pub(super) fn import_viewer_image_to_canvas"));
-        assert!(canvas.contains("kind: \"board-image\".into()"));
-        assert!(canvas.contains("app_data_dir().join(\"canvas\").join(\"uploads\")"));
+    assert!(bridge.contains("source.path().to_owned()"));
+        assert!(bridge.contains("DEFAULT_CANVAS_WORKSPACE_ID.into()"));
+        assert!(import.contains("source_current(app, &context, false)"));
+        assert!(import.contains("persist_canvas_managed_image("));
+        assert!(import.contains("ManagedUserArea::CanvasUploads"));
+        assert!(commit.contains("kind: \"board-image\".into()"));
+        assert!(commit.contains("apply_canvas_edit_checked("));
+        assert!(commit.contains("CanvasSaveCompletion::Viewer"));
         assert!(page.contains("running: AppState.canvas-focus-request > 0;"));
         assert!(page.contains("root.focus-selection();"));
     }
@@ -6331,21 +6775,57 @@ mod tests {
     fn character_viewer_workflow_opens_its_independent_canvas_with_the_image_as_reference() {
         i_slint_backend_testing::init_no_event_loop();
         let app = AppWindow::new().expect("create app window");
-        let context = AppContext::default();
+        let fixture = video_image_callbacks::tests::scoped_inputs::Fixture::new();
+        struct Drain<'a>(&'a video_image_callbacks::tests::scoped_inputs::Fixture);
+        impl Drop for Drain<'_> {
+            fn drop(&mut self) {
+                let lease = self.0.persistence.lease();
+                let delivery = drain_delivery_commit_workers_for_lease_for_test(lease);
+                let previews = drain_activation_preview_workers_for_lease_for_test(lease);
+                let canvas = drain_canvas_workers_for_lease_for_test(lease);
+                let retired = self.0.context.user_activity.begin_quiesce(lease).map(|guard| guard.retire());
+                if !std::thread::panicking() {
+                    delivery.unwrap(); previews.unwrap(); canvas.unwrap(); retired.unwrap();
+                }
+            }
+        }
+        let _drain = Drain(&fixture);
+        let context = fixture.context.clone();
+        let transition = context.namespace_operations.try_begin_transition().unwrap();
+        let recovery = transition.begin_prepublication_recovery(fixture.persistence.lease()).unwrap();
+        recovery.verify_no_unsupported_imports(&fixture.authority).unwrap();
+        let recovered = recovery.finish().unwrap();
+        transition.prepare_publication(fixture.persistence.lease(), recovered).unwrap().publish();
         wire_viewer_callbacks(&app, context.clone());
         let state = app.global::<AppState>();
-        let source_path = std::env::temp_dir().join(format!(
-            "elunvi-character-workflow-reference-{}.png",
-            Uuid::new_v4()
-        ));
-        fs::write(&source_path, b"test image reference").expect("write reference fixture");
+        let authority = fixture.authority.clone();
+        let source_path = std::thread::spawn(move || {
+            persist_reference_image_for_namespace(&authority,
+                &image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+                    32, 20, image::Rgba([22, 44, 66, 255]),
+                ))).unwrap()
+        }).join().unwrap();
+        let original_bytes = fs::read(&source_path).unwrap();
+        context.store.borrow_mut().assets.push(AssetData {
+            id: "character-workflow-original".into(), conversation_id: "conversation".into(),
+            title: "Character".into(), category: "character".into(), kind: "game".into(),
+            time: "fixture".into(), prompt: "original character".into(), ratio: "1:1".into(),
+            quality: "1K".into(), model: "fixture-model".into(), origin: "generation".into(),
+            width: 32, height: 20, source_path: source_path.to_string_lossy().into_owned(),
+            reference_paths: vec![], cutout_done: false, remove_black_done: false,
+            upscale_done: false, is_new: false, delivery_recoverable: false, delivery_downloading: false,
+        });
 
         state.set_logged_in(true);
+        state.set_session_state("online".into());
         state.set_page("assets".into());
+        state.set_viewer_id("character-workflow-original".into());
+        state.set_viewer_source("asset".into());
         state.set_viewer_open(true);
         state.set_viewer_category("character".into());
         state.set_viewer_source_path(source_path.display().to_string().into());
         state.set_canvas_workflow_prompt("prompt in the previous workspace".into());
+        fixture.persistence.save_store(local_store_data(&app, &context.store.borrow())).unwrap();
 
         state.invoke_viewer_open_creation_workflow(
             "character-age".into(),
@@ -6354,6 +6834,7 @@ mod tests {
             "describe the character".into(),
         );
 
+        video_image_callbacks::tests::scoped_inputs::pump(|| state.get_page() == "canvas");
         assert_eq!(state.get_page(), "canvas");
         assert_eq!(state.get_canvas_workflow_id(), "character-age");
         assert_eq!(state.get_canvas_workflow_title(), "角色年龄变化");
@@ -6363,9 +6844,11 @@ mod tests {
         let store = context.store.borrow();
         assert_eq!(store.active_canvas_workspace_id, "character-age");
         assert_eq!(store.canvas_references.len(), 1);
+        let copied_path = PathBuf::from(&store.canvas_references[0].source_path);
+        assert!(fixture.persistence.owns_path(&copied_path));
         assert_eq!(
-            store.canvas_references[0].source_path,
-            source_path.display().to_string()
+            decode_reference_bytes(&fs::read(&copied_path).unwrap()).unwrap().to_rgba8(),
+            decode_reference_bytes(&original_bytes).unwrap().to_rgba8(),
         );
         assert_eq!(
             store
@@ -6376,6 +6859,9 @@ mod tests {
             "prompt in the previous workspace"
         );
         drop(store);
+        let saved = fixture.writer.load_client_state_for_namespace(fixture.persistence.lease()).unwrap().unwrap();
+        assert_eq!(saved.active_canvas_workspace_id, "character-age");
+        assert_eq!(saved.canvas_workspaces["character-age"].references.len(), 1);
         context.store.borrow_mut().canvas_workspaces.insert(
             "character-body".to_string(),
             CanvasWorkspaceData {
@@ -6406,7 +6892,8 @@ mod tests {
             context.store.borrow().active_canvas_workspace_id,
             "character-age"
         );
-        let _ = fs::remove_file(source_path);
+        assert_eq!(fs::read(&source_path).unwrap(), original_bytes);
+        assert!(copied_path.is_file());
     }
 
     #[test]
@@ -6416,11 +6903,10 @@ mod tests {
 
         i_slint_backend_testing::init_no_event_loop();
         let app = AppWindow::new().expect("create app window");
-        let context = AppContext::default();
-        wire_viewer_callbacks(&app, context.clone());
+        let fixture = IntegratedViewerFixture::new(&app);
+        let context = fixture.scoped.context.clone();
         let state = app.global::<AppState>();
-        let source_path = std::env::temp_dir().join(format!("elunvi-building-reference-{}.png", Uuid::new_v4()));
-        fs::write(&source_path, b"test image reference").expect("write reference fixture");
+        let source_path = fixture.source_path.clone();
         state.set_logged_in(true);
         state.set_contact_popup_open(false);
         state.set_page("assets".into());
@@ -6438,6 +6924,7 @@ mod tests {
         ElementHandle::find_by_accessible_label(&app, "导入建筑衍生器")
             .next().expect("building derivation menu item")
             .mock_single_click(PointerEventButton::Left);
+        video_image_callbacks::tests::scoped_inputs::pump(|| !state.get_viewer_open());
         assert_eq!(state.get_page(), "canvas");
         assert_eq!(state.get_canvas_workflow_id(), "building-derivation");
         assert_eq!(state.get_asset_type(), "scene");
@@ -6446,34 +6933,36 @@ mod tests {
         let store = context.store.borrow();
         assert_eq!(store.active_canvas_workspace_id, "building-derivation");
         assert_eq!(store.canvas_references.len(), 1);
-        assert_eq!(store.canvas_references[0].source_path, source_path.display().to_string());
+        fixture.assert_owned_copy(&store.canvas_references[0].source_path);
         drop(store);
-        let _ = fs::remove_file(source_path);
+
     }
 
     #[test]
     fn viewer_import_picker_accepts_every_workflow_for_unclassified_images() {
         i_slint_backend_testing::init_no_event_loop();
         let app = AppWindow::new().unwrap();
-        let context = AppContext::default();
-        wire_viewer_callbacks(&app, context.clone());
+        let fixture = IntegratedViewerFixture::new(&app);
+        let context = fixture.scoped.context.clone();
         let state = app.global::<AppState>();
         state.set_logged_in(true);
-        let source_path = std::env::temp_dir().join(format!("elunvi-import-{}.png", Uuid::new_v4()));
-        image::RgbaImage::new(2, 2).save(&source_path).unwrap();
+        let source_path = fixture.source_path.clone();
         for id in ["character-outfit", "character-age", "character-body", "plant-growth",
             "monster-generator", "upgrade-evolution", "building-derivation"] {
+            state.set_viewer_id("integration-original".into());
+            state.set_viewer_source("asset".into());
             state.set_page("assets".into());
             state.set_viewer_open(true);
             state.set_viewer_category("other".into());
             state.set_viewer_source_path(source_path.display().to_string().into());
             state.invoke_viewer_open_creation_workflow(id.into(), "title".into(), "template".into(), "hint".into());
+            video_image_callbacks::tests::scoped_inputs::pump(|| !state.get_viewer_open());
             assert_eq!(state.get_page(), "canvas", "workflow {id}");
             assert!(!state.get_viewer_open());
             let store = context.store.borrow();
             assert_eq!(store.active_canvas_workspace_id, id);
             assert_eq!(store.canvas_references.len(), 1);
-            assert_eq!(store.canvas_references[0].source_path, source_path.display().to_string());
+            fixture.assert_owned_copy(&store.canvas_references[0].source_path);
         }
         state.set_page("assets".into());
         state.set_viewer_open(true);
@@ -6482,7 +6971,7 @@ mod tests {
         assert_eq!(state.get_page(), "assets");
         assert!(state.get_viewer_open());
         assert_eq!(context.store.borrow().active_canvas_workspace_id, "building-derivation");
-        fs::remove_file(source_path).unwrap();
+
     }
 
     #[test]
@@ -6492,14 +6981,10 @@ mod tests {
 
         i_slint_backend_testing::init_no_event_loop();
         let app = AppWindow::new().expect("create app window");
-        let context = AppContext::default();
-        wire_viewer_callbacks(&app, context.clone());
+        let fixture = IntegratedViewerFixture::new(&app);
+        let context = fixture.scoped.context.clone();
         let state = app.global::<AppState>();
-        let source_path = std::env::temp_dir().join(format!(
-            "elunvi-upgrade-evolution-reference-{}.png",
-            Uuid::new_v4()
-        ));
-        fs::write(&source_path, b"test image reference").expect("write reference fixture");
+        let source_path = fixture.source_path.clone();
 
         state.set_logged_in(true);
         state.set_page("assets".into());
@@ -6521,6 +7006,7 @@ mod tests {
             .expect("upgrade evolution context menu item")
             .mock_single_click(PointerEventButton::Left);
 
+        video_image_callbacks::tests::scoped_inputs::pump(|| !state.get_viewer_open());
         assert_eq!(state.get_page(), "canvas");
         assert_eq!(state.get_canvas_workflow_id(), "upgrade-evolution");
         assert_eq!(state.get_canvas_workflow_title(), "升级进化");
@@ -6542,12 +7028,9 @@ mod tests {
         let store = context.store.borrow();
         assert_eq!(store.active_canvas_workspace_id, "upgrade-evolution");
         assert_eq!(store.canvas_references.len(), 1);
-        assert_eq!(
-            store.canvas_references[0].source_path,
-            source_path.display().to_string()
-        );
+        fixture.assert_owned_copy(&store.canvas_references[0].source_path);
         drop(store);
-        let _ = fs::remove_file(source_path);
+
     }
 
     #[test]
@@ -6692,6 +7175,17 @@ mod tests {
         let callbacks = include_str!("callbacks/image_cutout.rs");
         let api = include_str!("api/generation.rs");
         let recovery = include_str!("generation/backend.rs");
+        let delivery = include_str!("generation/controller.rs");
+        let record = callbacks.split_once("fn new_cutout_record(").unwrap().1
+            .split_once("fn resume_pending_image_cutout(").unwrap().0;
+        let worker = callbacks.split_once("fn run_cutout_record(").unwrap().1
+            .split_once("fn decode_cutout_result_bytes(").unwrap().0;
+        let complete = callbacks.split_once("fn finish_cutout_work(").unwrap().1
+            .split_once("fn cutout_worker_current(").unwrap().0;
+        let stage = delivery.split_once("fn stage_namespace_delivery(").unwrap().1
+            .split_once("pub(super) struct CommittedNamespaceDelivery").unwrap().0;
+        let enqueue = delivery.split_once("fn enqueue_delivery(").unwrap().1
+            .split_once("fn stage_namespace_delivery(").unwrap().0;
 
         assert!(app.contains("import { CutoutPage }"));
         assert!(app.contains("CutoutPage {"));
@@ -6712,16 +7206,20 @@ mod tests {
         assert!(viewer_callbacks.contains("state.on_close_cutout"));
         assert!(viewer_callbacks.contains("state.set_viewer_open(true);"));
         assert!(callbacks.contains("state.on_submit_cutout"));
-        assert!(callbacks.contains("CreateImageCutout"));
-        assert!(callbacks.contains("subject_type:"));
-        assert!(callbacks.contains("task_type: \"image_cutout\".to_string()"));
-        assert!(callbacks.contains("model_code: \"aliyun_image_segmentation\".to_string()"));
-        assert!(callbacks.contains("pending_delivery_saved"));
-        assert!(callbacks.contains("acknowledge_delivery_after_local_save"));
-        assert!(callbacks.contains("category: \"other\".to_string()"));
-        assert!(callbacks.contains("origin: \"image_cutout\".to_string()"));
-        assert!(callbacks.contains("cutout_done: true"));
-        assert!(callbacks.contains("store.assets.insert(0, item)"));
+        assert!(worker.contains("create_image_cutout_billing(&CreateImageCutout"));
+        assert!(worker.contains("subject_type:record.quality.clone()"));
+        assert!(worker.contains("SavedReplayRequest::generation("));
+        assert!(worker.contains("prepare_namespace_cutout_delivery("));
+        assert!(record.contains("task_type:\"image_cutout\".into()"));
+        assert!(record.contains("model_code:\"aliyun_image_segmentation\".into()"));
+        assert!(record.contains("category:\"other\".into()"));
+        assert!(complete.contains("start_image_delivery_commit("));
+        assert!(enqueue.contains("stage_namespace_delivery(store,&prepared,time)"));
+        assert!(enqueue.contains("self.enqueue(local_store_data(app,store))"));
+        assert!(stage.contains("\"image_cutout\"=>Some((\"image_cutout\",\"智能抠图\"))"));
+        assert!(stage.contains("cutout_done:cutout"));
+        assert!(stage.contains("store.assets.insert(0,item)"));
+        assert!(stage.contains("if toolbox.is_none() {\n            reveal_prompt_history_entry(store,&item.prompt);\n            store.generations.insert(0,item.clone());"));
         assert!(!callbacks.contains("store.generations.insert"));
         assert!(api.contains("/v1/toolbox/image-cutouts"));
         assert!(api.contains("pub(crate) subject_type: String"));
@@ -6852,6 +7350,13 @@ mod tests {
         let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
         let state = include_str!("../../ui/app-state.slint");
         let callbacks = include_str!("callbacks/viewer.rs");
+        let references = include_str!("callbacks/reference.rs");
+        let viewer_drag = callbacks.split_once("state.on_start_viewer_file_drag(").unwrap().1
+            .split_once("state.on_viewer_cutout_image(").unwrap().0;
+        let preparation = references.split_once("fn start_reference_native_drag(").unwrap().1
+            .split_once("fn wire_reference_callbacks(").unwrap().0;
+        let dispatch = references.split_once("fn reference_native_file_drag(").unwrap().1
+            .split_once("fn reference_pointer_exit(").unwrap().0;
 
         assert!(state.contains("callback start-viewer-file-drag() -> bool;"));
         assert!(viewer.contains("property <bool> image-drag-armed: false;"));
@@ -6866,8 +7371,14 @@ mod tests {
         assert!(cleanup.contains("root.image-drag-armed = false;"));
         assert!(cleanup.contains("root.image-system-drag-started = false;"));
         assert!(callbacks.contains("state.on_start_viewer_file_drag"));
-        assert!(callbacks.contains("viewer_item(&store.borrow(), &id, &source)"));
-        assert!(callbacks.contains("drag_preview::start_thumbnail_file_drag"));
+        assert!(viewer_drag.contains("viewer_item(&store.borrow(), &id, &source)"));
+        assert!(viewer_drag.contains("state.invoke_start_thumbnail_file_drag("));
+        assert!(preparation.contains("ReferenceCapture::native(app,&context)"));
+        assert!(preparation.contains("prepare_native_file_drag_source(persistence,&path)"));
+        assert!(preparation.contains("bind_native_file_drag(context,source)"));
+        assert!(preparation.contains("drag.with_presentation_check("));
+        assert!(preparation.contains("reference_native_file_drag(drag)"));
+        assert!(dispatch.contains("drag_preview::start_thumbnail_file_drag_captured(drag)"));
     }
 
     #[test]
@@ -6978,29 +7489,39 @@ mod tests {
     #[test]
     fn recovered_pending_payment_does_not_launch_the_browser_automatically() {
         let callbacks = include_str!("callbacks/payment.rs");
-        assert!(
-            callbacks.contains("continue_payment_order(&app, context, backend, started, false);")
-        );
-        assert!(callbacks.contains("已恢复未完成订单，可重新打开支付宝继续支付"));
+        let recovery = callbacks.split_once("fn recover_pending_orders(").unwrap().1
+            .split_once("fn start_credit_order_with_billing_scope(").unwrap().0;
+        let result = callbacks.split_once("fn poll_payment_result(").unwrap().1
+            .split_once("fn poll_payment_order(").unwrap().0;
+        let continuation = callbacks.split_once("fn continue_payment_order(").unwrap().1
+            .split_once("fn wire_payment_callbacks(").unwrap().0;
+        assert!(recovery.contains("recover_pending_order_worker(worker,record,kind,worker_presentation)"));
+        assert!(recovery.contains("PaymentPoll::Initial{launch:false},receiver)"));
+        assert!(result.contains("continue_payment_order(&app,context,capture,started,poll)"));
+        assert!(!recovery.contains("open_payment_checkout("));
+        assert!(!recovery.contains("schedule_payment_checkout("));
+        assert!(continuation.contains("if matches!(poll,PaymentPoll::Initial{launch:true}) && checkout.is_some(){"));
+        assert!(continuation.contains("schedule_payment_checkout("));
+        assert!(continuation.contains("已恢复未完成订单，可重新打开支付宝继续支付"));
     }
 
     #[test]
-    fn prompt_model_fallback_preserves_openai_prompt_as_the_default() {
+    fn prompt_model_fallback_uses_gpt_5_6_sol_as_the_default() {
         let auth = include_str!("callbacks/auth.rs");
-        let selection_start = auth.find("let selected_prompt = snapshot").unwrap();
-        let selection_end = auth[selection_start..]
-            .find("let mut model_groups")
-            .map(|offset| selection_start + offset)
-            .unwrap();
-        let selection = &auth[selection_start..selection_end];
-        let saved_selection = selection.find("item.code == selected_prompt_code").unwrap();
-        let preferred_fallback = selection.find("item.code == \"openai_prompt\"").unwrap();
-        let generic_fallback = selection
-            .rfind("item.purpose == \"prompt_processing\"")
-            .unwrap();
-
-        assert!(saved_selection < preferred_fallback);
-        assert!(preferred_fallback < generic_fallback);
+        // Both publication and refresh retain the same saved -> GPT-5.6 -> first order.
+        for (start, end) in [
+            ("fn prepare_activation_catalog_projection(", "fn prepare_activation_image_model("),
+            ("fn apply_model_catalog_projection(", "fn model_group("),
+        ] {
+            let producer = auth.split_once(start).unwrap().1.split_once(end).unwrap().0;
+            let selection = producer.split_once("let selected_prompt = available_models").unwrap().1
+                .split_once("let selected_video_code").unwrap().0;
+            let saved_selection = selection.find("item.code == selected_prompt_code").unwrap();
+            let preferred_fallback = selection.find("item.code == \"gpt_5_6_sol\"").unwrap();
+            let generic_fallback = selection.rfind("item.purpose == \"prompt_processing\"").unwrap();
+            assert!(saved_selection < preferred_fallback, "{start}");
+            assert!(preferred_fallback < generic_fallback, "{start}");
+        }
     }
 
     #[test]
@@ -7026,31 +7547,37 @@ mod tests {
     }
 
     #[test]
-    fn insufficient_credit_generation_opens_recharge_dialog_without_failed_record() {
+    fn billing_rejection_generation_opens_contextual_dialog_without_failed_record() {
         let backend = include_str!("generation/backend.rs");
         let poll = include_str!("generation/poll.rs");
         let model = include_str!("model.rs");
         let dialog = include_str!("../../ui/dialogs/credit-insufficient-dialog.slint");
         let api_error = include_str!("api/error.rs");
+        // Deliberately inspect the ordinary starter, not a D/E or retained-worker branch.
+        let submission = backend.split_once("pub(super) fn start_backend_generation_with_billing_scope(").unwrap().1
+            .split_once("pub(super) fn start_backend_image_edit(").unwrap().0;
+        let rejected = submission.split_once("if error.is_billing_rejection() {").unwrap().1
+            .split_once("if !error.should_preserve_generation_recovery()").unwrap().0;
 
         assert!(api_error.contains("is_insufficient_credits"));
         assert!(model.contains("CreditInsufficient"));
-        assert!(backend.contains("error.is_insufficient_credits()"));
-        assert!(backend.contains("GenerationOutcome::CreditInsufficient"));
-        assert!(backend.contains("remove_pending_generation_scoped("));
-        assert!(poll.contains("GenerationOutcome::CreditInsufficient"));
+        assert!(rejected.contains("remove_pending_generation_for_namespace(&authority, &recovery_identity)"));
+        assert!(rejected.contains("GenerationOutcome::CreditInsufficient"));
+        assert!(rejected.contains("return;"));
+        assert!(!rejected.contains("GenerationOutcome::Failure"));
         let credit_branch = poll
-            .split("GenerationOutcome::CreditInsufficient")
-            .nth(1)
-            .and_then(|value| value.split("GenerationOutcome::Failure").next())
-            .expect("credit insufficient branch");
-        assert!(credit_branch.contains("state.set_credit_insufficient_open(true)"));
+            .split_once("GenerationOutcome::CreditInsufficient { message } => {").unwrap().1
+            .split_once("GenerationOutcome::Failure { reason, time } => {").unwrap().0;
+        assert!(credit_branch.contains("remove_active_generation("));
+        assert!(!credit_branch.contains("add_stream_failure_item("));
+        assert!(credit_branch.contains("show_credit_rejection(&state, &message)"));
         assert!(credit_branch.contains("restore_stream_inputs("));
         assert!(credit_branch.contains("remove_conversation_placeholder(&state, &conversation_id)"));
         assert!(!credit_branch.contains("finish_conversation_placeholder(&state, &conversation_id"));
         assert!(dialog.contains("积分不足"));
         assert!(dialog.contains("前往充值"));
         assert!(dialog.contains("AppState.navigate(\"credits\")"));
+        // Structure only: this does not prove that a failed recovery-row removal is acknowledged.
     }
 
     #[test]
@@ -7060,10 +7587,15 @@ mod tests {
         let cutout = include_str!("callbacks/image_cutout.rs");
         let enhancement = include_str!("callbacks/image_enhancement.rs");
         let toolbox = include_str!("callbacks/toolbox.rs");
-
-        assert!(generation_state.contains("GenerationScopeDisposition::CapturedTerminal"));
-        assert!(generation_state
-            .contains("sign_out_locally(&app, context, true, Some(session_scope.auth_epoch))"));
+        let auth = include_str!("callbacks/auth.rs");
+        let transition = include_str!("account_transition.rs");
+        let guard = generation_state.split_once("pub(super) fn generation_scope_allows_polling(").unwrap().1
+            .split_once("pub(super) fn observe_detached_generation_scope(").unwrap().0;
+        let reset = generation_state.split_once("pub(super) fn clear_generation_account_state(").unwrap().1
+            .split_once("pub(super) fn insert_active_generation(").unwrap().0;
+        assert!(guard.contains("GenerationScopeDisposition::CapturedTerminal"));
+        assert!(guard.contains("terminal_auth_scope_matches_context(context, session_scope)"));
+        assert!(guard.contains("sign_out_locally(&app, context, true, Some(session_scope.auth_epoch))"));
         for setter in [
             "state.set_generating(false)",
             "state.set_generation_loading_count(0)",
@@ -7078,16 +7610,45 @@ mod tests {
             "state.set_colorize_processing(false)",
             "state.set_colorize_progress(0)",
         ] {
-            assert!(generation_state.contains(setter), "missing reset {setter}");
+            assert!(reset.contains(setter), "missing reset {setter}");
         }
-        assert!(generation_poll.contains("generation_scope_allows_polling"));
-        assert!(cutout.contains("generation_scope_allows_polling"));
-        assert!(enhancement.contains("generation_scope_allows_polling"));
-        assert_eq!(
-            toolbox.matches("generation_scope_allows_polling").count(),
-            4,
-            "watermark and colorization must guard both before and after reading outcomes",
-        );
+        let logout = auth.split_once("pub(super) fn sign_out_locally(").unwrap().1
+            .split_once("pub(super) fn require_online_operation(").unwrap().0;
+        let retired = transition.split_once("fn clear_retired_private_state(").unwrap().1
+            .split_once("/// Captured at model preparation").unwrap().0;
+        assert!(logout.contains("coordinator.logout(app, context.clone(), scope, false)"));
+        assert!(logout.contains("clear_generation_account_state(app, context, generation_teardown_scope.as_ref())"));
+        assert!(retired.contains("clear_generation_account_state(app, context, None)"));
+        let poll = generation_poll.split_once("pub(super) fn poll_generation_stream(").unwrap().1
+            .split_once("pub(super) fn acknowledge_delivery_after_local_save(").unwrap().0;
+        assert!(poll.contains("generation_scope_allows_polling(&app_weak, &context, &session_scope)"));
+
+        // Migrated tool workers join before consuming terminal errors; they do not
+        // use the old session-only poll guard to dispatch their private completion.
+        for (source, poll_start, error_start) in [
+            (cutout, "fn poll_cutout_work<R:Send+'static>(", "fn cutout_error("),
+            (enhancement, "fn poll_enhancement_work<R:Send+'static>(", "fn enhancement_error("),
+        ] {
+            let poll = source.split_once(poll_start).unwrap().1.split_once(error_start).unwrap().0;
+            let error = source.split_once(error_start).unwrap().1.split_once("capture.apply(app,").unwrap().0;
+            assert!(poll.contains("if !capture.current()"));
+            assert!(poll.contains("is_terminal_session_error()"));
+            assert!(poll.contains("if capture.current(){complete(&app,&capture,result);}"));
+            assert!(poll.find("_worker_pending(id)").unwrap() < poll.find("receiver.try_recv()").unwrap());
+            assert!(error.contains("capture.binding_matches() && terminal_auth_scope_matches_context(&capture.context,&capture.session)"));
+            assert!(error.contains("sign_out_locally(app,&capture.context,true,Some(capture.session.auth_epoch))"));
+        }
+        // The two captured remote-tool consumers now finish the terminal message,
+        // then check session and original binding before any AppState projection.
+        for start in ["fn poll_watermark_outcomes(", "fn poll_image_colorization_outcomes("] {
+            let poll = toolbox.split_once(start).unwrap().1
+                .split_once("let state = app.global::<AppState>();").unwrap().0;
+            assert!(poll.contains("rx.finish_message(outcome)"));
+            assert!(poll.contains("generation_scope_allows_polling(&app_weak, &context, &session_scope)"));
+            assert!(poll.contains("toolbox_binding_is_current(&context.store, &persistence)"));
+            assert!(poll.find("rx.finish_message(outcome)").unwrap()
+                < poll.find("generation_scope_allows_polling(").unwrap());
+        }
     }
 
     #[test]
@@ -7095,33 +7656,63 @@ mod tests {
         let generation_state = include_str!("generation/state.rs");
         let generation_poll = include_str!("generation/poll.rs");
         let generation_controller = include_str!("generation/controller.rs");
-
-        assert!(generation_state.contains("fn observe_detached_generation_scope"));
-        assert!(generation_state.contains("generation_scope_allows_polling"));
-        let ack = generation_poll
-            .split("pub(super) fn acknowledge_delivery_after_local_save")
-            .nth(1)
-            .expect("delivery ack helper");
+        let backend = include_str!("generation/backend.rs");
+        let observer = generation_state.split_once("pub(super) fn observe_detached_generation_scope(").unwrap().1
+            .split_once("pub(super) fn clear_generation_account_state(").unwrap().0;
+        assert!(observer.contains("generation_scope_allows_polling(&app_weak, &context, &session_scope)"));
+        assert!(observer.find("generation_scope_allows_polling(").unwrap()
+            < observer.find("rx.try_recv()").unwrap());
+        let ack = generation_poll.split_once("pub(super) fn acknowledge_delivery_after_local_save(").unwrap().1
+            .split_once("#[cfg(test)]").unwrap().0;
+        assert!(ack.contains("acknowledge_delivery_scoped("));
+        assert!(ack.contains("&worker_scope"));
         assert!(ack.contains("observe_detached_generation_scope("));
         assert!(ack.contains("pending_delivery_acknowledged("));
-        assert!(generation_controller.contains("cancel_scoped(&server_task_id, &worker_scope)"));
-        assert!(generation_controller.contains("observe_detached_generation_scope("));
+        let cancel = generation_controller.split_once("pub(super) fn stop_generation(").unwrap().1
+            .split_once("pub(super) fn add_stream_success_item(").unwrap().0;
+        assert!(cancel.contains("GenerationRecoveryPatch::RequestCancellation"));
+        assert!(cancel.contains("context.namespace_for(&task.session_scope)"));
+        assert!(cancel.contains("cleanup_cancelled_generation(&backend, &authority, &api, &worker_scope, &key, &[], Some(&server_task_id), &cancellations)"));
+        assert!(cancel.contains("observe_detached_generation_scope("));
+        let cleanup = backend.split_once("pub(super) fn cleanup_cancelled_generation(").unwrap().1
+            .split_once("fn cleanup_image_edit_input_path(").unwrap().0;
+        assert!(cleanup.contains("api.cancel_scoped(task_id, session_scope)?"));
+        assert!(cleanup.contains("require_saved_group(&row.billing_account_group_id, &before.billing_account_group_id)?"));
+        assert!(cleanup.contains("require_saved_group(&row.billing_account_group_id, &after.billing_account_group_id)?"));
+        // This preserves the legacy detached observer/delegation contract only.
+        // It does not certify joined lifecycle or typed cancellation-error propagation.
     }
 
     #[test]
     fn generation_recovery_discovery_observes_terminal_scope() {
         let backend = include_str!("generation/backend.rs");
-        let discovery = backend
-            .split("fn recover_server_generation_tasks")
-            .nth(1)
-            .and_then(|value| value.split("fn resume_pending_generation").next())
-            .expect("server recovery discovery");
-
-        assert!(discovery.contains("list_tasks_scoped(status, &worker_scope)"));
-        assert!(discovery.contains("task_scoped(&summary.id, &worker_scope)"));
-        assert!(discovery.contains("backend_generation_scope_active(&backend, &worker_scope)"));
-        assert!(discovery.contains("sender.send(Err(()))"));
-        assert!(discovery.contains("generation_scope_allows_polling"));
+        // Historical test name retained. Server-only tasks absent from this device
+        // are explicitly deferred; the current contract discovers existing local
+        // namespace rows, preserves blocked records, and observes terminal scope.
+        let discovery = backend.split_once("pub(super) fn recover_pending_generations(").unwrap().1
+            .split_once("fn reconcile_recoverable_delivery_cards(").unwrap().0;
+        assert!(discovery.contains("context.current_account_session_scope()"));
+        assert!(discovery.contains("context.namespace_for(&scope)"));
+        assert!(discovery.contains("context.storage_authority_for(&lease)"));
+        assert!(discovery.contains("load_pending_generations_for_namespace(&authority)"));
+        assert!(discovery.contains("| \"image_to_video\""));
+        assert!(discovery.contains("activity.is_quiescing() || !backend.api.user_work_is_current(&worker_scope)"));
+        assert!(discovery.contains("bind_generation_recovery_candidate(&backend, &authority, &worker_scope, record)"));
+        assert!(discovery.contains("blocked += 1"));
+        assert!(discovery.contains("sender.send(result)"));
+        assert!(discovery.contains("poll_server_generation_recovery(app.as_weak(), context, scope,"));
+        assert!(!discovery.contains("recover_server_generation_tasks("));
+        assert!(!discovery.contains("list_tasks_scoped("));
+        assert!(!discovery.contains("remove_pending_generation"));
+        let poll = backend.split_once("fn poll_server_generation_recovery(").unwrap().1
+            .split_once("fn resume_pending_generation(").unwrap().0;
+        let read = poll.find("rx.try_recv()").unwrap();
+        let first_guard = poll.find("generation_scope_allows_polling(&app_weak, &context, &session_scope)").unwrap();
+        let last_guard = poll.rfind("generation_scope_allows_polling(&app_weak, &context, &session_scope)").unwrap();
+        assert!(first_guard < read && read < last_guard);
+        assert!(poll.contains("原记录已保留"));
+        assert!(poll.contains("原付款账号和记录已保留；不会切换付款账号重试"));
+        assert!(poll.contains("resume_pending_generation(&app, context.clone(), record)"));
     }
 
     #[test]
@@ -7246,14 +7837,18 @@ mod tests {
     fn generation_keeps_reference_thumbnails_after_submission() {
         let backend = include_str!("generation/backend.rs");
         let submission = backend
-            .split("pub(super) fn start_backend_generation")
-            .nth(1)
-            .and_then(|value| value.split("pub(super) fn start_backend_upscale").next())
-            .expect("generation submission");
+            .split_once("pub(super) fn start_backend_generation_with_billing_scope(").unwrap().1
+            .split_once("pub(super) fn start_backend_image_edit(").unwrap().0;
+        let captured = submission.split_once("let original_references = {").unwrap().1
+            .split_once("let reference_paths = original_references").unwrap().0;
 
-        assert!(submission.contains("let original_references ="));
+        assert!(captured.contains("GenerationDestination::Canvas { .. } => &store.canvas_references"));
+        assert!(captured.contains("references_for_category(&store.references, &category)"));
+        assert!(captured.contains(".cloned()"));
         assert!(!submission.contains("references_for_category_mut"));
         assert!(!submission.contains("push_references(app"));
+        assert!(!submission.contains("canvas_references.clear()"));
+        // No actual thumbnail submission fixture is implied by these source checks.
     }
 
     #[test]
@@ -7323,7 +7918,7 @@ mod tests {
         assert!(!settings.contains("launch-touch := TouchArea"));
         assert!(!settings.contains("启动方式"));
         assert_eq!(settings.matches("AppState.open-external-link(").count(), 1);
-        assert!(app.contains("wire_external_link_callbacks(app);"));
+        assert!(app.contains("wire_external_link_callbacks(app, context.clone());"));
     }
 
     #[test]
@@ -7347,7 +7942,7 @@ mod tests {
         let callback = include_str!("callbacks/invitation_code.rs");
 
         assert!(state.contains("callback submit-invitation-code();"));
-        assert!(profile.contains("AppState.profile-section == \"invitation\""));
+        assert!(profile.contains("AppState.account-center-section == \"invitation\""));
         assert!(profile.contains("请填写邀请码"));
         assert!(profile.contains("填写邀请码，确认后将由服务端验证"));
         assert!(state.contains("invitation-code-submitted: false"));
@@ -7438,8 +8033,22 @@ mod tests {
         assert!(page.contains("AppState.load-more-notifications()"));
         assert!(api.contains("next_cursor: Option<String>"));
         assert!(api.contains("/v1/notifications?limit=50&cursor={cursor}"));
-        assert!(callbacks.contains("if append"));
-        assert!(callbacks.contains("notification_page_epoch != request_epoch"));
+        let start = callbacks.split_once("fn start_notification_page(").unwrap().1
+            .split_once("fn notification_session_ended(").unwrap().0;
+        let poll = callbacks.split_once("fn poll_server_notifications(").unwrap().1
+            .split_once("fn notification_is_success(").unwrap().0;
+        let update = callbacks.split_once("fn update_notification_store(").unwrap().1
+            .split_once("fn poll_notification_save(").unwrap().0;
+        assert!(start.contains("notification_page_epoch.checked_add(1)"));
+        assert!(start.contains("api.list_page_scoped(cursor.as_deref(), scope)"));
+        assert!(start.contains("capture, epoch, append, receiver"));
+        assert!(poll.contains("update_notification_store(&app, &context, &capture, Some(epoch)"));
+        assert!(poll.contains("if !append { store.notifications.clear(); }"));
+        assert!(poll.contains("existing.id == item.id"));
+        assert!(poll.contains("store.notifications.push(item)"));
+        assert!(poll.contains("let cursor = page.next_cursor.unwrap_or_default()"));
+        assert!(poll.contains("set_notification_next_cursor(cursor.clone().into())"));
+        assert!(update.contains("store.notification_page_epoch != epoch"));
     }
 
     #[test]

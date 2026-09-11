@@ -74,29 +74,8 @@ pub(super) fn user_profile_path() -> PathBuf {
     app_data_dir().join("user-profile.json")
 }
 
-pub(super) fn load_user_profile(app: &AppWindow) {
-    let profile = match load_client_user_profile() {
-        Ok(Some(profile)) => profile,
-        Ok(None) => {
-            let path = user_profile_path();
-            restore_json_backup_if_needed(&path);
-            let Ok(text) = fs::read_to_string(&path) else {
-                return;
-            };
-            let Ok(profile) = serde_json::from_str::<UserProfileData>(&text) else {
-                return;
-            };
-            if persist_client_user_profile_checked(profile.clone()).is_ok() {
-                archive_migrated_json(&path);
-            }
-            profile
-        }
-        Err(error) => {
-            eprintln!("failed to load local user profile: {error}");
-            return;
-        }
-    };
-    apply_user_profile(app, profile);
+pub(super) fn load_user_profile(_app: &AppWindow) {
+    // TEMP(team-accounts): removed in Task 10. No lease grants no private I/O.
 }
 
 pub(super) fn apply_user_profile(app: &AppWindow, profile: UserProfileData) {
@@ -113,46 +92,24 @@ pub(super) fn apply_user_profile(app: &AppWindow, profile: UserProfileData) {
     state.set_accepted_user_terms_version(profile.accepted_user_terms_version.into());
     state.set_accepted_privacy_version(profile.accepted_privacy_version.into());
     state.set_nickname(profile.nickname.into());
-    if !profile.language.trim().is_empty() {
-        state.set_language(profile.language.into());
-    }
-    if !profile.theme_id.trim().is_empty() {
-        state.set_theme_id(profile.theme_id.clone().into());
-        apply_theme(app, &profile.theme_id);
-    }
-    let card_style = if profile.card_style == "square" {
-        "square"
-    } else {
-        "rounded"
-    };
-    state.set_card_style(card_style.into());
     if !profile.asset_type.trim().is_empty() {
         let category = resolve_category(&profile.asset_type, "");
         state.set_asset_type(category.into());
     }
-    state.set_close_behavior(normalize_close_behavior(&profile.close_behavior).into());
-    state.set_generation_gallery_layout(
-        normalize_gallery_layout(&profile.ui_preferences.generation_gallery_layout).into(),
-    );
-    state.set_asset_gallery_layout(
-        normalize_gallery_layout(&profile.ui_preferences.asset_gallery_layout).into(),
-    );
-    state.set_inspiration_gallery_layout(
-        normalize_gallery_layout(&profile.ui_preferences.inspiration_gallery_layout).into(),
-    );
-    state.set_settings_font_family(profile.ui_preferences.font_family.into());
-    state.set_settings_font_size(normalize_settings_font_size(profile.ui_preferences.font_size));
 }
 
-pub(super) fn save_user_profile(app: &AppWindow) {
-    let _ = persist_client_user_profile_async(user_profile_data(app));
+pub(super) fn save_user_profile(app: &AppWindow, store: &Store) {
+    if save_user_profile_checked(app, store).is_err() {
+        app.global::<AppState>().set_generation_status("个人设置未能安全保存，请重试".into());
+    }
 }
 
-pub(super) fn save_user_profile_checked(app: &AppWindow) -> Result<()> {
-    persist_client_user_profile_checked(user_profile_data(app))
+pub(super) fn save_user_profile_checked(app: &AppWindow, store: &Store) -> Result<()> {
+    let authority = store.private_persistence.as_ref().ok_or_else(|| anyhow!("用户命名空间尚未激活"))?;
+    authority.save_profile(user_profile_data(app))
 }
 
-fn user_profile_data(app: &AppWindow) -> UserProfileData {
+pub(super) fn user_profile_data(app: &AppWindow) -> UserProfileData {
     let state = app.global::<AppState>();
     let nickname = state.get_nickname().to_string();
     let profile = UserProfileData {
@@ -163,32 +120,7 @@ fn user_profile_data(app: &AppWindow) -> UserProfileData {
         email_mask: state.get_email_mask().to_string(),
         accepted_user_terms_version: state.get_accepted_user_terms_version().to_string(),
         accepted_privacy_version: state.get_accepted_privacy_version().to_string(),
-        theme_id: state.get_theme_id().to_string(),
-        card_style: if state.get_card_style() == "square" {
-            "square".to_string()
-        } else {
-            "rounded".to_string()
-        },
-        language: state.get_language().to_string(),
         asset_type: resolve_category(&state.get_asset_type().to_string(), ""),
-        close_behavior: normalize_close_behavior(&state.get_close_behavior().to_string())
-            .to_string(),
-        ui_preferences: UiPreferencesData {
-            font_family: state.get_settings_font_family().to_string(),
-            font_size: normalize_settings_font_size(state.get_settings_font_size()),
-            generation_gallery_layout: normalize_gallery_layout(
-                &state.get_generation_gallery_layout().to_string(),
-            )
-            .to_string(),
-            asset_gallery_layout: normalize_gallery_layout(
-                &state.get_asset_gallery_layout().to_string(),
-            )
-            .to_string(),
-            inspiration_gallery_layout: normalize_gallery_layout(
-                &state.get_inspiration_gallery_layout().to_string(),
-            )
-            .to_string(),
-        },
     };
     profile
 }
@@ -219,33 +151,138 @@ fn archive_migrated_json(path: &Path) {
     }
 }
 
-pub(super) fn load_local_store(app: &AppWindow, store: &Rc<RefCell<Store>>) -> bool {
-    let data = match load_client_state() {
-        Ok(Some(data)) => data,
-        Ok(None) => {
-            let path = local_store_path();
-            restore_json_backup_if_needed(&path);
-            let Ok(text) = fs::read_to_string(&path) else {
-                recover_output_assets(app, store);
-                let _ = save_local_store_checked(app, &store.borrow());
-                return false;
-            };
-            let Ok(data) = serde_json::from_str::<LocalStoreData>(&text) else {
-                recover_output_assets(app, store);
-                let _ = save_local_store_checked(app, &store.borrow());
-                return false;
-            };
-            if persist_client_state_checked(data.clone()).is_ok() {
-                archive_migrated_json(&path);
-            }
-            data
+pub(super) fn load_local_store(_app: &AppWindow, _store: &Rc<RefCell<Store>>) -> bool {
+    // TEMP(team-accounts): removed in Task 10.
+    false
+}
+
+pub(super) struct PreparedPrivateStore {
+    pub(super) store: Store,
+    pub(super) image_model: String,
+    pub(super) reasoning_model: String,
+    pub(super) video_model: String,
+}
+
+/// Preparation is memory-only. Missing media remains represented, never deleted
+/// from the user's model merely because a path cannot currently be opened.
+pub(super) fn prepare_private_store(data: LocalStoreData) -> PreparedPrivateStore {
+    let store = Rc::new(RefCell::new(Store::default()));
+    let saved_image_model = data.image_model.clone();
+    let saved_reasoning_model = data.reasoning_model.clone();
+    let saved_video_model = data.video_model.clone();
+    let _normalized = {
+        let mut store_mut = store.borrow_mut();
+        // Legacy provider endpoints and API keys are intentionally ignored.
+        store_mut.model_groups.clear();
+        store_mut.assets = data
+            .assets
+            .into_iter()
+            .map(asset_from_stored_preserved)
+            .collect();
+        store_mut.generations = data
+            .generations
+            .into_iter()
+            .map(asset_from_stored_preserved)
+            .collect();
+        store_mut.notifications = data.notifications;
+        store_mut.references = data.references;
+        store_mut.video_outputs = data.video_outputs;
+        store_mut.prompt_drafts = data.prompt_drafts;
+        store_mut.dismissed_prompt_history = data.dismissed_prompt_history;
+        let migrated_prompt_drafts = normalize_reserved_prompt_drafts(&mut store_mut.prompt_drafts);
+        store_mut.custom_prompts = normalize_custom_prompts(data.custom_prompts);
+        store_mut.selected_custom_prompts = data.selected_custom_prompts;
+        store_mut.custom_prompt_times = data.custom_prompt_times;
+        store_mut.custom_prompt_profiles = data.custom_prompt_profiles;
+        let active_canvas_workspace_id =
+            normalize_canvas_workspace_id(&data.active_canvas_workspace_id);
+        let migrated_canvas_workspaces = data.active_canvas_workspace_id.trim().is_empty()
+            || !data
+                .canvas_workspaces
+                .contains_key(&active_canvas_workspace_id);
+        store_mut.active_canvas_workspace_id = active_canvas_workspace_id.clone();
+        store_mut.canvas_workspaces = data.canvas_workspaces;
+        let migrated_canvas_prompt_text =
+            normalize_canvas_workspace_prompts(&mut store_mut.canvas_workspaces);
+        store_mut.canvas_notes = data.canvas_notes;
+        normalize_canvas_groups(&mut store_mut.canvas_notes);
+        let fitted_canvas_groups = fit_groups_to_children(&mut store_mut.canvas_notes);
+        store_mut.canvas_links = data.canvas_links;
+        let active_prompt = store_mut
+            .canvas_workspaces
+            .get(&active_canvas_workspace_id)
+            .map(|workspace| workspace.prompt.clone())
+            .unwrap_or_default();
+        let active_canvas_references = store_mut
+            .canvas_workspaces
+            .get(&active_canvas_workspace_id)
+            .map(|workspace| workspace.references.clone())
+            .unwrap_or_default();
+        store_mut.canvas_references = active_canvas_references.clone();
+        let active_canvas_notes = store_mut.canvas_notes.clone();
+        let active_canvas_links = store_mut.canvas_links.clone();
+        store_mut.canvas_workspaces.insert(
+            active_canvas_workspace_id,
+            CanvasWorkspaceData {
+                notes: active_canvas_notes,
+                links: active_canvas_links,
+                prompt: active_prompt,
+                references: active_canvas_references,
+            },
+        );
+        store_mut.deep_prompt_jobs_by_owner = data
+            .deep_prompt_jobs_by_owner
+            .into_iter()
+            .filter_map(|(owner_user_id, job_id)| {
+                let owner_user_id = owner_user_id.trim().to_string();
+                let job_id = job_id.trim().to_string();
+                (!owner_user_id.is_empty() && !job_id.is_empty())
+                    .then_some((owner_user_id, job_id))
+            })
+            .collect();
+        store_mut.deep_prompt_pending_requests_by_owner = data
+            .deep_prompt_pending_requests_by_owner
+            .into_iter()
+            .filter_map(|(owner_user_id, request)| {
+                let owner_user_id = owner_user_id.trim().to_string();
+                let valid = !owner_user_id.is_empty()
+                    && !request.client_request_id.trim().is_empty()
+                    && !request.prompt.trim().is_empty();
+                valid.then_some((owner_user_id, request))
+            })
+            .collect();
+        store_mut.legacy_deep_prompt_job_id = data.deep_prompt_job_id.trim().to_string();
+        store_mut.deep_prompt_bindings = data.deep_prompt_bindings;
+        store_mut.pending_credit_redemptions_by_owner = data.pending_credit_redemptions_by_owner;
+        store_mut.contact_popup_dismissed = data.contact_popup_dismissed;
+        let original_prompt_times = store_mut.custom_prompt_times.clone();
+        let retained = store_mut
+            .custom_prompts
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        normalize_selected_custom_prompts(&mut store_mut.selected_custom_prompts, &retained);
+        store_mut
+            .custom_prompt_times
+            .retain(|prompt, _| retained.contains(prompt));
+        store_mut
+            .custom_prompt_profiles
+            .retain(|prompt, _| retained.contains(prompt));
+        let migration_time = Local::now().format("%Y-%m-%d %H:%M").to_string();
+        for prompt in store_mut.custom_prompts.clone() {
+            store_mut
+                .custom_prompt_times
+                .entry(prompt)
+                .or_insert_with(|| migration_time.clone());
         }
-        Err(error) => {
-            eprintln!("failed to load local client state: {error}");
-            return false;
-        }
+        migrated_prompt_drafts
+            || migrated_canvas_workspaces
+            || migrated_canvas_prompt_text
+            || fitted_canvas_groups
+            || store_mut.custom_prompt_times != original_prompt_times
     };
-    apply_local_store_data(app, store, data)
+    let store = match Rc::try_unwrap(store) { Ok(store) => store.into_inner(), Err(_) => unreachable!("private preparation never shares its Store") };
+    PreparedPrivateStore { store, image_model: saved_image_model, reasoning_model: saved_reasoning_model, video_model: saved_video_model }
 }
 
 fn apply_local_store_data(
@@ -338,6 +375,7 @@ fn apply_local_store_data(
             .collect();
         store_mut.legacy_deep_prompt_job_id = data.deep_prompt_job_id.trim().to_string();
         store_mut.deep_prompt_bindings = data.deep_prompt_bindings;
+        store_mut.pending_credit_redemptions_by_owner = data.pending_credit_redemptions_by_owner;
         store_mut.contact_popup_dismissed = data.contact_popup_dismissed;
         let original_prompt_times = store_mut.custom_prompt_times.clone();
         let retained = store_mut
@@ -853,15 +891,28 @@ pub(super) fn recovered_asset_title(path: &Path) -> String {
 }
 
 pub(super) fn save_local_store(app: &AppWindow, store: &Store) {
-    let data = local_store_data(app, store);
-    let _ = persist_client_state_async(data);
+    if save_local_store_checked(app, store).is_err() {
+        app.global::<AppState>().set_generation_status("创作状态未能安全保存，请重试".into());
+    }
 }
 
 pub(super) fn save_local_store_checked(app: &AppWindow, store: &Store) -> Result<()> {
-    persist_client_state_checked(local_store_data(app, store))
+    let authority = store.private_persistence.as_ref().ok_or_else(|| anyhow!("用户命名空间尚未激活"))?;
+    authority.save_store(local_store_data(app, store))
 }
 
-fn local_store_data(app: &AppWindow, store: &Store) -> LocalStoreData {
+pub(super) fn save_local_store_checked_for_namespace(
+    app: &AppWindow,
+    store: &Store,
+    writer: &ClientStateWriter,
+    lease: &NamespaceLease,
+) -> Result<()> {
+    writer
+        .persist_client_state_checked_for_namespace(lease, local_store_data(app, store))
+        .map_err(Into::into)
+}
+
+pub(super) fn local_store_data(app: &AppWindow, store: &Store) -> LocalStoreData {
     let state = app.global::<AppState>();
     let active_canvas_workspace_id =
         normalize_canvas_workspace_id(&store.active_canvas_workspace_id);
@@ -879,6 +930,9 @@ fn local_store_data(app: &AppWindow, store: &Store) -> LocalStoreData {
         },
     );
     LocalStoreData {
+        video_outputs: store.video_outputs.clone(),
+        references: store.references.clone(),
+        pending_credit_redemptions_by_owner: store.pending_credit_redemptions_by_owner.clone(),
         generations: store.generations.iter().map(stored_asset_from).collect(),
         assets: store.assets.iter().map(stored_asset_from).collect(),
         notifications: store.notifications.clone(),
@@ -920,6 +974,26 @@ pub(super) fn persist_generated_asset_checked(
         include_in_generations,
         reveal_prompt,
         |store| save_local_store_checked(app, store),
+    )
+}
+
+pub(super) fn persist_generated_asset_checked_for_namespace(
+    app: &AppWindow,
+    store: &mut Store,
+    writer: &ClientStateWriter,
+    lease: &NamespaceLease,
+    item: AssetData,
+    notification: NotificationData,
+    include_in_generations: bool,
+    reveal_prompt: Option<&str>,
+) -> Result<()> {
+    persist_generated_asset_with(
+        store,
+        item,
+        notification,
+        include_in_generations,
+        reveal_prompt,
+        |pending| save_local_store_checked_for_namespace(app, pending, writer, lease),
     )
 }
 
@@ -1044,6 +1118,24 @@ where
     Ok(())
 }
 
+pub(super) fn replace_failed_delivery_asset_checked_for_namespace(
+    app: &AppWindow,
+    store: &mut Store,
+    writer: &ClientStateWriter,
+    lease: &NamespaceLease,
+    failed_asset_id: &str,
+    completed_asset: AssetData,
+    notification: NotificationData,
+) -> Result<()> {
+    replace_failed_delivery_asset_with(
+        store,
+        failed_asset_id,
+        completed_asset,
+        notification,
+        |pending| save_local_store_checked_for_namespace(app, pending, writer, lease),
+    )
+}
+
 #[cfg(test)]
 mod generated_asset_persistence_tests {
     use super::*;
@@ -1134,12 +1226,21 @@ mod generated_asset_persistence_tests {
 
     #[test]
     fn every_remote_generation_result_uses_checked_asset_persistence_before_ack() {
+        // Historical structural guard, not a claim that ordinary/Canvas output
+        // has migrated to the namespace ordered-delivery protocol. That remains OPEN.
+        fn section<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+            source.split_once(start).expect("production entry exists").1
+                .split_once(end).expect("next production boundary exists").0
+        }
         let controller = include_str!("../generation/controller.rs");
         let generation_poll = include_str!("../generation/poll.rs");
+        let delivery = include_str!("../generation/delivery_retry.rs");
         let cutout = include_str!("../callbacks/image_cutout.rs");
         let enhancement = include_str!("../callbacks/image_enhancement.rs");
         let toolbox = include_str!("../callbacks/toolbox.rs");
 
+        // Keep the original ordinary-save requirements; do not substitute the
+        // newer D/E Prepared branch for the still-existing ImageSuccess consumer.
         let ordinary = controller
             .split("pub(super) fn add_stream_success_item")
             .nth(1)
@@ -1149,68 +1250,78 @@ mod generated_asset_persistence_tests {
                     .next()
             })
             .unwrap();
-        let cutout_save = cutout
-            .split("fn save_image_cutout_asset")
-            .nth(1)
-            .and_then(|value| value.split("#[cfg(test)]").next())
-            .unwrap();
-        let enhancement_save = enhancement
-            .split("fn save_image_enhancement_asset")
-            .nth(1)
-            .and_then(|value| value.split("#[cfg(test)]").next())
-            .unwrap();
-        let watermark_save = toolbox
-            .split("fn save_watermark_asset")
-            .nth(1)
-            .and_then(|value| value.split("fn start_image_colorization").next())
-            .unwrap();
-        let colorization_save = toolbox
-            .split("fn save_image_colorization_asset")
-            .nth(1)
-            .and_then(|value| value.split("#[cfg(test)]").next())
-            .unwrap();
-
-        for save in [ordinary, enhancement_save, watermark_save, colorization_save] {
+        for save in [ordinary] {
             assert!(save.contains("persist_generated_asset_checked("));
             assert!(!save.contains("save_local_store(app"));
         }
-        assert!(cutout_save.contains("save_local_store_checked(app, &store)"));
-        assert!(!cutout_save.contains("save_local_store(app"));
-        assert!(cutout_save.contains("store.assets.remove(0)"));
-        assert!(cutout_save.contains("store.notifications.remove(0)"));
-
-        for callback in [cutout, enhancement, toolbox] {
-            assert!(callback.contains("pending_delivery_saved("));
-            assert!(callback.contains("acknowledge_delivery_after_local_save("));
-        }
-
-        for (flow, save_call) in [
-            (generation_poll, "add_stream_success_item("),
-            (cutout, "save_image_cutout_asset("),
-            (enhancement, "save_image_enhancement_asset("),
-        ] {
+        let ordinary_flow = section(generation_poll, "GenerationOutcome::ImageSuccess {", "GenerationOutcome::ImageFailure {");
+        assert!(ordinary_flow.contains("add_canvas_stream_success_item("));
+        assert!(ordinary_flow.contains("replace_failed_delivery_asset_checked("));
+        for (flow, save_call) in [(ordinary_flow, "add_stream_success_item(")] {
             assert!(flow.find(save_call).unwrap() < flow.find("pending_delivery_saved(").unwrap());
         }
-        let watermark_flow = toolbox
-            .split("fn poll_watermark_outcomes")
-            .nth(1)
-            .and_then(|value| value.split("fn save_watermark_asset").next())
-            .unwrap();
-        let colorization_flow = toolbox
-            .split("fn poll_image_colorization_outcomes")
-            .nth(1)
-            .and_then(|value| value.split("fn save_image_colorization_asset").next())
-            .unwrap();
-        assert!(
-            watermark_flow.find("save_watermark_asset(").unwrap()
-                < watermark_flow.find("pending_delivery_saved(").unwrap(),
-        );
-        assert!(
-            colorization_flow
-                .find("save_image_colorization_asset(")
-                .unwrap()
-                < colorization_flow.find("pending_delivery_saved(").unwrap(),
-        );
+        assert!(ordinary_flow.find("match saved_result {").unwrap()
+            < ordinary_flow.find("pending_delivery_saved_then_acknowledge_with(").unwrap());
+        assert!(ordinary_flow.find("pending_delivery_saved(").unwrap()
+            < ordinary_flow.find("acknowledge_delivery_after_local_save(").unwrap());
+
+        // Replaced toolbox save functions now forward the owned proof to one
+        // shared commit boundary; their callbacks cannot use unchecked Store saves.
+        let cutout_save = section(cutout, "fn finish_cutout_work(", "fn cutout_worker_current(");
+        let enhancement_save = section(enhancement, "fn finish_enhancement_work(", "fn enhancement_worker_current(");
+        let toolbox_save = section(toolbox, "fn enqueue_toolbox_remote_delivery(", "#[derive(Clone, Copy)]");
+        for save in [cutout_save, enhancement_save, toolbox_save] {
+            assert!(save.contains("start_image_delivery_commit("));
+            assert!(!save.contains("save_local_store(app"));
+            assert!(!save.contains("acknowledge_delivery_scoped("));
+        }
+        for (poll, end, kind) in [
+            ("fn poll_watermark_outcomes(", "fn start_image_colorization(", "ToolboxRemoteKind::Watermark"),
+            ("fn poll_image_colorization_outcomes(", "#[cfg(test)]", "ToolboxRemoteKind::Colorization"),
+        ] {
+            let flow = section(toolbox, poll, end);
+            let prepared = section(flow, "ToolboxRemoteOutcome::Prepared(prepared) =>", "ToolboxRemoteOutcome::CreditInsufficient");
+            assert!(prepared.contains("enqueue_toolbox_remote_delivery("));
+            assert!(prepared.contains("persistence.clone(),\n                    *prepared,"));
+            assert!(prepared.contains(kind));
+            assert!(!prepared.contains("save_local_store(app"));
+        }
+
+        let commit = section(controller, "pub(super) fn start_image_delivery_commit(", "fn poll_image_delivery_commit(");
+        assert!(commit.find("persistence.prepare_ordered_save()?").unwrap()
+            < commit.find("enqueue_delivery(").unwrap());
+        assert!(commit.find("enqueue_delivery(").unwrap() < commit.find("pending.wait()").unwrap());
+        let ack_worker = section(commit, ".name(\"delivery-store-ack\".into()).spawn(move||{", "\n    match spawned {");
+        assert!(ack_worker.find("pending.wait().map_err(DeliveryRetryError::from).and_then(|receipt|").unwrap()
+            < ack_worker.find("acknowledge_namespace_delivery(receipt)").unwrap());
+        let terminal = "Err(DeliveryRetryError::Api(error)) if error.is_terminal_session_error()=>Err(error.into())";
+        assert!(ack_worker.find(terminal).unwrap() < ack_worker.find("Err(_)=>Ok(false)").unwrap());
+        assert!(ack_worker.find("acknowledge_namespace_delivery(receipt)").unwrap()
+            < ack_worker.find("sender.send(result)").unwrap());
+        let enqueue = section(controller, "pub(super) fn enqueue_delivery(", "fn stage_namespace_delivery(");
+        assert!(enqueue.find("stage_namespace_delivery(store,&prepared,time)").unwrap()
+            < enqueue.find("self.enqueue(local_store_data(app,store))").unwrap());
+        assert!(enqueue.contains("Ok(receiver)=>Ok(PendingNamespaceDeliveryCommit {receiver,proof:prepared.into_proof(),asset_id})"));
+        assert!(enqueue.contains("Err(error)=>Err(GuardedDeliveryEnqueueError"));
+        assert!(!enqueue.contains("save_local_store(app"));
+        // Queue/ack failure retains idempotently staged output, not an unsafe
+        // rollback of whatever newer full Store snapshot may already exist.
+        assert!(!enqueue.contains("store.assets.remove(0)"));
+        assert!(!enqueue.contains("store.notifications.remove(0)"));
+        let waited = section(controller, "impl PendingNamespaceDeliveryCommit {", "pub(super) enum DeliveryEnqueueOwnership");
+        assert!(waited.find("self.receiver.recv().map_err(").unwrap()
+            < waited.find("Ok(CommittedNamespaceDelivery { prepared: self.proof })").unwrap());
+        assert!(waited.contains("delivery writer acknowledgment disconnected\"))??;"));
+        let acknowledged = section(delivery, "pub(super) fn acknowledge_namespace_delivery(", "impl NamespaceDeliveryProof {");
+        for check in ["prepared.ensure_current()?", "verify_namespace_delivery_file(", "prepared.ensure_index_current()?"] {
+            assert!(acknowledged.find(check).unwrap()
+                < acknowledged.find("prepared.api.acknowledge_delivery_scoped(").unwrap());
+        }
+        assert!(acknowledged.find("pending_delivery_saved_for_namespace(").unwrap()
+            < acknowledged.find("prepared.api.acknowledge_delivery_scoped(").unwrap());
+        assert!(acknowledged.contains("&prepared.confirmation.sha256,\n        prepared.confirmation.size_bytes,"));
+        assert!(acknowledged.find("prepared.api.acknowledge_delivery_scoped(").unwrap()
+            < acknowledged.find("pending_delivery_acknowledged_for_namespace(").unwrap());
     }
 }
 
@@ -1339,7 +1450,11 @@ pub(super) fn asset_from_stored(asset: StoredAssetData) -> Option<AssetData> {
     {
         return None;
     }
-    Some(AssetData {
+    Some(asset_from_stored_preserved(asset))
+}
+
+fn asset_from_stored_preserved(asset: StoredAssetData) -> AssetData {
+    AssetData {
         id: asset.id,
         conversation_id: asset.conversation_id,
         title: asset.title,
@@ -1361,5 +1476,106 @@ pub(super) fn asset_from_stored(asset: StoredAssetData) -> Option<AssetData> {
         is_new: false,
         delivery_recoverable: false,
         delivery_downloading: false,
-    })
+    }
+}
+
+pub(super) fn load_device_settings_into_app(app: &AppWindow) -> Result<()> {
+    apply_device_settings(app, load_device_settings()?.unwrap_or_default());
+    Ok(())
+}
+
+pub(super) fn apply_device_settings(app: &AppWindow, settings: DeviceSettings) {
+    let settings = settings.normalized();
+    let state = app.global::<AppState>();
+    state.set_theme_id(settings.theme_id.clone().into());
+    apply_theme(app, &settings.theme_id);
+    state.set_card_style(settings.card_style.into());
+    state.set_language(settings.language.into());
+    state.set_close_behavior(settings.close_behavior.into());
+    state.set_settings_font_family(settings.font_family.into());
+    state.set_settings_font_size(settings.font_size);
+    state.set_generation_gallery_layout(settings.generation_gallery_layout.into());
+    state.set_asset_gallery_layout(settings.asset_gallery_layout.into());
+    state.set_inspiration_gallery_layout(settings.inspiration_gallery_layout.into());
+}
+
+fn device_settings_data(app: &AppWindow) -> DeviceSettings {
+    let state = app.global::<AppState>();
+    DeviceSettings {
+        theme_id: state.get_theme_id().to_string(),
+        card_style: state.get_card_style().to_string(),
+        language: state.get_language().to_string(),
+        close_behavior: normalize_close_behavior(&state.get_close_behavior()).into(),
+        font_family: state.get_settings_font_family().to_string(),
+        font_size: normalize_settings_font_size(state.get_settings_font_size()),
+        generation_gallery_layout: state.get_generation_gallery_layout().to_string(),
+        asset_gallery_layout: state.get_asset_gallery_layout().to_string(),
+        inspiration_gallery_layout: state.get_inspiration_gallery_layout().to_string(),
+    }
+    .normalized()
+}
+
+pub(super) fn save_device_settings(app: &AppWindow) {
+    let _ = persist_device_settings_async(device_settings_data(app));
+}
+
+pub(super) fn save_device_settings_checked(app: &AppWindow) -> Result<()> {
+    persist_device_settings_checked(device_settings_data(app))
+}
+
+#[cfg(test)]
+mod device_profile_isolation_tests {
+    use super::*;
+
+    #[test]
+    fn applying_a_b_a_private_profiles_cannot_overwrite_device_presentation() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let settings = DeviceSettings {
+            theme_id: "dark".into(),
+            card_style: "square".into(),
+            language: "en".into(),
+            close_behavior: "tray".into(),
+            font_family: "Microsoft YaHei UI".into(),
+            font_size: 18,
+            generation_gallery_layout: "waterfall".into(),
+            asset_gallery_layout: "waterfall".into(),
+            inspiration_gallery_layout: "grid".into(),
+        };
+        apply_device_settings(&app, settings.clone());
+        for nickname in ["Alice", "Bob", "Alice"] {
+            apply_user_profile(
+                &app,
+                UserProfileData {
+                    nickname: nickname.into(),
+                    asset_type: "scene".into(),
+                    ..Default::default()
+                },
+            );
+            assert_eq!(app.global::<AppState>().get_nickname(), nickname);
+            assert_eq!(device_settings_data(&app), settings);
+            let profile = serde_json::to_value(user_profile_data(&app)).unwrap();
+            for key in KNOWN_DEVICE_SETTING_KEYS {
+                assert!(profile.get(key).is_none());
+            }
+            assert!(profile.get("ui_preferences").is_none());
+        }
+    }
+
+    #[test]
+    fn no_lease_local_store_entrypoints_are_no_io_and_do_not_apply_private_state() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let store = Rc::new(RefCell::new(Store::default()));
+        app.global::<AppState>().set_nickname("Current".into());
+        store.borrow_mut().custom_prompts = vec!["current private draft".into()];
+        load_user_profile(&app);
+        assert!(!load_local_store(&app, &store));
+        save_user_profile(&app, &store.borrow());
+        save_local_store(&app, &store.borrow());
+        assert!(save_user_profile_checked(&app, &store.borrow()).is_err());
+        assert!(save_local_store_checked(&app, &store.borrow()).is_err());
+        assert_eq!(app.global::<AppState>().get_nickname(), "Current");
+        assert_eq!(store.borrow().custom_prompts, ["current private draft"]);
+    }
 }

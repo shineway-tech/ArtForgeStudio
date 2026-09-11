@@ -117,6 +117,7 @@ component CreditLedgerSection {
 }
 
 component CreditRedemptionPanel inherits Rectangle {
+    property <bool> joined-team: AppState.team-role-label == "成员" || AppState.team-role-label == "Member";
     height: 296px;
     background: AppTheme.panel;
     border-radius: 14px;
@@ -140,8 +141,8 @@ component CreditRedemptionPanel inherits Rectangle {
         width: parent.width - 44px;
         height: 22px;
         text: AppState.en
-            ? "Enter an official redemption code. Credits will be added directly to the current account."
-            : "输入官方发放的兑换码，积分将直接到账当前账号。";
+            ? "Redeem an official code in My Team. Credits are added to your own account."
+            : "请在“自己的团队”中输入官方兑换码，积分将到账你自己的主账号。";
         color: AppTheme.muted;
         font-size: 13px;
         font-weight: 400;
@@ -153,7 +154,9 @@ component CreditRedemptionPanel inherits Rectangle {
         y: 82px;
         width: parent.width - 44px;
         height: 20px;
-        text: (AppState.en ? "Receiving account · " : "到账账号 · ")
+        text: root.joined-team
+            ? (AppState.en ? "You are in a joined team. Switch to My Team to redeem a code." : "当前为加入的团队，请切换到“自己的团队”后兑换。")
+            : (AppState.en ? "Receiving account · " : "到账账号 · ")
             + (AppState.nickname == ""
                 ? (AppState.email-mask == "" ? "--" : AppState.email-mask)
                 : AppState.nickname + (AppState.email-mask == "" ? "" : " · " + AppState.email-mask));
@@ -246,9 +249,9 @@ component CreditRedemptionPanel inherits Rectangle {
         y: 258px;
         width: parent.width - 44px;
         height: 32px;
-        text: AppState.en
-            ? "After redemption, credits are added automatically to the current account."
-            : "兑换成功后，积分将自动到账当前账号。";
+        text: root.joined-team
+            ? (AppState.en ? "Redeemed credits do not increase your monthly limit in other teams." : "兑换积分不会增加你在其他团队中的月额度。")
+            : (AppState.en ? "After redemption, credits are added automatically to your own account." : "兑换成功后，积分将自动到账你自己的主账号。");
         color: AppTheme.muted;
         font-size: 12px;
         font-weight: 400;

@@ -202,7 +202,11 @@ pub(super) fn convert_image_file(
     source_path: &Path,
     target_format: &str,
 ) -> Result<(Vec<u8>, &'static str)> {
-    let (image, _) = decode_image_file(source_path)?;
+    let bytes = fs::read(source_path).with_context(|| format!("无法读取图片 {}", source_path.display()))?;
+    convert_image_bytes(source_path, &bytes, target_format)
+}
+pub(super) fn convert_image_bytes(source_name: &Path, source_bytes: &[u8], target_format: &str) -> Result<(Vec<u8>, &'static str)> {
+    let (image, _) = decode_image_bytes(source_name, source_bytes)?;
     let extension = conversion_format_extension(target_format)
         .ok_or_else(|| anyhow!("unsupported conversion target format"))?;
     let mut bytes = Vec::new();
@@ -336,7 +340,11 @@ pub(super) fn compress_image_file(
 ) -> Result<CompressedImage> {
     let source_bytes = fs::read(source_path)
         .with_context(|| format!("无法读取待压缩图片 {}", source_path.display()))?;
-    let (image, detected_format) = decode_image_file(source_path)?;
+    compress_image_bytes(source_path, &source_bytes, mode)
+}
+pub(super) fn compress_image_bytes(source_name: &Path, bytes: &[u8], mode: ImageCompressionMode) -> Result<CompressedImage> {
+    let source_bytes = bytes.to_vec();
+    let (image, detected_format) = decode_image_bytes(source_name, bytes)?;
     let format = CompressionFormat::from_detected(detected_format)?;
     let original_width = image.width();
     let original_height = image.height();
@@ -647,6 +655,64 @@ pub(super) fn slint_image_from_rgba(rgba: &image::RgbaImage, width: u32, height:
     Image::from_rgba8(buffer)
 }
 
+pub(super) fn prepare_reference_bytes_for_namespace(authority: &NamespaceStorageAuthority, path: &Path, paired: bool)
+    -> Result<(Vec<u8>, &'static str, &'static str)> {
+    anyhow::ensure!(path.starts_with(authority.lease().namespace.root()), "upload input is outside captured namespace");
+    let bytes = authority.read_image_source(path, 100 * 1024 * 1024)?;
+    prepare_reference_upload_bytes(bytes,paired)
+}
+/// Normalize already-owned and (when replaying) fingerprint-checked bytes.
+/// No source path or filesystem access is permitted in this stage.
+pub(super) fn prepare_reference_upload_bytes(bytes:Vec<u8>,paired:bool)
+    -> Result<(Vec<u8>, &'static str, &'static str)> {
+    let mut image = decode_reference_bytes(&bytes)?;
+    if paired {
+        return match image::guess_format(&bytes)? {
+            image::ImageFormat::Png => Ok((bytes, "reference.png", "image/png")),
+            image::ImageFormat::Jpeg => Ok((bytes, "reference.jpg", "image/jpeg")),
+            _ => Err(anyhow!("paired input must already be PNG or JPEG")),
+        };
+    }
+    let preserve_alpha = image.color().has_alpha();
+    if image.width().max(image.height()) > REFERENCE_UPLOAD_MAX_EDGE {
+        image = image.resize(REFERENCE_UPLOAD_MAX_EDGE, REFERENCE_UPLOAD_MAX_EDGE, image::imageops::FilterType::Lanczos3);
+    }
+    loop {
+        let (bytes, extension) = encode_reference_upload(&image, preserve_alpha)?;
+        if bytes.len() as u64 <= REFERENCE_UPLOAD_TARGET_BYTES || image.width().max(image.height()) <= REFERENCE_UPLOAD_MIN_EDGE {
+            return Ok(if extension == "png" { (bytes, "reference.png", "image/png") } else { (bytes, "reference.jpg", "image/jpeg") });
+        }
+        let scale = ((REFERENCE_UPLOAD_TARGET_BYTES as f64 / bytes.len() as f64).sqrt() * 0.95).clamp(0.5, 0.9);
+        image = image.resize_exact(((image.width() as f64 * scale).round() as u32).max(1),
+            ((image.height() as f64 * scale).round() as u32).max(1), image::imageops::FilterType::Lanczos3);
+    }
+}
+pub(super) fn decode_owned_reference_source(authority: &NamespaceStorageAuthority, path: &Path) -> Result<image::DynamicImage> {
+    decode_reference_bytes(&authority.read_image_source(path, 100 * 1024 * 1024)?)
+}
+pub(super) fn decode_reference_bytes(bytes: &[u8]) -> Result<image::DynamicImage> {
+    use image::ImageDecoder;
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
+    let mut decoder = reader.into_decoder()?;
+    let (width, height) = decoder.dimensions();
+    anyhow::ensure!(width > 0 && height > 0 && u64::from(width) * u64::from(height) <= 100_000_000, "reference dimensions exceed policy");
+    let orientation = decoder.orientation()?;
+    let mut image = image::DynamicImage::from_decoder(decoder)?;
+    image.apply_orientation(orientation);
+    Ok(image)
+}
+pub(super) fn persist_reference_image_for_namespace(authority: &NamespaceStorageAuthority, image: &image::DynamicImage) -> Result<PathBuf> {
+    let _unit = authority.begin_ordinary_mutation()?;
+    let (bytes, extension) = encode_reference_upload(image, image.color().has_alpha())?;
+    let key = ManagedFileKey::new(ManagedUserArea::ReferencesLibrary, &format!("reference-{}.{}", Uuid::new_v4(), extension))?;
+    let mut file = authority.create_temporary_regular_for(&key)?;
+    authority.write_new_regular_from(&mut file, &mut std::io::Cursor::new(bytes))?;
+    authority.sync_regular(&mut file)?;
+    authority.publish_regular(&mut file, NamespaceManagedPublication::Absent(&key))?;
+    let registration = NamespacedManagedFileRegistration::new(authority, file, "reference", "user")?;
+    authority.delivery_index()?.register_file_for_namespace(authority, &registration)?;
+    Ok(authority.lease().namespace.path(key.area()).join(key.relative_name().as_str()))
+}
 pub(super) fn persist_reference_source(path: &Path) -> Result<PathBuf> {
     let (decoded, _) = decode_image_file(path)?;
     persist_reference_image(&decoded)
@@ -657,7 +723,7 @@ pub(super) fn persist_colorization_source(path: &Path) -> Result<PathBuf> {
     persist_reference_image(&flatten_colorization_image(&decoded))
 }
 
-fn flatten_colorization_image(image: &image::DynamicImage) -> image::DynamicImage {
+pub(super) fn flatten_colorization_image(image: &image::DynamicImage) -> image::DynamicImage {
     let rgba = image.to_rgba8();
     let mut rgb = image::RgbImage::new(rgba.width(), rgba.height());
     for (x, y, pixel) in rgba.enumerate_pixels() {
@@ -714,8 +780,15 @@ fn persist_reference_image(image: &image::DynamicImage) -> Result<PathBuf> {
 pub(super) fn decode_image_file(
     path: &Path,
 ) -> Result<(image::DynamicImage, Option<image::ImageFormat>)> {
+    let bytes = fs::read(path).with_context(|| format!("无法读取图片 {}", path.display()))?;
+    decode_image_bytes(path, &bytes)
+}
+/// The name supplies only a format hint. Decoding and native fallback use these owned bytes.
+pub(super) fn decode_image_bytes(path: &Path, bytes: &[u8]) -> Result<(image::DynamicImage, Option<image::ImageFormat>)> {
     let decoded = (|| -> image::ImageResult<_> {
-        let reader = image::ImageReader::open(path)?.with_guessed_format()?;
+        let mut reader = image::ImageReader::new(Cursor::new(bytes));
+        if let Ok(format) = image::ImageFormat::from_path(path) { reader.set_format(format); }
+        let reader = reader.with_guessed_format()?;
         let format = reader.format();
         let mut decoder = reader.into_decoder()?;
         let orientation = decoder.orientation()?;
@@ -729,7 +802,7 @@ pub(super) fn decode_image_file(
         Err(error) => {
             #[cfg(target_os = "macos")]
             if is_macos_native_image(path) {
-                return decode_macos_native_image(path)
+                return decode_macos_native_image_bytes(bytes)
                     .map(|image| (image, None))
                     .with_context(|| format!("无法读取图片 {}", path.display()));
             }
@@ -746,16 +819,13 @@ fn is_macos_native_image(path: &Path) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn decode_macos_native_image(path: &Path) -> Result<image::DynamicImage> {
+fn decode_macos_native_image_bytes(bytes: &[u8]) -> Result<image::DynamicImage> {
     use objc2::AllocAnyThread;
     use objc2_app_kit::NSImage;
-    use objc2_foundation::NSString;
+    use objc2_foundation::NSData;
 
-    let file_name = path
-        .to_str()
-        .map(NSString::from_str)
-        .ok_or_else(|| anyhow!("图片路径不是有效文本"))?;
-    let native_image = NSImage::initWithContentsOfFile(NSImage::alloc(), &file_name)
+    let data = NSData::with_bytes(bytes);
+    let native_image = NSImage::initWithData(NSImage::alloc(), &data)
         .ok_or_else(|| anyhow!("macOS 无法解码该图片"))?;
     let tiff_data = native_image
         .TIFFRepresentation()
@@ -767,6 +837,41 @@ fn decode_macos_native_image(path: &Path) -> Result<image::DynamicImage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::GenericImageView as _;
+
+    #[test]
+    fn core_owned_byte_codecs_never_reopen_the_source_name() {
+        let source = image::RgbaImage::from_pixel(8, 5, image::Rgba([20, 80, 120, 90]));
+        let bytes = encode_png_rgba(&source, 8, 5).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let hint = root.path().join("missing-original.png");
+        let (decoded, format) = decode_image_bytes(&hint, &bytes).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (8, 5));
+        assert_eq!(format, Some(image::ImageFormat::Png));
+        assert!(!hint.exists());
+        let original = compress_image_bytes(&hint, &bytes, ImageCompressionMode::Quality(100)).unwrap();
+        assert_eq!(original.bytes, bytes);
+        assert_eq!(compress_image_bytes(&hint, &bytes, ImageCompressionMode::TargetBytes(bytes.len() as u64)).unwrap().bytes, bytes);
+        let (jpeg, extension) = convert_image_bytes(&hint, &bytes, "jpeg").unwrap();
+        assert_eq!(extension, "jpg");
+        assert_eq!(image::load_from_memory(&jpeg).unwrap().dimensions(), (8, 5));
+        // A later path occupant must never replace corrupt captured input.
+        image::RgbaImage::from_pixel(2, 3, image::Rgba([255,0,0,255])).save(&hint).unwrap();
+        assert!(decode_image_bytes(&hint, b"invalid captured bytes").is_err());
+        assert!(convert_image_bytes(&hint, b"invalid captured bytes", "png").is_err());
+        assert!(compress_image_bytes(&hint, b"invalid captured bytes", ImageCompressionMode::Quality(100)).is_err());
+        assert_eq!(decode_image_bytes(&hint, &bytes).unwrap().0.dimensions(), (8, 5));
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn core_native_image_decoder_uses_owned_nsdata_without_a_path() {
+        let source = image::RgbaImage::from_pixel(3, 7, image::Rgba([20,80,120,255]));
+        let bytes = encode_png_rgba(&source, 3, 7).unwrap();
+        let decoded = decode_macos_native_image_bytes(&bytes).unwrap();
+        assert_eq!(decoded.dimensions(), (3, 7));
+        // This proves the NSData native bridge, not HEIC decoding without a HEIC fixture.
+    }
+
 
     #[test]
     fn reference_optimization_only_runs_for_large_files_or_dimensions() {
