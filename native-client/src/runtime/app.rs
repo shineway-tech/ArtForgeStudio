@@ -20,6 +20,7 @@ pub(super) fn run() -> Result<()> {
     init_version_state(&app);
     cleanup_stale_update_dirs();
     apply_theme(&app, "light");
+    prepare_app_data_dir()?;
     fs::create_dir_all(app_data_dir())?;
     let data_root_capability = Arc::new(NamespaceFs::open_data_root(&app_data_dir())?);
     initialize_client_state_repository(Arc::clone(&data_root_capability))

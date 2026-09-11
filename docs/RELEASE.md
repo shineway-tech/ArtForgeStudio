@@ -128,7 +128,7 @@ OSS 上传：
 
 ## Windows packaging
 
-Windows Runner 使用 MSVC 构建 release 二进制。`package-native-client.ps1` 组装 portable 目录、素材和数据目录，再创建 ZIP。
+Windows Runner 使用 MSVC 构建 release 二进制。`package-native-client.ps1` 组装 portable 目录、素材和数据目录，再创建 ZIP。Portable 版本继续把数据保存在程序旁的 `data`；安装版通过安装标记把可写数据保存在 `%LOCALAPPDATA%\ElunviCanvas\data`，首次启动时会在目标目录为空的情况下迁移旧版程序旁的数据。
 
 Windows 自动更新必须通过更新辅助程序显式传入当前 EXE 目录作为安装器的 `/DIR`，不能依赖历史安装记录。辅助程序完成校验并通知就绪后，客户端才退出；辅助程序等待旧进程结束、检查安装退出码和目标 EXE 版本，然后确保同一路径的客户端重新打开。安装器日志保存在该次临时更新目录的 `install.log`，失败结果保存在当前数据目录的 `update-result.json`，重启后显示。现有 `data` 不属于安装覆盖范围。
 
@@ -138,7 +138,7 @@ Windows 更新链路的隔离回归测试（临时程序、临时目录，不安
 powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/windows-update-helper.ps1
 ```
 
-CI 随后查找或安装 Inno Setup，并使用 `installer/ElunviCanvas.iss` 生成当前用户安装器。安装器输入目录、版本和输出目录由工作流通过以下临时环境变量传入：
+CI 随后查找或安装 Inno Setup，并使用 `installer/ElunviCanvas.iss` 生成当前用户安装器。安装器不会复用注册表中可能已经失效的旧安装目录；自动更新仍通过 `/DIR` 明确指定当前目录。安装器输入目录、版本和输出目录由工作流通过以下临时环境变量传入：
 
 - `ARTFORGE_APP_VERSION`
 - `ARTFORGE_PACKAGE_DIR`
