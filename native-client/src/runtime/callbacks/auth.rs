@@ -389,6 +389,15 @@ fn expire_wechat_login(state: &AppState) {
     state.set_auth_error("微信二维码已失效，请点击刷新".into());
 }
 
+fn begin_account_activation(state: &AppState, wechat_status: Option<&str>) {
+    state.set_auth_busy(true);
+    state.set_session_state("activating".into());
+    state.set_auth_error("".into());
+    if let Some(status) = wechat_status {
+        state.set_auth_wechat_status(status.into());
+    }
+}
+
 pub(super) fn wire_auth_callbacks(app: &AppWindow, context: AppContext) {
     let Some(backend) = context.backend.clone() else {
         return;
@@ -988,9 +997,19 @@ fn schedule_network_recovery(app_weak: Weak<AppWindow>, context: AppContext) {
     });
 }
 
+fn network_recovery_allowed(state: &AppState) -> bool {
+    !state.get_auth_open()
+        && !state.get_auth_busy()
+        && !state.get_auth_wechat_busy()
+        && state.get_auth_wechat_login_id().is_empty()
+        && matches!(state.get_session_state().as_str(), "offline" | "signed_out")
+}
+
 fn try_network_recovery(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
-    if state.get_auth_busy() || !matches!(state.get_session_state().as_str(), "offline" | "signed_out") { return; }
+    if !network_recovery_allowed(&state) {
+        return;
+    }
     if context.active_namespace.lock().unwrap_or_else(|poison| poison.into_inner()).is_some() { return; }
     if let Some(coordinator) = context.account_transition.clone() {
         coordinator.resume_persisted_session(app, context);
@@ -1435,9 +1454,12 @@ fn poll_wechat_status_result(
                 state.set_auth_error(message.into());
             }
             Ok(WechatPollOutcome::Completed(response)) => {
-                let Some(backend) = context.backend.as_ref() else {
+                if context.backend.is_none() {
+                    state.set_auth_busy(false);
+                    state.set_session_state("signed_out".into());
+                    state.set_auth_error("后端客户端初始化失败".into());
                     return;
-                };
+                }
                 let current = auth_operation_is_current(&context, auth_operation_epoch)
                     && state.get_auth_open()
                     && state.get_auth_method().as_str() == "wechat"
@@ -1446,9 +1468,13 @@ fn poll_wechat_status_result(
                 state.set_auth_wechat_login_id("".into());
                 state.set_auth_wechat_qr_ready(false);
                 state.set_auth_wechat_scanned(false);
-                state.set_auth_wechat_status("登录成功".into());
+                begin_account_activation(&state, Some("登录成功，正在加载账号数据"));
                 if let Some(coordinator) = context.account_transition.clone() {
                     coordinator.activate_authenticated(&app, context, response, LoginOrigin::Wechat, None);
+                } else {
+                    state.set_auth_busy(false);
+                    state.set_session_state("signed_out".into());
+                    state.set_auth_error("账号初始化服务不可用，请重试".into());
                 }
             }
             Err(error) => {
@@ -1514,7 +1540,6 @@ fn poll_login_result(
         {
             return;
         }
-        state.set_auth_busy(false);
         match result {
             Ok(response) => handle_login_success(
                 &app,
@@ -1525,6 +1550,7 @@ fn poll_login_result(
                 &pending_registration,
             ),
             Err(error) => {
+                state.set_auth_busy(false);
                 state.set_session_state("signed_out".into());
                 apply_email_login_error(&app, &login_mode, error);
             }
@@ -1545,17 +1571,25 @@ fn handle_login_success(
         LoginWorkerResponse::Password(response)
         | LoginWorkerResponse::Email { outcome: EmailLoginOutcome::Authenticated { login: response }, .. } => {
             pending_registration.borrow_mut().take();
-            let Some(backend) = context.backend.as_ref() else {
+            if context.backend.is_none() {
+                state.set_auth_busy(false);
+                state.set_session_state("signed_out".into());
+                state.set_auth_error("后端客户端初始化失败".into());
                 return;
-            };
+            }
             let current = auth_operation_is_current(context, auth_operation_epoch)
                 && state.get_auth_open()
                 && state.get_auth_method().as_str() == "email"
                 && state.get_auth_email_mode().as_str() == login_mode;
             if current {
+                begin_account_activation(&state, None);
                 if let Some(coordinator) = context.account_transition.clone() {
                     let origin = if login_mode == "password" { LoginOrigin::Password } else { LoginOrigin::Email };
                     coordinator.activate_authenticated(app, context.clone(), response, origin, None);
+                } else {
+                    state.set_auth_busy(false);
+                    state.set_session_state("signed_out".into());
+                    state.set_auth_error("账号初始化服务不可用，请重试".into());
                 }
             }
         }
@@ -1566,6 +1600,7 @@ fn handle_login_success(
             pending_invitation_count,
             selection_state,
         }, email, acceptances } => {
+            state.set_auth_busy(false);
             let Ok(continuation_expires_at) = chrono::DateTime::parse_from_rfc3339(&continuation_expires_at).map(|value| value.with_timezone(&chrono::Utc)) else {
                 state.set_auth_error("团队注册验证有效期无效，请重新验证邮箱".into());
                 state.set_session_state("signed_out".into());
@@ -3195,6 +3230,38 @@ pub(super) fn valid_email(email: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authenticated_transport_keeps_login_blocked_until_account_activation_finishes() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_auth_busy(false);
+        state.set_session_state("authenticating".into());
+
+        begin_account_activation(&state, Some("登录成功，正在加载账号数据"));
+
+        assert!(state.get_auth_busy());
+        assert_eq!(state.get_session_state().as_str(), "activating");
+        assert_eq!(
+            state.get_auth_wechat_status().as_str(),
+            "登录成功，正在加载账号数据"
+        );
+    }
+
+    #[test]
+    fn network_recovery_stays_idle_while_login_dialog_is_open() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_session_state("signed_out".into());
+        state.set_auth_open(true);
+
+        assert!(!network_recovery_allowed(&state));
+
+        state.set_auth_open(false);
+        assert!(network_recovery_allowed(&state));
+    }
     use crate::runtime::test_support::MemoryRefreshTokenStore;
     use reqwest::Url;
 
