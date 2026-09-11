@@ -1,5 +1,6 @@
 //! Serialized real-user activation and bounded ordinary user activity.
 use super::*;
+use anyhow::ensure;
 use std::sync::Condvar;
 
 #[derive(Clone, Default)]
@@ -130,6 +131,14 @@ impl PreparedPrivateModels {
         let PreparedBackendProjection { mut ui,model_groups,pagination,credit_version } =
             prepare_activation_backend_projection(&prepared.snapshot,&preferred_image,&preferred_prompt,&preferred_video,&preferred_pack);
         ui.append(prepare_activation_team_projection(&prepared.groups,prepared.billing_ticket.proposed_scope(),&prepared.snapshot.account));
+        ui.push(display_directory_path(&prepared.lease.namespace.path(ManagedUserArea::Input)).into(), |state, value| state.set_input_dir(value));
+        ui.push(display_directory_path(&prepared.lease.namespace.path(ManagedUserArea::Output)).into(), |state, value| state.set_output_dir(value));
+        ui.push(display_directory_path(&prepared.lease.namespace.path(ManagedUserArea::Prompt)).into(), |state, value| state.set_prompt_dir(value));
+        if let Some(notice) = &prepared.migration_notice {
+            ui.push(notice.clone().into(), |state, value| state.set_directory_migration_message(value));
+            ui.push("error".into(), |state, value| state.set_directory_migration_stage(value));
+            ui.push(true, |state, value| state.set_directory_migration_open(value));
+        }
         if let Some(data)=&data {
             let category=prepared.profile.as_ref().map(|profile|resolve_category(&profile.asset_type,"")).unwrap_or_else(||"character".into());
             let prompt=prompt_draft_for_category(&data.store.prompt_drafts,&category);
@@ -202,6 +211,7 @@ impl AccountTransitionCoordinator {
             context.backend.as_ref().ok_or_else(|| anyhow!("backend unavailable"))?.api.upgrade_latch().clone(),
         ));
         let core = Arc::new(TransitionCore {
+            index: context.file_index.clone().ok_or_else(|| anyhow!("file index unavailable"))?,
             backend: context.backend.clone().ok_or_else(|| anyhow!("backend unavailable"))?,
             writer: client_state_writer()?.clone(), root: context.data_root_capability.clone().ok_or_else(|| anyhow!("retained root unavailable"))?, root_path,
             admission: AccountTransitionAdmission::default(), namespace_operations: context.namespace_operations.clone(),
@@ -537,6 +547,7 @@ fn clear_retired_private_state(app: &AppWindow, context: &AppContext) {
     *context.canvas_history.borrow_mut() = CanvasController::default();
     clear_retired_private_projection(&app.global::<AppState>());
     let state = app.global::<AppState>(); state.set_logged_in(false); state.set_session_state("signed_out".into());
+    state.set_input_dir("".into()); state.set_output_dir("".into()); state.set_prompt_dir("".into());
     state.set_nickname("".into()); state.set_email_mask("".into()); state.set_prompt("".into()); state.set_negative_prompt("".into()); state.set_canvas_workflow_prompt("".into());
 }
 /// Captured at model preparation, never reconstructed from mutable UI identity.
@@ -565,7 +576,7 @@ impl PrivatePersistence {
     pub(super) fn begin_activity(&self) -> Result<UserActivityPermit> { self.activity.begin_recovery_unit(&self.lease) }
     pub(super) fn lease(&self) -> &NamespaceLease { &self.lease }
     pub(super) fn upgrade_latch(&self) -> UpgradeLatch { self.upgrade.clone() }
-    pub(super) fn owns_path(&self, path: &Path) -> bool { path.starts_with(self.lease.namespace.root()) }
+    pub(super) fn owns_path(&self, path: &Path) -> bool { self.lease.namespace.owns_path(path) }
     pub(super) fn is_current(&self) -> bool {
         !self.upgrade.is_tripped() && self.activity.begin_recovery_unit(&self.lease).is_ok()
     }
@@ -696,6 +707,7 @@ fn resumable_persisted_owner(session: &SessionManager, debt: &Mutex<Option<Clean
     session.persisted_owner_user_id()
 }
 struct TransitionCore {
+    index: FileIndex,
     backend: Arc<BackendRuntime>, writer: ClientStateWriter,
     root: Arc<DataRootCapability>, root_path: PathBuf,
     admission: AccountTransitionAdmission, namespace_operations: NamespaceOperationGate,
@@ -731,6 +743,7 @@ struct PreparedActivation {
     lease: NamespaceLease, billing_ticket: BillingSwitchTicket, staged: StagedBillingConfirmation,
     data: Option<LocalStoreData>, profile: Option<UserProfileData>, snapshot: BackendSnapshot,
     groups: Vec<AccountGroupChoice>,
+    migration_notice: Option<String>,
 }
 struct PersistedActivation { prepared: PreparedActivation, _commit: OrdinaryDurableCommitPermit }
 impl TransitionCore {
@@ -822,10 +835,15 @@ impl TransitionCore {
         let billing_ticket = self.billing.begin_switch(&scope, &self.backend.api.device().id, &choice.group_id, PreviousBillingAuthority::StillValid)?;
         let snapshot = AccountApi::new(self.backend.api.clone()).snapshot_billing(billing_ticket.proposed_scope())?;
         let staged = self.billing.stage_confirmation(&billing_ticket, choice, snapshot.account.clone())?;
-        let lease = NamespaceLease {
-            namespace: UserNamespace::new(&self.root_path, &scope.owner_user_id).map_err(transition_error)?,
+        let mut lease = NamespaceLease {
+            namespace: self.writer.load_account_directory_namespace(&self.root_path, &scope.owner_user_id).map_err(transition_error)?,
             auth_epoch: scope.auth_epoch, namespace_epoch: ticket.id,
         };
+        let authority = NamespaceStorageAuthority::open_prepublication(self.root.clone(), &lease).map_err(transition_error)?;
+        if !lease.namespace.mappings().is_empty() {
+            self.index.replay_directory_rebind(&authority).map_err(transition_error)?;
+            lease.namespace = self.writer.complete_directory_rebind(&lease.namespace).map_err(transition_error)?;
+        }
         let authority = NamespaceStorageAuthority::open_prepublication(self.root.clone(), &lease).map_err(transition_error)?;
         let phase = namespace_transition.begin_prepublication_recovery(&lease).map_err(transition_error)?;
         phase.verify_no_unsupported_imports(&authority).map_err(transition_error)?;
@@ -836,7 +854,8 @@ impl TransitionCore {
         let activity = self.activity.prepare_activation(lease.clone()).map_err(transition_error)?;
         self.writer.activate(lease.clone()).map_err(transition_error)?;
         pending.writer_lease = Some(lease.clone());
-        Ok(Some(PreparedActivation { pending, namespace: Some(namespace), activity: Some(activity), lease, billing_ticket, staged, data: Some(data), profile, snapshot, groups: listed.items }))
+        let migration_notice = self.writer.take_account_directory_migration_notice(lease.namespace.user_public_id()).map_err(transition_error)?;
+        Ok(Some(PreparedActivation { migration_notice, pending, namespace: Some(namespace), activity: Some(activity), lease, billing_ticket, staged, data: Some(data), profile, snapshot, groups: listed.items }))
     }
     fn prepare_billing_switch(self: &Arc<Self>, ticket: BillingSwitchTicket, choice: AccountGroupChoice) -> Result<PreparedActivation, ApiError> {
         let scope = ticket.proposed_scope().request.session.clone();
@@ -845,7 +864,7 @@ impl TransitionCore {
         let staged = self.billing.stage_confirmation(&ticket, choice, snapshot.account.clone())?;
         let groups = TeamApi::new(self.backend.api.clone()).list_groups(&scope)?.items;
         let pending = PendingActivation { core: self.clone(), scope, writer_lease: None, committed: false, changes_user: false };
-        Ok(PreparedActivation { pending, namespace: None, activity: None, lease, billing_ticket: ticket, staged, data: None, profile: None, snapshot, groups })
+        Ok(PreparedActivation { migration_notice: None, pending, namespace: None, activity: None, lease, billing_ticket: ticket, staged, data: None, profile: None, snapshot, groups })
     }
 }
 impl PreparedActivation {
@@ -923,6 +942,12 @@ impl UserActivityGate {
         state.count = count;
         Ok(UserActivityPermit { inner: self.inner.clone(), lease: lease.clone() })
     }
+    fn try_quiesce(&self, lease: &NamespaceLease) -> Result<QuiescedUserActivity> {
+        let mut state = self.inner.state.lock().map_err(|_| anyhow!("activity gate poisoned"))?;
+        anyhow::ensure!(!state.closed && !state.quiescing && state.count == 0 && state.lease.as_ref() == Some(lease), "当前账号有任务正在处理，请完成后重试");
+        state.quiescing = true;
+        Ok(QuiescedUserActivity { inner: self.inner.clone(), lease: lease.clone(), retired: false })
+    }
     // Blocking drain is used only by the activation worker, never the UI thread.
     pub(super) fn begin_quiesce(&self, lease: &NamespaceLease) -> Result<QuiescedUserActivity> {
         let mut state = self.inner.state.lock().map_err(|_| anyhow!("activity gate poisoned"))?;
@@ -935,6 +960,7 @@ impl UserActivityGate {
     }
 }
 impl UserActivityPermit {
+    pub(crate) fn matches_namespace(&self, lease: &NamespaceLease) -> bool { &self.lease == lease }
     pub(super) fn is_quiescing(&self) -> bool {
         self.inner.state.lock().map(|state| state.closed || state.quiescing || state.lease.as_ref() != Some(&self.lease)).unwrap_or(true)
     }
@@ -966,6 +992,121 @@ impl Drop for QuiescedUserActivity {
             state.quiescing = false;
             self.inner.changed.notify_all();
         }
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct AccountDirectoryMigrationWorker { core: Arc<TransitionCore> }
+pub(super) struct AccountDirectoryMigrationSession {
+    core: Arc<TransitionCore>,
+    lease: NamespaceLease,
+    transition: Option<NamespaceTransitionGuard>,
+    quiesced: Option<QuiescedUserActivity>,
+    flushed: Option<client_state::FlushedWriterRetirement>,
+    committed: Option<NamespaceLease>,
+    prepared_mapping: Option<AccountDirectoryMapping>,
+    pinned: Option<(NamespaceStorageAuthority, NamespaceStorageAuthority)>,
+    _effect: Option<api::OrdinaryBlockingEffectPermit>,
+    admission: Option<AccountTransitionTicket>,
+}
+pub(super) struct AccountDirectoryMigrationCompletion {
+    lease: NamespaceLease,
+    _admission: AccountTransitionTicket,
+    _effect: api::OrdinaryBlockingEffectPermit,
+}
+impl std::ops::Deref for AccountDirectoryMigrationCompletion {
+    type Target = NamespaceLease;
+    fn deref(&self) -> &NamespaceLease { &self.lease }
+}
+impl AccountTransitionCoordinator {
+    pub(super) fn directory_migration_worker(&self) -> AccountDirectoryMigrationWorker { AccountDirectoryMigrationWorker { core: self.core.clone() } }
+    pub(super) fn finish_directory_migration_ui(&self, app: &AppWindow, context: &AppContext, lease: &NamespaceLease) -> Result<()> {
+        ensure!(self.core.active_namespace.lock().map_err(|_| anyhow!("namespace poisoned"))?.as_ref() == Some(lease), "migration namespace no longer active");
+        let index = context.file_index.clone().ok_or_else(|| anyhow!("file index unavailable"))?;
+        {
+            let mut store = context.store.borrow_mut();
+            lease.namespace.remap_locations().remap_store(&mut store);
+            store.private_persistence = Some(PrivatePersistence::new(self.core.writer.clone(), lease.clone(), self.core.activity.clone(), self.core.backend.api.upgrade_latch().clone()).with_storage(self.core.root.clone(), self.core.backend.api.clone(), index));
+        }
+        super::sync_account_migrated_file_locations(app, context, &lease.namespace);
+        Ok(())
+    }
+}
+impl AccountDirectoryMigrationWorker {
+    pub(super) fn begin(&self, lease: &NamespaceLease) -> Result<AccountDirectoryMigrationSession> {
+        let effect = self.core.backend.api.upgrade_latch().begin_ordinary_blocking_effect().map_err(|required| anyhow!(required.as_error().user_message()))?;
+        let admission = self.core.admission.begin()?;
+        let transition = self.core.namespace_operations.try_begin_transition()?;
+        ensure!(self.core.active_namespace.lock().map_err(|_| anyhow!("namespace poisoned"))?.as_ref() == Some(lease), "账号目录已变化，请重新选择目录");
+        let scope = SessionScope { owner_user_id: lease.namespace.user_public_id().into(), auth_epoch: lease.auth_epoch };
+        ensure!(self.core.backend.api.session().is_scope_current(&scope), "登录状态已变化");
+        let quiesced = self.core.activity.try_quiesce(lease)?;
+        let flushed = self.core.writer.flush_for_retirement(lease)?;
+        Ok(AccountDirectoryMigrationSession { core: self.core.clone(), lease: lease.clone(), transition: Some(transition), quiesced: Some(quiesced), flushed: Some(flushed), committed: None, prepared_mapping: None, pinned: None, _effect: Some(effect), admission: Some(admission) })
+    }
+}
+impl AccountDirectoryMigrationSession {
+    pub(super) fn prepare(&mut self, area: ManagedUserArea, target: &Path, manifest: &[crate::directory_migration::MigrationManifestEntry]) -> Result<()> {
+        ensure!(self.prepared_mapping.is_none() && self.committed.is_none(), "migration already prepared");
+        let chosen = target.ancestors().nth(4).ok_or_else(|| anyhow!("invalid migration target"))?;
+        let _external_boundary = ExternalExportDestination::open(self.core.root.as_ref(), chosen)?;
+        let mapping = AccountDirectoryMapping { version: 1, area: area.storage_name().into(), source: self.lease.namespace.path(area), target: target.to_owned(), identity: NamespaceFs::directory_identity_at(target)?, source_identity: NamespaceFs::directory_identity_at(&self.lease.namespace.path(area))?, manifest_json: serde_json::to_string(manifest)?, pending_rebind: Vec::new() };
+        let namespace = self.lease.namespace.clone().with_mapping(mapping.clone())?;
+        // Open all retained capabilities before the copy; a missing previously mapped volume must fail here.
+        let source = NamespaceStorageAuthority::open_prepublication(self.core.root.clone(), &self.lease)?;
+        let candidate = NamespaceLease { namespace, ..self.lease.clone() };
+        let destination = NamespaceStorageAuthority::open_prepublication(self.core.root.clone(), &candidate)?;
+        self.core.writer.prepare_account_directory_migration(self.flushed.as_ref().ok_or_else(|| anyhow!("writer reservation unavailable"))?, &serde_json::json!({ "version": 1, "phase": "prepared", "mapping": &mapping }))?;
+        self.pinned = Some((source, destination));
+        self.prepared_mapping = Some(mapping);
+        Ok(())
+    }
+    pub(super) fn commit(&mut self, area: ManagedUserArea, target: &Path) -> Result<()> {
+        ensure!(self.committed.is_none(), "迁移已经提交");
+        let scope = SessionScope { owner_user_id: self.lease.namespace.user_public_id().into(), auth_epoch: self.lease.auth_epoch };
+        ensure!(self.core.backend.api.session().is_scope_current(&scope), "登录状态已变化");
+        let mut mapping = self.prepared_mapping.clone().ok_or_else(|| anyhow!("migration copy was not prepared"))?;
+        ensure!(mapping.area == area.storage_name() && mapping.target == target, "migration target changed");
+        ensure!(NamespaceFs::directory_identity_at(target)? == mapping.identity && NamespaceFs::directory_identity_at(&mapping.source)? == mapping.source_identity, "migration directory identity changed during copy");
+        let mut candidate = NamespaceLease { namespace: self.lease.namespace.clone().with_mapping(mapping.clone())?, auth_epoch: self.lease.auth_epoch, namespace_epoch: self.lease.namespace_epoch.checked_add(1).ok_or_else(|| anyhow!("namespace epoch exhausted"))? };
+        let (source, destination) = self.pinned.as_ref().ok_or_else(|| anyhow!("migration capabilities missing"))?;
+        mapping.pending_rebind = self.core.index.prepare_directory_rebind(source, destination, area)?;
+        candidate.namespace = self.lease.namespace.clone().with_mapping(mapping)?;
+        self.core.writer.commit_account_directory_mapping(self.flushed.as_ref().ok_or_else(|| anyhow!("writer reservation unavailable"))?, &candidate.namespace)?;
+        // Durable commit is final: no fallible operations beyond this point.
+        self.committed = Some(candidate);
+        Ok(())
+    }
+    pub(super) fn finish(mut self) -> Result<AccountDirectoryMigrationCompletion> {
+        let mut candidate = self.committed.clone().ok_or_else(|| anyhow!("migration was not committed"))?;
+        let authority = NamespaceStorageAuthority::open_prepublication(self.core.root.clone(), &candidate)?;
+        self.core.index.replay_directory_rebind(&authority)?;
+        candidate.namespace = self.core.writer.complete_directory_rebind(&candidate.namespace)?;
+        let mut transition = self.transition.take().ok_or_else(|| anyhow!("migration transition missing"))?;
+        transition.retire_flushed(self.flushed.take().ok_or_else(|| anyhow!("migration writer reservation missing"))?)?;
+        self.quiesced.take().unwrap().retire();
+        *self.core.active_namespace.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        let authority = NamespaceStorageAuthority::open_prepublication(self.core.root.clone(), &candidate)?;
+        let recovery = transition.begin_prepublication_recovery(&candidate)?;
+        recovery.verify_no_unsupported_imports(&authority)?;
+        let recovered = recovery.finish()?;
+        let namespace = transition.prepare_publication(&candidate, recovered)?;
+        let activity = self.core.activity.prepare_activation(candidate.clone())?;
+        self.core.writer.activate(candidate.clone())?;
+        namespace.publish();
+        *self.core.active_namespace.lock().unwrap_or_else(|p| p.into_inner()) = Some(candidate.clone());
+        activity.publish();
+        self.committed = None;
+        Ok(AccountDirectoryMigrationCompletion { lease: candidate, _admission: self.admission.take().unwrap(), _effect: self._effect.take().unwrap() })
+    }
+}
+impl Drop for AccountDirectoryMigrationSession {
+    fn drop(&mut self) {
+        if self.committed.is_none() { return; }
+        // A committed mapping may never reopen the old writer after a refresh failure.
+        if let (Some(transition), Some(flushed)) = (&mut self.transition, self.flushed.take()) { let _ = transition.retire_flushed(flushed); }
+        if let Some(quiesced) = self.quiesced.take() { quiesced.retire(); }
+        *self.core.active_namespace.lock().unwrap_or_else(|p| p.into_inner()) = None;
     }
 }
 
@@ -1446,6 +1587,7 @@ mod tests {
                     app_version:"fixture".into(),last_seen_at:"2026-09-07T00:00:00Z".into(),is_current:true }]
             };
             let mut prepared=PreparedActivation {
+                migration_notice: None,
                 pending:PendingActivation { core:core.clone(),scope,writer_lease:None,committed:false,changes_user:false },
                 namespace:None,activity:None,lease:lease.clone(),billing_ticket:ticket,staged,
                 data:fresh_store.then(LocalStoreData::default),profile:None,snapshot,groups:vec![choice]
@@ -2127,6 +2269,7 @@ fn select_finance_fixture_group(context: &AppContext, session: &SessionScope, pa
         }, DeviceIdentity { id: "22222222-2222-4222-8222-222222222222".into(), name: "fixture".into(), platform: "macos".into() }, session).unwrap();
         client.bind_user_work(UserWorkAdmission::new(active_namespace.clone(), activity.clone())).unwrap();
         let core = Arc::new(TransitionCore {
+            index: FileIndex::initialize(root_path.join("migration-index.sqlite3")).unwrap(),
             backend: Arc::new(BackendRuntime { api: client }), writer: (*fixture).clone(), root, root_path,
             admission: AccountTransitionAdmission::default(), namespace_operations, activity,
             billing: Arc::new(BillingContextManager::default()), active_namespace,

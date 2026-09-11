@@ -12,6 +12,21 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 
+static MAPPED_PRIVATE_IDENTITIES: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<StableFileIdentity>>> = std::sync::OnceLock::new();
+pub(crate) fn register_mapped_private_identity(identity: StableFileIdentity) -> Result<()> {
+    MAPPED_PRIVATE_IDENTITIES.get_or_init(Default::default).lock().map_err(|_| anyhow::anyhow!("private identity registry poisoned"))?.insert(identity);
+    Ok(())
+}
+fn reject_mapped_private_identity(identity: StableFileIdentity) -> Result<()> {
+    ensure!(!MAPPED_PRIVATE_IDENTITIES.get_or_init(Default::default).lock().map_err(|_| anyhow::anyhow!("private identity registry poisoned"))?.contains(&identity), "external destination/source is managed account storage");
+    Ok(())
+}
+fn reject_reserved_account_path(path: &Path) -> Result<()> {
+    let components: Vec<_> = path.components().filter_map(|c| if let Component::Normal(name) = c { Some(name.to_string_lossy()) } else { None }).collect();
+    ensure!(!components.windows(3).any(|parts| parts[0].eq_ignore_ascii_case("ElunviCanvas") && parts[1].eq_ignore_ascii_case("accounts") && Uuid::parse_str(&parts[2]).is_ok()), "external destination/source is reserved account storage");
+    Ok(())
+}
+
 pub(crate) struct NamespaceStorageAuthority {
     data_root: Arc<DataRootCapability>,
     lease: NamespaceLease,
@@ -440,14 +455,25 @@ pub(crate) enum NamespaceManagedPublication<'a> {
 }
 
 impl NamespaceStorageAuthority {
+    fn checked_runtime_access(&self) -> Result<Option<super::UserActivityPermit>> {
+        match &self.access {
+            NamespaceStorageAccess::Runtime { client, scope, .. } => {
+                let activity = client.begin_user_work(scope).map_err(|error| anyhow::anyhow!(error.user_message()))?;
+                ensure!(activity.matches_namespace(&self.lease), "retained storage namespace has been replaced");
+                Ok(Some(activity))
+            }
+            _ => Ok(None),
+        }
+    }
+
     pub(crate) fn read_image_source(&self, path: &Path, limit: u64) -> Result<Vec<u8>> {
         let _unit = self.begin_ordinary_mutation()?;
         ensure!(path.is_absolute() && limit > 0, "invalid image source");
-        if let Ok(relative) = path.strip_prefix(self.lease.namespace.root()) {
+        if self.lease.namespace.owns_path(path) {
             let mut areas = MANAGED_USER_AREAS.to_vec();
             areas.sort_by_key(|area| std::cmp::Reverse(area.relative_path().len()));
             let key = areas.into_iter().find_map(|area| {
-                relative.strip_prefix(area.relative_path()).ok().and_then(|name|
+                path.strip_prefix(self.lease.namespace.path(area)).ok().and_then(|name|
                     name.to_str().and_then(|name| ManagedFileKey::new(area, name).ok()))
             }).ok_or_else(|| anyhow::anyhow!("source is outside owned managed areas"))?;
             let mut file = self.open_existing_regular(&key)?;
@@ -473,6 +499,7 @@ impl NamespaceStorageAuthority {
         &self, file: &mut NamespaceManagedFile,
         operation: impl FnOnce(&mut dyn ManagedReadSeek) -> Result<T>,
     ) -> Result<T> {
+        let _runtime = self.checked_runtime_access()?;
         let directory = self.fs.open_managed_dir(&self.directories, file.key.area())?;
         self.fs.with_regular_reader(&directory, &mut file.capability, operation)
     }
@@ -507,6 +534,7 @@ impl NamespaceStorageAuthority {
             NamespaceStorageAccess::Prepublication => anyhow::bail!("prepublication storage is read-only"),
             NamespaceStorageAccess::Runtime { client, scope, .. } => {
                 let activity = client.begin_user_work(scope).map_err(|error| anyhow::anyhow!(error.user_message()))?;
+                ensure!(activity.matches_namespace(&self.lease), "storage namespace has been replaced");
                 let durable = client.upgrade_latch().begin_ordinary_durable_commit().map_err(|required| anyhow::anyhow!(required.as_error().user_message()))?;
                 Ok(Some((activity, durable)))
             }
@@ -521,6 +549,7 @@ impl NamespaceStorageAuthority {
         self.lease.namespace.user_public_id()
     }
     pub(crate) fn create_new_regular(&self, key: &ManagedFileKey) -> Result<NamespaceManagedFile> {
+        let _runtime = self.checked_runtime_access()?;
         let directory = self.fs.open_managed_dir(&self.directories, key.area())?;
         let capability = self
             .fs
@@ -534,6 +563,7 @@ impl NamespaceStorageAuthority {
         &self,
         key: &ManagedFileKey,
     ) -> Result<NamespaceManagedFile> {
+        let _runtime = self.checked_runtime_access()?;
         let directory = self.fs.open_managed_dir(&self.directories, key.area())?;
         let capability = self
             .fs
@@ -547,6 +577,7 @@ impl NamespaceStorageAuthority {
         &self,
         key: &ManagedFileKey,
     ) -> Result<Option<NamespaceManagedFile>> {
+        let _runtime = self.checked_runtime_access()?;
         let directory = self.fs.open_managed_dir(&self.directories, key.area())?;
         Ok(self
             .fs
@@ -560,6 +591,7 @@ impl NamespaceStorageAuthority {
         &self,
         file: &NamespaceManagedFile,
     ) -> Result<ManagedFileMetadata> {
+        let _runtime = self.checked_runtime_access()?;
         let directory = self
             .fs
             .open_managed_dir(&self.directories, file.key.area())?;
@@ -569,6 +601,7 @@ impl NamespaceStorageAuthority {
         &self,
         area: ManagedUserArea,
     ) -> Result<Vec<ManagedRelativeName>> {
+        let _runtime = self.checked_runtime_access()?;
         let directory = self.fs.open_managed_dir(&self.directories, area)?;
         self.fs.enumerate_regular_names(&directory)
     }
@@ -579,6 +612,7 @@ impl NamespaceStorageAuthority {
         files: &[NamespaceManagedFileCheck<'_>],
         operation: impl FnOnce(&[ManagedFileMetadata]) -> Result<T>,
     ) -> Result<T> {
+        let _runtime = self.checked_runtime_access()?;
         let directories = files
             .iter()
             .map(|check| {
@@ -625,6 +659,7 @@ impl NamespaceStorageAuthority {
         file: &mut NamespaceManagedFile,
         sink: &mut dyn std::io::Write,
     ) -> Result<u64> {
+        let _runtime = self.checked_runtime_access()?;
         let directory = self
             .fs
             .open_managed_dir(&self.directories, file.key.area())?;
@@ -636,6 +671,7 @@ impl NamespaceStorageAuthority {
         file: &mut NamespaceManagedFile,
         source: &mut dyn std::io::Read,
     ) -> Result<u64> {
+        let _runtime = self.checked_runtime_access()?;
         let directory = self
             .fs
             .open_managed_dir(&self.directories, file.key.area())?;
@@ -643,6 +679,7 @@ impl NamespaceStorageAuthority {
             .write_new_regular_from(&directory, &mut file.capability, source)
     }
     pub(crate) fn sync_regular(&self, file: &mut NamespaceManagedFile) -> Result<()> {
+        let _runtime = self.checked_runtime_access()?;
         let directory = self
             .fs
             .open_managed_dir(&self.directories, file.key.area())?;
@@ -653,6 +690,7 @@ impl NamespaceStorageAuthority {
         source: &mut NamespaceManagedFile,
         destination: NamespaceManagedPublication<'_>,
     ) -> Result<()> {
+        let _runtime = self.checked_runtime_access()?;
         let destination_key = match &destination {
             NamespaceManagedPublication::Absent(key) => (*key).clone(),
             NamespaceManagedPublication::Replace(file) => file.key.clone(),
@@ -678,6 +716,7 @@ impl NamespaceStorageAuthority {
         Ok(())
     }
     pub(crate) fn unlink_regular(&self, file: NamespaceManagedFile) -> Result<()> {
+        let _runtime = self.checked_runtime_access()?;
         let directory = self
             .fs
             .open_managed_dir(&self.directories, file.key.area())?;
@@ -1374,6 +1413,7 @@ pub(crate) use windows::{
 #[cfg(unix)]
 impl DataRootCapability {
     fn read_external_source(&self, path: &Path, limit: u64) -> Result<Vec<u8>> {
+        reject_reserved_account_path(path)?;
         use std::io::Read;
         use std::os::unix::ffi::OsStrExt;
         use std::os::unix::fs::MetadataExt;
@@ -1534,6 +1574,29 @@ impl ManagedUserArea {
 pub(crate) struct UserNamespace {
     user_public_id: String,
     root: PathBuf,
+    mappings: Vec<AccountDirectoryMapping>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AccountDirectoryMapping {
+    pub(crate) version: u32,
+    pub(crate) area: String,
+    pub(crate) source: PathBuf,
+    pub(crate) target: PathBuf,
+    pub(crate) identity: StableFileIdentity,
+    pub(crate) source_identity: StableFileIdentity,
+    pub(crate) manifest_json: String,
+    #[serde(default)]
+    pub(crate) pending_rebind: Vec<MigratedIndexIdentity>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct MigratedIndexIdentity {
+    pub(crate) path: String,
+    pub(crate) before: StableFileIdentity,
+    pub(crate) after: StableFileIdentity,
+    pub(crate) bytes: u64,
 }
 
 impl UserNamespace {
@@ -1548,6 +1611,7 @@ impl UserNamespace {
                 .join("accounts")
                 .join(&canonical_user_public_id),
             user_public_id: canonical_user_public_id,
+            mappings: Vec::new(),
         })
     }
 
@@ -1560,7 +1624,32 @@ impl UserNamespace {
     }
 
     pub(crate) fn path(&self, area: ManagedUserArea) -> PathBuf {
-        self.root.join(area.relative_path())
+        self.mappings.iter().rev().find(|m| m.area == area.storage_name()).map(|m| m.target.clone()).unwrap_or_else(|| self.root.join(area.relative_path()))
+    }
+
+    pub(crate) fn mappings(&self) -> &[AccountDirectoryMapping] { &self.mappings }
+    pub(crate) fn with_mapping(mut self, mapping: AccountDirectoryMapping) -> Result<Self> {
+        let area = ManagedUserArea::from_storage_name(&mapping.area)?;
+        ensure!(mapping.version == 1 && matches!(area, ManagedUserArea::Input | ManagedUserArea::Output | ManagedUserArea::Prompt), "invalid account directory mapping");
+        ensure!(mapping.target.is_absolute() && mapping.source == self.path(area), "mapping source does not match namespace");
+        let suffix = PathBuf::from("ElunviCanvas").join("accounts").join(self.user_public_id()).join(area.relative_path());
+        reject_reserved_account_path(mapping.target.ancestors().nth(4).ok_or_else(|| anyhow::anyhow!("mapping target is too shallow"))?)?;
+        ensure!(mapping.target.ends_with(suffix) && !mapping.target.starts_with(self.root.parent().unwrap()), "mapping target has invalid account ownership");
+        ensure!(!MANAGED_USER_AREAS.into_iter().any(|other| mapping.target.starts_with(self.path(other)) || self.path(other).starts_with(&mapping.target)), "migration target overlaps a managed directory");
+        ensure!(mapping.target.components().all(|c| matches!(c, Component::Prefix(_) | Component::RootDir | Component::Normal(_))), "mapping path is not normal");
+        ensure!(!self.mappings.iter().any(|old| mapping.target.starts_with(&old.source) || old.source.starts_with(&mapping.target)), "migration target overlaps historical source");
+        register_mapped_private_identity(mapping.identity)?;
+        self.mappings.push(mapping);
+        Ok(self)
+    }
+    pub(crate) fn owns_path(&self, path: &Path) -> bool {
+        MANAGED_USER_AREAS.into_iter().any(|area| path.starts_with(self.path(area)))
+    }
+    pub(crate) fn remap_path(&self, path: &mut String) { self.remap_locations().remap(path); }
+    pub(crate) fn remap_locations(&self) -> super::DirectoryLocations {
+        let mut locations = super::DirectoryLocations::default();
+        locations.relocations = self.mappings.iter().map(|m| super::DirectoryRelocation { source: m.source.clone(), destination: m.target.clone() }).collect();
+        locations
     }
 
     pub(crate) fn output_dir(&self) -> PathBuf {
@@ -1635,7 +1724,7 @@ impl ManagedFileKey {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum StableFileIdentity {
     Unix { device: u64, inode: u64 },
     Windows { volume: u64, file_id: [u8; 16] },
@@ -1799,6 +1888,7 @@ impl ExternalExportDestination {
 #[cfg(unix)]
 impl ExternalExportDestination {
     pub(crate) fn open(data_root: &DataRootCapability, candidate: &Path) -> Result<Self> {
+        reject_reserved_account_path(candidate)?;
         use std::os::unix::ffi::OsStrExt;
         ensure!(
             candidate.is_absolute(),
@@ -1861,6 +1951,7 @@ impl ExternalExportDestination {
     }
 
     pub(crate) fn create_new_directory(&self, name: &str) -> Result<Self> {
+        reject_reserved_account_path(&self.display_path.join(name))?;
         validate_export_leaf(name)?;
         let _lock = self.lock_directory()?;
         let private_identity = directory_identity(&self.private_root)?;
@@ -2001,6 +2092,7 @@ fn reject_private_ancestry(directory: &OwnedFd, private: ObjectIdentity) -> Resu
     // follows retained handles, never a resolved display pathname.
     for _ in 0..1024 {
         let identity = directory_identity(&current)?;
+        reject_mapped_private_identity(StableFileIdentity::Unix { device: identity.device, inode: identity.inode })?;
         ensure!(
             identity != private,
             "export destination is inside private app storage"
@@ -2094,6 +2186,7 @@ pub(crate) struct NamespaceFs {
     root_identity: ObjectIdentity,
     user_public_id: String,
     binding_id: u64,
+    namespace: UserNamespace,
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -2428,11 +2521,12 @@ impl NamespaceFs {
             );
             chain.push(child);
         }
-        for name in directory.area.relative_path().split('/') {
-            chain.push(checked_directory_at(
-                chain.last().unwrap(),
-                OsStr::new(name),
-            )?);
+        if self.namespace.mappings.iter().any(|m| m.area == directory.area.storage_name()) {
+            chain.push(self.area_directory(chain.last().unwrap(), directory.area, DirectoryWalk::ExistingOnly)?);
+        } else {
+            for name in directory.area.relative_path().split('/') {
+                chain.push(checked_directory_at(chain.last().unwrap(), OsStr::new(name))?);
+            }
         }
         ensure!(
             directory_identity(chain.last().unwrap())? == directory.identity,
@@ -2529,7 +2623,22 @@ impl NamespaceFs {
             root_identity: data_root.identity,
             user_public_id: namespace.user_public_id().to_string(),
             binding_id: NAMESPACE_BINDING_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+            namespace: namespace.clone(),
         })
+    }
+
+    fn area_directory(&self, namespace: &OwnedFd, area: ManagedUserArea, mode: DirectoryWalk) -> Result<OwnedFd> {
+        if let Some(mapping) = self.namespace.mappings.iter().rev().find(|m| m.area == area.storage_name()) {
+            let descriptor = open_absolute_directory(&mapping.target)?;
+            let actual = directory_identity(&descriptor)?;
+            ensure!(mapping.identity == StableFileIdentity::Unix { device: actual.device, inode: actual.inode }, "mapped directory is unavailable or has been replaced");
+            Ok(descriptor)
+        } else { walk_fixed_directories(namespace, area.relative_path(), mode) }
+    }
+    pub(crate) fn directory_identity_at(path: &Path) -> Result<StableFileIdentity> {
+        let descriptor = open_absolute_directory(path)?;
+        let id = directory_identity(&descriptor)?;
+        Ok(StableFileIdentity::Unix { device: id.device, inode: id.inode })
     }
 
     pub(crate) fn ensure_managed_dirs(&self) -> Result<ManagedNamespaceDirectories> {
@@ -2545,11 +2654,7 @@ impl NamespaceFs {
         let namespace_identity = directory_identity(&namespace_descriptor)?;
         let mut managed = Vec::with_capacity(MANAGED_USER_AREAS.len());
         for area in MANAGED_USER_AREAS {
-            let descriptor = walk_fixed_directories(
-                &namespace_descriptor,
-                area.relative_path(),
-                DirectoryWalk::CreateMissing,
-            )?;
+            let descriptor = self.area_directory(&namespace_descriptor, area, DirectoryWalk::CreateMissing)?;
             let identity = directory_identity(&descriptor)?;
             managed.push(RetainedManagedDirectory {
                 area,
@@ -2561,11 +2666,7 @@ impl NamespaceFs {
         let current_namespace =
             self.reopen_namespace(accounts_identity, namespace_identity)?;
         for retained in &managed {
-            let current = walk_fixed_directories(
-                &current_namespace,
-                retained.area.relative_path(),
-                DirectoryWalk::ExistingOnly,
-            )?;
+            let current = self.area_directory(&current_namespace, retained.area, DirectoryWalk::ExistingOnly)?;
             ensure!(
                 directory_identity(&current)? == retained.identity,
                 "managed directory changed while its capabilities were opened"
@@ -2615,11 +2716,7 @@ impl NamespaceFs {
             directories.accounts_identity,
             directories.namespace_identity,
         )?;
-        let current = walk_fixed_directories(
-            &current_namespace,
-            area.relative_path(),
-            DirectoryWalk::ExistingOnly,
-        )?;
+        let current = self.area_directory(&current_namespace, area, DirectoryWalk::ExistingOnly)?;
         ensure!(
             directory_identity(&current)? == retained.identity,
             "managed directory is no longer attached to this namespace"
@@ -2857,11 +2954,7 @@ impl NamespaceFs {
         );
         let namespace =
             self.reopen_namespace(directory.accounts_identity, directory.namespace_identity)?;
-        let current = walk_fixed_directories(
-            &namespace,
-            directory.area.relative_path(),
-            DirectoryWalk::ExistingOnly,
-        )?;
+        let current = self.area_directory(&namespace, directory.area, DirectoryWalk::ExistingOnly)?;
         ensure!(
             directory_identity(&current)? == directory.identity,
             "managed directory is no longer attached to this namespace"
@@ -5353,5 +5446,65 @@ mod tests {
     fn namespace_filesystem_fails_closed_without_audited_handle_relative_support() {
         let root = temporary_directory();
         assert!(NamespaceFs::open_data_root(root.path()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod account_directory_mapping_regressions {
+    use super::*;
+    const OWNER: &str = "11111111-1111-4111-8111-111111111111";
+    const OTHER: &str = "22222222-2222-4222-8222-222222222222";
+
+    fn mapping(namespace: &UserNamespace, target: PathBuf, identity: StableFileIdentity) -> AccountDirectoryMapping {
+        AccountDirectoryMapping {
+            version: 1, area: "input".into(), source: namespace.path(ManagedUserArea::Input), target,
+            identity, source_identity: identity, manifest_json: "[]".into(), pending_rebind: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn account_mapping_rejects_other_owner_and_keeps_other_areas_local() {
+        let root = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let namespace = UserNamespace::new(root.path(), OWNER).unwrap();
+        let identity = NamespaceFs::directory_identity_at(external.path()).unwrap();
+        let foreign = external.path().join("ElunviCanvas/accounts").join(OTHER).join("input");
+        assert!(namespace.clone().with_mapping(mapping(&namespace, foreign, identity)).is_err());
+        let target = external.path().join("ElunviCanvas/accounts").join(OWNER).join("input");
+        let relocated = namespace.clone().with_mapping(mapping(&namespace, target.clone(), identity)).unwrap();
+        assert_eq!(relocated.path(ManagedUserArea::Input), target);
+        assert_eq!(relocated.output_dir(), namespace.output_dir());
+        assert_eq!(UserNamespace::new(root.path(), OTHER).unwrap().path(ManagedUserArea::Input), root.path().join("accounts").join(OTHER).join("input"));
+    }
+
+    #[test]
+    fn missing_mapped_directory_is_never_recreated() {
+        let root = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let namespace = UserNamespace::new(root.path(), OWNER).unwrap();
+        let target = external.path().join("ElunviCanvas/accounts").join(OWNER).join("input");
+        let identity = NamespaceFs::directory_identity_at(external.path()).unwrap();
+        let namespace = namespace.clone().with_mapping(mapping(&namespace, target.clone(), identity)).unwrap();
+        let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
+        assert!(NamespaceFs::for_namespace(&data_root, &namespace).and_then(|fs| fs.ensure_managed_dirs()).is_err());
+        assert!(!target.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaced_mapped_directory_revokes_retained_capability() {
+        let root = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let namespace = UserNamespace::new(root.path(), OWNER).unwrap();
+        let target = external.path().join("ElunviCanvas/accounts").join(OWNER).join("input");
+        std::fs::create_dir_all(&target).unwrap();
+        let identity = NamespaceFs::directory_identity_at(&target).unwrap();
+        let namespace = namespace.clone().with_mapping(mapping(&namespace, target.clone(), identity)).unwrap();
+        let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
+        let fs = NamespaceFs::for_namespace(&data_root, &namespace).unwrap();
+        let directories = fs.ensure_managed_dirs().unwrap();
+        std::fs::rename(&target, target.with_extension("retained")).unwrap();
+        std::fs::create_dir(&target).unwrap();
+        assert!(fs.open_managed_dir(&directories, ManagedUserArea::Input).is_err());
     }
 }

@@ -772,16 +772,28 @@ impl NamespaceRecoveryStore<'_> {
 pub(super) fn load_pending_generations_for_namespace(
     authority: &NamespaceStorageAuthority,
 ) -> Result<Vec<PendingGenerationRecord>> {
-    Ok(NamespaceRecoveryStore { authority }
+    let mut records = NamespaceRecoveryStore { authority }
         .load_generations()?
-        .generations)
+        .generations;
+    for record in &mut records {
+        for path in record.reference_paths.iter_mut().chain(record.lineage_reference_paths.iter_mut()) {
+            authority.lease().namespace.remap_path(path);
+        }
+    }
+    Ok(records)
 }
 pub(super) fn load_pending_prompt_tasks_for_namespace(
     authority: &NamespaceStorageAuthority,
 ) -> Result<Vec<PendingPromptTaskRecord>> {
-    Ok(NamespaceRecoveryStore { authority }
+    let mut records = NamespaceRecoveryStore { authority }
         .load_prompt_tasks()?
-        .prompt_tasks)
+        .prompt_tasks;
+    for record in &mut records {
+        for path in &mut record.reference_paths {
+            authority.lease().namespace.remap_path(path);
+        }
+    }
+    Ok(records)
 }
 pub(super) fn load_pending_prompt_optimizations_for_namespace(
     authority: &NamespaceStorageAuthority,
@@ -1353,6 +1365,9 @@ pub(super) fn settle_acknowledged_cutout_delivery_for_namespace(
             let stable = |record: &PendingGenerationRecord| -> Result<serde_json::Value> {
                 let mut record = record.clone();
                 record.deliveries.clear(); record.terminal = false; record.expected_success_count = 0;
+                for path in record.reference_paths.iter_mut().chain(record.lineage_reference_paths.iter_mut()) {
+                    authority.lease().namespace.remap_path(path);
+                }
                 Ok(serde_json::to_value(record)?)
             };
             anyhow::ensure!(stable(record)? == stable(original)?

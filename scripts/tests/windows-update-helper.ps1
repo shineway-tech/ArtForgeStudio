@@ -24,12 +24,24 @@ foreach ($version in @('1.0.21.0', '1.0.22.0')) {
 & $compiler /nologo /target:winexe (('/out:') + (Join-Path $testRoot 'installer.exe')) (Join-Path $PSScriptRoot 'fixtures\update-installer.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Unable to compile installer fixture' }
 $processes = @()
+$originalLocalAppData = $env:LOCALAPPDATA
 try {
-    foreach ($scenario in @('success', 'failure', 'unchanged', 'auto-launch', 'bad-hash')) {
-        $caseRoot = Join-Path $testRoot $scenario
+    foreach ($mode in @('portable', 'installed', 'installed-fallback')) {
+      foreach ($scenario in @('success', 'failure', 'unchanged', 'auto-launch', 'bad-hash')) {
+        $caseRoot = Join-Path $testRoot ($mode + '-' + $scenario)
         $target = Join-Path $caseRoot ("Elunvi Canvas's & [" + [char]0x7d20 + [char]0x6750 + '] %')
         $download = Join-Path $caseRoot 'download'
         New-Item -ItemType Directory -Path $target,$download,(Join-Path $target 'data') -Force | Out-Null
+        $env:LOCALAPPDATA = Join-Path $caseRoot 'LocalAppData'
+        $dataDirectory = Join-Path $target 'data'
+        if ($mode -ne 'portable') {
+            [IO.File]::WriteAllText((Join-Path $target 'elunvi-installed.marker'), 'installed', $utf8)
+            if ($mode -eq 'installed') {
+                $dataDirectory = Join-Path $env:LOCALAPPDATA 'ElunviCanvas\data'
+                New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
+            } else { $env:LOCALAPPDATA = $null }
+        }
+        [IO.File]::WriteAllText((Join-Path $dataDirectory 'user-data.txt'), 'preserve actual user data', $utf8)
         $appExe = Join-Path $target 'ElunviCanvas.exe'
         Copy-Item -LiteralPath (Join-Path $testRoot '1.0.21.0.exe') -Destination $appExe
         Copy-Item -LiteralPath (Join-Path $testRoot '1.0.22.0.exe') -Destination (Join-Path $download 'payload.exe')
@@ -43,7 +55,7 @@ try {
         $processes += $parent
         Wait-For { Test-Path -LiteralPath (Join-Path $target 'parent-started') } 'Parent fixture did not start'
         $status = Join-Path $download 'status.txt'
-        $result = Join-Path $target 'data\update-result.json'
+        $result = Join-Path $dataDirectory 'update-result.json'
         [IO.File]::WriteAllText($result, '{"status":"previous-attempt"}', $utf8)
         $sha = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash
         if ($scenario -eq 'bad-hash') { $sha = '0' * 64 }
@@ -82,11 +94,14 @@ try {
         $wantedVersion = if ($wanted -eq 'installed') { '1.0.22.0' } else { '1.0.21.0' }
         Assert-True ($launches.Count -eq 1 -and $launches[0] -eq $wantedVersion) 'Wrong version or duplicate relaunch'
         Assert-True ([IO.File]::ReadAllText((Join-Path $target 'data\keep.txt')) -eq 'unchanged user data') 'User data was modified'
+        Assert-True ([IO.File]::ReadAllText((Join-Path $dataDirectory 'user-data.txt')) -eq 'preserve actual user data') 'Actual user data was modified'
         if (Test-Path -LiteralPath (Join-Path $target 'hold-open')) { Remove-Item -LiteralPath (Join-Path $target 'hold-open') }
-        Write-Output "PASS: $scenario"
+        Write-Output "PASS: $mode / $scenario"
+      }
     }
     Write-Output 'PASS: bad-hash'
 } finally {
+    $env:LOCALAPPDATA = $originalLocalAppData
     foreach ($process in $processes) { if (-not $process.HasExited) { $process.Kill(); $process.WaitForExit() } }
     # Retain fixture files for inspection; never touch the real client or registry.
 }

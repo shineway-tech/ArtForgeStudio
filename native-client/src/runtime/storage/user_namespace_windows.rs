@@ -1,7 +1,7 @@
 //! Windows retained-handle namespace implementation.
 
 use super::{
-    validate_export_leaf, validate_export_volume_root_name, validate_windows_relative_name,
+    reject_reserved_account_path, reject_mapped_private_identity, validate_export_leaf, validate_export_volume_root_name, validate_windows_relative_name,
     ManagedFileCheck, ManagedFileKey, ManagedFileMetadata, ManagedPublication,
     ManagedPublicationConflict, ManagedReadSeek, ManagedRelativeName, ManagedUserArea, ManagedWriteState,
     StableFileIdentity, UserNamespace, MANAGED_USER_AREAS,
@@ -20,6 +20,7 @@ use windows_sys::Win32::System::IO::OVERLAPPED;
 
 impl DataRootCapability {
     pub(super) fn read_external_source(&self, path: &Path, limit: u64) -> Result<Vec<u8>> {
+        reject_reserved_account_path(path)?;
         use std::io::Read;
         ensure!(path.is_absolute(), "image source must be absolute");
         let mut components = path.components();
@@ -179,6 +180,8 @@ pub(crate) struct NamespaceFs {
     lock_identity: Identity,
     user: String,
     binding: u64,
+    namespace: UserNamespace,
+    _mapped_chains: Vec<Vec<OwnedHandle>>,
 }
 
 /// A pinned chain from a proven volume root to the external directory. Keeping
@@ -192,6 +195,7 @@ pub(crate) struct ExternalExportDestination {
 
 impl ExternalExportDestination {
     pub(crate) fn open(data_root: &DataRootCapability, candidate: &Path) -> Result<Self> {
+        reject_reserved_account_path(candidate)?;
         ensure!(
             candidate.is_absolute(),
             "export destination must be absolute"
@@ -328,6 +332,7 @@ impl ExternalExportDestination {
     }
 
     pub(crate) fn create_new_directory(&self, name: &str) -> Result<Self> {
+        reject_reserved_account_path(&self.display_path.join(name))?;
         validate_export_leaf(name)?;
         self.validate()?;
         let mut chain = self
@@ -449,6 +454,7 @@ fn reject_private_chain(chain: &[OwnedHandle], private: Identity) -> Result<()> 
     .volume;
     for handle in chain.iter().rev() {
         let identity = identify(handle, true)?;
+        reject_mapped_private_identity(StableFileIdentity::Windows { volume: identity.volume, file_id: identity.file })?;
         ensure!(
             identity != private,
             "export destination is inside private app storage"
@@ -765,11 +771,12 @@ impl NamespaceFs {
             );
             chain.push(child);
         }
-        for name in directory.area.relative_path().split('/') {
-            chain.push(checked_directory_at(
-                chain.last().unwrap(),
-                OsStr::new(name),
-            )?);
+        if self.namespace.mappings.iter().any(|m| m.area == directory.area.storage_name()) {
+            chain.push(self.area_directory(chain.last().unwrap(), directory.area, false)?);
+        } else {
+            for name in directory.area.relative_path().split('/') {
+                chain.push(checked_directory_at(chain.last().unwrap(), OsStr::new(name))?);
+            }
         }
         ensure!(
             identify(chain.last().unwrap(), true)? == directory.identity,
@@ -853,7 +860,24 @@ impl NamespaceFs {
             lock_identity: root.lock_identity,
             user: namespace.user_public_id().to_owned(),
             binding: BINDING_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+            namespace: namespace.clone(),
+            _mapped_chains: namespace.mappings.iter().filter(|m| namespace.path(ManagedUserArea::from_storage_name(&m.area).unwrap()) == m.target).map(|m| open_absolute_directory_chain(&m.target)).collect::<Result<_>>()?,
         })
+    }
+
+    fn area_directory(&self, namespace: &OwnedHandle, area: ManagedUserArea, create: bool) -> Result<OwnedHandle> {
+        if let Some(mapping) = self.namespace.mappings.iter().rev().find(|m| m.area == area.storage_name()) {
+            let chain = open_absolute_directory_chain(&mapping.target)?;
+            let handle = chain.last().unwrap();
+            let actual = identify(handle, true)?;
+            ensure!(mapping.identity == StableFileIdentity::Windows { volume: actual.volume, file_id: actual.file }, "mapped directory unavailable or replaced");
+            Ok(handle.try_clone()?)
+        } else { walk_directories(namespace, area.relative_path(), create) }
+    }
+    pub(crate) fn directory_identity_at(path: &Path) -> Result<StableFileIdentity> {
+        let chain = open_absolute_directory_chain(path)?;
+        let id = identify(chain.last().unwrap(), true)?;
+        Ok(StableFileIdentity::Windows { volume: id.volume, file_id: id.file })
     }
 
     pub(crate) fn ensure_managed_dirs(&self) -> Result<ManagedNamespaceDirectories> {
@@ -865,7 +889,7 @@ impl NamespaceFs {
         let namespace_identity = identify(&namespace, true)?;
         let mut managed = Vec::with_capacity(MANAGED_USER_AREAS.len());
         for area in MANAGED_USER_AREAS {
-            let handle = walk_directories(&namespace, area.relative_path(), true)?;
+            let handle = self.area_directory(&namespace, area, true)?;
             let identity = identify(&handle, true)?;
             managed.push(RetainedDirectory {
                 area,
@@ -875,7 +899,7 @@ impl NamespaceFs {
         }
         let current = self.reopen_namespace(accounts_identity, namespace_identity)?;
         for retained in &managed {
-            let attached = walk_directories(&current, retained.area.relative_path(), false)?;
+            let attached = self.area_directory(&current, retained.area, false)?;
             ensure!(
                 identify(&attached, true)? == retained.identity,
                 "managed directory moved while opening capabilities"
@@ -1088,7 +1112,7 @@ impl NamespaceFs {
         );
         let namespace =
             self.reopen_namespace(directory.accounts_identity, directory.namespace_identity)?;
-        let current = walk_directories(&namespace, directory.area.relative_path(), false)?;
+        let current = self.area_directory(&namespace, directory.area, false)?;
         ensure!(
             identify(&current, true)? == directory.identity,
             "managed directory moved"
@@ -1659,6 +1683,70 @@ fn open_absolute_directory(path: &Path) -> Result<OwnedHandle> {
         )?;
     }
     Ok(handle)
+}
+
+fn open_absolute_directory_chain(path: &Path) -> Result<Vec<OwnedHandle>> {
+    ensure!(path.is_absolute(), "data root must be absolute");
+    let mut components = path.components();
+    let prefix = match components.next() {
+        Some(Component::Prefix(prefix)) => prefix,
+        _ => {
+            return Err(anyhow!(
+                "data root requires an absolute drive or UNC anchor"
+            ))
+        }
+    };
+    ensure!(
+        matches!(
+            prefix.kind(),
+            Prefix::Disk(_)
+                | Prefix::VerbatimDisk(_)
+                | Prefix::UNC(_, _)
+                | Prefix::VerbatimUNC(_, _)
+        ),
+        "unsupported Windows namespace prefix"
+    );
+    ensure!(
+        matches!(components.next(), Some(Component::RootDir)),
+        "missing absolute Windows root"
+    );
+    let names = components
+        .map(|part| match part {
+            Component::Normal(name) => {
+                leaf_wide(name)?;
+                Ok(name.to_os_string())
+            }
+            _ => Err(anyhow!("non-normal data-root component")),
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut anchor = PathBuf::from(prefix.as_os_str());
+    anchor.push("\\");
+    let handle = open_absolute_anchor(
+        &anchor,
+        if names.is_empty() {
+            CHECKED_MANAGED_ACCESS
+        } else {
+            TRAVERSE_ACCESS
+        },
+        SHARE_LOCK,
+    )?;
+    let mut chain = vec![handle];
+    for (index, name) in names.iter().enumerate() {
+        let handle = nt_open(
+            chain.last().unwrap(),
+            name,
+            if index + 1 == names.len() {
+                CHECKED_MANAGED_ACCESS
+            } else {
+                TRAVERSE_ACCESS
+            },
+            SHARE_LOCK,
+            NT_OPEN,
+            true,
+        )?;
+        chain.push(handle);
+    }
+    Ok(chain)
 }
 
 fn open_absolute_anchor(anchor: &Path, access: u32, share: u32) -> Result<OwnedHandle> {

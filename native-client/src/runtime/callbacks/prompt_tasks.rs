@@ -363,7 +363,7 @@ fn launch_prompt_record(
             let mut hashes=Vec::new();let mut sizes=Vec::new();
             for path in &record.reference_paths{
                 worker.ensure()?;
-                if !Path::new(path).starts_with(worker.capture.authority.lease().namespace.root()){
+                if !worker.capture.authority.lease().namespace.owns_path(Path::new(path)){
                     return Err(ApiError::LocalState{message:"参考图尚未导入原账号，未创建提示词请求".into()});
                 }
                 let (activity,effect)=worker.capture.persistence.begin_effect().map_err(transition_error)?;
@@ -422,7 +422,7 @@ fn prompt_unsent_partial(record:&PendingPromptTaskRecord)->bool{
 fn verify_prompt_reference(worker:&PromptWorker,record:&PendingPromptTaskRecord,index:usize)->std::result::Result<(),ApiError>{
     worker.ensure()?;
     let path=record.reference_paths.get(index).ok_or_else(||ApiError::LocalState{message:"原引用路径不完整".into()})?;
-    if !Path::new(path).starts_with(worker.capture.authority.lease().namespace.root()){
+    if !worker.capture.authority.lease().namespace.owns_path(Path::new(path)){
         return Err(ApiError::LocalState{message:"原引用不在已保存账号中，记录保持原样".into()});
     }
     let (activity,effect)=worker.capture.persistence.begin_effect().map_err(transition_error)?;

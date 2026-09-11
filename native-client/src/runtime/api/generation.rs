@@ -389,7 +389,7 @@ impl GenerationApi {
         let activity=self.client.begin_user_work(scope)?;
         let read=self.client.upgrade_latch().begin_ordinary_blocking_effect().map_err(|required|required.as_error())?;
         let prepared=(||->anyhow::Result<_>{
-            anyhow::ensure!(path.starts_with(authority.lease().namespace.root()),"reference outside original namespace");
+            anyhow::ensure!(authority.lease().namespace.owns_path(path),"reference outside original namespace");
             anyhow::ensure!(expected_size_bytes>0 && expected_sha256.len()==64,"retained fingerprint incomplete");
             // Exactly one held read. The bytes verified here are the same owned
             // bytes normalized below; neither stage reopens the source path.

@@ -657,7 +657,7 @@ pub(super) fn slint_image_from_rgba(rgba: &image::RgbaImage, width: u32, height:
 
 pub(super) fn prepare_reference_bytes_for_namespace(authority: &NamespaceStorageAuthority, path: &Path, paired: bool)
     -> Result<(Vec<u8>, &'static str, &'static str)> {
-    anyhow::ensure!(path.starts_with(authority.lease().namespace.root()), "upload input is outside captured namespace");
+    anyhow::ensure!(authority.lease().namespace.owns_path(path), "upload input is outside captured namespace");
     let bytes = authority.read_image_source(path, 100 * 1024 * 1024)?;
     prepare_reference_upload_bytes(bytes,paired)
 }

@@ -518,14 +518,14 @@ export component SettingsPage {
                     }
                     Rectangle { x: 18px; y: 150px; width: parent.width - 36px; height: 1px; background: AppTheme.border; }
                     Text { x: 18px; y: 176px; text: AppState.en ? "Config path (input assets)" : "配置位置（输入素材）"; color: AppTheme.text; font-size: 14px; font-weight: 400; }
-                    Text { x: 18px; y: 206px; width: parent.width - 160px; text: AppState.input-dir; color: AppTheme.muted; font-size: 13px; font-weight: 400; overflow: elide; }
+                    Text { x: 18px; y: 206px; width: parent.width - 160px; text: AppState.logged-in ? AppState.input-dir : (AppState.en ? "Sign in to manage this account’s folders" : "登录后管理当前账号目录"); color: AppTheme.muted; font-size: 13px; font-weight: 400; overflow: elide; }
                     config-path-migrate := PillButton {
                         x: parent.width - 122px;
                         y: 182px;
                         width: 104px;
                         height: 36px;
                         text: AppState.en ? "Migrate" : "一键迁移";
-                        disabled: AppState.directory-migration-open || AppState.update-active;
+                        disabled: !AppState.logged-in || AppState.auth-busy || AppState.account-group-switching || AppState.directory-migration-open || AppState.update-active;
                         clicked => { AppState.pick-dir("input"); }
                     }
                 }

@@ -20,7 +20,7 @@ pub(crate) struct CapturedNativeFileDrag {
 
 fn owned_drag_key(lease: &NamespaceLease, path: &Path) -> Result<ManagedFileKey> {
     anyhow::ensure!(path.is_absolute(), "native drag requires an owned absolute path");
-    let _relative = path.strip_prefix(lease.namespace.root())?;
+    anyhow::ensure!(lease.namespace.owns_path(path), "native drag requires a current-account file");
     // Recovery and staging are not user-export surfaces. Nested managed areas
     // must win over their parents, and ManagedFileKey rejects path traversal.
     let mut areas = vec![ManagedUserArea::Input, ManagedUserArea::Output,

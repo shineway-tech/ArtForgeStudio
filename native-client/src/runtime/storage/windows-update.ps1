@@ -50,10 +50,17 @@ try {
     $AppExePath = $appFile.FullName
     $targetDirectory = $appFile.Directory.FullName
     $downloadDirectory = $packageFile.Directory.FullName
+    # Match paths.rs: installed builds keep writable data in LOCALAPPDATA;
+    # portable builds (and the missing-LOCALAPPDATA fallback) use adjacent data.
+    $resultDirectory = Join-Path $targetDirectory 'data'
+    if ([IO.File]::Exists((Join-Path $targetDirectory 'elunvi-installed.marker')) -and
+        -not [string]::IsNullOrEmpty($env:LOCALAPPDATA)) {
+        $resultDirectory = Join-Path $env:LOCALAPPDATA 'ElunviCanvas\data'
+    }
     if ($targetDirectory -eq [IO.Path]::GetPathRoot($targetDirectory) -or
         $targetDirectory -ieq [Environment]::GetFolderPath('UserProfile')) { throw 'Invalid target directory' }
     if ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($StatusPath)) -ine $downloadDirectory -or
-        [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($ResultPath)) -ine (Join-Path $targetDirectory 'data')) { throw 'Invalid status directory' }
+        [IO.Path]::GetFullPath($ResultPath) -ine [IO.Path]::GetFullPath((Join-Path $resultDirectory 'update-result.json'))) { throw 'Invalid status directory' }
     if ($ExpectedVersion -notmatch '^\d+\.\d+\.\d+(\.\d+)?$' -or $ExpectedSha256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Invalid update metadata' }
     $packageGuard = [IO.File]::Open($PackagePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
     if ((Get-FileHash -LiteralPath $PackagePath -Algorithm SHA256).Hash -ine $ExpectedSha256) { throw 'Package hash mismatch' }

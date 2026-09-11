@@ -117,7 +117,11 @@ fn wire_close_behavior(app: &AppWindow, tray: &AppTray) {
         });
     }
 
-    tray.on_quit(|| {
+    let quit_weak = app.as_weak();
+    tray.on_quit(move || {
+        if quit_weak.upgrade().is_some_and(|app| app.global::<AppState>().get_directory_migration_busy()) {
+            return;
+        }
         if let Err(error) = slint::quit_event_loop() {
             eprintln!("failed to quit from system tray: {error}");
         }
@@ -130,6 +134,9 @@ fn wire_close_behavior(app: &AppWindow, tray: &AppTray) {
                 return slint::CloseRequestResponse::HideWindow;
             };
             let state = app.global::<AppState>();
+            if state.get_directory_migration_busy() {
+                return slint::CloseRequestResponse::KeepWindowShown;
+            }
             match normalize_close_behavior(&state.get_close_behavior().to_string()) {
                 "exit" => {
                     if let Err(error) = slint::quit_event_loop() {
@@ -177,6 +184,9 @@ fn wire_close_behavior(app: &AppWindow, tray: &AppTray) {
                     return;
                 }
                 let state = app.global::<AppState>();
+                if state.get_directory_migration_busy() {
+                    return;
+                }
                 state.set_close_behavior(behavior.into());
                 state.set_close_choice_open(false);
                 if let Err(error) = save_device_settings_checked(&app) {

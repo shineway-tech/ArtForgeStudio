@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::ensure;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::de::DeserializeOwned;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -242,6 +243,14 @@ pub(super) fn initialize_client_state_repository(data_root: Arc<DataRootCapabili
     let path = client_state_path();
     let mut connection = open_client_state_connection(&path)?;
     migrate_client_state_schema(&mut connection, data_root.as_ref())?;
+    {
+        let mut statement = connection.prepare("SELECT value_json FROM user_settings WHERE key='account_directory_mappings_v1'")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            let mappings: Vec<AccountDirectoryMapping> = serde_json::from_str(&row?)?;
+            for mapping in mappings { register_mapped_private_identity(mapping.identity)?; }
+        }
+    }
     let (writer, receiver) = ClientStateWriter::channel(path, data_root);
     let worker = writer.clone();
     std::thread::Builder::new()
@@ -516,6 +525,61 @@ impl ClientStateWriter {
         }
         receiver.recv().map_err(local_error)?.map_err(Into::into)
     }
+    pub(super) fn load_account_directory_namespace(&self, data_root: &Path, user: &str) -> Result<UserNamespace> {
+        let connection = open_client_state_connection(&self.path)?;
+        let mappings: Vec<AccountDirectoryMapping> = read_setting_json_or_default(&connection, user, "account_directory_mappings_v1")?;
+        mappings.into_iter().try_fold(UserNamespace::new(data_root, user)?, |namespace, mapping| namespace.with_mapping(mapping))
+    }
+    pub(super) fn prepare_account_directory_migration(&self, proof: &FlushedWriterRetirement, attempt: &serde_json::Value) -> Result<()> {
+        let pending = self.pending.lock().map_err(local_error)?;
+        ensure!(Arc::ptr_eq(&proof.reservation.pending, &self.pending) && proof.reservation.matches(&pending), "migration writer reservation expired");
+        let mut connection = open_client_state_connection(&self.path)?;
+        let tx = connection.transaction()?;
+        write_setting_json(&tx, proof.lease().namespace.user_public_id(), "account_directory_migration_attempt_v1", attempt)?;
+        tx.commit()?;
+        Ok(())
+    }
+    pub(super) fn commit_account_directory_mapping(&self, proof: &FlushedWriterRetirement, namespace: &UserNamespace) -> Result<()> {
+        let pending = self.pending.lock().map_err(local_error)?;
+        ensure!(Arc::ptr_eq(&proof.reservation.pending, &self.pending) && proof.reservation.matches(&pending), "migration writer reservation expired");
+        ensure!(proof.lease().namespace.user_public_id() == namespace.user_public_id(), "migration owner changed");
+        let mut connection = open_client_state_connection(&self.path)?;
+        let tx = connection.transaction()?;
+        let saved: Vec<AccountDirectoryMapping> = read_setting_json_or_default(&tx, namespace.user_public_id(), "account_directory_mappings_v1")?;
+        ensure!(saved == proof.lease().namespace.mappings(), "mapping changed since preparation");
+        write_setting_json(&tx, namespace.user_public_id(), "account_directory_mappings_v1", &namespace.mappings())?;
+        let mapping = namespace.mappings().last().ok_or_else(|| anyhow!("missing migration mapping"))?;
+        write_setting_json(&tx, namespace.user_public_id(), "account_directory_migration_attempt_v1", &serde_json::json!({ "version": 1, "phase": "committed", "mapping": mapping }))?;
+        tx.commit()?;
+        Ok(())
+    }
+    pub(super) fn complete_directory_rebind(&self, namespace: &UserNamespace) -> Result<UserNamespace> {
+        let mut mappings = namespace.mappings().to_vec();
+        for mapping in &mut mappings { mapping.pending_rebind.clear(); }
+        let mut connection = open_client_state_connection(&self.path)?;
+        let tx = connection.transaction()?;
+        let saved: Vec<AccountDirectoryMapping> = read_setting_json_or_default(&tx, namespace.user_public_id(), "account_directory_mappings_v1")?;
+        ensure!(saved == namespace.mappings(), "mapping changed during index rebind");
+        write_setting_json(&tx, namespace.user_public_id(), "account_directory_mappings_v1", &mappings)?;
+        let mut attempt: serde_json::Value = read_setting_json_or_default(&tx, namespace.user_public_id(), "account_directory_migration_attempt_v1")?;
+        if attempt.get("phase").and_then(serde_json::Value::as_str) == Some("committed") {
+            attempt["phase"] = "completed".into();
+            write_setting_json(&tx, namespace.user_public_id(), "account_directory_migration_attempt_v1", &attempt)?;
+        }
+        tx.commit()?;
+        let data_root = namespace.root().parent().and_then(Path::parent).ok_or_else(|| anyhow!("invalid namespace root"))?;
+        mappings.into_iter().try_fold(UserNamespace::new(data_root, namespace.user_public_id())?, |namespace, mapping| namespace.with_mapping(mapping))
+    }
+    pub(super) fn take_account_directory_migration_notice(&self, user: &str) -> Result<Option<String>> {
+        let mut connection = open_client_state_connection(&self.path)?;
+        let tx = connection.transaction()?;
+        let mut attempt: serde_json::Value = read_setting_json_or_default(&tx, user, "account_directory_migration_attempt_v1")?;
+        if attempt.get("phase").and_then(serde_json::Value::as_str) != Some("prepared") { return Ok(None); }
+        attempt["phase"] = "prepared-notified".into();
+        write_setting_json(&tx, user, "account_directory_migration_attempt_v1", &attempt)?;
+        tx.commit()?;
+        Ok(Some("上次目录迁移未完成，当前账号仍使用原目录。目标目录可能留有副本，原文件未删除；重新迁移前请选择新的空目录。".into()))
+    }
     pub(super) fn load_client_state_for_namespace(
         &self,
         lease: &NamespaceLease,
@@ -526,7 +590,8 @@ impl ClientStateWriter {
         if read_meta(&tx, user, "local_store_initialized")?.as_deref() != Some("1") {
             return Ok(None);
         }
-        let data = read_local_store_transaction(&tx, user)?;
+        let mut data = read_local_store_transaction(&tx, user)?;
+        lease.namespace.remap_locations().remap_local_store(&mut data);
         tx.commit()?;
         Ok(Some(data))
     }

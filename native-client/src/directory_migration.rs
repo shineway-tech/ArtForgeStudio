@@ -20,11 +20,26 @@ pub(crate) struct MigrationPlan {
     pub source: PathBuf,
     pub destination: PathBuf,
     entries: Vec<Entry>,
+    retained: std::sync::Arc<RetainedMigration>,
     pub bytes: u64,
     pub files: usize,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct MigrationManifestEntry {
+    pub relative: PathBuf,
+    pub directory: bool,
+    pub size: u64,
+    pub modified: SystemTime,
+}
+
 impl MigrationPlan {
+    pub fn manifest(&self) -> Vec<MigrationManifestEntry> {
+        self.entries.iter().map(|entry| MigrationManifestEntry {
+            relative: entry.relative.clone(), directory: entry.directory,
+            size: entry.size, modified: entry.modified,
+        }).collect()
+    }
     pub fn prepare(source: &Path, destination: &Path, protected: &[PathBuf]) -> io::Result<Self> {
         let source = checked_directory(source)?;
         let destination = checked_directory(destination)?;
@@ -52,7 +67,10 @@ impl MigrationPlan {
                 ));
             }
         }
+        let retained_source = RetainedDirectory::open(&source)?;
+        let retained_destination = RetainedDirectory::open(&destination)?;
         let entries = scan(&source)?;
+        let retained = std::sync::Arc::new(RetainedMigration::capture(retained_source, retained_destination, &entries)?);
         check_conflicts(&destination, &entries)?;
         let bytes = entries
             .iter()
@@ -64,15 +82,38 @@ impl MigrationPlan {
             source,
             destination,
             entries,
+            retained,
             bytes,
             files,
         })
     }
 
+    #[cfg(test)]
     pub fn execute(
         &self,
         commit: impl FnOnce() -> io::Result<()>,
+        progress: impl FnMut(u64, u64),
+    ) -> io::Result<Vec<PathBuf>> {
+        self.execute_with_cleanup(commit, progress, true)
+    }
+
+    /// Account relocation retains its verified originals as a recovery copy.
+    /// Failed copies retain partial destinations; no pathname rollback can delete
+    /// a replacement file created by another process.
+    pub fn copy_retaining_source(
+        &self,
+        commit: impl FnOnce() -> io::Result<()>,
+        progress: impl FnMut(u64, u64),
+    ) -> io::Result<()> {
+        self.retained.copy(self, commit, progress)
+    }
+
+    #[cfg(test)]
+    fn execute_with_cleanup(
+        &self,
+        commit: impl FnOnce() -> io::Result<()>,
         mut progress: impl FnMut(u64, u64),
+        cleanup_source: bool,
     ) -> io::Result<Vec<PathBuf>> {
         self.revalidate()?;
         check_conflicts(&self.destination, &self.entries)?;
@@ -166,6 +207,10 @@ impl MigrationPlan {
             }));
         }
 
+        if !cleanup_source {
+            return Ok(Vec::new());
+        }
+
         // The caller has persisted the new location. Cleanup is intentionally
         // conservative: locks or external edits leave a recoverable original copy.
         let mut leftovers = Vec::new();
@@ -194,6 +239,7 @@ impl MigrationPlan {
         Ok(leftovers)
     }
 
+    #[cfg(test)]
     fn revalidate(&self) -> io::Result<()> {
         if checked_directory(&self.source)? != self.source
             || checked_directory(&self.destination)? != self.destination
@@ -202,6 +248,304 @@ impl MigrationPlan {
             return Err(io::Error::other("目录内容已变化，请重新选择后迁移"));
         }
         Ok(())
+    }
+}
+
+
+// A plan pins both root directory chains before confirmation. Path checks
+// alone cannot make a later File::open safe: a parent or leaf may be replaced
+// between metadata and open. Unix descends with openat(O_NOFOLLOW); Windows
+// pins every ancestor against deletion and opens leaves as reparse points.
+#[derive(Debug)]
+struct RetainedDirectory {
+    path: PathBuf,
+    chain: Vec<std::sync::Arc<fs::File>>,
+}
+#[derive(Debug)]
+struct RetainedEntry {
+    entry: Entry,
+    identity: (u64, u64, u64),
+    stamp: Option<(u64, SystemTime, i64, i64)>,
+}
+#[derive(Debug)]
+struct RetainedMigration {
+    source: RetainedDirectory,
+    destination: RetainedDirectory,
+    entries: Vec<RetainedEntry>,
+}
+
+fn identity(file: &fs::File) -> io::Result<(u64, u64, u64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let m = file.metadata()?;
+        Ok((m.dev(), m.ino(), 0))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION};
+        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok((info.dwVolumeSerialNumber as u64, info.nFileIndexHigh as u64, info.nFileIndexLow as u64))
+    }
+    #[cfg(not(any(unix, windows)))]
+    { let _ = file; Err(io::Error::other("此平台不支持安全目录迁移")) }
+}
+
+fn verify_regular(file: &fs::File) -> io::Result<()> {
+    let m = file.metadata()?;
+    if !m.is_file() || is_link(&m) { return Err(io::Error::other("迁移文件不是普通文件")); }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if m.nlink() != 1 { return Err(io::Error::other("不支持迁移硬链接文件")); }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION};
+        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if info.nNumberOfLinks != 1 { return Err(io::Error::other("不支持迁移硬链接文件")); }
+    }
+    Ok(())
+}
+
+impl RetainedDirectory {
+    fn handle(&self) -> &fs::File { self.chain.last().unwrap() }
+    fn open(path: &Path) -> io::Result<Self> {
+        if !path.is_absolute() { return Err(io::Error::other("迁移目录必须为绝对路径")); }
+        let mut components = path.components();
+        #[cfg(unix)]
+        let (anchor, handle) = {
+            if components.next() != Some(Component::RootDir) { return Err(io::Error::other("无效目录根")); }
+            let fd = rustix::fs::open("/", rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::DIRECTORY
+                | rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::CLOEXEC, rustix::fs::Mode::empty())?;
+            (PathBuf::from("/"), fs::File::from(fd))
+        };
+        #[cfg(windows)]
+        let (anchor, handle) = {
+            use std::path::Prefix;
+            let prefix = match components.next() {
+                Some(Component::Prefix(p)) if matches!(p.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)) => p,
+                _ => return Err(io::Error::other("迁移需要本地磁盘目录")),
+            };
+            if components.next() != Some(Component::RootDir) { return Err(io::Error::other("无效目录根")); }
+            let mut anchor = PathBuf::from(prefix.as_os_str()); anchor.push("\\");
+            let handle = windows_open(&anchor, true, false)?;
+            (anchor, handle)
+        };
+        #[cfg(not(any(unix, windows)))]
+        let (anchor, handle): (PathBuf, fs::File) = return Err(io::Error::other("此平台不支持安全目录迁移"));
+        let mut result = Self { path: anchor, chain: vec![std::sync::Arc::new(handle)] };
+        for component in components {
+            let Component::Normal(name) = component else { return Err(io::Error::other("迁移目录包含非标准路径")); };
+            result = result.child_directory(name, false)?;
+        }
+        Ok(result)
+    }
+    fn child(&self, name: &std::ffi::OsStr, directory: bool, create: bool) -> io::Result<fs::File> {
+        let mut parts = Path::new(name).components();
+        if !matches!(parts.next(), Some(Component::Normal(_))) || parts.next().is_some() {
+            return Err(io::Error::other("无效迁移文件名"));
+        }
+        #[cfg(unix)]
+        let file = {
+            use rustix::fs::{Mode, OFlags};
+            if directory && create { rustix::fs::mkdirat(self.handle(), name, Mode::RWXU)?; }
+            let flags = OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK
+                | if directory { OFlags::RDONLY | OFlags::DIRECTORY }
+                  else if create { OFlags::RDWR | OFlags::CREATE | OFlags::EXCL }
+                  else { OFlags::RDONLY };
+            fs::File::from(rustix::fs::openat(self.handle(), name, flags, Mode::RUSR | Mode::WUSR)?)
+        };
+        #[cfg(windows)]
+        let file = {
+            // Every parent is held without FILE_SHARE_DELETE. The verified path
+            // cannot be renamed into a reparse point while this chain is alive.
+            if directory && create { fs::create_dir(self.path.join(name))?; }
+            windows_open(&self.path.join(name), directory, create && !directory)?
+        };
+        #[cfg(not(any(unix, windows)))]
+        let file: fs::File = return Err(io::Error::other("此平台不支持安全目录迁移"));
+        let metadata = file.metadata()?;
+        if is_link(&metadata) || metadata.is_dir() != directory {
+            return Err(io::Error::other("目录或文件被替换为链接/特殊文件"));
+        }
+        if !directory { verify_regular(&file)?; }
+        Ok(file)
+    }
+    fn child_directory(&self, name: &std::ffi::OsStr, create: bool) -> io::Result<Self> {
+        let child = self.child(name, true, create)?;
+        let mut chain = self.chain.clone(); chain.push(std::sync::Arc::new(child));
+        Ok(Self { path: self.path.join(name), chain })
+    }
+    fn verify(&self) -> io::Result<()> {
+        let current = Self::open(&self.path)?;
+        if current.chain.len() != self.chain.len() { return Err(io::Error::other("迁移目录已变化")); }
+        for (before, after) in self.chain.iter().zip(&current.chain) {
+            if identity(before)? != identity(after)? { return Err(io::Error::other("迁移目录身份已变化，请重新选择")); }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn windows_open(path: &Path, directory: bool, create: bool) -> io::Result<fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE};
+    let file = fs::OpenOptions::new().read(true).write(create).create_new(create)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | if directory { FILE_FLAG_BACKUP_SEMANTICS } else { 0 })
+        .open(path)?;
+    let m = file.metadata()?;
+    if is_link(&m) || (directory && !m.is_dir()) { return Err(io::Error::other("迁移路径包含重解析点")); }
+    Ok(file)
+}
+
+fn retained_stamp(file: &fs::File) -> io::Result<(u64, SystemTime, i64, i64)> {
+    let m = file.metadata()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok((m.len(), m.modified()?, m.ctime(), m.ctime_nsec()))
+    }
+    #[cfg(not(unix))]
+    { Ok((m.len(), m.modified()?, 0, 0)) }
+}
+fn read_at(file: &fs::File, buffer: &mut [u8], offset: u64) -> io::Result<usize> {
+    #[cfg(unix)]
+    { use std::os::unix::fs::FileExt; file.read_at(buffer, offset) }
+    #[cfg(windows)]
+    { use std::os::windows::fs::FileExt; file.seek_read(buffer, offset) }
+    #[cfg(not(any(unix, windows)))]
+    { let _ = (file, buffer, offset); Err(io::Error::other("此平台不支持安全目录迁移")) }
+}
+fn retained_equal(left: &fs::File, right: &fs::File) -> io::Result<bool> {
+    verify_regular(left)?; verify_regular(right)?;
+    let before = (retained_stamp(left)?, retained_stamp(right)?);
+    if before.0.0 != before.1.0 { return Ok(false); }
+    let mut offset = 0;
+    let mut a = [0u8; 65536]; let mut b = [0u8; 65536];
+    while offset < before.0.0 {
+        let limit = ((before.0.0 - offset) as usize).min(a.len());
+        let count = read_at(left, &mut a[..limit], offset)?;
+        if count == 0 { return Ok(false); }
+        let mut filled = 0;
+        while filled < count {
+            let n = read_at(right, &mut b[filled..count], offset + filled as u64)?;
+            if n == 0 { return Ok(false); } filled += n;
+        }
+        if a[..count] != b[..count] { return Ok(false); }
+        offset += count as u64;
+    }
+    Ok(before == (retained_stamp(left)?, retained_stamp(right)?))
+}
+impl RetainedMigration {
+    // Retain only the roots. A large gallery must not require one descriptor per
+    // image; every operation reopens beneath those roots and checks the saved ID.
+    fn parent(root: &RetainedDirectory, entries: &[RetainedEntry], relative: &Path) -> io::Result<RetainedDirectory> {
+        let mut parent = RetainedDirectory { path: root.path.clone(), chain: root.chain.clone() };
+        let mut prefix = PathBuf::new();
+        for part in relative.parent().unwrap_or(Path::new("")).components() {
+            let Component::Normal(name) = part else { return Err(io::Error::other("无效迁移路径")); };
+            prefix.push(name);
+            let expected = entries.iter().find(|held| held.entry.directory && held.entry.relative == prefix)
+                .ok_or_else(|| io::Error::other("迁移父目录尚未验证"))?;
+            parent = parent.child_directory(name, false)?;
+            if identity(parent.handle())? != expected.identity { return Err(io::Error::other("迁移父目录身份已变化")); }
+        }
+        Ok(parent)
+    }
+    fn open_entry(root: &RetainedDirectory, entries: &[RetainedEntry], held: &RetainedEntry) -> io::Result<(RetainedDirectory, fs::File)> {
+        let parent = Self::parent(root, entries, &held.entry.relative)?;
+        let file = parent.child(held.entry.relative.file_name().unwrap(), held.entry.directory, false)?;
+        if identity(&file)? != held.identity { return Err(io::Error::other("迁移文件身份已变化")); }
+        Ok((parent, file))
+    }
+    fn capture(source: RetainedDirectory, destination: RetainedDirectory, snapshot: &[Entry]) -> io::Result<Self> {
+        let mut entries = Vec::with_capacity(snapshot.len());
+        for entry in snapshot {
+            let parent = Self::parent(&source, &entries, &entry.relative)?;
+            let file = parent.child(entry.relative.file_name().ok_or_else(|| io::Error::other("缺少文件名"))?, entry.directory, false)?;
+            if !entry.directory {
+                let m = file.metadata()?;
+                if m.len() != entry.size || m.modified()? != entry.modified { return Err(io::Error::other("准备期间源文件已变化")); }
+            }
+            let stamp = if entry.directory { None } else { Some(retained_stamp(&file)?) };
+            entries.push(RetainedEntry { entry: entry.clone(), identity: identity(&file)?, stamp });
+        }
+        source.verify()?; destination.verify()?;
+        Ok(Self { source, destination, entries })
+    }
+    fn verify_source(&self, plan: &MigrationPlan) -> io::Result<()> {
+        self.source.verify()?; self.destination.verify()?;
+        if scan(&plan.source)? != plan.entries { return Err(io::Error::other("目录内容已变化，请重新选择")); }
+        for held in &self.entries {
+            let (_parent, file) = Self::open_entry(&self.source, &self.entries, held)?;
+            if !held.entry.directory && Some(retained_stamp(&file)?) != held.stamp {
+                return Err(io::Error::other("源文件内容已变化，请重新选择"));
+            }
+        }
+        Ok(())
+    }
+    fn copy(&self, plan: &MigrationPlan, commit: impl FnOnce() -> io::Result<()>, mut progress: impl FnMut(u64, u64)) -> io::Result<()> {
+        self.verify_source(plan)?;
+        check_conflicts(&plan.destination, &plan.entries)?;
+        let mut outputs: Vec<RetainedEntry> = Vec::new();
+        let result = (|| {
+            let mut done = 0; progress(0, plan.bytes);
+            for source in &self.entries {
+                let (_source_parent, input) = Self::open_entry(&self.source, &self.entries, source)?;
+                let parent = Self::parent(&self.destination, &outputs, &source.entry.relative)?;
+                parent.verify()?;
+                let mut output = parent.child(source.entry.relative.file_name().unwrap(), source.entry.directory, true)?;
+                if !source.entry.directory {
+                    let before = retained_stamp(&input)?;
+                    if Some(before) != source.stamp { return Err(io::Error::other("源文件内容已变化")); }
+                    let mut offset = 0; let mut buffer = [0u8; 128 * 1024];
+                    loop {
+                        let n = read_at(&input, &mut buffer, offset)?;
+                        if n == 0 { break; }
+                        output.write_all(&buffer[..n])?;
+                        offset += n as u64; done += n as u64; progress(done.min(plan.bytes), plan.bytes);
+                        if offset > source.entry.size { return Err(io::Error::other("复制期间源文件增长")); }
+                    }
+                    output.sync_all()?;
+                    if before != retained_stamp(&input)? || !retained_equal(&input, &output)? {
+                        return Err(io::Error::other("文件复制校验失败，原文件已保留"));
+                    }
+                }
+                #[cfg(unix)]
+                parent.handle().sync_all()?;
+                let stamp = if source.entry.directory { None } else { Some(retained_stamp(&output)?) };
+                outputs.push(RetainedEntry { entry: source.entry.clone(), identity: identity(&output)?, stamp });
+            }
+            self.verify_source(plan)?;
+            for (source, target) in self.entries.iter().zip(&outputs) {
+                let (_source_parent, input) = Self::open_entry(&self.source, &self.entries, source)?;
+                let (_target_parent, output) = Self::open_entry(&self.destination, &outputs, target)?;
+                if !target.entry.directory && !retained_equal(&input, &output)? {
+                    return Err(io::Error::other("迁移期间文件发生变化"));
+                }
+                #[cfg(unix)]
+                if target.entry.directory { output.sync_all()?; }
+            }
+            self.source.verify()?; self.destination.verify()?;
+            #[cfg(unix)]
+            self.destination.handle().sync_all()?;
+            commit()?;
+            progress(plan.bytes, plan.bytes);
+            Ok(())
+        })();
+        // Never unlink by a display path during rollback: another process could
+        // replace it after the identity check. Originals and partial copies stay.
+        result.map_err(|error: io::Error| io::Error::other(format!("{error}；原文件已保留，目标中可能有未完成副本，请检查后重试")))
     }
 }
 
@@ -409,6 +753,97 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn account_copy_rejects_replaced_root_after_confirmation() {
+        let f = Fixture::new();
+        let plan = f.plan();
+        fs::rename(f.new_dir(), f.0.join("held-target")).unwrap();
+        fs::create_dir(f.new_dir()).unwrap();
+        assert!(plan.copy_retaining_source(|| panic!("replacement must not commit"), |_, _| {}).is_err());
+        assert_eq!(fs::read_dir(f.new_dir()).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn account_copy_refuses_leaf_symlink_installed_after_validation() {
+        use std::os::unix::fs::symlink;
+        let f = Fixture::new();
+        let plan = f.plan();
+        let private = f.0.join("other-user-file");
+        fs::write(&private, b"must never copy").unwrap();
+        let mut swapped = false;
+        assert!(plan.copy_retaining_source(|| panic!("link must not commit"), |_, _| {
+            if !swapped {
+                swapped = true;
+                fs::remove_file(f.old().join(".hidden")).unwrap();
+                symlink(&private, f.old().join(".hidden")).unwrap();
+            }
+        }).is_err());
+        assert!(!f.new_dir().join(".hidden").exists());
+        assert_eq!(fs::read(&private).unwrap(), b"must never copy");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn account_copy_does_not_write_through_replaced_destination_parent() {
+        use std::os::unix::fs::symlink;
+        let f = Fixture::new();
+        let plan = f.plan();
+        let external = f.0.join("external"); fs::create_dir(&external).unwrap();
+        let mut swapped = false;
+        assert!(plan.copy_retaining_source(|| panic!("replaced target must not commit"), |_, _| {
+            if !swapped {
+                swapped = true;
+                fs::rename(f.new_dir(), f.0.join("held-target")).unwrap();
+                symlink(&external, f.new_dir()).unwrap();
+            }
+        }).is_err());
+        assert_eq!(fs::read_dir(external).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn account_copy_large_gallery_does_not_retain_each_source_file() {
+        let f = Fixture::new();
+        for i in 0..600 { fs::write(f.old().join(format!("image-{i:04}")), b"pixels").unwrap(); }
+        let plan = f.plan();
+        assert_eq!(plan.retained.entries.len(), 604);
+        // RetainedEntry contains only identity/stamp metadata; roots alone own
+        // File handles. Copy opens at most two file handles plus ancestor chains.
+        plan.copy_retaining_source(|| Ok(()), |_, _| {}).unwrap();
+        assert_eq!(fs::read(f.new_dir().join("image-0599")).unwrap(), b"pixels");
+    }
+
+    #[test]
+    fn account_copy_retains_originals_after_commit() {
+        let f = Fixture::new();
+        let committed = std::cell::Cell::new(false);
+        f.plan().copy_retaining_source(|| {
+            assert_eq!(fs::read(f.new_dir().join("nested/作品.png"))?, b"image bytes");
+            committed.set(true);
+            Ok(())
+        }, |_, _| {}).unwrap();
+        assert!(committed.get());
+        for root in [f.old(), f.new_dir()] {
+            assert_eq!(fs::read(root.join("nested/作品.png")).unwrap(), b"image bytes");
+            assert_eq!(fs::read(root.join(".hidden")).unwrap(), b"hidden bytes");
+            assert!(root.join("nested/empty").is_dir());
+        }
+    }
+
+    #[test]
+    fn account_copy_commit_failure_preserves_source_and_partial_destination() {
+        let f = Fixture::new();
+        fs::write(f.new_dir().join("unrelated.txt"), b"keep").unwrap();
+        assert!(f.plan().copy_retaining_source(
+            || Err(io::Error::other("mapping commit failed")), |_, _| {},
+        ).is_err());
+        assert_eq!(fs::read(f.old().join("nested/作品.png")).unwrap(), b"image bytes");
+        assert_eq!(fs::read(f.new_dir().join("unrelated.txt")).unwrap(), b"keep");
+        assert_eq!(fs::read(f.new_dir().join("nested/作品.png")).unwrap(), b"image bytes");
+        assert_eq!(fs::read(f.new_dir().join(".hidden")).unwrap(), b"hidden bytes");
     }
 
     #[test]

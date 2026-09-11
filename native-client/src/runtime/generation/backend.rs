@@ -1220,7 +1220,7 @@ fn report_unhandled_terminal_failures(
 pub(super) fn reference_fingerprints_for_namespace(authority: &NamespaceStorageAuthority, paths: &[PathBuf]) -> Result<(Vec<String>, Vec<u64>)> {
     let mut hashes = Vec::with_capacity(paths.len()); let mut sizes = Vec::with_capacity(paths.len());
     for path in paths {
-        anyhow::ensure!(path.starts_with(authority.lease().namespace.root()), "reference is outside captured namespace");
+        anyhow::ensure!(authority.lease().namespace.owns_path(path), "reference is outside captured namespace");
         let bytes = authority.read_image_source(path, 100 * 1024 * 1024)?;
         hashes.push(format!("{:x}", Sha256::digest(&bytes))); sizes.push(bytes.len() as u64);
     }

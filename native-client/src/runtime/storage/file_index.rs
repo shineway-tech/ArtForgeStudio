@@ -353,6 +353,47 @@ impl FileIndex {
             connection: Arc::new(Mutex::new(connection)),
         })
     }
+    pub(super) fn prepare_directory_rebind(&self, source: &NamespaceStorageAuthority, target: &NamespaceStorageAuthority, area: ManagedUserArea) -> anyhow::Result<Vec<super::MigratedIndexIdentity>> {
+        let records = {
+            let c = self.lock_connection()?;
+            let mut stmt = c.prepare(&format!("{FILE_SELECT} WHERE user_public_id=?1 AND managed_area=?2"))?;
+            let mut rows = stmt.query(params![source.user_public_id(), area.storage_name()])?;
+            let mut records = Vec::new();
+            while let Some(row) = rows.next()? { records.push(map_file(row)?); }
+            records
+        };
+        records.into_iter().map(|record| {
+            let key = ManagedFileKey::new(area, &record.path.to_string_lossy())?;
+            let old_file = source.open_existing_regular(&key)?;
+            let old = source.inspect_regular(&old_file)?;
+            anyhow::ensure!(old.identity == record.physical_identity, "indexed source identity changed");
+            let new_file = target.open_existing_regular(&key)?;
+            let new = target.inspect_regular(&new_file)?;
+            anyhow::ensure!(old.byte_size == new.byte_size, "indexed migration size changed");
+            Ok(super::MigratedIndexIdentity { path: key.relative_name().as_str().into(), before: old.identity, after: new.identity, bytes: new.byte_size })
+        }).collect()
+    }
+    pub(super) fn replay_directory_rebind(&self, target: &NamespaceStorageAuthority) -> anyhow::Result<()> {
+        for mapping in target.lease().namespace.mappings() {
+            if mapping.pending_rebind.is_empty() { continue; }
+            let area = ManagedUserArea::from_storage_name(&mapping.area)?;
+            for entry in &mapping.pending_rebind {
+                let file = target.open_existing_regular(&ManagedFileKey::new(area, &entry.path)?)?;
+                let metadata = target.inspect_regular(&file)?;
+                anyhow::ensure!(metadata.identity == entry.after && metadata.byte_size == entry.bytes, "migrated file changed before index rebind");
+            }
+            let mut c = self.lock_connection()?;
+            let tx = c.transaction()?;
+            for entry in &mapping.pending_rebind {
+                let key = ManagedFileKey::new(area, &entry.path)?;
+                let record = query_key(&tx, target.user_public_id(), &key)?.ok_or_else(|| anyhow::anyhow!("migrated index row disappeared"))?;
+                anyhow::ensure!(record.physical_identity == entry.before || record.physical_identity == entry.after, "migrated index identity conflict");
+                tx.execute("UPDATE managed_files SET physical_identity=?3,byte_size=?4 WHERE user_public_id=?1 AND id=?2", params![target.user_public_id(),record.id.0,entry.after.to_storage_bytes(),to_sql_i64("migration bytes",entry.bytes)?])?;
+            }
+            tx.commit()?;
+        }
+        Ok(())
+    }
     pub(super) fn database_path(&self) -> &Path {
         self.database_path.as_path()
     }
