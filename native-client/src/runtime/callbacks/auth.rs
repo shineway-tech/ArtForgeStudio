@@ -970,6 +970,9 @@ pub(super) fn initialize_auth(app: &AppWindow, context: AppContext) {
     state.set_logged_in(false);
     state.set_session_state("signed_out".into());
     let Some(backend) = context.backend.clone() else { state.set_auth_error("后端客户端初始化失败".into()); return; };
+    let startup_operation_epoch = begin_auth_operation(&context);
+    let agreements_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_agreements_ready = agreements_ready.clone();
     let weak = app.as_weak();
     let api = AuthApi::new(backend.api.clone());
     std::thread::spawn(move || {
@@ -979,12 +982,45 @@ pub(super) fn initialize_auth(app: &AppWindow, context: AppContext) {
                 Ok(agreements) => apply_agreements(&app, &agreements),
                 Err(error) => app.global::<AppState>().set_auth_error(error.user_message().into()),
             }
+            worker_agreements_ready.store(true, Ordering::SeqCst);
         });
     });
     if let Some(coordinator) = context.account_transition.clone() {
         coordinator.resume_persisted_session(app, context.clone());
     }
+    start_initial_wechat_login(app, context.clone(), startup_operation_epoch, agreements_ready);
     schedule_network_recovery(app.as_weak(), context);
+}
+
+fn start_initial_wechat_login(
+    app: &AppWindow,
+    context: AppContext,
+    operation_epoch: u64,
+    agreements_ready: Arc<std::sync::atomic::AtomicBool>,
+) {
+    let state = app.global::<AppState>();
+    if !auth_operation_is_current(&context, operation_epoch)
+        || !state.get_auth_open()
+        || state.get_auth_method().as_str() != "wechat"
+        || state.get_session_state().as_str() != "signed_out"
+        || state.get_auth_wechat_busy()
+        || state.get_auth_wechat_qr_ready()
+        || !state.get_auth_wechat_login_id().is_empty()
+    {
+        return;
+    }
+    // Wait for agreement versions and retained-session restoration. A newer
+    // login or a successful restoration cancels this one-time startup request.
+    if !agreements_ready.load(Ordering::SeqCst) || state.get_auth_busy() {
+        let weak = app.as_weak();
+        slint::Timer::single_shot(Duration::from_millis(100), move || {
+            if let Some(app) = weak.upgrade() {
+                start_initial_wechat_login(&app, context, operation_epoch, agreements_ready);
+            }
+        });
+        return;
+    }
+    state.invoke_start_wechat_login();
 }
 
 fn schedule_network_recovery(app_weak: Weak<AppWindow>, context: AppContext) {
