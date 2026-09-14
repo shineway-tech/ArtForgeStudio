@@ -364,13 +364,30 @@ impl FileIndex {
         };
         records.into_iter().map(|record| {
             let key = ManagedFileKey::new(area, &record.path.to_string_lossy())?;
-            let old_file = source.open_existing_regular(&key)?;
+            let mut old_file = source.open_existing_regular(&key)?;
             let old = source.inspect_regular(&old_file)?;
-            anyhow::ensure!(old.identity == record.physical_identity, "indexed source identity changed");
-            let new_file = target.open_existing_regular(&key)?;
+            anyhow::ensure!(migration_source_identity_matches(record.physical_identity, record.byte_size, old.identity, old.byte_size),
+                "文件索引与源文件不一致：{}，原文件已保留", key.relative_name().as_str());
+            let mut new_file = target.open_existing_regular(&key)?;
             let new = target.inspect_regular(&new_file)?;
             anyhow::ensure!(old.byte_size == new.byte_size, "indexed migration size changed");
-            Ok(super::MigratedIndexIdentity { path: key.relative_name().as_str().into(), before: old.identity, after: new.identity, bytes: new.byte_size })
+            if old.identity != record.physical_identity {
+                // macOS device numbers can change after remount/reboot. Only the
+                // migration path reconciles that legacy index value, after proving
+                // the current held source and destination contain identical bytes.
+                use sha2::{Digest, Sha256};
+                let mut old_hash = Sha256::new();
+                let old_bytes = source.read_regular_to(&mut old_file, &mut old_hash)?;
+                let mut new_hash = Sha256::new();
+                let new_bytes = target.read_regular_to(&mut new_file, &mut new_hash)?;
+                anyhow::ensure!(old_bytes == old.byte_size && new_bytes == old.byte_size
+                    && old_hash.finalize() == new_hash.finalize()
+                    && source.inspect_regular(&old_file)? == old && target.inspect_regular(&new_file)? == new,
+                    "迁移文件内容校验失败：{}，原文件已保留", key.relative_name().as_str());
+            }
+            // Replay compares against the persisted row, including its old device
+            // number; using the currently observed identity would break recovery.
+            Ok(super::MigratedIndexIdentity { path: key.relative_name().as_str().into(), before: record.physical_identity, after: new.identity, bytes: new.byte_size })
         }).collect()
     }
     pub(super) fn replay_directory_rebind(&self, target: &NamespaceStorageAuthority) -> anyhow::Result<()> {
@@ -972,6 +989,44 @@ fn identity_conflict() -> FileIndexError {
         "logical and physical file identity conflict"
     ))
 }
+
+fn migration_source_identity_matches(
+    indexed: StableFileIdentity,
+    indexed_bytes: u64,
+    current: StableFileIdentity,
+    current_bytes: u64,
+) -> bool {
+    if indexed == current { return true; }
+    #[cfg(target_os = "macos")]
+    if let (StableFileIdentity::Unix { device: before, inode: old }, StableFileIdentity::Unix { device: after, inode: new }) = (indexed, current) {
+        return before != after && old == new && indexed_bytes == current_bytes;
+    }
+    let _ = (indexed_bytes, current_bytes);
+    false
+}
+
+#[cfg(test)]
+mod migration_identity_tests {
+    use super::*;
+
+    #[test]
+    fn directory_migration_identity_accepts_macos_device_renumbering() {
+        let indexed = StableFileIdentity::Unix { device: 16777225, inode: 21082673 };
+        let current = StableFileIdentity::Unix { device: 16777220, inode: 21082673 };
+        assert_eq!(migration_source_identity_matches(indexed, 8440782, current, 8440782), cfg!(target_os = "macos"));
+    }
+
+    #[test]
+    fn directory_migration_identity_rejects_changed_inode_size_or_windows_volume() {
+        let indexed = StableFileIdentity::Unix { device: 9, inode: 42 };
+        assert!(!migration_source_identity_matches(indexed, 10, StableFileIdentity::Unix { device: 4, inode: 43 }, 10));
+        assert!(!migration_source_identity_matches(indexed, 10, StableFileIdentity::Unix { device: 4, inode: 42 }, 11));
+        let windows = StableFileIdentity::Windows { volume: 9, file_id: [7; 16] };
+        assert!(!migration_source_identity_matches(windows, 10, StableFileIdentity::Windows { volume: 4, file_id: [7; 16] }, 10));
+        assert!(migration_source_identity_matches(indexed, 10, indexed, 10));
+    }
+}
+
 fn register_guarded(
     c: &Connection,
     user: &str,
@@ -1610,6 +1665,39 @@ mod tests {
     use super::*;
     const A: &str = "11111111-1111-4111-8111-111111111111";
     const B: &str = "22222222-2222-4222-8222-222222222222";
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn directory_migration_remount_requires_identical_copy_and_keeps_normal_reads_strict() {
+        use super::super::user_namespace::AccountDirectoryMapping;
+        let f = Fixture::new();
+        let record = f.register(&f.a, ManagedUserArea::Output, "image.png");
+        let StableFileIdentity::Unix { device, inode } = record.physical_identity else { panic!("expected Unix identity"); };
+        let stale = StableFileIdentity::Unix { device: device + 1, inode };
+        f.index.lock_connection().unwrap().execute("UPDATE managed_files SET physical_identity=?1 WHERE id=?2", params![stale.to_storage_bytes(), record.id.0]).unwrap();
+        let destination = tempfile::tempdir().unwrap();
+        let out = destination.path().canonicalize().unwrap().join("out");
+        fs::create_dir(&out).unwrap();
+        fs::write(out.join("image.png"), b"wrong").unwrap();
+        let source = f.a.lease().namespace.path(ManagedUserArea::Output);
+        let namespace = f.a.lease().namespace.clone().with_mapping(AccountDirectoryMapping {
+            version: 2, area: "output".into(), source: source.clone(), target: out.clone(),
+            identity: NamespaceFs::directory_identity_at(&out).unwrap(),
+            source_identity: NamespaceFs::directory_identity_at(&source).unwrap(),
+            manifest_json: "[]".into(), pending_rebind: Vec::new(),
+        }).unwrap();
+        let root = Arc::new(NamespaceFs::open_data_root(&f.directory.path().canonicalize().unwrap()).unwrap());
+        let target = NamespaceStorageAuthority::open(root, &NamespaceLease { namespace, ..f.a.lease().clone() }).unwrap();
+        let error = f.index.prepare_directory_rebind(&f.a, &target, ManagedUserArea::Output).unwrap_err();
+        assert!(error.to_string().contains("内容校验失败"), "{error}");
+        fs::write(out.join("image.png"), b"image").unwrap();
+        let prepared = f.index.prepare_directory_rebind(&f.a, &target, ManagedUserArea::Output).unwrap();
+        assert_eq!(prepared.len(), 1);
+        assert_eq!(prepared[0].before, stale);
+        assert!(f.index.find_file_by_path_for_namespace(&f.a, ManagedUserArea::Output, "image.png").is_err());
+        assert_eq!(f.index.owned_file(A, record.id).unwrap().unwrap().physical_identity, stale);
+    }
+
     struct Fixture {
         index: FileIndex,
         a: NamespaceStorageAuthority,

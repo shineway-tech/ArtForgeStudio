@@ -71,7 +71,7 @@ impl MigrationPlan {
         let retained_destination = RetainedDirectory::open(&destination)?;
         let entries = scan(&source)?;
         let retained = std::sync::Arc::new(RetainedMigration::capture(retained_source, retained_destination, &entries)?);
-        check_conflicts(&destination, &entries)?;
+        retained.check_targets(&entries)?;
         let bytes = entries
             .iter()
             .filter(|e| !e.directory)
@@ -103,9 +103,12 @@ impl MigrationPlan {
     pub fn copy_retaining_source(
         &self,
         commit: impl FnOnce() -> io::Result<()>,
-        progress: impl FnMut(u64, u64),
+        mut progress: impl FnMut(u64, u64),
     ) -> io::Result<()> {
-        self.retained.copy(self, commit, progress)
+        copy_batch_retaining_source(std::slice::from_ref(self), commit, |done, total| {
+            progress(done, total);
+            Ok(())
+        })
     }
 
     #[cfg(test)]
@@ -251,6 +254,49 @@ impl MigrationPlan {
     }
 }
 
+/// Copies every prepared directory while retaining each source, then validates
+/// every pinned source and copied target before committing all mappings once.
+pub(crate) fn copy_batch_retaining_source(
+    plans: &[MigrationPlan],
+    commit: impl FnOnce() -> io::Result<()>,
+    mut progress: impl FnMut(u64, u64) -> io::Result<()>,
+) -> io::Result<()> {
+    let total = plans.iter().try_fold(0u64, |total, plan| {
+        total
+            .checked_add(plan.bytes)
+            .ok_or_else(|| io::Error::other("迁移文件总大小超出支持范围"))
+    })?;
+    let result = (|| {
+        progress(0, total)?;
+        let mut copied = Vec::with_capacity(plans.len());
+        let mut completed = 0u64;
+        for plan in plans {
+            let outputs = plan.retained.copy_files(plan, |done| {
+                progress(completed.saturating_add(done).min(total), total)
+            })?;
+            completed = completed
+                .checked_add(plan.bytes)
+                .ok_or_else(|| io::Error::other("迁移进度超出支持范围"))?;
+            copied.push(outputs);
+        }
+
+        // No callback or other caller-controlled work may occur between this
+        // cross-plan verification and the single durable mapping commit.
+        for (plan, outputs) in plans.iter().zip(&copied) {
+            plan.retained.verify_copy(plan, outputs)?;
+        }
+        commit()
+    })();
+
+    // Never unlink by a display path during rollback: another process could
+    // replace it after the identity check. Originals and partial copies stay.
+    result.map_err(|error: io::Error| {
+        io::Error::other(format!(
+            "{error}；原文件已保留，目标中可能有未完成副本，请检查后重试"
+        ))
+    })
+}
+
 
 // A plan pins both root directory chains before confirmation. Path checks
 // alone cannot make a later File::open safe: a parent or leaf may be replaced
@@ -380,6 +426,59 @@ impl RetainedDirectory {
         if !directory { verify_regular(&file)?; }
         Ok(file)
     }
+    fn staging_file(&self) -> io::Result<(std::ffi::OsString, fs::File)> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        loop {
+            let name = std::ffi::OsString::from(format!(
+                ".elunvi-migration-{}-{}-{}.tmp", std::process::id(),
+                SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            ));
+            match self.child(&name, false, true) {
+                Ok(file) => return Ok((name, file)),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    fn replace_file(&self, temporary: &std::ffi::OsStr, name: &std::ffi::OsStr, output: &fs::File) -> io::Result<()> {
+        self.verify()?;
+        verify_regular(output)?;
+        #[cfg(unix)]
+        {
+            // Both names resolve beneath the pinned parent; rename never follows
+            // the destination leaf. Verify the staging name still owns our inode.
+            let staged = self.child(temporary, false, false)?;
+            if identity(&staged)? != identity(output)? {
+                return Err(io::Error::other("迁移临时文件身份已变化"));
+            }
+            rustix::fs::renameat(self.handle(), temporary, self.handle(), name)?;
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::{ffi::OsStrExt, io::AsRawHandle};
+            use windows_sys::Win32::Storage::FileSystem::{SetFileInformationByHandle, FileRenameInfo, FILE_RENAME_INFO};
+            // Rename the opened file itself. Ancestors and the staging handle
+            // deny delete sharing, so neither can be exchanged beneath us.
+            let _ = temporary;
+            let wide: Vec<u16> = self.path.join(name).as_os_str().encode_wide().collect();
+            let bytes = std::mem::size_of::<FILE_RENAME_INFO>() + wide.len() * 2;
+            let mut storage = vec![0usize; bytes.div_ceil(std::mem::size_of::<usize>())];
+            let info = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+            unsafe {
+                (*info).Anonymous.ReplaceIfExists = true;
+                (*info).RootDirectory = std::ptr::null_mut();
+                (*info).FileNameLength = (wide.len() * 2) as u32;
+                std::ptr::copy_nonoverlapping(wide.as_ptr(), (*info).FileName.as_mut_ptr(), wide.len());
+                if SetFileInformationByHandle(output.as_raw_handle(), FileRenameInfo, info.cast(), bytes as u32) == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
+        return Err(io::Error::other("此平台不支持安全目录迁移"));
+        Ok(())
+    }
     fn child_directory(&self, name: &std::ffi::OsStr, create: bool) -> io::Result<Self> {
         let child = self.child(name, true, create)?;
         let mut chain = self.chain.clone(); chain.push(std::sync::Arc::new(child));
@@ -398,8 +497,9 @@ impl RetainedDirectory {
 #[cfg(windows)]
 fn windows_open(path: &Path, directory: bool, create: bool) -> io::Result<fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
-    use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE};
+    use windows_sys::Win32::Storage::FileSystem::{DELETE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE};
     let file = fs::OpenOptions::new().read(true).write(create).create_new(create)
+        .access_mode(FILE_GENERIC_READ | if create { FILE_GENERIC_WRITE | DELETE } else { 0 })
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | if directory { FILE_FLAG_BACKUP_SEMANTICS } else { 0 })
         .open(path)?;
@@ -483,6 +583,26 @@ impl RetainedMigration {
         source.verify()?; destination.verify()?;
         Ok(Self { source, destination, entries })
     }
+    fn check_targets(&self, entries: &[Entry]) -> io::Result<()> {
+        self.destination.verify()?;
+        'entry: for entry in entries {
+            let mut parent = RetainedDirectory { path: self.destination.path.clone(), chain: self.destination.chain.clone() };
+            for part in entry.relative.parent().unwrap_or(Path::new("")).components() {
+                let Component::Normal(name) = part else { return Err(io::Error::other("无效迁移路径")); };
+                match parent.child_directory(name, false) {
+                    Ok(child) => parent = child,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => continue 'entry,
+                    Err(error) => return Err(error),
+                }
+            }
+            match parent.child(entry.relative.file_name().unwrap(), entry.directory, false) {
+                Ok(_) => {},
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {},
+                Err(error) => return Err(error),
+            }
+        }
+        self.destination.verify()
+    }
     fn verify_source(&self, plan: &MigrationPlan) -> io::Result<()> {
         self.source.verify()?; self.destination.verify()?;
         if scan(&plan.source)? != plan.entries { return Err(io::Error::other("目录内容已变化，请重新选择")); }
@@ -494,58 +614,111 @@ impl RetainedMigration {
         }
         Ok(())
     }
-    fn copy(&self, plan: &MigrationPlan, commit: impl FnOnce() -> io::Result<()>, mut progress: impl FnMut(u64, u64)) -> io::Result<()> {
+    fn copy_files(
+        &self,
+        plan: &MigrationPlan,
+        mut progress: impl FnMut(u64) -> io::Result<()>,
+    ) -> io::Result<Vec<RetainedEntry>> {
         self.verify_source(plan)?;
-        check_conflicts(&plan.destination, &plan.entries)?;
+        self.check_targets(&plan.entries)?;
         let mut outputs: Vec<RetainedEntry> = Vec::new();
-        let result = (|| {
-            let mut done = 0; progress(0, plan.bytes);
-            for source in &self.entries {
-                let (_source_parent, input) = Self::open_entry(&self.source, &self.entries, source)?;
-                let parent = Self::parent(&self.destination, &outputs, &source.entry.relative)?;
-                parent.verify()?;
-                let mut output = parent.child(source.entry.relative.file_name().unwrap(), source.entry.directory, true)?;
-                if !source.entry.directory {
-                    let before = retained_stamp(&input)?;
-                    if Some(before) != source.stamp { return Err(io::Error::other("源文件内容已变化")); }
-                    let mut offset = 0; let mut buffer = [0u8; 128 * 1024];
-                    loop {
-                        let n = read_at(&input, &mut buffer, offset)?;
-                        if n == 0 { break; }
-                        output.write_all(&buffer[..n])?;
-                        offset += n as u64; done += n as u64; progress(done.min(plan.bytes), plan.bytes);
-                        if offset > source.entry.size { return Err(io::Error::other("复制期间源文件增长")); }
+        let mut done = 0;
+        for source in &self.entries {
+            let (_source_parent, input) =
+                Self::open_entry(&self.source, &self.entries, source)?;
+            let parent = Self::parent(&self.destination, &outputs, &source.entry.relative)?;
+            parent.verify()?;
+            let name = source.entry.relative.file_name().unwrap();
+            let existing = match parent.child(name, source.entry.directory, false) {
+                Ok(file) => Some(file),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error),
+            };
+            let previous = existing.as_ref().map(|file| Ok::<_, io::Error>((identity(file)?, retained_stamp(file)?))).transpose()?;
+            let (temporary, mut output) = if source.entry.directory {
+                (None, match existing { Some(file) => file, None => parent.child(name, true, true)? })
+            } else {
+                // Release the previous target before Windows replaces it; never
+                // truncate it until the new sibling has been copied and checked.
+                drop(existing);
+                let (name, file) = parent.staging_file()?;
+                (Some(name), file)
+            };
+            if !source.entry.directory {
+                let before = retained_stamp(&input)?;
+                if Some(before) != source.stamp {
+                    return Err(io::Error::other("源文件内容已变化"));
+                }
+                let mut offset = 0;
+                let mut buffer = [0u8; 128 * 1024];
+                loop {
+                    let n = read_at(&input, &mut buffer, offset)?;
+                    if n == 0 {
+                        break;
                     }
-                    output.sync_all()?;
-                    if before != retained_stamp(&input)? || !retained_equal(&input, &output)? {
-                        return Err(io::Error::other("文件复制校验失败，原文件已保留"));
+                    output.write_all(&buffer[..n])?;
+                    offset += n as u64;
+                    done += n as u64;
+                    progress(done.min(plan.bytes))?;
+                    if offset > source.entry.size {
+                        return Err(io::Error::other("复制期间源文件增长"));
                     }
                 }
-                #[cfg(unix)]
-                parent.handle().sync_all()?;
-                let stamp = if source.entry.directory { None } else { Some(retained_stamp(&output)?) };
-                outputs.push(RetainedEntry { entry: source.entry.clone(), identity: identity(&output)?, stamp });
-            }
-            self.verify_source(plan)?;
-            for (source, target) in self.entries.iter().zip(&outputs) {
-                let (_source_parent, input) = Self::open_entry(&self.source, &self.entries, source)?;
-                let (_target_parent, output) = Self::open_entry(&self.destination, &outputs, target)?;
-                if !target.entry.directory && !retained_equal(&input, &output)? {
-                    return Err(io::Error::other("迁移期间文件发生变化"));
+                output.sync_all()?;
+                if before != retained_stamp(&input)? || !retained_equal(&input, &output)? {
+                    return Err(io::Error::other("文件复制校验失败，原文件已保留"));
                 }
-                #[cfg(unix)]
-                if target.entry.directory { output.sync_all()?; }
             }
-            self.source.verify()?; self.destination.verify()?;
+            if let Some(temporary) = temporary {
+                let current = match parent.child(name, false, false) {
+                    Ok(file) => Some((identity(&file)?, retained_stamp(&file)?)),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                    Err(error) => return Err(error),
+                };
+                if current != previous {
+                    return Err(io::Error::other("复制期间目标文件已变化，请重试"));
+                }
+                parent.replace_file(&temporary, name, &output)?;
+            }
             #[cfg(unix)]
-            self.destination.handle().sync_all()?;
-            commit()?;
-            progress(plan.bytes, plan.bytes);
-            Ok(())
-        })();
-        // Never unlink by a display path during rollback: another process could
-        // replace it after the identity check. Originals and partial copies stay.
-        result.map_err(|error: io::Error| io::Error::other(format!("{error}；原文件已保留，目标中可能有未完成副本，请检查后重试")))
+            parent.handle().sync_all()?;
+            let stamp = if source.entry.directory {
+                None
+            } else {
+                Some(retained_stamp(&output)?)
+            };
+            outputs.push(RetainedEntry {
+                entry: source.entry.clone(),
+                identity: identity(&output)?,
+                stamp,
+            });
+        }
+        Ok(outputs)
+    }
+
+    fn verify_copy(&self, plan: &MigrationPlan, outputs: &[RetainedEntry]) -> io::Result<()> {
+        self.verify_source(plan)?;
+        if outputs.len() != self.entries.len() {
+            return Err(io::Error::other("迁移目标文件不完整"));
+        }
+        for (source, target) in self.entries.iter().zip(outputs) {
+            let (_source_parent, input) =
+                Self::open_entry(&self.source, &self.entries, source)?;
+            let (_target_parent, output) =
+                Self::open_entry(&self.destination, outputs, target)?;
+            if !target.entry.directory && !retained_equal(&input, &output)? {
+                return Err(io::Error::other("迁移期间文件发生变化"));
+            }
+            #[cfg(unix)]
+            if target.entry.directory {
+                output.sync_all()?;
+            }
+        }
+        self.source.verify()?;
+        self.destination.verify()?;
+        #[cfg(unix)]
+        self.destination.handle().sync_all()?;
+        Ok(())
     }
 }
 
@@ -755,6 +928,310 @@ mod tests {
         }
     }
 
+    #[test]
+    fn account_copy_overwrites_files_and_merges_directories() {
+        let f = Fixture::new();
+        fs::create_dir_all(f.new_dir().join("nested/empty")).unwrap();
+        fs::write(f.new_dir().join(".hidden"), b"old destination").unwrap();
+        fs::write(f.new_dir().join("nested/作品.png"), b"partial").unwrap();
+        fs::write(f.new_dir().join("nested/unrelated"), b"keep").unwrap();
+        f.plan().copy_retaining_source(|| Ok(()), |_, _| {}).unwrap();
+        for root in [f.old(), f.new_dir()] {
+            assert_eq!(fs::read(root.join(".hidden")).unwrap(), b"hidden bytes");
+            assert_eq!(fs::read(root.join("nested/作品.png")).unwrap(), b"image bytes");
+        }
+        assert_eq!(fs::read(f.new_dir().join("nested/unrelated")).unwrap(), b"keep");
+        assert_eq!(fs::read_dir(f.new_dir()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn account_copy_retry_after_failed_commit_overwrites_partial_destination() {
+        let f = Fixture::new();
+        assert!(f.plan().copy_retaining_source(|| Err(io::Error::other("commit failed")), |_, _| {}).is_err());
+        fs::write(f.new_dir().join("nested/作品.png"), b"partial").unwrap();
+        f.plan().copy_retaining_source(|| Ok(()), |_, _| {}).unwrap();
+        assert_eq!(fs::read(f.new_dir().join("nested/作品.png")).unwrap(), b"image bytes");
+    }
+
+    #[test]
+    fn account_copy_failed_verification_keeps_existing_destination_intact() {
+        let f = Fixture::new();
+        fs::write(f.new_dir().join(".hidden"), b"previous destination").unwrap();
+        let mut changed = false;
+        let result = f.plan().copy_retaining_source(|| panic!("must not commit"), |done, _| {
+            if done > 0 && !changed {
+                changed = true;
+                fs::write(f.old().join(".hidden"), b"changed source").unwrap();
+            }
+        });
+        assert!(result.is_err());
+        assert!(changed);
+        assert_eq!(fs::read(f.new_dir().join(".hidden")).unwrap(), b"previous destination");
+    }
+
+    #[test]
+    fn account_copy_overwrites_regular_file_created_after_prepare() {
+        let f = Fixture::new();
+        let plan = f.plan();
+        fs::write(f.new_dir().join(".hidden"), b"late destination").unwrap();
+        plan.copy_retaining_source(|| Ok(()), |_, _| {}).unwrap();
+        assert_eq!(fs::read(f.new_dir().join(".hidden")).unwrap(), b"hidden bytes");
+    }
+
+    #[test]
+    fn account_copy_rejects_destination_type_mismatches() {
+        let f = Fixture::new();
+        fs::create_dir(f.new_dir().join(".hidden")).unwrap();
+        assert!(MigrationPlan::prepare(&f.old(), &f.new_dir(), &[]).is_err());
+        fs::remove_dir(f.new_dir().join(".hidden")).unwrap();
+        fs::write(f.new_dir().join("nested"), b"keep file").unwrap();
+        assert!(MigrationPlan::prepare(&f.old(), &f.new_dir(), &[]).is_err());
+        assert_eq!(fs::read(f.new_dir().join("nested")).unwrap(), b"keep file");
+    }
+
+    #[test]
+    fn account_copy_rejects_hardlinked_destination_file() {
+        let f = Fixture::new();
+        let external = f.0.join("external");
+        fs::write(&external, b"external data").unwrap();
+        fs::hard_link(&external, f.new_dir().join(".hidden")).unwrap();
+        assert!(MigrationPlan::prepare(&f.old(), &f.new_dir(), &[]).is_err());
+        assert_eq!(fs::read(external).unwrap(), b"external data");
+    }
+
+    #[test]
+    fn account_copy_does_not_overwrite_destination_changed_during_copy() {
+        let f = Fixture::new();
+        fs::write(f.new_dir().join(".hidden"), b"previous destination").unwrap();
+        let mut changed = false;
+        let result = f.plan().copy_retaining_source(|| panic!("must not commit"), |done, _| {
+            if done > 0 && !changed {
+                changed = true;
+                assert_eq!(fs::read(f.new_dir().join(".hidden")).unwrap(), b"previous destination");
+                fs::write(f.new_dir().join(".hidden"), b"concurrent edit").unwrap();
+            }
+        });
+        assert!(result.is_err());
+        assert!(changed);
+        assert_eq!(fs::read(f.new_dir().join(".hidden")).unwrap(), b"concurrent edit");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn account_copy_rejects_destination_links_and_special_files() {
+        use std::os::unix::fs::symlink;
+        let f = Fixture::new();
+        let external = f.0.join("external");
+        fs::write(&external, b"external data").unwrap();
+        symlink(&external, f.new_dir().join(".hidden")).unwrap();
+        assert!(MigrationPlan::prepare(&f.old(), &f.new_dir(), &[]).is_err());
+        fs::remove_file(f.new_dir().join(".hidden")).unwrap();
+        assert!(std::process::Command::new("mkfifo")
+            .arg(f.new_dir().join(".hidden")).status().unwrap().success());
+        assert!(MigrationPlan::prepare(&f.old(), &f.new_dir(), &[]).is_err());
+        fs::remove_file(f.new_dir().join(".hidden")).unwrap();
+        symlink(f.old().join("nested"), f.new_dir().join("nested")).unwrap();
+        assert!(MigrationPlan::prepare(&f.old(), &f.new_dir(), &[]).is_err());
+        assert_eq!(fs::read(external).unwrap(), b"external data");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn account_copy_rejects_target_symlink_installed_during_staging() {
+        use std::os::unix::fs::symlink;
+        let f = Fixture::new();
+        fs::write(f.new_dir().join(".hidden"), b"previous destination").unwrap();
+        let external = f.0.join("external");
+        fs::write(&external, b"external data").unwrap();
+        let mut changed = false;
+        let result = f.plan().copy_retaining_source(|| panic!("must not commit"), |done, _| {
+            if done > 0 && !changed {
+                changed = true;
+                fs::remove_file(f.new_dir().join(".hidden")).unwrap();
+                symlink(&external, f.new_dir().join(".hidden")).unwrap();
+            }
+        });
+        assert!(result.is_err());
+        assert!(changed);
+        assert_eq!(fs::read(external).unwrap(), b"external data");
+        assert!(fs::symlink_metadata(f.new_dir().join(".hidden")).unwrap().file_type().is_symlink());
+    }
+
+    #[test]
+    fn batch_copy_commits_once_after_copying_every_plan() {
+        let fixtures = [Fixture::new(), Fixture::new(), Fixture::new()];
+        let plans: Vec<_> = fixtures.iter().map(Fixture::plan).collect();
+        let total = plans.iter().map(|plan| plan.bytes).sum();
+        let commits = std::cell::Cell::new(0);
+        let mut progress = Vec::new();
+
+        copy_batch_retaining_source(
+            &plans,
+            || {
+                commits.set(commits.get() + 1);
+                for fixture in &fixtures {
+                    assert_eq!(
+                        fs::read(fixture.new_dir().join("nested/作品.png"))?,
+                        b"image bytes"
+                    );
+                    assert_eq!(
+                        fs::read(fixture.new_dir().join(".hidden"))?,
+                        b"hidden bytes"
+                    );
+                }
+                Ok(())
+            },
+            |done, total| {
+                progress.push((done, total));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(commits.get(), 1);
+        assert_eq!(progress.first(), Some(&(0, total)));
+        assert_eq!(progress.last(), Some(&(total, total)));
+        assert!(progress.windows(2).all(|window| window[0].0 <= window[1].0));
+        for fixture in &fixtures {
+            assert_eq!(fs::read(fixture.old().join(".hidden")).unwrap(), b"hidden bytes");
+        }
+    }
+
+    #[test]
+    fn batch_copy_later_conflict_prevents_commit_and_keeps_partial_outputs() {
+        let fixtures = [Fixture::new(), Fixture::new(), Fixture::new()];
+        let plans: Vec<_> = fixtures.iter().map(Fixture::plan).collect();
+        fs::create_dir(fixtures[1].new_dir().join(".hidden")).unwrap();
+        let commits = std::cell::Cell::new(0);
+
+        let result = copy_batch_retaining_source(
+            &plans,
+            || {
+                commits.set(commits.get() + 1);
+                Ok(())
+            },
+            |_, _| Ok(()),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(commits.get(), 0);
+        assert_eq!(
+            fs::read(fixtures[0].new_dir().join("nested/作品.png")).unwrap(),
+            b"image bytes"
+        );
+        assert!(fixtures[1].new_dir().join(".hidden").is_dir());
+        assert_eq!(fs::read_dir(fixtures[2].new_dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn batch_copy_revalidates_an_earlier_source_after_later_copy() {
+        let fixtures = [Fixture::new(), Fixture::new(), Fixture::new()];
+        let plans: Vec<_> = fixtures.iter().map(Fixture::plan).collect();
+        let first_bytes = plans[0].bytes;
+        let mut changed = false;
+
+        let result = copy_batch_retaining_source(
+            &plans,
+            || panic!("changed source must not commit"),
+            |done, _| {
+                if done > first_bytes && !changed {
+                    changed = true;
+                    fs::write(fixtures[0].old().join(".hidden"), b"edited after copy")?;
+                }
+                Ok(())
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(changed);
+        assert_eq!(
+            fs::read(fixtures[0].old().join(".hidden")).unwrap(),
+            b"edited after copy"
+        );
+        assert!(fixtures[0].new_dir().join(".hidden").exists());
+    }
+
+    #[test]
+    fn batch_copy_detects_replacement_of_an_earlier_target() {
+        let fixtures = [Fixture::new(), Fixture::new(), Fixture::new()];
+        let plans: Vec<_> = fixtures.iter().map(Fixture::plan).collect();
+        let first_bytes = plans[0].bytes;
+        let target = fixtures[0].new_dir().join(".hidden");
+        let mut replaced = false;
+
+        let result = copy_batch_retaining_source(
+            &plans,
+            || panic!("replaced target must not commit"),
+            |done, _| {
+                if done > first_bytes && !replaced {
+                    replaced = true;
+                    fs::remove_file(&target)?;
+                    fs::write(&target, b"replacement")?;
+                }
+                Ok(())
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(replaced);
+        assert_eq!(fs::read(target).unwrap(), b"replacement");
+        assert!(fixtures[0].old().join(".hidden").exists());
+    }
+
+    #[test]
+    fn batch_copy_commit_failure_retains_all_sources_and_destinations() {
+        let fixtures = [Fixture::new(), Fixture::new(), Fixture::new()];
+        let plans: Vec<_> = fixtures.iter().map(Fixture::plan).collect();
+
+        let result = copy_batch_retaining_source(
+            &plans,
+            || Err(io::Error::other("mapping commit failed")),
+            |_, _| Ok(()),
+        );
+
+        assert!(result.is_err());
+        for fixture in &fixtures {
+            for root in [fixture.old(), fixture.new_dir()] {
+                assert_eq!(fs::read(root.join(".hidden")).unwrap(), b"hidden bytes");
+                assert_eq!(
+                    fs::read(root.join("nested/作品.png")).unwrap(),
+                    b"image bytes"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn batch_copy_supports_empty_sources() {
+        let fixtures = [Fixture::new(), Fixture::new(), Fixture::new()];
+        for fixture in &fixtures {
+            fs::remove_dir_all(fixture.old()).unwrap();
+            fs::create_dir(fixture.old()).unwrap();
+        }
+        let plans: Vec<_> = fixtures.iter().map(Fixture::plan).collect();
+        let commits = std::cell::Cell::new(0);
+        let mut progress = Vec::new();
+
+        copy_batch_retaining_source(
+            &plans,
+            || {
+                commits.set(commits.get() + 1);
+                Ok(())
+            },
+            |done, total| {
+                progress.push((done, total));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(commits.get(), 1);
+        assert_eq!(progress, vec![(0, 0)]);
+        assert!(fixtures
+            .iter()
+            .all(|fixture| fs::read_dir(fixture.new_dir()).unwrap().next().is_none()));
+    }
+
     #[cfg(unix)]
     #[test]
     fn account_copy_rejects_replaced_root_after_confirmation() {
@@ -903,10 +1380,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_conflicts_before_changing_any_files() {
+    fn legacy_cleanup_rejects_conflicts_before_changing_any_files() {
         let f = Fixture::new();
         fs::write(f.new_dir().join(".hidden"), b"destination bytes").unwrap();
-        assert!(MigrationPlan::prepare(&f.old(), &f.new_dir(), &[]).is_err());
+        assert!(f.plan().execute(|| panic!("must not commit"), |_, _| {}).is_err());
         assert_eq!(
             fs::read(f.new_dir().join(".hidden")).unwrap(),
             b"destination bytes"

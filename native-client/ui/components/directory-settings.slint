@@ -1,0 +1,36 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { PillButton } from "pill-button.slint";
+
+component DirectoryPath {
+    in property <string> label;
+    in property <string> value;
+    height: 45px;
+    Text { x: 0px; y: 0px; text: root.label; color: AppTheme.muted; font-size: 12px; }
+    Text {
+        y: 20px; width: parent.width; height: 20px;
+        text: AppState.logged-in ? root.value : (AppState.en ? "Sign in to manage your folders" : "登录后管理数据目录");
+        color: AppTheme.text; font-size: 13px; overflow: elide;
+    }
+}
+
+export component DirectorySettings inherits Rectangle {
+    height: 228px;
+    background: transparent;
+    Text { x: 0px; y: 12px; text: AppState.en ? "Data folders" : "数据目录"; color: AppTheme.text; font-size: 14px; }
+    migrate-all := PillButton {
+        x: parent.width - 112px; y: 4px; width: 104px;
+        text: AppState.en ? "Migrate files" : "一键迁移";
+        disabled: !AppState.logged-in || AppState.auth-busy || AppState.account-group-switching || AppState.directory-migration-open || AppState.update-active;
+        clicked => { AppState.pick-dir("all"); }
+    }
+    Text {
+        y: 44px; width: parent.width; height: 20px;
+        text: AppState.en ? "Move input, output and prompts together to the selected folder" : "将输入素材、输出和提示词一起迁移到所选位置";
+        color: AppTheme.muted; font-size: 12px; overflow: elide;
+    }
+    DirectoryPath { y: 76px; width: parent.width; label: AppState.en ? "Input" : "输入素材"; value: AppState.input-dir; }
+    DirectoryPath { y: 124px; width: parent.width; label: AppState.en ? "Output" : "输出作品"; value: AppState.output-dir; }
+    DirectoryPath { y: 172px; width: parent.width; label: AppState.en ? "Prompts" : "提示词模板"; value: AppState.prompt-dir; }
+    Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: AppTheme.border; }
+}

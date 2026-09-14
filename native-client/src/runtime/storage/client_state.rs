@@ -548,8 +548,9 @@ impl ClientStateWriter {
         let saved: Vec<AccountDirectoryMapping> = read_setting_json_or_default(&tx, namespace.user_public_id(), "account_directory_mappings_v1")?;
         ensure!(saved == proof.lease().namespace.mappings(), "mapping changed since preparation");
         write_setting_json(&tx, namespace.user_public_id(), "account_directory_mappings_v1", &namespace.mappings())?;
-        let mapping = namespace.mappings().last().ok_or_else(|| anyhow!("missing migration mapping"))?;
-        write_setting_json(&tx, namespace.user_public_id(), "account_directory_migration_attempt_v1", &serde_json::json!({ "version": 1, "phase": "committed", "mapping": mapping }))?;
+        let mappings = namespace.mappings().strip_prefix(saved.as_slice())
+            .filter(|mappings| !mappings.is_empty()).ok_or_else(|| anyhow!("missing migration mappings"))?;
+        write_setting_json(&tx, namespace.user_public_id(), "account_directory_migration_attempt_v1", &serde_json::json!({ "version": 2, "phase": "committed", "mappings": mappings }))?;
         tx.commit()?;
         Ok(())
     }

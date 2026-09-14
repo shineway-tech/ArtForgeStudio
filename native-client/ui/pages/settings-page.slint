@@ -3,7 +3,7 @@ import { AppState } from "../app-state.slint";
 import { CardStyleOption } from "../components/card-style-option.slint";
 import { CloseBehaviorOption } from "../components/close-behavior-option.slint";
 import { CustomPromptSettings } from "../components/custom-prompt-settings.slint";
-import { DirRow } from "../components/dir-row.slint";
+import { DirectorySettings } from "../components/directory-settings.slint";
 import { FontPicker } from "../components/font-picker.slint";
 import { FontStepButton } from "../components/font-step-button.slint";
 import { LoadingDots } from "../components/loading-dots.slint";
@@ -96,11 +96,17 @@ export component SettingsPage {
     }
 
     function page-height() -> length {
+        if AppState.settings-section == "contact" {
+            return 516px;
+        }
         if AppState.settings-section == "models" {
             return max(960px, 126px + root.models-height());
         }
         if AppState.settings-section == "basic" {
             return 1300px;
+        }
+        if AppState.settings-section == "about" {
+            return 366px + root.card-size + (root.recommendations-wrap ? root.card-size + 20px : 0px);
         }
         return 960px;
     }
@@ -115,15 +121,15 @@ export component SettingsPage {
             Rectangle {
                 property <length> left-w: 250px;
                 property <length> gap: 28px;
-                property <length> content-x: 24px + left-w + gap;
-                property <length> content-w: parent.width - content-x - 48px;
+                property <length> content-x: AppState.settings-section == "contact" ? 24px : 24px + left-w + gap;
+                property <length> content-w: parent.width - content-x - (AppState.settings-section == "contact" ? 24px : 48px);
                 x: 0px;
                 y: 0px;
                 width: parent.width;
                 height: max(root.page-height(), parent.height);
                 background: transparent;
 
-                Rectangle {
+                if AppState.settings-section != "contact": Rectangle {
                     x: 24px;
                     y: 30px;
                     width: left-w;
@@ -178,7 +184,7 @@ export component SettingsPage {
                         border-radius: 10px;
                         if AppState.settings-section == "about": Rectangle { x: 0px; y: 14px; width: 3px; height: 24px; border-radius: 2px; background: AppTheme.accent; }
                         Text { x: 18px; y: 10px; text: AppState.en ? "About" : "关于"; color: AppState.settings-section == "about" ? AppTheme.text : AppTheme.muted; font-size: 14px; font-weight: 400; }
-                        Text { x: 18px; y: 34px; text: AppState.en ? "Version and paths" : "版本与配置位置"; color: AppTheme.weak; font-size: 12px; font-weight: 400; }
+                        Text { x: 18px; y: 34px; text: AppState.en ? "Version information" : "版本信息"; color: AppTheme.weak; font-size: 12px; font-weight: 400; }
                         update-indicator := Rectangle {
                             visible: AppState.update-available;
                             x: parent.width - 24px;
@@ -189,18 +195,6 @@ export component SettingsPage {
                             background: AppTheme.danger;
                         }
                         TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.settings-section = "about"; } }
-                    }
-                    Rectangle {
-                        x: 16px;
-                        y: 414px;
-                        width: parent.width - 32px;
-                        height: 62px;
-                        background: AppState.settings-section == "contact" ? AppTheme.panel-soft : transparent;
-                        border-radius: 10px;
-                        if AppState.settings-section == "contact": Rectangle { x: 0px; y: 14px; width: 3px; height: 24px; border-radius: 2px; background: AppTheme.accent; }
-                        Text { x: 18px; y: 10px; text: AppState.en ? "Contact Us" : "联系我们"; color: AppState.settings-section == "contact" ? AppTheme.text : AppTheme.muted; font-size: 14px; font-weight: 400; }
-                        Text { x: 18px; y: 34px; text: AppState.en ? "Community and support" : "官方群与客服"; color: AppTheme.weak; font-size: 12px; font-weight: 400; }
-                        TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.settings-section = "contact"; } }
                     }
                 }
 
@@ -306,9 +300,7 @@ export component SettingsPage {
                         }
                     }
                 }
-                if AppState.settings-section == "basic": DirRow { x: content-x; y: 856px; width: content-w; label: AppState.en ? "Input folder" : "输入素材目录"; value: AppState.input-dir; kind: "input"; }
-                if AppState.settings-section == "basic": DirRow { x: content-x; y: 934px; width: content-w; label: AppState.en ? "Output folder" : "输出目录"; value: AppState.output-dir; kind: "output"; }
-                if AppState.settings-section == "basic": DirRow { x: content-x; y: 1012px; width: content-w; label: AppState.en ? "Prompt folder" : "提示词模板目录"; value: AppState.prompt-dir; kind: "prompt"; }
+                if AppState.settings-section == "basic": DirectorySettings { x: content-x; y: 856px; width: content-w; }
                 if AppState.settings-section == "basic": Rectangle {
                     x: content-x;
                     y: 1110px;
@@ -459,7 +451,7 @@ export component SettingsPage {
                     x: content-x;
                     y: 96px;
                     width: content-w;
-                    height: 270px;
+                    height: 156px;
                     background: AppTheme.panel;
                     border-radius: 14px;
                     border-width: 1px;
@@ -516,22 +508,10 @@ export component SettingsPage {
                         width: 28px;
                         height: 28px;
                     }
-                    Rectangle { x: 18px; y: 150px; width: parent.width - 36px; height: 1px; background: AppTheme.border; }
-                    Text { x: 18px; y: 176px; text: AppState.en ? "Config path (input assets)" : "配置位置（输入素材）"; color: AppTheme.text; font-size: 14px; font-weight: 400; }
-                    Text { x: 18px; y: 206px; width: parent.width - 160px; text: AppState.logged-in ? AppState.input-dir : (AppState.en ? "Sign in to manage this account’s folders" : "登录后管理当前账号目录"); color: AppTheme.muted; font-size: 13px; font-weight: 400; overflow: elide; }
-                    config-path-migrate := PillButton {
-                        x: parent.width - 122px;
-                        y: 182px;
-                        width: 104px;
-                        height: 36px;
-                        text: AppState.en ? "Migrate" : "一键迁移";
-                        disabled: !AppState.logged-in || AppState.auth-busy || AppState.account-group-switching || AppState.directory-migration-open || AppState.update-active;
-                        clicked => { AppState.pick-dir("input"); }
-                    }
                 }
                 if AppState.settings-section == "about": Text {
                     x: content-x;
-                    y: 404px;
+                    y: 290px;
                     text: AppState.en ? "You may also like" : "你可能喜欢";
                     color: AppTheme.text;
                     font-size: 20px;
@@ -539,7 +519,7 @@ export component SettingsPage {
                 }
                 if AppState.settings-section == "about": RecommendationCard {
                     x: content-x;
-                    y: 444px;
+                    y: 330px;
                     width: root.card-size;
                     height: root.card-size;
                     title: AppState.en ? "Audio Separation" : "声音分离";
@@ -549,7 +529,7 @@ export component SettingsPage {
                 }
                 if AppState.settings-section == "about": RecommendationCard {
                     x: content-x + root.card-size + 20px;
-                    y: 444px;
+                    y: 330px;
                     width: root.card-size;
                     height: root.card-size;
                     title: AppState.en ? "Beyond Words" : "言外之意";
@@ -559,7 +539,7 @@ export component SettingsPage {
                 }
                 if AppState.settings-section == "about": RecommendationCard {
                     x: root.recommendations-wrap ? content-x : content-x + 2 * (root.card-size + 20px);
-                    y: root.recommendations-wrap ? 444px + root.card-size + 20px : 444px;
+                    y: root.recommendations-wrap ? 330px + root.card-size + 20px : 330px;
                     width: root.card-size;
                     height: root.card-size;
                     title: AppState.en ? "Marketing Master" : "营销大师";

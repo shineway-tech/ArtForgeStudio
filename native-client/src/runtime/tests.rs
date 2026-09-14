@@ -7852,11 +7852,12 @@ mod tests {
     }
 
     #[test]
-    fn contact_details_are_available_on_first_launch_and_in_settings() {
+    fn contact_details_are_available_on_first_launch_and_from_sidebar() {
         let state = include_str!("../../ui/app-state.slint");
         let app = include_str!("../../ui/app.slint");
         let popup = include_str!("../../ui/dialogs/contact-popup.slint");
         let settings = include_str!("../../ui/pages/settings-page.slint");
+        let sidebar = include_str!("../../ui/components/sidebar.slint");
         let callbacks = include_str!("callbacks/contact.rs");
 
         assert!(state.contains("contact-popup-open: true"));
@@ -7870,7 +7871,8 @@ mod tests {
             assert!(popup.contains(detail));
             assert!(settings.contains(detail));
         }
-        assert!(settings.contains("AppState.settings-section = \"contact\""));
+        assert!(sidebar.contains("AppState.open-contact-settings()"));
+        assert!(!settings.contains("AppState.settings-section = \"contact\""));
         assert!(callbacks.contains("store_mut.contact_popup_dismissed = true"));
         assert!(callbacks.contains("state.set_settings_section(\"contact\".into())"));
         assert!(callbacks.contains("state.on_copy_contact_detail"));

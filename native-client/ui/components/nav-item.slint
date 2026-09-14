@@ -9,6 +9,8 @@ export component NavItem {
     in property <bool> show-dot: false;
     in property <bool> collapsed: false;
     in property <bool> active: AppState.page == root.page;
+    callback clicked();
+    clicked => { AppState.navigate(root.page); }
     width: root.collapsed ? 56px : 176px;
     height: 38px;
     animate width { duration: 160ms; }
@@ -49,6 +51,6 @@ export component NavItem {
             border-radius: 4px;
             background: AppTheme.danger;
         }
-        touch := TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.navigate(root.page); } }
+        touch := TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.clicked(); } }
     }
 }
