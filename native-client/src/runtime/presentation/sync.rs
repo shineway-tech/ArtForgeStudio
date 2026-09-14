@@ -638,6 +638,32 @@ mod core_owned_viewer_projection_tests {
         assert!(ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow().is_empty()),"success follows actual join");
     }
     #[test]
+    fn core_inspiration_preview_reads_bundled_image_and_rejects_foreign_path() {
+        let (f, app) = setup();
+        f.context.store.borrow_mut().inspiration = load_inspiration().unwrap();
+        for (category, expected) in [("all", 38), ("scene", 7), ("character", 9), ("ui", 20), ("effect", 2)] {
+            assert_eq!(gallery_filtered_indices(&f.context.store.borrow(), PreviewCollection::Inspiration, category).len(), expected);
+        }
+        let state = app.global::<AppState>();
+        state.set_page("inspiration".into());
+        let prepared = prepare_viewer_projection(&app, &f.context.store.borrow(), "inspiration-25", "inspiration").unwrap();
+        let effects = f.context.apply_user_completion(f.persistence.lease(), || prepared.publish_metadata(&app)).unwrap();
+        start_viewer_preview_effects(&app, f.context.clone(), f.persistence.clone(), effects);
+        pump(|| state.get_viewer_image().size().width > 0);
+        assert_eq!(state.get_viewer_image().size().width, 640);
+        assert_eq!(state.get_viewer_title(), "莲华灯");
+
+        let foreign = f.context.store.borrow().assets[0].source_path.clone();
+        f.context.store.borrow_mut().inspiration[24].source_path = foreign;
+        let prepared = prepare_viewer_projection(&app, &f.context.store.borrow(), "inspiration-25", "inspiration").unwrap();
+        let effects = f.context.apply_user_completion(f.persistence.lease(), || prepared.publish_metadata(&app)).unwrap();
+        start_viewer_preview_effects(&app, f.context.clone(), f.persistence.clone(), effects);
+        join_without_publishing(&f);
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(100));
+        assert_eq!(state.get_viewer_image().size().width, 0);
+    }
+
+    #[test]
     fn core_viewer_preview_closed_presentation_rejects_already_prepared_original_pixels() {
         let(f,app)=setup();let effects=publish(&f,&app);
         start_viewer_preview_effects(&app,f.context.clone(),f.persistence.clone(),effects);
@@ -810,12 +836,17 @@ pub(super) fn start_viewer_preview_effects(app:&AppWindow,context:AppContext,per
         || ACTIVATION_PREVIEW_CLOSING.with(Cell::get) || ACTIVATION_PREVIEW_FAILURE.with(Cell::get){return;}
     let Ok(activity)=persistence.begin_activity()else{return;};
     let captured=persistence.clone();let path=target.path.clone();
+    let inspiration_id = (target.source == "inspiration").then(|| target.id.clone());
     let cancel=Arc::new(std::sync::atomic::AtomicBool::new(false));let worker_cancel=cancel.clone();
     let(sender,receiver)=mpsc::channel();
     let worker=std::thread::Builder::new().name("owned-viewer-preview".into()).spawn(move||{
         if worker_cancel.load(Ordering::Acquire) || activity.is_quiescing()
             || VIEWER_PREVIEW_EPOCH.load(Ordering::Acquire)!=epoch{return;}
-        let result=prepare_owned_preview(&captured,Path::new(&path),PreviewPurpose::Viewer);
+        let result = if let Some(id) = inspiration_id {
+            prepare_inspiration_preview(&id, Path::new(&path))
+        } else {
+            prepare_owned_preview(&captured, Path::new(&path), PreviewPurpose::Viewer)
+        };
         if !worker_cancel.load(Ordering::Acquire) && !activity.is_quiescing()
             && VIEWER_PREVIEW_EPOCH.load(Ordering::Acquire)==epoch && captured.is_current() {
             let _=sender.send(result);
