@@ -2986,20 +2986,21 @@ mod tests {
         app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
         app.show().unwrap();
 
-        for (label, id, expected) in [
-            ("植物生成器", "plant-growth", "完整生命周期"),
-            ("角色换装", "character-outfit", "只改变服装"),
-            ("怪物生成器", "monster-generator", "怪物设计"),
-            ("升级进化", "upgrade-evolution", "连续升级进化阶段"),
-            ("角色年龄变化", "character-age", "婴儿到老年"),
-            ("角色体型修改器", "character-body", "体型"),
-            ("建筑衍生器", "building-derivation", "不同功能的新建筑"),
+        for (label, id, expected, hint) in [
+            ("植物生成器", "plant-growth", "完整生命周期", "上传植物图，见证从种子到成熟的全过程"),
+            ("角色换装", "character-outfit", "只改变服装", "上传角色图，尝试不同服装搭配，保持角色特征不变"),
+            ("怪物生成器", "monster-generator", "怪物设计", "上传参考图，把熟悉的物品变成独特怪物"),
+            ("升级进化", "upgrade-evolution", "连续升级进化阶段", "上传主体图，观察从基础形态到终极形态的完整进化"),
+            ("角色年龄变化", "character-age", "婴儿到老年", "上传角色图，查看从婴儿到老年的连续年龄变化"),
+            ("角色体型修改器", "character-body", "体型", "上传角色图，探索从纤细到魁梧的多种体型"),
+            ("建筑衍生器", "building-derivation", "不同功能的新建筑", "上传建筑图，自动衍生同风格建筑；可指定用途，例如：铁匠铺、酒馆、仓库"),
         ] {
             submitted.borrow_mut().clear();
             state.set_page("free-canvas".into());
             ElementHandle::find_by_accessible_label(&app, label).next().expect(label)
                 .mock_single_click(PointerEventButton::Left);
             assert_eq!(state.get_canvas_workflow_id(), id);
+            assert_eq!(state.get_canvas_workflow_hint(), hint);
             state.set_page("canvas".into());
             state.set_references(ModelRc::new(VecModel::from(Vec::<ReferenceItem>::new())));
             state.set_canvas_workflow_prompt("".into());
@@ -3177,6 +3178,17 @@ mod tests {
         assert!(canvas.contains("changed workspace-switch-request"));
         assert!(canvas.contains("workflow-template-action := Rectangle"));
         assert!(canvas.contains("workflow-bottom-controls := Rectangle"));
+        for hint in [
+            "上传植物图，见证从种子到成熟的全过程",
+            "上传角色图，尝试不同服装搭配，保持角色特征不变",
+            "上传参考图，把熟悉的物品变成独特怪物",
+            "上传主体图，观察从基础形态到终极形态的完整进化",
+            "上传角色图，查看从婴儿到老年的连续年龄变化",
+            "上传角色图，探索从纤细到魁梧的多种体型",
+        ] {
+            assert!(launcher.contains(hint) || canvas.contains(hint), "missing AI creation hint: {hint}");
+        }
+        assert!(canvas.contains("AppState.canvas-workflow-id != \"\""));
         assert!(!canvas.contains("AppState.en ? \"Video generation\" : \"视频生成\""));
         assert!(!canvas.contains("AppState.en ? \"3D generation\" : \"3D生成\""));
         assert!(!canvas.contains("text: \"@\""));

@@ -2675,8 +2675,8 @@ export component InfiniteCanvasPage {
                 ? "Using the reference plant and keyword, create exactly {count} consecutive growth stages of the same plant from germination through maturity, fruiting, and withering. Cover the complete life cycle and add evenly spaced intermediate changes for the selected count. Arrange all {count} stages in one horizontal image. Keep the species, camera, scale, background, and rendering style consistent, with complete silhouettes, even spacing, and a clear progression. By default, grow every stage directly in natural soil without a pot or container. Place each stage on its own separate mound of soil. The {count} mounds must not touch, with visible background gaps between every mound. Never form a continuous soil strip, shared ground, or connected soil. Only use a pot or container when the user explicitly requests one, and keep it consistent across every stage."
                 : "根据参考图中的植物和关键词，生成同一植物从种子萌发到成熟、结果与衰败的{count}个连续生长阶段。阶段需覆盖完整生命周期，并按所选数量均匀补充中间变化。将{count}个阶段安排在同一张横向画面中，保持植物品种、视角、比例、背景和绘制风格一致，各阶段轮廓完整、间距均匀、演变清晰。默认直接生长在自然土壤中，不使用花盆或其他容器。采用自然土壤时，每个阶段分别位于一块独立的小土堆上，{count}块土壤互不接触，土块之间必须保留清晰的背景空隙；禁止形成连续土带、共享地面或相互连接的土壤。只有当用户在描述中明确要求花盆、花器或容器时，才采用对应容器，并在所有阶段保持一致。";
             AppState.canvas-workflow-hint = AppState.en
-                ? "Describe the plant and style, e.g. tomato, educational illustration"
-                : "简单描述植物和风格，例如：西红柿，儿童科普插画";
+                ? "Upload a plant image and watch it grow from seed to maturity"
+                : "上传植物图，见证从种子到成熟的全过程";
         } else if workflow-id == "character-outfit" {
             AppState.asset-type = "character";
             AppState.canvas-workflow-title = AppState.en ? "Character Outfit Swap" : "角色换装";
@@ -2685,8 +2685,8 @@ export component InfiniteCanvasPage {
                 ? "Create exactly {count} outfit variations for the reference character. Preserve identity, face, hair, body shape, pose, camera, and rendering style; change only clothing, footwear, and accessories. Arrange all {count} full-body designs evenly in one clean horizontal character sheet."
                 : "根据参考角色生成{count}套不同服装造型。保持角色身份、面部、发型、体型、姿势、视角和绘制风格一致，只改变服装、鞋履和配饰。将{count}套完整造型均匀排列在同一张横向角色设定图中，背景干净。";
             AppState.canvas-workflow-hint = AppState.en
-                ? "Describe the character and outfit direction, e.g. swordswoman, formal and battle outfits"
-                : "简单描述角色和换装方向，例如：女剑士，礼服与战斗服";
+                ? "Upload a character and explore new outfits while keeping the identity"
+                : "上传角色图，尝试不同服装搭配，保持角色特征不变";
         } else if workflow-id == "monster-generator" {
             AppState.asset-type = "character";
             AppState.canvas-workflow-title = AppState.en ? "Monster Generator" : "怪物生成器";
@@ -2695,8 +2695,8 @@ export component InfiniteCanvasPage {
                 ? "Use the reference shape, material, and motif to create exactly {count} monster designs from the same world. Preserve recognizable visual DNA while varying body mass, silhouette, anatomy, and details. Arrange all {count} complete monsters evenly in one clean horizontal concept sheet with a consistent camera and art style."
                 : "以参考图中的造型、材质和主题为核心，生成{count}个同一世界观下的怪物设计。保留可识别的核心视觉基因，让体型、轮廓、肢体结构和细节产生明确变化。将{count}个完整怪物均匀排列在同一张横向设定图中，视角和画风统一，背景干净。";
             AppState.canvas-workflow-hint = AppState.en
-                ? "Describe the motif and mood, e.g. stone idol, massive but cute"
-                : "简单描述原型和气质，例如：石雕图腾，厚重但可爱";
+                ? "Upload a reference and turn a familiar object into a unique monster"
+                : "上传参考图，把熟悉的物品变成独特怪物";
         } else if workflow-id == "building-derivation" {
             AppState.asset-type = "scene";
             AppState.canvas-workflow-title = AppState.en ? "Building Derivation" : "建筑衍生器";
@@ -2711,8 +2711,8 @@ export component InfiniteCanvasPage {
                 ? "Using the uploaded reference image, create exactly {count} consecutive upgrade-evolution stages of the same subject, progressing from a low-level basic form to a top-tier ultimate form. Automatically identify the subject type first and apply the appropriate type-specific upgrade logic; never treat every subject as a simple small-to-large scale-up. For a human or humanoid character, keep age, height, build, body proportions, face, and identity stable; do not turn the character into a child, giant, or different person. Upgrade mainly through clothing tier, weapons, gear, armor, accessories, material quality, craftsmanship complexity, and energy effects. For a monster, mechanical creature, or other organism, size, body proportions, silhouette, and form may evolve gradually by tier, with added horns, wings, limbs, mechanical modules, carapace, crystals, armor, or energy structures, while preserving the same species or design lineage and core identity. For a building, do not keep its shape unchanged. Preserve its purpose, world, style, and core identity while progressively expanding its massing, footprint, silhouette, floor count, and structural layout. Every higher tier must add visible physical elements: higher tiers have more annexes, structural layers, and richer detail, such as wings, floors, towers, layered roofs, balconies, connecting galleries, porches, walls, courtyard facilities, or functional modules integrated into that same building. Adjacent tiers must have clear structural differences, and the final tier must be substantially more developed and complex than the first. Recoloring, glow, or particles alone do not count as an upgrade; simply scaling up the original building is also insufficient. Show the entire building and every extension without cropping, with ample empty space separating each tier so buildings never connect. For a standalone weapon, prop, vehicle, or plant, evolve its functional parts, structural tiers, material quality, ornamental complexity, and magical or technological energy systems. Keep the main colors, material style, and core recognizable features coherent across all stages. Buildings may inherit a signature design language without locking their shape or structure. Make every step even, clear, and traceable; never replace it with a different subject. Arrange all {count} complete forms evenly from lowest to highest on one solid-color background. Do not include any words, letters, numbers, numbering, labels, titles, captions, explanations, or watermarks."
                 : "根据上传的参考图，以图中主体为唯一核心，生成保持同一主体的{count}个连续升级进化阶段，从低级、基础形态逐步进化到顶级、终极形态。先自动识别参考图中的主体类型，并按类型采用不同的升级逻辑，不得把所有主体统一处理为从小到大。若主体是人类或类人角色，必须保持年龄、身高、体型、身体比例、面部和身份特征稳定，不得变成儿童、巨人或不同人物；主要通过服装等级、武器、装备、护甲、饰品、材质品质、工艺复杂度和能量效果逐级增强。若主体是怪物、机械生物或其他生物，允许随等级逐步改变体型、身体比例、轮廓和形态，并可增加角、翼、肢体、机械模块、甲壳、水晶、装甲或能量结构，但必须保持同一物种或设计谱系和核心识别特征。若主体是建筑，不得保持建筑形状不变；保持建筑用途、世界观、风格和核心识别特征连贯，但允许建筑体量、占地、轮廓、层数和结构布局逐级扩展。每升一级都必须增加可见的实体附加元素，等级越高，附属结构越多、结构层次和细节越丰富，例如依次增加侧翼、楼层、塔楼、多层屋顶、阳台、廊桥、门廊、围墙、庭院设施或功能模块，并让这些新增结构与同一座建筑合理整合。相邻等级必须有清晰的结构差异，最高级应显著比初级更完整、更复杂；不能仅靠换色、发光或粒子效果表示升级，也不能只是等比例放大原建筑。建筑整体及所有扩建部件必须完整入镜，各等级建筑之间保留足够留白，不得相互连接。若主体是武器、道具、载具或植物，则围绕其功能部件、结构层级、材质品质、装饰复杂度和魔法或科技能量系统逐级进化。所有阶段必须保持主色、基础材质风格和核心识别特征连贯，建筑的标志性设计语言可以继承，但不锁定其形状或结构，让每一步变化均匀、清晰且可追溯，不得突然变成不同主体。将{count}个完整形态按从低级到顶级的顺序均匀排列，使用单一纯色背景，不得出现任何文字、字母、数字、编号、标签、标题、说明或水印。";
             AppState.canvas-workflow-hint = AppState.en
-                ? "Upload the subject and optionally describe its upgrade direction"
-                : "上传主体图片，可补充升级方向，例如：石头巨兽，逐步增加水晶装甲与魔法能量";
+                ? "Upload a subject and follow its evolution from basic to ultimate form"
+                : "上传主体图，观察从基础形态到终极形态的完整进化";
         } else if workflow-id == "character-age" {
             AppState.asset-type = "character";
             AppState.canvas-workflow-title = AppState.en ? "Character Age Progression" : "角色年龄变化";
@@ -2721,8 +2721,8 @@ export component InfiniteCanvasPage {
                 ? CharacterAgePreset.prompt-en
                 : CharacterAgePreset.prompt-zh;
             AppState.canvas-workflow-hint = AppState.en
-                ? "Describe the character cue, e.g. blue-robed mage, keep the blue magic"
-                : "简单描述角色特征，例如：蓝袍法师，始终保留蓝色魔法";
+                ? "Upload a character and see the full age progression from baby to elder"
+                : "上传角色图，查看从婴儿到老年的连续年龄变化";
         } else if workflow-id == "character-body" {
             AppState.asset-type = "character";
             AppState.canvas-workflow-title = AppState.en ? "Character Body Variations" : "角色体型修改器";
@@ -2731,8 +2731,8 @@ export component InfiniteCanvasPage {
                 ? "Create exactly {count} clearly different body-shape variations of the reference character in a deliberate progression. Preserve identity, face, hair, outfit theme, weapon, and art style; change only height, shoulder width, muscle mass, body-fat distribution, and silhouette. Arrange all {count} full characters evenly in one horizontal character sheet."
                 : "根据参考角色生成{count}种明显不同且变化有序的体型。保持角色身份、面部、发型、服装主题、武器和绘制风格一致，只改变身高、肩宽、肌肉量、脂肪比例和身体轮廓。将{count}个完整角色均匀排列在同一张横向设定图中。";
             AppState.canvas-workflow-hint = AppState.en
-                ? "Describe the character cue, e.g. green orc warrior, lean to massive"
-                : "简单描述角色特征，例如：绿色兽人战士，从瘦小到魁梧";
+                ? "Upload a character and explore body shapes from lean to powerful"
+                : "上传角色图，探索从纤细到魁梧的多种体型";
         }
     }
 
@@ -3585,11 +3585,9 @@ export component InfiniteCanvasPage {
                         y: 0px;
                         width: parent.width - self.x;
                         height: 24px;
-                        text: AppState.canvas-workflow-id == "building-derivation"
+                        text: AppState.canvas-workflow-id != ""
                             ? AppState.canvas-workflow-hint
-                            : (AppState.canvas-workflow-id != ""
-                                ? ""
-                                : (AppState.en ? "Image editing, enter a prompt" : "图片编辑，请输入提示词"));
+                            : (AppState.en ? "Image editing, enter a prompt" : "图片编辑，请输入提示词");
                         color: #9895a1;
                         font-size: 13px;
                         font-weight: 400;
