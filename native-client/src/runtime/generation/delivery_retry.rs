@@ -41,7 +41,17 @@ impl VerifiedDeliveryIndexContent<'_> {
             && self.record.auth_epoch == self.scope.auth_epoch,
             "delivery reconciliation namespace changed");
         let current = load_exact_delivery_record(self.authority, &self.record.identity())?;
-        ensure_delivery!(serde_json::to_value(&current)? == serde_json::to_value(self.record)?,
+        // Other images may finish while this image is downloading. Retain the
+        // current item's full evidence while ignoring only sibling progress.
+        let item_snapshot = |record: &PendingGenerationRecord| -> Result<serde_json::Value> {
+            let mut record = record.clone();
+            record.deliveries.retain(|delivery| delivery.item_index == self.confirmation.item_index
+                || delivery.file_id == self.confirmation.file_id);
+            record.terminal = false;
+            record.expected_success_count = 0;
+            Ok(serde_json::to_value(record)?)
+        };
+        ensure_delivery!(item_snapshot(&current)? == item_snapshot(self.record)?,
             "delivery reconciliation retained record changed");
         ensure_delivery!(self.record.client_request_id == self.confirmation.client_request_id
             && self.record.server_task_id == self.confirmation.task_id

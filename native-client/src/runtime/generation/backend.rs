@@ -3552,7 +3552,7 @@ fn resume_pending_generation(
     let saved_count = record
         .deliveries
         .iter()
-        .filter(|item| !item.local_path.is_empty() && Path::new(&item.local_path).is_file())
+        .filter(|item| item.acknowledged && !item.abandoned)
         .count() as i32;
     let is_canvas_generation = !record.canvas_source_node_id.is_empty();
     insert_active_generation(
@@ -3953,6 +3953,11 @@ fn run_generation_record_checked(
         }
         return Ok(());
     }
+    // Check the original identity before Accepted can update the retained row.
+    if !record.server_task_id.is_empty() && record.server_task_id != detail.id {
+        return Err(anyhow!("recovered delivery task identity mismatch").into());
+    }
+    require_saved_group(&record.billing_account_group_id, &detail.billing_account_group_id)?;
     record.server_task_id = detail.id.clone();
     let server_task_id = detail.id.clone();
     let uploaded_snapshot = uploaded.clone();
@@ -3979,10 +3984,24 @@ fn run_generation_record_checked(
         task_id: server_task_id.clone(),
     });
 
-    // A retained local path is not a Store-commit receipt. Every item, including
-    // an already downloaded file or an acknowledgement retry, uses the same
-    // retained prepare / Store commit / acknowledgement handoff below.
-    let mut handled_success = BTreeSet::new();
+    // A local path alone still needs the complete commit/acknowledgment path.
+    // Only an exact acknowledged result is already settled; its remote file
+    // may have been deleted as a normal consequence of that acknowledgment.
+    let mut handled_success: BTreeSet<usize> = record.deliveries.iter()
+        .filter(|delivery| delivery.acknowledged && !delivery.abandoned)
+        .filter(|delivery| record.deliveries.iter().filter(|other|
+            other.item_index == delivery.item_index || other.file_id == delivery.file_id).count() == 1)
+        .filter_map(|delivery| {
+            let mut items = detail.items.iter().filter(|item| item.index == delivery.item_index);
+            let item = items.next()?;
+            if items.next().is_some() || item.status != "succeeded" || item.index >= record.count.max(0) as usize {
+                return None;
+            }
+            let file = item.file.as_ref()?;
+            (file.id == delivery.file_id && file.sha256 == delivery.sha256
+                && file.size_bytes == delivery.size_bytes.to_string())
+                .then_some(item.index)
+        }).collect();
     let mut handled_failure = BTreeSet::new();
 
     loop {
@@ -5095,6 +5114,161 @@ pub(in crate::runtime) mod billing_capture_test_support {
 mod billing_capture_tests {
     use super::billing_capture_test_support::*;
     use super::*;
+
+    fn multi_image_recovery_outcomes(change: Option<&str>) -> (Vec<usize>, usize, Vec<String>, bool) {
+        use std::io::Write;
+        let (listener, url) = listener();
+        let f = fixture(&url);
+        let index = FileIndex::initialize(f.root.path().join("delivery-index.sqlite3")).unwrap();
+        let authority = Arc::new(NamespaceStorageAuthority::open_active(
+            f.context.data_root_capability.as_ref().unwrap().clone(), f.authority.lease(),
+            f.backend.api.clone(), index).unwrap());
+        let mut record = generation_record(&f.scope, "image_generation");
+        record.server_task_id = OTHER.into();
+        record.count = 2;
+        record.uploaded_file_ids.clear();
+        record.terminal = true;
+        record.expected_success_count = 2;
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgba8(1, 1).write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+        let png = bytes.into_inner();
+        let hash = format!("{:x}", Sha256::digest(&png));
+        let size = png.len() as u64;
+        let mut saved = PendingDeliveryRecord {
+            item_index: 0, file_id: OWNER.into(), sha256: hash.clone(), size_bytes: size,
+            local_path: "fixture/already-saved.png".into(), acknowledged: true,
+            ..Default::default()
+        };
+        match change {
+            Some("unacknowledged") => saved.acknowledged = false,
+            Some("abandoned") => saved.abandoned = true,
+            Some("file") => saved.file_id = PAYER.into(),
+            Some("index") => saved.item_index = 1,
+            Some("hash") => saved.sha256 = "0".repeat(64),
+            Some("size") => saved.size_bytes += 1,
+            Some("task" | "payer" | "duplicate" | "collision") => {},
+            None => {},
+            _ => unreachable!(),
+        }
+        record.deliveries = vec![saved.clone()];
+        if matches!(change, Some("duplicate" | "collision")) {
+            if change == Some("collision") { saved.file_id = OTHER.into(); }
+            record.deliveries.push(saved);
+        }
+        let original = serde_json::to_value(&record).unwrap();
+        upsert_pending_generation_for_namespace(&authority, &f.scope, record.clone()).unwrap();
+        let output = |index, id, status| serde_json::json!({
+            "index":index,"status":"succeeded","credit_cost":"1","failure":null,
+            "file":{"id":id,"status":status,"mime_type":"image/png",
+                "size_bytes":size.to_string(),"sha256":hash,"width":1,"height":1,
+                "download_url":format!("{url}blob")}
+        });
+        let mut items = vec![output(0, OWNER, "deleted")];
+        // Negative cases isolate the acknowledged image so another item's
+        // failure cannot hide an incorrectly skipped identity mismatch.
+        if change.is_none() { items.push(output(1, PAYER, "available")); }
+        let mut detail = serde_json::json!({
+            "id":OTHER,"billing_account_group_id":PAYER,"status":"completed",
+            "progress_percent":100,"success_count":items.len(),"failure_count":0,
+            "failure":null,"prompt":null,"result_prompt":null,"request":{},"model":null,
+            "quality":"2K","requested_count":2,"type":"image_generation","items":items
+        });
+        if change == Some("task") { detail["id"] = OWNER.into(); }
+        if change == Some("payer") { detail["billing_account_group_id"] = OWNER.into(); }
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopped = stop.clone();
+        let transport = std::thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let mut requests = Vec::new();
+            while !stopped.load(Ordering::SeqCst) && Instant::now() < deadline {
+                let mut stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(2)); continue;
+                    },
+                    Err(error) => panic!("fixture accept failed: {error}"),
+                };
+                let request = String::from_utf8(read_request_bytes(&mut stream)).unwrap();
+                let body = if request.starts_with("GET /blob ") { png.clone() } else {
+                    serde_json::to_vec(&serde_json::json!({"request_id":"fixture","data":detail,"error":null,"meta":null})).unwrap()
+                };
+                stream.set_write_timeout(Some(Duration::from_secs(3))).unwrap();
+                write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).unwrap();
+                stream.write_all(&body).unwrap();
+                requests.push(request);
+            }
+            requests
+        });
+        let (sender, receiver) = mpsc::channel();
+        let backend = f.backend.clone();
+        let scope = f.scope.request.session.clone();
+        let worker = std::thread::spawn(move || run_generation_record_checked(
+            backend, authority, None, scope, record, sender,
+            Arc::new(Mutex::new(BTreeSet::new())), None));
+        let result = worker.join().unwrap();
+        stop.store(true, Ordering::SeqCst);
+        let requests = transport.join().unwrap();
+        if matches!(change, Some("task" | "payer")) {
+            let retained = load_pending_generations_for_namespace(&f.authority).unwrap();
+            assert_eq!(retained.len(), 1);
+            assert_eq!(serde_json::to_value(&retained[0]).unwrap(), original,
+                "a foreign task or payer response cannot rewrite the retained identity");
+        } else {
+            assert!(result.is_ok(), "fixture worker error: {:?}", result.as_ref().err());
+        }
+        let mut worker_failed = result.is_err();
+        let mut successes = Vec::new();
+        let mut failures = 0;
+        for outcome in receiver.try_iter() {
+            match outcome {
+                GenerationOutcome::NamespaceImageSuccess { prepared, .. } => successes.push(prepared.confirmation().item_index),
+                GenerationOutcome::ImageFailure { reason, .. } => {
+                    eprintln!("fixture image failure: {reason}");
+                    failures += 1;
+                },
+                // The API rejects a foreign payer before returning task detail;
+                // this existing error path reports failure through the channel.
+                GenerationOutcome::Failure { .. } if change == Some("payer") => worker_failed = true,
+                GenerationOutcome::Failure { reason, .. } => panic!("unexpected task failure: {reason}"),
+                _ => {},
+            }
+        }
+        (successes, failures, requests, worker_failed)
+    }
+
+    #[test]
+    fn multi_image_recovery_skips_acknowledged_image_and_delivers_missing_item() {
+        let (successes, failures, requests, worker_failed) = multi_image_recovery_outcomes(None);
+        assert!(!worker_failed);
+        assert_eq!(successes, vec![1], "only the missing image should be delivered again");
+        assert_eq!(failures, 0, "an acknowledged image must not create another failed card");
+        assert!(!requests.iter().any(|request| request.starts_with("POST ")));
+        assert_eq!(requests.iter().filter(|request| request.starts_with("GET /blob ")).count(), 1);
+    }
+
+    #[test]
+    fn multi_image_recovery_never_skips_unacknowledged_or_mismatched_delivery() {
+        for change in ["unacknowledged", "abandoned", "file", "index", "hash", "size", "duplicate", "collision"] {
+            let (successes, failures, requests, worker_failed) = multi_image_recovery_outcomes(Some(change));
+            assert!(!worker_failed, "{change}");
+            assert!(successes.is_empty(), "{change}");
+            assert_eq!(failures, 1, "{change} cannot authorize skipping a server result");
+            assert!(!requests.iter().any(|request| request.starts_with("POST ")));
+        }
+    }
+
+    #[test]
+    fn multi_image_recovery_rejects_foreign_task_or_payer_before_updating_identity() {
+        for change in ["task", "payer"] {
+            let (successes, failures, requests, worker_failed) = multi_image_recovery_outcomes(Some(change));
+            assert!(worker_failed, "{change}");
+            assert!(successes.is_empty(), "{change}");
+            assert_eq!(failures, 0, "{change}");
+            assert_eq!(requests.len(), 1, "{change}: reject after the original task GET");
+            assert!(requests[0].starts_with(&format!("GET /v1/generation/tasks/{OTHER} ")));
+        }
+    }
 
     #[test]
     fn forced_upgrade_retains_actual_generation_recovery_and_immutable_payer() {

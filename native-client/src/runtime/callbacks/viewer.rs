@@ -278,6 +278,8 @@ fn poll_captured_image_editor(
             if !source.is_current(&app, &context, &persistence) { return; }
             points.clear(); *last_point.borrow_mut() = None;
             let state = app.global::<AppState>();
+            // Account retirement replaces the displayed model; reconnect the cleared stroke model.
+            state.set_image_editor_points(points.clone().into());
             state.set_image_editor_image(image); state.set_image_editor_source_path(source.path().to_string_lossy().into_owned().into());
             state.set_image_editor_source_width(dimensions.0 as i32); state.set_image_editor_source_height(dimensions.1 as i32);
             state.set_image_editor_brush_size(28.0); state.set_image_editor_brush_shape("circle".into());
@@ -3439,6 +3441,35 @@ mod actual_viewer_callback_tests {
         state.set_viewer_title(item.title.clone().into()); state.set_viewer_category(item.category.clone().into());
         state.set_viewer_width(32); state.set_viewer_height(20); state.set_viewer_remove_black_done(false);
         item
+    }
+
+    #[test]
+    fn image_editor_brush_stays_visible_after_private_projection_reset() {
+        let (fixture, app) = setup();
+        let state = app.global::<AppState>();
+        for session in 0..2 {
+            clear_retired_private_projection(&state);
+            owned_viewer(&fixture, &app, &format!("brush-reset-{session}"));
+            state.invoke_viewer_open_image_editor();
+            video_image_callbacks::tests::scoped_inputs::pump(|| state.get_page() == "image-editor");
+            assert_eq!(state.get_image_editor_points().row_count(), 0);
+
+            let color = slint::Color::from_rgb_u8(255, 77, 79);
+            state.invoke_begin_image_editor_stroke(0.25, 0.5, 0.1, 1.6, "circle".into(), color);
+            assert_eq!(state.get_image_editor_points().row_count(), 1,
+                "the first brush mark must reach the model displayed on the image");
+            state.invoke_continue_image_editor_stroke(0.75, 0.5, 0.1, 1.6, "circle".into(), color);
+            state.invoke_end_image_editor_stroke();
+            let visible = state.get_image_editor_points();
+            assert!(visible.row_count() > 2, "dragging must display a continuous stroke");
+            let points: Vec<_> = visible.iter().collect();
+            let mask = rasterize_image_edit_mask(&points, 32, 20).unwrap();
+            assert_eq!(mask.get_pixel(16, 10).0[3], 0);
+            assert_eq!(mask.get_pixel(0, 0).0[3], 255);
+
+            state.invoke_close_image_editor();
+            assert_eq!(state.get_image_editor_points().row_count(), 0);
+        }
     }
 
     #[test]
