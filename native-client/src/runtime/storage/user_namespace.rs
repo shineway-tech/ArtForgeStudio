@@ -1688,14 +1688,19 @@ impl UserNamespace {
     pub(crate) fn mappings(&self) -> &[AccountDirectoryMapping] { &self.mappings }
     pub(crate) fn with_mapping(mut self, mapping: AccountDirectoryMapping) -> Result<Self> {
         let area = ManagedUserArea::from_storage_name(&mapping.area)?;
-        ensure!(matches!(mapping.version, 1 | 2) && matches!(area, ManagedUserArea::Input | ManagedUserArea::Output | ManagedUserArea::Prompt), "invalid account directory mapping");
+        ensure!(matches!(mapping.version, 1 | 2 | 3) && matches!(area, ManagedUserArea::Input | ManagedUserArea::Output | ManagedUserArea::Prompt), "invalid account directory mapping");
         ensure!(mapping.target.is_absolute() && mapping.source == self.path(area), "mapping source does not match namespace");
         let (suffix, depth) = if mapping.version == 1 {
             ensure!(mapping.material_owner.is_none(), "unexpected material ownership binding");
             (PathBuf::from("ElunviCanvas").join("accounts").join(self.user_public_id()).join(area.relative_path()), 4)
-        } else {
+        } else if mapping.material_owner.is_some() {
+            // Local v2 records already used owned, readable folders. New records
+            // use v3 so released v2 direct-category records remain unambiguous.
             ensure!(mapping.material_owner.as_ref().is_some_and(|binding| binding.owner_user_id == self.user_public_id()), "material directory ownership changed");
             (PathBuf::from(MATERIAL_DIRECTORY_NAME).join(material_folder_name(area)?), 2)
+        } else {
+            ensure!(mapping.version == 2, "readable material mapping requires ownership");
+            (PathBuf::from(area.relative_path()), 1)
         };
         reject_reserved_account_path(mapping.target.ancestors().nth(depth).ok_or_else(|| anyhow::anyhow!("mapping target is too shallow"))?)?;
         ensure!(mapping.target.ends_with(suffix) && !mapping.target.starts_with(self.root.parent().unwrap()), "mapping target has invalid account ownership");
@@ -1711,7 +1716,7 @@ impl UserNamespace {
         // that was migrated away from to remain connected forever.
         for mapping in &self.mappings {
             let area = ManagedUserArea::from_storage_name(&mapping.area)?;
-            if mapping.version == 2 && self.path(area) == mapping.target {
+            if mapping.material_owner.is_some() && self.path(area) == mapping.target {
                 let parent = mapping.target.parent().ok_or_else(|| anyhow::anyhow!("material root missing"))?;
                 ensure!(mapping.material_owner.as_ref() == Some(&material_directory_owner(parent, self.user_public_id())?), "material directory ownership changed");
             }
@@ -5578,7 +5583,7 @@ mod account_directory_mapping_regressions {
         let area = target.join("输入素材");
         std::fs::create_dir(&area).unwrap();
         let namespace = UserNamespace::new(private.path(), OWNER).unwrap();
-        let mut record = mapping(&namespace, area.clone(), NamespaceFs::directory_identity_at(&area).unwrap());
+        let mut record = readable_mapping(&namespace, area.clone(), NamespaceFs::directory_identity_at(&area).unwrap());
         record.version = 2;
         record.material_owner = Some(material_directory_owner(&target, OWNER).unwrap());
         let restored: AccountDirectoryMapping = serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
@@ -5603,7 +5608,7 @@ mod account_directory_mapping_regressions {
             let target = prepare_material_directory(&root, chosen.path(), OWNER).unwrap();
             let area = target.join("输入素材");
             std::fs::create_dir(&area).unwrap();
-            let mut record = mapping(&namespace, area.clone(), NamespaceFs::directory_identity_at(&area).unwrap());
+            let mut record = readable_mapping(&namespace, area.clone(), NamespaceFs::directory_identity_at(&area).unwrap());
             record.version = 2;
             record.material_owner = Some(material_directory_owner(&target, OWNER).unwrap());
             namespace = namespace.with_mapping(record.clone()).unwrap();
@@ -5615,11 +5620,41 @@ mod account_directory_mapping_regressions {
         assert_eq!(restored.path(ManagedUserArea::Input), second.path().join("Elunvi Canvas/输入素材"));
     }
 
-    fn mapping(namespace: &UserNamespace, target: PathBuf, identity: StableFileIdentity) -> AccountDirectoryMapping {
+    fn readable_mapping(namespace: &UserNamespace, target: PathBuf, identity: StableFileIdentity) -> AccountDirectoryMapping {
         AccountDirectoryMapping {
             version: 1, area: "input".into(), source: namespace.path(ManagedUserArea::Input), target,
             identity, source_identity: identity, manifest_json: "[]".into(), pending_rebind: Vec::new(), material_owner: None,
         }
+    }
+
+    fn mapping(
+        namespace: &UserNamespace,
+        version: u32,
+        area: ManagedUserArea,
+        target: PathBuf,
+        identity: StableFileIdentity,
+    ) -> AccountDirectoryMapping {
+        AccountDirectoryMapping {
+            version,
+            area: area.storage_name().into(),
+            source: namespace.path(area),
+            target,
+            identity,
+            source_identity: identity,
+            manifest_json: "[]".into(),
+            pending_rebind: Vec::new(),
+            material_owner: None,
+        }
+    }
+
+    fn existing_mapping(
+        namespace: &UserNamespace,
+        version: u32,
+        area: ManagedUserArea,
+        target: PathBuf,
+    ) -> AccountDirectoryMapping {
+        let identity = NamespaceFs::directory_identity_at(&target).unwrap();
+        mapping(namespace, version, area, target, identity)
     }
 
     #[test]
@@ -5628,13 +5663,204 @@ mod account_directory_mapping_regressions {
         let external = tempfile::tempdir().unwrap();
         let namespace = UserNamespace::new(root.path(), OWNER).unwrap();
         let identity = NamespaceFs::directory_identity_at(external.path()).unwrap();
-        let foreign = external.path().join("ElunviCanvas/accounts").join(OTHER).join("input");
-        assert!(namespace.clone().with_mapping(mapping(&namespace, foreign, identity)).is_err());
-        let target = external.path().join("ElunviCanvas/accounts").join(OWNER).join("input");
-        let relocated = namespace.clone().with_mapping(mapping(&namespace, target.clone(), identity)).unwrap();
+        let foreign = external
+            .path()
+            .join("ElunviCanvas/accounts")
+            .join(OTHER)
+            .join("input");
+        assert!(namespace
+            .clone()
+            .with_mapping(mapping(
+                &namespace,
+                1,
+                ManagedUserArea::Input,
+                foreign,
+                identity,
+            ))
+            .is_err());
+        let target = external
+            .path()
+            .join("ElunviCanvas/accounts")
+            .join(OWNER)
+            .join("input");
+        let relocated = namespace
+            .clone()
+            .with_mapping(mapping(
+                &namespace,
+                1,
+                ManagedUserArea::Input,
+                target.clone(),
+                identity,
+            ))
+            .unwrap();
         assert_eq!(relocated.path(ManagedUserArea::Input), target);
         assert_eq!(relocated.output_dir(), namespace.output_dir());
-        assert_eq!(UserNamespace::new(root.path(), OTHER).unwrap().path(ManagedUserArea::Input), root.path().join("accounts").join(OTHER).join("input"));
+        assert_eq!(
+            UserNamespace::new(root.path(), OTHER)
+                .unwrap()
+                .path(ManagedUserArea::Input),
+            root.path().join("accounts").join(OTHER).join("input")
+        );
+    }
+
+    #[test]
+    fn version_two_maps_all_three_direct_category_children_only() {
+        let root = tempfile::tempdir().unwrap();
+        let chosen = tempfile::tempdir().unwrap();
+        let mut namespace = UserNamespace::new(root.path(), OWNER).unwrap();
+        let canvas = namespace.canvas_dir();
+        let references = namespace.reference_dir();
+        let recovery = namespace.recovery_dir();
+
+        for (area, leaf) in [
+            (ManagedUserArea::Input, "input"),
+            (ManagedUserArea::Output, "out"),
+            (ManagedUserArea::Prompt, "prompt"),
+        ] {
+            let target = chosen.path().join(leaf);
+            std::fs::create_dir(&target).unwrap();
+            let next = existing_mapping(&namespace, 2, area, target.clone());
+            namespace = namespace.with_mapping(next).unwrap();
+            assert_eq!(namespace.path(area), target);
+        }
+
+        assert_eq!(namespace.canvas_dir(), canvas);
+        assert_eq!(namespace.reference_dir(), references);
+        assert_eq!(namespace.recovery_dir(), recovery);
+        let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
+        let filesystem = NamespaceFs::for_namespace(&data_root, &namespace).unwrap();
+        let directories = filesystem.ensure_managed_dirs().unwrap();
+        for area in [
+            ManagedUserArea::Input,
+            ManagedUserArea::Output,
+            ManagedUserArea::Prompt,
+        ] {
+            filesystem.open_managed_dir(&directories, area).unwrap();
+        }
+    }
+
+    #[test]
+    fn historical_version_one_mappings_upgrade_to_version_two_and_reload() {
+        let root = tempfile::tempdir().unwrap();
+        let old_chosen = tempfile::tempdir().unwrap();
+        let new_chosen = tempfile::tempdir().unwrap();
+        let mut namespace = UserNamespace::new(root.path(), OWNER).unwrap();
+
+        for (area, leaf) in [
+            (ManagedUserArea::Input, "input"),
+            (ManagedUserArea::Output, "out"),
+            (ManagedUserArea::Prompt, "prompt"),
+        ] {
+            let target = old_chosen
+                .path()
+                .join("ElunviCanvas/accounts")
+                .join(OWNER)
+                .join(leaf);
+            std::fs::create_dir_all(&target).unwrap();
+            let next = existing_mapping(&namespace, 1, area, target);
+            namespace = namespace.with_mapping(next).unwrap();
+        }
+        for (area, leaf) in [
+            (ManagedUserArea::Input, "input"),
+            (ManagedUserArea::Output, "out"),
+            (ManagedUserArea::Prompt, "prompt"),
+        ] {
+            let target = new_chosen.path().join(leaf);
+            std::fs::create_dir(&target).unwrap();
+            let next = existing_mapping(&namespace, 2, area, target.clone());
+            namespace = namespace.with_mapping(next).unwrap();
+            assert_eq!(namespace.path(area), target);
+        }
+
+        let encoded = serde_json::to_string(namespace.mappings()).unwrap();
+        let decoded: Vec<AccountDirectoryMapping> = serde_json::from_str(&encoded).unwrap();
+        let reloaded = decoded
+            .into_iter()
+            .try_fold(UserNamespace::new(root.path(), OWNER).unwrap(), |current, mapping| {
+                current.with_mapping(mapping)
+            })
+            .unwrap();
+        assert_eq!(reloaded, namespace);
+    }
+
+    #[test]
+    fn version_two_rejects_the_same_directory_as_its_source() {
+        let root = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let namespace = UserNamespace::new(root.path(), OWNER).unwrap();
+        let identity = NamespaceFs::directory_identity_at(external.path()).unwrap();
+
+        let same = namespace.path(ManagedUserArea::Input);
+        assert!(namespace
+            .clone()
+            .with_mapping(mapping(&namespace, 2, ManagedUserArea::Input, same, identity))
+            .is_err());
+    }
+
+    #[test]
+    fn version_two_rejects_a_target_inside_a_historical_source() {
+        let root = tempfile::tempdir().unwrap();
+        let first_chosen = tempfile::tempdir().unwrap();
+        let second_chosen = tempfile::tempdir().unwrap();
+        let mut namespace = UserNamespace::new(root.path(), OWNER).unwrap();
+        let first = first_chosen.path().join("input");
+        let second = second_chosen.path().join("input");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        let next = existing_mapping(&namespace, 2, ManagedUserArea::Input, first.clone());
+        namespace = namespace.with_mapping(next).unwrap();
+        let next = existing_mapping(&namespace, 2, ManagedUserArea::Input, second);
+        namespace = namespace.with_mapping(next).unwrap();
+
+        let historical_child = first.join("input");
+        assert!(namespace
+            .clone()
+            .with_mapping(mapping(
+                &namespace,
+                2,
+                ManagedUserArea::Input,
+                historical_child,
+                NamespaceFs::directory_identity_at(first_chosen.path()).unwrap(),
+            ))
+            .is_err());
+    }
+
+    #[test]
+    fn mapping_versions_keep_their_layout_and_path_validation() {
+        let root = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let namespace = UserNamespace::new(root.path(), OWNER).unwrap();
+        let identity = NamespaceFs::directory_identity_at(external.path()).unwrap();
+
+        let reserved = external
+            .path()
+            .join("ElunviCanvas/accounts")
+            .join(OWNER)
+            .join("input");
+        assert!(namespace
+            .clone()
+            .with_mapping(mapping(&namespace, 2, ManagedUserArea::Input, reserved, identity))
+            .is_err());
+        let unclean = external.path().join("chosen/../input");
+        assert!(namespace
+            .clone()
+            .with_mapping(mapping(&namespace, 2, ManagedUserArea::Input, unclean, identity))
+            .is_err());
+        let direct = external.path().join("input");
+        assert!(namespace
+            .clone()
+            .with_mapping(mapping(&namespace, 1, ManagedUserArea::Input, direct, identity))
+            .is_err());
+        assert!(namespace
+            .clone()
+            .with_mapping(mapping(
+                &namespace,
+                3,
+                ManagedUserArea::Input,
+                external.path().join("input"),
+                identity,
+            ))
+            .is_err());
     }
 
     #[test]
@@ -5644,9 +5870,29 @@ mod account_directory_mapping_regressions {
         let namespace = UserNamespace::new(root.path(), OWNER).unwrap();
         let target = external.path().join("ElunviCanvas/accounts").join(OWNER).join("input");
         let identity = NamespaceFs::directory_identity_at(external.path()).unwrap();
-        let namespace = namespace.clone().with_mapping(mapping(&namespace, target.clone(), identity)).unwrap();
+        let namespace = namespace.clone().with_mapping(mapping(&namespace, 1, ManagedUserArea::Input, target.clone(), identity)).unwrap();
         let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
         assert!(NamespaceFs::for_namespace(&data_root, &namespace).and_then(|fs| fs.ensure_managed_dirs()).is_err());
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn missing_version_two_mapped_directory_is_never_recreated() {
+        let root = tempfile::tempdir().unwrap();
+        let chosen = tempfile::tempdir().unwrap();
+        let namespace = UserNamespace::new(root.path(), OWNER).unwrap();
+        let target = chosen.path().join("input");
+        std::fs::create_dir(&target).unwrap();
+        let identity = NamespaceFs::directory_identity_at(&target).unwrap();
+        std::fs::remove_dir(&target).unwrap();
+        let namespace = namespace
+            .clone()
+            .with_mapping(mapping(&namespace, 2, ManagedUserArea::Input, target.clone(), identity))
+            .unwrap();
+        let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
+        assert!(NamespaceFs::for_namespace(&data_root, &namespace)
+            .and_then(|fs| fs.ensure_managed_dirs())
+            .is_err());
         assert!(!target.exists());
     }
 
@@ -5659,12 +5905,32 @@ mod account_directory_mapping_regressions {
         let target = external.path().join("ElunviCanvas/accounts").join(OWNER).join("input");
         std::fs::create_dir_all(&target).unwrap();
         let identity = NamespaceFs::directory_identity_at(&target).unwrap();
-        let namespace = namespace.clone().with_mapping(mapping(&namespace, target.clone(), identity)).unwrap();
+        let namespace = namespace.clone().with_mapping(mapping(&namespace, 1, ManagedUserArea::Input, target.clone(), identity)).unwrap();
         let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
         let fs = NamespaceFs::for_namespace(&data_root, &namespace).unwrap();
         let directories = fs.ensure_managed_dirs().unwrap();
         std::fs::rename(&target, target.with_extension("retained")).unwrap();
         std::fs::create_dir(&target).unwrap();
         assert!(fs.open_managed_dir(&directories, ManagedUserArea::Input).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaced_version_two_mapped_directory_revokes_retained_capability() {
+        let root = tempfile::tempdir().unwrap();
+        let chosen = tempfile::tempdir().unwrap();
+        let namespace = UserNamespace::new(root.path(), OWNER).unwrap();
+        let target = chosen.path().join("input");
+        std::fs::create_dir(&target).unwrap();
+        let next = existing_mapping(&namespace, 2, ManagedUserArea::Input, target.clone());
+        let namespace = namespace.with_mapping(next).unwrap();
+        let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
+        let fs = NamespaceFs::for_namespace(&data_root, &namespace).unwrap();
+        let directories = fs.ensure_managed_dirs().unwrap();
+        std::fs::rename(&target, target.with_extension("retained")).unwrap();
+        std::fs::create_dir(&target).unwrap();
+        assert!(fs
+            .open_managed_dir(&directories, ManagedUserArea::Input)
+            .is_err());
     }
 }

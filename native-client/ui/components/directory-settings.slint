@@ -1,0 +1,21 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { PillButton } from "pill-button.slint";
+
+export component DirectorySettings inherits Rectangle {
+    height: 78px;
+    background: transparent;
+    Text { x: 0px; y: 12px; text: AppState.en ? "Material storage folder" : "素材存储目录"; color: AppTheme.text; font-size: 14px; }
+    migrate-all := PillButton {
+        x: parent.width - 112px; y: 20px; width: 104px;
+        text: AppState.en ? "Migrate files" : "一键迁移";
+        disabled: !AppState.logged-in || AppState.auth-busy || AppState.account-group-switching || AppState.directory-migration-open || AppState.update-active;
+        clicked => { AppState.pick-dir("all"); }
+    }
+    Text {
+        y: 40px; width: parent.width - 128px; height: 20px;
+        text: !AppState.logged-in ? (AppState.en ? "Sign in to manage your folders" : "登录后管理当前账号目录") : AppState.material-dir != "" ? AppState.material-dir : (AppState.en ? "Multiple locations — migrate to consolidate" : "分散存储，点击一键迁移统一目录");
+        color: AppTheme.muted; font-size: 13px; overflow: elide;
+    }
+    Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: AppTheme.border; }
+}

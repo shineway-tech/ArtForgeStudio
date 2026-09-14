@@ -1047,6 +1047,17 @@ impl AccountDirectoryMigrationWorker {
     }
 }
 impl AccountDirectoryMigrationSession {
+    pub(super) fn prepare_all(&mut self, plans: &[(ManagedUserArea, crate::directory_migration::MigrationPlan)]) -> Result<()> {
+        ensure!(self.prepared_mappings.is_empty() && self.committed.is_none(), "migration already prepared");
+        let areas = [ManagedUserArea::Input, ManagedUserArea::Output, ManagedUserArea::Prompt];
+        ensure!(plans.len() == areas.len() && plans.iter().zip(areas).all(|((area, _), expected)| *area == expected), "migration must include all three directories");
+        for (area, plan) in plans {
+            ensure!(crate::directory_migration::checked_directory(&self.lease.namespace.path(*area))? == plan.source, "migration source changed");
+            self.prepare(*area, &plan.destination, &plan.manifest())?;
+        }
+        Ok(())
+    }
+
     pub(super) fn prepare(&mut self, area: ManagedUserArea, target: &Path, manifest: &[crate::directory_migration::MigrationManifestEntry]) -> Result<()> {
         // Reserve all selected areas in the same retirement session. No active
         // location changes until commit publishes the complete mapping vector.
@@ -1056,12 +1067,13 @@ impl AccountDirectoryMigrationSession {
         let legacy_suffix = PathBuf::from("ElunviCanvas").join("accounts").join(self.lease.namespace.user_public_id()).join(
             if area == ManagedUserArea::Output { "out" } else { area.storage_name() });
         let legacy = target.ends_with(&legacy_suffix);
-        let material_owner = if legacy { None } else {
+        let readable = target.file_name().is_some_and(|name| material_folder_name(area).is_ok_and(|expected| name == expected));
+        let material_owner = if !readable { None } else {
             Some(material_directory_owner(target.parent().ok_or_else(|| anyhow!("material root missing"))?, self.lease.namespace.user_public_id())?)
         };
-        let chosen = target.ancestors().nth(if legacy { 4 } else { 2 }).ok_or_else(|| anyhow!("invalid migration target"))?;
+        let chosen = target.ancestors().nth(if legacy { 4 } else if readable { 2 } else { 1 }).ok_or_else(|| anyhow!("invalid migration target"))?;
         let _external_boundary = ExternalExportDestination::open(self.core.root.as_ref(), chosen)?;
-        let mapping = AccountDirectoryMapping { version: if legacy { 1 } else { 2 }, area: area.storage_name().into(), source: self.lease.namespace.path(area), target: target.to_owned(), identity: NamespaceFs::directory_identity_at(target)?, source_identity: NamespaceFs::directory_identity_at(&self.lease.namespace.path(area))?, manifest_json: serde_json::to_string(manifest)?, pending_rebind: Vec::new(), material_owner };
+        let mapping = AccountDirectoryMapping { version: if legacy { 1 } else if readable { 3 } else { 2 }, area: area.storage_name().into(), source: self.lease.namespace.path(area), target: target.to_owned(), identity: NamespaceFs::directory_identity_at(target)?, source_identity: NamespaceFs::directory_identity_at(&self.lease.namespace.path(area))?, manifest_json: serde_json::to_string(manifest)?, pending_rebind: Vec::new(), material_owner };
         let mut mappings = self.prepared_mappings.clone();
         mappings.push(mapping);
         let namespace = mappings.iter().try_fold(self.lease.namespace.clone(), |namespace, mapping| namespace.with_mapping(mapping.clone()))?;
@@ -1073,6 +1085,13 @@ impl AccountDirectoryMigrationSession {
         self.pinned = Some((source, destination));
         self.prepared_mappings = mappings;
         Ok(())
+    }
+    pub(super) fn commit_all(&mut self) -> Result<()> {
+        ensure!(self.prepared_mappings.len() == 3, "migration copy was not prepared");
+        let last = self.prepared_mappings.last().unwrap();
+        let area = ManagedUserArea::from_storage_name(&last.area)?;
+        let target = last.target.clone();
+        self.commit(area, &target)
     }
     pub(super) fn commit(&mut self, area: ManagedUserArea, target: &Path) -> Result<()> {
         ensure!(self.committed.is_none(), "迁移已经提交");
@@ -2388,6 +2407,99 @@ fn select_finance_fixture_group(context: &AppContext, session: &SessionScope, pa
         });
         (fixture, core, scope, lease)
     }
+    fn unified_migration_plans(lease: &NamespaceLease, destination: &Path) -> Vec<(ManagedUserArea, crate::directory_migration::MigrationPlan)> {
+        [(ManagedUserArea::Input, "input"), (ManagedUserArea::Output, "out"), (ManagedUserArea::Prompt, "prompt")]
+            .into_iter().map(|(area, name)| {
+                let target = destination.join(name);
+                fs::create_dir(&target).unwrap();
+                (area, crate::directory_migration::MigrationPlan::prepare(&lease.namespace.path(area), &target, &[]).unwrap())
+            }).collect()
+    }
+
+    #[test]
+    fn unified_migration_commits_all_mappings_and_replays_index_after_restart() {
+        assert_unified_migration_replay(false);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unified_migration_rebinds_remounted_device_and_replays_after_restart() {
+        assert_unified_migration_replay(true);
+    }
+
+    fn assert_unified_migration_replay(remounted_device: bool) {
+        use super::user_namespace::StableFileIdentity;
+        let (_fixture, core, _, lease) = active_transition_fixture(false);
+        let destination = tempfile::tempdir().unwrap();
+        let authority = NamespaceStorageAuthority::open_active(core.root.clone(), &lease, core.backend.api.clone(), core.index.clone()).unwrap();
+        for area in [ManagedUserArea::Input, ManagedUserArea::Output, ManagedUserArea::Prompt] {
+            fs::write(lease.namespace.path(area).join("sample.txt"), area.storage_name()).unwrap();
+        }
+        let key = ManagedFileKey::new(ManagedUserArea::Output, "sample.txt").unwrap();
+        let file = authority.open_existing_regular(&key).unwrap();
+        let registration = file_index::NamespacedManagedFileRegistration::new(&authority, file, "image", "user").unwrap();
+        let original_record = core.index.register_file_for_namespace(&authority, &registration).unwrap();
+        // Registration is finished. Migration runs after readers retire; retaining
+        // this fixture's DELETE-capable file handle would conflict on Windows.
+        drop(registration);
+        let mut indexed_identity = original_record.physical_identity;
+        if remounted_device {
+            let StableFileIdentity::Unix { device, inode } = indexed_identity else { panic!("expected Unix fixture"); };
+            indexed_identity = StableFileIdentity::Unix { device: device + 1, inode };
+            let connection = rusqlite::Connection::open(core.index.database_path()).unwrap();
+            connection.execute("UPDATE managed_files SET physical_identity=?1 WHERE id=?2", rusqlite::params![indexed_identity.to_storage_bytes(), original_record.id.0]).unwrap();
+        }
+        let plans = unified_migration_plans(&lease, destination.path());
+        let worker = AccountDirectoryMigrationWorker { core: core.clone() };
+        let mut session = worker.begin(&lease).unwrap();
+        session.prepare_all(&plans).unwrap();
+        let files: Vec<_> = plans.iter().map(|(_, plan)| plan.clone()).collect();
+        crate::directory_migration::copy_batch_retaining_source(&files, || session.commit_all().map_err(std::io::Error::other), |_, _| Ok(())).unwrap();
+        let loaded = core.writer.load_account_directory_namespace(&core.root_path, lease.namespace.user_public_id()).unwrap();
+        assert_eq!(loaded.mappings().len(), 3);
+        assert!(loaded.mappings().iter().all(|mapping| mapping.version == 2));
+        let output_mapping = loaded.mappings().iter().find(|mapping| mapping.area == "output").unwrap();
+        assert_eq!(output_mapping.pending_rebind[0].before, indexed_identity);
+        for (area, name) in [(ManagedUserArea::Input, "input"), (ManagedUserArea::Output, "out"), (ManagedUserArea::Prompt, "prompt")] {
+            assert_eq!(loaded.path(area), fs::canonicalize(destination.path().join(name)).unwrap());
+            assert!(lease.namespace.path(area).join("sample.txt").exists());
+        }
+        // Simulate process loss after the SQLite commit, before index publication.
+        drop(session);
+        assert!(core.active_namespace.lock().unwrap().is_none());
+        let restored_lease = NamespaceLease { namespace: loaded, namespace_epoch: 2, ..lease.clone() };
+        let restored = NamespaceStorageAuthority::open_prepublication(core.root.clone(), &restored_lease).unwrap();
+        core.index.replay_directory_rebind(&restored).unwrap();
+        core.index.replay_directory_rebind(&restored).unwrap();
+        let complete = core.writer.complete_directory_rebind(&restored_lease.namespace).unwrap();
+        assert!(complete.mappings().iter().all(|mapping| mapping.pending_rebind.is_empty()));
+        let file = restored.open_existing_regular(&key).unwrap();
+        let metadata = restored.inspect_regular(&file).unwrap();
+        assert_ne!(metadata.identity, original_record.physical_identity);
+        let record = core.index.find_file_by_path_for_namespace(&restored, ManagedUserArea::Output, "sample.txt").unwrap().unwrap();
+        assert_eq!(record.physical_identity, metadata.identity);
+    }
+
+    #[test]
+    fn unified_migration_failed_commit_keeps_all_original_locations() {
+        let (_fixture, core, _, lease) = active_transition_fixture(false);
+        let destination = tempfile::tempdir().unwrap();
+        let plans = unified_migration_plans(&lease, destination.path());
+        let worker = AccountDirectoryMigrationWorker { core: core.clone() };
+        let mut session = worker.begin(&lease).unwrap();
+        session.prepare_all(&plans).unwrap();
+        let connection = rusqlite::Connection::open(core.root_path.join("fixture.sqlite3")).unwrap();
+        connection.execute_batch("CREATE TRIGGER refuse_mapping_insert BEFORE INSERT ON user_settings WHEN NEW.key = 'account_directory_mappings_v1' BEGIN SELECT RAISE(ABORT, 'fixture mapping failure'); END;").unwrap();
+        let files: Vec<_> = plans.iter().map(|(_, plan)| plan.clone()).collect();
+        assert!(crate::directory_migration::copy_batch_retaining_source(&files, || session.commit_all().map_err(std::io::Error::other), |_, _| Ok(())).is_err());
+        drop(session);
+        let loaded = core.writer.load_account_directory_namespace(&core.root_path, lease.namespace.user_public_id()).unwrap();
+        assert_eq!(loaded, lease.namespace);
+        assert_eq!(core.active_namespace.lock().unwrap().as_ref(), Some(&lease));
+        assert!(core.activity.begin_recovery_unit(&lease).is_ok());
+        assert!(core.writer.take_account_directory_migration_notice(lease.namespace.user_public_id()).unwrap().is_some());
+    }
+
     #[test]
     fn core_actual_coordinator_retired_ack_cancellation_clears_exact_credentials_and_records_debt() {
         for fail in [false, true] {

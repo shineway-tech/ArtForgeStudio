@@ -548,8 +548,9 @@ impl ClientStateWriter {
         let saved: Vec<AccountDirectoryMapping> = read_setting_json_or_default(&tx, namespace.user_public_id(), "account_directory_mappings_v1")?;
         ensure!(saved == proof.lease().namespace.mappings(), "mapping changed since preparation");
         write_setting_json(&tx, namespace.user_public_id(), "account_directory_mappings_v1", &namespace.mappings())?;
-        let mapping = namespace.mappings().last().ok_or_else(|| anyhow!("missing migration mapping"))?;
-        write_setting_json(&tx, namespace.user_public_id(), "account_directory_migration_attempt_v1", &serde_json::json!({ "version": 1, "phase": "committed", "mapping": mapping }))?;
+        let mappings = namespace.mappings().strip_prefix(saved.as_slice())
+            .filter(|mappings| !mappings.is_empty()).ok_or_else(|| anyhow!("missing migration mappings"))?;
+        write_setting_json(&tx, namespace.user_public_id(), "account_directory_migration_attempt_v1", &serde_json::json!({ "version": 2, "phase": "committed", "mappings": mappings }))?;
         tx.commit()?;
         Ok(())
     }
@@ -3201,6 +3202,79 @@ fn core_cutout_atomic_settle_rejects_extra_out_of_count_delivery_after_real_remo
         }
     }
 
+    #[test]
+    fn multi_image_delivery_reconciliation_allows_sibling_acknowledgment() {
+        let (listener, url) = backend_generation::billing_capture_test_support::listener();
+        let f = DeliveryFixture::new_with_canvas_count(&url, "", 2);
+        let mut detail = delivery_detail();
+        detail["requested_count"] = 2.into();
+        detail["success_count"] = 2.into();
+        let mut sibling = detail["items"][0].clone();
+        sibling["index"] = 1.into();
+        sibling["file"]["id"] = USER_B.into();
+        detail["items"].as_array_mut().unwrap().push(sibling);
+        let server = DeliveryServer::start(listener, &url, &f, detail, DELIVERY_PNG.to_vec(), true);
+        let result = run_owned_worker(|| {
+            let authority = f.authority.clone();
+            let identity = f.record.identity();
+            file_index::FileIndex::delivery_reconcile_after_discovery_for_test(move || {
+                let sibling = DeliveryConfirmation {
+                    client_request_id: "delivery-request".into(), item_index: 1,
+                    task_id: DELIVERY_TASK.into(), file_id: USER_B.into(),
+                    sha256: "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460".into(),
+                    size_bytes: 68, failed_asset_id: None,
+                };
+                assert!(pending_delivery_saved_for_namespace(&authority, &identity, &sibling, "fixture/sibling.png").unwrap());
+                assert!(apply_generation_patch_for_namespace(&authority, &identity,
+                    GenerationRecoveryPatch::Terminal { expected_success_count: 2 }).unwrap());
+                assert!(pending_delivery_acknowledged_for_namespace(&authority, &identity, USER_B).unwrap());
+            });
+            prepare_namespace_delivery(&f.api, f.authority.clone(), f.index.clone(), &f.record.identity(), 0)
+        });
+        let requests = server.finish();
+        let prepared = result.unwrap_or_else(|error| panic!("a sibling acknowledgment must not invalidate this image: {error}"));
+        assert_eq!(prepared.confirmation().item_index, 0);
+        assert_eq!(std::fs::read(f.output()).unwrap(), DELIVERY_PNG);
+        assert_eq!(delivery_index_rows(&f, DELIVERY_INDEX_ROWS).len(), 1);
+        let records = load_pending_generations_for_namespace(&f.authority).unwrap();
+        assert_eq!(records[0].deliveries.len(), 1);
+        assert!(records[0].deliveries[0].acknowledged);
+        assert!(!requests.iter().any(|request| request.0.starts_with("POST ")));
+    }
+    #[test]
+    fn multi_image_delivery_reconciliation_rejects_current_item_and_task_changes() {
+        for change in ["current-item", "current-item-path", "prompt", "payer"] {
+            let (listener, url) = backend_generation::billing_capture_test_support::listener();
+            let f = DeliveryFixture::new(&url);
+            let server = DeliveryServer::start(listener, &url, &f, delivery_detail(), DELIVERY_PNG.to_vec(), true);
+            let result = run_owned_worker(|| {
+                let authority = f.authority.clone();
+                let identity = f.record.identity();
+                file_index::FileIndex::delivery_reconcile_after_discovery_for_test(move || {
+                    if change.starts_with("current-item") {
+                        let replacement = DeliveryConfirmation {
+                            client_request_id: "delivery-request".into(), item_index: 0,
+                            task_id: DELIVERY_TASK.into(), file_id: if change == "current-item-path" { DELIVERY_FILE } else { USER_B }.into(),
+                            sha256: "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460".into(),
+                            size_bytes: 68, failed_asset_id: None,
+                        };
+                        assert!(pending_delivery_saved_for_namespace(&authority, &identity, &replacement, "fixture/replacement.png").unwrap());
+                    } else {
+                        let file = authority.lease().namespace.path(ManagedUserArea::Recovery).join("pending-generations.json");
+                        let mut document: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+                        if change == "prompt" { document["generations"][0]["raw_prompt"] = "changed fixture prompt".into(); }
+                        else { document["generations"][0]["billing_account_group_id"] = GROUP_B.into(); }
+                        std::fs::write(&file, serde_json::to_vec(&document).unwrap()).unwrap();
+                    }
+                });
+                prepare_namespace_delivery(&f.api, f.authority.clone(), f.index.clone(), &f.record.identity(), 0)
+            });
+            let requests = server.finish();
+            assert!(result.is_err(), "{change} must invalidate the prepared image");
+            assert!(delivery_index_rows(&f, DELIVERY_INDEX_ROWS).is_empty());
+            assert!(!requests.iter().any(|request| request.0.starts_with("POST ")));
+        }
+    }
     #[test]
     fn core_delivery_index_interrupted_publication_reconciles_original_content_without_losing_links() {
         let (listener,url)=backend_generation::billing_capture_test_support::listener();

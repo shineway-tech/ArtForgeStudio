@@ -1,5 +1,5 @@
 use super::*;
-use crate::directory_migration::MigrationPlan;
+use crate::directory_migration::{copy_batch_retaining_source, MigrationPlan};
 
 struct PendingAccountMigration {
     lease: NamespaceLease,
@@ -33,7 +33,7 @@ pub(super) fn wire_directory_migration_callbacks(app: &AppWindow, context: AppCo
         state.on_pick_dir(move |kind| {
             let Some(app) = weak.upgrade() else { return; };
             if app.global::<AppState>().get_directory_migration_open() { return; }
-            if !matches!(kind.as_str(), "materials" | "input" | "output" | "prompt") {
+            if !matches!(kind.as_str(), "all" | "materials" | "input" | "output" | "prompt") {
                 show_migration_error(&app, "未知目录类型。"); return;
             }
             let lease = match current_migration_lease(&context) {
@@ -71,7 +71,7 @@ pub(super) fn wire_directory_migration_callbacks(app: &AppWindow, context: AppCo
             state.set_directory_migration_source(source_display.into());
             state.set_directory_migration_target(display_directory_path(&target).into());
             state.set_directory_migration_stage("checking".into());
-            state.set_directory_migration_message("正在检查当前账号目录和同名文件…".into());
+            state.set_directory_migration_message("正在检查输入素材、输出和提示词目录…".into());
             state.set_directory_migration_open(true);
             let (sender, receiver) = mpsc::channel();
             std::thread::spawn(move || {
@@ -117,38 +117,33 @@ pub(super) fn wire_directory_migration_callbacks(app: &AppWindow, context: AppCo
 fn prepare_account_material_migration(data_root: &DataRootCapability, chosen: &Path, namespace: &UserNamespace, protected: &[PathBuf]) -> Result<Vec<(ManagedUserArea, MigrationPlan)>> {
     let target = prepare_material_directory(data_root, chosen, namespace.user_public_id())?;
     let owner = material_directory_owner(&target, namespace.user_public_id())?;
-    let plans = MATERIAL_AREAS.into_iter().map(|area| {
-        prepare_account_migration(chosen, &target.join(material_folder_name(area)?), &namespace.path(area), protected).map(|plan| (area, plan))
-    }).collect::<Result<Vec<_>>>()?;
-    anyhow::ensure!(material_directory_owner(&target, namespace.user_public_id())? == owner, "素材目录归属发生变化，请重新选择位置");
-    Ok(plans)
-}
-
-fn prepare_account_migration(chosen: &Path, target: &Path, source: &Path, protected: &[PathBuf]) -> Result<MigrationPlan> {
-    use crate::directory_migration::checked_directory;
-    let relative = target.strip_prefix(chosen)?.to_path_buf();
-    let chosen = checked_directory(chosen)?;
-    // Only create fixed account-owned suffix components; reject links at each level.
-    let mut directory = chosen.clone();
-    for component in relative.components() {
-        let std::path::Component::Normal(name) = component else { anyhow::bail!("目标目录无效"); };
-        directory.push(name);
-        if protected.iter().any(|root| directory.starts_with(root) || root.starts_with(&directory)) {
+    // The selected parent may be a drive root; only inspect/create children inside
+    // the application-owned folder, never treat the drive itself as a material area.
+    let target = crate::directory_migration::checked_directory(&target)?;
+    for area in MATERIAL_AREAS {
+        let directory = target.join(material_folder_name(area)?);
+        if protected.iter().any(|root| crate::directory_migration::overlaps(&directory, root)) {
             anyhow::bail!("目标目录与现有账号数据重叠，请选择独立文件夹。");
         }
+    }
+    let mut plans = Vec::new();
+    for area in MATERIAL_AREAS {
+        let directory = target.join(material_folder_name(area)?);
         match fs::create_dir(&directory) {
             Ok(()) => {},
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {},
             Err(error) => return Err(error.into()),
         }
-        checked_directory(&directory)?;
+        crate::directory_migration::checked_directory(&directory)?;
         #[cfg(unix)]
         {
             fs::File::open(&directory)?.sync_all()?;
-            fs::File::open(directory.parent().ok_or_else(|| anyhow::anyhow!("目标目录无父目录"))?)?.sync_all()?;
+            fs::File::open(&target)?.sync_all()?;
         }
+        plans.push((area, MigrationPlan::prepare(&namespace.path(area), &directory, protected)?));
     }
-    Ok(MigrationPlan::prepare(source, &directory, protected)?)
+    anyhow::ensure!(material_directory_owner(&target, namespace.user_public_id())? == owner, "素材目录归属发生变化，请重新选择位置");
+    Ok(plans)
 }
 
 fn poll_migration_plan(weak: Weak<AppWindow>, context: AppContext,
@@ -164,7 +159,7 @@ fn poll_migration_plan(weak: Weak<AppWindow>, context: AppContext,
                 let state = app.global::<AppState>();
                 let files: usize = prepared.plans.iter().map(|(_, plan)| plan.files).sum();
                 let bytes: u64 = prepared.plans.iter().map(|(_, plan)| plan.bytes).sum();
-                state.set_directory_migration_message(format!("统一迁移当前账号的输入素材、生成图片和提示词模板，共 {files} 个文件（{}）。\n全部复制并校验成功后保存新位置，重启后从新目录读取素材。原文件保留，不覆盖目标中的同名文件。", format_storage_bytes(bytes)).into());
+                state.set_directory_migration_message(format!("统一迁移当前账号的输入素材、生成图片和提示词模板，共 {files} 个文件（{}）。\n全部复制并校验成功后保存新位置，重启后从新目录读取素材。原文件保留。同名文件将覆盖，文件夹合并；确认后开始迁移。", format_storage_bytes(bytes)).into());
                 state.set_directory_migration_stage("confirm".into());
                 *pending.borrow_mut() = Some(prepared);
             }
@@ -191,20 +186,17 @@ fn start_directory_migration(app: &AppWindow, context: AppContext, prepared: Pen
         let outcome = match worker.begin(&prepared.lease) {
             Err(error) => AccountMigrationOutcome::Failed(error.to_string()),
             Ok(mut session) => {
-                let copied = (|| -> Result<()> {
-                    for (area, plan) in &prepared.plans {
-                        session.prepare(*area, &plan.destination, &plan.manifest())?;
-                    }
-                    let (last_area, last_plan) = prepared.plans.last().ok_or_else(|| anyhow!("迁移目录为空"))?;
-                    let plans: Vec<_> = prepared.plans.iter().map(|(_, plan)| plan.clone()).collect();
-                    crate::directory_migration::copy_retaining_sources(&plans,
-                        || session.commit(*last_area, &last_plan.destination).map_err(std::io::Error::other),
-                        |done, total| worker_progress.store(if total == 0 { 0 } else {
+                let plans: Vec<_> = prepared.plans.iter().map(|(_, plan)| plan.clone()).collect();
+                let copied = session.prepare_all(&prepared.plans)
+                    .map_err(std::io::Error::other).and_then(|()| copy_batch_retaining_source(&plans,
+                    || session.commit_all().map_err(std::io::Error::other),
+                    |done, total| {
+                        worker_progress.store(if total == 0 { 0 } else {
                             (done as f64 / total as f64 * 95.0) as u64
-                        }, Ordering::Relaxed),
-                    )?;
-                    Ok(())
-                })();
+                        }, Ordering::Relaxed);
+                        Ok(())
+                    },
+                ));
                 match copied {
                     Err(error) => AccountMigrationOutcome::Failed(error.to_string()),
                     Ok(()) => match session.finish() {
@@ -512,10 +504,10 @@ mod tests {
         state.on_pick_dir(move |kind| captured.borrow_mut().push(kind.to_string()));
         app.window().set_size(slint::LogicalSize::new(1440.0, 1500.0));
         app.show().unwrap();
-        let buttons: Vec<_> = ElementHandle::find_by_element_id(&app, "DirRow::migrate-button").collect();
+        let buttons: Vec<_> = ElementHandle::find_by_element_id(&app, "DirectorySettings::migrate-all").collect();
         assert_eq!(buttons.len(), 1, "the three folders share one migration entry");
         buttons[0].mock_single_click(PointerEventButton::Left);
-        assert_eq!(observed.borrow().as_slice(), &["materials"]);
+        assert_eq!(observed.borrow().as_slice(), &["all"]);
         if let Some(directory) = std::env::var_os("ELUNVI_TEST_ARTIFACT_DIR") {
             let directory = PathBuf::from(directory);
             fs::create_dir_all(&directory).unwrap();
@@ -560,7 +552,7 @@ mod tests {
             image::save_buffer(directory.join("about-config-migration.png"), pixels.as_bytes(), pixels.width(), pixels.height(), image::ColorType::Rgba8).unwrap();
         }
         button.mock_single_click(PointerEventButton::Left);
-        assert_eq!(observed.borrow().as_slice(), &["materials"]);
+        assert_eq!(observed.borrow().as_slice(), &["all"]);
         assert_eq!(state.get_material_dir(), r"E:\我的素材\ElunviCanvas\accounts\fixture");
         state.set_directory_migration_open(true);
         button.mock_single_click(PointerEventButton::Left);
@@ -650,5 +642,35 @@ mod tests {
                 text: slint::platform::Key::Escape.into(),
             });
         assert!(!state.get_directory_migration_open());
+    }
+    #[test]
+    fn unified_directory_migration_plans_existing_scattered_sources() {
+        let root = tempfile::tempdir().unwrap();
+        let previous = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let mut namespace = UserNamespace::new(root.path(), "11111111-1111-4111-8111-111111111111").unwrap();
+        for area in MATERIAL_AREAS { fs::create_dir_all(namespace.path(area)).unwrap(); }
+        let old_prompt = namespace.path(ManagedUserArea::Prompt);
+        let moved_prompt = previous.path().join("ElunviCanvas/accounts").join(namespace.user_public_id()).join("prompt");
+        fs::create_dir_all(&moved_prompt).unwrap();
+        namespace = namespace.with_mapping(AccountDirectoryMapping {
+            version: 1, area: "prompt".into(), source: old_prompt.clone(), target: moved_prompt.clone(),
+            identity: NamespaceFs::directory_identity_at(&moved_prompt).unwrap(),
+            source_identity: NamespaceFs::directory_identity_at(&old_prompt).unwrap(),
+            manifest_json: "[]".into(), pending_rebind: Vec::new(), material_owner: None,
+        }).unwrap();
+        for area in MATERIAL_AREAS { fs::write(namespace.path(area).join("sample.txt"), material_folder_name(area).unwrap()).unwrap(); }
+        let protected: Vec<_> = MATERIAL_AREAS.iter().map(|area| namespace.path(*area)).collect();
+        let data_root = NamespaceFs::open_data_root(root.path()).unwrap();
+        let prepared = prepare_account_material_migration(&data_root, target.path(), &namespace, &protected).unwrap();
+        assert_eq!(prepared[2].1.source, fs::canonicalize(moved_prompt).unwrap());
+        let plans: Vec<_> = prepared.into_iter().map(|(_, plan)| plan).collect();
+        copy_batch_retaining_source(&plans, || Ok(()), |_, _| Ok(())).unwrap();
+        for area in MATERIAL_AREAS {
+            assert_eq!(fs::read(target.path().join(MATERIAL_DIRECTORY_NAME).join(material_folder_name(area).unwrap()).join("sample.txt")).unwrap(), material_folder_name(area).unwrap().as_bytes());
+            assert!(namespace.path(area).join("sample.txt").exists());
+        }
+        assert!(!target.path().join("ElunviCanvas").exists());
+        assert!(target.path().join(MATERIAL_DIRECTORY_NAME).is_dir());
     }
 }
