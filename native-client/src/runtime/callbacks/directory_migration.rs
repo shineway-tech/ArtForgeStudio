@@ -57,8 +57,7 @@ pub(super) fn wire_directory_migration_callbacks(app: &AppWindow, context: AppCo
             if !migration_lease_is_current(&context, &lease) {
                 show_migration_error(&app, "账号已变化，请重新选择迁移目录。"); return;
             }
-            let target = chosen.join("ElunviCanvas").join("accounts")
-                .join(lease.namespace.user_public_id());
+            let target = chosen.join(MATERIAL_DIRECTORY_NAME);
             let protected = vec![app_data_dir(), lease.namespace.root().to_path_buf(),
                 lease.namespace.path(ManagedUserArea::Input), lease.namespace.path(ManagedUserArea::Output),
                 lease.namespace.path(ManagedUserArea::Prompt)];
@@ -77,8 +76,7 @@ pub(super) fn wire_directory_migration_callbacks(app: &AppWindow, context: AppCo
             let (sender, receiver) = mpsc::channel();
             std::thread::spawn(move || {
                 let _planning_permit = planning_permit;
-                let result = ExternalExportDestination::open(&data_root, &chosen)
-                    .and_then(|_chosen_capability| prepare_account_material_migration(&chosen, &target, &lease.namespace, &protected))
+                let result = prepare_account_material_migration(&data_root, &chosen, &lease.namespace, &protected)
                     .map(|plans| PendingAccountMigration { lease, plans });
                 let _ = sender.send(result.map_err(|error| error.to_string()));
             });
@@ -116,11 +114,14 @@ pub(super) fn wire_directory_migration_callbacks(app: &AppWindow, context: AppCo
     }
 }
 
-fn prepare_account_material_migration(chosen: &Path, target: &Path, namespace: &UserNamespace, protected: &[PathBuf]) -> Result<Vec<(ManagedUserArea, MigrationPlan)>> {
-    MATERIAL_AREAS.into_iter().map(|area| {
-        let name = if area == ManagedUserArea::Output { "out" } else { area.storage_name() };
-        prepare_account_migration(chosen, &target.join(name), &namespace.path(area), protected).map(|plan| (area, plan))
-    }).collect()
+fn prepare_account_material_migration(data_root: &DataRootCapability, chosen: &Path, namespace: &UserNamespace, protected: &[PathBuf]) -> Result<Vec<(ManagedUserArea, MigrationPlan)>> {
+    let target = prepare_material_directory(data_root, chosen, namespace.user_public_id())?;
+    let owner = material_directory_owner(&target, namespace.user_public_id())?;
+    let plans = MATERIAL_AREAS.into_iter().map(|area| {
+        prepare_account_migration(chosen, &target.join(material_folder_name(area)?), &namespace.path(area), protected).map(|plan| (area, plan))
+    }).collect::<Result<Vec<_>>>()?;
+    anyhow::ensure!(material_directory_owner(&target, namespace.user_public_id())? == owner, "素材目录归属发生变化，请重新选择位置");
+    Ok(plans)
 }
 
 fn prepare_account_migration(chosen: &Path, target: &Path, source: &Path, protected: &[PathBuf]) -> Result<MigrationPlan> {
@@ -163,7 +164,7 @@ fn poll_migration_plan(weak: Weak<AppWindow>, context: AppContext,
                 let state = app.global::<AppState>();
                 let files: usize = prepared.plans.iter().map(|(_, plan)| plan.files).sum();
                 let bytes: u64 = prepared.plans.iter().map(|(_, plan)| plan.bytes).sum();
-                state.set_directory_migration_message(format!("统一迁移当前账号的输入素材、生成结果和提示词模板，共 {files} 个文件（{}）。\n全部复制并校验成功后，一次切换保存位置；原文件保留，不覆盖目标中的同名文件。", format_storage_bytes(bytes)).into());
+                state.set_directory_migration_message(format!("统一迁移当前账号的输入素材、生成图片和提示词模板，共 {files} 个文件（{}）。\n全部复制并校验成功后保存新位置，重启后从新目录读取素材。原文件保留，不覆盖目标中的同名文件。", format_storage_bytes(bytes)).into());
                 state.set_directory_migration_stage("confirm".into());
                 *pending.borrow_mut() = Some(prepared);
             }
@@ -232,13 +233,33 @@ fn poll_directory_migration(weak: Weak<AppWindow>, context: AppContext,
                     show_migration_error(&app, "文件已复制并保存新位置，原文件也已保留。请重启客户端恢复账号状态。"); return;
                 }
                 state.set_directory_migration_progress(100);
-                state.set_directory_migration_stage("done".into());
-                state.set_directory_migration_message("输入素材、生成结果和提示词模板已统一迁移，保存位置已更新。原目录文件已保留作为恢复副本。".into());
+                state.set_directory_migration_stage("restarting".into());
+                state.set_directory_migration_message("迁移完成，新目录已保存，正在重启软件。原文件已保留作为恢复副本。".into());
+                schedule_material_restart(app.as_weak());
             }
             Ok(AccountMigrationOutcome::Failed(error)) => show_migration_error(&app, &error),
             Ok(AccountMigrationOutcome::RecoveryRequired) => show_migration_error(&app, "文件已复制并保存新位置，原文件也已保留。请重启客户端恢复账号状态。"),
             Err(TryRecvError::Empty) => poll_directory_migration(weak, context, receiver, progress),
             Err(TryRecvError::Disconnected) => show_migration_error(&app, "迁移未能正常结束，请重启客户端检查保存位置；原文件已保留。"),
+        }
+    });
+}
+
+fn schedule_material_restart(weak: Weak<AppWindow>) {
+    // Leave the verified 100% state visible briefly. Normal shutdown below still
+    // drains workers and flushes settings; the new process waits for this one.
+    slint::Timer::single_shot(Duration::from_millis(1000), move || {
+        let Some(app) = weak.upgrade() else { return; };
+        if app.global::<AppState>().get_directory_migration_stage() != "restarting" { return; }
+        match crate::restart::spawn_waiting_child() {
+            Ok(mut child) => {
+                if slint::quit_event_loop().is_err() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    show_migration_error(&app, "迁移已完成并保存新目录，但自动重启失败，请手动关闭后重新打开软件。");
+                }
+            }
+            Err(_) => show_migration_error(&app, "迁移已完成并保存新目录，但自动重启失败，请手动关闭后重新打开软件。"),
         }
     });
 }
@@ -390,6 +411,84 @@ mod tests {
         }
         state.invoke_close_directory_migration();
         assert!(!state.get_directory_migration_open());
+    }
+
+    #[test]
+    fn material_migration_dialog_shows_restart_notice_and_locks_during_restart() {
+        use i_slint_backend_testing::ElementHandle;
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true, renderer_name: Some("software".into()), ..Default::default()
+            },
+        ))).unwrap();
+        let app = AppWindow::new().unwrap();
+        wire_directory_migration_callbacks(&app, AppContext::default());
+        apply_theme(&app, "light");
+        let state = app.global::<AppState>();
+        state.set_contact_popup_open(false);
+        state.set_directory_migration_open(true);
+        state.set_directory_migration_source(["输入素材", "生成图片", "提示词模板"].map(|name|
+            format!(r"C:\Users\示例用户\AppData\Local\ElunviCanvas\data\accounts\11111111-1111-4111-8111-111111111111\{name}"))
+            .join("\n").into());
+        state.set_directory_migration_target(r"D:\创作素材\Elunvi Canvas".into());
+        state.set_directory_migration_message("正在复制并校验文件，原文件将保留，请勿断开磁盘…".into());
+        state.set_directory_migration_stage("copying".into());
+        state.set_directory_migration_progress(50);
+        app.window().set_size(slint::LogicalSize::new(1180.0, 760.0));
+        app.show().unwrap();
+        let labels: Vec<_> = ElementHandle::find_by_element_type_name(&app, "Text")
+            .filter_map(|element| element.accessible_label()).collect();
+        assert!(labels.iter().any(|label| label.contains("迁移完成后将重启软件")));
+        assert!(labels.iter().any(|label| label.as_str() == "50%"));
+        let close = ElementHandle::find_by_element_id(&app, "DirectoryMigrationDialog::close-button").next().unwrap();
+        let progress = ElementHandle::find_by_element_type_name(&app, "Text")
+            .find(|element| element.accessible_label().is_some_and(|label| label.as_str() == "50%")).unwrap();
+        assert!(progress.absolute_position().y + progress.size().height < close.absolute_position().y,
+            "long source paths must not push progress out of the visible dialog");
+        let track = ElementHandle::find_by_element_id(&app, "DirectoryMigrationDialog::progress-track").next().unwrap();
+        let fill = ElementHandle::find_by_element_id(&app, "DirectoryMigrationDialog::progress-fill").next().unwrap();
+        assert!((fill.absolute_position().x - track.absolute_position().x).abs() < 0.5,
+            "progress must grow from the left edge, not the center");
+        assert!((fill.size().width - track.size().width * 0.5).abs() < 0.5);
+        let progress_y = progress.absolute_position().y;
+        let previous_source = state.get_directory_migration_source();
+        state.set_directory_migration_source(previous_source.repeat(5).into());
+        assert!((progress.absolute_position().y - progress_y).abs() < 0.5,
+            "progress stays visible even when directory details must scroll");
+        state.set_directory_migration_source(previous_source);
+        if let Some(directory) = std::env::var_os("ELUNVI_TEST_ARTIFACT_DIR") {
+            let directory = PathBuf::from(directory);
+            fs::create_dir_all(&directory).unwrap();
+            let pixels = app.window().take_snapshot().unwrap();
+            image::save_buffer(directory.join("material-migration-progress.png"), pixels.as_bytes(), pixels.width(), pixels.height(), image::ColorType::Rgba8).unwrap();
+        }
+        state.set_directory_migration_stage("restarting".into());
+        state.set_directory_migration_progress(100);
+        assert!(state.get_directory_migration_busy());
+        state.invoke_close_directory_migration();
+        assert!(state.get_directory_migration_open());
+    }
+
+    #[test]
+    fn material_migration_prepares_readable_folders_inside_the_selected_location() {
+        let source = tempfile::tempdir().unwrap();
+        let chosen = tempfile::tempdir().unwrap();
+        let namespace = UserNamespace::new(source.path(), "11111111-1111-4111-8111-111111111111").unwrap();
+        for area in MATERIAL_AREAS {
+            fs::create_dir_all(namespace.path(area)).unwrap();
+            fs::write(namespace.path(area).join("sample.txt"), area.storage_name()).unwrap();
+        }
+        let target = chosen.path().join("Elunvi Canvas");
+        let data_root = NamespaceFs::open_data_root(source.path()).unwrap();
+        for selected in [chosen.path().to_owned(), fs::canonicalize(chosen.path()).unwrap()] {
+        let plans = prepare_account_material_migration(&data_root, &selected, &namespace, &[source.path().to_owned()]).unwrap();
+        assert_eq!(plans.len(), 3);
+        for ((_, plan), folder) in plans.iter().zip(["输入素材", "生成图片", "提示词模板"]) {
+            assert_eq!(plan.destination, fs::canonicalize(target.join(folder)).unwrap());
+            assert_eq!(plan.files, 1);
+            assert!(!plan.destination.join("sample.txt").exists(), "planning must not copy before confirmation");
+        }
+        }
     }
 
     #[test]

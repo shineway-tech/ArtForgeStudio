@@ -272,24 +272,14 @@ impl ExternalExportDestination {
         }
         reject_private_chain(&chain, data_root.identity)?;
         // Upgrade only the closest existing parent. Ancestors need traversal
-        // rights, not write/list access. Reopen via its pinned parent, never via
-        // the display path, and require the identical object.
+        // rights, not write/list access. Relative children use the pinned parent.
+        // For a volume root, retain the original handle while opening the anchor
+        // with write access, then prove identity before any directory creation.
         let current = chain.last().unwrap();
         let writable = if chain.len() == 1 {
-            let raw = unsafe {
-                ReOpenFile(
-                    current.as_raw_handle(),
-                    MANAGED_ACCESS,
-                    SHARE_LOCK,
-                    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-                )
-            };
-            ensure!(
-                raw != INVALID_HANDLE_VALUE,
-                "cannot acquire external root write authority: {}",
-                std::io::Error::last_os_error()
-            );
-            unsafe { OwnedHandle::from_raw_handle(raw) }
+            let root = open_absolute_anchor(&anchor, MANAGED_ACCESS, SHARE_LOCK)?;
+            prove_external_volume_root(&root)?;
+            root
         } else {
             nt_open(
                 &chain[chain.len() - 2],
@@ -853,6 +843,7 @@ impl NamespaceFs {
             identify(&current, true)? == root.identity,
             "configured data root has been replaced"
         );
+        namespace.validate_active_material_owners()?;
         Ok(Self {
             root: root.handle.try_clone()?,
             root_identity: root.identity,
@@ -878,6 +869,25 @@ impl NamespaceFs {
         let chain = open_absolute_directory_chain(path)?;
         let id = identify(chain.last().unwrap(), true)?;
         Ok(StableFileIdentity::Windows { volume: id.volume, file_id: id.file })
+    }
+
+    pub(crate) fn read_material_owner_file(path: &Path) -> Result<(StableFileIdentity, StableFileIdentity, Vec<u8>)> {
+        use std::io::Read;
+        let chain = open_absolute_directory_chain(path)?;
+        let root = chain.last().unwrap();
+        let root_id = identify(root, true)?;
+        let handle = nt_open(root, OsStr::new(super::MATERIAL_OWNER_FILE),
+            FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE, FILE_SHARE_READ, NT_OPEN, false)?;
+        ensure!(file_link_count(&handle)? == 1, "linked material ownership file");
+        let file_id = identify(&handle, false)?;
+        let mut file = std::fs::File::from(handle);
+        ensure!(file.metadata()?.len() <= 2048, "material ownership file is too large");
+        let mut bytes = Vec::new();
+        (&mut file).take(2049).read_to_end(&mut bytes)?;
+        ensure!(bytes.len() <= 2048, "material ownership file is too large");
+        ensure!(identify(open_absolute_directory_chain(path)?.last().unwrap(), true)? == root_id, "material root changed");
+        Ok((StableFileIdentity::Windows { volume: root_id.volume, file_id: root_id.file },
+            StableFileIdentity::Windows { volume: file_id.volume, file_id: file_id.file }, bytes))
     }
 
     pub(crate) fn ensure_managed_dirs(&self) -> Result<ManagedNamespaceDirectories> {
@@ -1992,6 +2002,23 @@ mod tests {
         fs.unlink_within(&out, source).unwrap();
         assert_eq!(fs::read(ns.output_dir().join("held")).unwrap(), b"old");
         assert!(!ns.output_dir().join("temp").exists());
+    }
+
+    #[test]
+    fn windows_external_export_can_select_a_writable_drive_root() {
+        use super::{open_absolute_anchor, MANAGED_ACCESS, SHARE_LOCK};
+        let private = tempfile::tempdir().unwrap();
+        let data_root = NamespaceFs::open_data_root(private.path()).unwrap();
+        let working = std::env::current_dir().unwrap();
+        let drive = working.ancestors().last().unwrap();
+        // This test opens handles only: it never creates files at the drive root.
+        let Ok(_writable) = open_absolute_anchor(drive, MANAGED_ACCESS, SHARE_LOCK) else {
+            eprintln!("root selection test needs a writable checkout drive");
+            return;
+        };
+        let destination = ExternalExportDestination::open(&data_root, drive)
+            .expect("a writable drive root must be selectable for material migration");
+        assert_eq!(destination.normalized_display_path(), drive);
     }
 
     #[test]

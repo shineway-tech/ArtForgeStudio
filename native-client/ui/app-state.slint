@@ -759,7 +759,7 @@ export global AppState {
     in-out property <string> directory-migration-stage: "";
     in-out property <string> directory-migration-message: "";
     in-out property <int> directory-migration-progress: 0;
-    out property <bool> directory-migration-busy: directory-migration-stage == "checking" || directory-migration-stage == "copying";
+    out property <bool> directory-migration-busy: directory-migration-stage == "checking" || directory-migration-stage == "copying" || directory-migration-stage == "restarting";
     callback confirm-directory-migration();
     callback close-directory-migration();
     in-out property <bool> storage-busy: false;

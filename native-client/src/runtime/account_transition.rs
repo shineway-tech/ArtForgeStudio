@@ -1053,9 +1053,15 @@ impl AccountDirectoryMigrationSession {
         ensure!(self.committed.is_none(), "migration already committed");
         ensure!(!self.prepared_mappings.iter().any(|mapping| mapping.area == area.storage_name()), "migration area already prepared");
         ensure!(self.prepared_mappings.first().map_or(true, |mapping| mapping.target.parent() == target.parent()), "migration targets must share one material directory");
-        let chosen = target.ancestors().nth(4).ok_or_else(|| anyhow!("invalid migration target"))?;
+        let legacy_suffix = PathBuf::from("ElunviCanvas").join("accounts").join(self.lease.namespace.user_public_id()).join(
+            if area == ManagedUserArea::Output { "out" } else { area.storage_name() });
+        let legacy = target.ends_with(&legacy_suffix);
+        let material_owner = if legacy { None } else {
+            Some(material_directory_owner(target.parent().ok_or_else(|| anyhow!("material root missing"))?, self.lease.namespace.user_public_id())?)
+        };
+        let chosen = target.ancestors().nth(if legacy { 4 } else { 2 }).ok_or_else(|| anyhow!("invalid migration target"))?;
         let _external_boundary = ExternalExportDestination::open(self.core.root.as_ref(), chosen)?;
-        let mapping = AccountDirectoryMapping { version: 1, area: area.storage_name().into(), source: self.lease.namespace.path(area), target: target.to_owned(), identity: NamespaceFs::directory_identity_at(target)?, source_identity: NamespaceFs::directory_identity_at(&self.lease.namespace.path(area))?, manifest_json: serde_json::to_string(manifest)?, pending_rebind: Vec::new() };
+        let mapping = AccountDirectoryMapping { version: if legacy { 1 } else { 2 }, area: area.storage_name().into(), source: self.lease.namespace.path(area), target: target.to_owned(), identity: NamespaceFs::directory_identity_at(target)?, source_identity: NamespaceFs::directory_identity_at(&self.lease.namespace.path(area))?, manifest_json: serde_json::to_string(manifest)?, pending_rebind: Vec::new(), material_owner };
         let mut mappings = self.prepared_mappings.clone();
         mappings.push(mapping);
         let namespace = mappings.iter().try_fold(self.lease.namespace.clone(), |namespace, mapping| namespace.with_mapping(mapping.clone()))?;
@@ -1082,6 +1088,7 @@ impl AccountDirectoryMigrationSession {
             mapping.pending_rebind = self.core.index.prepare_directory_rebind(source, destination, area)?;
         }
         let namespace = mappings.into_iter().try_fold(self.lease.namespace.clone(), |namespace, mapping| namespace.with_mapping(mapping))?;
+        namespace.validate_active_material_owners()?;
         let candidate = NamespaceLease { namespace, auth_epoch: self.lease.auth_epoch, namespace_epoch: self.lease.namespace_epoch.checked_add(1).ok_or_else(|| anyhow!("namespace epoch exhausted"))? };
         self.core.writer.commit_account_directory_mapping(self.flushed.as_ref().ok_or_else(|| anyhow!("writer reservation unavailable"))?, &candidate.namespace)?;
         // Durable commit is final: no fallible operations beyond this point.
@@ -2254,6 +2261,7 @@ fn select_finance_fixture_group(context: &AppContext, session: &SessionScope, pa
 
     #[test]
     fn account_material_migration_switches_all_three_directories_together() {
+        for readable_layout in [false, true] {
         for fail_last_copy in [false, true] {
             let (_fixture, core, _, mut lease) = active_transition_fixture(false);
             // Older clients allowed an individual area to live on another disk.
@@ -2272,7 +2280,9 @@ fn select_finance_fixture_group(context: &AppContext, session: &SessionScope, pa
             drop(completed);
             assert!(material_directory_display(&lease.namespace).is_empty());
             let external = tempfile::tempdir_in(fs::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
-            let target_root = external.path().join("ElunviCanvas").join("accounts").join(lease.namespace.user_public_id());
+            let target_root = if readable_layout {
+                prepare_material_directory(core.root.as_ref(), external.path(), lease.namespace.user_public_id()).unwrap()
+            } else { external.path().join("ElunviCanvas").join("accounts").join(lease.namespace.user_public_id()) };
             let areas = [ManagedUserArea::Input, ManagedUserArea::Output, ManagedUserArea::Prompt];
             let authority = NamespaceStorageAuthority::open(core.root.clone(), &lease).unwrap();
             let mut original_identities = Vec::new();
@@ -2284,7 +2294,8 @@ fn select_finance_fixture_group(context: &AppContext, session: &SessionScope, pa
                 let registration = NamespacedManagedFileRegistration::new(&authority, file, "generation", "durable").unwrap();
                 original_identities.push(core.index.register_file_for_namespace(&authority, &registration).unwrap().physical_identity);
                 drop(registration);
-                let destination = target_root.join(if area == ManagedUserArea::Output { "out" } else { area.storage_name() });
+                let destination = target_root.join(if readable_layout { material_folder_name(area).unwrap() }
+                    else if area == ManagedUserArea::Output { "out" } else { area.storage_name() });
                 fs::create_dir_all(&destination).unwrap();
                 (area, crate::directory_migration::MigrationPlan::prepare(&source, &destination, &[]).unwrap())
             }).collect();
@@ -2320,7 +2331,8 @@ fn select_finance_fixture_group(context: &AppContext, session: &SessionScope, pa
             }
             let restored = core.writer.load_account_directory_namespace(&core.root_path, lease.namespace.user_public_id()).unwrap();
             let active = core.active_namespace.lock().unwrap().clone().unwrap();
-            let restored_authority = NamespaceStorageAuthority::open(core.root.clone(), &active).unwrap();
+            let restored_lease = NamespaceLease { namespace: restored.clone(), ..active };
+            let restored_authority = NamespaceStorageAuthority::open(core.root.clone(), &restored_lease).unwrap();
             for (index, (area, plan)) in plans.iter().enumerate() {
                 assert_eq!(restored.path(*area), if fail_last_copy { plan.source.clone() } else { plan.destination.clone() });
                 assert_eq!(fs::read_to_string(plan.source.join("same-name.txt")).unwrap(), area.storage_name());
@@ -2328,8 +2340,14 @@ fn select_finance_fixture_group(context: &AppContext, session: &SessionScope, pa
                 assert_eq!(indexed.physical_identity == original_identities[index], fail_last_copy);
                 assert_eq!(indexed.kind, "generation");
                 assert_eq!(indexed.byte_size, area.storage_name().len() as u64);
+                let mut file = restored_authority.open_existing_regular(&ManagedFileKey::new(*area, "same-name.txt").unwrap()).unwrap();
+                let bytes = restored_authority.with_regular_reader(&mut file, |reader| {
+                    let mut bytes = Vec::new(); std::io::Read::read_to_end(reader, &mut bytes)?; Ok(bytes)
+                }).unwrap();
+                assert_eq!(bytes, area.storage_name().as_bytes(), "restored namespace must read from its saved location");
             }
             assert!(core.writer.load_account_directory_namespace(&core.root_path, "22222222-2222-4222-8222-222222222222").unwrap().mappings().is_empty());
+        }
         }
     }
 

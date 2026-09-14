@@ -24,6 +24,9 @@ fn reject_mapped_private_identity(identity: StableFileIdentity) -> Result<()> {
 fn reject_reserved_account_path(path: &Path) -> Result<()> {
     let components: Vec<_> = path.components().filter_map(|c| if let Component::Normal(name) = c { Some(name.to_string_lossy()) } else { None }).collect();
     ensure!(!components.windows(3).any(|parts| parts[0].eq_ignore_ascii_case("ElunviCanvas") && parts[1].eq_ignore_ascii_case("accounts") && Uuid::parse_str(&parts[2]).is_ok()), "external destination/source is reserved account storage");
+    ensure!(!components.windows(2).any(|parts| parts[0].eq_ignore_ascii_case(MATERIAL_DIRECTORY_NAME)
+        && ["输入素材", "生成图片", "提示词模板", MATERIAL_OWNER_FILE].contains(&parts[1].as_ref())),
+        "external destination/source is reserved material storage");
     Ok(())
 }
 
@@ -1589,6 +1592,61 @@ pub(crate) struct AccountDirectoryMapping {
     pub(crate) manifest_json: String,
     #[serde(default)]
     pub(crate) pending_rebind: Vec<MigratedIndexIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) material_owner: Option<MaterialOwnerBinding>,
+}
+
+pub(crate) const MATERIAL_DIRECTORY_NAME: &str = "Elunvi Canvas";
+pub(crate) const MATERIAL_OWNER_FILE: &str = ".elunvi-materials.json";
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MaterialOwnerBinding {
+    owner_user_id: String,
+    root: StableFileIdentity,
+    file: StableFileIdentity,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MaterialOwnerRecord { version: u32, owner_user_id: String }
+
+pub(crate) fn material_folder_name(area: ManagedUserArea) -> Result<&'static str> {
+    match area {
+        ManagedUserArea::Input => Ok("输入素材"),
+        ManagedUserArea::Output => Ok("生成图片"),
+        ManagedUserArea::Prompt => Ok("提示词模板"),
+        _ => anyhow::bail!("unsupported material area"),
+    }
+}
+
+pub(crate) fn material_directory_owner(path: &Path, owner: &str) -> Result<MaterialOwnerBinding> {
+    let (root, file, bytes) = NamespaceFs::read_material_owner_file(path)?;
+    let record: MaterialOwnerRecord = serde_json::from_slice(&bytes)?;
+    ensure!(record.version == 1 && record.owner_user_id == owner,
+        "目标素材目录属于其他账号，请选择其他位置");
+    Ok(MaterialOwnerBinding { owner_user_id: owner.into(), root, file })
+}
+
+/// Own a newly created folder before copying anything. Existing unrelated folders
+/// are never adopted, even when their names happen to match the application name.
+pub(crate) fn prepare_material_directory(data_root: &DataRootCapability, chosen: &Path, owner: &str) -> Result<PathBuf> {
+    ensure!(Uuid::parse_str(owner)?.to_string() == owner, "invalid material owner");
+    let parent = ExternalExportDestination::open(data_root, chosen)?;
+    let target = parent.normalized_display_path().join(MATERIAL_DIRECTORY_NAME);
+    match parent.create_new_directory(MATERIAL_DIRECTORY_NAME) {
+        Ok(directory) => {
+            let record = serde_json::to_vec(&MaterialOwnerRecord { version: 1, owner_user_id: owner.into() })?;
+            directory.write_new_file(MATERIAL_OWNER_FILE, &mut record.as_slice())?;
+        }
+        Err(error) => {
+            if std::fs::symlink_metadata(&target).is_err() { return Err(error); }
+            material_directory_owner(&target, owner).map_err(|_| anyhow::anyhow!(
+                "所选位置已有其他用途或其他账号的 Elunvi Canvas 文件夹，请选择其他位置；现有文件未改动"))?;
+        }
+    }
+    material_directory_owner(&target, owner)?;
+    Ok(target)
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1630,10 +1688,16 @@ impl UserNamespace {
     pub(crate) fn mappings(&self) -> &[AccountDirectoryMapping] { &self.mappings }
     pub(crate) fn with_mapping(mut self, mapping: AccountDirectoryMapping) -> Result<Self> {
         let area = ManagedUserArea::from_storage_name(&mapping.area)?;
-        ensure!(mapping.version == 1 && matches!(area, ManagedUserArea::Input | ManagedUserArea::Output | ManagedUserArea::Prompt), "invalid account directory mapping");
+        ensure!(matches!(mapping.version, 1 | 2) && matches!(area, ManagedUserArea::Input | ManagedUserArea::Output | ManagedUserArea::Prompt), "invalid account directory mapping");
         ensure!(mapping.target.is_absolute() && mapping.source == self.path(area), "mapping source does not match namespace");
-        let suffix = PathBuf::from("ElunviCanvas").join("accounts").join(self.user_public_id()).join(area.relative_path());
-        reject_reserved_account_path(mapping.target.ancestors().nth(4).ok_or_else(|| anyhow::anyhow!("mapping target is too shallow"))?)?;
+        let (suffix, depth) = if mapping.version == 1 {
+            ensure!(mapping.material_owner.is_none(), "unexpected material ownership binding");
+            (PathBuf::from("ElunviCanvas").join("accounts").join(self.user_public_id()).join(area.relative_path()), 4)
+        } else {
+            ensure!(mapping.material_owner.as_ref().is_some_and(|binding| binding.owner_user_id == self.user_public_id()), "material directory ownership changed");
+            (PathBuf::from(MATERIAL_DIRECTORY_NAME).join(material_folder_name(area)?), 2)
+        };
+        reject_reserved_account_path(mapping.target.ancestors().nth(depth).ok_or_else(|| anyhow::anyhow!("mapping target is too shallow"))?)?;
         ensure!(mapping.target.ends_with(suffix) && !mapping.target.starts_with(self.root.parent().unwrap()), "mapping target has invalid account ownership");
         ensure!(!MANAGED_USER_AREAS.into_iter().any(|other| mapping.target.starts_with(self.path(other)) || self.path(other).starts_with(&mapping.target)), "migration target overlaps a managed directory");
         ensure!(mapping.target.components().all(|c| matches!(c, Component::Prefix(_) | Component::RootDir | Component::Normal(_))), "mapping path is not normal");
@@ -1641,6 +1705,18 @@ impl UserNamespace {
         register_mapped_private_identity(mapping.identity)?;
         self.mappings.push(mapping);
         Ok(self)
+    }
+    pub(crate) fn validate_active_material_owners(&self) -> Result<()> {
+        // Historic mappings only rebase old paths. They must not require a disk
+        // that was migrated away from to remain connected forever.
+        for mapping in &self.mappings {
+            let area = ManagedUserArea::from_storage_name(&mapping.area)?;
+            if mapping.version == 2 && self.path(area) == mapping.target {
+                let parent = mapping.target.parent().ok_or_else(|| anyhow::anyhow!("material root missing"))?;
+                ensure!(mapping.material_owner.as_ref() == Some(&material_directory_owner(parent, self.user_public_id())?), "material directory ownership changed");
+            }
+        }
+        Ok(())
     }
     pub(crate) fn owns_path(&self, path: &Path) -> bool {
         MANAGED_USER_AREAS.into_iter().any(|area| path.starts_with(self.path(area)))
@@ -2220,6 +2296,24 @@ const MANAGED_USER_AREAS: [ManagedUserArea; 18] = [
 
 #[cfg(unix)]
 impl NamespaceFs {
+    pub(crate) fn read_material_owner_file(path: &Path) -> Result<(StableFileIdentity, StableFileIdentity, Vec<u8>)> {
+        use std::io::Read;
+        let root = open_absolute_directory(path)?;
+        let root_id = directory_identity(&root)?;
+        let descriptor = open_regular_at(&root, OsStr::new(MATERIAL_OWNER_FILE))?;
+        let file_id = regular_file_identity(&descriptor)?;
+        ensure!(rustix::fs::fstat(&descriptor)?.st_nlink == 1, "linked material ownership file");
+        let mut file = std::fs::File::from(descriptor);
+        ensure!(file.metadata()?.len() <= 2048, "material ownership file is too large");
+        let mut bytes = Vec::new();
+        (&mut file).take(2049).read_to_end(&mut bytes)?;
+        ensure!(bytes.len() <= 2048, "material ownership file is too large");
+        ensure!(regular_file_identity(&open_regular_at(&root, OsStr::new(MATERIAL_OWNER_FILE))?)? == file_id
+            && directory_identity(&open_absolute_directory(path)?)? == root_id, "material ownership changed during read");
+        Ok((StableFileIdentity::Unix { device: root_id.device, inode: root_id.inode },
+            StableFileIdentity::Unix { device: file_id.device, inode: file_id.inode }, bytes))
+    }
+
     pub(crate) fn open_optional_regular(
         &self,
         directory: &ManagedDirectoryCapability,
@@ -2618,6 +2712,7 @@ impl NamespaceFs {
             directory_identity(&current_root)? == data_root.identity,
             "configured data root no longer names its retained directory"
         );
+        namespace.validate_active_material_owners()?;
         Ok(Self {
             root_descriptor: duplicate_descriptor(&data_root.descriptor)?,
             root_identity: data_root.identity,
@@ -5455,10 +5550,75 @@ mod account_directory_mapping_regressions {
     const OWNER: &str = "11111111-1111-4111-8111-111111111111";
     const OTHER: &str = "22222222-2222-4222-8222-222222222222";
 
+    #[test]
+    fn readable_material_folder_rejects_other_accounts_and_unowned_existing_folders() {
+        let private = tempfile::tempdir().unwrap();
+        let chosen = tempfile::tempdir().unwrap();
+        let root = NamespaceFs::open_data_root(private.path()).unwrap();
+        let target = prepare_material_directory(&root, chosen.path(), OWNER).unwrap();
+        let binding = material_directory_owner(&target, OWNER).unwrap();
+        assert_eq!(prepare_material_directory(&root, chosen.path(), OWNER).unwrap(), target);
+        assert!(prepare_material_directory(&root, chosen.path(), OTHER).is_err());
+        assert_eq!(material_directory_owner(&target, OWNER).unwrap(), binding);
+        let unrelated = tempfile::tempdir().unwrap();
+        let existing = unrelated.path().join("Elunvi Canvas");
+        std::fs::create_dir(&existing).unwrap();
+        std::fs::write(existing.join("unrelated.txt"), "keep").unwrap();
+        assert!(prepare_material_directory(&root, unrelated.path(), OWNER).is_err());
+        assert_eq!(std::fs::read(existing.join("unrelated.txt")).unwrap(), b"keep");
+        assert!(!existing.join(MATERIAL_OWNER_FILE).exists());
+    }
+
+    #[test]
+    fn readable_material_mapping_checks_owner_and_retained_marker_on_reload() {
+        let private = tempfile::tempdir().unwrap();
+        let chosen = tempfile::tempdir().unwrap();
+        let root = NamespaceFs::open_data_root(private.path()).unwrap();
+        let target = prepare_material_directory(&root, chosen.path(), OWNER).unwrap();
+        let area = target.join("输入素材");
+        std::fs::create_dir(&area).unwrap();
+        let namespace = UserNamespace::new(private.path(), OWNER).unwrap();
+        let mut record = mapping(&namespace, area.clone(), NamespaceFs::directory_identity_at(&area).unwrap());
+        record.version = 2;
+        record.material_owner = Some(material_directory_owner(&target, OWNER).unwrap());
+        let restored: AccountDirectoryMapping = serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
+        assert_eq!(namespace.clone().with_mapping(restored).unwrap().path(ManagedUserArea::Input), area);
+        assert!(reject_reserved_account_path(&area.join("private.png")).is_err());
+        std::fs::write(target.join(MATERIAL_OWNER_FILE), serde_json::to_vec(&MaterialOwnerRecord {
+            version: 1, owner_user_id: OTHER.into(),
+        }).unwrap()).unwrap();
+        assert!(namespace.with_mapping(record).unwrap().validate_active_material_owners().is_err());
+    }
+
+    #[test]
+    fn readable_material_mapping_history_does_not_reopen_an_old_destination() {
+        let private = tempfile::tempdir().unwrap();
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        let root = NamespaceFs::open_data_root(private.path()).unwrap();
+        let original = UserNamespace::new(private.path(), OWNER).unwrap();
+        let mut namespace = original.clone();
+        let mut records = Vec::new();
+        for chosen in [&first, &second] {
+            let target = prepare_material_directory(&root, chosen.path(), OWNER).unwrap();
+            let area = target.join("输入素材");
+            std::fs::create_dir(&area).unwrap();
+            let mut record = mapping(&namespace, area.clone(), NamespaceFs::directory_identity_at(&area).unwrap());
+            record.version = 2;
+            record.material_owner = Some(material_directory_owner(&target, OWNER).unwrap());
+            namespace = namespace.with_mapping(record.clone()).unwrap();
+            records.push(record);
+        }
+        std::fs::remove_file(first.path().join("Elunvi Canvas").join(MATERIAL_OWNER_FILE)).unwrap();
+        let restored = records.into_iter().try_fold(original, |namespace, record| namespace.with_mapping(record)).unwrap();
+        restored.validate_active_material_owners().unwrap();
+        assert_eq!(restored.path(ManagedUserArea::Input), second.path().join("Elunvi Canvas/输入素材"));
+    }
+
     fn mapping(namespace: &UserNamespace, target: PathBuf, identity: StableFileIdentity) -> AccountDirectoryMapping {
         AccountDirectoryMapping {
             version: 1, area: "input".into(), source: namespace.path(ManagedUserArea::Input), target,
-            identity, source_identity: identity, manifest_json: "[]".into(), pending_rebind: Vec::new(),
+            identity, source_identity: identity, manifest_json: "[]".into(), pending_rebind: Vec::new(), material_owner: None,
         }
     }
 

@@ -26,7 +26,7 @@ export component DirectoryMigrationDialog inherits Rectangle {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         width: min(720px, parent.width - 64px);
-        height: min(490px, parent.height - 64px);
+        height: min(560px, parent.height - 64px);
         background: AppTheme.panel;
         border-radius: 16px;
         border-width: 1px;
@@ -37,7 +37,7 @@ export component DirectoryMigrationDialog inherits Rectangle {
             color: AppTheme.text; font-size: 20px; font-weight: 600;
         }
         ScrollView {
-            x: 28px; y: 72px; width: parent.width - 56px; height: parent.height - 160px;
+            x: 28px; y: 72px; width: parent.width - 56px; height: parent.height - 256px;
             viewport-width: self.width;
             viewport-height: max(content.preferred-height, self.height);
             content := VerticalLayout {
@@ -49,15 +49,24 @@ export component DirectoryMigrationDialog inherits Rectangle {
                 Text { text: AppState.directory-migration-target; color: AppTheme.text; font-size: 14px; wrap: char-wrap; }
                 Rectangle { height: 12px; background: transparent; }
                 Text { text: AppState.directory-migration-message; color: AppState.directory-migration-stage == "error" ? AppTheme.danger : AppTheme.muted; font-size: 14px; wrap: word-wrap; }
-                if AppState.directory-migration-stage == "copying": Rectangle {
-                    height: 6px; border-radius: 3px; background: AppTheme.panel-soft;
-                    Rectangle { height: parent.height; width: parent.width * AppState.directory-migration-progress / 100; background: AppTheme.accent; border-radius: 3px; }
-                }
-                if AppState.directory-migration-stage == "copying": Text {
-                    text: AppState.directory-migration-progress + "%"; color: AppTheme.muted; font-size: 13px; horizontal-alignment: right;
-                }
                 Rectangle { vertical-stretch: 1; background: transparent; }
             }
+        }
+        VerticalLayout {
+            x: 28px; y: parent.height - 162px; width: parent.width - 56px; height: 82px;
+            spacing: 8px; padding: 0px;
+            restart-notice := Text {
+                text: AppState.en ? "The app will restart after migration. It will read materials from the new folder." : "迁移完成后将重启软件，之后将从新目录读取素材。";
+                color: AppTheme.accent-dark; font-size: 14px; wrap: word-wrap;
+            }
+            if AppState.directory-migration-stage == "copying" || AppState.directory-migration-stage == "restarting": progress-track := Rectangle {
+                height: 6px; border-radius: 3px; background: AppTheme.panel-soft;
+                progress-fill := Rectangle { x: 0px; y: 0px; height: parent.height; width: parent.width * AppState.directory-migration-progress / 100; background: AppTheme.accent; border-radius: 3px; }
+            }
+            if AppState.directory-migration-stage == "copying" || AppState.directory-migration-stage == "restarting": Text {
+                text: AppState.directory-migration-progress + "%"; color: AppTheme.muted; font-size: 13px; horizontal-alignment: right;
+            }
+            Rectangle { vertical-stretch: 1; background: transparent; }
         }
         HorizontalLayout {
             x: 28px; y: parent.height - 64px; width: parent.width - 56px; height: 36px; spacing: 12px;
