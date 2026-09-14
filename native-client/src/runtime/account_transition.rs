@@ -131,6 +131,7 @@ impl PreparedPrivateModels {
         let PreparedBackendProjection { mut ui,model_groups,pagination,credit_version } =
             prepare_activation_backend_projection(&prepared.snapshot,&preferred_image,&preferred_prompt,&preferred_video,&preferred_pack);
         ui.append(prepare_activation_team_projection(&prepared.groups,prepared.billing_ticket.proposed_scope(),&prepared.snapshot.account));
+        ui.push(material_directory_display(&prepared.lease.namespace).into(), |state, value| state.set_material_dir(value));
         ui.push(display_directory_path(&prepared.lease.namespace.path(ManagedUserArea::Input)).into(), |state, value| state.set_input_dir(value));
         ui.push(display_directory_path(&prepared.lease.namespace.path(ManagedUserArea::Output)).into(), |state, value| state.set_output_dir(value));
         ui.push(display_directory_path(&prepared.lease.namespace.path(ManagedUserArea::Prompt)).into(), |state, value| state.set_prompt_dir(value));
@@ -547,7 +548,7 @@ fn clear_retired_private_state(app: &AppWindow, context: &AppContext) {
     *context.canvas_history.borrow_mut() = CanvasController::default();
     clear_retired_private_projection(&app.global::<AppState>());
     let state = app.global::<AppState>(); state.set_logged_in(false); state.set_session_state("signed_out".into());
-    state.set_input_dir("".into()); state.set_output_dir("".into()); state.set_prompt_dir("".into());
+    state.set_material_dir("".into()); state.set_input_dir("".into()); state.set_output_dir("".into()); state.set_prompt_dir("".into());
     state.set_nickname("".into()); state.set_email_mask("".into()); state.set_prompt("".into()); state.set_negative_prompt("".into()); state.set_canvas_workflow_prompt("".into());
 }
 /// Captured at model preparation, never reconstructed from mutable UI identity.
@@ -1004,7 +1005,7 @@ pub(super) struct AccountDirectoryMigrationSession {
     quiesced: Option<QuiescedUserActivity>,
     flushed: Option<client_state::FlushedWriterRetirement>,
     committed: Option<NamespaceLease>,
-    prepared_mapping: Option<AccountDirectoryMapping>,
+    prepared_mappings: Vec<AccountDirectoryMapping>,
     pinned: Option<(NamespaceStorageAuthority, NamespaceStorageAuthority)>,
     _effect: Option<api::OrdinaryBlockingEffectPermit>,
     admission: Option<AccountTransitionTicket>,
@@ -1042,36 +1043,46 @@ impl AccountDirectoryMigrationWorker {
         ensure!(self.core.backend.api.session().is_scope_current(&scope), "登录状态已变化");
         let quiesced = self.core.activity.try_quiesce(lease)?;
         let flushed = self.core.writer.flush_for_retirement(lease)?;
-        Ok(AccountDirectoryMigrationSession { core: self.core.clone(), lease: lease.clone(), transition: Some(transition), quiesced: Some(quiesced), flushed: Some(flushed), committed: None, prepared_mapping: None, pinned: None, _effect: Some(effect), admission: Some(admission) })
+        Ok(AccountDirectoryMigrationSession { core: self.core.clone(), lease: lease.clone(), transition: Some(transition), quiesced: Some(quiesced), flushed: Some(flushed), committed: None, prepared_mappings: Vec::new(), pinned: None, _effect: Some(effect), admission: Some(admission) })
     }
 }
 impl AccountDirectoryMigrationSession {
     pub(super) fn prepare(&mut self, area: ManagedUserArea, target: &Path, manifest: &[crate::directory_migration::MigrationManifestEntry]) -> Result<()> {
-        ensure!(self.prepared_mapping.is_none() && self.committed.is_none(), "migration already prepared");
+        // Reserve all selected areas in the same retirement session. No active
+        // location changes until commit publishes the complete mapping vector.
+        ensure!(self.committed.is_none(), "migration already committed");
+        ensure!(!self.prepared_mappings.iter().any(|mapping| mapping.area == area.storage_name()), "migration area already prepared");
+        ensure!(self.prepared_mappings.first().map_or(true, |mapping| mapping.target.parent() == target.parent()), "migration targets must share one material directory");
         let chosen = target.ancestors().nth(4).ok_or_else(|| anyhow!("invalid migration target"))?;
         let _external_boundary = ExternalExportDestination::open(self.core.root.as_ref(), chosen)?;
         let mapping = AccountDirectoryMapping { version: 1, area: area.storage_name().into(), source: self.lease.namespace.path(area), target: target.to_owned(), identity: NamespaceFs::directory_identity_at(target)?, source_identity: NamespaceFs::directory_identity_at(&self.lease.namespace.path(area))?, manifest_json: serde_json::to_string(manifest)?, pending_rebind: Vec::new() };
-        let namespace = self.lease.namespace.clone().with_mapping(mapping.clone())?;
+        let mut mappings = self.prepared_mappings.clone();
+        mappings.push(mapping);
+        let namespace = mappings.iter().try_fold(self.lease.namespace.clone(), |namespace, mapping| namespace.with_mapping(mapping.clone()))?;
         // Open all retained capabilities before the copy; a missing previously mapped volume must fail here.
         let source = NamespaceStorageAuthority::open_prepublication(self.core.root.clone(), &self.lease)?;
         let candidate = NamespaceLease { namespace, ..self.lease.clone() };
         let destination = NamespaceStorageAuthority::open_prepublication(self.core.root.clone(), &candidate)?;
-        self.core.writer.prepare_account_directory_migration(self.flushed.as_ref().ok_or_else(|| anyhow!("writer reservation unavailable"))?, &serde_json::json!({ "version": 1, "phase": "prepared", "mapping": &mapping }))?;
+        self.core.writer.prepare_account_directory_migration(self.flushed.as_ref().ok_or_else(|| anyhow!("writer reservation unavailable"))?, &serde_json::json!({ "version": 1, "phase": "prepared", "mappings": &mappings }))?;
         self.pinned = Some((source, destination));
-        self.prepared_mapping = Some(mapping);
+        self.prepared_mappings = mappings;
         Ok(())
     }
     pub(super) fn commit(&mut self, area: ManagedUserArea, target: &Path) -> Result<()> {
         ensure!(self.committed.is_none(), "迁移已经提交");
         let scope = SessionScope { owner_user_id: self.lease.namespace.user_public_id().into(), auth_epoch: self.lease.auth_epoch };
         ensure!(self.core.backend.api.session().is_scope_current(&scope), "登录状态已变化");
-        let mut mapping = self.prepared_mapping.clone().ok_or_else(|| anyhow!("migration copy was not prepared"))?;
+        let mut mappings = self.prepared_mappings.clone();
+        let mapping = mappings.last().ok_or_else(|| anyhow!("migration copy was not prepared"))?;
         ensure!(mapping.area == area.storage_name() && mapping.target == target, "migration target changed");
-        ensure!(NamespaceFs::directory_identity_at(target)? == mapping.identity && NamespaceFs::directory_identity_at(&mapping.source)? == mapping.source_identity, "migration directory identity changed during copy");
-        let mut candidate = NamespaceLease { namespace: self.lease.namespace.clone().with_mapping(mapping.clone())?, auth_epoch: self.lease.auth_epoch, namespace_epoch: self.lease.namespace_epoch.checked_add(1).ok_or_else(|| anyhow!("namespace epoch exhausted"))? };
         let (source, destination) = self.pinned.as_ref().ok_or_else(|| anyhow!("migration capabilities missing"))?;
-        mapping.pending_rebind = self.core.index.prepare_directory_rebind(source, destination, area)?;
-        candidate.namespace = self.lease.namespace.clone().with_mapping(mapping)?;
+        for mapping in &mut mappings {
+            ensure!(NamespaceFs::directory_identity_at(&mapping.target)? == mapping.identity && NamespaceFs::directory_identity_at(&mapping.source)? == mapping.source_identity, "migration directory identity changed during copy");
+            let area = ManagedUserArea::from_storage_name(&mapping.area)?;
+            mapping.pending_rebind = self.core.index.prepare_directory_rebind(source, destination, area)?;
+        }
+        let namespace = mappings.into_iter().try_fold(self.lease.namespace.clone(), |namespace, mapping| namespace.with_mapping(mapping))?;
+        let candidate = NamespaceLease { namespace, auth_epoch: self.lease.auth_epoch, namespace_epoch: self.lease.namespace_epoch.checked_add(1).ok_or_else(|| anyhow!("namespace epoch exhausted"))? };
         self.core.writer.commit_account_directory_mapping(self.flushed.as_ref().ok_or_else(|| anyhow!("writer reservation unavailable"))?, &candidate.namespace)?;
         // Durable commit is final: no fallible operations beyond this point.
         self.committed = Some(candidate);
@@ -2240,6 +2251,88 @@ fn select_finance_fixture_group(context: &AppContext, session: &SessionScope, pa
     fn active_transition_fixture(fail_delete: bool) -> (client_state::tests::Fixture, Arc<TransitionCore>, SessionScope, NamespaceLease) {
         active_transition_fixture_at(fail_delete, "http://127.0.0.1:9")
     }
+
+    #[test]
+    fn account_material_migration_switches_all_three_directories_together() {
+        for fail_last_copy in [false, true] {
+            let (_fixture, core, _, mut lease) = active_transition_fixture(false);
+            // Older clients allowed an individual area to live on another disk.
+            let previous = tempfile::tempdir_in(fs::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+            let previous_output = previous.path().join("ElunviCanvas").join("accounts").join(lease.namespace.user_public_id()).join("out");
+            fs::create_dir_all(&previous_output).unwrap();
+            let previous_plan = crate::directory_migration::MigrationPlan::prepare(&lease.namespace.path(ManagedUserArea::Output), &previous_output, &[]).unwrap();
+            let completed = std::thread::scope(|threads| threads.spawn(|| -> Result<_> {
+                let worker = AccountDirectoryMigrationWorker { core: core.clone() };
+                let mut session = worker.begin(&lease)?;
+                session.prepare(ManagedUserArea::Output, &previous_plan.destination, &previous_plan.manifest())?;
+                previous_plan.copy_retaining_source(|| session.commit(ManagedUserArea::Output, &previous_plan.destination).map_err(std::io::Error::other), |_, _| {})?;
+                session.finish()
+            }).join().unwrap()).unwrap();
+            lease = (*completed).clone();
+            drop(completed);
+            assert!(material_directory_display(&lease.namespace).is_empty());
+            let external = tempfile::tempdir_in(fs::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+            let target_root = external.path().join("ElunviCanvas").join("accounts").join(lease.namespace.user_public_id());
+            let areas = [ManagedUserArea::Input, ManagedUserArea::Output, ManagedUserArea::Prompt];
+            let authority = NamespaceStorageAuthority::open(core.root.clone(), &lease).unwrap();
+            let mut original_identities = Vec::new();
+            let plans: Vec<_> = areas.iter().map(|&area| {
+                let source = lease.namespace.path(area);
+                fs::write(source.join("same-name.txt"), area.storage_name()).unwrap();
+                let key = ManagedFileKey::new(area, "same-name.txt").unwrap();
+                let file = authority.open_existing_regular(&key).unwrap();
+                let registration = NamespacedManagedFileRegistration::new(&authority, file, "generation", "durable").unwrap();
+                original_identities.push(core.index.register_file_for_namespace(&authority, &registration).unwrap().physical_identity);
+                drop(registration);
+                let destination = target_root.join(if area == ManagedUserArea::Output { "out" } else { area.storage_name() });
+                fs::create_dir_all(&destination).unwrap();
+                (area, crate::directory_migration::MigrationPlan::prepare(&source, &destination, &[]).unwrap())
+            }).collect();
+            let result = std::thread::scope(|threads| threads.spawn(|| -> Result<_> {
+                let worker = AccountDirectoryMigrationWorker { core: core.clone() };
+                let mut session = worker.begin(&lease)?;
+                for (area, plan) in &plans {
+                    session.prepare(*area, &plan.destination, &plan.manifest())?;
+                }
+                if fail_last_copy {
+                    fs::write(plans[2].1.destination.join("same-name.txt"), "unrelated sentinel")?;
+                }
+                let copies: Vec<_> = plans.iter().map(|(_, plan)| plan.clone()).collect();
+                crate::directory_migration::copy_retaining_sources(&copies, || {
+                    let persisted = core.writer.load_account_directory_namespace(&core.root_path, lease.namespace.user_public_id()).map_err(std::io::Error::other)?;
+                    assert_eq!(persisted, lease.namespace, "no directory switches before every copy succeeds");
+                    session.commit(plans[2].0, &plans[2].1.destination).map_err(std::io::Error::other)
+                }, |_, _| {})?;
+                session.finish()
+            }).join().unwrap());
+            if fail_last_copy {
+                assert!(result.is_err());
+                assert_eq!(core.active_namespace.lock().unwrap().as_ref(), Some(&lease));
+                assert_eq!(fs::read_to_string(plans[2].1.destination.join("same-name.txt")).unwrap(), "unrelated sentinel");
+            } else {
+                let completed = result.expect("all three areas must be prepared and published in one migration");
+                assert_eq!(completed.namespace_epoch, lease.namespace_epoch + 1);
+                assert_eq!(material_directory_display(&completed.namespace), display_directory_path(&target_root));
+                for (area, plan) in &plans {
+                    assert_eq!(completed.namespace.path(*area), plan.destination);
+                    assert_eq!(fs::read_to_string(plan.destination.join("same-name.txt")).unwrap(), area.storage_name());
+                }
+            }
+            let restored = core.writer.load_account_directory_namespace(&core.root_path, lease.namespace.user_public_id()).unwrap();
+            let active = core.active_namespace.lock().unwrap().clone().unwrap();
+            let restored_authority = NamespaceStorageAuthority::open(core.root.clone(), &active).unwrap();
+            for (index, (area, plan)) in plans.iter().enumerate() {
+                assert_eq!(restored.path(*area), if fail_last_copy { plan.source.clone() } else { plan.destination.clone() });
+                assert_eq!(fs::read_to_string(plan.source.join("same-name.txt")).unwrap(), area.storage_name());
+                let indexed = core.index.find_file_by_path_for_namespace(&restored_authority, *area, "same-name.txt").unwrap().unwrap();
+                assert_eq!(indexed.physical_identity == original_identities[index], fail_last_copy);
+                assert_eq!(indexed.kind, "generation");
+                assert_eq!(indexed.byte_size, area.storage_name().len() as u64);
+            }
+            assert!(core.writer.load_account_directory_namespace(&core.root_path, "22222222-2222-4222-8222-222222222222").unwrap().mappings().is_empty());
+        }
+    }
+
     fn active_transition_fixture_at(fail_delete: bool, url: &str) -> (client_state::tests::Fixture, Arc<TransitionCore>, SessionScope, NamespaceLease) {
         active_transition_fixture_with_store(Arc::new(DeleteFaultStore { inner: api::test_support::MemoryRefreshTokenStore::default(), fail: fail_delete.into() }), url)
     }

@@ -177,6 +177,17 @@ pub(super) fn display_directory_path(path: &Path) -> String {
     }
 }
 
+pub(super) fn material_directory_display(namespace: &UserNamespace) -> String {
+    let input = namespace.path(ManagedUserArea::Input);
+    let Some(parent) = input.parent() else { return String::new(); };
+    if [ManagedUserArea::Output, ManagedUserArea::Prompt].into_iter()
+        .all(|area| namespace.path(area).parent() == Some(parent)) {
+        display_directory_path(parent)
+    } else {
+        String::new()
+    }
+}
+
 pub(super) fn configured_output_directory() -> PathBuf {
     directory_locations()
         .directory("output")

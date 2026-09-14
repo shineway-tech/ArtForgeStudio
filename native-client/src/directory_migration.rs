@@ -105,7 +105,7 @@ impl MigrationPlan {
         commit: impl FnOnce() -> io::Result<()>,
         progress: impl FnMut(u64, u64),
     ) -> io::Result<()> {
-        self.retained.copy(self, commit, progress)
+        copy_retaining_sources(std::slice::from_ref(self), commit, progress)
     }
 
     #[cfg(test)]
@@ -494,7 +494,24 @@ impl RetainedMigration {
         }
         Ok(())
     }
-    fn copy(&self, plan: &MigrationPlan, commit: impl FnOnce() -> io::Result<()>, mut progress: impl FnMut(u64, u64)) -> io::Result<()> {
+    fn verify_copy(&self, plan: &MigrationPlan, outputs: &[RetainedEntry]) -> io::Result<()> {
+        self.verify_source(plan)?;
+        for (source, target) in self.entries.iter().zip(outputs) {
+            let (_source_parent, input) = Self::open_entry(&self.source, &self.entries, source)?;
+            let (_target_parent, output) = Self::open_entry(&self.destination, outputs, target)?;
+            if !target.entry.directory && !retained_equal(&input, &output)? {
+                return Err(io::Error::other("迁移期间文件发生变化"));
+            }
+            #[cfg(unix)]
+            if target.entry.directory { output.sync_all()?; }
+        }
+        self.source.verify()?;
+        self.destination.verify()?;
+        #[cfg(unix)]
+        self.destination.handle().sync_all()?;
+        Ok(())
+    }
+    fn copy_verified(&self, plan: &MigrationPlan, mut progress: impl FnMut(u64, u64)) -> io::Result<Vec<RetainedEntry>> {
         self.verify_source(plan)?;
         check_conflicts(&plan.destination, &plan.entries)?;
         let mut outputs: Vec<RetainedEntry> = Vec::new();
@@ -526,27 +543,39 @@ impl RetainedMigration {
                 let stamp = if source.entry.directory { None } else { Some(retained_stamp(&output)?) };
                 outputs.push(RetainedEntry { entry: source.entry.clone(), identity: identity(&output)?, stamp });
             }
-            self.verify_source(plan)?;
-            for (source, target) in self.entries.iter().zip(&outputs) {
-                let (_source_parent, input) = Self::open_entry(&self.source, &self.entries, source)?;
-                let (_target_parent, output) = Self::open_entry(&self.destination, &outputs, target)?;
-                if !target.entry.directory && !retained_equal(&input, &output)? {
-                    return Err(io::Error::other("迁移期间文件发生变化"));
-                }
-                #[cfg(unix)]
-                if target.entry.directory { output.sync_all()?; }
-            }
-            self.source.verify()?; self.destination.verify()?;
-            #[cfg(unix)]
-            self.destination.handle().sync_all()?;
-            commit()?;
+            self.verify_copy(plan, &outputs)?;
             progress(plan.bytes, plan.bytes);
-            Ok(())
+            Ok(outputs)
         })();
         // Never unlink by a display path during rollback: another process could
         // replace it after the identity check. Originals and partial copies stay.
         result.map_err(|error: io::Error| io::Error::other(format!("{error}；原文件已保留，目标中可能有未完成副本，请检查后重试")))
     }
+}
+
+/// Verify the entire group again after its last copy, then publish every new
+/// location in one caller-owned durable transaction. Never remove originals.
+pub(crate) fn copy_retaining_sources(
+    plans: &[MigrationPlan],
+    commit: impl FnOnce() -> io::Result<()>,
+    mut progress: impl FnMut(u64, u64),
+) -> io::Result<()> {
+    if plans.is_empty() { return Err(io::Error::other("没有需要迁移的目录")); }
+    let total = plans.iter().try_fold(0_u64, |sum, plan| sum.checked_add(plan.bytes)
+        .ok_or_else(|| io::Error::other("迁移文件总大小过大")))?;
+    let mut copied = Vec::with_capacity(plans.len());
+    let mut completed = 0;
+    for plan in plans {
+        let outputs = plan.retained.copy_verified(plan, |done, _| progress(completed + done, total))?;
+        copied.push(outputs);
+        completed += plan.bytes;
+    }
+    for (plan, outputs) in plans.iter().zip(&copied) {
+        plan.retained.verify_copy(plan, outputs)?;
+    }
+    commit()?;
+    progress(total, total);
+    Ok(())
 }
 
 pub(crate) fn checked_directory(path: &Path) -> io::Result<PathBuf> {
@@ -830,6 +859,69 @@ mod tests {
             assert_eq!(fs::read(root.join("nested/作品.png")).unwrap(), b"image bytes");
             assert_eq!(fs::read(root.join(".hidden")).unwrap(), b"hidden bytes");
             assert!(root.join("nested/empty").is_dir());
+        }
+    }
+
+    fn material_group(f: &Fixture) -> Vec<MigrationPlan> {
+        ["input", "out", "prompt"].into_iter().map(|name| {
+            let source = f.0.join(format!("source-{name}"));
+            let destination = f.0.join("materials").join(name);
+            fs::create_dir_all(&source).unwrap();
+            fs::create_dir_all(&destination).unwrap();
+            fs::write(source.join("same-name.txt"), name).unwrap();
+            MigrationPlan::prepare(&source, &destination, &[]).unwrap()
+        }).collect()
+    }
+
+    #[test]
+    fn material_group_commits_once_after_all_copies_and_retains_originals() {
+        let f = Fixture::new();
+        let plans = material_group(&f);
+        let commits = std::cell::Cell::new(0);
+        let mut progress = Vec::new();
+        copy_retaining_sources(&plans, || {
+            for (plan, expected) in plans.iter().zip(["input", "out", "prompt"]) {
+                assert_eq!(fs::read_to_string(plan.destination.join("same-name.txt"))?, expected);
+                assert_eq!(fs::read_to_string(plan.source.join("same-name.txt"))?, expected);
+            }
+            commits.set(commits.get() + 1);
+            Ok(())
+        }, |done, total| progress.push((done, total))).unwrap();
+        assert_eq!(commits.get(), 1);
+        assert_eq!(progress.last(), Some(&(14, 14)));
+        assert!(progress.windows(2).all(|pair| pair[0].0 <= pair[1].0));
+    }
+
+    #[test]
+    fn material_group_last_conflict_never_commits_or_overwrites() {
+        let f = Fixture::new();
+        let plans = material_group(&f);
+        fs::write(plans[2].destination.join("same-name.txt"), "unrelated sentinel").unwrap();
+        let committed = std::cell::Cell::new(false);
+        assert!(copy_retaining_sources(&plans, || { committed.set(true); Ok(()) }, |_, _| {}).is_err());
+        assert!(!committed.get());
+        assert_eq!(fs::read_to_string(plans[2].destination.join("same-name.txt")).unwrap(), "unrelated sentinel");
+        for (plan, expected) in plans.iter().zip(["input", "out", "prompt"]) {
+            assert_eq!(fs::read_to_string(plan.source.join("same-name.txt")).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn material_group_rechecks_earlier_copies_before_one_commit() {
+        for change_source in [false, true] {
+            let f = Fixture::new();
+            let plans = material_group(&f);
+            let committed = std::cell::Cell::new(false);
+            let changed = std::cell::Cell::new(false);
+            let result = copy_retaining_sources(&plans, || { committed.set(true); Ok(()) }, |done, _| {
+                if done > plans[0].bytes && !changed.replace(true) {
+                    let root = if change_source { &plans[0].source } else { &plans[0].destination };
+                    fs::write(root.join("same-name.txt"), b"xxxxx").unwrap();
+                }
+            });
+            assert!(changed.get());
+            assert!(result.is_err());
+            assert!(!committed.get());
         }
     }
 

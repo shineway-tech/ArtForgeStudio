@@ -93,6 +93,7 @@ pub(super) fn apply_startup_device_state(
     // a namespace lease. These presentation values confer no filesystem authority.
     apply_device_settings(app, settings);
     let state = app.global::<AppState>();
+    state.set_material_dir("".into());
     state.set_input_dir("".into());
     state.set_prompt_dir("".into());
     state.set_output_dir(

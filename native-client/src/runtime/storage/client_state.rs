@@ -3149,6 +3149,59 @@ fn core_cutout_atomic_settle_rejects_extra_out_of_count_delivery_after_real_remo
     }
     const DELIVERY_INDEX_ROWS: &str = "SELECT id,user_public_id,managed_area,path,physical_identity,kind,byte_size,managed,retention_policy,created_at,last_accessed_at,pending_delete FROM managed_files ORDER BY id";
     #[test]
+    fn core_delivery_batch_sibling_ack_during_reconciliation_keeps_both_images() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        for first_index in [0, 1] {
+            let (listener, url) = backend_generation::billing_capture_test_support::listener();
+            let f = DeliveryFixture::new_with_canvas_count(&url, "", 2);
+            const OTHER_FILE: &str = "33333333-3333-4333-8333-333333333333";
+            let mut detail = delivery_detail();
+            detail["requested_count"] = 2.into();
+            detail["success_count"] = 2.into();
+            let mut second = detail["items"][0].clone();
+            second["index"] = 1.into();
+            second["file"]["id"] = OTHER_FILE.into();
+            second["file"]["download_url"] = format!("{url}blob").into();
+            detail["items"].as_array_mut().unwrap().push(second);
+            let server = DeliveryServer::start(listener, &url, &f, detail, DELIVERY_PNG.to_vec(), true);
+            let mut store = Store::default();
+            let first = run_owned_worker(|| prepare_namespace_delivery(
+                &f.api, f.authority.clone(), f.index.clone(), &f.record.identity(), first_index,
+            )).unwrap();
+            let (_, _, receipt) = persist_namespace_delivery(
+                &app, &mut store, &f.repo.writer, first, "first",
+            ).unwrap();
+            let second = run_owned_worker(|| {
+                // Deterministic overlap: the next image has captured the task,
+                // then the previous image advances delivery and terminal progress.
+                FileIndex::delivery_reconcile_after_discovery_for_test(move || {
+                    assert!(acknowledge_namespace_delivery(receipt).unwrap());
+                });
+                prepare_namespace_delivery(
+                    &f.api, f.authority.clone(), f.index.clone(), &f.record.identity(), 1 - first_index,
+                )
+            }).unwrap_or_else(|error| panic!("sibling delivery must not invalidate this image: {error}"));
+            let (_, _, receipt) = persist_namespace_delivery(
+                &app, &mut store, &f.repo.writer, second, "second",
+            ).unwrap();
+            assert!(run_owned_worker(|| acknowledge_namespace_delivery(receipt)).unwrap());
+            let saved = f.repo.load_client_state_for_namespace(f.authority.lease()).unwrap().unwrap();
+            assert_eq!(saved.assets.len(), 2);
+            assert_eq!(saved.generations.len(), 2);
+            assert_eq!(saved.notifications.len(), 2);
+            assert!(saved.notifications.iter().all(|notification| notification.success));
+            assert_eq!(std::fs::read(f.output()).unwrap(), DELIVERY_PNG);
+            let other = f.authority.lease().namespace.path(ManagedUserArea::Output).join(format!("{OTHER_FILE}.png"));
+            assert_eq!(std::fs::read(other).unwrap(), DELIVERY_PNG);
+            assert!(load_pending_generations_for_namespace(&f.authority).unwrap().is_empty());
+            let requests = server.finish();
+            assert_eq!(requests.iter().filter(|(head, _)| head.starts_with("GET /blob ")).count(), 2);
+            assert_eq!(requests.iter().filter(|(head, _)| head.starts_with("POST ")).count(), 2);
+        }
+    }
+
+    #[test]
     fn core_delivery_index_interrupted_publication_reconciles_original_content_without_losing_links() {
         let (listener,url)=backend_generation::billing_capture_test_support::listener();
         let f=DeliveryFixture::new(&url);
@@ -3224,7 +3277,7 @@ fn core_cutout_atomic_settle_rejects_extra_out_of_count_delivery_after_real_remo
     }
     #[test]
     fn core_delivery_index_reconcile_cas_refuses_changed_row_and_original_payer_or_stale_lease() {
-        for change in ["row","payer","task","content","lease"] {
+        for change in ["row","payer","task","prompt","count","inputs","target-file","target-path","target-card","target-ack","target-abandon","terminal","content","lease"] {
             let (listener,url)=backend_generation::billing_capture_test_support::listener();
             let f=DeliveryFixture::new(&url);
             let server=DeliveryServer::start(listener,&url,&f,delivery_detail(),DELIVERY_PNG.to_vec(),true);
@@ -3241,14 +3294,33 @@ fn core_cutout_atomic_settle_rejects_extra_out_of_count_delivery_after_real_remo
                             let c=Connection::open(path).unwrap();
                             c.execute("UPDATE managed_files SET last_accessed_at=last_accessed_at+1",[]).unwrap();
                         }
-                        "payer" | "task" => {
+                        "payer" | "task" | "prompt" | "count" | "inputs" | "target-file" | "target-path" | "target-card" | "target-ack" | "target-abandon" | "terminal" => {
                             // Controlled corruption of this fixture's own retained document.
                             // No mutation authority is minted from the changed row.
                             let file=authority.lease().namespace.path(ManagedUserArea::Recovery)
                                 .join("pending-generations.json");
                             let mut value:serde_json::Value=serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-                            if change=="payer" { value["generations"][0]["billing_account_group_id"]=GROUP_B.into(); }
-                            else { value["generations"][0]["server_task_id"]=USER_B.into(); }
+                            let row = &mut value["generations"][0];
+                            match change {
+                                "payer" => row["billing_account_group_id"] = GROUP_B.into(),
+                                "task" => row["server_task_id"] = USER_B.into(),
+                                "prompt" => row["generation_prompt"] = "changed prompt".into(),
+                                "count" => row["count"] = 2.into(),
+                                "inputs" => row["reference_paths"] = serde_json::json!(["changed-input"]),
+                                "terminal" => { row["terminal"] = true.into(); row["expected_success_count"] = 0.into(); },
+                                _ => {
+                                    let mut delivery = serde_json::json!({"item_index":0,"file_id":DELIVERY_FILE,
+                                        "size_bytes":68,"sha256":"431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"});
+                                    match change {
+                                        "target-file" => delivery["file_id"] = USER_B.into(),
+                                        "target-path" => delivery["local_path"] = "changed-path".into(),
+                                        "target-card" => delivery["failed_asset_id"] = "changed-card".into(),
+                                        "target-ack" => delivery["acknowledged"] = true.into(),
+                                        _ => delivery["abandoned"] = true.into(),
+                                    }
+                                    row["deliveries"] = serde_json::json!([delivery]);
+                                },
+                            }
                             std::fs::write(&file,serde_json::to_vec(&value).unwrap()).unwrap();
                         }
                         "content" => {

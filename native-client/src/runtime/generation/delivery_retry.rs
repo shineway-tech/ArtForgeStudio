@@ -20,6 +20,7 @@ pub(super) struct VerifiedDeliveryIndexContent<'a> {
     source_path: &'a str,
     file: &'a NamespaceManagedFile,
     metadata: ManagedFileMetadata,
+    terminal_success_count: Option<usize>,
     derived: Option<DerivedCutoutIndexContent<'a>>,
 }
 struct DerivedCutoutIndexContent<'a> {
@@ -41,13 +42,25 @@ impl VerifiedDeliveryIndexContent<'_> {
             && self.record.auth_epoch == self.scope.auth_epoch,
             "delivery reconciliation namespace changed");
         let current = load_exact_delivery_record(self.authority, &self.record.identity())?;
-        ensure_delivery!(serde_json::to_value(&current)? == serde_json::to_value(self.record)?,
+        // Sibling images are committed/acknowledged while this image downloads.
+        // Compare immutable task metadata and this item's retained row only;
+        // another item's progress must not invalidate verified local content.
+        ensure_delivery!(delivery_task_metadata(&current)? == delivery_task_metadata(self.record)?,
             "delivery reconciliation retained record changed");
         ensure_delivery!(self.record.client_request_id == self.confirmation.client_request_id
             && self.record.server_task_id == self.confirmation.task_id
             && self.confirmation.item_index < self.record.count as usize,
             "delivery reconciliation task changed");
-        exact_saved_delivery(&current, self.confirmation)?;
+        let saved = exact_saved_delivery(&current, self.confirmation)?;
+        let original = exact_saved_delivery(self.record, self.confirmation)?;
+        ensure_delivery!(serde_json::to_value(saved)? == serde_json::to_value(original)?,
+            "delivery reconciliation selected item changed");
+        ensure_delivery!(
+            (!self.record.terminal || (current.terminal
+                && current.expected_success_count == self.record.expected_success_count))
+                && (!current.terminal || self.terminal_success_count
+                    .is_some_and(|count| count == current.expected_success_count)),
+            "delivery reconciliation terminal progress changed");
         let path = self.authority.lease().namespace.path(self.file.key().area())
             .join(self.file.key().relative_name().as_str());
         ensure_delivery!(path.to_str() == Some(self.source_path),
@@ -310,6 +323,7 @@ fn prepare_namespace_delivery_proof(
         authority: &authority, api, scope: &scope, record: &record,
         confirmation: &confirmation, source_path: &source_path,
         file: &registration_file, metadata, derived: None,
+        terminal_success_count: detail.terminal().then_some(successes),
     };
     let indexed = {
         let _commit = authority.begin_ordinary_mutation()?;
@@ -353,15 +367,8 @@ pub(super) fn acknowledge_namespace_delivery(
     let current = load_exact_delivery_record(&prepared.authority, &identity)?;
     // Delivery rows and terminal progress can advance independently, but the
     // captured task/prompt/input metadata may not silently change underneath us.
-    let stable = |record: &PendingGenerationRecord| -> Result<serde_json::Value> {
-        let mut record = record.clone();
-        record.deliveries.clear();
-        record.terminal = false;
-        record.expected_success_count = 0;
-        Ok(serde_json::to_value(record)?)
-    };
     ensure_delivery!(
-        stable(&current)? == stable(&prepared.record)?,
+        delivery_task_metadata(&current)? == delivery_task_metadata(&prepared.record)?,
         "saved delivery record changed"
     );
     let saved_delivery = exact_saved_delivery(&current, &prepared.confirmation)?;
@@ -480,6 +487,14 @@ fn require_delivery_uuid(value: &str) -> Result<()> {
     );
     Ok(())
 }
+fn delivery_task_metadata(record: &PendingGenerationRecord) -> Result<serde_json::Value> {
+    let mut metadata = record.clone();
+    metadata.deliveries.clear();
+    metadata.terminal = false;
+    metadata.expected_success_count = 0;
+    Ok(serde_json::to_value(metadata)?)
+}
+
 fn load_exact_delivery_record(
     authority: &NamespaceStorageAuthority,
     expected: &RecoveryRecordIdentity,
@@ -707,6 +722,7 @@ pub(super) fn prepare_namespace_cutout_delivery(
         authority: &proof.authority, api, scope: &proof.scope, record: &proof.record,
         confirmation: &proof.confirmation, source_path: &output_path, file: &output,
         metadata: output_metadata.clone(),
+        terminal_success_count: proof.terminal_success_count,
         derived: Some(DerivedCutoutIndexContent { remote: &proof,
             source: &source, source_metadata: &source_metadata,
             sha256: &sha256, size }),

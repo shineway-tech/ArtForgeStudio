@@ -100,7 +100,7 @@ export component SettingsPage {
             return max(960px, 126px + root.models-height());
         }
         if AppState.settings-section == "basic" {
-            return 1300px;
+            return 1144px;
         }
         return 960px;
     }
@@ -306,12 +306,15 @@ export component SettingsPage {
                         }
                     }
                 }
-                if AppState.settings-section == "basic": DirRow { x: content-x; y: 856px; width: content-w; label: AppState.en ? "Input folder" : "输入素材目录"; value: AppState.input-dir; kind: "input"; }
-                if AppState.settings-section == "basic": DirRow { x: content-x; y: 934px; width: content-w; label: AppState.en ? "Output folder" : "输出目录"; value: AppState.output-dir; kind: "output"; }
-                if AppState.settings-section == "basic": DirRow { x: content-x; y: 1012px; width: content-w; label: AppState.en ? "Prompt folder" : "提示词模板目录"; value: AppState.prompt-dir; kind: "prompt"; }
+                if AppState.settings-section == "basic": DirRow {
+                    x: content-x; y: 856px; width: content-w;
+                    label: AppState.en ? "Material storage folder" : "素材存储目录";
+                    value: AppState.material-dir != "" ? AppState.material-dir : (AppState.en ? "Multiple locations — migrate to consolidate" : "分散存储，点击一键迁移统一目录");
+                    kind: "materials";
+                }
                 if AppState.settings-section == "basic": Rectangle {
                     x: content-x;
-                    y: 1110px;
+                    y: 954px;
                     width: content-w;
                     height: 154px;
                     background: AppTheme.panel;
@@ -517,8 +520,8 @@ export component SettingsPage {
                         height: 28px;
                     }
                     Rectangle { x: 18px; y: 150px; width: parent.width - 36px; height: 1px; background: AppTheme.border; }
-                    Text { x: 18px; y: 176px; text: AppState.en ? "Config path (input assets)" : "配置位置（输入素材）"; color: AppTheme.text; font-size: 14px; font-weight: 400; }
-                    Text { x: 18px; y: 206px; width: parent.width - 160px; text: AppState.logged-in ? AppState.input-dir : (AppState.en ? "Sign in to manage this account’s folders" : "登录后管理当前账号目录"); color: AppTheme.muted; font-size: 13px; font-weight: 400; overflow: elide; }
+                    Text { x: 18px; y: 176px; text: AppState.en ? "Material storage folder" : "素材存储目录"; color: AppTheme.text; font-size: 14px; font-weight: 400; }
+                    Text { x: 18px; y: 206px; width: parent.width - 160px; text: !AppState.logged-in ? (AppState.en ? "Sign in to manage this account’s folders" : "登录后管理当前账号目录") : AppState.material-dir != "" ? AppState.material-dir : (AppState.en ? "Multiple locations — migrate to consolidate" : "分散存储，点击一键迁移统一目录"); color: AppTheme.muted; font-size: 13px; font-weight: 400; overflow: elide; }
                     config-path-migrate := PillButton {
                         x: parent.width - 122px;
                         y: 182px;
@@ -526,7 +529,7 @@ export component SettingsPage {
                         height: 36px;
                         text: AppState.en ? "Migrate" : "一键迁移";
                         disabled: !AppState.logged-in || AppState.auth-busy || AppState.account-group-switching || AppState.directory-migration-open || AppState.update-active;
-                        clicked => { AppState.pick-dir("input"); }
+                        clicked => { AppState.pick-dir("materials"); }
                     }
                 }
                 if AppState.settings-section == "about": Text {
