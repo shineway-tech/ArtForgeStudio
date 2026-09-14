@@ -100,6 +100,13 @@ export component Sidebar {
             Rectangle { vertical-stretch: 1; }
             if AppState.logged-in: SidebarCreditsButton { collapsed: AppState.sidebar-collapsed; }
             sidebar-notifications := NavItem { collapsed: AppState.sidebar-collapsed; icon: "notifications"; label: AppState.en ? "Notifications" : "通知"; page: "notifications"; show-dot: AppState.has-unread; }
+            sidebar-contact := NavItem {
+                collapsed: AppState.sidebar-collapsed;
+                icon: "contact";
+                label: AppState.en ? "Contact Us" : "联系我们";
+                active: AppState.page == "settings" && AppState.settings-section == "contact";
+                clicked => { AppState.open-contact-settings(); }
+            }
             SidebarAccountButton {
                 collapsed: AppState.sidebar-collapsed;
                 show-dot: AppState.update-available;
