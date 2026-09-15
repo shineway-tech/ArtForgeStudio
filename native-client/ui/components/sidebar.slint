@@ -84,6 +84,13 @@ export component Sidebar {
             }
             NavItem {
                 collapsed: AppState.sidebar-collapsed;
+                icon: "video";
+                label: AppState.en ? "AI Video" : "AI视频";
+                page: "video-generation";
+                active: AppState.page == "video-generation";
+            }
+            NavItem {
+                collapsed: AppState.sidebar-collapsed;
                 icon: "toolbox";
                 label: AppState.en ? "Toolbox" : "工具箱";
                 page: "toolbox";

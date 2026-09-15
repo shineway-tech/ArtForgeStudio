@@ -118,6 +118,7 @@ impl PreparedPrivateModels {
         let state=app.global::<AppState>();
         let mut data=prepared.data.clone().map(prepare_private_store);
         if let Some(data)=&mut data {
+            seed_inspiration(&mut data.store);
             let core=&prepared.pending.core;
             data.store.private_persistence=Some(PrivatePersistence::new(core.writer.clone(),prepared.lease.clone(),core.activity.clone(),core.backend.api.upgrade_latch().clone())
                 .with_storage(core.root.clone(),core.backend.api.clone(),context.file_index.clone().expect("initialized file index precedes activation")));
@@ -1652,6 +1653,9 @@ mod tests {
             core.writer.persist_client_state_checked_for_namespace(&lease,original).unwrap();
             if fresh_store { prepared.data=core.writer.load_client_state_for_namespace(&lease).unwrap(); }
             let models=PreparedPrivateModels::new(&app,&mut prepared,&context).unwrap();
+            if fresh_store {
+                assert!(!models.data.as_ref().unwrap().store.inspiration.is_empty());
+            }
             assert!(!app.global::<AppState>().get_logged_in());
             assert_eq!(app.global::<AppState>().get_catalog_models().row_count(),0);
             assert!(core.writer.load_selected_group(lease.namespace.user_public_id(),&core.backend.api.device().id).unwrap().is_none());

@@ -154,6 +154,49 @@ fn imports_append_without_overwriting_prompt_and_removal_never_deletes_files() {
 }
 
 #[test]
+fn directory_migration_rebases_video_inputs_and_asset_choices_without_clearing_rows() {
+    i_slint_backend_testing::init_no_event_loop();
+    let app = AppWindow::new().unwrap();
+    let state = app.global::<AppState>();
+    let root = tempfile::tempdir().unwrap();
+    let old_output = root.path().join("old-output");
+    let new_output = root.path().join("new-output");
+    let old_path = old_output.join("nested").join("asset.png");
+    let new_path = new_output.join("nested").join("asset.png");
+    let locations = DirectoryLocations {
+        relocations: vec![DirectoryRelocation {
+            source: old_output,
+            destination: new_output,
+        }],
+        ..Default::default()
+    };
+    let row = VideoImageItem {
+        id: video_image_key(&old_path).into(),
+        source_asset_id: "asset-id".into(),
+        title: "Asset".into(),
+        source_path: old_path.to_string_lossy().into_owned().into(),
+        selected: true,
+        added: true,
+        ..Default::default()
+    };
+    state.set_video_images(ModelRc::new(VecModel::from(vec![row.clone()])));
+    state.set_video_asset_choices(ModelRc::new(VecModel::from(vec![row])));
+
+    remap_video_image_models(&state, &locations);
+
+    for remapped in [
+        state.get_video_images().row_data(0).unwrap(),
+        state.get_video_asset_choices().row_data(0).unwrap(),
+    ] {
+        assert_eq!(Path::new(remapped.source_path.as_str()), new_path);
+        assert_eq!(remapped.id.as_str(), video_image_key(&new_path));
+        assert_eq!(remapped.source_asset_id.as_str(), "asset-id");
+        assert!(remapped.selected);
+        assert!(remapped.added);
+    }
+}
+
+#[test]
 fn asset_picker_multiselect_adds_all_checked_images_and_marks_existing_images() {
     use i_slint_backend_testing::ElementHandle;
     use slint::platform::PointerEventButton;
@@ -418,6 +461,67 @@ pub(in crate::runtime) mod scoped_inputs {
         assert_eq!(row.source_asset_id.as_str(),"saved-asset");
         assert_eq!(Path::new(row.source_path.as_str()),original.as_path());
         f.drain();
+    }
+    #[test]
+    fn migrated_persisted_asset_reloads_from_new_output_and_remains_video_selectable() {
+        let (mut f,app,_epoch,_quote,_key)=setup();
+        let old_lease=f.persistence.lease().clone();
+        let old_output=old_lease.namespace.path(ManagedUserArea::Output);
+        fs::create_dir_all(&old_output).unwrap();
+        let old_path=png(&old_output,"migrated-asset.png");
+        let mut data=LocalStoreData::default();
+        data.assets.push(stored_asset_from(&asset(&old_path)));
+        f.writer.persist_client_state_checked_for_namespace(&old_lease,data).unwrap();
+
+        let destination=tempfile::tempdir().unwrap();
+        let new_output=destination.path().join("out");
+        fs::create_dir(&new_output).unwrap();
+        let new_path=new_output.join("migrated-asset.png");
+        fs::copy(&old_path,&new_path).unwrap();
+        let namespace=old_lease.namespace.clone().with_mapping(AccountDirectoryMapping {
+            version:2,
+            area:ManagedUserArea::Output.storage_name().into(),
+            source:old_output.clone(),
+            target:fs::canonicalize(&new_output).unwrap(),
+            identity:NamespaceFs::directory_identity_at(&new_output).unwrap(),
+            source_identity:NamespaceFs::directory_identity_at(&old_output).unwrap(),
+            manifest_json:"[]".into(),
+            pending_rebind:Vec::new(),
+            material_owner:None,
+        }).unwrap();
+        let new_lease=NamespaceLease { namespace,namespace_epoch:old_lease.namespace_epoch+1,..old_lease.clone() };
+        f.writer.activate(new_lease.clone()).unwrap();
+        f.context.user_activity.begin_quiesce(&old_lease).unwrap().retire();
+        f.context.user_activity.activate(new_lease.clone()).unwrap();
+        *f.context.active_namespace.lock().unwrap()=Some(new_lease.clone());
+
+        let loaded=f.writer.load_client_state_for_namespace(&new_lease).unwrap().unwrap();
+        let expected_new_path=PathBuf::from(display_directory_path(&fs::canonicalize(&new_path).unwrap()));
+        assert_eq!(Path::new(&loaded.assets[0].source_path),expected_new_path);
+        let mut prepared=prepare_private_store(loaded).store;
+        let backend=f.context.backend.as_ref().unwrap().clone();
+        let persistence=PrivatePersistence::for_test_with_storage(
+            (*f.writer).clone(),new_lease.clone(),f.context.user_activity.clone(),
+            backend.api.upgrade_latch().clone(),f.writer.data_root_capability_arc(),backend.api.clone(),
+            f.context.file_index.as_ref().unwrap().clone(),
+        );
+        prepared.private_persistence=Some(persistence.clone());
+        *f.context.store.borrow_mut()=prepared;
+        f.persistence=persistence;
+        f.authority=f.persistence.storage_authority().unwrap();
+        assert_eq!(
+            f.authority.read_image_source(&expected_new_path,MAX_VIDEO_IMAGE_BYTES).unwrap(),
+            fs::read(&expected_new_path).unwrap(),
+        );
+
+        app.global::<AppState>().invoke_open_video_asset_picker();
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(5));
+        slint::platform::update_timers_and_animations();
+        let row=app.global::<AppState>().get_video_asset_choices().row_data(0)
+            .expect("migrated asset should remain available to video generation");
+        assert_eq!(row.source_asset_id.as_str(),"asset");
+        assert_eq!(Path::new(row.source_path.as_str()),expected_new_path);
+        app.global::<AppState>().invoke_close_video_image_dialog();
     }
     #[test]
     fn video_image_remove_is_denied_after_exact_upgrade_without_invalidating_quote() {

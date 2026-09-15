@@ -31,7 +31,7 @@ pub(super) fn asset_path(relative: &str) -> Option<PathBuf> {
         .find(|path| path.exists())
 }
 
-pub(super) fn seed_inspiration(_app: &AppWindow, store: &Rc<RefCell<Store>>) -> Result<()> {
+pub(super) fn seed_inspiration(store: &mut Store) {
     let dirs = inspiration_dirs();
     let mut items = Vec::new();
     let mut seen_files = BTreeSet::new();
@@ -39,7 +39,10 @@ pub(super) fn seed_inspiration(_app: &AppWindow, store: &Rc<RefCell<Store>>) -> 
         if !dir.exists() {
             continue;
         }
-        let mut paths = fs::read_dir(dir)?
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        let mut paths = entries
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
             .collect::<Vec<_>>();
         paths.sort_by_key(|path| {
@@ -97,8 +100,7 @@ pub(super) fn seed_inspiration(_app: &AppWindow, store: &Rc<RefCell<Store>>) -> 
             }
         }
     }
-    store.borrow_mut().inspiration = items;
-    Ok(())
+    store.inspiration = items;
 }
 
 pub(super) fn inspiration_dirs() -> Vec<PathBuf> {
@@ -187,7 +189,19 @@ pub(super) fn inspiration_prompt(index: usize, title: &str, ratio: &str) -> Stri
 
 #[cfg(test)]
 mod tests {
-    use super::{inspiration_meta, inspiration_prompt};
+    use super::{inspiration_meta, inspiration_prompt, seed_inspiration, Store};
+
+    #[test]
+    fn bundled_inspiration_is_rebuilt_for_each_private_store() {
+        let mut store = Store::default();
+        seed_inspiration(&mut store);
+
+        assert!(!store.inspiration.is_empty());
+        assert!(store
+            .inspiration
+            .iter()
+            .all(|item| item.origin == "inspiration" && std::path::Path::new(&item.source_path).is_file()));
+    }
 
     #[test]
     fn fantasy_ui_atlas_items_are_registered_as_game_ui_in_order() {

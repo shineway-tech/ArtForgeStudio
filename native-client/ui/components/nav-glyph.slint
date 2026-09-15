@@ -9,6 +9,7 @@ export component NavGlyph {
     if root.kind == "generation": Image { width: parent.width; height: parent.height; source: AppState.icon-generation; colorize: root.glyph-color; image-fit: contain; }
     if root.kind == "workspace": Image { width: parent.width; height: parent.height; source: AppState.icon-workspace; colorize: root.glyph-color; image-fit: contain; }
     if root.kind == "ai-creation": Image { width: parent.width; height: parent.height; source: @image-url("../../assets/icons/ai-creation.svg"); colorize: root.glyph-color; image-fit: contain; }
+    if root.kind == "video": Image { width: parent.width; height: parent.height; source: @image-url("../../assets/icons/video.svg"); colorize: root.glyph-color; image-fit: contain; }
     if root.kind == "canvas": Image { width: parent.width; height: parent.height; source: @image-url("../../assets/icons/canvas.svg"); colorize: root.glyph-color; image-fit: contain; }
     if root.kind == "toolbox": Image { width: parent.width; height: parent.height; source: @image-url("../../assets/icons/controls.svg"); colorize: root.glyph-color; image-fit: contain; }
     if root.kind == "inspiration": Image { width: parent.width; height: parent.height; source: AppState.icon-inspiration; colorize: root.glyph-color; image-fit: contain; }

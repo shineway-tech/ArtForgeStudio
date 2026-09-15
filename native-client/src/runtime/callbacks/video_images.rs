@@ -21,6 +21,33 @@ fn video_image_key(path: &Path) -> String {
     if cfg!(windows) { key.to_lowercase() } else { key }
 }
 
+pub(super) fn remap_video_image_models(state: &AppState, locations: &DirectoryLocations) {
+    let remap_rows = |rows: ModelRc<VideoImageItem>| {
+        rows.iter()
+            .map(|mut row| {
+                let mut id = row.id.to_string();
+                let previous_id = id.clone();
+                locations.remap(&mut id);
+                if id != previous_id {
+                    id = video_image_key(Path::new(&id));
+                }
+                row.id = id.into();
+
+                let mut source_path = row.source_path.to_string();
+                locations.remap(&mut source_path);
+                row.source_path = source_path.into();
+                row
+            })
+            .collect::<Vec<_>>()
+    };
+    state.set_video_images(ModelRc::new(VecModel::from(remap_rows(
+        state.get_video_images(),
+    ))));
+    state.set_video_asset_choices(ModelRc::new(VecModel::from(remap_rows(
+        state.get_video_asset_choices(),
+    ))));
+}
+
 fn video_asset_candidates(store: &Store) -> Vec<(String, PathBuf)> {
     store
         .assets

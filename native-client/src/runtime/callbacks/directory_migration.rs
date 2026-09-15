@@ -298,7 +298,11 @@ fn show_migration_error(app: &AppWindow, message: &str) {
 
 pub(super) fn sync_account_migrated_file_locations(app: &AppWindow, context: &AppContext, namespace: &UserNamespace) {
     let config = namespace.remap_locations();
-    config.remap_store(&mut context.store.borrow_mut());
+    {
+        let mut store = context.store.borrow_mut();
+        config.remap_store(&mut store);
+        seed_inspiration(&mut store);
+    }
     context
         .canvas_history
         .borrow_mut()
@@ -361,10 +365,12 @@ pub(super) fn sync_account_migrated_file_locations(app: &AppWindow, context: &Ap
     }
     remap_image_model!(get_compression_images, set_compression_images);
     remap_image_model!(get_conversion_images, set_conversion_images);
+    remap_video_image_models(&state, &config);
     let store = context.store.borrow();
     clear_preview_memory_cache();
     push_assets(app, &store);
     push_generations(app, &store);
+    push_inspiration(app, &store);
     push_references(app, &store);
     push_custom_prompts(app, &store);
     push_canvas_notes(app, &store);

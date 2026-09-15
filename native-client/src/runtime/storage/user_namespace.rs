@@ -476,7 +476,7 @@ impl NamespaceStorageAuthority {
             let mut areas = MANAGED_USER_AREAS.to_vec();
             areas.sort_by_key(|area| std::cmp::Reverse(area.relative_path().len()));
             let key = areas.into_iter().find_map(|area| {
-                path.strip_prefix(self.lease.namespace.path(area)).ok().and_then(|name|
+                self.lease.namespace.managed_relative_path(area, path).and_then(|name|
                     name.to_str().and_then(|name| ManagedFileKey::new(area, name).ok()))
             }).ok_or_else(|| anyhow::anyhow!("source is outside owned managed areas"))?;
             let mut file = self.open_existing_regular(&key)?;
@@ -1723,8 +1723,19 @@ impl UserNamespace {
         }
         Ok(())
     }
+    fn managed_relative_path(&self, area: ManagedUserArea, path: &Path) -> Option<PathBuf> {
+        let root = self.path(area);
+        let normalized = crate::directory_migration::remap_path(
+            path.to_string_lossy().as_ref(),
+            &root,
+            &root,
+        )?;
+        PathBuf::from(normalized).strip_prefix(root).ok().map(Path::to_path_buf)
+    }
     pub(crate) fn owns_path(&self, path: &Path) -> bool {
-        MANAGED_USER_AREAS.into_iter().any(|area| path.starts_with(self.path(area)))
+        MANAGED_USER_AREAS
+            .into_iter()
+            .any(|area| self.managed_relative_path(area, path).is_some())
     }
     pub(crate) fn remap_path(&self, path: &mut String) { self.remap_locations().remap(path); }
     pub(crate) fn remap_locations(&self) -> super::DirectoryLocations {

@@ -95,6 +95,12 @@ fn bottom_account_controls_keep_routes_and_menu_fits_collapsed_and_expanded_side
     app.show().unwrap();
     for (language, collapsed) in [("zh", false), ("zh", true), ("en", false), ("en", true)] {
         state.set_language(language.into());
+        let video_label = if language == "zh" { "AI视频" } else { "AI Video" };
+        ElementHandle::find_by_accessible_label(&app, video_label)
+            .next()
+            .unwrap_or_else(|| panic!("missing AI video navigation entry: {video_label}"))
+            .mock_single_click(PointerEventButton::Left);
+        assert_eq!(&*destination.borrow(), "video-generation");
         state.set_sidebar_collapsed(collapsed);
         i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(200));
         let avatar = ElementHandle::find_by_element_type_name(&app, "SidebarAccountButton")

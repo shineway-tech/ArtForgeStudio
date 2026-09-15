@@ -48,7 +48,7 @@ component AccountMenuRow inherits Rectangle {
 
 export component SidebarCreditsButton inherits Rectangle {
     in property <bool> collapsed: false;
-    width: root.collapsed ? 56px : 176px;
+    width: root.collapsed ? 56px : 80px;
     height: 38px;
     accessible-role: button;
     accessible-label: AppState.account-amount-label;
@@ -60,7 +60,7 @@ export component SidebarCreditsButton inherits Rectangle {
         ? AppTheme.panel-soft
         : transparent;
     Rectangle {
-        x: root.collapsed ? (parent.width - self.width) / 2 : 9px;
+        x: root.collapsed ? (parent.width - self.width) / 2 : 5px;
         y: 8px;
         width: 22px;
         height: 22px;
@@ -74,10 +74,10 @@ export component SidebarCreditsButton inherits Rectangle {
         }
     }
     if !root.collapsed: Text {
-        x: 42px;
-        width: parent.width - 52px;
+        x: 32px;
+        width: parent.width - 36px;
         height: parent.height;
-        text: AppState.account-amount-label;
+        text: AppState.en ? "Credits" : "积分";
         color: AppTheme.text;
         font-size: AppState.settings-font-size * 1px;
         font-weight: 500;
