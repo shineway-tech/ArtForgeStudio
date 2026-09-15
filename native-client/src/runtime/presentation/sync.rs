@@ -1,5 +1,9 @@
 use super::*;
 
+// Keep preview delivery cooperative with Slint's event loop. A large library
+// can otherwise make one timer callback monopolize the UI thread.
+const ACTIVATION_PREVIEW_COMPLETIONS_PER_TICK: usize = 4;
+
 pub(super) struct PreparedActivationVisuals {
     ui: PreparedUiProjection,
     assets: GalleryVirtualSlot,
@@ -40,7 +44,15 @@ fn prepare_private_visuals(
 )->PreparedActivationVisuals {
     let mut ui=PreparedUiProjection::default();
     let mut jobs=Vec::new();
+    let active_preview_collection=current.and_then(|state|match state.get_page().as_str(){
+        "assets"=>Some(PreviewCollection::Assets),
+        "generation"=>Some(PreviewCollection::Generations),
+        _=>None,
+    });
     let existing_videos=current.map(|state|state.get_saved_videos().iter().map(|row|(row.id.to_string(),row.image)).collect::<BTreeMap<_,_>>()).unwrap_or_default();
+    let existing_conversation_previews=current.map(|state|state.get_conversations().iter()
+        .filter(|row|row.image.size().width>0 && row.image.size().height>0)
+        .map(|row|(row.id.to_string(),row.image)).collect::<BTreeMap<_,_>>()).unwrap_or_default();
     let videos = store.video_outputs.values().rev().map(|output| {
         let key=output.key();
         let image=existing_videos.get(&key).cloned().unwrap_or_default();
@@ -76,7 +88,8 @@ fn prepare_private_visuals(
             let item_index=items.len() as i32;
             items.push(to_asset_view_with_previews(asset,&existing));
             placements.push(GalleryPlacement { item_index,x:layout.x,y:layout.y,width:layout.width,gap:layout.gap,masonry:layout.masonry });
-            if !asset.source_path.is_empty() && asset.source_path!="failed" && !existing.contains_key(&(asset.id.clone(),asset.source_path.clone())) {
+            if (current.is_none() || active_preview_collection==Some(collection))
+                && !asset.source_path.is_empty() && asset.source_path!="failed" && !existing.contains_key(&(asset.id.clone(),asset.source_path.clone())) {
                 jobs.push(ActivationPreviewJob { kind:ActivationPreviewKind::Gallery(collection),id:asset.id.clone(),path:asset.source_path.clone() });
             }
         }
@@ -124,8 +137,10 @@ fn prepare_private_visuals(
     let mut seen=BTreeSet::new(); let mut conversations=Vec::new();
     for item in store.generations.iter().filter(|item|item.source_path!="failed" && !item.conversation_id.trim().is_empty()) {
         if !seen.insert(item.conversation_id.clone()) { continue; }
-        conversations.push(ConversationItem { id:item.conversation_id.clone().into(),title:short_text(&item.title,10).into(),image:Image::default(),loading:false });
-        jobs.push(ActivationPreviewJob { kind:ActivationPreviewKind::Conversation,id:item.conversation_id.clone(),path:item.source_path.clone() });
+        conversations.push(ConversationItem { id:item.conversation_id.clone().into(),title:short_text(&item.title,10).into(),image:existing_conversation_previews.get(&item.conversation_id).cloned().unwrap_or_default(),loading:false });
+        if current.is_none() || active_preview_collection==Some(PreviewCollection::Generations) {
+            jobs.push(ActivationPreviewJob { kind:ActivationPreviewKind::Conversation,id:item.conversation_id.clone(),path:item.source_path.clone() });
+        }
     }
     if let Some(state)=current {
         let placeholders=state.get_conversations().iter().filter(|row|row.loading && !seen.contains(row.id.as_str())).collect::<Vec<_>>();
@@ -136,7 +151,9 @@ fn prepare_private_visuals(
     ui.push(current_conversation,|state,value|state.set_current_conversation_id(value));
     ui.push(ModelRc::new(VecModel::from(conversations)),|state,value|state.set_conversations(value));
     for item in references_for_category(&store.references,category).iter().take(max_reference_images_for_category(category)) {
-        if !item.source_path.is_empty() { jobs.push(ActivationPreviewJob { kind:ActivationPreviewKind::Reference,id:item.id.clone(),path:item.source_path.clone() }); }
+        if (current.is_none() || active_preview_collection==Some(PreviewCollection::Generations)) && !item.source_path.is_empty() {
+            jobs.push(ActivationPreviewJob { kind:ActivationPreviewKind::Reference,id:item.id.clone(),path:item.source_path.clone() });
+        }
     }
     PreparedActivationVisuals { ui,assets,generations,jobs }
 }
@@ -212,12 +229,14 @@ fn poll_activation_previews(weak:Weak<AppWindow>,context:AppContext,persistence:
     slint::Timer::single_shot(Duration::from_millis(50),move || {
         reap_activation_preview_workers();
         let Some(app)=weak.upgrade() else { return; };
-        loop {
+        let mut processed=0;
+        while processed<ACTIVATION_PREVIEW_COMPLETIONS_PER_TICK {
             let (job,preview)=match receiver.try_recv() {
                 Ok(value)=>value,
                 Err(TryRecvError::Empty)=>{ poll_activation_previews(weak,context,persistence,receiver); return; },
                 Err(TryRecvError::Disconnected)=>return,
             };
+            processed+=1;
             if !context.store.borrow().private_persistence.as_ref().is_some_and(|current|current.same_binding(&persistence)) { return; }
             let _=context.apply_user_completion(persistence.lease(),|| {
                 let state=app.global::<AppState>();
@@ -262,6 +281,7 @@ fn poll_activation_previews(weak:Weak<AppWindow>,context:AppContext,persistence:
                 }
             });
         }
+        poll_activation_previews(weak,context,persistence,receiver);
     });
 }
 

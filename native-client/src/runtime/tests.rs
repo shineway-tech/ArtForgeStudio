@@ -8126,4 +8126,32 @@ mod tests {
 
         assert_eq!((min_x, min_y, max_x, max_y), (100, 100, 923, 923));
     }
+
+    #[test]
+    fn generation_delivery_previews_cannot_monopolize_the_ui_thread() {
+        let sync = include_str!("presentation/sync.rs");
+        let preparation = sync
+            .split_once("fn prepare_private_visuals(")
+            .expect("private visual preparation")
+            .1
+            .split_once("struct ActivationPreviewWorker")
+            .expect("activation worker boundary")
+            .0;
+        let polling = sync
+            .split_once("fn poll_activation_previews(")
+            .expect("activation preview poll")
+            .1
+            .split_once("pub(super) fn prepare_startup_projection")
+            .expect("activation preview poll boundary")
+            .0;
+
+        assert!(preparation.contains("existing_conversation_previews"));
+        assert!(preparation.contains("active_preview_collection"));
+        assert!(preparation.contains(
+            "current.is_none() || active_preview_collection==Some(collection)"
+        ));
+        assert!(polling.contains("ACTIVATION_PREVIEW_COMPLETIONS_PER_TICK"));
+        assert!(polling.contains("poll_activation_previews("));
+        assert!(!polling.contains("loop {"));
+    }
 }
