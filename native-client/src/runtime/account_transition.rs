@@ -83,6 +83,38 @@ struct ActivationUi {
     mailbox: Arc<ActivationMailbox>, models: Option<PreparedPrivateModels>,
     worker: Option<std::thread::JoinHandle<()>>, login_origin: Option<LoginOrigin>,
 }
+
+struct RetirementCover {
+    lease: NamespaceLease,
+    store: LocalStoreData,
+    profile: UserProfileData,
+}
+
+impl RetirementCover {
+    fn capture(app: &AppWindow, context: &AppContext) -> Option<Self> {
+        let store = context.store.borrow();
+        let persistence = store.private_persistence.as_ref()?;
+        Some(Self {
+            lease: persistence.lease().clone(),
+            store: local_store_data(app, &store),
+            profile: user_profile_data(app),
+        })
+    }
+
+    fn persist(self, core: &TransitionCore, old: &NamespaceLease) -> Result<(), ApiError> {
+        if &self.lease != old {
+            return Err(transition_error("待封存账号与当前账号不一致"));
+        }
+        retry_client_state_write(|| {
+            core.writer.persist_client_state_checked_for_namespace(old, self.store.clone())
+        })?;
+        retry_client_state_write(|| {
+            core.writer.persist_client_user_profile_checked_for_namespace(old, self.profile.clone())
+        })?;
+        Ok(())
+    }
+}
+
 impl Drop for ActivationUi {
     fn drop(&mut self) { self.mailbox.cancel(); }
 }
@@ -249,6 +281,9 @@ impl AccountTransitionCoordinator {
             _ => None,
         };
         let explicit_login = matches!(&input, ActivationInput::Login { .. });
+        let retirement_cover = matches!(&input, ActivationInput::Login { .. } | ActivationInput::Logout { .. })
+            .then(|| RetirementCover::capture(app, &context))
+            .flatten();
         if self.pending.borrow().is_some() {
             if explicit_login {
                 let state = app.global::<AppState>();
@@ -270,6 +305,14 @@ impl AccountTransitionCoordinator {
                 return;
             }
         };
+        // A previous failed transition may already have retired its namespace
+        // while stale presentation state remained. There is no old writer to
+        // protect in that case, so clear it before starting the next login.
+        if explicit_login && self.core.active_namespace.lock()
+            .unwrap_or_else(|poison| poison.into_inner()).is_none()
+        {
+            clear_retired_private_state(app, &context);
+        }
         let input = match input {
             ActivationInput::Switch { scope, choice, rollback } => {
                 let proposed = self.core.backend.api.upgrade_latch().apply_if_open(|| self.core.billing.begin_switch(&scope, &self.core.backend.api.device().id, &choice.group_id, rollback));
@@ -302,7 +345,7 @@ impl AccountTransitionCoordinator {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 #[cfg(test)]
                 if let Some(hook)=&checkpoint { hook("working"); }
-                let prepared = core.prepare_activation(input, &ticket, || {
+                let prepared = core.prepare_activation_with_cover(input, &ticket, retirement_cover, || {
                     worker_mailbox.put(ActivationMailboxPhase::Retired);
                     worker_mailbox.wait_for(|phase| matches!(phase, ActivationMailboxPhase::Working))?;
                     Ok(())
@@ -749,8 +792,17 @@ struct PreparedActivation {
 }
 struct PersistedActivation { prepared: PreparedActivation, _commit: OrdinaryDurableCommitPermit }
 impl TransitionCore {
+    #[cfg(test)]
     fn prepare_activation(
         self: &Arc<Self>, input: ActivationInput, ticket: &AccountTransitionTicket,
+        retired_ui: impl FnOnce() -> Result<(), ApiError>,
+    ) -> Result<Option<PreparedActivation>, ApiError> {
+        self.prepare_activation_with_cover(input, ticket, None, retired_ui)
+    }
+
+    fn prepare_activation_with_cover(
+        self: &Arc<Self>, input: ActivationInput, ticket: &AccountTransitionTicket,
+        retirement_cover: Option<RetirementCover>,
         retired_ui: impl FnOnce() -> Result<(), ApiError>,
     ) -> Result<Option<PreparedActivation>, ApiError> {
         let input = match input {
@@ -764,6 +816,7 @@ impl TransitionCore {
         }
         let mut namespace_transition = self.namespace_operations.begin_transition().map_err(transition_error)?;
         let old = self.active_namespace.lock().map_err(transition_error)?.clone();
+        let mut retirement_cover = retirement_cover;
         // Prepare all cleanup ownership before the irreversible writer retirement.
         let mut retired_cleanup = old.as_ref().map(|old| {
             let scope = SessionScope { owner_user_id: old.namespace.user_public_id().into(), auth_epoch: old.auth_epoch };
@@ -784,7 +837,17 @@ impl TransitionCore {
         }
         if let Some(old) = old.as_ref() {
             let quiesced = self.activity.begin_quiesce(old).map_err(transition_error)?;
-            let flushed = self.writer.flush_for_retirement(old).map_err(transition_error)?;
+            let flushed = match self.writer.flush_for_retirement(old) {
+                Ok(flushed) => flushed,
+                Err(error @ ClientStateWriteError::LocalState { .. }) => {
+                    let Some(cover) = retirement_cover.take() else {
+                        return Err(transition_error(error));
+                    };
+                    cover.persist(self, old)?;
+                    self.writer.flush_for_retirement(old).map_err(transition_error)?
+                }
+                Err(error) => return Err(transition_error(error)),
+            };
             namespace_transition.retire_flushed(flushed).map_err(transition_error)?;
             retired_cleanup.as_mut().expect("old retirement owns cleanup").armed = true;
             if let Some(remote) = &mut remote_logout { remote.armed = true; }
@@ -874,12 +937,18 @@ impl PreparedActivation {
         let core = self.pending.core.clone();
         let permit = core.backend.api.upgrade_latch().begin_ordinary_durable_commit().map_err(|required| required.as_error())?;
         if let Some(profile)=self.profile.clone() {
-            core.writer.persist_client_user_profile_checked_for_namespace(&self.lease,profile).map_err(transition_error)?;
+            retry_client_state_write(|| {
+                core.writer.persist_client_user_profile_checked_for_namespace(&self.lease, profile.clone())
+            })?;
         }
-        let result = core.writer.save_selected_group(
+        let save_selection = || core.writer.save_selected_group(
             &self.lease.namespace.user_public_id(), self.billing_ticket.device_installation_id(),
             &self.billing_ticket.proposed_scope().request.account_group_id,
-        ).map_err(transition_error);
+        );
+        let result = save_selection().or_else(|_| {
+            std::thread::sleep(Duration::from_millis(120));
+            save_selection()
+        }).map_err(transition_error);
         if let Err(error) = result {
             drop(self);
             drop(permit);
@@ -888,6 +957,19 @@ impl PreparedActivation {
         // Acknowledged disk selection is irreversible by ordinary ticket Drop.
         self.billing_ticket.suppress_rollback();
         Ok(PersistedActivation { prepared: self, _commit: permit })
+    }
+}
+
+fn retry_client_state_write(
+    mut write: impl FnMut() -> client_state::WriteResult,
+) -> Result<(), ApiError> {
+    match write() {
+        Ok(()) => Ok(()),
+        Err(ClientStateWriteError::LocalState { .. }) => {
+            std::thread::sleep(Duration::from_millis(120));
+            write().map_err(transition_error)
+        }
+        Err(error) => Err(transition_error(error)),
     }
 }
 
@@ -1301,6 +1383,11 @@ mod tests {
                     core.backend.api.upgrade_latch().clone()).with_storage(core.root.clone(), core.backend.api.clone(), index);
                 context.store.borrow_mut().private_persistence = Some(persistence.clone());
                 context.store.borrow_mut().custom_prompts = vec!["A private draft".into()];
+                context.store.borrow_mut().notifications = vec![NotificationData {
+                    id: "a-private-notification".into(), title: "A notification".into(),
+                    model: "A model".into(), time: "2026-09-07 12:00".into(),
+                    reason: "A-only".into(), success: true, read: false,
+                }];
                 context.billing_context.bind_authenticated_session(scope.clone()).unwrap();
                 let account: AccountSnapshot = serde_json::from_value(snapshot(USER_A, choice(GROUP_A, "Original team", "1"))).unwrap();
                 let ticket = core.billing.begin_switch(&scope, &core.backend.api.device().id, GROUP_A, PreviousBillingAuthority::StillValid).unwrap();
@@ -1311,7 +1398,10 @@ mod tests {
                     serde_json::from_value(choice(GROUP_B, "Second team", "1")).unwrap()]);
                 let app = AppWindow::new().unwrap(); let state = app.global::<AppState>();
                 state.set_session_state("online".into()); state.set_logged_in(true);
+                state.set_nickname("A retained profile".into());
+                state.set_credit_balance("999".into());
                 state.set_profile_open(true); state.set_account_center_section("accounts-teams".into()); state.set_team_tab("members".into());
+                push_notifications(&app, &context.store.borrow());
                 wire_team_callbacks(&app, context.clone()); render_team_context(&app, &context);
                 persistence.save_store(local_store_data(&app, &context.store.borrow())).unwrap();
                 persistence.save_profile(UserProfileData { nickname: "A retained profile".into(), ..Default::default() }).unwrap();
@@ -1402,6 +1492,9 @@ mod tests {
             let lease_b = fixture.context.active_namespace.lock().unwrap().clone().unwrap();
             assert_ne!(lease_b, fixture.original_lease); assert_eq!(lease_b.namespace.user_public_id(), CLEANUP_B);
             assert!(fixture.context.store.borrow().custom_prompts.is_empty());
+            assert!(fixture.context.store.borrow().notifications.is_empty());
+            assert_eq!(app.global::<AppState>().get_notifications().row_count(), 0);
+            assert!(app.global::<AppState>().get_credit_balance().is_empty());
             let writer = &fixture.coordinator.core.writer;
             assert_eq!(writer.load_client_state_for_namespace(&fixture.original_lease).unwrap().unwrap().custom_prompts, vec!["A private draft"]);
             assert_eq!(writer.load_client_user_profile_for_namespace(&fixture.original_lease).unwrap().unwrap().nickname, "A retained profile");
@@ -2277,6 +2370,33 @@ fn select_finance_fixture_group(context: &AppContext, session: &SessionScope, pa
         assert!(core.backend.api.session().is_scope_current(&scope));
         assert_eq!(core.active_namespace.lock().unwrap().as_ref(), Some(&lease));
         assert!(core.cleanup_failure.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn core_retirement_cover_recovers_a_transient_private_write_debt() {
+        let (_fixture, core, scope, lease) = active_transition_fixture(false);
+        let connection = rusqlite::Connection::open(core.root_path.join("fixture.sqlite3")).unwrap();
+        connection.execute_batch("CREATE TRIGGER refuse_cover_fixture BEFORE INSERT ON user_settings BEGIN SELECT RAISE(ABORT, 'fixture undurable state'); END;").unwrap();
+        assert!(core.writer.persist_client_state_checked_for_namespace(&lease, LocalStoreData::default()).is_err());
+        connection.execute_batch("DROP TRIGGER refuse_cover_fixture").unwrap();
+        assert!(core.writer.flush_for_retirement(&lease).is_err(), "the original debt must remain until an exact covering write succeeds");
+
+        let cover = RetirementCover {
+            lease: lease.clone(),
+            store: LocalStoreData { custom_prompts: vec!["covered before logout".into()], ..Default::default() },
+            profile: UserProfileData { nickname: "Covered account".into(), ..Default::default() },
+        };
+        let ticket = core.admission.begin().unwrap();
+        let result = core.prepare_activation_with_cover(
+            ActivationInput::Logout { scope, token: None, all: false },
+            &ticket,
+            Some(cover),
+            || Ok(()),
+        ).unwrap();
+        assert!(result.is_none());
+        assert!(core.active_namespace.lock().unwrap().is_none());
+        let saved = core.writer.load_client_state_for_namespace(&lease).unwrap().unwrap();
+        assert_eq!(saved.custom_prompts, vec!["covered before logout"]);
     }
     fn active_transition_fixture(fail_delete: bool) -> (client_state::tests::Fixture, Arc<TransitionCore>, SessionScope, NamespaceLease) {
         active_transition_fixture_at(fail_delete, "http://127.0.0.1:9")

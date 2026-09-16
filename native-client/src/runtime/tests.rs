@@ -4413,6 +4413,8 @@ mod tests {
         assert!(picker.contains("12px + root.option-count() * 42px"));
         assert!(picker.contains("AppState.model-image-options"));
         assert!(picker.contains("AppState.model-reasoning-options"));
+        assert!(picker.contains("AppState.video-model-options"));
+        assert!(picker.contains("AppState.video-model == model.code"));
         assert!(!picker.contains("visible: group.kind == root.kind"));
         assert!(state.contains("model-image-options"));
         assert!(state.contains("model-reasoning-options"));
@@ -4435,13 +4437,15 @@ mod tests {
                 app.window().set_size(slint::LogicalSize::new(width, 928.0));
                 let bar = ElementHandle::find_by_element_type_name(&app, "TopBar").next().unwrap();
                 let mut pickers = bar.query_descendants().match_inherits("ModelPicker").find_all();
-                assert_eq!(pickers.len(), 2, "both model selectors must remain available");
+                assert_eq!(pickers.len(), 3, "all model selectors must remain available");
                 pickers.sort_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x));
                 assert!((pickers[0].absolute_position().x - bar.absolute_position().x - 18.0).abs() <= 1.0);
-                assert!((pickers[1].absolute_position().x - pickers[0].absolute_position().x
-                    - pickers[0].size().width - 18.0).abs() <= 1.0);
-                assert!((pickers[0].absolute_position().y - pickers[1].absolute_position().y).abs() <= 1.0,
-                    "selectors must move together when the toolbar wraps");
+                for pair in pickers.windows(2) {
+                    assert!((pair[1].absolute_position().x - pair[0].absolute_position().x
+                        - pair[0].size().width - 18.0).abs() <= 1.0);
+                    assert!((pair[0].absolute_position().y - pair[1].absolute_position().y).abs() <= 1.0,
+                        "selectors must move together when the toolbar wraps");
+                }
                 for picker in pickers {
                     assert!(picker.size().width >= 220.0);
                     assert!(picker.absolute_position().x + picker.size().width

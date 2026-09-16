@@ -53,7 +53,7 @@ export component TopBar {
     property <length> payment-width: 112px;
     property <length> login-width: 112px;
     property <bool> models-on-second-row: AppState.page == "generation"
-        && root.width < root.actions-width() + 36px + 2 * 240px + 38px;
+        && root.width < root.actions-width() + 36px + 3 * 220px + 2 * 18px + 38px;
     height: root.models-on-second-row ? 112px : 58px;
     Rectangle {
         width: root.width;
@@ -102,6 +102,14 @@ export component TopBar {
                     picker-width: root.model-picker-width();
                     select-model(model) => { AppState.select-reasoning-model(model); }
                 }
+                ModelPicker {
+                    x: 2 * (root.model-picker-width() + 18px);
+                    y: 6px;
+                    kind: "video";
+                    label: AppState.en ? "Video" : "视频";
+                    picker-width: root.model-picker-width();
+                    select-model(model) => { AppState.select-video-model(model); }
+                }
             }
         }
         Rectangle {
@@ -144,6 +152,6 @@ export component TopBar {
             + (AppState.payment-active ? root.payment-width : 0px) + (count - 1) * root.action-gap;
     }
     function model-picker-width() -> length {
-        return min(280px, (root.width - (root.models-on-second-row ? 36px : root.actions-width() + 56px) - 18px) / 2);
+        return min(280px, (root.width - (root.models-on-second-row ? 36px : root.actions-width() + 56px) - 2 * 18px) / 3);
     }
 }

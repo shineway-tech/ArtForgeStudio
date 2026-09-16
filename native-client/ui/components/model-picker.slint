@@ -102,12 +102,31 @@ export component ModelPicker {
                             }
                         }
                     }
+                    if root.kind == "video": VerticalLayout {
+                        spacing: 4px;
+                        for model in AppState.video-model-options: IconButton {
+                            width: root.width - 12px;
+                            text: model.name;
+                            active: AppState.video-model == model.code;
+                            clicked => {
+                                root.select-model(model.code);
+                                root.open = false;
+                                popup.close();
+                            }
+                        }
+                    }
                 }
             }
         }
     }
     function option-count() -> int {
-        return root.kind == "image" ? AppState.model-image-options.length : AppState.model-reasoning-options.length;
+        if root.kind == "image" {
+            return AppState.model-image-options.length;
+        }
+        if root.kind == "video" {
+            return AppState.video-model-options.length;
+        }
+        return AppState.model-reasoning-options.length;
     }
     function popup-height() -> length {
         return min(320px, max(54px, 12px + root.option-count() * 42px));
@@ -115,6 +134,9 @@ export component ModelPicker {
     function display-text() -> string {
         if root.kind == "image" {
             return AppState.image-model == "" ? (AppState.en ? "Not selected" : "未选择") : AppState.image-model-name;
+        }
+        if root.kind == "video" {
+            return AppState.video-model == "" ? (AppState.en ? "Not selected" : "未选择") : AppState.video-model-name;
         }
         return AppState.reasoning-model == "" ? (AppState.en ? "Not selected" : "未选择") : AppState.reasoning-model-name;
     }

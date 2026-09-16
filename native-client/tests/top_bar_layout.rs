@@ -29,6 +29,8 @@ fn invitation_pill_fits_beside_model_pickers_and_keeps_navigation() {
     state.set_image_model_name("gpt-image-2".into());
     state.set_reasoning_model("prompt-code".into());
     state.set_reasoning_model_name("GPT-5.6 Sol".into());
+    state.set_video_model("video-code".into());
+    state.set_video_model_name("Video Model".into());
     let destination = Rc::new(RefCell::new(String::new()));
     let selected = destination.clone();
     state.on_navigate(move |page| *selected.borrow_mut() = page.to_string());
@@ -44,7 +46,9 @@ fn invitation_pill_fits_beside_model_pickers_and_keeps_navigation() {
                 gift.size().width >= 96.0,
                 "invitation text needs a full pill, not the old icon-only slot"
             );
-            for picker in ElementHandle::find_by_element_type_name(&app, "ModelPicker") {
+            let pickers = ElementHandle::find_by_element_type_name(&app, "ModelPicker").collect::<Vec<_>>();
+            assert_eq!(pickers.len(), 3, "image, reasoning and video selectors must be visible");
+            for picker in pickers {
                 assert!(
                     picker.size().width <= 280.0,
                     "generation model controls must use the compact width"
