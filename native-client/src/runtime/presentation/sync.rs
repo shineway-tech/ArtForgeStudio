@@ -1187,6 +1187,7 @@ pub(super) fn clear_retired_private_projection(state: &AppState) {
     state.set_video_result_path("".into());
     state.set_video_task_id("".into());
     state.set_video_return_page("generation".into());
+    state.set_video_return_to_viewer(false);
     state.set_image_editor_image(Image::default());
     state.set_image_editor_source_path("".into());
     state.set_image_editor_brush_shape("circle".into());

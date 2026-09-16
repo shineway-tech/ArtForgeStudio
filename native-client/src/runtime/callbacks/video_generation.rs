@@ -78,7 +78,9 @@ pub(super) fn wire_deferred_video_generation_callbacks(app: &AppWindow, context:
                 });
                 state.set_video_prompt_expanded_open(false);
                 state.set_video_quote_loading(false);
-                state.set_viewer_open(true);
+                state.set_viewer_open(
+                    state.get_video_return_to_viewer() && !state.get_viewer_id().is_empty(),
+                );
                 true
             })
             .unwrap_or(false);
@@ -175,6 +177,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
             let applied = context.apply_user_completion(persistence.lease(), || {
                 let state = app.global::<AppState>();
                 state.set_video_return_page("assets".into());
+                state.set_video_return_to_viewer(false);
                 state.set_video_result_path(output.source_path.clone().into());
                 state.set_video_source_title(output.title.into());
                 state.set_video_prompt(prompt.into());
@@ -366,6 +369,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
                     state.set_video_result_path("".into());
                     state.set_video_task_id("".into());
                     state.set_video_return_page(state.get_page());
+                    state.set_video_return_to_viewer(true);
                     state.set_video_status(if state.get_video_service_available() {
                         "正在获取服务端报价...".into()
                     } else {
@@ -418,12 +422,11 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
             }
             cancel_video_image_work(&state, &image_epoch);
             let return_page = state.get_video_return_page().to_string();
+            let return_to_viewer = state.get_video_return_to_viewer();
             state.set_video_prompt_expanded_open(false);
             state.set_video_quote_loading(false);
             navigate_to_with_store(&app, &store.borrow(), &return_page);
-            if return_page != "assets" || !state.get_viewer_id().is_empty() {
-                state.set_viewer_open(true);
-            }
+            state.set_viewer_open(return_to_viewer && !state.get_viewer_id().is_empty());
         });
     }
 
@@ -494,6 +497,31 @@ mod tests {
     }
 
     #[test]
+    fn direct_video_navigation_returns_to_workspace_without_opening_empty_viewer() {
+        i_slint_backend_testing::init_no_event_loop();
+        let fixture = video_image_callbacks::tests::scoped_inputs::Fixture::new();
+        let app = AppWindow::new().unwrap();
+        wire_video_generation_callbacks(&app, fixture.context.clone());
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_page("generation".into());
+        state.set_viewer_id("stale-viewer".into());
+        state.set_viewer_open(true);
+
+        assert!(crate::runtime::app::prepare_direct_video_navigation(&state));
+        state.set_page("video-generation".into());
+        assert_eq!(state.get_video_return_page(), "generation");
+        assert!(!state.get_video_return_to_viewer());
+        assert!(!state.get_viewer_open());
+
+        state.invoke_close_video_generation();
+
+        assert_eq!(state.get_page(), "generation");
+        assert!(!state.get_viewer_open());
+        fixture.drain();
+    }
+
+    #[test]
     fn core_video_viewer_open_captures_owned_source_and_exact_upgrade_keeps_projection() {
         i_slint_backend_testing::init_no_event_loop();
         let (fixture, _source_root, path) = captured_video_fixture();
@@ -502,14 +530,22 @@ mod tests {
         let state = app.global::<AppState>();
         state.set_logged_in(true);
         state.set_page("assets".into());
+        state.set_viewer_id("source-asset".into());
         state.set_viewer_source_path(path.to_string_lossy().into_owned().into());
         state.set_viewer_title("Original source".into());
+        state.set_viewer_open(true);
         state.invoke_viewer_generate_video();
         video_image_callbacks::tests::scoped_inputs::pump(|| !state.get_video_images_loading());
         assert_eq!(state.get_video_images().row_count(), 1);
+        assert_eq!(state.get_page(), "video-generation");
+        assert!(state.get_video_return_to_viewer());
+        assert!(!state.get_viewer_open());
         let owned = PathBuf::from(state.get_video_source_path().to_string());
         assert_ne!(owned, path);
         assert!(fixture.persistence.owns_path(&owned));
+        state.invoke_close_video_generation();
+        assert_eq!(state.get_page(), "assets");
+        assert!(state.get_viewer_open());
         fixture.persistence.upgrade_latch().trip(RequiredUpgrade {
             minimum_version: None,
         });

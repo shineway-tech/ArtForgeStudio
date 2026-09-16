@@ -1,6 +1,16 @@
 use super::*;
 use crate::platform;
 
+pub(super) fn prepare_direct_video_navigation(state: &AppState) -> bool {
+    if state.get_page() == "video-generation" {
+        return false;
+    }
+    state.set_video_return_page(state.get_page());
+    state.set_video_return_to_viewer(false);
+    state.set_viewer_open(false);
+    true
+}
+
 pub(super) fn run() -> Result<()> {
     // The local Store, SQLite index and preview cache are shared process resources. Keeping a
     // second process out avoids cross-process reference rebuilds and cache/write races.
@@ -333,7 +343,8 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
         let context = context.clone();
         state.on_navigate(move |page| {
             if let Some(app) = app_weak.upgrade() {
-                let entering_video = page.as_str() == "video-generation" && app.global::<AppState>().get_page() != "video-generation";
+                let entering_video = page.as_str() == "video-generation"
+                    && prepare_direct_video_navigation(&app.global::<AppState>());
                 navigate_to_with_store(&app, &store.borrow(), &page);
                 if entering_video { app.global::<AppState>().invoke_refresh_video_prices(); }
                 if page.as_str() == "credits"
