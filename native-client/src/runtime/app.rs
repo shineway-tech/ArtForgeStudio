@@ -27,6 +27,7 @@ pub(super) fn run() -> Result<()> {
     platform::schedule_application_icon_install();
     schedule_external_image_drop_install(app.as_weak(), 20);
     app.window().set_size(slint::PhysicalSize::new(1440, 900));
+    center_main_window(&app);
     init_version_state(&app);
     cleanup_stale_update_dirs();
     apply_theme(&app, "light");
@@ -93,6 +94,48 @@ pub(super) fn run() -> Result<()> {
     flush_device()?;
     Ok(())
 }
+
+/// Place the main window in the centre of the primary display's usable work area.
+///
+/// Winit restores the last native window position when a window is recreated. That is useful
+/// after a user has deliberately moved the window, but it also means a stale position (for
+/// example, flush with the taskbar after a display change) can be restored on every launch. The
+/// client currently has a fixed startup size, so explicitly centring it here gives each fresh
+/// launch a predictable position while leaving later user moves untouched.
+#[cfg(windows)]
+fn center_main_window(app: &AppWindow) {
+    use std::ffi::c_void;
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, SPI_GETWORKAREA,
+    };
+
+    let mut work_area = RECT::default();
+    // SAFETY: SPI_GETWORKAREA writes a RECT to the valid buffer supplied here and does not
+    // retain the pointer after returning.
+    let succeeded = unsafe {
+        SystemParametersInfoW(
+            SPI_GETWORKAREA,
+            0,
+            (&mut work_area as *mut RECT).cast::<c_void>(),
+            0,
+        ) != 0
+    };
+    if !succeeded {
+        return;
+    }
+
+    let size = app.window().size();
+    let work_width = work_area.right.saturating_sub(work_area.left);
+    let work_height = work_area.bottom.saturating_sub(work_area.top);
+    let x = work_area.left + (work_width.saturating_sub(size.width as i32)) / 2;
+    let y = work_area.top + (work_height.saturating_sub(size.height as i32)) / 2;
+    app.window()
+        .set_position(slint::PhysicalPosition::new(x, y));
+}
+
+#[cfg(not(windows))]
+fn center_main_window(_app: &AppWindow) {}
 
 pub(super) fn apply_startup_device_state(
     app: &AppWindow,

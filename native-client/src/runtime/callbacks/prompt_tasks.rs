@@ -1393,7 +1393,20 @@ fn claim_recovered_prompt_result(app:&AppWindow,context:&AppContext){
         if record.result_prompt.trim().is_empty() || !record.terminal_error.trim().is_empty(){return;}
         let state=app.global::<AppState>();let mut target=record.clone();
         if record.target_kind=="video_prompt"{
-            if state.get_page()!="video-generation" || state.get_video_source_id().as_str()!=record.target_id || state.get_video_generating(){return;}
+            if state.get_page()!="video-generation" || state.get_video_source_id().as_str()!=record.target_id || state.get_video_generating(){
+                if reopen_video_prompt_target(app,context,&record) {
+                    // Restore the original source page first; the recovery worker will
+                    // rediscover this result once the video workspace is active.
+                    state.set_recovered_prompt_result_open(false);
+                    state.invoke_viewer_generate_video();
+                    let weak=app.as_weak();
+                    let context=context.clone();
+                    slint::Timer::single_shot(Duration::from_millis(700),move||{
+                        if let Some(app)=weak.upgrade(){claim_recovered_prompt_result(&app,&context);}
+                    });
+                }
+                return;
+            }
             target.target_input=state.get_video_prompt().to_string();
         }else if record.target_kind=="custom_prompt" && state.get_custom_prompt_editor_open(){
             target.target_id=state.get_custom_prompt_editor_session_id().to_string();
@@ -1405,6 +1418,21 @@ fn claim_recovered_prompt_result(app:&AppWindow,context:&AppContext){
         }
         begin_prompt_result_application(app,context,capture,record,target,action);
     });
+}
+fn reopen_video_prompt_target(app:&AppWindow,context:&AppContext,record:&PendingPromptTaskRecord)->bool{
+    let found={
+        let store=context.store.borrow();
+        store.assets.iter().map(|item|("asset",item))
+            .chain(store.generations.iter().map(|item|("generation",item)))
+            .chain(store.inspiration.iter().map(|item|("inspiration",item)))
+            .find(|(_,item)|item.id==record.target_id)
+            .map(|(source,item)|(source.to_string(),item.clone()))
+    };
+    let Some((source,item))=found else{return false;};
+    let state=app.global::<AppState>();
+    state.set_viewer_id(item.id.into());state.set_viewer_source(source.into());
+    state.set_viewer_source_path(item.source_path.into());state.set_viewer_title(item.title.into());
+    state.set_viewer_prompt(item.prompt.into());true
 }
 fn retry_committed_prompt_cleanup(
     app:&AppWindow,context:&AppContext,capture:&PromptCapture,record:PendingPromptTaskRecord,action:PromptResultAction,

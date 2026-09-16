@@ -6769,6 +6769,15 @@ mod tests {
     }
 
     #[test]
+    fn recovered_prompt_result_can_be_scrolled_and_video_claim_is_not_disabled_in_dialog() {
+        let dialog = include_str!("../../ui/dialogs/recovered-prompt-result-dialog.slint");
+        assert!(dialog.contains("result-scroll := ScrollView"));
+        assert!(dialog.contains("vertical-scrollbar-policy: ScrollBarPolicy.always-on"));
+        assert!(dialog.contains("disabled: AppState.recovered-prompt-error != \"\";"));
+        assert!(!dialog.contains("root.video-target-unavailable;"));
+    }
+
+    #[test]
     fn canvas_import_uses_board_image_nodes_and_focuses_selection() {
         let canvas = include_str!("callbacks/infinite_canvas.rs");
         let callbacks = include_str!("callbacks/viewer.rs");

@@ -1,6 +1,7 @@
 import { AppState } from "../app-state.slint";
 import { PillButton } from "../components/pill-button.slint";
 import { AppTheme } from "../theme.slint";
+import { ScrollView } from "std-widgets.slint";
 
 export component RecoveredPromptResultDialog {
     property <bool> video-target-unavailable: AppState.recovered-prompt-target-kind == "video_prompt"
@@ -59,19 +60,28 @@ export component RecoveredPromptResultDialog {
                     border-color: AppTheme.border;
                     clip: true;
 
-                    TextInput {
+                    result-scroll := ScrollView {
                         x: 14px;
                         y: 12px;
                         width: parent.width - 28px;
                         height: parent.height - 24px;
-                        text: AppState.recovered-prompt-error != ""
-                            ? AppState.recovered-prompt-error
-                            : AppState.recovered-prompt-result;
-                        color: AppTheme.text;
-                        font-size: 14px;
-                        single-line: false;
-                        wrap: word-wrap;
-                        read-only: true;
+                        viewport-width: self.visible-width;
+                        viewport-height: max(self.visible-height, result-input.preferred-height);
+                        vertical-scrollbar-policy: ScrollBarPolicy.always-on;
+                        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                        mouse-drag-pan-enabled: true;
+
+                        result-input := TextInput {
+                            width: result-scroll.visible-width - 10px;
+                            text: AppState.recovered-prompt-error != ""
+                                ? AppState.recovered-prompt-error
+                                : AppState.recovered-prompt-result;
+                            color: AppTheme.text;
+                            font-size: 14px;
+                            single-line: false;
+                            wrap: word-wrap;
+                            read-only: true;
+                        }
                     }
                 }
 
@@ -98,7 +108,7 @@ export component RecoveredPromptResultDialog {
                         horizontal-stretch: 1;
                         text: AppState.en ? "Use result" : "使用结果";
                         primary: true;
-                        disabled: AppState.recovered-prompt-error != "" || root.video-target-unavailable;
+                        disabled: AppState.recovered-prompt-error != "";
                         clicked => { AppState.apply-recovered-prompt-result(); }
                     }
                 }
