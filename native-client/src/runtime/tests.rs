@@ -2285,8 +2285,10 @@ mod tests {
         assert!(state.contains("in-out property <bool> close-choice-open: false"));
         assert!(state.contains("callback set-close-behavior(string)"));
         assert!(state.contains("callback confirm-close-behavior(string)"));
-        assert!(dialog.contains("退出程序"));
-        assert!(dialog.contains("最小化到系统托盘"));
+        assert!(dialog.contains("关闭程序还是最小化程序？"));
+        assert!(dialog.contains("关闭程序"));
+        assert!(dialog.contains("最小化程序"));
+        assert!(dialog.contains("首次选择会被记住"));
         assert!(settings.contains("CloseBehaviorOption"));
         assert!(settings.contains("AppState.en ? \"When closing the window\" : \"关闭窗口时\""));
         assert!(option.contains("AppState.set-close-behavior(root.id)"));

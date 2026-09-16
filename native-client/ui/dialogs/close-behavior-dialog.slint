@@ -24,7 +24,7 @@ export component CloseBehaviorDialog {
                 x: 24px;
                 y: 24px;
                 width: parent.width - 48px;
-                text: AppState.en ? "Choose what happens when you close the window" : "关闭窗口时执行什么操作？";
+                text: AppState.en ? "Close or minimize Elunvi Canvas?" : "关闭程序还是最小化程序？";
                 color: AppTheme.text;
                 font-size: 19px;
                 font-weight: 600;
@@ -36,8 +36,8 @@ export component CloseBehaviorDialog {
                 width: parent.width - 56px;
                 height: 52px;
                 text: AppState.en
-                    ? "You can change this later in Settings > Basic Settings."
-                    : "后续可在“设置 → 基础设置”中修改。";
+                    ? "Closing ends the application. Minimizing keeps it running in the system tray."
+                    : "关闭程序将结束运行；最小化程序将在系统托盘继续运行。";
                 color: AppTheme.muted;
                 font-size: 13px;
                 horizontal-alignment: center;
@@ -52,13 +52,13 @@ export component CloseBehaviorDialog {
                 spacing: 12px;
                 PillButton {
                     horizontal-stretch: 1;
-                    text: AppState.en ? "Exit application" : "退出程序";
+                    text: AppState.en ? "Close application" : "关闭程序";
                     danger: true;
                     clicked => { AppState.confirm-close-behavior("exit"); }
                 }
                 PillButton {
                     horizontal-stretch: 1;
-                    text: AppState.en ? "Minimize to system tray" : "最小化到系统托盘";
+                    text: AppState.en ? "Minimize application" : "最小化程序";
                     primary: true;
                     clicked => { AppState.confirm-close-behavior("tray"); }
                 }
@@ -67,7 +67,7 @@ export component CloseBehaviorDialog {
                 x: 24px;
                 y: 202px;
                 width: parent.width - 48px;
-                text: AppState.en ? "Your choice will be remembered." : "本次选择会被记住。";
+                text: AppState.en ? "Your first choice will be remembered and can be changed in Settings." : "首次选择会被记住，也可以随时在设置中修改。";
                 color: AppTheme.weak;
                 font-size: 11px;
                 horizontal-alignment: center;
