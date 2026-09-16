@@ -125,6 +125,9 @@ impl DirectoryLocations {
         for profile in data.custom_prompt_profiles.values_mut() {
             self.remap_profile(profile);
         }
+        for output in data.video_outputs.values_mut() {
+            self.remap(&mut output.source_path);
+        }
     }
 
     pub fn remap_store(&self, store: &mut Store) {
@@ -153,6 +156,9 @@ impl DirectoryLocations {
         }
         for profile in store.custom_prompt_profiles.values_mut() {
             self.remap_profile(profile);
+        }
+        for output in store.video_outputs.values_mut() {
+            self.remap(&mut output.source_path);
         }
         for category in ["character", "scene", "ui", "effect"] {
             for reference in references_for_category_mut(&mut store.references, category) {
@@ -215,7 +221,7 @@ mod tests {
         let expected = target.join("image.png").display().to_string();
         let unrelated = root.join("outside/image.png").display().to_string();
         let locations = DirectoryLocations::default()
-            .migrated("output", source, target)
+            .migrated("output", source, target.clone())
             .unwrap();
         let mut data = LocalStoreData::default();
         data.prompt_drafts.scene = old.clone();
@@ -232,6 +238,25 @@ mod tests {
                 ..Default::default()
             },
         );
+        data.video_outputs.insert(
+            "task:file".into(),
+            SavedVideoOutput {
+                model: "model".into(),
+                resolution: "720P".into(),
+                duration_secs: 5,
+                source_asset_id: "asset".into(),
+                prompt: "prompt".into(),
+                source_path: old.clone(),
+                client_request_id: "request".into(),
+                server_task_id: "00000000-0000-4000-8000-000000000001".into(),
+                file_id: "00000000-0000-4000-8000-000000000002".into(),
+                billing_account_group_id: "00000000-0000-4000-8000-000000000003".into(),
+                sha256: "a".repeat(64),
+                size_bytes: 1,
+                title: "video".into(),
+                created_at: "now".into(),
+            },
+        );
         locations.remap_local_store(&mut data);
         assert_eq!(data.canvas_notes[0].image_path, expected);
         assert_eq!(data.canvas_notes[0].content, old);
@@ -240,6 +265,12 @@ mod tests {
             data.custom_prompt_profiles["preset"].reference_paths,
             vec![expected, unrelated]
         );
+        assert_eq!(data.video_outputs["task:file"].source_path, target.join("image.png").display().to_string());
+
+        let mut store = Store::default();
+        store.video_outputs = data.video_outputs.clone();
+        locations.remap_store(&mut store);
+        assert_eq!(store.video_outputs["task:file"].source_path, target.join("image.png").display().to_string());
     }
 
     #[test]

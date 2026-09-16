@@ -256,7 +256,19 @@ pub(super) fn poll_generation_stream(
             }
             GenerationOutcome::NamespaceVideoSuccess { prepared, time } => {
                 start_video_delivery_commit_with_binding(&app, context.clone(), Some(original_persistence.clone()), *prepared, time, move |app, result| {
-                    if let Ok((_, id, _)) = result {
+                    if let Ok((_, id, acknowledged)) = result {
+                        let state = app.global::<AppState>();
+                        if let Some(output) = context.store.borrow().video_outputs.get(&id) {
+                            // Keep the freshly delivered file attached to the video page so
+                            // the embedded player can open it as soon as generation completes.
+                            state.set_video_result_path(output.source_path.clone().into());
+                        }
+                        state.set_video_progress(100);
+                        state.set_video_status(if acknowledged {
+                            "视频已生成并保存"
+                        } else {
+                            "视频已保存，交付确认待重试"
+                        }.into());
                         mark_active_generation_image_completed(&context, app, &category, &task_id, true, Some(id), None);
                         push_video_assets(app, &context.store.borrow());
                     }

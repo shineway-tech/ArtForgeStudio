@@ -1672,6 +1672,8 @@ mod tests {
         assert!(backend.contains("generation_reference_paths"));
         assert!(backend.contains("reference_file_ids: Some(uploaded.clone())"));
         assert!(poll.contains("&generation_reference_paths"));
+        assert!(poll.contains("set_video_result_path(output.source_path.clone().into())"));
+        assert!(poll.contains("视频已生成并保存"));
         assert!(controller.contains("reference_paths: reference_paths.to_vec()"));
         assert!(controller.contains("restore_asset_regeneration_inputs"));
         assert!(controller.contains("references_for_category_mut"));
