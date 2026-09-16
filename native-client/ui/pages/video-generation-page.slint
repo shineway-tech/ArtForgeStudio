@@ -105,31 +105,11 @@ export component VideoGenerationPage inherits Rectangle {
 
     background: AppTheme.bg;
 
-    Rectangle {
+    workspace := Rectangle {
         x: 28px;
         y: 16px;
         width: parent.width - 56px;
-        height: 44px;
-        background: transparent;
-
-        Text {
-            x: 0px;
-            width: parent.width;
-            height: 40px;
-            text: AppState.en ? "Generate Video" : "生成视频";
-            color: AppTheme.text;
-            font-size: 22px;
-            font-weight: 600;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-    }
-
-    workspace := Rectangle {
-        x: 28px;
-        y: 72px;
-        width: parent.width - 56px;
-        height: parent.height - 90px;
+        height: parent.height - 34px;
         background: transparent;
 
         preview-card := Rectangle {

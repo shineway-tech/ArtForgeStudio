@@ -6596,6 +6596,12 @@ mod tests {
         assert!(page.contains("text <=> AppState.video-prompt"));
         assert!(page.contains("AppState.video-credit-cost"));
         assert!(page.contains("AppState.submit-video-generation();"));
+        assert_eq!(
+            page.matches("AppState.en ? \"Generate Video\" : \"生成视频\"")
+                .count(),
+            1,
+            "the submit button is the only video-generation title"
+        );
     }
 
     #[test]
