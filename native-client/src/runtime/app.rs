@@ -27,7 +27,6 @@ pub(super) fn run() -> Result<()> {
     platform::schedule_application_icon_install();
     schedule_external_image_drop_install(app.as_weak(), 20);
     app.window().set_size(slint::PhysicalSize::new(1440, 900));
-    center_main_window(&app);
     init_version_state(&app);
     cleanup_stale_update_dirs();
     apply_theme(&app, "light");
@@ -56,6 +55,12 @@ pub(super) fn run() -> Result<()> {
     begin_update_check(&app, false);
     initialize_auth(&app, context.clone());
     tray.show()?;
+    let center_window = app.as_weak();
+    slint::Timer::single_shot(Duration::from_millis(50), move || {
+        if let Some(app) = center_window.upgrade() {
+            center_main_window(&app);
+        }
+    });
     let result = app.run();
     drop(platform::take_external_image_drops());
     dispose_pending_native_file_drag_for_shutdown();
@@ -95,41 +100,56 @@ pub(super) fn run() -> Result<()> {
     Ok(())
 }
 
-/// Place the main window in the centre of the primary display's usable work area.
+/// Place the main window in the centre of its current display's usable work area.
 ///
-/// Winit restores the last native window position when a window is recreated. That is useful
-/// after a user has deliberately moved the window, but it also means a stale position (for
-/// example, flush with the taskbar after a display change) can be restored on every launch. The
-/// client currently has a fixed startup size, so explicitly centring it here gives each fresh
-/// launch a predictable position while leaving later user moves untouched.
+/// This runs after the native window has been created so the calculation uses the real outer
+/// frame size. That matters on Windows with DPI scaling, where the pre-creation Slint size can be
+/// expressed in logical pixels while native window positions use physical pixels.
 #[cfg(windows)]
 fn center_main_window(app: &AppWindow) {
-    use std::ffi::c_void;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use windows_sys::Win32::Foundation::RECT;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SystemParametersInfoW, SPI_GETWORKAREA,
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
     };
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
-    let mut work_area = RECT::default();
-    // SAFETY: SPI_GETWORKAREA writes a RECT to the valid buffer supplied here and does not
-    // retain the pointer after returning.
-    let succeeded = unsafe {
-        SystemParametersInfoW(
-            SPI_GETWORKAREA,
-            0,
-            (&mut work_area as *mut RECT).cast::<c_void>(),
-            0,
-        ) != 0
+    let window_handle = app.window().window_handle();
+    let Ok(window_handle) = window_handle.window_handle() else {
+        return;
     };
-    if !succeeded {
+    let RawWindowHandle::Win32(handle) = window_handle.as_raw() else {
+        return;
+    };
+    let hwnd = handle.hwnd.get() as windows_sys::Win32::Foundation::HWND;
+
+    let mut outer = RECT::default();
+    // SAFETY: The HWND comes from Slint's live native window and the RECT pointer is valid for
+    // the duration of the call.
+    if unsafe { GetWindowRect(hwnd, &mut outer) } == 0 {
+        return;
+    }
+    // SAFETY: The monitor handle is derived from the same live HWND. The monitor info buffer is
+    // initialized with the structure size as required by GetMonitorInfoW.
+    let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    if monitor.is_null() {
+        return;
+    }
+    let mut monitor_info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if unsafe { GetMonitorInfoW(monitor, &mut monitor_info) } == 0 {
         return;
     }
 
-    let size = app.window().size();
+    let window_width = outer.right.saturating_sub(outer.left);
+    let window_height = outer.bottom.saturating_sub(outer.top);
+    let work_area = monitor_info.rcWork;
     let work_width = work_area.right.saturating_sub(work_area.left);
     let work_height = work_area.bottom.saturating_sub(work_area.top);
-    let x = work_area.left + (work_width.saturating_sub(size.width as i32)) / 2;
-    let y = work_area.top + (work_height.saturating_sub(size.height as i32)) / 2;
+    let x = work_area.left + (work_width.saturating_sub(window_width)) / 2;
+    let y = work_area.top + (work_height.saturating_sub(window_height)) / 2;
     app.window()
         .set_position(slint::PhysicalPosition::new(x, y));
 }
