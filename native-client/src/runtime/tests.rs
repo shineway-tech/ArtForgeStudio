@@ -4219,9 +4219,8 @@ mod tests {
             "width: max(0px, min(parent.width, parent.width * AppState.deep-optimization-progress / 100));",
         ));
         assert!(drawer.contains("text: AppState.deep-optimization-change-summary"));
-        assert!(drawer.contains(
-            "\"本次最多消耗 \" + AppState.deep-optimization-maximum-credits + \" 积分\"",
-        ));
+        assert!(drawer.contains("credit-cost: AppState.deep-optimization-maximum-credits;"));
+        assert!(!drawer.contains("本次最多消耗"));
     }
 
     #[test]
@@ -4267,6 +4266,15 @@ mod tests {
         assert!(panel.contains("work-scroll := ScrollView"));
         assert!(panel.contains("viewport-height: max(self.visible-height, work-content.height)"));
         assert!(panel.contains("generate-action := GenerateActionButton"));
+        let generate_button = include_str!("../../ui/components/generate-action-button.slint");
+        let pill_button = include_str!("../../ui/components/pill-button.slint");
+        assert!(generate_button.contains("../../assets/icons/credits.svg"));
+        assert!(generate_button.contains("text: AppState.generation-estimated-credit-cost;"));
+        assert!(!generate_button.contains("Estimated cost:"));
+        assert!(!generate_button.contains("本次预计消耗"));
+        assert!(pill_button.contains("in property <string> credit-cost;"));
+        assert!(pill_button.contains("text: root.secondary-text == \"\" ? root.text : root.text + \"  ·  \" + root.secondary-text;"));
+        assert!(!pill_button.contains("if root.secondary-text != \"\": Text"));
         assert!(panel.contains("y: settings-row.y + settings-row.height + 52px"));
         assert!(panel.contains("y: generate-action.y + generate-action.height + 14px"));
         assert!(!panel.contains("parent.height - 266px - negative-editor.height"));
@@ -6648,6 +6656,9 @@ mod tests {
         assert!(page.contains("AppState.video-duration-seconds + 1"));
         assert!(page.contains("text <=> AppState.video-prompt"));
         assert!(page.contains("AppState.video-credit-cost"));
+        assert!(page.contains("credit-cost: AppState.video-quote-loading ? \"\" : AppState.video-credit-cost;"));
+        assert!(!page.contains("secondary-text:"));
+        assert!(!page.contains("需要 \" + AppState.video-credit-cost"));
         assert!(page.contains("AppState.submit-video-generation();"));
         assert_eq!(
             page.matches("AppState.en ? \"Generate Video\" : \"生成视频\"")

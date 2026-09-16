@@ -5,6 +5,7 @@ import { GenerateGlowBorder } from "generate-glow-border.slint";
 export component PillButton {
     in property <string> text;
     in property <string> secondary-text;
+    in property <string> credit-cost;
     in property <bool> active: false;
     in property <bool> primary: false;
     in property <bool> danger: false;
@@ -25,11 +26,11 @@ export component PillButton {
         border-width: root.primary || root.active ? 0px : 1px;
         border-color: root.danger ? AppTheme.danger : (touch.has-hover && !root.disabled ? AppTheme.accent : AppTheme.border);
         Text {
+            visible: root.credit-cost == "";
             x: 0px;
-            y: root.secondary-text == "" ? 0px : 8px;
             width: parent.width;
-            height: root.secondary-text == "" ? parent.height : 20px;
-            text: root.text;
+            height: parent.height;
+            text: root.secondary-text == "" ? root.text : root.text + "  ·  " + root.secondary-text;
             color: root.primary || root.active ? #ffffff : (root.danger ? AppTheme.danger : AppTheme.text);
             font-size: root.label-font-size;
             font-weight: root.primary ? 500 : 400;
@@ -38,18 +39,37 @@ export component PillButton {
             wrap: no-wrap;
             overflow: elide;
         }
-        if root.secondary-text != "": Text {
-            x: 14px;
-            y: parent.height - 24px;
-            width: parent.width - 28px;
+        credit-icon := Image {
+            visible: root.credit-cost != "";
+            x: (parent.width - (16px + 5px + credit-value.preferred-width + 12px + credit-action.preferred-width)) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 16px;
             height: 16px;
-            text: root.secondary-text;
-            color: root.primary || root.active ? #ffffffcc : AppTheme.muted;
-            font-size: 11px;
-            font-weight: 400;
-            horizontal-alignment: center;
+            source: @image-url("../../assets/icons/credits.svg");
+            colorize: root.primary || root.active ? #ffffff : AppTheme.text;
+            image-fit: contain;
+        }
+        credit-value := Text {
+            visible: root.credit-cost != "";
+            x: credit-icon.x + credit-icon.width + 5px;
+            width: self.preferred-width;
+            height: parent.height;
+            text: root.credit-cost;
+            color: root.primary || root.active ? #ffffff : AppTheme.text;
+            font-size: root.label-font-size;
+            font-weight: root.primary ? 500 : 400;
             vertical-alignment: center;
-            overflow: elide;
+        }
+        credit-action := Text {
+            visible: root.credit-cost != "";
+            x: credit-value.x + credit-value.width + 12px;
+            width: self.preferred-width;
+            height: parent.height;
+            text: root.text;
+            color: root.primary || root.active ? #ffffff : (root.danger ? AppTheme.danger : AppTheme.text);
+            font-size: root.label-font-size;
+            font-weight: root.primary ? 500 : 400;
+            vertical-alignment: center;
         }
         if root.generate-effect: GenerateGlowBorder {
             width: parent.width;

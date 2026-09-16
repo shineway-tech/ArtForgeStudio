@@ -389,9 +389,7 @@ export component VideoGenerationPage inherits Rectangle {
                 text: AppState.video-quote-loading
                     ? (AppState.en ? "Getting price..." : "正在获取报价...")
                     : (AppState.en ? "Generate Video" : "生成视频");
-                secondary-text: AppState.video-credit-cost == ""
-                    ? ""
-                    : (AppState.en ? AppState.video-credit-cost + " credits" : "需要 " + AppState.video-credit-cost + " 积分");
+                credit-cost: AppState.video-quote-loading ? "" : AppState.video-credit-cost;
                 clicked => { AppState.submit-video-generation(); }
             }
         }

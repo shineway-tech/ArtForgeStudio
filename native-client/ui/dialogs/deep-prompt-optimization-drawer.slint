@@ -233,9 +233,7 @@ export component DeepPromptOptimizationDrawer {
                         PillButton {
                             x: 0px; y: 672px; width: parent.width; height: 56px;
                             text: AppState.en ? "Start deep optimization" : "开始深度优化";
-                            secondary-text: AppState.en
-                                ? "Up to " + AppState.deep-optimization-maximum-credits + " credits"
-                                : "本次最多消耗 " + AppState.deep-optimization-maximum-credits + " 积分";
+                            credit-cost: AppState.deep-optimization-maximum-credits;
                             primary: true;
                             generate-effect: true;
                             disabled: AppState.prompt == "";

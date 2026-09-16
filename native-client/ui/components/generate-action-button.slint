@@ -12,12 +12,11 @@ export component GenerateActionButton {
         opacity: root.disabled ? 0.45 : 1.0;
         background: AppTheme.accent;
         border-radius: root.height / 2;
-        Text {
+        if AppState.generating: Text {
             x: 14px;
-            y: AppState.generating ? 0px : 8px;
             width: parent.width - 28px;
-            height: AppState.generating ? parent.height : 20px;
-            text: AppState.generating ? (AppState.en ? "Stop" : "停止生成") : (AppState.en ? "Generate" : "生成");
+            height: parent.height;
+            text: AppState.en ? "Stop" : "停止生成";
             color: #ffffff;
             font-size: AppState.settings-font-size * 1px;
             font-weight: 500;
@@ -25,18 +24,37 @@ export component GenerateActionButton {
             vertical-alignment: center;
             overflow: elide;
         }
-        if !AppState.generating: Text {
-            x: 14px;
-            y: parent.height - 24px;
-            width: parent.width - 28px;
+        credit-icon := Image {
+            visible: !AppState.generating;
+            x: (parent.width - (16px + 5px + credit-value.preferred-width + 12px + action-label.preferred-width)) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 16px;
             height: 16px;
-            text: AppState.en ? ("Estimated cost: " + AppState.generation-estimated-credit-cost + " credits") : ("本次预计消耗 " + AppState.generation-estimated-credit-cost + " 积分");
-            color: #ffffffcc;
-            font-size: 11px;
-            font-weight: 400;
-            horizontal-alignment: center;
+            source: @image-url("../../assets/icons/credits.svg");
+            colorize: #ffffff;
+            image-fit: contain;
+        }
+        credit-value := Text {
+            visible: !AppState.generating;
+            x: credit-icon.x + credit-icon.width + 5px;
+            width: self.preferred-width;
+            height: parent.height;
+            text: AppState.generation-estimated-credit-cost;
+            color: #ffffff;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 500;
             vertical-alignment: center;
-            overflow: elide;
+        }
+        action-label := Text {
+            visible: !AppState.generating;
+            x: credit-value.x + credit-value.width + 12px;
+            width: self.preferred-width;
+            height: parent.height;
+            text: AppState.en ? "Generate" : "生成";
+            color: #ffffff;
+            font-size: AppState.settings-font-size * 1px;
+            font-weight: 500;
+            vertical-alignment: center;
         }
         GenerateGlowBorder {
             width: parent.width;
