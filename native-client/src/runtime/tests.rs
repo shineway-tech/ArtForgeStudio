@@ -361,6 +361,55 @@ mod tests {
     }
 
     #[test]
+    fn none_prompt_controls_do_not_add_generation_instructions() {
+        let controls = PromptControls {
+            category: "scene".to_string(),
+            creation: "none".to_string(),
+            style: "none".to_string(),
+            view: "none".to_string(),
+            weather: "none".to_string(),
+            time: "none".to_string(),
+            light: "none".to_string(),
+        };
+
+        assert!(visible_prompt_control_entries(&controls).is_empty());
+        assert_eq!(
+            prompt_with_controls("a quiet forest", &controls, PromptLanguage::English),
+            "a quiet forest"
+        );
+        assert_eq!(advanced_prompt_preview_text(&controls, PromptLanguage::Chinese), "");
+    }
+
+    #[test]
+    fn generation_control_chips_default_to_none_and_can_be_cleared() {
+        let state = include_str!("../../ui/app-state.slint");
+        let app = include_str!("app.rs");
+        let creation = include_str!("../../ui/components/creation-mode-chip.slint");
+        let style = include_str!("../../ui/components/style-mode-chip.slint");
+        let advanced = include_str!("../../ui/components/advanced-control-chip.slint");
+        let advanced_select = include_str!("../../ui/components/advanced-select-line.slint");
+
+        for property in [
+            "creation-mode",
+            "style-mode",
+            "view-mode",
+            "weather-mode",
+            "time-mode",
+            "light-mode",
+        ] {
+            assert!(state.contains(&format!("property <string> {property}: \"none\";")));
+        }
+        for setter in ["creation", "style", "view", "weather", "time", "light"] {
+            assert!(app.contains(&format!("state.set_{setter}_mode(\"none\".into());")));
+        }
+        assert!(creation.contains("AppState.creation-mode = \"none\""));
+        assert!(style.contains("AppState.style-mode = \"none\""));
+        assert!(advanced.contains("root.is-empty() ? (AppState.en ? \"None\" : \"无\")"));
+        assert!(advanced_select.contains("root.clear-value()"));
+        assert!(advanced_select.contains("return AppState.en ? \"None\" : \"无\";"));
+    }
+
+    #[test]
     fn ui_component_atlas_instruction_is_hidden_from_display_prompt() {
         let generated = append_category_generation_instruction(
             "fantasy inventory icons",

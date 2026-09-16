@@ -13,7 +13,7 @@ export component AdvancedControlChip {
         border-radius: 18px;
         border-width: 1px;
         border-color: AppTheme.accent;
-        Text { x: 14px; width: parent.width - 44px; height: parent.height; text: AppState.en ? "Advanced" : "高级控制"; color: AppTheme.text; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; overflow: elide; }
+        Text { x: 14px; width: parent.width - 44px; height: parent.height; text: root.is-empty() ? (AppState.en ? "None" : "无") : (AppState.en ? "Advanced" : "高级控制"); color: AppTheme.text; font-size: AppState.settings-font-size * 1px; font-weight: 400; vertical-alignment: center; overflow: elide; }
         DropdownIcon { x: parent.width - 28px; y: (parent.height - 12px) / 2; }
         TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.open = true; popup.show(); } }
     }
@@ -94,6 +94,16 @@ export component AdvancedControlChip {
 
     function show-view() -> bool {
         return AppState.asset-type == "scene" || AppState.asset-type == "character";
+    }
+
+    function is-empty() -> bool {
+        if AppState.asset-type == "scene" {
+            return AppState.view-mode == "none" && AppState.weather-mode == "none" && AppState.time-mode == "none" && AppState.light-mode == "none";
+        }
+        if AppState.asset-type == "character" {
+            return AppState.view-mode == "none" && AppState.light-mode == "none";
+        }
+        return AppState.light-mode == "none";
     }
 
     function light-y() -> length {

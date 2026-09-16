@@ -121,10 +121,10 @@ fn creation_menu_contains_and_selects_its_last_option_in_every_category() {
         ));
         state.set_language(language.into());
         for (category, count, last) in [
-            ("scene", 8, "building-kit"),
-            ("character", 8, "character-poster"),
-            ("ui", 8, "ui-popup"),
-            ("effect", 7, "fx-weapon-trail"),
+            ("scene", 9, "building-kit"),
+            ("character", 9, "character-poster"),
+            ("ui", 9, "ui-popup"),
+            ("effect", 8, "fx-weapon-trail"),
         ] {
             state.set_asset_type(category.into());
             state.set_creation_mode("free".into());
@@ -147,7 +147,7 @@ fn style_menu_contains_and_selects_its_last_option() {
         ));
         state.set_language(language.into());
         state.set_style_mode("free".into());
-        select_last_option(&app, "StyleModeChip", 9);
+        select_last_option(&app, "StyleModeChip", 10);
         assert_eq!(state.get_style_mode(), "ghibli");
     }
 }

@@ -30,6 +30,7 @@ export component StyleModeChip {
             options := VerticalLayout {
                 padding: 6px;
                 spacing: 3px;
+                TextOption { left: AppState.en ? "None" : "无"; right: ""; active: AppState.style-mode == "none"; clicked => { AppState.style-mode = "none"; root.open = false; popup.close(); } }
                 TextOption { left: AppState.en ? "Free Style" : "自由风格"; right: ""; active: AppState.style-mode == "free"; clicked => { AppState.style-mode = "free"; root.open = false; popup.close(); } }
                 TextOption { left: AppState.en ? "Warm Healing" : "温暖治愈"; right: AppState.en ? "Warm" : "暖"; active: AppState.style-mode == "warm"; clicked => { AppState.style-mode = "warm"; root.open = false; popup.close(); } }
                 TextOption { left: AppState.en ? "Cool Pressure" : "冷峻压抑"; right: AppState.en ? "Cold" : "冷"; active: AppState.style-mode == "cold"; clicked => { AppState.style-mode = "cold"; root.open = false; popup.close(); } }
@@ -43,6 +44,7 @@ export component StyleModeChip {
         }
     }
     function label() -> string {
+        if AppState.style-mode == "none" { return AppState.en ? "None" : "无"; }
         if AppState.style-mode == "warm" { return AppState.en ? "Warm Healing" : "温暖治愈"; }
         if AppState.style-mode == "cold" { return AppState.en ? "Cool Pressure" : "冷峻压抑"; }
         if AppState.style-mode == "vivid" { return AppState.en ? "High Saturation" : "高饱和"; }

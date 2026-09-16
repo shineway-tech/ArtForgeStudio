@@ -486,12 +486,12 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
             let previous_category = resolve_category(&state.get_asset_type().to_string(), "");
             if previous_category != category {
                 store_current_prompt_draft(&app, &store, &previous_category);
-                state.set_creation_mode("free".into());
-                state.set_style_mode("free".into());
-                state.set_view_mode("free".into());
-                state.set_weather_mode("natural".into());
-                state.set_time_mode("natural".into());
-                state.set_light_mode("natural".into());
+                state.set_creation_mode("none".into());
+                state.set_style_mode("none".into());
+                state.set_view_mode("none".into());
+                state.set_weather_mode("none".into());
+                state.set_time_mode("none".into());
+                state.set_light_mode("none".into());
                 state.set_advanced_preview_open(false);
                 state.set_advanced_prompt_preview("".into());
             }

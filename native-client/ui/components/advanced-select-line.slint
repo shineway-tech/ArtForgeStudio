@@ -30,6 +30,7 @@ export component AdvancedSelectLine {
             VerticalLayout {
                 padding: 6px;
                 spacing: 3px;
+                TextOption { left: AppState.en ? "None" : "无"; right: ""; active: root.value() == "none"; clicked => { root.clear-value(); root.open = false; popup.close(); } }
                 if root.kind == "view": TextOption { left: AppState.en ? "Free Camera" : "自由视角"; right: ""; active: AppState.view-mode == "free"; clicked => { AppState.view-mode = "free"; root.open = false; popup.close(); } }
                 if root.kind == "view": TextOption { left: "Top Down"; right: AppState.en ? "Top" : "俯视"; active: AppState.view-mode == "top-down"; clicked => { AppState.view-mode = "top-down"; root.open = false; popup.close(); } }
                 if root.kind == "view": TextOption { left: "2.5D"; right: AppState.en ? "Angle" : "斜视"; active: AppState.view-mode == "2.5d"; clicked => { AppState.view-mode = "2.5d"; root.open = false; popup.close(); } }
@@ -67,12 +68,13 @@ export component AdvancedSelectLine {
     }
 
     function options-height() -> length {
-        if root.kind == "time" { return 198px; }
-        if root.kind == "light" { return 230px; }
-        return 294px;
+        if root.kind == "time" { return 230px; }
+        if root.kind == "light" { return 262px; }
+        return 326px;
     }
 
     function label() -> string {
+        if root.value() == "none" { return AppState.en ? "None" : "无"; }
         if root.kind == "view" {
             if AppState.view-mode == "top-down" { return "Top Down"; }
             if AppState.view-mode == "2.5d" { return "2.5D"; }
@@ -108,5 +110,19 @@ export component AdvancedSelectLine {
         if AppState.light-mode == "volumetric" { return AppState.en ? "Volumetric Light" : "体积光"; }
         if AppState.light-mode == "neon" { return AppState.en ? "Neon Light" : "霓虹灯"; }
         return AppState.en ? "Natural Light" : "自然光照";
+    }
+
+    function value() -> string {
+        if root.kind == "view" { return AppState.view-mode; }
+        if root.kind == "weather" { return AppState.weather-mode; }
+        if root.kind == "time" { return AppState.time-mode; }
+        return AppState.light-mode;
+    }
+
+    function clear-value() {
+        if root.kind == "view" { AppState.view-mode = "none"; }
+        if root.kind == "weather" { AppState.weather-mode = "none"; }
+        if root.kind == "time" { AppState.time-mode = "none"; }
+        if root.kind == "light" { AppState.light-mode = "none"; }
     }
 }

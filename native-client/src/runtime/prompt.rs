@@ -54,6 +54,9 @@ pub(super) fn resolve_ratio_for_category(
 }
 
 pub(super) fn control_label(kind: &str, value: &str, language: PromptLanguage) -> &'static str {
+    if value == "none" {
+        return "";
+    }
     if language == PromptLanguage::Chinese {
         return match (kind, value) {
             ("creation", "character-standee") => "角色立绘",
@@ -202,20 +205,24 @@ pub(super) fn visible_prompt_control_entries<'a>(
 ) -> Vec<(&'static str, &'a str)> {
     let mut entries = Vec::new();
     let hide_ui_default = controls.category == "ui";
-    if !hide_ui_default || controls.creation != "free" {
+    if controls.creation != "none" && (!hide_ui_default || controls.creation != "free") {
         entries.push(("creation", controls.creation.as_str()));
     }
-    if !hide_ui_default || controls.style != "free" {
+    if controls.style != "none" && (!hide_ui_default || controls.style != "free") {
         entries.push(("style", controls.style.as_str()));
     }
-    if controls.category == "scene" || controls.category == "character" {
+    if controls.view != "none"
+        && (controls.category == "scene" || controls.category == "character")
+    {
         entries.push(("view", controls.view.as_str()));
     }
-    if controls.category == "scene" {
+    if controls.category == "scene" && controls.weather != "none" {
         entries.push(("weather", controls.weather.as_str()));
+    }
+    if controls.category == "scene" && controls.time != "none" {
         entries.push(("time", controls.time.as_str()));
     }
-    if !hide_ui_default || controls.light != "free" {
+    if controls.light != "none" && (!hide_ui_default || controls.light != "free") {
         entries.push(("light", controls.light.as_str()));
     }
     entries

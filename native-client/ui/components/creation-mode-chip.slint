@@ -30,6 +30,7 @@ export component CreationModeChip {
             options := VerticalLayout {
                 padding: 6px;
                 spacing: 3px;
+                TextOption { left: AppState.en ? "None" : "无"; right: ""; active: AppState.creation-mode == "none"; clicked => { AppState.creation-mode = "none"; root.open = false; popup.close(); } }
                 if AppState.asset-type == "character": TextOption { left: AppState.en ? "Free Create" : "自由创作"; right: ""; active: AppState.creation-mode == "free"; clicked => { AppState.creation-mode = "free"; root.open = false; popup.close(); } }
                 if AppState.asset-type == "character": TextOption { left: AppState.en ? "Character Full Body" : "角色立绘"; right: AppState.en ? "Full" : "立绘"; active: AppState.creation-mode == "character-standee"; clicked => { AppState.creation-mode = "character-standee"; root.open = false; popup.close(); } }
                 if AppState.asset-type == "character": TextOption { left: AppState.en ? "Three Views" : "三视图"; right: AppState.en ? "Sheet" : "设定"; active: AppState.creation-mode == "character-turnaround"; clicked => { AppState.creation-mode = "character-turnaround"; root.open = false; popup.close(); } }
@@ -69,6 +70,7 @@ export component CreationModeChip {
         }
     }
     function label() -> string {
+        if AppState.creation-mode == "none" { return AppState.en ? "None" : "无"; }
         if AppState.creation-mode == "character-standee" { return AppState.en ? "Character Full Body" : "角色立绘"; }
         if AppState.creation-mode == "character-turnaround" { return AppState.en ? "Three Views" : "三视图"; }
         if AppState.creation-mode == "character-8dir" { return AppState.en ? "8 Directions" : "8方向"; }
