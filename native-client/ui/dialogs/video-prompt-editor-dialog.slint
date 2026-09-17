@@ -7,6 +7,7 @@ import { VideoPromptOptimizeButton } from "../components/video-prompt-optimize-b
 export component VideoPromptEditorDialog inherits Rectangle {
     background: #00000070;
     property <bool> focus-pending: true;
+    property <length> prompt-font-size: AppState.settings-font-size * 1px + 3px;
 
     TouchArea {
         width: parent.width;
@@ -88,7 +89,8 @@ export component VideoPromptEditorDialog inherits Rectangle {
                     width: expanded-scroll.visible-width - 10px;
                     text <=> AppState.video-prompt;
                     color: AppTheme.text;
-                    font-size: AppState.settings-font-size * 1px + 3px;
+                    font-family: "Nirmala Text";
+                    font-size: root.prompt-font-size;
                     font-weight: 400;
                     single-line: false;
                     wrap: word-wrap;
