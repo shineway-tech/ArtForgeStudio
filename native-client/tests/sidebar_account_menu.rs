@@ -84,6 +84,7 @@ fn bottom_account_controls_keep_routes_and_menu_fits_collapsed_and_expanded_side
     state.set_page("generation".into());
     state.set_nickname("Very long display name for layout".into());
     state.set_account_amount_label("197950 积分".into());
+    state.set_credit_balance("197950".into());
     state.set_has_unread(true);
     state.set_update_available(true);
     let destination = Rc::new(RefCell::new(String::new()));
@@ -109,12 +110,23 @@ fn bottom_account_controls_keep_routes_and_menu_fits_collapsed_and_expanded_side
         let credits = ElementHandle::find_by_element_type_name(&app, "SidebarCreditsButton")
             .next()
             .unwrap();
+        let credit_label = if language == "zh" {
+            "积分 197950"
+        } else {
+            "Credits 197950"
+        };
+        assert!(
+            ElementHandle::find_by_accessible_label(&app, credit_label)
+                .next()
+                .is_some(),
+            "credits entry must expose the current balance"
+        );
         let notification =
             ElementHandle::find_by_element_id(&app, "Sidebar::sidebar-notifications")
                 .next()
                 .unwrap();
         assert!(
-            credits.size().width <= if collapsed { 56.0 } else { 80.0 },
+            credits.size().width <= if collapsed { 56.0 } else { 144.0 },
             "credits entry must stay compact instead of filling the sidebar"
         );
         assert!(credits.absolute_position().y > 520.0);

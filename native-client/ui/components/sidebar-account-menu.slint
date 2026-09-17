@@ -48,10 +48,12 @@ component AccountMenuRow inherits Rectangle {
 
 export component SidebarCreditsButton inherits Rectangle {
     in property <bool> collapsed: false;
-    width: root.collapsed ? 56px : 80px;
+    property <string> balance-label: (AppState.en ? "Credits " : "积分 ")
+        + (AppState.credit-balance == "" ? "—" : AppState.credit-balance);
+    width: root.collapsed ? 56px : 144px;
     height: 38px;
     accessible-role: button;
-    accessible-label: AppState.account-amount-label;
+    accessible-label: root.balance-label;
     accessible-action-default => { AppState.navigate("credits"); }
     border-radius: 7px;
     border-width: AppState.page == "credits" ? 1px : 0px;
@@ -75,9 +77,9 @@ export component SidebarCreditsButton inherits Rectangle {
     }
     if !root.collapsed: Text {
         x: 32px;
-        width: parent.width - 36px;
+        width: parent.width - 40px;
         height: parent.height;
-        text: AppState.en ? "Credits" : "积分";
+        text: root.balance-label;
         color: AppTheme.text;
         font-size: AppState.settings-font-size * 1px;
         font-weight: 500;
