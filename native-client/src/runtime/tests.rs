@@ -8287,6 +8287,8 @@ mod tests {
             .to_rgba8();
         assert_eq!(logo.dimensions(), (460, 460));
         assert_eq!(logo.get_pixel(0, 0).0[3], 0);
+        let accent = logo.get_pixel(24, 410).0;
+        assert!(accent[1] > accent[2], "new logo must keep its teal lower panel");
         assert!(include_bytes!("../../assets/app.ico").len() > 20_000);
         assert!(include_bytes!("../../assets/app.icns").len() > 100_000);
     }
