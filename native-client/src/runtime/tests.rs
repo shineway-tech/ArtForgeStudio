@@ -7230,6 +7230,9 @@ mod tests {
         assert!(viewer.contains("viewer-image-stage.set-zoom(root.image-zoom - 0.1);"));
         assert!(viewer.contains("viewer-image-stage.set-zoom(root.image-zoom + 0.1);"));
         assert!(viewer.contains("if root.image-zoom-menu-open: zoom-shortcuts := Rectangle"));
+        assert!(viewer.contains("height: 220px;"));
+        assert!(viewer.contains("background: AppTheme.panel.with-alpha(0.82);"));
+        assert!(viewer.contains("for zoom in [20, 40, 60, 100, 140, 160, 180]: Rectangle"));
         for zoom in ["20", "40", "60", "100", "140", "160", "180"] {
             assert!(viewer.contains(zoom), "missing viewer zoom shortcut {zoom}%");
         }
