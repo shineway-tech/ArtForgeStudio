@@ -2,6 +2,7 @@ import { TeamRegistrationInvitationView, AccountGroupCardView, TeamMemberRowView
 
 export global AppState {
     in-out property <[VideoImageItem]> saved-videos: [];
+    in-out property <string> video-page-tab: "create";
     in-out property <bool> video-480-available: true;
     in-out property <bool> video-720-available: true;
     in-out property <bool> video-1080-available: true;
@@ -1002,6 +1003,7 @@ export global AppState {
     callback request-video-quote(string, string, int);
     callback submit-video-generation();
     callback sync-video-player(float, float, float, float);
+    callback update-video-player-visibility(bool);
     callback close-image-editor();
     callback begin-image-editor-stroke(float, float, float, float, string, color);
     callback continue-image-editor-stroke(float, float, float, float, string, color);

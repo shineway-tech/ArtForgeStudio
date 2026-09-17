@@ -1,5 +1,6 @@
 fn main() {
     println!("cargo:rerun-if-env-changed=ELUNVI_BUILD_CHANNEL");
+    println!("cargo:rerun-if-env-changed=SLINT_EMIT_DEBUG_INFO");
     let channel = std::env::var("ELUNVI_BUILD_CHANNEL").unwrap_or_else(|_| "local".into());
     assert!(matches!(channel.as_str(), "local" | "release"), "invalid ELUNVI_BUILD_CHANNEL");
     println!("cargo:rustc-env=ELUNVI_BUILD_CHANNEL={channel}");

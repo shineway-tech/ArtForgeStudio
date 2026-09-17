@@ -6637,6 +6637,12 @@ mod tests {
         assert!(state.contains("callback close-video-generation();"));
         assert!(state.contains("callback request-video-quote(string, string, int);"));
         assert!(state.contains("callback submit-video-generation();"));
+        assert!(state.contains("property <string> video-page-tab: \"create\";"));
+        assert!(state.contains("callback update-video-player-visibility(bool);"));
+        assert!(page.contains("first-text: AppState.en ? \"Create\" : \"创作\";"));
+        assert!(page.contains("second-text: AppState.en ? \"History\" : \"历史记录\";"));
+        assert!(page.contains("AppState.video-page-tab == \"history\""));
+        assert!(page.contains("VideoGallery"));
 
         let footer = viewer
             .split("viewer-footer-actions := HorizontalLayout")

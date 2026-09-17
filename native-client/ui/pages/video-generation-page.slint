@@ -4,6 +4,8 @@ import { PillButton } from "../components/pill-button.slint";
 import { VideoModelPicker } from "../components/video-model-picker.slint";
 import { VideoPromptOptimizeButton } from "../components/video-prompt-optimize-button.slint";
 import { VideoImageGrid } from "../components/video-image-grid.slint";
+import { VideoGallery } from "../components/video-gallery.slint";
+import { SegmentedControl } from "../components/segmented-control.slint";
 import { AppTheme } from "../theme.slint";
 
 component VideoChoiceButton inherits Rectangle {
@@ -70,7 +72,7 @@ component StepButton inherits Rectangle {
 export component VideoGenerationPage inherits Rectangle {
     Timer {
         interval: 100ms;
-        running: AppState.video-result-path != "";
+        running: AppState.video-page-tab == "create" && AppState.video-result-path != "";
         triggered => {
             AppState.sync-video-player(
                 preview-card.absolute-position.x / 1px,
@@ -122,19 +124,14 @@ export component VideoGenerationPage inherits Rectangle {
             border-width: 1px;
             border-color: AppTheme.border;
             clip: true;
+            visible: AppState.video-page-tab == "create";
 
             if AppState.video-result-path == "": Rectangle {
                 width: parent.width; height: parent.height; background: transparent;
                 Text {
-                    x: 20px; y: 20px; width: parent.width - 160px; height: 28px;
+                    x: 20px; y: 20px; width: parent.width - 244px; height: 28px;
                     text: (AppState.en ? "Source images" : "图片素材") + " · " + AppState.video-images.length;
                     color: AppTheme.text; font-size: 18px; font-weight: 600; vertical-alignment: center;
-                }
-                PillButton {
-                    x: parent.width - 120px; y: 16px; width: 100px; height: 36px;
-                    text: AppState.en ? "Add images" : "添加图片";
-                    disabled: AppState.video-generating || AppState.video-images-loading;
-                    clicked => { AppState.video-image-dialog = "source"; }
                 }
                 Text {
                     x: 20px; y: 56px; width: parent.width - 40px; height: 24px;
@@ -195,6 +192,7 @@ export component VideoGenerationPage inherits Rectangle {
             border-radius: 12px;
             border-width: 1px;
             border-color: AppTheme.border;
+            visible: AppState.video-page-tab == "create";
 
             Text {
                 x: 20px;
@@ -391,6 +389,57 @@ export component VideoGenerationPage inherits Rectangle {
                     : (AppState.en ? "Generate Video" : "生成视频");
                 credit-cost: AppState.video-quote-loading ? "" : AppState.video-credit-cost;
                 clicked => { AppState.submit-video-generation(); }
+            }
+        }
+
+        history-card := Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+            visible: AppState.video-page-tab == "history";
+            background: AppTheme.panel;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            clip: true;
+
+            Text {
+                x: 20px;
+                y: 20px;
+                width: parent.width - 244px;
+                height: 28px;
+                text: (AppState.en ? "Video history" : "历史记录") + " · " + AppState.saved-videos.length;
+                color: AppTheme.text;
+                font-size: 18px;
+                font-weight: 600;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            VideoGallery {
+                x: 20px;
+                y: 70px;
+                width: parent.width - 40px;
+                height: parent.height - 90px;
+            }
+        }
+
+        video-page-tabs := SegmentedControl {
+            x: AppState.video-page-tab == "history" ? parent.width - self.width - 20px : preview-card.width - self.width - 20px;
+            y: 16px;
+            width: 196px;
+            height: 36px;
+            first-text: AppState.en ? "Create" : "创作";
+            second-text: AppState.en ? "History" : "历史记录";
+            first-active: AppState.video-page-tab == "create";
+            label-font-size: 14px;
+            first-clicked => {
+                AppState.video-page-tab = "create";
+                AppState.update-video-player-visibility(true);
+            }
+            second-clicked => {
+                AppState.video-page-tab = "history";
+                AppState.update-video-player-visibility(false);
             }
         }
     }

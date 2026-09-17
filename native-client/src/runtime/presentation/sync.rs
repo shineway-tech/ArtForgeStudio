@@ -56,7 +56,7 @@ fn prepare_private_visuals(
     let existing_reference_previews=current.map(|state|state.get_references().iter()
         .filter(|row|row.image.size().width>0 && row.image.size().height>0)
         .map(|row|((row.id.to_string(),row.source_path.to_string()),row.image)).collect::<BTreeMap<_,_>>()).unwrap_or_default();
-    let videos = store.video_outputs.values().rev().map(|output| {
+    let videos = sorted_video_outputs(store).into_iter().map(|output| {
         let key=output.key();
         let image=existing_videos.get(&key).cloned().unwrap_or_default();
         let has_preview=image.size().width>0 && image.size().height>0;
@@ -67,7 +67,7 @@ fn prepare_private_visuals(
         }
         VideoImageItem { id:key.into(), image, has_preview,
             title:output.title.clone().into(),
-            subtitle:format!("{} · {} · {}s",output.model,output.resolution,output.duration_secs).into(),
+            subtitle:video_history_subtitle(output).into(),
             ..Default::default() }
     }).collect::<Vec<_>>();
     ui.push(videos, |state, rows| state.set_saved_videos(ModelRc::new(VecModel::from(rows))));
@@ -699,6 +699,27 @@ mod core_owned_viewer_projection_tests {
         assert_eq!(prepared.jobs.iter().filter(|job|matches!(job.kind,ActivationPreviewKind::Conversation)).count(),0);
         assert_eq!(prepared.jobs.iter().filter(|job|matches!(job.kind,ActivationPreviewKind::Reference)).count(),0);
     }
+    #[test]
+    fn video_history_is_newest_first_and_includes_creation_time() {
+        let mut store=Store::default();
+        let output=|task:&str,title:&str,created_at:&str| SavedVideoOutput {
+            model:"seedance-2.0-fast".into(),resolution:"1080P".into(),duration_secs:8,
+            source_asset_id:String::new(),prompt:String::new(),client_request_id:format!("request-{task}"),
+            server_task_id:task.into(),file_id:format!("file-{task}"),billing_account_group_id:"group".into(),
+            sha256:"0".repeat(64),size_bytes:1,source_path:format!("C:/videos/{task}.mp4"),
+            title:title.into(),created_at:created_at.into(),
+        };
+        for video in [
+            output("older","较早视频","2026-09-16T08:00:00+08:00"),
+            output("newer","最新视频","2026-09-17T12:30:00+08:00"),
+        ] {
+            store.video_outputs.insert(video.key(),video);
+        }
+
+        let videos=sorted_video_outputs(&store);
+        assert_eq!(videos.iter().map(|video|video.title.as_str()).collect::<Vec<_>>(),vec!["最新视频","较早视频"]);
+        assert_eq!(video_history_subtitle(videos[0]),"2026-09-17 12:30 · seedance-2.0-fast · 1080P · 8s");
+    }
 }
 
 // Pure viewer projection and original-namespace registered preview producer.
@@ -1201,6 +1222,7 @@ pub(super) fn clear_retired_private_projection(state: &AppState) {
     state.set_viewer_upscale_done(false);
     state.set_video_source_id("".into());
     state.set_saved_videos(ModelRc::default());
+    state.set_video_page_tab("create".into());
     state.set_video_images(ModelRc::new(VecModel::default()));
     state.set_video_asset_choices(ModelRc::new(VecModel::default()));
     state.set_video_image_dialog("".into());
@@ -2784,11 +2806,7 @@ pub(super) fn push_video_assets(app: &AppWindow, store: &Store) {
     let source_images=state.get_assets().iter().chain(state.get_generations().iter())
         .filter(|row|row.image.size().width>0 && row.image.size().height>0)
         .map(|row|(row.id.to_string(),row.image)).collect::<BTreeMap<_,_>>();
-    let rows = store
-        .video_outputs
-        .values()
-        .rev()
-        .map(|output| {
+    let rows = sorted_video_outputs(store).into_iter().map(|output| {
             let key=output.key();
             let image=existing.get(&key).or_else(||source_images.get(&output.source_asset_id)).cloned().unwrap_or_default();
             VideoImageItem {
@@ -2796,11 +2814,40 @@ pub(super) fn push_video_assets(app: &AppWindow, store: &Store) {
             image:image.clone(),
             has_preview:image.size().width>0 && image.size().height>0,
             title: output.title.clone().into(),
-            subtitle: format!("{} · {} · {}s",output.model,output.resolution,output.duration_secs).into(),
+            subtitle: video_history_subtitle(output).into(),
             ..Default::default()
         }})
         .collect::<Vec<_>>();
     state.set_saved_videos(ModelRc::new(VecModel::from(rows)));
+}
+
+fn sorted_video_outputs(store: &Store) -> Vec<&SavedVideoOutput> {
+    let mut outputs = store.video_outputs.values().collect::<Vec<_>>();
+    outputs.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| right.key().cmp(&left.key()))
+    });
+    outputs
+}
+
+fn video_history_subtitle(output: &SavedVideoOutput) -> String {
+    let created_at = output
+        .created_at
+        .get(..16)
+        .unwrap_or(output.created_at.as_str())
+        .replace('T', " ");
+    [
+        created_at,
+        output.model.clone(),
+        output.resolution.clone(),
+        format!("{}s", output.duration_secs),
+    ]
+    .into_iter()
+    .filter(|value| !value.trim().is_empty())
+    .collect::<Vec<_>>()
+    .join(" · ")
 }
 
 pub(super) fn video_source_asset<'a>(store:&'a Store,output:&SavedVideoOutput)->Option<&'a AssetData> {
