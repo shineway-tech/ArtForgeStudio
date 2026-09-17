@@ -56,7 +56,9 @@ fn prepare_private_visuals(
     let existing_reference_previews=current.map(|state|state.get_references().iter()
         .filter(|row|row.image.size().width>0 && row.image.size().height>0)
         .map(|row|((row.id.to_string(),row.source_path.to_string()),row.image)).collect::<BTreeMap<_,_>>()).unwrap_or_default();
-    let videos = sorted_video_outputs(store).into_iter().map(|output| {
+    let video_outputs = sorted_video_outputs(store);
+    let video_groups = build_video_groups(&video_outputs, language);
+    let videos = video_outputs.into_iter().map(|output| {
         let key=output.key();
         let image=existing_videos.get(&key).cloned().unwrap_or_default();
         let has_preview=image.size().width>0 && image.size().height>0;
@@ -71,6 +73,7 @@ fn prepare_private_visuals(
             ..Default::default() }
     }).collect::<Vec<_>>();
     ui.push(videos, |state, rows| state.set_saved_videos(ModelRc::new(VecModel::from(rows))));
+    ui.push(video_groups, |state, rows| state.set_saved_video_groups(ModelRc::new(VecModel::from(rows))));
     let mut prepare_gallery=|collection, category:&str, layout:&str| {
         let viewport=if current.is_some() {
             GALLERY_VIRTUAL_STATE.with(|state|state.borrow_mut().slot_mut(collection).viewport)
@@ -711,14 +714,23 @@ mod core_owned_viewer_projection_tests {
         };
         for video in [
             output("older","较早视频","2026-09-16T08:00:00+08:00"),
+            output("same-day","同日视频","2026-09-17T10:00:00+08:00"),
             output("newer","最新视频","2026-09-17T12:30:00+08:00"),
         ] {
             store.video_outputs.insert(video.key(),video);
         }
 
         let videos=sorted_video_outputs(&store);
-        assert_eq!(videos.iter().map(|video|video.title.as_str()).collect::<Vec<_>>(),vec!["最新视频","较早视频"]);
+        assert_eq!(videos.iter().map(|video|video.title.as_str()).collect::<Vec<_>>(),vec!["最新视频","同日视频","较早视频"]);
         assert_eq!(video_history_subtitle(videos[0]),"2026-09-17 12:30 · seedance-2.0-fast · 1080P · 8s");
+        let groups=build_video_groups(&videos,"zh-CN");
+        assert_eq!(groups.len(),2);
+        assert_eq!(groups[0].start_index,0);
+        assert_eq!(groups[0].item_count,2);
+        assert_eq!(groups[0].title,time_group_label("2026-09-17 12:30:00+08:00","zh-CN"));
+        assert_eq!(groups[1].start_index,2);
+        assert_eq!(groups[1].item_count,1);
+        assert_eq!(groups[1].title,time_group_label("2026-09-16 08:00:00+08:00","zh-CN"));
     }
 }
 
@@ -1222,6 +1234,7 @@ pub(super) fn clear_retired_private_projection(state: &AppState) {
     state.set_viewer_upscale_done(false);
     state.set_video_source_id("".into());
     state.set_saved_videos(ModelRc::default());
+    state.set_saved_video_groups(ModelRc::default());
     state.set_video_page_tab("create".into());
     state.set_video_images(ModelRc::new(VecModel::default()));
     state.set_video_asset_choices(ModelRc::new(VecModel::default()));
@@ -2806,7 +2819,9 @@ pub(super) fn push_video_assets(app: &AppWindow, store: &Store) {
     let source_images=state.get_assets().iter().chain(state.get_generations().iter())
         .filter(|row|row.image.size().width>0 && row.image.size().height>0)
         .map(|row|(row.id.to_string(),row.image)).collect::<BTreeMap<_,_>>();
-    let rows = sorted_video_outputs(store).into_iter().map(|output| {
+    let video_outputs = sorted_video_outputs(store);
+    let groups = build_video_groups(&video_outputs, state.get_language().as_str());
+    let rows = video_outputs.into_iter().map(|output| {
             let key=output.key();
             let image=existing.get(&key).or_else(||source_images.get(&output.source_asset_id)).cloned().unwrap_or_default();
             VideoImageItem {
@@ -2819,6 +2834,7 @@ pub(super) fn push_video_assets(app: &AppWindow, store: &Store) {
         }})
         .collect::<Vec<_>>();
     state.set_saved_videos(ModelRc::new(VecModel::from(rows)));
+    state.set_saved_video_groups(ModelRc::new(VecModel::from(groups)));
 }
 
 fn sorted_video_outputs(store: &Store) -> Vec<&SavedVideoOutput> {
@@ -2830,6 +2846,24 @@ fn sorted_video_outputs(store: &Store) -> Vec<&SavedVideoOutput> {
             .then_with(|| right.key().cmp(&left.key()))
     });
     outputs
+}
+
+fn build_video_groups(outputs: &[&SavedVideoOutput], language: &str) -> Vec<VideoGroup> {
+    let mut groups = Vec::<VideoGroup>::new();
+    for (index, output) in outputs.iter().enumerate() {
+        let normalized_time = output.created_at.replace('T', " ");
+        let title = time_group_label(&normalized_time, language);
+        if let Some(group) = groups.last_mut().filter(|group| group.title.as_str() == title) {
+            group.item_count += 1;
+        } else {
+            groups.push(VideoGroup {
+                title: title.into(),
+                start_index: index.min(i32::MAX as usize) as i32,
+                item_count: 1,
+            });
+        }
+    }
+    groups
 }
 
 fn video_history_subtitle(output: &SavedVideoOutput) -> String {

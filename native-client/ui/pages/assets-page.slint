@@ -36,7 +36,13 @@ export component AssetsPage {
                 mode <=> AppState.asset-gallery-layout;
                 preference-key: "assets";
             }
-            if AppState.asset-category-filter == "video": VideoGallery { x: 0px; y: 116px; width: parent.width; height: parent.height - 116px; }
+            if AppState.asset-category-filter == "video": VideoGallery {
+                x: 0px;
+                y: 116px;
+                width: parent.width;
+                height: parent.height - 116px;
+                group-by-date: true;
+            }
             if AppState.asset-category-filter != "video": AssetGallery {
                 x: 0px;
                 y: 116px;

@@ -1,7 +1,8 @@
-import { TeamRegistrationInvitationView, AccountGroupCardView, TeamMemberRowView, TeamInvitationRowView, TeamUsageRowView, AccountSession, AssetGroup, AssetItem, BrushPoint, CanvasLink, CanvasNote, CatalogModelView, CompressionImageItem, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, GalleryHeader, GalleryLoadingPlacement, GalleryPlacement, InvitedUserView, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, PromptTextEdit, ReferenceItem, VideoImageItem } from "types.slint";
+import { TeamRegistrationInvitationView, AccountGroupCardView, TeamMemberRowView, TeamInvitationRowView, TeamUsageRowView, AccountSession, AssetGroup, AssetItem, BrushPoint, CanvasLink, CanvasNote, CatalogModelView, CompressionImageItem, ConversationItem, CreditPackView, CreditRecord, CustomPromptItem, DeepOptimizationRoundView, GalleryHeader, GalleryLoadingPlacement, GalleryPlacement, InvitedUserView, InvoiceOrderView, MembershipPlanView, ModelGroup, ModelOption, NotificationItem, PromptTextEdit, ReferenceItem, VideoGroup, VideoImageItem } from "types.slint";
 
 export global AppState {
     in-out property <[VideoImageItem]> saved-videos: [];
+    in-out property <[VideoGroup]> saved-video-groups: [];
     in-out property <string> video-page-tab: "create";
     in-out property <bool> video-480-available: true;
     in-out property <bool> video-720-available: true;

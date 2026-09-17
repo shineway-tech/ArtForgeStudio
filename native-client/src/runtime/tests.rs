@@ -6630,6 +6630,7 @@ mod tests {
         let state = include_str!("../../ui/app-state.slint");
         let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
         let page = include_str!("../../ui/pages/video-generation-page.slint");
+        let assets_page = include_str!("../../ui/pages/assets-page.slint");
 
         assert!(app.contains("import { VideoGenerationPage }"));
         assert!(app.contains("if AppState.page == \"video-generation\": VideoGenerationPage"));
@@ -6643,6 +6644,8 @@ mod tests {
         assert!(page.contains("second-text: AppState.en ? \"History\" : \"历史记录\";"));
         assert!(page.contains("AppState.video-page-tab == \"history\""));
         assert!(page.contains("VideoGallery"));
+        assert!(assets_page.contains("group-by-date: true;"));
+        assert!(!page.contains("group-by-date: true;"));
 
         let footer = viewer
             .split("viewer-footer-actions := HorizontalLayout")
