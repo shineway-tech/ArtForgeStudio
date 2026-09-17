@@ -53,6 +53,9 @@ fn prepare_private_visuals(
     let existing_conversation_previews=current.map(|state|state.get_conversations().iter()
         .filter(|row|row.image.size().width>0 && row.image.size().height>0)
         .map(|row|(row.id.to_string(),row.image)).collect::<BTreeMap<_,_>>()).unwrap_or_default();
+    let existing_reference_previews=current.map(|state|state.get_references().iter()
+        .filter(|row|row.image.size().width>0 && row.image.size().height>0)
+        .map(|row|((row.id.to_string(),row.source_path.to_string()),row.image)).collect::<BTreeMap<_,_>>()).unwrap_or_default();
     let videos = store.video_outputs.values().rev().map(|output| {
         let key=output.key();
         let image=existing_videos.get(&key).cloned().unwrap_or_default();
@@ -138,7 +141,8 @@ fn prepare_private_visuals(
     for item in store.generations.iter().filter(|item|item.source_path!="failed" && !item.conversation_id.trim().is_empty()) {
         if !seen.insert(item.conversation_id.clone()) { continue; }
         conversations.push(ConversationItem { id:item.conversation_id.clone().into(),title:short_text(&item.title,10).into(),image:existing_conversation_previews.get(&item.conversation_id).cloned().unwrap_or_default(),loading:false });
-        if current.is_none() || active_preview_collection==Some(PreviewCollection::Generations) {
+        if (current.is_none() || active_preview_collection==Some(PreviewCollection::Generations))
+            && !existing_conversation_previews.contains_key(&item.conversation_id) {
             jobs.push(ActivationPreviewJob { kind:ActivationPreviewKind::Conversation,id:item.conversation_id.clone(),path:item.source_path.clone() });
         }
     }
@@ -151,13 +155,16 @@ fn prepare_private_visuals(
     ui.push(current_conversation,|state,value|state.set_current_conversation_id(value));
     ui.push(ModelRc::new(VecModel::from(conversations)),|state,value|state.set_conversations(value));
     for item in references_for_category(&store.references,category).iter().take(max_reference_images_for_category(category)) {
-        if (current.is_none() || active_preview_collection==Some(PreviewCollection::Generations)) && !item.source_path.is_empty() {
+        if (current.is_none() || active_preview_collection==Some(PreviewCollection::Generations))
+            && !item.source_path.is_empty()
+            && !existing_reference_previews.contains_key(&(item.id.clone(),item.source_path.clone())) {
             jobs.push(ActivationPreviewJob { kind:ActivationPreviewKind::Reference,id:item.id.clone(),path:item.source_path.clone() });
         }
     }
     PreparedActivationVisuals { ui,assets,generations,jobs }
 }
 struct ActivationPreviewWorker { lease:NamespaceLease,cancel:Arc<std::sync::atomic::AtomicBool>,handle:std::thread::JoinHandle<()> }
+static ACTIVATION_VISUAL_EPOCH:AtomicU64=AtomicU64::new(0);
 thread_local! {
     static ACTIVATION_PREVIEW_WORKERS:RefCell<Vec<ActivationPreviewWorker>>=const { RefCell::new(Vec::new()) };
     static ACTIVATION_PREVIEW_FAILURE:Cell<bool>=const { Cell::new(false) };
@@ -199,6 +206,7 @@ pub(super) fn drain_activation_preview_workers_for_lease_for_test(lease:&Namespa
 pub(super) fn start_activation_visual_effects(app:&AppWindow,context:AppContext,effects:ActivationVisualEffects) {
     if ACTIVATION_PREVIEW_CLOSING.with(Cell::get) { return; }
     let ActivationVisualEffects { persistence,jobs }=effects;
+    let epoch=ACTIVATION_VISUAL_EPOCH.fetch_add(1,Ordering::AcqRel).wrapping_add(1);
     if jobs.is_empty() { return; }
     let Ok(activity)=persistence.begin_activity() else { return; };
     let cancel=Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -206,12 +214,14 @@ pub(super) fn start_activation_visual_effects(app:&AppWindow,context:AppContext,
     let (sender,receiver)=mpsc::sync_channel(4);
     let worker=std::thread::Builder::new().name("activation-previews".into()).spawn(move || {
         for job in jobs {
-            if worker_cancel.load(Ordering::SeqCst) || activity.is_quiescing() { break; }
+            if worker_cancel.load(Ordering::SeqCst) || activity.is_quiescing()
+                || ACTIVATION_VISUAL_EPOCH.load(Ordering::Acquire)!=epoch { break; }
             let purpose=if matches!(job.kind,ActivationPreviewKind::Gallery(_)) { PreviewPurpose::Gallery } else { PreviewPurpose::Reference };
             let Ok(preview)=prepare_owned_preview(&captured,Path::new(&job.path),purpose) else { continue; };
             let mut value=(job,preview);
             loop {
-                if worker_cancel.load(Ordering::SeqCst) || activity.is_quiescing() || !captured.is_current() { return; }
+                if worker_cancel.load(Ordering::SeqCst) || activity.is_quiescing() || !captured.is_current()
+                    || ACTIVATION_VISUAL_EPOCH.load(Ordering::Acquire)!=epoch { return; }
                 match sender.try_send(value) {
                     Ok(())=>break,
                     Err(mpsc::TrySendError::Disconnected(_))=>return,
@@ -222,18 +232,24 @@ pub(super) fn start_activation_visual_effects(app:&AppWindow,context:AppContext,
         drop(activity);
     });
     let Ok(handle)=worker else { return; };
-    ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow_mut().push(ActivationPreviewWorker { lease:persistence.lease().clone(),cancel,handle }));
-    poll_activation_previews(app.as_weak(),context,persistence,receiver);
+    ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow_mut().push(ActivationPreviewWorker {
+        lease:persistence.lease().clone(),cancel:cancel.clone(),handle,
+    }));
+    poll_activation_previews(app.as_weak(),context,persistence,epoch,cancel,receiver);
 }
-fn poll_activation_previews(weak:Weak<AppWindow>,context:AppContext,persistence:PrivatePersistence,receiver:mpsc::Receiver<(ActivationPreviewJob,PreparedDeliveryPreview)>) {
+fn poll_activation_previews(weak:Weak<AppWindow>,context:AppContext,persistence:PrivatePersistence,epoch:u64,
+    cancel:Arc<std::sync::atomic::AtomicBool>,receiver:mpsc::Receiver<(ActivationPreviewJob,PreparedDeliveryPreview)>) {
     slint::Timer::single_shot(Duration::from_millis(50),move || {
         reap_activation_preview_workers();
         let Some(app)=weak.upgrade() else { return; };
+        if ACTIVATION_VISUAL_EPOCH.load(Ordering::Acquire)!=epoch {
+            cancel.store(true,Ordering::Release);return;
+        }
         let mut processed=0;
         while processed<ACTIVATION_PREVIEW_COMPLETIONS_PER_TICK {
             let (job,preview)=match receiver.try_recv() {
                 Ok(value)=>value,
-                Err(TryRecvError::Empty)=>{ poll_activation_previews(weak,context,persistence,receiver); return; },
+                Err(TryRecvError::Empty)=>{ poll_activation_previews(weak,context,persistence,epoch,cancel,receiver); return; },
                 Err(TryRecvError::Disconnected)=>return,
             };
             processed+=1;
@@ -281,7 +297,7 @@ fn poll_activation_previews(weak:Weak<AppWindow>,context:AppContext,persistence:
                 }
             });
         }
-        poll_activation_previews(weak,context,persistence,receiver);
+        poll_activation_previews(weak,context,persistence,epoch,cancel,receiver);
     });
 }
 
@@ -656,6 +672,32 @@ mod core_owned_viewer_projection_tests {
         app.global::<AppState>().set_page("generation".into());
         start_canvas_reference_preview_effects(&app,f.persistence.clone(),effects);
         pump(||app.global::<AppState>().get_references().row_data(0).unwrap().image.size().width>0);
+    }
+    #[test]
+    fn repeated_delivery_projection_only_schedules_missing_previews() {
+        let(f,app)=setup();
+        let source=f.context.store.borrow().assets[0].source_path.clone();
+        let preview=Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(1,1));
+        let mut generations=Vec::new();let mut conversations=Vec::new();
+        for index in 0..200 {
+            let id=format!("conversation-{index}");
+            generations.push(AssetData {
+                id:format!("generation-{index}"),conversation_id:id.clone(),title:id.clone(),category:"character".into(),
+                kind:"game".into(),time:"2026-09-17 12:00".into(),prompt:"prompt".into(),ratio:"1:1".into(),quality:"1K".into(),
+                model:"model".into(),origin:"generation".into(),width:80,height:120,source_path:source.clone(),reference_paths:Vec::new(),
+                cutout_done:false,remove_black_done:false,upscale_done:false,is_new:false,delivery_recoverable:false,delivery_downloading:false,
+            });
+            conversations.push(ConversationItem {id:id.into(),title:"history".into(),image:preview.clone(),loading:false});
+        }
+        f.context.store.borrow_mut().generations=generations;
+        let state=app.global::<AppState>();state.set_page("generation".into());
+        state.set_conversations(ModelRc::new(VecModel::from(conversations)));
+        f.context.store.borrow_mut().references.character=vec![ReferenceData{id:"reference".into(),source_path:source.clone()}];
+        state.set_references(ModelRc::new(VecModel::from(vec![ReferenceItem{id:"reference".into(),source_path:source.into(),image:preview}])));
+
+        let prepared=prepare_delivery_visuals(&app,&f.context.store.borrow());
+        assert_eq!(prepared.jobs.iter().filter(|job|matches!(job.kind,ActivationPreviewKind::Conversation)).count(),0);
+        assert_eq!(prepared.jobs.iter().filter(|job|matches!(job.kind,ActivationPreviewKind::Reference)).count(),0);
     }
 }
 
