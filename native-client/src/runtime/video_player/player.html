@@ -18,12 +18,15 @@
     #volume { width: 72px; accent-color: #00d982; cursor: pointer; }
     #centerPlay { position: absolute; z-index: 3; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 66px; height: 66px; border-radius: 50%; background: rgba(0,217,130,.92); font-size: 27px; box-shadow: 0 12px 40px rgba(0,0,0,.35); }
     #centerPlay:hover { background: #00d982; color: #fff; transform: translate(-50%,-50%) scale(1.04); }
+    #playerMessage { position: absolute; z-index: 4; left: 50%; top: 42%; transform: translate(-50%,-50%); max-width: min(460px, calc(100% - 48px)); padding: 10px 16px; border-radius: 8px; background: rgba(10,15,24,.88); color: rgba(255,255,255,.86); font-size: 14px; text-align: center; pointer-events: none; }
+    #playerMessage.error { color: #ffb6b6; border: 1px solid rgba(255,120,120,.42); }
     .hidden { opacity: 0; pointer-events: none; }
   </style>
 </head>
 <body>
   <div id="player">
     <video id="video" preload="metadata" playsinline></video>
+    <div id="playerMessage">正在加载视频...</div>
     <button id="centerPlay" aria-label="播放">▶</button>
     <div id="controls">
       <button id="playButton" aria-label="播放或暂停">▶</button>
@@ -40,8 +43,8 @@
   </div>
   <script>
     const video = document.getElementById('video');
-    video.src = __VIDEO_SRC_JSON__;
     const player = document.getElementById('player');
+    const playerMessage = document.getElementById('playerMessage');
     const playButton = document.getElementById('playButton');
     const centerPlay = document.getElementById('centerPlay');
     const seek = document.getElementById('seek');
@@ -54,6 +57,8 @@
     const folderButton = document.getElementById('folderButton');
     const regenerateButton = document.getElementById('regenerateButton');
     const send = command => window.ipc.postMessage(JSON.stringify({ command }));
+    let readyReported = false;
+    let errorReported = false;
     const formatTime = value => {
       if (!Number.isFinite(value)) return '00:00';
       const seconds = Math.max(0, Math.floor(value));
@@ -64,12 +69,29 @@
       playButton.textContent = paused ? '▶' : 'Ⅱ';
       centerPlay.classList.toggle('hidden', !paused);
     };
-    const togglePlay = () => video.paused ? video.play() : video.pause();
+    const reportReady = () => {
+      playerMessage.classList.add('hidden');
+      if (!readyReported) { readyReported = true; send('player_ready'); }
+    };
+    const reportError = () => {
+      playerMessage.textContent = '视频无法播放，请下载后使用系统播放器查看';
+      playerMessage.classList.add('error');
+      playerMessage.classList.remove('hidden');
+      centerPlay.classList.add('hidden');
+      if (!errorReported) { errorReported = true; send('playback_error'); }
+    };
+    const togglePlay = async () => {
+      if (!video.paused) { video.pause(); return; }
+      try { await video.play(); } catch (_) { reportError(); }
+    };
     playButton.onclick = togglePlay;
     centerPlay.onclick = togglePlay;
     video.onclick = togglePlay;
     video.onplay = syncPlay;
     video.onpause = syncPlay;
+    video.onloadedmetadata = reportReady;
+    video.oncanplay = reportReady;
+    video.onerror = reportError;
     video.ontimeupdate = () => {
       seek.value = video.duration ? String(Math.round(video.currentTime / video.duration * 1000)) : '0';
       timeLabel.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
@@ -82,6 +104,8 @@
     downloadButton.onclick = () => send('download');
     folderButton.onclick = () => send('open_folder');
     regenerateButton.onclick = () => send('regenerate');
+    video.src = __VIDEO_SRC_JSON__;
+    video.load();
     syncPlay();
   </script>
 </body>

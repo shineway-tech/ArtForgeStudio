@@ -1,7 +1,7 @@
 use super::*;
 
 use sha2::{Digest, Sha256};
-use std::io::{Read, Write, Seek, SeekFrom};
+use std::io::{Read, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::AtomicBool;
 
@@ -33,6 +33,7 @@ impl OwnedVideoSource {
 }
 struct PreparedVideoPlayback {
     url: reqwest::Url,
+    player_url: reqwest::Url,
     cancel: Arc<AtomicBool>,
     source: Arc<OwnedVideoSource>,
 }
@@ -144,11 +145,19 @@ pub(super) fn drain_video_player_workers_for_shutdown() -> Result<()> {
 }
 
 // This URL contains no filesystem name, identity, query or arbitrary proxy target.
-fn validated_local_video_url(address: std::net::SocketAddr, token: &str) -> Result<reqwest::Url> {
+fn validated_local_video_url(
+    address: std::net::SocketAddr,
+    token: &str,
+    endpoint: &str,
+) -> Result<reqwest::Url> {
     anyhow::ensure!(address.ip() == std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
         && address.port() != 0 && token.len() == 32 && token.bytes().all(|byte| byte.is_ascii_hexdigit()),
         "invalid owned player endpoint");
-    Ok(reqwest::Url::parse(&format!("http://127.0.0.1:{}/{token}", address.port()))?)
+    anyhow::ensure!(matches!(endpoint, "media" | "player"), "invalid owned player route");
+    Ok(reqwest::Url::parse(&format!(
+        "http://127.0.0.1:{}/{endpoint}/{token}",
+        address.port()
+    ))?)
 }
 
 fn prepare_video_playback(persistence: PrivatePersistence, output: SavedVideoOutput) -> Result<PreparedVideoPlayback> {
@@ -193,7 +202,9 @@ fn prepare_video_playback_with_cancel(
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
     listener.set_nonblocking(true)?;
     let token = Uuid::new_v4().simple().to_string();
-    let url = validated_local_video_url(listener.local_addr()?, &token)?;
+    let address = listener.local_addr()?;
+    let url = validated_local_video_url(address, &token, "media")?;
+    let player_url = validated_local_video_url(address, &token, "player")?;
     let port = url.port().ok_or_else(|| anyhow!("missing player port"))?;
     let worker_source = source.clone();
     let worker_cancel = cancel.clone();
@@ -201,7 +212,7 @@ fn prepare_video_playback_with_cancel(
     spawn_video_player_worker(persistence.lease().clone(), cancel.clone(), move || {
         run_video_listener(listener, worker_persistence, worker_source, worker_cancel, token, port, mime);
     })?;
-    Ok(PreparedVideoPlayback { url, cancel, source })
+    Ok(PreparedVideoPlayback { url, player_url, cancel, source })
 }
 
 fn run_video_listener(
@@ -215,12 +226,15 @@ fn run_video_listener(
                 if !address.ip().is_loopback() { continue; }
                 if stream.set_read_timeout(Some(VIDEO_SOCKET_TIMEOUT)).is_err()
                     || stream.set_write_timeout(Some(VIDEO_SOCKET_TIMEOUT)).is_err() { continue; }
-                if let Err(error) = serve_video_connection(&mut stream, &persistence, &source, &cancel, &token, port, mime) {
-                    if error.downcast_ref::<std::io::Error>().is_some_and(|error|
-                        matches!(error.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock)) {
-                        cancel.store(true, Ordering::SeqCst);
-                    }
-                }
+                let _ = serve_video_connection(
+                    &mut stream,
+                    &persistence,
+                    &source,
+                    &cancel,
+                    &token,
+                    port,
+                    mime,
+                );
                 let _ = stream.shutdown(std::net::Shutdown::Both);
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(10)),
@@ -300,8 +314,13 @@ fn serve_video_connection(
     let request = read_video_request(stream, cancel)?;
     let mut lines = request.split("\r\n");
     let first = lines.next().unwrap_or_default().split(' ').collect::<Vec<_>>();
-    if first.len() != 3 || !matches!(first[0], "GET" | "HEAD") || first[1] != format!("/{token}")
-        || first[2] != "HTTP/1.1" {
+    let media_path = format!("/media/{token}");
+    let player_path = format!("/player/{token}");
+    if first.len() != 3
+        || !matches!(first[0], "GET" | "HEAD")
+        || !matches!(first[1], path if path == media_path || path == player_path)
+        || first[2] != "HTTP/1.1"
+    {
         return empty_video_response(stream, 404, None);
     }
     let mut host = None;
@@ -321,6 +340,34 @@ fn serve_video_connection(
         }
     }
     if host != Some(format!("127.0.0.1:{port}").as_str()) { return empty_video_response(stream, 404, None); }
+    if first[1] == player_path {
+        if range.is_some() { return empty_video_response(stream, 400, None); }
+        let media_url = validated_local_video_url(
+            std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port)),
+            token,
+            "media",
+        )?;
+        let html = player_html(&media_url)?;
+        let body = html.as_bytes();
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        let (activity, _effect) = persistence.begin_effect()?;
+        anyhow::ensure!(
+            !cancel.load(Ordering::SeqCst) && !activity.is_quiescing(),
+            "video player page cancelled"
+        );
+        write_video_bytes(stream, headers.as_bytes(), || {
+            !cancel.load(Ordering::SeqCst) && !activity.is_quiescing()
+        })?;
+        if first[0] == "GET" {
+            write_video_bytes(stream, body, || {
+                !cancel.load(Ordering::SeqCst) && !activity.is_quiescing()
+            })?;
+        }
+        return Ok(());
+    }
     let (start, length, partial) = match video_range(range, source.size) {
         Ok(range) => range, Err(_) => return empty_video_response(stream, 416, Some(source.size)),
     };
@@ -356,6 +403,8 @@ enum PlayerCommand {
     Download,
     OpenFolder,
     Regenerate,
+    Ready,
+    PlaybackError,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -396,6 +445,8 @@ fn parse_player_command(body: &str) -> Option<PlayerCommand> {
         "download" => Some(PlayerCommand::Download),
         "open_folder" => Some(PlayerCommand::OpenFolder),
         "regenerate" => Some(PlayerCommand::Regenerate),
+        "player_ready" => Some(PlayerCommand::Ready),
+        "playback_error" => Some(PlayerCommand::PlaybackError),
         _ => None,
     }
 }
@@ -541,7 +592,7 @@ fn poll_video_player_preparation(
                 Ok(playback) => {
                     #[cfg(any(target_os = "windows", target_os = "macos"))]
                     let opened = desktop_video_player::sync(&app, context.clone(), persistence.clone(),
-                        output.clone(), &playback.url, cancel.clone(), bounds);
+                        output.clone(), &playback.player_url, &playback.url, cancel.clone(), bounds);
                     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
                     let opened: Result<()> = { let _ = bounds; Err(anyhow!("当前平台不支持应用内视频播放器")) };
                     match opened {
@@ -592,6 +643,18 @@ fn handle_player_command(
         }
         PlayerCommand::OpenFolder => start_captured_video_reveal(app, context, persistence, output),
         PlayerCommand::Download => start_captured_video_export(app, context, persistence, output),
+        PlayerCommand::Ready => {
+            let _ = apply_video_player(context, persistence, output, || {
+                app.global::<AppState>().set_video_status("视频已加载".into());
+            });
+        }
+        PlayerCommand::PlaybackError => {
+            let _ = apply_video_player(context, persistence, output, || {
+                app.global::<AppState>().set_video_status(
+                    "视频无法解码，请下载后使用系统播放器查看".into(),
+                );
+            });
+        }
     }
 }
 
@@ -815,18 +878,21 @@ mod desktop_video_player {
     }
     pub(super) fn sync(
         app: &AppWindow, context: AppContext, persistence: PrivatePersistence, output: SavedVideoOutput,
-        video_url: &reqwest::Url, cancel: Arc<AtomicBool>, bounds: VideoPlayerBounds,
+        player_url: &reqwest::Url, media_url: &reqwest::Url, cancel: Arc<AtomicBool>, bounds: VideoPlayerBounds,
     ) -> Result<()> {
-        let html = player_html(video_url)?;
+        anyhow::ensure!(player_url.origin() == media_url.origin(), "播放器地址来源不一致");
         let weak = app.as_weak();
         let command_cancel = cancel.clone();
+        let allowed_player_url = player_url.as_str().to_string();
         let window_handle = app.window().window_handle();
         let webview = WebViewBuilder::new()
-            .with_html(html)
+            .with_url(player_url.as_str())
             .with_bounds(rect(bounds))
             .with_devtools(false)
             .with_clipboard(false)
-            .with_navigation_handler(|candidate| candidate == "about:blank")
+            .with_navigation_handler(move |candidate| {
+                candidate == allowed_player_url || candidate == "about:blank"
+            })
             .with_new_window_req_handler(|_, _| NewWindowResponse::Deny)
             .with_download_started_handler(|_, _| false)
             .with_ipc_handler(move |request| {
@@ -883,6 +949,14 @@ mod tests {
         assert_eq!(
             parse_player_command(r#"{"command":"regenerate"}"#),
             Some(PlayerCommand::Regenerate)
+        );
+        assert_eq!(
+            parse_player_command(r#"{"command":"player_ready"}"#),
+            Some(PlayerCommand::Ready)
+        );
+        assert_eq!(
+            parse_player_command(r#"{"command":"playback_error"}"#),
+            Some(PlayerCommand::PlaybackError)
         );
         for body in [
             r#"{"command":"open_url"}"#,
@@ -1059,6 +1133,28 @@ mod core_player_tests {
         let (headers, body) = request(&playback.url, "GET", playback.url.path(), "");
         assert!(headers.starts_with("HTTP/1.1 200 "));
         assert_eq!(body, bytes);
+        fixture.stop();
+    }
+
+    #[test]
+    fn core_video_player_serves_the_player_and_media_from_one_local_origin() {
+        let fixture = Fixture::new(A);
+        let output = fixture.output(b"private video");
+        let playback = fixture.prepare(output);
+        assert_eq!(playback.player_url.origin(), playback.url.origin());
+        let (headers, body) = request(
+            &playback.player_url,
+            "GET",
+            playback.player_url.path(),
+            "",
+        );
+        let html = String::from_utf8(body).unwrap();
+        assert!(headers.starts_with("HTTP/1.1 200 "));
+        assert!(headers.contains("Content-Type: text/html; charset=utf-8"));
+        assert!(headers.contains("Content-Security-Policy:"));
+        assert!(html.contains(playback.url.as_str()));
+        assert!(html.contains("player_ready"));
+        assert!(html.contains("playback_error"));
         fixture.stop();
     }
 

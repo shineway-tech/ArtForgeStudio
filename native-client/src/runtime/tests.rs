@@ -6780,6 +6780,9 @@ mod tests {
             "downloadButton",
             "folderButton",
             "regenerateButton",
+            "playerMessage",
+            "player_ready",
+            "playback_error",
         ] {
             assert!(html.contains(control), "missing player control {control}");
         }
