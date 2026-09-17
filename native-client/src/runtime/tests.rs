@@ -6639,11 +6639,21 @@ mod tests {
         assert!(state.contains("callback request-video-quote(string, string, int);"));
         assert!(state.contains("callback submit-video-generation();"));
         assert!(state.contains("property <string> video-page-tab: \"create\";"));
+        assert!(state.contains("property <bool> video-player-open: false;"));
         assert!(state.contains("callback update-video-player-visibility(bool);"));
         assert!(page.contains("first-text: AppState.en ? \"Create\" : \"创作\";"));
         assert!(page.contains("second-text: AppState.en ? \"History\" : \"历史记录\";"));
         assert!(page.contains("AppState.video-page-tab == \"history\""));
         assert!(page.contains("VideoGallery"));
+        assert!(page.contains("width: preview-card.width;"));
+        assert!(page.contains("visible: AppState.video-player-open && AppState.video-result-path != \"\";"));
+        assert!(page.contains("video-generation-spinner := ProgressSpinner"));
+        let settings = page
+            .split("settings-card := Rectangle")
+            .nth(1)
+            .and_then(|value| value.split("history-card := Rectangle").next())
+            .expect("video settings card");
+        assert!(!settings.contains("visible: AppState.video-page-tab == \"create\""));
         assert!(assets_page.contains("group-by-date: true;"));
         assert!(!page.contains("group-by-date: true;"));
 
@@ -6685,6 +6695,7 @@ mod tests {
         assert!(!page.contains("secondary-text:"));
         assert!(!page.contains("需要 \" + AppState.video-credit-cost"));
         assert!(page.contains("AppState.submit-video-generation();"));
+        assert!(page.contains("AppState.video-page-tab = \"create\";\n                    AppState.submit-video-generation();"));
         assert_eq!(
             page.matches("AppState.en ? \"Generate Video\" : \"生成视频\"")
                 .count(),
@@ -7196,7 +7207,14 @@ mod tests {
         let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
 
         assert!(viewer.contains("property <float> image-zoom: 1.0;"));
-        assert!(viewer.contains("max(0.5, min(3.0, root.image-zoom"));
+        assert!(viewer.contains("max(0.2, min(3.0, value))"));
+        assert!(viewer.contains("zoom-stepper := Rectangle"));
+        assert!(viewer.contains("viewer-image-stage.set-zoom(root.image-zoom - 0.1);"));
+        assert!(viewer.contains("viewer-image-stage.set-zoom(root.image-zoom + 0.1);"));
+        assert!(viewer.contains("if root.image-zoom-menu-open: zoom-shortcuts := Rectangle"));
+        for zoom in ["20", "40", "60", "100", "140", "160", "180"] {
+            assert!(viewer.contains(zoom), "missing viewer zoom shortcut {zoom}%");
+        }
         assert!(viewer.contains("root.image-fullscreen = !root.image-fullscreen;"));
         assert!(viewer.contains("fullscreen-button := Rectangle"));
         assert!(!viewer.contains("if image-touch.has-hover: fullscreen-button"));
@@ -7227,6 +7245,45 @@ mod tests {
         assert!(viewer.contains("root.image-pan-start-y + self.mouse-y - root.image-pressed-y"));
         assert!(viewer.contains("max(-viewer-image-stage.max-pan-x, min("));
         assert!(viewer.contains("max(-viewer-image-stage.max-pan-y, min("));
+    }
+
+    #[test]
+    fn viewer_zoom_stepper_changes_by_ten_percent_and_offers_shortcuts() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_viewer_source("asset".into());
+        state.set_viewer_width(1024);
+        state.set_viewer_height(1024);
+        state.set_viewer_open(true);
+        app.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
+        app.show().expect("show app window");
+
+        assert!(ElementHandle::find_by_accessible_label(&app, "当前缩放 100%")
+            .next()
+            .is_some());
+        ElementHandle::find_by_accessible_label(&app, "放大 10%")
+            .next()
+            .expect("zoom in button")
+            .mock_single_click(PointerEventButton::Left);
+        assert!(ElementHandle::find_by_accessible_label(&app, "当前缩放 110%")
+            .next()
+            .is_some());
+        ElementHandle::find_by_accessible_label(&app, "当前缩放 110%")
+            .next()
+            .unwrap()
+            .mock_single_click(PointerEventButton::Left);
+        ElementHandle::find_by_accessible_label(&app, "40%")
+            .next()
+            .expect("40 percent shortcut")
+            .mock_single_click(PointerEventButton::Left);
+        assert!(ElementHandle::find_by_accessible_label(&app, "当前缩放 40%")
+            .next()
+            .is_some());
     }
 
     #[test]

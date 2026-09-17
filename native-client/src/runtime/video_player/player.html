@@ -18,6 +18,7 @@
     #volume { width: 72px; accent-color: #00d982; cursor: pointer; }
     #centerPlay { position: absolute; z-index: 3; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 66px; height: 66px; border-radius: 50%; background: rgba(0,217,130,.92); font-size: 27px; box-shadow: 0 12px 40px rgba(0,0,0,.35); }
     #centerPlay:hover { background: #00d982; color: #fff; transform: translate(-50%,-50%) scale(1.04); }
+    #closeButton { position: absolute; z-index: 5; left: 18px; top: 18px; min-width: 72px; border: 1px solid rgba(255,255,255,.18); background: rgba(10,15,24,.82); backdrop-filter: blur(14px); }
     #playerMessage { position: absolute; z-index: 4; left: 50%; top: 42%; transform: translate(-50%,-50%); max-width: min(460px, calc(100% - 48px)); padding: 10px 16px; border-radius: 8px; background: rgba(10,15,24,.88); color: rgba(255,255,255,.86); font-size: 14px; text-align: center; pointer-events: none; }
     #playerMessage.error { color: #ffb6b6; border: 1px solid rgba(255,120,120,.42); }
     .hidden { opacity: 0; pointer-events: none; }
@@ -26,6 +27,7 @@
 <body>
   <div id="player">
     <video id="video" preload="metadata" playsinline></video>
+    <button id="closeButton" aria-label="返回历史记录">← 返回</button>
     <div id="playerMessage">正在加载视频...</div>
     <button id="centerPlay" aria-label="播放">▶</button>
     <div id="controls">
@@ -45,6 +47,7 @@
     const video = document.getElementById('video');
     const player = document.getElementById('player');
     const playerMessage = document.getElementById('playerMessage');
+    const closeButton = document.getElementById('closeButton');
     const playButton = document.getElementById('playButton');
     const centerPlay = document.getElementById('centerPlay');
     const seek = document.getElementById('seek');
@@ -57,6 +60,7 @@
     const folderButton = document.getElementById('folderButton');
     const regenerateButton = document.getElementById('regenerateButton');
     const send = command => window.ipc.postMessage(JSON.stringify({ command }));
+    closeButton.onclick = () => send('close');
     let readyReported = false;
     let errorReported = false;
     const formatTime = value => {

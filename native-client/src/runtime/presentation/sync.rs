@@ -1262,6 +1262,7 @@ pub(super) fn clear_retired_private_projection(state: &AppState) {
     state.set_video_status("".into());
     state.set_video_generating(false);
     state.set_video_result_path("".into());
+    state.set_video_player_open(false);
     state.set_video_task_id("".into());
     state.set_video_return_page("generation".into());
     state.set_video_return_to_viewer(false);

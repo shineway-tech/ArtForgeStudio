@@ -400,6 +400,7 @@ fn serve_video_connection(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PlayerCommand {
+    Close,
     Download,
     OpenFolder,
     Regenerate,
@@ -442,6 +443,7 @@ fn parse_player_command(body: &str) -> Option<PlayerCommand> {
         return None;
     }
     match value.get("command")?.as_str()? {
+        "close" => Some(PlayerCommand::Close),
         "download" => Some(PlayerCommand::Download),
         "open_folder" => Some(PlayerCommand::OpenFolder),
         "regenerate" => Some(PlayerCommand::Regenerate),
@@ -622,12 +624,24 @@ fn handle_player_command(
     output: &SavedVideoOutput, command: PlayerCommand,
 ) {
     match command {
+        PlayerCommand::Close => {
+            let closed = apply_video_player(context, persistence, output, || {
+                clear_active_video_player(Some(persistence.lease()));
+                let state = app.global::<AppState>();
+                state.set_video_player_open(false);
+                state.set_video_page_tab("history".into());
+                true
+            }).unwrap_or(false);
+            if closed { schedule_video_worker_reap(); }
+        }
         PlayerCommand::Regenerate => {
             let changed = apply_video_player(context, persistence, output, || {
                 let state = app.global::<AppState>();
                 if state.get_video_result_path().as_str() != output.source_path { return false; }
                 clear_active_video_player(Some(persistence.lease()));
                 state.set_video_result_path("".into());
+                state.set_video_player_open(false);
+                state.set_video_page_tab("create".into());
                 state.set_video_quote_ready(false);
                 state.set_video_status("正在更新服务端报价...".into());
                 true
@@ -938,6 +952,10 @@ mod tests {
 
     #[test]
     fn player_commands_are_a_strict_allowlist() {
+        assert_eq!(
+            parse_player_command(r#"{"command":"close"}"#),
+            Some(PlayerCommand::Close)
+        );
         assert_eq!(
             parse_player_command(r#"{"command":"download"}"#),
             Some(PlayerCommand::Download)

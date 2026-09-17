@@ -6,6 +6,7 @@ import { VideoPromptOptimizeButton } from "../components/video-prompt-optimize-b
 import { VideoImageGrid } from "../components/video-image-grid.slint";
 import { VideoGallery } from "../components/video-gallery.slint";
 import { SegmentedControl } from "../components/segmented-control.slint";
+import { ProgressSpinner } from "../components/progress-spinner.slint";
 import { AppTheme } from "../theme.slint";
 
 component VideoChoiceButton inherits Rectangle {
@@ -72,13 +73,13 @@ component StepButton inherits Rectangle {
 export component VideoGenerationPage inherits Rectangle {
     Timer {
         interval: 100ms;
-        running: AppState.video-page-tab == "create" && AppState.video-result-path != "";
+        running: AppState.video-player-open && AppState.video-result-path != "";
         triggered => {
             AppState.sync-video-player(
-                preview-card.absolute-position.x / 1px,
-                preview-card.absolute-position.y / 1px,
-                preview-card.width / 1px,
-                (preview-card.height - 56px) / 1px
+                player-stage.absolute-position.x / 1px,
+                player-stage.absolute-position.y / 1px,
+                player-stage.width / 1px,
+                player-stage.height / 1px
             );
         }
     }
@@ -119,14 +120,14 @@ export component VideoGenerationPage inherits Rectangle {
             y: 0px;
             width: max(420px, parent.width - 430px);
             height: parent.height;
-            background: AppState.video-result-path != "" ? #090d16 : AppTheme.panel;
+            background: AppTheme.panel;
             border-radius: 12px;
             border-width: 1px;
             border-color: AppTheme.border;
             clip: true;
             visible: AppState.video-page-tab == "create";
 
-            if AppState.video-result-path == "": Rectangle {
+            Rectangle {
                 width: parent.width; height: parent.height; background: transparent;
                 Text {
                     x: 20px; y: 20px; width: parent.width - 244px; height: 28px;
@@ -151,32 +152,25 @@ export component VideoGenerationPage inherits Rectangle {
                     color: AppTheme.muted; font-size: 12px; wrap: word-wrap; vertical-alignment: center;
                 }
             }
-            Text {
-                visible: AppState.video-result-path != "";
-                x: 20px;
-                y: parent.height - 50px;
-                width: parent.width - 40px;
-                height: 30px;
-                text: AppState.video-source-title;
-                color: #ffffffcc;
-                font-size: 13px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                overflow: elide;
-            }
             if AppState.video-generating: Rectangle {
                 width: parent.width;
                 height: parent.height;
                 background: #05070cb8;
+                video-generation-spinner := ProgressSpinner {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2 - 16px;
+                    label: AppState.en ? "Generating video" : "正在生成视频";
+                    progress: AppState.video-progress;
+                }
                 Text {
                     x: 40px;
-                    y: (parent.height - 60px) / 2;
+                    y: video-generation-spinner.y + video-generation-spinner.height + 4px;
                     width: parent.width - 80px;
-                    height: 60px;
-                    text: (AppState.en ? "Generating video " : "正在生成视频 ") + AppState.video-progress + "%";
-                    color: #ffffff;
-                    font-size: 18px;
-                    font-weight: 600;
+                    height: 28px;
+                    text: AppState.en ? "The task is running. You can keep editing the settings." : "任务正在处理中，请稍候";
+                    color: #ffffffb3;
+                    font-size: 13px;
+                    font-weight: 400;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
@@ -192,8 +186,6 @@ export component VideoGenerationPage inherits Rectangle {
             border-radius: 12px;
             border-width: 1px;
             border-color: AppTheme.border;
-            visible: AppState.video-page-tab == "create";
-
             Text {
                 x: 20px;
                 y: 18px;
@@ -388,14 +380,17 @@ export component VideoGenerationPage inherits Rectangle {
                     ? (AppState.en ? "Getting price..." : "正在获取报价...")
                     : (AppState.en ? "Generate Video" : "生成视频");
                 credit-cost: AppState.video-quote-loading ? "" : AppState.video-credit-cost;
-                clicked => { AppState.submit-video-generation(); }
+                clicked => {
+                    AppState.video-page-tab = "create";
+                    AppState.submit-video-generation();
+                }
             }
         }
 
         history-card := Rectangle {
             x: 0px;
             y: 0px;
-            width: parent.width;
+            width: preview-card.width;
             height: parent.height;
             visible: AppState.video-page-tab == "history";
             background: AppTheme.panel;
@@ -425,7 +420,7 @@ export component VideoGenerationPage inherits Rectangle {
         }
 
         video-page-tabs := SegmentedControl {
-            x: AppState.video-page-tab == "history" ? parent.width - self.width - 20px : preview-card.width - self.width - 20px;
+            x: preview-card.width - self.width - 20px;
             y: 16px;
             width: 196px;
             height: 36px;
@@ -435,12 +430,28 @@ export component VideoGenerationPage inherits Rectangle {
             label-font-size: 14px;
             first-clicked => {
                 AppState.video-page-tab = "create";
-                AppState.update-video-player-visibility(true);
             }
             second-clicked => {
                 AppState.video-page-tab = "history";
-                AppState.update-video-player-visibility(false);
             }
+        }
+    }
+
+    player-stage := Rectangle {
+        visible: AppState.video-player-open && AppState.video-result-path != "";
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: #090d16;
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: AppState.en ? "Loading video..." : "正在加载视频...";
+            color: #ffffffcc;
+            font-size: 15px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
         }
     }
 }

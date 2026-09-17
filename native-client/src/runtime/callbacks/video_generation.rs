@@ -150,8 +150,9 @@ fn apply_saved_video_selection(state: &AppState, output: &SavedVideoOutput, prom
         state.set_video_return_page("assets".into());
         state.set_video_return_to_viewer(false);
     }
-    state.set_video_page_tab("create".into());
+    state.set_video_page_tab("history".into());
     state.set_video_result_path(output.source_path.clone().into());
+    state.set_video_player_open(true);
     state.set_video_source_title(output.title.clone().into());
     state.set_video_prompt(prompt.into());
     if !output.model.is_empty() {
@@ -375,6 +376,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
                     state.set_video_generating(false);
                     state.set_video_progress(0);
                     state.set_video_result_path("".into());
+                    state.set_video_player_open(false);
                     state.set_video_task_id("".into());
                     state.set_video_return_page(state.get_page());
                     state.set_video_return_to_viewer(true);
@@ -425,6 +427,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
             quote_epoch.fetch_add(1, Ordering::SeqCst);
             close_video_player();
             let state = app.global::<AppState>();
+            state.set_video_player_open(false);
             if state.get_video_quote_loading() {
                 state.set_video_generating(false);
             }
@@ -520,6 +523,7 @@ mod tests {
         assert!(crate::runtime::app::prepare_direct_video_navigation(&state));
         state.set_page("video-generation".into());
         assert_eq!(state.get_video_page_tab(), "create");
+        assert!(!state.get_video_player_open());
         assert_eq!(state.get_video_return_page(), "generation");
         assert!(!state.get_video_return_to_viewer());
         assert!(!state.get_viewer_open());
@@ -558,7 +562,8 @@ mod tests {
 
         apply_saved_video_selection(&state, &output, output.prompt.clone());
 
-        assert_eq!(state.get_video_page_tab(), "create");
+        assert_eq!(state.get_video_page_tab(), "history");
+        assert!(state.get_video_player_open());
         assert_eq!(state.get_page(), "video-generation");
         assert_eq!(state.get_video_return_page(), "generation");
         assert_eq!(state.get_video_result_path(), output.source_path);
@@ -690,11 +695,6 @@ mod tests {
             subtitle: "2026-09-17 12:30 · 1080P · 8s".into(),
             ..Default::default()
         }])));
-        let visibility = Rc::new(RefCell::new(Vec::new()));
-        {
-            let visibility = visibility.clone();
-            state.on_update_video_player_visibility(move |visible| visibility.borrow_mut().push(visible));
-        }
         let opened = Rc::new(RefCell::new(String::new()));
         {
             let opened = opened.clone();
@@ -702,7 +702,9 @@ mod tests {
             state.on_play_saved_video(move |id| {
                 *opened.borrow_mut() = id.to_string();
                 if let Some(app) = weak.upgrade() {
-                    app.global::<AppState>().set_video_page_tab("create".into());
+                    let state = app.global::<AppState>();
+                    state.set_video_result_path("C:/videos/history.mp4".into());
+                    state.set_video_player_open(true);
                 }
             });
         }
@@ -723,7 +725,13 @@ mod tests {
             .expect("history tab")
             .mock_single_click(PointerEventButton::Left);
         assert_eq!(state.get_video_page_tab(), "history");
-        assert_eq!(visibility.borrow().as_slice(), &[false]);
+        let history = ElementHandle::find_by_element_id(&app, "VideoGenerationPage::history-card")
+            .next()
+            .expect("history occupies the left workspace");
+        let settings = ElementHandle::find_by_element_id(&app, "VideoGenerationPage::settings-card")
+            .next()
+            .expect("settings stay mounted beside history");
+        assert!(history.absolute_position().x + history.size().width <= settings.absolute_position().x);
         save_video_prompt_test_snapshot(&app, "video-history-tab.png");
 
         ElementHandle::find_by_accessible_label(&app, "播放 历史视频")
@@ -731,8 +739,10 @@ mod tests {
             .expect("saved video card")
             .mock_single_click(PointerEventButton::Left);
         assert_eq!(opened.borrow().as_str(), "video-history-id");
-        assert_eq!(state.get_video_page_tab(), "create");
+        assert_eq!(state.get_video_page_tab(), "history");
+        assert!(state.get_video_player_open());
 
+        state.set_video_player_open(false);
         ElementHandle::find_by_accessible_label(&app, "历史记录")
             .next()
             .unwrap()
@@ -742,7 +752,6 @@ mod tests {
             .expect("create tab")
             .mock_single_click(PointerEventButton::Left);
         assert_eq!(state.get_video_page_tab(), "create");
-        assert_eq!(visibility.borrow().as_slice(), &[false, false, true]);
     }
 
     #[test]

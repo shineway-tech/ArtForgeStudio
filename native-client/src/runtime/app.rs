@@ -8,6 +8,7 @@ pub(super) fn prepare_direct_video_navigation(state: &AppState) -> bool {
     state.set_video_return_page(state.get_page());
     state.set_video_return_to_viewer(false);
     state.set_video_page_tab("create".into());
+    state.set_video_player_open(false);
     state.set_viewer_open(false);
     true
 }

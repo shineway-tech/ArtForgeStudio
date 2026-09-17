@@ -137,6 +137,7 @@ pub(super) fn wire_video_submission(
             if state.get_video_generating() || state.get_optimizing_video_prompt() {
                 return;
             }
+            state.set_video_page_tab("create".into());
             let Some(persistence) = context.store.borrow().private_persistence.clone() else {
                 return;
             };
