@@ -7310,6 +7310,10 @@ mod tests {
         assert!(state.contains("callback dismiss-new-generation(string);"));
         assert!(card.contains("return root.item.is-new && root.source == \"generation\""));
         assert!(card.contains("text: \"NEW\";"));
+        assert!(card.contains("if root.new-tag-visible(): Rectangle {\n                    x: 8px;"));
+        assert!(card.contains("hover.mouse-x >= root.outline-pad + 6px"));
+        assert!(card.contains("hover.mouse-x < root.outline-pad + 46px"));
+        assert!(card.contains("x: parent.width - 38px;"));
         assert!(card.contains("AppState.dismiss-new-generation(root.item.id);"));
         assert!(callbacks.contains("state.on_dismiss_new_generation"));
     }
