@@ -6502,6 +6502,24 @@ mod tests {
     }
 
     #[test]
+    fn viewer_blocks_pointer_events_from_reaching_the_page_below() {
+        let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+        let overlay = viewer
+            .split_once("if AppState.viewer-open: Rectangle {")
+            .expect("viewer overlay")
+            .1;
+        let shield = overlay
+            .find("viewer-input-shield := TouchArea")
+            .expect("full viewer input shield");
+        let shortcuts = overlay
+            .find("viewer-shortcuts := FocusScope")
+            .expect("viewer keyboard shortcuts");
+
+        assert!(shield < shortcuts, "the input shield must sit below viewer controls");
+        assert!(overlay.contains("viewer-input-shield := TouchArea {\n            width: parent.width;\n            height: parent.height;"));
+    }
+
+    #[test]
     fn viewer_footer_exposes_the_primary_image_actions() {
         let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
         let state = include_str!("../../ui/app-state.slint");

@@ -145,6 +145,14 @@ export component ViewerOverlay {
     property <bool> image-zoom-menu-open: false;
     if AppState.viewer-open: Rectangle {
         background: AppTheme.bg;
+        viewer-input-shield := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            clicked => {
+                root.context-menu-open = false;
+                root.image-zoom-menu-open = false;
+            }
+        }
         viewer-shortcuts := FocusScope {
             width: 1px;
             height: 1px;
