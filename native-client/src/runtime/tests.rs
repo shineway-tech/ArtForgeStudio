@@ -12,10 +12,22 @@ mod tests {
         assert_eq!(pixel_dimensions_for("9:16", "4K"), (2160, 3840));
 
         assert_eq!(quality_from_actual_dimensions(1023, 1537), "2K");
+        assert_eq!(quality_from_actual_dimensions(1672, 941), "2K");
         assert_eq!(quality_from_actual_dimensions(1024, 1024), "1K");
         assert_eq!(quality_from_actual_dimensions(2048, 1152), "2K");
         assert_eq!(quality_from_actual_dimensions(2560, 1440), "2K");
         assert_eq!(quality_from_actual_dimensions(3840, 2160), "4K");
+    }
+
+    #[test]
+    fn delivered_images_are_labeled_from_actual_dimensions() {
+        let delivery = include_str!("generation/controller.rs");
+
+        assert!(delivery.matches("quality_from_actual_dimensions(").count() >= 4);
+        assert!(!delivery.contains(
+            "ratio:ratio_from_actual_dimensions(width as i32,height as i32),quality:record.quality.clone()"
+        ));
+        assert!(!delivery.contains("quality: failed_asset.quality"));
     }
 
     #[test]

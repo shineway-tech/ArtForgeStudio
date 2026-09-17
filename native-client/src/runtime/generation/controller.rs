@@ -561,7 +561,8 @@ fn stage_canvas_namespace_delivery(
     let references=if !record.lineage_reference_paths.is_empty(){record.lineage_reference_paths.clone()}else{record.reference_paths.clone()};
     let asset=AssetData{id:id.clone(),conversation_id:record.conversation_id.clone(),title:short_text(&record.raw_prompt,18),
         category:"other".into(),kind:record.mode.clone(),time:time.into(),prompt:display_generation_prompt(&record.generation_prompt),
-        ratio:ratio_from_actual_dimensions(width as i32,height as i32),quality:record.quality.clone(),model:record.model_code.clone(),
+        ratio:ratio_from_actual_dimensions(width as i32,height as i32),
+        quality:quality_from_actual_dimensions(width as i32,height as i32),model:record.model_code.clone(),
         origin:"generation".into(),width:width as i32,height:height as i32,source_path:path.into(),reference_paths:references,
         cutout_done:false,remove_black_done:false,upscale_done:false,is_new:true,delivery_recoverable:false,delivery_downloading:false};
     if target==&active {store.canvas_notes=notes;store.canvas_links=links;}
@@ -629,6 +630,7 @@ fn stage_namespace_delivery(store:&mut Store, prepared:&PreparedNamespaceDeliver
         let mut completed=(*failed).clone();
         completed.source_path=path.to_owned();completed.width=width as i32;completed.height=height as i32;
         completed.ratio=ratio_from_actual_dimensions(width as i32,height as i32);
+        completed.quality=quality_from_actual_dimensions(width as i32,height as i32);
         completed.time=time.to_owned();completed.is_new=true;completed.delivery_recoverable=false;completed.delivery_downloading=false;
         let notification=NotificationData {title:format!("图片下载完成：{}",short_text(&completed.prompt,24)),..notification};
         local_store::replace_failed_delivery_asset_with(store,&id,completed,notification,|_|Ok(()))?;
@@ -641,7 +643,8 @@ fn stage_namespace_delivery(store:&mut Store, prepared:&PreparedNamespaceDeliver
                 let label=match record.quality.as_str(){"portrait"=>"人像","avatar"=>"头像","skin"=>"皮肤","product"=>"商品","clothing"=>"服饰","sky"=>"天空",_=>"通用"};
                 format!("智能抠图（{label}）")
             }else{display_generation_prompt(&record.generation_prompt)},
-            ratio:ratio_from_actual_dimensions(width as i32,height as i32),quality:if enhancement || cutout{match width.max(height){0..=1024=>"1K",1025..=2048=>"2K",_=>"4K"}.into()}else{record.quality.clone()},
+            ratio:ratio_from_actual_dimensions(width as i32,height as i32),
+            quality:quality_from_actual_dimensions(width as i32,height as i32),
             model:toolbox.map(|(_,name)|name.to_owned()).unwrap_or_else(||record.model_code.clone()),
             origin:toolbox.map(|(origin,_)|origin).unwrap_or(if record.task_type=="image_edit"{"image_edit"}else{"generation"}).into(),
             width:width as i32,height:height as i32,source_path:path.to_owned(),
@@ -1456,7 +1459,7 @@ pub(super) fn replace_failed_delivery_asset_checked(
         time: time.to_string(),
         prompt: failed_asset.prompt.clone(),
         ratio: ratio_from_actual_dimensions(width as i32, height as i32),
-        quality: failed_asset.quality,
+        quality: quality_from_actual_dimensions(width as i32, height as i32),
         model: failed_asset.model.clone(),
         origin: failed_asset.origin,
         width: width as i32,
