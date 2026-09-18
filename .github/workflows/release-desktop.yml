@@ -148,6 +148,7 @@ jobs:
           set -euo pipefail
           DMG_PATH="dist/ElunviCanvas_${APP_VERSION}_macos_${{ matrix.artifact_arch }}.dmg"
           NOTARY_RESULT="$RUNNER_TEMP/notary-${{ matrix.artifact_arch }}.json"
+          NOTARY_LOG="$RUNNER_TEMP/notary-${{ matrix.artifact_arch }}-log.json"
           set +e
           xcrun notarytool submit "$DMG_PATH" \
             --key "$APPLE_API_KEY_PATH" \
@@ -174,12 +175,23 @@ jobs:
                 --key "$APPLE_API_KEY_PATH" \
                 --key-id "$APPLE_API_KEY" \
                 --issuer "$APPLE_API_ISSUER" \
-                --output-format json || true
+                --output-format json > "$NOTARY_LOG" 2>&1 || true
             fi
             exit "$NOTARY_STATUS"
           fi
           xcrun stapler staple -v "$DMG_PATH"
           xcrun stapler validate -v "$DMG_PATH"
+
+      - name: Upload macOS notarization diagnostics
+        if: always() && startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v7
+        with:
+          name: notarization-diagnostics-${{ matrix.artifact_arch }}
+          path: |
+            ${{ runner.temp }}/notary-${{ matrix.artifact_arch }}.json
+            ${{ runner.temp }}/notary-${{ matrix.artifact_arch }}-log.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload macOS package artifact
         uses: actions/upload-artifact@v7
