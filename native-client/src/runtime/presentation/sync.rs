@@ -640,7 +640,7 @@ mod core_owned_viewer_projection_tests {
     #[test]
     fn core_inspiration_preview_reads_bundled_image_and_rejects_foreign_path() {
         let (f, app) = setup();
-        f.context.store.borrow_mut().inspiration = load_inspiration().unwrap();
+        seed_inspiration(&mut f.context.store.borrow_mut());
         for (category, expected) in [("all", 38), ("scene", 7), ("character", 9), ("ui", 20), ("effect", 2)] {
             assert_eq!(gallery_filtered_indices(&f.context.store.borrow(), PreviewCollection::Inspiration, category).len(), expected);
         }

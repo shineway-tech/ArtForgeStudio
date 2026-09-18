@@ -147,13 +147,39 @@ jobs:
         run: |
           set -euo pipefail
           DMG_PATH="dist/ElunviCanvas_${APP_VERSION}_macos_${{ matrix.artifact_arch }}.dmg"
+          NOTARY_RESULT="$RUNNER_TEMP/notary-${{ matrix.artifact_arch }}.json"
+          set +e
           xcrun notarytool submit "$DMG_PATH" \
             --key "$APPLE_API_KEY_PATH" \
             --key-id "$APPLE_API_KEY" \
             --issuer "$APPLE_API_ISSUER" \
-            --wait
-          xcrun stapler staple "$DMG_PATH"
-          xcrun stapler validate "$DMG_PATH"
+            --wait \
+            --output-format json > "$NOTARY_RESULT"
+          NOTARY_STATUS=$?
+          set -e
+          cat "$NOTARY_RESULT"
+          if [ "$NOTARY_STATUS" -ne 0 ]; then
+            SUBMISSION_ID="$(python3 - "$NOTARY_RESULT" <<'PY'
+          import json
+          import sys
+          try:
+              with open(sys.argv[1], encoding="utf-8") as handle:
+                  print(json.load(handle).get("id", ""))
+          except (OSError, json.JSONDecodeError):
+              print("")
+          PY
+            )"
+            if [ -n "$SUBMISSION_ID" ]; then
+              xcrun notarytool log "$SUBMISSION_ID" \
+                --key "$APPLE_API_KEY_PATH" \
+                --key-id "$APPLE_API_KEY" \
+                --issuer "$APPLE_API_ISSUER" \
+                --output-format json || true
+            fi
+            exit "$NOTARY_STATUS"
+          fi
+          xcrun stapler staple -v "$DMG_PATH"
+          xcrun stapler validate -v "$DMG_PATH"
 
       - name: Upload macOS package artifact
         uses: actions/upload-artifact@v7
