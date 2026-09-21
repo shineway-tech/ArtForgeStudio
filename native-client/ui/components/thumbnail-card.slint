@@ -172,6 +172,7 @@ export component ThumbnailCard {
                         } else {
                             root.drag-armed = true;
                             root.system-drag-preview-started = false;
+                            AppState.prepare-thumbnail-file-drag(root.native-drag-data());
                             root.update-drag-preview();
                         }
                     } else if event.kind == PointerEventKind.move {
@@ -191,9 +192,10 @@ export component ThumbnailCard {
                 }
                 clicked => {
                     root.hide-drag-preview();
-                    if root.new-tag-hit() {
+                    if root.new-tag-visible() {
                         AppState.dismiss-new-generation(root.item.id);
-                    } else if root.delete-hit() {
+                    }
+                    if root.delete-hit() {
                         AppState.request-delete-thumbnail(root.item.id, root.source);
                     } else if root.item.source-path != "failed" {
                         AppState.open-viewer(root.item.id, root.source);
@@ -379,11 +381,12 @@ export component ThumbnailCard {
             return;
         }
         root.system-drag-preview-started = true;
-        let drag-data = root.item.drag-uri != "" ? root.item.drag-uri : root.item.source-path;
-        AppState.start-thumbnail-drag-preview(drag-data);
         AppState.thumbnail-drag-preview-visible = false;
-        AppState.start-thumbnail-file-drag(drag-data);
+        AppState.start-thumbnail-file-drag(root.native-drag-data());
         root.hide-drag-preview();
+    }
+    function native-drag-data() -> string {
+        return root.item.source-path != "" ? root.item.source-path : root.item.drag-uri;
     }
     function category-label(id: string) -> string {
         if id == "character" { return AppState.en ? "Character" : "角色"; }

@@ -3,7 +3,6 @@ import { AppState } from "../app-state.slint";
 import { PillButton } from "../components/pill-button.slint";
 import { ProgressSpinner } from "../components/progress-spinner.slint";
 import { ViewerContextMenuItem } from "../components/viewer-context-menu-item.slint";
-import { BuildingDerivationPreset } from "../components/building-derivation-preset.slint";
 import { ViewerNavButton } from "../components/viewer-nav-button.slint";
 import { AppTheme } from "../theme.slint";
 import { FreeCanvasPage } from "../pages/free-canvas-page.slint";
@@ -132,7 +131,7 @@ export component ViewerOverlay {
     property <length> context-menu-x: 0px;
     property <length> context-menu-y: 0px;
     property <length> context-menu-width: 188px;
-    property <length> context-menu-height: AppState.viewer-category == "character" ? 414px : 294px;
+    property <length> context-menu-height: 214px;
     property <bool> image-drag-armed: false;
     property <bool> image-system-drag-started: false;
     property <length> image-pressed-x: 0px;
@@ -285,6 +284,7 @@ export component ViewerOverlay {
                         } else {
                             root.image-pan-active = false;
                             root.image-drag-armed = true;
+                            AppState.prepare-viewer-file-drag();
                         }
                     } else if event.kind == PointerEventKind.move && root.image-pan-active {
                         root.image-pan-x = max(-viewer-image-stage.max-pan-x, min(
@@ -712,87 +712,6 @@ export component ViewerOverlay {
                 width: parent.width - 16px;
                 height: parent.height - 16px;
                 spacing: 2px;
-                if AppState.viewer-category == "character": ViewerContextMenuItem {
-                    text: AppState.en ? "Import Age Progression" : "导入角色年龄变化";
-                    clicked => {
-                        root.context-menu-open = false;
-                        AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-age.png");
-                        AppState.viewer-open-creation-workflow(
-                            "character-age",
-                            AppState.en ? "Character Age Progression" : "角色年龄变化",
-                            AppState.en
-                                ? "Create exactly {count} consecutive age stages of the reference character from infancy to old age, distributed evenly across the lifespan. Preserve identity cues, outfit theme, palette, and art style while changing face, height, body proportions, and posture appropriately. Arrange all {count} full characters evenly in one horizontal character sheet."
-                                : "根据参考角色生成从婴儿到老年的{count}个连续年龄阶段，并按所选数量均匀分布人生阶段。保持角色身份特征、服装主题、配色和绘制风格连贯，让面部、身高、体型和姿态符合年龄变化。将{count}个完整角色均匀排列在同一张横向设定图中。",
-                            AppState.en
-                                ? "Describe the character cue, e.g. blue-robed mage, keep the blue magic"
-                                : "简单描述角色特征，例如：蓝袍法师，始终保留蓝色魔法"
-                        );
-                    }
-                }
-                if AppState.viewer-category == "character": ViewerContextMenuItem {
-                    text: AppState.en ? "Import Outfit Swap" : "导入角色换装";
-                    clicked => {
-                        root.context-menu-open = false;
-                        AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-outfit.png");
-                        AppState.viewer-open-creation-workflow(
-                            "character-outfit",
-                            AppState.en ? "Character Outfit Swap" : "角色换装",
-                            AppState.en
-                                ? "Create exactly {count} outfit variations for the reference character. Preserve identity, face, hair, body shape, pose, camera, and rendering style; change only clothing, footwear, and accessories. Arrange all {count} full-body designs evenly in one clean horizontal character sheet."
-                                : "根据参考角色生成{count}套不同服装造型。保持角色身份、面部、发型、体型、姿势、视角和绘制风格一致，只改变服装、鞋履和配饰。将{count}套完整造型均匀排列在同一张横向角色设定图中，背景干净。",
-                            AppState.en
-                                ? "Describe the character and outfit direction, e.g. swordswoman, formal and battle outfits"
-                                : "简单描述角色和换装方向，例如：女剑士，礼服与战斗服"
-                        );
-                    }
-                }
-                if AppState.viewer-category == "character": ViewerContextMenuItem {
-                    text: AppState.en ? "Import Body Variations" : "导入角色体型修改";
-                    clicked => {
-                        root.context-menu-open = false;
-                        AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-body.png");
-                        AppState.viewer-open-creation-workflow(
-                            "character-body",
-                            AppState.en ? "Character Body Variations" : "角色体型修改器",
-                            AppState.en
-                                ? "Create exactly {count} clearly different body-shape variations of the reference character in a deliberate progression. Preserve identity, face, hair, outfit theme, weapon, and art style; change only height, shoulder width, muscle mass, body-fat distribution, and silhouette. Arrange all {count} full characters evenly in one horizontal character sheet."
-                                : "根据参考角色生成{count}种明显不同且变化有序的体型。保持角色身份、面部、发型、服装主题、武器和绘制风格一致，只改变身高、肩宽、肌肉量、脂肪比例和身体轮廓。将{count}个完整角色均匀排列在同一张横向设定图中。",
-                            AppState.en
-                                ? "Describe the character cue, e.g. green orc warrior, lean to massive"
-                                : "简单描述角色特征，例如：绿色兽人战士，从瘦小到魁梧"
-                        );
-                    }
-                }
-                ViewerContextMenuItem {
-                    text: AppState.en ? "Import Upgrade Evolution" : "导入升级进化";
-                    clicked => {
-                        root.context-menu-open = false;
-                        AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/upgrade-evolution.png");
-                        AppState.viewer-open-creation-workflow(
-                            "upgrade-evolution",
-                            AppState.en ? "Upgrade Evolution" : "升级进化",
-                            AppState.en
-                                ? "Using the uploaded reference image, create exactly {count} consecutive upgrade-evolution stages of the same subject, progressing from a low-level basic form to a top-tier ultimate form. Automatically identify the subject type first and apply the appropriate type-specific upgrade logic; never treat every subject as a simple small-to-large scale-up. For a human or humanoid character, keep age, height, build, body proportions, face, and identity stable; do not turn the character into a child, giant, or different person. Upgrade mainly through clothing tier, weapons, gear, armor, accessories, material quality, craftsmanship complexity, and energy effects. For a monster, mechanical creature, or other organism, size, body proportions, silhouette, and form may evolve gradually by tier, with added horns, wings, limbs, mechanical modules, carapace, crystals, armor, or energy structures, while preserving the same species or design lineage and core identity. For a standalone weapon, prop, vehicle, plant, or building, evolve its functional parts, structural tiers, material quality, ornamental complexity, and magical or technological energy systems. Keep the main colors, base materials, signature structure, and recognizable features coherent across all stages. Make every step even, clear, and traceable; never replace it with a different subject. Arrange all {count} complete forms evenly from lowest to highest on one solid-color background. Do not include any words, letters, numbers, numbering, labels, titles, captions, explanations, or watermarks."
-                                : "根据上传的参考图，以图中主体为唯一核心，生成保持同一主体的{count}个连续升级进化阶段，从低级、基础形态逐步进化到顶级、终极形态。先自动识别参考图中的主体类型，并按类型采用不同的升级逻辑，不得把所有主体统一处理为从小到大。若主体是人类或类人角色，必须保持年龄、身高、体型、身体比例、面部和身份特征稳定，不得变成儿童、巨人或不同人物；主要通过服装等级、武器、装备、护甲、饰品、材质品质、工艺复杂度和能量效果逐级增强。若主体是怪物、机械生物或其他生物，允许随等级逐步改变体型、身体比例、轮廓和形态，并可增加角、翼、肢体、机械模块、甲壳、水晶、装甲或能量结构，但必须保持同一物种或设计谱系和核心识别特征。若主体是武器、道具、载具、植物或建筑，则围绕其功能部件、结构层级、材质品质、装饰复杂度和魔法或科技能量系统逐级进化。所有阶段必须保持主色、基础材质、标志性结构和识别特征连贯，让每一步变化均匀、清晰且可追溯，不得突然变成不同主体。将{count}个完整形态按从低级到顶级的顺序均匀排列，使用单一纯色背景，不得出现任何文字、字母、数字、编号、标签、标题、说明或水印。",
-                            AppState.en
-                                ? "Optionally describe the upgrade direction"
-                                : "可补充升级方向，例如：逐步增加水晶装甲与魔法能量"
-                        );
-                    }
-                }
-                ViewerContextMenuItem {
-                    text: AppState.en ? "Import Building Derivation" : "导入建筑衍生器";
-                    clicked => {
-                        root.context-menu-open = false;
-                        AppState.canvas-workflow-artwork = BuildingDerivationPreset.artwork;
-                        AppState.viewer-open-creation-workflow(
-                            "building-derivation",
-                            AppState.en ? "Building Derivation" : "建筑衍生器",
-                            AppState.en ? BuildingDerivationPreset.prompt-en : BuildingDerivationPreset.prompt-zh,
-                            AppState.en ? BuildingDerivationPreset.hint-en : BuildingDerivationPreset.hint-zh
-                        );
-                    }
-                }
                 ViewerContextMenuItem {
                     text: AppState.en ? "Open Folder" : "打开文件夹位置";
                     clicked => {

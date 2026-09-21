@@ -955,7 +955,9 @@ export global AppState {
     callback add-reference-from-transfer(data-transfer) -> bool;
     callback clear-references();
     callback start-thumbnail-drag-preview(string) -> bool;
+    callback prepare-thumbnail-file-drag(string) -> bool;
     callback start-thumbnail-file-drag(string) -> bool;
+    callback prepare-viewer-file-drag() -> bool;
     callback start-viewer-file-drag() -> bool;
     callback paste-reference() -> bool;
     callback remove-reference(string);

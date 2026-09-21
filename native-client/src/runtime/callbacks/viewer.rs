@@ -1789,6 +1789,25 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         let store = store.clone();
+        state.on_prepare_viewer_file_drag(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return false;
+            };
+            let state = app.global::<AppState>();
+            let id = state.get_viewer_id().to_string();
+            let source = state.get_viewer_source().to_string();
+            let path = viewer_item(&store.borrow(), &id, &source)
+                .map(|item| PathBuf::from(item.source_path.trim()));
+            let Some(path) = path else {
+                return false;
+            };
+            state.invoke_prepare_thumbnail_file_drag(path.to_string_lossy().into_owned().into())
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
         state.on_start_viewer_file_drag(move || {
             let Some(app) = app_weak.upgrade() else {
                 return false;
@@ -1801,9 +1820,6 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
             let Some(path) = path else {
                 return false;
             };
-            // The shared callback captures this current Store/view target and
-            // prepares the held source in its registered worker. It owns the
-            // later native dispatch and captured pointer reset.
             state.invoke_start_thumbnail_file_drag(path.to_string_lossy().into_owned().into())
         });
     }
@@ -3777,7 +3793,16 @@ pub(super) fn file_uri_for_path(path: &str) -> String {
     }
     #[cfg(windows)]
     {
-        let normalized = path.replace('\\', "/");
+        let windows_path = path.replace('/', "\\");
+        let display_path = if let Some(unc) = windows_path.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{unc}")
+        } else {
+            windows_path
+                .strip_prefix(r"\\?\")
+                .unwrap_or(&windows_path)
+                .to_string()
+        };
+        let normalized = display_path.replace('\\', "/");
         let encoded = percent_encode_uri_path(&normalized);
         if encoded.starts_with("//") {
             format!("file:{encoded}")

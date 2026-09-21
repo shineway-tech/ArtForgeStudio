@@ -2311,7 +2311,7 @@ component CanvasNodeCard {
 
         image-settings-popup := PopupWindow {
             width: 378px;
-            height: 488px;
+            height: AppState.canvas-workflow-id == "side-scroll-map" ? 306px : 488px;
             x: root.settings-popup-x(self.width);
             y: root.settings-popup-y(self.height);
             close-policy: close-on-click-outside;
@@ -2340,28 +2340,34 @@ component CanvasNodeCard {
                     x: 18px;
                     y: 184px;
                     width: parent.width - 36px;
-                    height: 208px;
+                    height: AppState.canvas-workflow-id == "side-scroll-map" ? 36px : 208px;
                     spacing: 8px;
-                    Row {
+                    if AppState.canvas-workflow-id == "side-scroll-map": Row {
+                        CanvasRatioOption { width: 78px; value: "3:2"; label: "3:2"; selected: AppState.ratio == "3:2"; clicked => { AppState.ratio = "3:2"; } }
+                        CanvasRatioOption { width: 78px; value: "4:3"; label: "4:3"; selected: AppState.ratio == "4:3"; clicked => { AppState.ratio = "4:3"; } }
+                        CanvasRatioOption { width: 78px; value: "16:9"; label: "16:9"; selected: AppState.ratio == "16:9"; clicked => { AppState.ratio = "16:9"; } }
+                        CanvasRatioOption { width: 78px; value: "21:9"; label: "21:9"; selected: AppState.ratio == "21:9"; clicked => { AppState.ratio = "21:9"; } }
+                    }
+                    if AppState.canvas-workflow-id != "side-scroll-map": Row {
                         CanvasRatioOption { width: 78px; value: "1:1"; label: "1:1"; selected: AppState.ratio == "1:1"; clicked => { AppState.ratio = "1:1"; } }
                         CanvasRatioOption { width: 78px; value: "3:2"; label: "3:2"; selected: AppState.ratio == "3:2"; clicked => { AppState.ratio = "3:2"; } }
                         CanvasRatioOption { width: 78px; value: "2:3"; label: "2:3"; selected: AppState.ratio == "2:3"; clicked => { AppState.ratio = "2:3"; } }
                         CanvasRatioOption { width: 78px; value: "4:3"; label: "4:3"; selected: AppState.ratio == "4:3"; clicked => { AppState.ratio = "4:3"; } }
                     }
-                    Row {
+                    if AppState.canvas-workflow-id != "side-scroll-map": Row {
                         CanvasRatioOption { width: 78px; value: "3:4"; label: "3:4"; selected: AppState.ratio == "3:4"; clicked => { AppState.ratio = "3:4"; } }
                         CanvasRatioOption { width: 78px; value: "16:9"; label: "16:9"; selected: AppState.ratio == "16:9"; clicked => { AppState.ratio = "16:9"; } }
                         CanvasRatioOption { width: 78px; value: "9:16"; label: "9:16"; selected: AppState.ratio == "9:16"; clicked => { AppState.ratio = "9:16"; } }
                     }
-                    Row {
+                    if AppState.canvas-workflow-id != "side-scroll-map": Row {
                         CanvasRatioOption { width: 78px; value: "21:9"; label: "21:9"; selected: AppState.ratio == "21:9"; clicked => { AppState.ratio = "21:9"; } }
                         CanvasRatioOption { width: 78px; value: "9:21"; label: "9:21"; selected: AppState.ratio == "9:21"; clicked => { AppState.ratio = "9:21"; } }
                     }
                 }
-                Text { x: 18px; y: 402px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Generation count" : "生成张数"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
+                Text { x: 18px; y: AppState.canvas-workflow-id == "side-scroll-map" ? 230px : 402px; width: parent.width - 36px; height: 22px; text: AppState.en ? "Generation count" : "生成张数"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
                 HorizontalLayout {
                     x: 18px;
-                    y: 430px;
+                    y: AppState.canvas-workflow-id == "side-scroll-map" ? 258px : 430px;
                     width: parent.width - 36px;
                     height: 36px;
                     spacing: 10px;
@@ -2703,6 +2709,19 @@ export component InfiniteCanvasPage {
             AppState.canvas-workflow-artwork = BuildingDerivationPreset.artwork;
             AppState.canvas-workflow-template = AppState.en ? BuildingDerivationPreset.prompt-en : BuildingDerivationPreset.prompt-zh;
             AppState.canvas-workflow-hint = AppState.en ? BuildingDerivationPreset.hint-en : BuildingDerivationPreset.hint-zh;
+        } else if workflow-id == "side-scroll-map" {
+            AppState.asset-type = "scene";
+            AppState.ratio = "21:9";
+            AppState.count = 1;
+            AppState.mode = "game";
+            AppState.canvas-workflow-title = AppState.en ? "Side-scrolling Map Generator" : "横版地图生成器";
+            AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/side-scroll-map.png");
+            AppState.canvas-workflow-template = AppState.en
+                ? "Side-scrolling seamless map specification:"
+                : "横版无缝地图规范：";
+            AppState.canvas-workflow-hint = AppState.en
+                ? "Upload a style reference and create a layered, seamless side-scrolling map"
+                : "上传风格参考图，生成前中后景分层、首尾无缝衔接的横版地图";
         } else if workflow-id == "upgrade-evolution" {
             AppState.asset-type = "scene";
             AppState.canvas-workflow-title = AppState.en ? "Upgrade Evolution" : "升级进化";
@@ -2745,7 +2764,9 @@ export component InfiniteCanvasPage {
         if reference-driven-workflow && AppState.references.length == 0 {
             AppState.generation-status = AppState.canvas-workflow-id == "building-derivation"
                 ? (AppState.en ? "Upload a building reference image first" : "请先上传建筑参考图")
-                : (AppState.en ? "Upload a subject reference image first" : "请先上传主体参考图");
+                : (AppState.canvas-workflow-id == "side-scroll-map"
+                    ? (AppState.en ? "Upload a style reference image first" : "请先上传风格参考图")
+                    : (AppState.en ? "Upload a subject reference image first" : "请先上传主体参考图"));
             return;
         }
         if AppState.canvas-workflow-prompt == "" && !reference-driven-workflow {
@@ -3811,7 +3832,7 @@ export component InfiniteCanvasPage {
                         }
                     }
                     workflow-step-count-control := Rectangle {
-                        visible: AppState.canvas-workflow-id != "";
+                        visible: AppState.canvas-workflow-id != "" && AppState.canvas-workflow-id != "side-scroll-map";
                         x: 286px;
                         width: 190px;
                         height: parent.height;
@@ -4435,6 +4456,16 @@ export component InfiniteCanvasPage {
                 selected: AppState.canvas-workflow-id == self.workflow-id;
                 clicked => { root.switch-workflow("building-derivation"); workflow-switch-popup.close(); }
             }
+            CanvasWorkflowQuickCard {
+                x: 637px;
+                y: 190px;
+                workflow-id: "side-scroll-map";
+                title: AppState.en ? "Side-scrolling Map" : "横版地图生成器";
+                description: AppState.en ? "Layered seamless game map" : "分层无缝横版游戏地图";
+                artwork: @image-url("../../assets/free-canvas/side-scroll-map.png");
+                selected: AppState.canvas-workflow-id == self.workflow-id;
+                clicked => { root.switch-workflow("side-scroll-map"); workflow-switch-popup.close(); }
+            }
         }
     }
 
@@ -4707,7 +4738,7 @@ export component InfiniteCanvasPage {
         x: canvas.x + canvas-workflow-dock.x + 154px;
         y: canvas.y + canvas-workflow-dock.y + 161px - self.height;
         width: 342px;
-        height: 250px;
+        height: AppState.canvas-workflow-id == "side-scroll-map" ? 172px : 250px;
         close-policy: close-on-click-outside;
 
         Rectangle {
@@ -4764,20 +4795,26 @@ export component InfiniteCanvasPage {
                 x: 16px;
                 y: 123px;
                 width: parent.width - 32px;
-                height: 110px;
+                height: AppState.canvas-workflow-id == "side-scroll-map" ? 32px : 110px;
                 spacing: 7px;
-                Row {
+                if AppState.canvas-workflow-id == "side-scroll-map": Row {
+                    CanvasOptionPill { width: 72px; height: 32px; text: "3:2"; selected: AppState.ratio == "3:2"; clicked => { AppState.ratio = "3:2"; } }
+                    CanvasOptionPill { width: 72px; height: 32px; text: "4:3"; selected: AppState.ratio == "4:3"; clicked => { AppState.ratio = "4:3"; } }
+                    CanvasOptionPill { width: 72px; height: 32px; text: "16:9"; selected: AppState.ratio == "16:9"; clicked => { AppState.ratio = "16:9"; } }
+                    CanvasOptionPill { width: 72px; height: 32px; text: "21:9"; selected: AppState.ratio == "21:9"; clicked => { AppState.ratio = "21:9"; } }
+                }
+                if AppState.canvas-workflow-id != "side-scroll-map": Row {
                     CanvasOptionPill { width: 72px; height: 32px; text: "1:1"; selected: AppState.ratio == "1:1"; clicked => { AppState.ratio = "1:1"; } }
                     CanvasOptionPill { width: 72px; height: 32px; text: "3:2"; selected: AppState.ratio == "3:2"; clicked => { AppState.ratio = "3:2"; } }
                     CanvasOptionPill { width: 72px; height: 32px; text: "2:3"; selected: AppState.ratio == "2:3"; clicked => { AppState.ratio = "2:3"; } }
                     CanvasOptionPill { width: 72px; height: 32px; text: "4:3"; selected: AppState.ratio == "4:3"; clicked => { AppState.ratio = "4:3"; } }
                 }
-                Row {
+                if AppState.canvas-workflow-id != "side-scroll-map": Row {
                     CanvasOptionPill { width: 72px; height: 32px; text: "3:4"; selected: AppState.ratio == "3:4"; clicked => { AppState.ratio = "3:4"; } }
                     CanvasOptionPill { width: 72px; height: 32px; text: "16:9"; selected: AppState.ratio == "16:9"; clicked => { AppState.ratio = "16:9"; } }
                     CanvasOptionPill { width: 72px; height: 32px; text: "9:16"; selected: AppState.ratio == "9:16"; clicked => { AppState.ratio = "9:16"; } }
                 }
-                Row {
+                if AppState.canvas-workflow-id != "side-scroll-map": Row {
                     CanvasOptionPill { width: 72px; height: 32px; text: "21:9"; selected: AppState.ratio == "21:9"; clicked => { AppState.ratio = "21:9"; } }
                     CanvasOptionPill { width: 72px; height: 32px; text: "9:21"; selected: AppState.ratio == "9:21"; clicked => { AppState.ratio = "9:21"; } }
                 }

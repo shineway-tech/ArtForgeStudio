@@ -176,6 +176,12 @@ component FreeCanvasCard {
                         AppState.en ? root.hint-en : root.hint-zh, root.artwork);
                     return;
                 }
+                if root.card-id == "side-scroll-map" {
+                    AppState.asset-type = "scene";
+                    AppState.ratio = "21:9";
+                    AppState.count = 1;
+                    AppState.mode = "game";
+                }
                 AppState.open-canvas-workspace(root.card-id);
                 AppState.canvas-workflow-artwork = root.artwork;
                 if root.opens-canvas {
@@ -217,7 +223,7 @@ export component FreeCanvasPage {
     }
 
     function card-height() -> length {
-        return min(280px, max(232px, (root.height - 142px - root.card-gap()) / 2));
+        return min(250px, max(178px, (root.height - 142px - root.card-gap() * 2) / 3));
     }
 
     Rectangle {
@@ -250,7 +256,7 @@ export component FreeCanvasPage {
             x: 32px;
             y: 100px;
             width: root.cards-width();
-            height: root.card-height() * 2 + root.card-gap();
+            height: root.card-height() * 3 + root.card-gap() * 2;
             background: transparent;
 
             FreeCanvasCard {
@@ -379,6 +385,21 @@ export component FreeCanvasPage {
                 title: AppState.en ? "Infinite Canvas" : "无限画布";
                 description: AppState.en ? "Connect images, text and ideas freely" : "自由连接图片、文字与灵感";
                 opens-canvas: true;
+            }
+            if !root.import-mode: FreeCanvasCard {
+                x: 0px;
+                y: (root.card-height() + root.card-gap()) * 2;
+                width: root.card-width();
+                height: root.card-height();
+                card-id: "side-scroll-map";
+                title: AppState.en ? "Side-scrolling Map" : "横版地图生成器";
+                description: AppState.en ? "Layered map with a seamless horizontal loop" : "生成前中后景分层、首尾相接的无限地图";
+                category: "scene";
+                artwork: @image-url("../../assets/free-canvas/side-scroll-map.png");
+                prompt-zh: "横版无缝地图规范：";
+                prompt-en: "Side-scrolling seamless map specification:";
+                hint-zh: "上传风格参考图，生成前中后景分层、首尾无缝衔接的横版地图";
+                hint-en: "Upload a style reference and create a layered, seamless side-scrolling map";
             }
         }
     }

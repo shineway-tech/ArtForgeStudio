@@ -347,6 +347,80 @@ pub(super) fn build_generation_prompt_for_destination(
     }
 }
 
+pub(super) fn compose_side_scroll_map_prompt(description: &str, english: bool) -> String {
+    let description = description.trim();
+    let request = if description.is_empty() {
+        if english {
+            "Create a new map based on the reference image."
+        } else {
+            "根据参考图创作一张新地图。"
+        }
+    } else {
+        description
+    };
+    if english {
+        format!("{request}\n\nSide-scrolling seamless map specification: use the uploaded reference image only as the source for visual style, palette, materials, linework, rendering medium, perspective, lighting, atmosphere, and reusable environmental motifs. Create one full-bleed horizontal game map using the selected landscape aspect ratio, not a concept sheet or presentation mockup. Build three clearly readable depth planes by default: foreground, midground, and background. Keep the main traversable route readable across the foreground and midground, with coherent scale and side-view game composition. The map must tile seamlessly from right to left: the terrain height, path elevation, waterline, silhouettes, vegetation density, architecture rhythm, lighting, fog, colors, and texture at the right edge must continue exactly into the left edge. Avoid a unique landmark crossing either boundary. Verify the result by imagining two copies placed side by side; the join must be invisible and the route must remain continuous. Preserve stylistic identity without copying the reference composition. Output only the finished map. No reference-image inset, frame, arrows, carousel controls, labels, words, letters, numbers, UI, watermark, or border.")
+    } else {
+        format!("{request}\n\n横版无缝地图规范：仅将上传的参考图作为视觉风格、配色、材质、线条、渲染方式、透视、光照、氛围与环境元素的来源。按用户选择的横屏比例输出一张完整铺满画布的横版游戏地图，不是概念设定表或展示稿。默认建立清晰可辨的前景、中景、后景三个景深层级；在前景与中景中保持连续、易读的横向可行走路线，比例统一，符合横版游戏侧视构图。地图必须能够从右向左无缝循环：右边缘与左边缘的地形高度、道路标高、水位、轮廓、植被密度、建筑节奏、光照、雾气、颜色和纹理必须准确连续；不要让唯一性地标跨越任一拼接边界。生成前以两张成品左右并排的方式检查，接缝必须不可见，行走路线必须连续。保留参考图的风格识别，但不要复制参考图原有构图。只输出最终地图，不得出现参考图缩略图、边框、箭头、轮播控件、标签、文字、字母、数字、界面、水印或外框。")
+    }
+}
+
+pub(super) fn normalize_side_scroll_map_ratio(ratio: &str) -> String {
+    match ratio.trim() {
+        "3:2" | "4:3" | "16:9" | "21:9" => ratio.trim().to_string(),
+        _ => "21:9".to_string(),
+    }
+}
+
+pub(super) fn build_side_scroll_map_generation_prompt(
+    prompt: &str,
+    ratio: &str,
+    quality: &str,
+    language: PromptLanguage,
+) -> String {
+    append_parameter_priority_instruction(prompt, "scene", ratio, quality, language)
+}
+
+#[cfg(test)]
+mod side_scroll_map_tests {
+    use super::*;
+
+    #[test]
+    fn prompt_requires_depth_and_an_invisible_horizontal_seam() {
+        let prompt = compose_side_scroll_map_prompt("山水关卡", false);
+        for required in ["横屏比例", "前景", "中景", "后景", "右边缘", "左边缘", "接缝必须不可见"] {
+            assert!(prompt.contains(required));
+        }
+        assert!(prompt.starts_with("山水关卡"));
+    }
+
+    #[test]
+    fn ratio_accepts_only_landscape_choices() {
+        for ratio in ["3:2", "4:3", "16:9", "21:9"] {
+            assert_eq!(normalize_side_scroll_map_ratio(ratio), ratio);
+        }
+        for ratio in ["1:1", "2:3", "3:4", "9:16", "9:21", ""] {
+            assert_eq!(normalize_side_scroll_map_ratio(ratio), "21:9");
+        }
+    }
+
+    #[test]
+    fn request_does_not_inherit_hidden_workbench_instructions() {
+        let prompt = build_side_scroll_map_generation_prompt(
+            "map-only request",
+            "21:9",
+            "4K",
+            PromptLanguage::English,
+        );
+        assert!(prompt.starts_with("map-only request"));
+        assert!(prompt.contains("21:9"));
+        assert!(prompt.contains("4K"));
+        assert!(!prompt.contains("Generation controls:"));
+        assert!(!prompt.contains("Reference image information:"));
+        assert!(!prompt.contains("Negative prompt"));
+    }
+}
+
 pub(super) fn append_negative_prompt_instruction(
     prompt: &str,
     negative_prompt: &str,

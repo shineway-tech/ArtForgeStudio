@@ -45,8 +45,8 @@ pub(super) fn max_reference_images_for_category(_category: &str) -> usize {
     MAX_REFERENCE_IMAGES
 }
 
-pub(super) fn reference_limit_message(_max_references: usize) -> &'static str {
-    "最多上传 8 张参考图"
+pub(super) fn reference_limit_message(max_references: usize) -> &'static str {
+    if max_references == 1 { "此功能仅使用 1 张参考图" } else { "最多上传 8 张参考图" }
 }
 
 pub(super) fn normalize_creation_mode_for_category(_category: &str, creation: &str) -> String {

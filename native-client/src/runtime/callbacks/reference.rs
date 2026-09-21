@@ -3,6 +3,7 @@ use crate::platform::{self,ExternalDropPosition,ExternalImageDrop};
 use std::io::Read;
 
 const MAX_DROPPED_IMAGE_BYTES:u64=100*1024*1024;
+const NATIVE_DRAG_POLL_INTERVAL:Duration=Duration::from_millis(1);
 type ReferencePickerCompletion=Box<dyn FnOnce(Vec<PathBuf>)>;
 #[cfg(test)]
 thread_local!{
@@ -103,6 +104,9 @@ struct ReferenceNativeRequest{
     id:Uuid,lease:NamespaceLease,target:ReferenceTarget,path:PathBuf,
     preview_unclaimed:bool,cancel:Arc<std::sync::atomic::AtomicBool>,
 }
+struct PreparedLegacyNativeDrag{
+    source:PreparedNativeFileDragSource,path:PathBuf,file_id:ManagedFileId,
+}
 impl Drop for ReferenceNativeRequest{
     fn drop(&mut self){self.cancel.store(true,Ordering::Release);}
 }
@@ -191,6 +195,13 @@ fn spawn_reference_work<R:Send+'static>(
     work:impl FnOnce(&PrivatePersistence,&Arc<std::sync::atomic::AtomicBool>,&UserActivityPermit)->Result<R>+Send+'static,
     complete:impl FnOnce(&AppWindow,&AppContext,&ReferenceCapture,Result<R>)+'static,
 )->bool{
+    spawn_reference_work_with_poll(app,context,capture,Duration::from_millis(40),work,complete)
+}
+fn spawn_reference_work_with_poll<R:Send+'static>(
+    app:&AppWindow,context:AppContext,capture:ReferenceCapture,poll_interval:Duration,
+    work:impl FnOnce(&PrivatePersistence,&Arc<std::sync::atomic::AtomicBool>,&UserActivityPermit)->Result<R>+Send+'static,
+    complete:impl FnOnce(&AppWindow,&AppContext,&ReferenceCapture,Result<R>)+'static,
+)->bool{
     if !capture.current(app,&context){return false;}
     let Ok(activity)=capture.persistence.begin_activity()else{return false;};
     let persistence=capture.persistence.clone();let cancel=Arc::new(std::sync::atomic::AtomicBool::new(false));let worker_cancel=cancel.clone();
@@ -207,18 +218,19 @@ fn spawn_reference_work<R:Send+'static>(
     });
     let worker=match worker{Ok(worker)=>worker,Err(_)=>{capture.status(app,&context,"参考图操作未能启动，请重试");return false;}};
     REFERENCE_WORKERS.with(|workers|workers.borrow_mut().push(ReferenceWorker{id,lease:capture.persistence.lease().clone(),cancel:cancel.clone(),handle:worker}));
-    poll_reference_work(app.as_weak(),context,capture,Rc::new(RefCell::new(ReferenceJob{id,cancel,receiver})),complete);true
+    poll_reference_work(app.as_weak(),context,capture,Rc::new(RefCell::new(ReferenceJob{id,cancel,receiver})),poll_interval,complete);true
 }
 fn poll_reference_work<R:Send+'static>(weak:Weak<AppWindow>,context:AppContext,capture:ReferenceCapture,
-    job:Rc<RefCell<ReferenceJob<R>>>,complete:impl FnOnce(&AppWindow,&AppContext,&ReferenceCapture,Result<R>)+'static){
-    slint::Timer::single_shot(Duration::from_millis(40),move||{
+    job:Rc<RefCell<ReferenceJob<R>>>,poll_interval:Duration,
+    complete:impl FnOnce(&AppWindow,&AppContext,&ReferenceCapture,Result<R>)+'static){
+    slint::Timer::single_shot(poll_interval,move||{
         reap_reference_workers();let id=job.borrow().id;
         let Some(app)=weak.upgrade()else{job.borrow().cancel.store(true,Ordering::Release);if reference_worker_pending(id){reference_orphan_poll(id);}return;};
         if !capture.current(&app,&context){job.borrow().cancel.store(true,Ordering::Release);}
-        if reference_worker_pending(id){poll_reference_work(weak,context,capture,job,complete);return;}
+        if reference_worker_pending(id){poll_reference_work(weak,context,capture,job,poll_interval,complete);return;}
         let result=match job.borrow().receiver.try_recv(){
             Ok(result)=>result,Err(TryRecvError::Disconnected)=>Err(anyhow!("reference worker disconnected")),
-            Err(TryRecvError::Empty)=>{poll_reference_work(weak,context,capture,job.clone(),complete);return;},
+            Err(TryRecvError::Empty)=>{poll_reference_work(weak,context,capture,job.clone(),poll_interval,complete);return;},
         };
         if capture.current(&app,&context){complete(&app,&context,&capture,result);}
     });
@@ -420,16 +432,117 @@ fn reference_native_file_drag(drag:CapturedNativeFileDrag)->bool{
     if let Some(effect)=REFERENCE_TEST_FILE_DRAG.with(|hook|hook.borrow_mut().take()){return effect(drag);}
     drag_preview::start_thumbnail_file_drag_captured(drag)
 }
+fn reference_native_path_drag(path:PathBuf)->bool{
+    #[cfg(test)]
+    { let _=path; return false; }
+    #[cfg(not(test))]
+    drag_preview::start_thumbnail_file_drag_path(path)
+}
 fn reference_pointer_exit(app:&AppWindow){
     #[cfg(test)]
     if let Some(effect)=REFERENCE_TEST_POINTER_EXIT.with(|hook|hook.borrow_mut().take()){effect();return;}
     let _=app.window().try_dispatch_event(slint::platform::WindowEvent::PointerExited);
 }
 fn reference_path_in_store(context:&AppContext,path:&Path)->bool{
-    let Some(path)=path.to_str()else{return false;};let store=context.store.borrow();
-    store.assets.iter().chain(store.generations.iter()).any(|asset|asset.source_path==path)
+    let store=context.store.borrow();
+    store.assets.iter().chain(store.generations.iter()).any(|asset|crate::directory_migration::same_path(Path::new(&asset.source_path),path))
         || [&store.references.character,&store.references.scene,&store.references.ui,&store.references.effect,&store.canvas_references]
-            .into_iter().any(|rows|rows.iter().any(|row|row.source_path==path))
+            .into_iter().any(|rows|rows.iter().any(|row|crate::directory_migration::same_path(Path::new(&row.source_path),path)))
+}
+fn rewrite_path(value:&mut String,original:&Path,replacement:&Path)->bool{
+    if !crate::directory_migration::same_path(Path::new(value),original){return false;}
+    *value=display_directory_path(replacement);true
+}
+fn rewrite_native_drag_store_path(store:&mut Store,original:&Path,replacement:&Path)->bool{
+    let mut changed=false;
+    for asset in store.assets.iter_mut().chain(&mut store.generations){
+        changed|=rewrite_path(&mut asset.source_path,original,replacement);
+        for path in &mut asset.reference_paths{changed|=rewrite_path(path,original,replacement);}
+    }
+    for rows in [&mut store.references.character,&mut store.references.scene,&mut store.references.ui,
+        &mut store.references.effect,&mut store.canvas_references]{
+        for row in rows{changed|=rewrite_path(&mut row.source_path,original,replacement);}
+    }
+    for note in &mut store.canvas_notes{changed|=rewrite_path(&mut note.image_path,original,replacement);}
+    for workspace in store.canvas_workspaces.values_mut(){
+        for note in &mut workspace.notes{changed|=rewrite_path(&mut note.image_path,original,replacement);}
+        for row in &mut workspace.references{changed|=rewrite_path(&mut row.source_path,original,replacement);}
+    }
+    for profile in store.custom_prompt_profiles.values_mut(){
+        changed|=rewrite_path(&mut profile.reference_path,original,replacement);
+        for path in &mut profile.reference_paths{changed|=rewrite_path(path,original,replacement);}
+    }
+    changed
+}
+fn rewrite_native_drag_ui_path(app:&AppWindow,original:&Path,replacement:&Path){
+    let state=app.global::<AppState>();let replacement_text=display_directory_path(replacement);
+    for model in [state.get_assets(),state.get_generations()]{
+        for index in 0..model.row_count(){if let Some(mut item)=model.row_data(index){
+            if crate::directory_migration::same_path(Path::new(item.source_path.as_str()),original){
+                item.source_path=replacement_text.clone().into();item.drag_uri=file_uri_for_path(&replacement_text).into();model.set_row_data(index,item);
+            }
+        }}
+    }
+    let references=state.get_references();
+    for index in 0..references.row_count(){if let Some(mut item)=references.row_data(index){
+        if crate::directory_migration::same_path(Path::new(item.source_path.as_str()),original){
+            item.source_path=replacement_text.clone().into();references.set_row_data(index,item);
+        }
+    }}
+    if state.get_viewer_open() && crate::directory_migration::same_path(Path::new(state.get_viewer_source_path().as_str()),original){
+        state.set_viewer_source_path(replacement_text.into());
+    }
+}
+fn legacy_native_drag_extension(path:&Path,bytes:&[u8])->String{
+    path.extension().and_then(|value|value.to_str()).map(str::to_ascii_lowercase)
+        .filter(|extension|crate::image_formats::picker_image_extensions().contains(&extension.as_str()))
+        .unwrap_or_else(||image_extension(bytes).into())
+}
+fn prepare_legacy_native_drag_source(persistence:&PrivatePersistence,path:&Path)->Result<PreparedLegacyNativeDrag>{
+    let authority=persistence.storage_authority()?;let bytes=authority.read_image_source(path,MAX_DROPPED_IMAGE_BYTES)?;
+    let(decoded,_)=decode_image_bytes(path,&bytes)?;
+    anyhow::ensure!(decoded.width()>0 && decoded.height()>0 && u64::from(decoded.width())*u64::from(decoded.height())<=100_000_000,
+        "legacy native drag image dimensions invalid");
+    let stem=path.file_stem().and_then(|value|value.to_str()).map(sanitize_filename).filter(|value|!value.is_empty()).unwrap_or_else(||"legacy-image".into());
+    let leaf=format!("{}-migrated-{}.{}",stem,Uuid::new_v4(),legacy_native_drag_extension(path,&bytes));
+    let key=ManagedFileKey::new(ManagedUserArea::Output,&leaf)?;let _mutation=authority.begin_ordinary_mutation()?;
+    let mut temporary=authority.create_temporary_regular_for(&key)?;
+    authority.write_new_regular_from(&mut temporary,&mut std::io::Cursor::new(&bytes))?;authority.sync_regular(&mut temporary)?;
+    authority.publish_regular(&mut temporary,NamespaceManagedPublication::Absent(&key))?;
+    let file=authority.open_existing_regular(&key)?;
+    let registration=NamespacedManagedFileRegistration::new(&authority,file,"image","user")?;
+    let indexed=match authority.delivery_index()?.register_file_for_namespace(&authority,&registration){
+        Ok(indexed)=>indexed,Err(error)=>{drop(registration);if let Ok(file)=authority.open_existing_regular(&key){let _=authority.unlink_regular(file);}return Err(error.into());}
+    };
+    drop(registration);
+    let migrated=authority.lease().namespace.path(ManagedUserArea::Output).join(&leaf);
+    let source=match prepare_native_file_drag_source(persistence,&migrated){
+        Ok(source)=>source,Err(error)=>{
+            if let Ok(file)=authority.open_existing_regular(&key){
+                if authority.delivery_index()?.delete_file_for_namespace(&authority,indexed.id).unwrap_or(false){let _=authority.unlink_regular(file);}
+            }
+            return Err(error);
+        }
+    };
+    Ok(PreparedLegacyNativeDrag{source,path:migrated,file_id:indexed.id})
+}
+fn discard_prepared_legacy_native_drag(persistence:&PrivatePersistence,prepared:PreparedLegacyNativeDrag)->Result<()>{
+    let PreparedLegacyNativeDrag{source,path,file_id}=prepared;drop(source);
+    let authority=persistence.storage_authority()?;
+    let relative=path.strip_prefix(authority.lease().namespace.path(ManagedUserArea::Output))?
+        .to_str().ok_or_else(||anyhow!("legacy native drag path encoding"))?;
+    let key=ManagedFileKey::new(ManagedUserArea::Output,relative)?;let file=authority.open_existing_regular(&key)?;
+    anyhow::ensure!(authority.delivery_index()?.delete_file_for_namespace(&authority,file_id)?,"legacy native drag index missing");
+    authority.unlink_regular(file)
+}
+fn schedule_legacy_native_drag_cleanup(app:&AppWindow,context:AppContext,mut capture:ReferenceCapture,prepared:PreparedLegacyNativeDrag){
+    capture.require_target=false;
+    let _=spawn_reference_work(app,context,capture,move|persistence,_,_|discard_prepared_legacy_native_drag(persistence,prepared),|_,_,_,_|{});
+}
+fn rebind_reference_native_request(ticket:&ReferenceNativeTicket,capture:&ReferenceCapture,path:&Path)->bool{
+    if !ticket.current(){return false;}let mut ui=ticket.ui.borrow_mut();
+    let Some(request)=ui.native.as_mut().filter(|request|request.id==ticket.id && request.lease==*capture.persistence.lease())else{return false;};
+    request.target=capture.target.clone();request.path=path.to_path_buf();request.preview_unclaimed=false;true
 }
 fn reference_reset_pointer(app:&AppWindow,context:AppContext,capture:ReferenceCapture,ticket:ReferenceNativeTicket){
     if !ticket.current(){return;}
@@ -445,13 +558,146 @@ fn reference_reset_pointer(app:&AppWindow,context:AppContext,capture:ReferenceCa
         drop(effect);
     });
 }
+fn poll_legacy_native_drag_save(
+    weak:Weak<AppWindow>,context:AppContext,account_capture:ReferenceCapture,visible_capture:ReferenceCapture,
+    ticket:ReferenceNativeTicket,original:PathBuf,prepared:PreparedLegacyNativeDrag,
+    receiver:mpsc::Receiver<client_state::WriteResult>,
+){
+    slint::Timer::single_shot(Duration::from_millis(40),move||{
+        let Some(app)=weak.upgrade()else{return;};
+        if !account_capture.current(&app,&context){return;}
+        let saved=match receiver.try_recv(){
+            Ok(result)=>result.is_ok(),
+            Err(TryRecvError::Empty)=>{
+                poll_legacy_native_drag_save(weak,context,account_capture,visible_capture,ticket,original,prepared,receiver);return;
+            }
+            Err(TryRecvError::Disconnected)=>false,
+        };
+        if !saved{
+            ticket.cancel.store(true,Ordering::Release);let migrated=prepared.path.clone();
+            let can_cleanup=account_capture.apply(&app,&context,||{
+                {let mut store=context.store.borrow_mut();rewrite_native_drag_store_path(&mut store,&migrated,&original);}
+                !reference_path_in_store(&context,&migrated)
+            }).unwrap_or(false);
+            visible_capture.status(&app,&context,"作品原图路径未能安全迁移，请重试");
+            if can_cleanup{schedule_legacy_native_drag_cleanup(&app,context,account_capture,prepared);}
+            return;
+        }
+        let should_launch=ticket.current() && visible_capture.current(&app,&context);
+        let migrated=prepared.path.clone();
+        let published=account_capture.apply(&app,&context,||{
+            if !reference_path_in_store(&context,&migrated){return false;}
+            rewrite_native_drag_ui_path(&app,&original,&migrated);true
+        }).unwrap_or(false);
+        if !published || !should_launch{ticket.cancel.store(true,Ordering::Release);return;}
+        let Some(next_capture)=ReferenceCapture::native(&app,&context)else{return;};
+        if !rebind_reference_native_request(&ticket,&next_capture,&migrated){return;}
+        let Ok(drag)=bind_native_file_drag(&context,prepared.source)else{return;};
+        let current_path=migrated.clone();let weak=app.as_weak();let current_context=context.clone();
+        let target=next_capture.clone();let queued_ticket=ticket.clone();
+        let drag=drag.with_presentation_check(move||queued_ticket.current() && weak.upgrade().is_some_and(|app|
+            target.current(&app,&current_context) && reference_path_in_store(&current_context,&current_path)));
+        if !ticket.current() || !next_capture.current(&app,&context){return;}
+        let _=reference_native_file_drag(drag);
+        reference_reset_pointer(&app,context,next_capture,ticket);
+    });
+}
+fn save_legacy_native_drag_path(
+    app:&AppWindow,context:AppContext,mut account_capture:ReferenceCapture,visible_capture:ReferenceCapture,
+    ticket:ReferenceNativeTicket,original:PathBuf,prepared:PreparedLegacyNativeDrag,
+){
+    account_capture.require_target=false;
+    let mut write=match account_capture.persistence.prepare_ordered_save(){
+        Ok(write)=>Some(write),Err(_)=>{
+            ticket.cancel.store(true,Ordering::Release);visible_capture.status(app,&context,"作品原图路径未能安全迁移，请重试");
+            schedule_legacy_native_drag_cleanup(app,context,account_capture,prepared);return;
+        }
+    };
+    let migrated=prepared.path.clone();
+    if !ticket.current() || !visible_capture.current(app,&context){
+        ticket.cancel.store(true,Ordering::Release);
+        schedule_legacy_native_drag_cleanup(app,context,account_capture,prepared);return;
+    }
+    let queued=account_capture.apply(app,&context,||{
+        if !ticket.current() || !visible_capture.target_matches(app,&context){return None;}
+        let changed={let mut store=context.store.borrow_mut();rewrite_native_drag_store_path(&mut store,&original,&migrated)};
+        if !changed{return None;}
+        Some(write.take().unwrap().enqueue(local_store_data(app,&context.store.borrow())))
+    });
+    drop(write);
+    let receiver=match queued.flatten(){
+        Some(Ok(receiver))=>receiver,
+        Some(Err(error))=>{
+            drop(error);ticket.cancel.store(true,Ordering::Release);
+            account_capture.apply(app,&context,||{let mut store=context.store.borrow_mut();rewrite_native_drag_store_path(&mut store,&migrated,&original);});
+            visible_capture.status(app,&context,"作品原图路径未能安全迁移，请重试");
+            schedule_legacy_native_drag_cleanup(app,context,account_capture,prepared);return;
+        }
+        None=>{
+            ticket.cancel.store(true,Ordering::Release);
+            schedule_legacy_native_drag_cleanup(app,context,account_capture,prepared);return;
+        }
+    };
+    poll_legacy_native_drag_save(app.as_weak(),context,account_capture,visible_capture,ticket,original,prepared,receiver);
+}
+fn start_legacy_reference_native_drag(
+    app:&AppWindow,context:AppContext,capture:ReferenceCapture,ticket:ReferenceNativeTicket,path:PathBuf,
+)->bool{
+    let visible_capture=capture.clone();let completion=ticket.clone();let native_cancel=ticket.cancel.clone();
+    let worker_path=path.clone();let mut worker_capture=capture;worker_capture.require_target=false;
+    spawn_reference_work(app,context,worker_capture,move|persistence,_,_|{
+        if native_cancel.load(Ordering::Acquire){anyhow::bail!("legacy native drag superseded");}
+        let prepared=prepare_legacy_native_drag_source(persistence,&worker_path)?;
+        if native_cancel.load(Ordering::Acquire){anyhow::bail!("legacy native drag superseded");}
+        Ok(prepared)
+    },move|app,context,account_capture,result|{
+        let Ok(prepared)=result else{visible_capture.status(app,context,"原图文件不可用，无法拖拽");return;};
+        if !completion.current() || !visible_capture.current(app,context) || !reference_path_in_store(context,&path){
+            schedule_legacy_native_drag_cleanup(app,context.clone(),account_capture.clone(),prepared);return;
+        }
+        save_legacy_native_drag_path(app,context.clone(),account_capture.clone(),visible_capture,completion,path,prepared);
+    })
+}
+fn prepare_reference_native_drag(app:&AppWindow,context:&AppContext,data:String)->bool{
+    let _=(app,context);
+    !data.is_empty()
+}
+fn launch_prepared_reference_native_drag(
+    app:&AppWindow,context:&AppContext,capture:ReferenceCapture,ticket:ReferenceNativeTicket,
+    original:PathBuf,source:PreparedNativeFileDragSource,
+)->bool{
+    if !ticket.current() || !capture.current(app,context) || !reference_path_in_store(context,&original){return false;}
+    let Ok(drag)=bind_native_file_drag(context,source)else{return false;};
+    let weak=app.as_weak();let current_context=context.clone();let target=capture.clone();let queued_ticket=ticket.clone();
+    let drag=drag.with_presentation_check(move||queued_ticket.current() && weak.upgrade().is_some_and(|app|target.current(&app,&current_context)));
+    if !ticket.current() || !capture.current(app,context){return false;}
+    let started=reference_native_file_drag(drag);
+    reference_reset_pointer(app,context.clone(),capture,ticket);
+    started
+}
 fn start_reference_native_drag(app:&AppWindow,context:AppContext,data:String,preview:bool)->bool{
     let Some(capture)=ReferenceCapture::native(app,&context)else{return false;};
     let Some(path)=drag_data_to_path(&data)else{return false;};
-    if matches!(&capture.target,ReferenceTarget::NativeViewer{path:original,..} if Path::new(original)!=path){return false;}
-    if !capture.persistence.owns_path(&path) || !reference_path_in_store(&context,&path){return false;}
+    if matches!(&capture.target,ReferenceTarget::NativeViewer{path:original,..} if !crate::directory_migration::same_path(Path::new(original),&path)){return false;}
+    if !reference_path_in_store(&context,&path){return false;}
     if preview && !cfg!(windows){return false;}
+    let owned=capture.persistence.owns_path(&path);
+    if preview && !owned{return false;}
+    if !preview && owned{
+        if let Some(ticket)=begin_reference_native_request(app,&context,&capture,&path,false){
+            let started=reference_native_path_drag(path.clone());
+            if started{
+                reference_reset_pointer(app,context,capture,ticket);
+                return true;
+            }
+            ticket.cancel.store(true,Ordering::Release);
+        }
+    }
     let Some(ticket)=begin_reference_native_request(app,&context,&capture,&path,preview)else{return false;};
+    if !owned{
+        let started=start_legacy_reference_native_drag(app,context,capture,ticket.clone(),path);
+        if !started{ticket.cancel.store(true,Ordering::Release);}return started;
+    }
     let native_cancel=ticket.cancel.clone();
     let started=if preview{
         #[cfg(test)]
@@ -470,20 +716,14 @@ fn start_reference_native_drag(app:&AppWindow,context:AppContext,data:String,pre
         },|_,_,_,_|{})
     }else{
         let original=path.clone();let completion=ticket.clone();
-        spawn_reference_work(app,context,capture,move|persistence,_,_activity|{
+        spawn_reference_work_with_poll(app,context,capture,NATIVE_DRAG_POLL_INTERVAL,move|persistence,_,_activity|{
             if native_cancel.load(Ordering::Acquire){anyhow::bail!("native drag superseded");}
             let source=prepare_native_file_drag_source(persistence,&path)?;
             if native_cancel.load(Ordering::Acquire){anyhow::bail!("native drag superseded");}
             Ok(source)
         },move|app,context,capture,result|{
             let Ok(source)=result else{return;};
-            if !completion.current() || !capture.current(app,context) || !reference_path_in_store(context,&original){return;}
-            let Ok(drag)=bind_native_file_drag(context,source)else{return;};
-            let weak=app.as_weak();let current_context=context.clone();let target=capture.clone();let queued_ticket=completion.clone();
-            let drag=drag.with_presentation_check(move||queued_ticket.current() && weak.upgrade().is_some_and(|app|target.current(&app,&current_context)));
-            if !completion.current() || !capture.current(app,context){return;}
-            let _=reference_native_file_drag(drag);
-            reference_reset_pointer(app,context.clone(),capture.clone(),completion);
+            let _=launch_prepared_reference_native_drag(app,context,capture.clone(),completion,original,source);
         })
     };
     if !started{ticket.cancel.store(true,Ordering::Release);}
@@ -561,6 +801,10 @@ pub(super) fn wire_reference_callbacks(app:&AppWindow,context:AppContext){
     {
         let weak=app.as_weak();let context=context.clone();
         state.on_open_reference(move|id|if let Some(app)=weak.upgrade(){open_captured_reference(&app,context.clone(),id.to_string());});
+    }
+    {
+        let weak=app.as_weak();let context=context.clone();
+        state.on_prepare_thumbnail_file_drag(move|data|weak.upgrade().is_some_and(|app|prepare_reference_native_drag(&app,&context,data.to_string())));
     }
     {
         let weak=app.as_weak();let context=context.clone();
@@ -853,6 +1097,12 @@ mod core_reference_tests{
         f.persistence.save_store(local_store_data(app,&f.context.store.borrow())).unwrap();
         item
     }
+    fn legacy_asset(id:&str,path:&Path)->AssetData{
+        AssetData{id:id.into(),conversation_id:String::new(),title:"legacy image".into(),category:"other".into(),kind:"game".into(),
+            time:String::new(),prompt:String::new(),ratio:"1:1".into(),quality:String::new(),model:String::new(),origin:"legacy".into(),
+            width:2,height:2,source_path:path.to_string_lossy().into_owned(),reference_paths:vec![],cutout_done:false,remove_black_done:false,
+            upscale_done:false,is_new:false,delivery_recoverable:false,delivery_downloading:false}
+    }
     fn saved(f:&Fixture)->LocalStoreData{f.writer.load_client_state_for_namespace(f.persistence.lease()).unwrap().unwrap()}
     fn pump_until(mut predicate:impl FnMut()->bool){
         let end=Instant::now()+Duration::from_secs(5);
@@ -911,6 +1161,44 @@ mod core_reference_tests{
         *f.context.active_namespace.lock().unwrap() = None;
         assert!(!app.global::<AppState>().invoke_add_reference_from_asset("picker-asset".into()));
         assert_eq!(f.context.store.borrow().references.character, references);
+    }
+    #[test]
+    fn side_scroll_map_reference_import_appends_like_other_creation_workflows(){
+        let(f,app)=fixture();let original=owned(&f);
+        app.global::<AppState>().set_page("canvas".into());
+        {
+            let mut store=f.context.store.borrow_mut();store.active_canvas_workspace_id="side-scroll-map".into();
+            store.canvas_references.push(original.clone());
+        }
+        f.persistence.save_store(local_store_data(&app,&f.context.store.borrow())).unwrap();
+        let source=f.external.path().join("additional.png");std::fs::write(&source,png()).unwrap();
+
+        assert!(start_reference_paths_for_context(&app,f.context.clone(),vec![source]));
+        pump_until(||app.global::<AppState>().get_generation_status().as_str()=="已添加参考图");
+        drain_reference_test_workers();pump_for(Duration::from_millis(80));
+
+        let rows=f.context.store.borrow().canvas_references.clone();
+        assert_eq!(rows.len(),2);assert_eq!(rows[0],original);assert_ne!(rows[1].id,rows[0].id);
+        assert!(f.persistence.owns_path(Path::new(&rows[1].source_path)));
+        assert_eq!(saved(&f).canvas_workspaces["side-scroll-map"].references,rows);
+    }
+    #[test]
+    fn side_scroll_map_failed_add_keeps_the_existing_reference(){
+        let(f,app)=fixture();let original=owned(&f);
+        app.global::<AppState>().set_page("canvas".into());
+        {
+            let mut store=f.context.store.borrow_mut();store.active_canvas_workspace_id="side-scroll-map".into();
+            store.canvas_references.push(original.clone());
+        }
+        f.persistence.save_store(local_store_data(&app,&f.context.store.borrow())).unwrap();
+        let source=f.external.path().join("invalid.png");std::fs::write(&source,b"not an image").unwrap();
+
+        assert!(start_reference_paths_for_context(&app,f.context.clone(),vec![source]));
+        pump_until(||app.global::<AppState>().get_generation_status().contains("原文件保持不变"));
+        drain_reference_test_workers();pump_for(Duration::from_millis(80));
+
+        assert_eq!(f.context.store.borrow().canvas_references,vec![original.clone()]);
+        assert_eq!(saved(&f).canvas_workspaces["side-scroll-map"].references,vec![original]);
     }
     #[test]
     fn core_reference_retired_binding_remove_and_clear_do_not_mutate(){
@@ -1042,6 +1330,110 @@ mod core_reference_tests{
         REFERENCE_TEST_FILE_DRAG.with(|hook|*hook.borrow_mut()=Some(Box::new(move|_drag|{observed.set(true);true})));
         assert!(app.global::<AppState>().invoke_start_thumbnail_file_drag(item.source_path.into()));
         pump_until(||called.get());assert!(!app.global::<AppState>().get_thumbnail_drag_preview_visible());
+    }
+    #[test]
+    fn core_reference_native_drag_does_not_wait_for_the_general_worker_poll(){
+        let(f,app)=fixture();let item=seed(&f,&app);let called=Rc::new(Cell::new(false));let observed=called.clone();
+        REFERENCE_TEST_FILE_DRAG.with(|hook|*hook.borrow_mut()=Some(Box::new(move|_drag|{observed.set(true);true})));
+        assert!(app.global::<AppState>().invoke_start_thumbnail_file_drag(item.source_path.into()));
+        drain_reference_test_workers();
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(5));
+        slint::platform::update_timers_and_animations();
+        assert!(called.get(),"native drag still waited for the 40 ms reference-worker poll");
+    }
+    #[test]
+    fn core_native_file_drop_inside_prompt_adds_a_reference(){
+        let(f,app)=fixture();let source=f.external.path().join("prompt-drop.png");std::fs::write(&source,png()).unwrap();
+        let state=app.global::<AppState>();state.set_reference_drop_x(20.0);state.set_reference_drop_y(30.0);
+        state.set_reference_drop_width(400.0);state.set_reference_drop_height(220.0);
+        let position=ExternalDropPosition{x:120.0,y:100.0,physical:false};
+        assert!(external_drop_inside_reference_input(&app,Some(&position)));
+
+        assert!(start_reference_paths_for_context(&app,f.context.clone(),vec![source.clone()]));
+        pump_until(||state.get_generation_status().as_str()=="已添加参考图");
+        drain_reference_test_workers();pump_for(Duration::from_millis(80));
+
+        let imported=PathBuf::from(&f.context.store.borrow().references.character[0].source_path);
+        assert!(f.persistence.owns_path(&imported));assert_eq!(std::fs::read(imported).unwrap(),png());
+        assert_eq!(std::fs::read(source).unwrap(),png());
+    }
+    #[test]
+    fn legacy_visible_asset_drag_migrates_to_current_account_before_os_drag(){
+        let(f,app)=fixture();app.global::<AppState>().set_page("assets".into());
+        let original=f.external.path().join("legacy-visible.png");std::fs::write(&original,png()).unwrap();
+        f.context.store.borrow_mut().assets.push(legacy_asset("legacy-visible",&original));
+        f.persistence.save_store(local_store_data(&app,&f.context.store.borrow())).unwrap();
+        let dragged=Rc::new(RefCell::new(None));let observed=dragged.clone();
+        REFERENCE_TEST_FILE_DRAG.with(|hook|*hook.borrow_mut()=Some(Box::new(move|drag|{
+            *observed.borrow_mut()=Some(drag.consume(Path::to_path_buf).unwrap());true
+        })));
+
+        assert!(app.global::<AppState>().invoke_start_thumbnail_file_drag(file_uri_for_path(original.to_string_lossy().as_ref()).into()));
+        pump_until(||dragged.borrow().is_some());drain_reference_test_workers();pump_for(Duration::from_millis(80));
+
+        let migrated=dragged.borrow().clone().unwrap();assert_ne!(migrated,original);
+        assert!(f.persistence.owns_path(&migrated));assert_eq!(std::fs::read(&migrated).unwrap(),png());assert_eq!(std::fs::read(&original).unwrap(),png());
+        assert!(crate::directory_migration::same_path(Path::new(&f.context.store.borrow().assets[0].source_path),&migrated));
+        assert!(crate::directory_migration::same_path(Path::new(&saved(&f).assets[0].source_path),&migrated));
+        let authority=f.persistence.storage_authority().unwrap();
+        assert!(f.context.file_index.as_ref().unwrap().find_file_by_path_for_namespace(&authority,ManagedUserArea::Output,
+            migrated.file_name().unwrap().to_str().unwrap()).unwrap().is_some());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn windows_verbatim_legacy_asset_drag_migrates_before_os_drag(){
+        let(f,app)=fixture();app.global::<AppState>().set_page("assets".into());
+        let original=f.external.path().join("旧作品.png");std::fs::write(&original,png()).unwrap();
+        let verbatim=PathBuf::from(format!(r"\\?\{}",original.display()));
+        f.context.store.borrow_mut().assets.push(legacy_asset("legacy-verbatim",&verbatim));
+        f.persistence.save_store(local_store_data(&app,&f.context.store.borrow())).unwrap();
+        let dragged=Rc::new(RefCell::new(None));let observed=dragged.clone();
+        REFERENCE_TEST_FILE_DRAG.with(|hook|*hook.borrow_mut()=Some(Box::new(move|drag|{
+            *observed.borrow_mut()=Some(drag.consume(Path::to_path_buf).unwrap());true
+        })));
+
+        let uri=file_uri_for_path(verbatim.to_string_lossy().as_ref());
+        assert!(!uri.contains("%3F"));
+        assert!(app.global::<AppState>().invoke_start_thumbnail_file_drag(uri.into()));
+        pump_until(||dragged.borrow().is_some());drain_reference_test_workers();pump_for(Duration::from_millis(80));
+
+        let migrated=dragged.borrow().clone().unwrap();
+        assert!(f.persistence.owns_path(&migrated));assert_eq!(std::fs::read(&migrated).unwrap(),png());
+        assert_eq!(std::fs::read(&verbatim).unwrap(),png());
+        assert!(crate::directory_migration::same_path(Path::new(&saved(&f).assets[0].source_path),&migrated));
+    }
+    #[test]
+    fn legacy_asset_drag_save_failure_keeps_old_path_and_never_starts_os_drag(){
+        let(f,app)=fixture();app.global::<AppState>().set_page("assets".into());
+        let original=f.external.path().join("legacy-save-failure.png");std::fs::write(&original,png()).unwrap();
+        f.context.store.borrow_mut().assets.push(legacy_asset("legacy-save-failure",&original));
+        f.persistence.save_store(local_store_data(&app,&f.context.store.borrow())).unwrap();
+        let root=f.persistence.lease().namespace.root().parent().unwrap().parent().unwrap();
+        let connection=rusqlite::Connection::open(root.join("fixture.sqlite3")).unwrap();
+        connection.execute_batch("CREATE TRIGGER reject_legacy_drag BEFORE INSERT ON user_settings BEGIN SELECT RAISE(ABORT,'fixture rejected'); END;").unwrap();
+        REFERENCE_TEST_FILE_DRAG.with(|hook|*hook.borrow_mut()=Some(Box::new(|_|panic!("failed migration started OS drag"))));
+
+        assert!(app.global::<AppState>().invoke_start_thumbnail_file_drag(file_uri_for_path(original.to_string_lossy().as_ref()).into()));
+        pump_until(||app.global::<AppState>().get_generation_status().contains("路径未能安全迁移"));
+        drain_reference_test_workers();pump_for(Duration::from_millis(80));
+
+        assert_eq!(f.context.store.borrow().assets[0].source_path,original.to_string_lossy());
+        assert_eq!(saved(&f).assets[0].source_path,original.to_string_lossy());assert_eq!(std::fs::read(&original).unwrap(),png());
+        let output=f.persistence.lease().namespace.path(ManagedUserArea::Output);
+        assert_eq!(std::fs::read_dir(output).unwrap().count(),0);
+    }
+    #[test]
+    fn missing_legacy_asset_drag_never_creates_an_owned_copy(){
+        let(f,app)=fixture();app.global::<AppState>().set_page("assets".into());
+        let original=f.external.path().join("missing.png");f.context.store.borrow_mut().assets.push(legacy_asset("missing",&original));
+        REFERENCE_TEST_FILE_DRAG.with(|hook|*hook.borrow_mut()=Some(Box::new(|_|panic!("missing source started OS drag"))));
+
+        assert!(app.global::<AppState>().invoke_start_thumbnail_file_drag(file_uri_for_path(original.to_string_lossy().as_ref()).into()));
+        pump_until(||app.global::<AppState>().get_generation_status().contains("原图文件不可用"));
+        drain_reference_test_workers();
+
+        assert_eq!(f.context.store.borrow().assets[0].source_path,original.to_string_lossy());
+        assert_eq!(std::fs::read_dir(f.persistence.lease().namespace.path(ManagedUserArea::Output)).unwrap().count(),0);
     }
     #[test]
     fn core_reference_exact_upgrade_rejects_all_entries_before_native_effect(){

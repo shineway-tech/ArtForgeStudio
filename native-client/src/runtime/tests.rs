@@ -1628,6 +1628,8 @@ mod tests {
         assert!(composer
             .contains("AppState.reference-drop-x = reference-drop.absolute-position.x / 1px"));
         assert!(composer.contains("changed width => { root.sync-reference-drop-bounds(); }"));
+        assert!(composer.contains("changed reference-drop-absolute-x => { root.sync-reference-drop-bounds(); }"));
+        assert!(composer.contains("changed reference-drop-absolute-y => { root.sync-reference-drop-bounds(); }"));
         assert!(!composer.contains("interval: 50ms;\n        running: true;"));
         assert!(transfer.contains("transfer.plain_text()"));
         assert!(transfer.contains("external_image_url(data.as_str())"));
@@ -1653,6 +1655,12 @@ mod tests {
         assert!(viewer.contains("url.to_file_path()"));
         assert!(platform.contains("IDropTarget"));
         assert!(platform.contains("RegisterDragDrop"));
+        let windows_install = platform.split_once("pub(super) fn install(window: &slint::Window) -> bool")
+            .unwrap().1.split_once("pub(super) fn uninstall").unwrap().0;
+        assert!(windows_install.find("OleInitialize(None)").unwrap()
+            < windows_install.find("RegisterDragDrop(hwnd, &target)").unwrap());
+        assert!(platform.contains("RevokeDragDrop(hwnd)"));
+        assert!(platform.contains("OleUninitialize()"));
         assert!(platform.contains("CF_HDROP"));
         assert!(platform.contains("\"text/uri-list\""));
         assert!(platform.contains("\"text/html\""));
@@ -1665,6 +1673,7 @@ mod tests {
         assert!(platform.contains("draggingLocation"));
         assert!(!platform.contains("AnyObject::set_class"));
         assert!(app.contains("schedule_external_image_drop_install"));
+        assert!(app.contains("platform::uninstall_external_image_drop_target(app.window())"));
     }
 
     #[test]
@@ -1818,7 +1827,9 @@ mod tests {
         assert!(reset.contains("slint::Timer::single_shot(Duration::ZERO"));
         assert!(reset.contains("ticket.current() && capture.current(&app,&context)"));
         assert!(reset.contains("reference_pointer_exit(&app)"));
-        assert!(native.contains("reference_reset_pointer(app,context.clone(),capture.clone(),completion)"));
+        assert!(native.contains("reference_native_path_drag(path.clone())"));
+        assert!(native.contains("reference_reset_pointer(app,context,capture,ticket)"));
+        assert!(reset.contains("reference_reset_pointer(app,context.clone(),capture,ticket)"));
         assert!(viewer_drag.contains("state.invoke_start_thumbnail_file_drag("));
     }
 
@@ -1863,10 +1874,15 @@ mod tests {
 
         assert!(!thumbnail.contains("DragArea {"));
         assert!(thumbnail.contains("Math.abs(hover.mouse-x - hover.pressed-x) < 7px"));
-        assert!(thumbnail.contains("AppState.start-thumbnail-file-drag(drag-data)"));
+        let prepare = thumbnail
+            .find("AppState.prepare-thumbnail-file-drag(root.native-drag-data())")
+            .expect("pointer-down native drag preparation");
+        assert!(thumbnail.contains("AppState.start-thumbnail-file-drag(root.native-drag-data())"));
         let native_drag = thumbnail
-            .find("AppState.start-thumbnail-file-drag(drag-data)")
+            .find("AppState.start-thumbnail-file-drag(root.native-drag-data())")
             .expect("native drag call");
+        assert!(prepare < native_drag);
+        assert!(!thumbnail.contains("AppState.start-thumbnail-drag-preview("));
         let cleanup = thumbnail[native_drag..]
             .find("root.hide-drag-preview();")
             .expect("post-drag cleanup");
@@ -2508,7 +2524,7 @@ mod tests {
     }
 
     #[test]
-    fn ai_creation_entry_opens_an_eight_choice_launcher_before_the_infinite_canvas() {
+    fn ai_creation_entry_opens_a_nine_choice_launcher_with_a_shared_canvas_map_generator() {
         let app = include_str!("../../ui/app.slint");
         let sidebar = include_str!("../../ui/components/sidebar.slint");
         let nav_glyph = include_str!("../../ui/components/nav-glyph.slint");
@@ -2532,7 +2548,8 @@ mod tests {
         assert!(app.contains("import { FreeCanvasPage }"));
         assert!(app.contains("AppState.page == \"free-canvas\": FreeCanvasPage"));
         assert!(app.contains("AppState.page == \"canvas\": InfiniteCanvasPage"));
-        assert_eq!(page.matches("card-id: \"").count(), 8);
+        assert!(!app.contains("SideScrollMapPage"));
+        assert_eq!(page.matches("card-id: \"").count(), 9);
         for (card_id, title) in [
             ("plant-growth", "植物生成器"),
             ("character-outfit", "角色换装"),
@@ -2542,14 +2559,19 @@ mod tests {
             ("character-body", "角色体型修改器"),
             ("building-derivation", "建筑衍生器"),
             ("infinite-canvas", "无限画布"),
+            ("side-scroll-map", "横版地图生成器"),
         ] {
             assert!(page.contains(&format!("card-id: \"{card_id}\"")));
             assert!(page.contains(title));
         }
-        assert_eq!(page.matches("prompt-zh:").count(), 8);
-        assert_eq!(page.matches("prompt-en:").count(), 8);
+        assert_eq!(page.matches("prompt-zh:").count(), 9);
+        assert_eq!(page.matches("prompt-en:").count(), 9);
         assert!(!page.contains("AppState.navigate(\"generation\")"));
+        assert!(!page.contains("AppState.navigate(\"side-scroll-map\")"));
         assert!(page.contains("AppState.navigate(\"canvas\")"));
+        assert!(page.contains("AppState.ratio = \"21:9\""));
+        assert!(page.contains("AppState.count = 1"));
+        assert!(page.contains("AppState.mode = \"game\""));
         assert!(page.contains("opens-canvas: true"));
         let back = core_toolbox_contract_block(runtime, "state.on_back(", "state.on_set_theme(");
         let back: String = back.split_whitespace().collect();
@@ -2576,9 +2598,63 @@ mod tests {
             "character-age.png",
             "character-body.png",
             "building-derivation.png",
+            "side-scroll-map.png",
         ] {
             assert!(manifest.join("assets/free-canvas").join(image).is_file());
         }
+        assert_eq!(
+            image::image_dimensions(manifest.join("assets/free-canvas/side-scroll-map.png"))
+                .expect("side-scrolling map cover dimensions"),
+            (1448, 1086)
+        );
+    }
+
+    #[test]
+    fn side_scroll_map_opens_the_shared_canvas_with_map_specific_generation_rules() {
+        let launcher = include_str!("../../ui/pages/free-canvas-page.slint");
+        let canvas = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let card = launcher
+            .split_once("card-id: \"side-scroll-map\"")
+            .expect("side-scrolling map card")
+            .1;
+        assert!(card.contains("title: AppState.en ? \"Side-scrolling Map\" : \"横版地图生成器\""));
+        assert!(card.contains("prompt-zh: \"横版无缝地图规范：\""));
+        assert!(launcher.contains("AppState.open-canvas-workspace(root.card-id)"));
+        assert!(launcher.contains("AppState.navigate(\"canvas\")"));
+        assert!(!launcher.contains("AppState.navigate(\"side-scroll-map\")"));
+        assert!(launcher.contains("AppState.ratio = \"21:9\""));
+        assert!(launcher.contains("AppState.count = 1"));
+        assert!(launcher.contains("AppState.mode = \"game\""));
+        assert!(canvas.contains("workflow-id: \"side-scroll-map\""));
+        assert!(canvas.contains("AppState.canvas-workflow-id != \"side-scroll-map\""));
+        assert!(canvas.contains("AppState.references.length < 8 && !root.workflow-composer-collapsed"));
+        assert!(canvas.contains("height: AppState.canvas-workflow-id == \"side-scroll-map\" ? 172px : 250px"));
+        assert_eq!(canvas.matches("if AppState.canvas-workflow-id == \"side-scroll-map\": Row").count(), 2);
+        for landscape_ratio in ["3:2", "4:3", "16:9", "21:9"] {
+            assert!(canvas.contains(&format!("text: \"{landscape_ratio}\"")));
+            assert!(canvas.contains(&format!("value: \"{landscape_ratio}\"")));
+        }
+
+        let prompt = compose_canvas_workflow_prompt(
+            "横版无缝地图规范：",
+            "云海仙山栈道",
+            12,
+            false,
+        );
+        for required in ["云海仙山栈道", "横屏比例", "前景", "中景", "后景", "右边缘", "左边缘", "接缝必须不可见"] {
+            assert!(prompt.contains(required), "missing map rule: {required}");
+        }
+        assert!(!prompt.contains("必须使用单一纯色背景"));
+        assert!(!prompt.contains("恰好12个完整主体"));
+        let submitted = build_side_scroll_map_generation_prompt(
+            &prompt,
+            "21:9",
+            "4K",
+            PromptLanguage::Chinese,
+        );
+        assert!(submitted.contains("最终宽高比：21:9"));
+        assert!(submitted.contains("最终清晰度：4K"));
+        assert!(!submitted.contains("AI创作最终抠图规范"));
     }
 
     #[test]
@@ -3250,6 +3326,7 @@ mod tests {
             "上传主体图，观察从基础形态到终极形态的完整进化",
             "上传角色图，查看从婴儿到老年的连续年龄变化",
             "上传角色图，探索从纤细到魁梧的多种体型",
+            "上传风格参考图，生成前中后景分层、首尾无缝衔接的横版地图",
         ] {
             assert!(launcher.contains(hint) || canvas.contains(hint), "missing AI creation hint: {hint}");
         }
@@ -6855,7 +6932,7 @@ mod tests {
     }
 
     #[test]
-    fn viewer_right_click_exposes_the_relevant_creation_workflows() {
+    fn viewer_right_click_uses_the_shared_import_picker() {
         use i_slint_backend_testing::ElementHandle;
         use slint::platform::PointerEventButton;
 
@@ -6869,11 +6946,6 @@ mod tests {
         state.set_viewer_width(1024);
         state.set_viewer_height(1024);
         state.set_viewer_open(true);
-        let selected_workflows = Rc::new(RefCell::new(Vec::<String>::new()));
-        let observed_workflows = selected_workflows.clone();
-        state.on_viewer_open_creation_workflow(move |id, _, _, _| {
-            observed_workflows.borrow_mut().push(id.to_string());
-        });
         app.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
         app.show().expect("show app window");
 
@@ -6881,42 +6953,20 @@ mod tests {
             .next()
             .expect("viewer image touch area");
 
-        for (label, expected_id) in [
-            ("导入角色年龄变化", "character-age"),
-            ("导入角色换装", "character-outfit"),
-            ("导入角色体型修改", "character-body"),
-            ("导入升级进化", "upgrade-evolution"),
-            ("导入建筑衍生器", "building-derivation"),
-        ] {
-            image_touch.mock_single_click(PointerEventButton::Right);
-            ElementHandle::find_by_accessible_label(&app, label)
-                .next()
-                .unwrap_or_else(|| panic!("character context menu should expose {label}"))
-                .mock_single_click(PointerEventButton::Left);
-            assert_eq!(
-                selected_workflows.borrow().last().map(String::as_str),
-                Some(expected_id)
-            );
-        }
-
-        state.set_viewer_category("scene".into());
         image_touch.mock_single_click(PointerEventButton::Right);
-        for label in ["导入角色年龄变化", "导入角色换装", "导入角色体型修改"] {
+        for label in ["导入角色年龄变化", "导入角色换装", "导入角色体型修改", "导入升级进化", "导入建筑衍生器"] {
             assert!(
                 ElementHandle::find_by_accessible_label(&app, label)
                     .next()
                     .is_none(),
-                "non-character context menu must hide {label}"
+                "context menu must not expose the removed shortcut {label}"
             );
         }
-        ElementHandle::find_by_accessible_label(&app, "导入升级进化")
+        ElementHandle::find_by_accessible_label(&app, "导入")
             .next()
-            .expect("upgrade evolution must be available for every image category")
+            .expect("context menu import action")
             .mock_single_click(PointerEventButton::Left);
-        assert_eq!(
-            selected_workflows.borrow().last().map(String::as_str),
-            Some("upgrade-evolution")
-        );
+        assert_eq!(ElementHandle::find_by_element_type_name(&app, "FreeCanvasCard").count(), 8);
     }
 
     #[test]
@@ -7069,8 +7119,11 @@ mod tests {
         ElementHandle::find_by_element_id(&app, "ViewerOverlay::image-touch")
             .next().expect("viewer image touch area")
             .mock_single_click(PointerEventButton::Right);
-        ElementHandle::find_by_accessible_label(&app, "导入建筑衍生器")
-            .next().expect("building derivation menu item")
+        ElementHandle::find_by_accessible_label(&app, "导入")
+            .next().expect("context menu import action")
+            .mock_single_click(PointerEventButton::Left);
+        ElementHandle::find_by_element_type_name(&app, "FreeCanvasCard")
+            .nth(6).expect("building derivation workflow card")
             .mock_single_click(PointerEventButton::Left);
         video_image_callbacks::tests::scoped_inputs::pump(|| !state.get_viewer_open());
         assert_eq!(state.get_page(), "canvas");
@@ -7149,9 +7202,13 @@ mod tests {
             .next()
             .expect("viewer image touch area")
             .mock_single_click(PointerEventButton::Right);
-        ElementHandle::find_by_accessible_label(&app, "导入升级进化")
+        ElementHandle::find_by_accessible_label(&app, "导入")
             .next()
-            .expect("upgrade evolution context menu item")
+            .expect("context menu import action")
+            .mock_single_click(PointerEventButton::Left);
+        ElementHandle::find_by_element_type_name(&app, "FreeCanvasCard")
+            .nth(3)
+            .expect("upgrade evolution workflow card")
             .mock_single_click(PointerEventButton::Left);
 
         video_image_callbacks::tests::scoped_inputs::pump(|| !state.get_viewer_open());
@@ -7165,7 +7222,9 @@ mod tests {
         assert!(template.contains("主要通过服装等级、武器、装备、护甲"));
         assert!(template.contains("若主体是怪物、机械生物或其他生物"));
         assert!(template.contains("允许随等级逐步改变体型、身体比例、轮廓和形态"));
-        assert!(template.contains("若主体是武器、道具、载具、植物或建筑"));
+        assert!(template.contains("若主体是建筑"));
+        assert!(template.contains("不得保持建筑形状不变"));
+        assert!(template.contains("若主体是武器、道具、载具或植物"));
         let submitted = compose_canvas_workflow_prompt(&template, "", 8, false);
         assert!(submitted.contains("白、绿、蓝、紫、橙、红"));
         assert!(submitted.contains("等级色只能作为局部品质标识"));
@@ -7323,7 +7382,7 @@ mod tests {
     }
 
     #[test]
-    fn new_generation_badge_can_be_dismissed() {
+    fn new_generation_card_click_dismisses_the_badge_and_opens_the_viewer() {
         let state = include_str!("../../ui/app-state.slint");
         let card = include_str!("../../ui/components/thumbnail-card.slint");
         let callbacks = include_str!("callbacks/generation.rs");
@@ -7336,6 +7395,8 @@ mod tests {
         assert!(card.contains("hover.mouse-x < root.outline-pad + 46px"));
         assert!(card.contains("x: parent.width - 38px;"));
         assert!(card.contains("AppState.dismiss-new-generation(root.item.id);"));
+        assert!(card.contains("if root.new-tag-visible() {"));
+        assert!(card.contains("AppState.open-viewer(root.item.id, root.source);"));
         assert!(callbacks.contains("state.on_dismiss_new_generation"));
     }
 
@@ -7552,6 +7613,8 @@ mod tests {
         let state = include_str!("../../ui/app-state.slint");
         let callbacks = include_str!("callbacks/viewer.rs");
         let references = include_str!("callbacks/reference.rs");
+        let viewer_prepare = callbacks.split_once("state.on_prepare_viewer_file_drag(").unwrap().1
+            .split_once("state.on_start_viewer_file_drag(").unwrap().0;
         let viewer_drag = callbacks.split_once("state.on_start_viewer_file_drag(").unwrap().1
             .split_once("state.on_viewer_cutout_image(").unwrap().0;
         let preparation = references.split_once("fn start_reference_native_drag(").unwrap().1
@@ -7560,7 +7623,9 @@ mod tests {
             .split_once("fn reference_pointer_exit(").unwrap().0;
 
         assert!(state.contains("callback start-viewer-file-drag() -> bool;"));
+        assert!(state.contains("callback prepare-viewer-file-drag() -> bool;"));
         assert!(viewer.contains("property <bool> image-drag-armed: false;"));
+        assert!(viewer.contains("AppState.prepare-viewer-file-drag();"));
         assert!(viewer.contains("AppState.start-viewer-file-drag();"));
         assert!(viewer.contains("if viewer-image-stage.can-pan"));
         assert!(viewer.contains("root.image-drag-armed = false;"));
@@ -7572,6 +7637,7 @@ mod tests {
         assert!(cleanup.contains("root.image-drag-armed = false;"));
         assert!(cleanup.contains("root.image-system-drag-started = false;"));
         assert!(callbacks.contains("state.on_start_viewer_file_drag"));
+        assert!(viewer_prepare.contains("state.invoke_prepare_thumbnail_file_drag("));
         assert!(viewer_drag.contains("viewer_item(&store.borrow(), &id, &source)"));
         assert!(viewer_drag.contains("state.invoke_start_thumbnail_file_drag("));
         assert!(preparation.contains("ReferenceCapture::native(app,&context)"));
@@ -8049,6 +8115,9 @@ mod tests {
         assert!(!submission.contains("references_for_category_mut"));
         assert!(!submission.contains("push_references(app"));
         assert!(!submission.contains("canvas_references.clear()"));
+        assert!(submission.contains("side_scroll_map_canvas"));
+        assert!(submission.contains("build_side_scroll_map_generation_prompt"));
+        assert!(submission.contains("destination == GenerationDestination::Gallery"));
         // No actual thumbnail submission fixture is implied by these source checks.
     }
 

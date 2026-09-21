@@ -91,15 +91,26 @@ pub(crate) fn install_external_image_drop_target(window: &slint::Window) -> bool
     windows_drop_target::install(window)
 }
 
+#[cfg(windows)]
+pub(crate) fn uninstall_external_image_drop_target(window: &slint::Window) {
+    windows_drop_target::uninstall(window);
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn install_external_image_drop_target(window: &slint::Window) -> bool {
     macos_drop_target::install(window)
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn uninstall_external_image_drop_target(_window: &slint::Window) {}
+
 #[cfg(all(not(windows), not(target_os = "macos")))]
 pub(crate) fn install_external_image_drop_target(_window: &slint::Window) -> bool {
     true
 }
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+pub(crate) fn uninstall_external_image_drop_target(_window: &slint::Window) {}
 
 #[cfg(target_os = "macos")]
 pub(crate) fn schedule_application_icon_install() {
@@ -395,7 +406,7 @@ mod windows_drop_target {
     use super::{queue_external_image_drop, ExternalDropPosition, ExternalImageDrop};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use std::{
-        cell::{RefCell, UnsafeCell},
+        cell::{Cell, RefCell, UnsafeCell},
         ffi::OsString,
         os::windows::ffi::OsStringExt,
         path::PathBuf,
@@ -413,7 +424,7 @@ mod windows_drop_target {
                 Ole::{
                     IDropTarget, IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium,
                     RevokeDragDrop, CF_HDROP, CF_UNICODETEXT, DROPEFFECT, DROPEFFECT_COPY,
-                    DROPEFFECT_NONE,
+                    DROPEFFECT_NONE, OleInitialize, OleUninitialize,
                 },
                 SystemServices::MODIFIERKEYS_FLAGS,
             },
@@ -423,6 +434,7 @@ mod windows_drop_target {
 
     thread_local! {
         static DROP_TARGET: RefCell<Option<IDropTarget>> = const { RefCell::new(None) };
+        static OLE_INITIALIZED: Cell<bool> = const { Cell::new(false) };
     }
 
     pub(super) fn install(window: &slint::Window) -> bool {
@@ -434,16 +446,41 @@ mod windows_drop_target {
             return false;
         };
         let hwnd = HWND(handle.hwnd.get() as *mut _);
+        if unsafe { OleInitialize(None) }.is_err() {
+            return false;
+        }
         let target: IDropTarget = NativeImageDropTarget::new(hwnd).into();
 
         let _ = unsafe { RevokeDragDrop(hwnd) };
         if unsafe { RegisterDragDrop(hwnd, &target) }.is_err() {
+            unsafe { OleUninitialize() };
             return false;
         }
+        OLE_INITIALIZED.with(|initialized| initialized.set(true));
         DROP_TARGET.with(|slot| {
             slot.replace(Some(target));
         });
         true
+    }
+
+    pub(super) fn uninstall(window: &slint::Window) {
+        let window_accessor = window.window_handle();
+        let Ok(window_handle) = window_accessor.window_handle() else {
+            return;
+        };
+        let RawWindowHandle::Win32(handle) = window_handle.as_raw() else {
+            return;
+        };
+        let hwnd = HWND(handle.hwnd.get() as *mut _);
+        let _ = unsafe { RevokeDragDrop(hwnd) };
+        DROP_TARGET.with(|slot| {
+            slot.replace(None);
+        });
+        OLE_INITIALIZED.with(|initialized| {
+            if initialized.replace(false) {
+                unsafe { OleUninitialize() };
+            }
+        });
     }
 
     #[implement(IDropTarget)]

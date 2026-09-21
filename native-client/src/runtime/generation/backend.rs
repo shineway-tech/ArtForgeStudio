@@ -1478,6 +1478,8 @@ pub(super) fn start_backend_generation_with_billing_scope(
     };
     let store = context.store.clone();
     let state = app.global::<AppState>();
+    let side_scroll_map_canvas = matches!(&destination, GenerationDestination::Canvas { .. })
+        && state.get_canvas_workflow_id().as_str() == "side-scroll-map";
     let model_code = state.get_image_model().to_string();
     if model_code.trim().is_empty() {
         state.set_generation_status("服务端没有可用的图像模型".into());
@@ -1509,9 +1511,22 @@ pub(super) fn start_backend_generation_with_billing_scope(
         &raw_prompt,
         &state.get_quote_ratio().to_string(),
     );
+    let ratio = if side_scroll_map_canvas {
+        normalize_side_scroll_map_ratio(&ratio)
+    } else {
+        ratio
+    };
     let quality = state.get_quality().to_string();
-    let count = forced_count.unwrap_or_else(|| state.get_count().clamp(1, 4));
-    let mode = state.get_mode().to_string();
+    let count = if side_scroll_map_canvas {
+        1
+    } else {
+        forced_count.unwrap_or_else(|| state.get_count().clamp(1, 4))
+    };
+    let mode = if side_scroll_map_canvas {
+        "game".to_string()
+    } else {
+        state.get_mode().to_string()
+    };
     let original_references = {
         let store = store.borrow();
         let references = match &destination {
@@ -1578,25 +1593,32 @@ pub(super) fn start_backend_generation_with_billing_scope(
     } else {
         raw_prompt.clone()
     };
-    let language = if uses_deep_english
-        || state.get_translate_prompt()
-        || state.get_language().as_str() == "en"
-    {
+    let language = if side_scroll_map_canvas {
+        if state.get_language().as_str() == "en" {
+            PromptLanguage::English
+        } else {
+            PromptLanguage::Chinese
+        }
+    } else if uses_deep_english || state.get_translate_prompt() || state.get_language().as_str() == "en" {
         PromptLanguage::English
     } else {
         PromptLanguage::Chinese
     };
-    let generation_prompt = build_generation_prompt_for_destination(
-        &raw_prompt,
-        &state.get_negative_prompt().to_string(),
-        &controls,
-        &quote,
-        &category,
-        &ratio,
-        &quality,
-        language,
-        &destination,
-    );
+    let generation_prompt = if side_scroll_map_canvas {
+        build_side_scroll_map_generation_prompt(&raw_prompt, &ratio, &quality, language)
+    } else {
+        build_generation_prompt_for_destination(
+            &raw_prompt,
+            &state.get_negative_prompt().to_string(),
+            &controls,
+            &quote,
+            &category,
+            &ratio,
+            &quality,
+            language,
+            &destination,
+        )
+    };
     let recoverable_delivery_id = retry_failed_id.as_deref().filter(|failed_asset_id| {
         store.borrow().generations.iter().any(|item| {
             item.id == *failed_asset_id

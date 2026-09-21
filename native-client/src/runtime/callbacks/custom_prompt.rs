@@ -687,7 +687,8 @@ pub(super) fn wire_custom_prompt_callbacks(app:&AppWindow,context:AppContext){
             // an actual selected-set change, never by unrelated saved debt.
             let changed=capture.apply(&app,||{
                 app.global::<AppState>().set_prompt(editor.clone().into());
-                let store=context.store.borrow();
+                let mut store=context.store.borrow_mut();
+                set_prompt_draft_for_category(&mut store.prompt_drafts,&category,editor.clone());
                 let selected=store.selected_custom_prompts.get(&category).cloned().unwrap_or_default();
                 let retained=selected.iter().filter(|prompt|editor.contains(&inline_custom_prompt_display_text(&custom_prompt_display_name(&store,prompt)))).cloned().collect::<BTreeSet<_>>();
                 if retained==selected{push_custom_prompts(&app,&store);None}else{Some(retained)}
@@ -1953,6 +1954,9 @@ mod core_custom_effect_tests{
         assert_eq!(before,0,"ordinary keystrokes spawned an acknowledgment worker");
         assert!(durable.custom_prompts.is_empty(),"ordinary keystrokes persisted an unrelated Store row");
         assert_eq!(app.global::<AppState>().get_prompt(),"ordinary keystroke 31");
+        let store=f.context.store.borrow();
+        assert_eq!(store.prompt_drafts.character,"ordinary keystroke 31");
+        assert!(store.prompt_drafts.scene.is_empty());
     }
     #[test]
     fn core_custom_typing_does_not_treat_unrelated_save_debt_as_retry(){

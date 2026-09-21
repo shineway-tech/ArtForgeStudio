@@ -1,7 +1,15 @@
-#[cfg(target_os = "windows")]
-use std::path::Path;
-use std::path::PathBuf;
 use crate::runtime::native_drag::CapturedNativeFileDrag;
+
+#[cfg(target_os = "windows")]
+pub(crate) fn start_thumbnail_file_drag_path(path: std::path::PathBuf) -> bool {
+    if !path.is_file() { return false; }
+    unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture(); }
+    let result = windows_file_drag::run(path).is_ok();
+    unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture(); }
+    result
+}
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn start_thumbnail_file_drag_path(_path: std::path::PathBuf) -> bool { false }
 
 /// Synchronous: the caller's registered worker owns activity, external-worker
 /// admission and cancellation through the entire native preview loop.
@@ -35,7 +43,6 @@ pub(crate) fn start_thumbnail_file_drag_captured(_drag: CapturedNativeFileDrag) 
 
 #[cfg(target_os = "windows")]
 mod windows_preview {
-    use super::*;
     use image::imageops::FilterType;
     use std::ffi::c_void;
     use std::mem::{size_of, zeroed};
@@ -285,7 +292,6 @@ mod windows_file_drag {
     use std::cell::Cell;
     use std::fmt::Write as _;
     use std::mem::{size_of, ManuallyDrop};
-    use std::os::windows::ffi::OsStrExt;
     use std::path::{Path, PathBuf};
     use std::ptr::{copy_nonoverlapping, null_mut};
     use std::sync::OnceLock;
@@ -359,7 +365,7 @@ mod windows_file_drag {
                 } else if format.cfFormat == uri_list_format() {
                     create_text_memory(&file_uri_for_path(&self.path))?
                 } else if text_format_supported(format.cfFormat) {
-                    create_text_memory(&self.path.display().to_string())?
+                    create_text_memory(&shell_display_path(&self.path))?
                 } else if format.cfFormat == preferred_drop_effect_format() {
                     create_drop_effect_memory(DROPEFFECT_COPY.0)?
                 } else {
@@ -613,8 +619,25 @@ mod windows_file_drag {
     }
 
     fn file_uri_for_path(path: &Path) -> String {
-        let path_text = path.display().to_string().replace('\\', "/");
-        format!("file:///{}\r\n", percent_encode_uri_path(&path_text))
+        let path_text = shell_display_path(path).replace('\\', "/");
+        let encoded = percent_encode_uri_path(&path_text);
+        if encoded.starts_with("//") {
+            format!("file:{encoded}\r\n")
+        } else {
+            format!("file:///{encoded}\r\n")
+        }
+    }
+
+    fn shell_display_path(path: &Path) -> String {
+        let windows_path = path.display().to_string().replace('/', "\\");
+        if let Some(unc) = windows_path.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{unc}")
+        } else {
+            windows_path
+                .strip_prefix(r"\\?\")
+                .unwrap_or(&windows_path)
+                .to_string()
+        }
     }
 
     fn percent_encode_uri_path(value: &str) -> String {
@@ -629,6 +652,67 @@ mod windows_file_drag {
             }
         }
         encoded
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+        use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
+
+        #[test]
+        fn data_object_exposes_file_and_text_formats_for_drop_targets() {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("drag-source.png");
+            std::fs::write(&path, b"drag-source").unwrap();
+            let data: IDataObject = FileDataObject { path }.into();
+
+            for index in 0..FORMAT_COUNT {
+                let format = format_at(index).unwrap();
+                assert_eq!(unsafe { data.QueryGetData(&format) }, S_OK);
+                let mut medium = unsafe { data.GetData(&format) }.unwrap();
+                unsafe { windows::Win32::System::Ole::ReleaseStgMedium(&mut medium) };
+            }
+        }
+
+        #[test]
+        fn uri_list_normalizes_windows_verbatim_paths() {
+            let uri = file_uri_for_path(Path::new(r"\\?\E:\旧目录\作品.png"));
+            assert!(uri.starts_with("file:///E:/"));
+            assert!(!uri.contains("%3F"));
+            assert!(uri.ends_with(".png\r\n"));
+
+            assert_eq!(
+                file_uri_for_path(Path::new(r"\\?\UNC\server\share\作品.png")),
+                "file://server/share/%E4%BD%9C%E5%93%81.png\r\n"
+            );
+        }
+
+        #[test]
+        fn hdrop_and_filename_formats_hide_verbatim_prefixes_from_receivers() {
+            let path = PathBuf::from(r"\\?\E:\旧目录\作品.png");
+            let data: IDataObject = FileDataObject { path }.into();
+
+            let mut hdrop_medium = unsafe { data.GetData(&drag_format()) }.unwrap();
+            let hdrop = HDROP(unsafe { hdrop_medium.u.hGlobal.0 } as *mut _);
+            let character_count = unsafe { DragQueryFileW(hdrop, 0, None) } as usize;
+            let mut buffer = vec![0; character_count + 1];
+            unsafe { DragQueryFileW(hdrop, 0, Some(&mut buffer)) };
+            let dropped = OsString::from_wide(&buffer[..character_count]);
+            assert_eq!(dropped.to_string_lossy(), r"E:\旧目录\作品.png");
+            unsafe { windows::Win32::System::Ole::ReleaseStgMedium(&mut hdrop_medium) };
+
+            let mut filename_medium = unsafe { data.GetData(&file_name_w_format_etc()) }.unwrap();
+            let global = unsafe { filename_medium.u.hGlobal };
+            let pointer = unsafe { GlobalLock(global) }.cast::<u16>();
+            let unit_count = unsafe { windows::Win32::System::Memory::GlobalSize(global) }
+                / size_of::<u16>();
+            let units = unsafe { std::slice::from_raw_parts(pointer, unit_count) }
+                .iter().copied().take_while(|unit| *unit != 0).collect::<Vec<_>>();
+            assert_eq!(String::from_utf16(&units).unwrap(), r"E:\旧目录\作品.png");
+            let _ = unsafe { GlobalUnlock(global) };
+            unsafe { windows::Win32::System::Ole::ReleaseStgMedium(&mut filename_medium) };
+        }
     }
 
     unsafe fn create_text_memory(text: &str) -> Result<windows::Win32::Foundation::HGLOBAL> {
@@ -663,7 +747,8 @@ mod windows_file_drag {
     }
 
     unsafe fn create_hdrop_memory(path: &Path) -> Result<windows::Win32::Foundation::HGLOBAL> {
-        let mut wide_path: Vec<u16> = path.as_os_str().encode_wide().collect();
+        let display_path = shell_display_path(path);
+        let mut wide_path: Vec<u16> = display_path.encode_utf16().collect();
         wide_path.push(0);
 
         let header_size = size_of::<DROPFILES>();

@@ -1877,6 +1877,11 @@ pub(super) fn compose_canvas_workflow_prompt(
     if template.trim().is_empty() {
         return user_description.to_string();
     }
+    if template.contains("横版无缝地图规范：")
+        || template.contains("Side-scrolling seamless map specification:")
+    {
+        return compose_side_scroll_map_prompt(user_description, english);
+    }
 
     let step_count = requested_step_count.clamp(4, 12);
     let top_count = (step_count + 1) / 2;

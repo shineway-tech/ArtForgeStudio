@@ -64,6 +64,7 @@ pub(super) fn run() -> Result<()> {
         }
     });
     let result = app.run();
+    platform::uninstall_external_image_drop_target(app.window());
     drop(platform::take_external_image_drops());
     dispose_pending_native_file_drag_for_shutdown();
     // Stop and join playback even if the event loop returned an error. It must
