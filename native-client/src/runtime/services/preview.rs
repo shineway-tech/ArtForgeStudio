@@ -78,6 +78,29 @@ pub(super) fn prepare_owned_preview(persistence: &PrivatePersistence, path: &Pat
     let rgba = if width.max(height) > edge { decoded.thumbnail(edge, edge) } else { decoded }.to_rgba8();
     Ok(PreparedDeliveryPreview { width, height, preview_width: rgba.width(), preview_height: rgba.height(), rgba: rgba.into_raw() })
 }
+/// Public examples have a separate, narrowly scoped source from private account files.
+pub(super) fn prepare_inspiration_preview(id: &str, path: &Path) -> Result<PreparedDeliveryPreview> {
+    use image::ImageDecoder;
+    let index = id.strip_prefix("inspiration-").and_then(|value| value.parse::<usize>().ok())
+        .filter(|index| (1..=38).contains(index)).ok_or_else(|| anyhow!("unknown bundled inspiration"))?;
+    let filename = format!("inspiration-{index:02}.png");
+    anyhow::ensure!(inspiration_dirs().iter().any(|dir| dir.join(&filename) == path),
+        "inspiration preview source is outside bundled catalog");
+    anyhow::ensure!(fs::symlink_metadata(path)?.file_type().is_file(), "inspiration source is not a regular bundled file");
+    let reader = image::ImageReader::open(path)?.with_guessed_format()?;
+    let mut decoder = reader.into_decoder()?;
+    let (width, height) = decoder.dimensions();
+    anyhow::ensure!(width > 0 && height > 0 && u64::from(width) * u64::from(height) <= MAX_PREVIEW_SOURCE_PIXELS,
+        "inspiration image dimensions exceed preview policy");
+    let orientation = decoder.orientation()?;
+    let mut decoded = image::DynamicImage::from_decoder(decoder)?;
+    decoded.apply_orientation(orientation);
+    let (width, height) = (decoded.width(), decoded.height());
+    let edge = PreviewPurpose::Viewer.longest_edge();
+    let rgba = if width.max(height) > edge { decoded.thumbnail(edge, edge) } else { decoded }.to_rgba8();
+    Ok(PreparedDeliveryPreview { width, height, preview_width: rgba.width(), preview_height: rgba.height(), rgba: rgba.into_raw() })
+}
+
 pub(super) fn load_owned_preview_image(persistence: &PrivatePersistence, path: &Path, purpose: PreviewPurpose) -> Result<Image> {
     let _effect = persistence.begin_effect()?;
     let prepared = prepare_owned_preview(persistence, path, purpose)?;
