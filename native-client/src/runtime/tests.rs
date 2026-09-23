@@ -6352,6 +6352,9 @@ mod tests {
         assert!(credits.contains("if AppState.credit-promotion-active: MidAutumnHero"));
         assert_eq!(credits.matches("MidAutumnHero").count(), 1);
         assert!(credits.contains("credit-promotion-ends-at"));
+        assert!(credits.contains("background: @linear-gradient(135deg, #2b316f, #151a48);"));
+        assert!(credits.contains("drop-shadow-blur: 24px;"));
+        assert!(credits.contains("background: #11163fcc;"));
         assert!(!credits.contains("已选择"));
         assert!(!credits.contains("Selected:"));
         assert!(credits.contains("text: AppState.en ? \"Recharge now\" : \"立即充值\";"));

@@ -62,22 +62,79 @@ component CreditBalanceCard inherits Rectangle {
 
 component MidAutumnHero inherits Rectangle {
     height: 154px;
-    background: #1f2452;
+    background: @linear-gradient(135deg, #2b316f, #151a48);
     border-radius: 16px;
     clip: true;
 
+    // Soft atmospheric layers keep the background festive without competing
+    // with the promotion copy on the left.
     Rectangle {
-        x: parent.width - 118px;
-        y: 18px;
-        width: 72px;
-        height: 72px;
-        background: #f7d477;
-        border-radius: 36px;
+        x: -58px;
+        y: -46px;
+        width: 270px;
+        height: 124px;
+        background: #8791d11c;
+        border-radius: 62px;
     }
+    Rectangle {
+        x: parent.width - 306px;
+        y: 44px;
+        width: 134px;
+        height: 24px;
+        background: #aab4e51c;
+        border-radius: 12px;
+    }
+    Rectangle {
+        x: parent.width - 246px;
+        y: 54px;
+        width: 92px;
+        height: 18px;
+        background: #aab4e512;
+        border-radius: 9px;
+    }
+
+    Rectangle {
+        x: parent.width - 156px;
+        y: 14px;
+        width: 94px;
+        height: 94px;
+        background: #f8d477;
+        border-radius: 47px;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #f8d47755;
+    }
+    Rectangle { x: parent.width - 132px; y: 34px; width: 10px; height: 10px; background: #e7bd5d55; border-radius: 5px; }
+    Rectangle { x: parent.width - 112px; y: 70px; width: 6px; height: 6px; background: #e7bd5d44; border-radius: 3px; }
     Rectangle { x: 26px; y: 24px; width: 4px; height: 4px; background: #f7d477; border-radius: 2px; }
     Rectangle { x: 74px; y: 18px; width: 3px; height: 3px; background: #f7d477; border-radius: 2px; }
     Rectangle { x: parent.width - 164px; y: 86px; width: 4px; height: 4px; background: #f7d477; border-radius: 2px; }
     Rectangle { x: parent.width - 204px; y: 38px; width: 3px; height: 3px; background: #f7d477; border-radius: 2px; }
+
+    // Low-contrast hills anchor the illustration at the bottom edge.
+    Rectangle {
+        x: -34px;
+        y: 126px;
+        width: 196px;
+        height: 54px;
+        background: #11163fcc;
+        border-radius: 98px;
+    }
+    Rectangle {
+        x: 92px;
+        y: 136px;
+        width: 236px;
+        height: 44px;
+        background: #171c4dcc;
+        border-radius: 118px;
+    }
+    Rectangle {
+        x: parent.width - 164px;
+        y: 128px;
+        width: 206px;
+        height: 52px;
+        background: #10153dcc;
+        border-radius: 103px;
+    }
 
     // A light, low-density rabbit outline keeps the seasonal cue quiet.
     Rectangle {
