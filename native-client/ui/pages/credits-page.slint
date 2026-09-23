@@ -225,25 +225,6 @@ component MidAutumnHero inherits Rectangle {
         font-weight: 500;
         overflow: elide;
     }
-    Text {
-        x: parent.width - 146px;
-        y: 118px;
-        width: 112px;
-        height: 20px;
-        text: AppState.en ? "View rules →" : "查看活动规则 →";
-        color: #f7d477;
-        font-size: 11px;
-        font-weight: 500;
-        horizontal-alignment: right;
-    }
-    TouchArea {
-        x: parent.width - 152px;
-        y: 110px;
-        width: 132px;
-        height: 34px;
-        mouse-cursor: pointer;
-        clicked => { AppState.open-agreement(AppState.purchase-credit-rules-title, AppState.purchase-credit-rules-url); }
-    }
 }
 
 component CreditLedgerSection {
