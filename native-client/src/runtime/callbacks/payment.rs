@@ -18,6 +18,7 @@ struct PaymentPresentation {
     waiting_message: String,
     success_message: String,
     success_detail: String,
+    credit_fallback_total: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,6 +38,13 @@ impl PaymentOrderKind {
 
 impl PaymentPresentation {
     fn credit(credits: &str) -> Self {
+        Self::credit_with_total(credits)
+    }
+    fn credit_with_recharge(fallback_total: &str, recharge: Option<&CreditRechargeSummary>) -> Self {
+        let total = recharge.and_then(|r| r.total_credits.as_deref()).filter(|v| !v.trim().is_empty()).unwrap_or(fallback_total);
+        Self::credit_with_total(total)
+    }
+    fn credit_with_total(credits: &str) -> Self {
         let credits = credits.trim();
         Self {
             waiting_message: "已在浏览器中打开支付宝，客户端正在等待积分充值结果".to_string(),
@@ -46,6 +54,7 @@ impl PaymentPresentation {
                 format!("{credits} 积分已到账")
             },
             success_detail: "积分余额已更新".to_string(),
+            credit_fallback_total: credits.to_string(),
         }
     }
 
@@ -61,6 +70,7 @@ impl PaymentPresentation {
                 format!("{plan_name}会员已生效")
             },
             success_detail: "会员权益与有效期已更新".to_string(),
+            credit_fallback_total: String::new(),
         }
     }
 }
@@ -438,7 +448,8 @@ fn continue_payment_order(app:&AppWindow,context:AppContext,capture:PaymentCaptu
         let matched=payment_matches(&context,&capture.session,&key);
         release_payment_tracking(&context,&capture,&key);
         let visible=apply_payment_ui(app,&context,&capture,&payer,|state|{
-            apply_payment_presentation(state,started.kind,&started.presentation);
+            let settled_presentation = if started.kind == PaymentOrderKind::Credit { PaymentPresentation::credit_with_recharge(&started.presentation.credit_fallback_total, started.order.credit_recharge.as_ref()) } else { started.presentation.clone() };
+            apply_payment_presentation(state,started.kind,&settled_presentation);
             if matched {
                 state.set_payment_active(false);state.set_payment_browser_ready(false);
                 if phase==PaymentOrderPhase::Fulfilled {
@@ -700,7 +711,7 @@ fn start_new_payment(
         };
         is_upgrade=state.get_membership_tier_rank()>0 && target.tier_rank>state.get_membership_tier_rank();
         PaymentPresentation::membership(target.name.as_str())
-    }else{PaymentPresentation::credit(state.get_selected_credit_amount().as_str())};
+    }else{ let total = state.get_selected_credit_total(); let total = if total.trim().is_empty() { state.get_selected_credit_amount() } else { total }; PaymentPresentation::credit(total.as_str()) };
     let key=Uuid::new_v4().simple().to_string();
     let record=PendingOrderRecord{
         schema_version:2,kind:if kind==PaymentOrderKind::Credit{"credit"}else if is_upgrade{"membership_upgrade"}else{"membership"}.into(),
@@ -994,6 +1005,7 @@ mod tests {
             fulfillment_status: fulfillment_status.to_string(),
             payable_amount_cents: "100".to_string(),
             payment: None,
+            credit_recharge: None,
         }
     }
 
@@ -1054,6 +1066,17 @@ mod tests {
 
         let named_membership = PaymentPresentation::membership("年度会员");
         assert_eq!(named_membership.success_message, "年度会员已生效");
+    }
+
+    #[test]
+    fn payment_success_prefers_server_recharge_total() {
+        let recharge = CreditRechargeSummary {
+            base_credits: Some("10000".into()), bonus_credits: Some("2000".into()),
+            total_credits: Some("12000".into()), pack_code: Some("pack_10000".into()),
+            promotion_id: Some("mid-autumn".into()), promotion_ends_at: None,
+        };
+        let presentation = PaymentPresentation::credit_with_recharge("10000", Some(&recharge));
+        assert_eq!(presentation.success_message, "12000 积分已到账");
     }
 
     #[test]

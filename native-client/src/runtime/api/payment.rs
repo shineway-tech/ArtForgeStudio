@@ -13,6 +13,25 @@ pub(crate) struct CreditPack {
     pub(crate) discount_amount_cents: Option<String>,
     pub(crate) recharge_discount_bps: Option<i32>,
     pub(crate) credits: String,
+    #[serde(default)] pub(crate) bonus_credits: Option<String>,
+    #[serde(default)] pub(crate) total_credits: Option<String>,
+    #[serde(default)] pub(crate) promotion_id: Option<String>,
+    #[serde(default)] pub(crate) promotion_title: Option<String>,
+    #[serde(default)] pub(crate) promotion_description: Option<String>,
+    #[serde(default)] pub(crate) promotion_label: Option<String>,
+    #[serde(default)] pub(crate) promotion_ends_at: Option<String>,
+    #[serde(default)] pub(crate) promotion_copy: Option<String>,
+    #[serde(default)] pub(crate) promotion_deadline_label: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct CreditRechargeSummary {
+    #[serde(default)] pub(crate) base_credits: Option<String>,
+    #[serde(default)] pub(crate) bonus_credits: Option<String>,
+    #[serde(default)] pub(crate) total_credits: Option<String>,
+    #[serde(default)] pub(crate) pack_code: Option<String>,
+    #[serde(default)] pub(crate) promotion_id: Option<String>,
+    #[serde(default)] pub(crate) promotion_ends_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -30,6 +49,7 @@ pub(crate) struct OrderDetail {
     pub(crate) fulfillment_status: String,
     pub(crate) payable_amount_cents: String,
     pub(crate) payment: Option<PaymentCheckout>,
+    #[serde(default)] pub(crate) credit_recharge: Option<CreditRechargeSummary>,
 }
 
 #[derive(Serialize)]

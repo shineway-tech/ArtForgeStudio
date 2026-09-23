@@ -301,6 +301,11 @@ pub(crate) struct CreditLedgerItem {
     pub(crate) business_type: String,
     pub(crate) description: String,
     pub(crate) created_at: String,
+    #[serde(default)] pub(crate) base_credits: Option<String>,
+    #[serde(default)] pub(crate) bonus_credits: Option<String>,
+    #[serde(default)] pub(crate) total_credits: Option<String>,
+    #[serde(default)] pub(crate) price_cents: Option<String>,
+    #[serde(default)] pub(crate) promotion_id: Option<String>,
 }
 
 pub(crate) const CREDIT_LEDGER_PAGE_SIZE: usize = 8;
@@ -1888,6 +1893,7 @@ mod tests {
             business_type: "registration".to_string(),
             description: "注册赠送".to_string(),
             created_at: "2026-07-15T12:00:00Z".to_string(),
+            base_credits: None, bonus_credits: None, total_credits: None, price_cents: None, promotion_id: None,
         }
     }
 

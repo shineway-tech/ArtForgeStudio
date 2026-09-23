@@ -89,17 +89,7 @@ pub(super) fn prepare_activation_backend_projection(
         ui.push("".into(), |state, value| state.set_credit_reserved(value));
     }
     let available_packs = projection.packs.unwrap_or(&[]);
-    let packs = available_packs
-        .iter()
-        .map(|pack| CreditPackView {
-            code: pack.code.clone().into(),
-            name: pack.name.clone().into(),
-            credits: pack.credits.clone().into(),
-            price: format_cents(credit_pack_price_cents(pack)).into(),
-            price_cents: credit_pack_price_cents(pack).into(),
-            note: credit_pack_note(pack).into(),
-        })
-        .collect::<Vec<_>>();
+    let packs = available_packs.iter().map(credit_pack_view).collect::<Vec<_>>();
     let selected_code = preferred_pack.to_owned();
     if let Some(selected) = available_packs
         .iter()
@@ -108,12 +98,17 @@ pub(super) fn prepare_activation_backend_projection(
     {
         ui.push(selected.code.clone().into(), |state, value| state.set_selected_credit_pack_code(value));
         ui.push(selected.credits.clone().into(), |state, value| state.set_selected_credit_amount(value));
+        ui.push(credit_pack_bonus_credits(selected).into(), |state, value| state.set_selected_credit_bonus(value));
+        ui.push(credit_pack_total_credits(selected).into(), |state, value| state.set_selected_credit_total(value));
         ui.push(format_cents(credit_pack_price_cents(selected)).into(), |state, value| state.set_selected_credit_price(value));
     } else {
         ui.push("".into(), |state, value| state.set_selected_credit_pack_code(value));
         ui.push("".into(), |state, value| state.set_selected_credit_amount(value));
+        ui.push("".into(), |state, value| state.set_selected_credit_bonus(value));
+        ui.push("".into(), |state, value| state.set_selected_credit_total(value));
         ui.push("".into(), |state, value| state.set_selected_credit_price(value));
     }
+    apply_promotion_state(&mut ui, available_packs);
     let prepared_invoice_packs=packs.clone();
     ui.push(ModelRc::new(VecModel::from(packs)), |state, value| state.set_credit_packs(value));
     let available_plans = projection.plans.unwrap_or(&[]);
@@ -1940,7 +1935,7 @@ pub(super) fn clear_billing_snapshot_state(app: &AppWindow, context: &AppContext
     state.set_credit_balance("".into()); state.set_credit_reserved("".into());
     invalidate_credit_account_view(&context.store); reset_credit_ledger(app, &context.store, &[], None);
     state.set_credit_packs(ModelRc::new(VecModel::default())); state.set_invoice_orders(ModelRc::new(VecModel::default()));
-    state.set_selected_credit_pack_code("".into()); state.set_selected_credit_amount("".into()); state.set_selected_credit_price("".into());
+    state.set_selected_credit_pack_code("".into()); state.set_selected_credit_amount("".into()); state.set_selected_credit_bonus("".into()); state.set_selected_credit_total("".into()); state.set_selected_credit_price("".into());
     state.set_payment_active(false); state.set_payment_dialog_open(false); state.set_payment_browser_ready(false);
     state.set_payment_status_message("".into()); state.set_payment_waiting_message("".into());
     state.set_payment_success_message("".into()); state.set_payment_success_detail("".into());
@@ -1983,7 +1978,14 @@ pub(super) fn clear_account_snapshot_state(app: &AppWindow, context: &AppContext
     state.set_credit_packs(ModelRc::new(VecModel::from(Vec::<CreditPackView>::new())));
     state.set_selected_credit_pack_code("".into());
     state.set_selected_credit_amount("".into());
+    state.set_selected_credit_bonus("".into());
+    state.set_selected_credit_total("".into());
     state.set_selected_credit_price("".into());
+    state.set_credit_promotion_active(false);
+    state.set_credit_promotion_title("".into());
+    state.set_credit_promotion_description("".into());
+    state.set_credit_promotion_label("".into());
+    state.set_credit_promotion_ends_at("".into());
     state.set_credit_payment_busy(false);
     state.set_credit_payment_message("".into());
     clear_credit_redemption_state(app);
@@ -2536,17 +2538,7 @@ fn apply_backend_snapshot_projection(
         true
     };
     let available_packs = projection.packs.unwrap_or(&[]);
-    let packs = available_packs
-        .iter()
-        .map(|pack| CreditPackView {
-            code: pack.code.clone().into(),
-            name: pack.name.clone().into(),
-            credits: pack.credits.clone().into(),
-            price: format_cents(credit_pack_price_cents(pack)).into(),
-            price_cents: credit_pack_price_cents(pack).into(),
-            note: credit_pack_note(pack).into(),
-        })
-        .collect::<Vec<_>>();
+    let packs = available_packs.iter().map(credit_pack_view).collect::<Vec<_>>();
     let selected_code = state.get_selected_credit_pack_code().to_string();
     if let Some(selected) = available_packs
         .iter()
@@ -2555,12 +2547,17 @@ fn apply_backend_snapshot_projection(
     {
         state.set_selected_credit_pack_code(selected.code.clone().into());
         state.set_selected_credit_amount(selected.credits.clone().into());
+        state.set_selected_credit_bonus(credit_pack_bonus_credits(selected).into());
+        state.set_selected_credit_total(credit_pack_total_credits(selected).into());
         state.set_selected_credit_price(format_cents(credit_pack_price_cents(selected)).into());
     } else {
         state.set_selected_credit_pack_code("".into());
         state.set_selected_credit_amount("".into());
+        state.set_selected_credit_bonus("".into());
+        state.set_selected_credit_total("".into());
         state.set_selected_credit_price("".into());
     }
+    apply_promotion_state_state(&state, available_packs);
     state.set_credit_packs(ModelRc::new(VecModel::from(packs)));
     let available_plans = projection.plans.unwrap_or(&[]);
     state.set_membership_plans(ModelRc::new(VecModel::from(
@@ -2915,7 +2912,7 @@ fn format_membership_ends_at(ends_at: &str) -> String {
         .to_string()
 }
 
-fn format_cents(value: &str) -> String {
+pub(super) fn format_cents(value: &str) -> String {
     let value = value.trim();
     let (sign, digits) = value
         .strip_prefix('-')
@@ -2939,6 +2936,28 @@ fn credit_pack_price_cents(pack: &CreditPack) -> &str {
     pack.payable_price_cents
         .as_deref()
         .unwrap_or(&pack.price_cents)
+}
+
+fn credit_pack_bonus_credits(pack: &CreditPack) -> String {
+    pack.bonus_credits.as_deref().filter(|v| !v.trim().is_empty()).unwrap_or("0").to_string()
+}
+fn credit_pack_total_credits(pack: &CreditPack) -> String {
+    pack.total_credits.as_deref().filter(|v| !v.trim().is_empty()).unwrap_or(pack.credits.as_str()).to_string()
+}
+fn credit_pack_view(pack: &CreditPack) -> CreditPackView {
+    CreditPackView { code: pack.code.clone().into(), name: pack.name.clone().into(), credits: pack.credits.clone().into(), price: format_cents(credit_pack_price_cents(pack)).into(), price_cents: credit_pack_price_cents(pack).into(), note: credit_pack_note(pack).into(), bonus_credits: credit_pack_bonus_credits(pack).into(), total_credits: credit_pack_total_credits(pack).into(), promotion_id: pack.promotion_id.clone().unwrap_or_default().into(), promotion_title: pack.promotion_title.clone().unwrap_or_default().into(), promotion_description: pack.promotion_description.clone().unwrap_or_default().into(), promotion_label: pack.promotion_label.clone().unwrap_or_default().into(), promotion_ends_at: pack.promotion_ends_at.clone().unwrap_or_default().into(), promotion_copy: pack.promotion_copy.clone().unwrap_or_default().into(), promotion_deadline_label: pack.promotion_deadline_label.clone().unwrap_or_default().into() }
+}
+fn pack_has_promotion_metadata(pack: &CreditPack) -> bool {
+    [pack.promotion_id.as_deref(), pack.promotion_title.as_deref(), pack.promotion_description.as_deref(), pack.promotion_label.as_deref(), pack.promotion_ends_at.as_deref(), pack.promotion_copy.as_deref(), pack.promotion_deadline_label.as_deref()].into_iter().flatten().any(|v| !v.trim().is_empty())
+}
+fn first_promotion_pack<'a>(packs: &'a [CreditPack]) -> Option<&'a CreditPack> { packs.iter().find(|pack| pack_has_promotion_metadata(pack)) }
+fn promotion_title(pack: &CreditPack) -> String { pack.promotion_title.as_deref().filter(|v| !v.trim().is_empty()).or_else(|| pack.promotion_label.as_deref().filter(|v| !v.trim().is_empty())).unwrap_or_default().to_string() }
+fn promotion_description(pack: &CreditPack) -> String { pack.promotion_description.as_deref().filter(|v| !v.trim().is_empty()).or_else(|| pack.promotion_copy.as_deref().filter(|v| !v.trim().is_empty())).unwrap_or_default().to_string() }
+fn apply_promotion_state(ui: &mut PreparedUiProjection, packs: &[CreditPack]) {
+    if let Some(pack) = first_promotion_pack(packs) { ui.push(true, |s,v| s.set_credit_promotion_active(v)); ui.push(promotion_title(pack).into(), |s,v| s.set_credit_promotion_title(v)); ui.push(promotion_description(pack).into(), |s,v| s.set_credit_promotion_description(v)); ui.push(pack.promotion_label.clone().unwrap_or_default().into(), |s,v| s.set_credit_promotion_label(v)); ui.push(pack.promotion_ends_at.clone().unwrap_or_default().into(), |s,v| s.set_credit_promotion_ends_at(v)); } else { ui.push(false, |s,v| s.set_credit_promotion_active(v)); ui.push("".into(), |s,v| s.set_credit_promotion_title(v)); ui.push("".into(), |s,v| s.set_credit_promotion_description(v)); ui.push("".into(), |s,v| s.set_credit_promotion_label(v)); ui.push("".into(), |s,v| s.set_credit_promotion_ends_at(v)); }
+}
+fn apply_promotion_state_state(state: &AppState, packs: &[CreditPack]) {
+    if let Some(pack) = first_promotion_pack(packs) { state.set_credit_promotion_active(true); state.set_credit_promotion_title(promotion_title(pack).into()); state.set_credit_promotion_description(promotion_description(pack).into()); state.set_credit_promotion_label(pack.promotion_label.clone().unwrap_or_default().into()); state.set_credit_promotion_ends_at(pack.promotion_ends_at.clone().unwrap_or_default().into()); } else { state.set_credit_promotion_active(false); state.set_credit_promotion_title("".into()); state.set_credit_promotion_description("".into()); state.set_credit_promotion_label("".into()); state.set_credit_promotion_ends_at("".into()); }
 }
 
 fn credit_pack_note(pack: &CreditPack) -> String {

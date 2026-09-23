@@ -972,9 +972,14 @@ fn invoice_order(item: &CreditLedgerItem, packs: &[CreditPackView]) -> Option<In
         return None;
     }
 
-    let credits = absolute_credit_amount(&item.available_delta);
-    let pack = packs.iter().find(|pack| pack.credits.as_str() == credits);
-    let (amount, amount_cents, eligible, status) = match pack {
+    let delta_credits = absolute_credit_amount(&item.available_delta);
+    let credits = item.total_credits.as_deref().filter(|v| !v.trim().is_empty()).unwrap_or(delta_credits.as_str()).to_string();
+    let base_credits = item.base_credits.as_deref().filter(|v| !v.trim().is_empty()).unwrap_or(delta_credits.as_str());
+    let pack = packs.iter().find(|pack| pack.credits.as_str() == base_credits);
+    let (amount, amount_cents, eligible, status) = if let Some(price_cents) = item.price_cents.as_deref().filter(|v| !v.trim().is_empty()) {
+        let eligible = decimal_at_least(price_cents, "10000");
+        (format_cents(price_cents), price_cents.to_string(), eligible, if eligible { "可申请开票".to_string() } else { "单次充值未满 ¥100.00".to_string() })
+    } else { match pack {
         Some(pack) => {
             let eligible = decimal_at_least(pack.price_cents.as_str(), "10000");
             (
@@ -994,7 +999,7 @@ fn invoice_order(item: &CreditLedgerItem, packs: &[CreditPackView]) -> Option<In
             false,
             "暂无法确认订单金额".to_string(),
         ),
-    };
+    } };
 
     Some(InvoiceOrderView {
         id: item.id.clone().into(),
@@ -1184,6 +1189,7 @@ mod tests {
             business_type: business_type.to_string(),
             description: "服务端技术描述".to_string(),
             created_at: "2026-07-15T12:44:40.734Z".to_string(),
+            base_credits: None, bonus_credits: None, total_credits: None, price_cents: None, promotion_id: None,
         }
     }
 
@@ -1195,6 +1201,7 @@ mod tests {
             price: price.into(),
             price_cents: price_cents.into(),
             note: "".into(),
+            bonus_credits: credits.into(), total_credits: credits.into(), promotion_id: "".into(), promotion_title: "".into(), promotion_description: "".into(), promotion_label: "".into(), promotion_ends_at: "".into(), promotion_copy: "".into(), promotion_deadline_label: "".into(),
         }
     }
 
@@ -1218,6 +1225,18 @@ mod tests {
 
         assert!(!order.eligible);
         assert_eq!(order.status.as_str(), "单次充值未满 ¥100.00");
+    }
+
+    #[test]
+    fn invoice_order_prefers_ledger_snapshot_without_current_pack() {
+        let mut item = ledger_item("grant", "12000", "0", "order");
+        item.base_credits = Some("10000".into());
+        item.bonus_credits = Some("2000".into());
+        item.total_credits = Some("12000".into());
+        item.price_cents = Some("10000".into());
+        let order = invoice_order(&item, &[]).expect("ledger snapshot");
+        assert_eq!(order.amount_cents.as_str(), "10000");
+        assert_eq!(order.title.as_str(), "充值 12000 积分");
     }
 
     #[test]
