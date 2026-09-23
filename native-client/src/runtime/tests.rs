@@ -6403,7 +6403,11 @@ mod tests {
         assert!(!plans.contains("Rectangle { horizontal-stretch: 1; background: transparent; }"));
         assert!(plan.contains("AppTheme.accent.with-alpha(0.12)"));
         assert!(plan.contains("visible: AppState.selected-credit-pack-code == root.code;"));
+        assert_eq!(plan.matches("TouchArea {").count(), 1);
+        assert!(!plan.contains("PillButton"));
+        assert!(!plan.contains("Button {"));
         assert!(!plan.contains("AppState.en ? \"Select\" : \"选择\""));
+        assert_eq!(credits.matches("AppState.recharge-credits(AppState.selected-credit-pack-code)").count(), 1);
     }
 
     #[test]

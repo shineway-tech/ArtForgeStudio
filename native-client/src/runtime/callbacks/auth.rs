@@ -3945,6 +3945,34 @@ mod tests {
     }
 
     #[test]
+    fn active_promotion_projection_keeps_member_price_and_total_copy() {
+        let mut pack = credit_pack(Some("850"));
+        pack.bonus_credits = Some("100".into());
+        pack.total_credits = Some("1100".into());
+        pack.promotion_id = Some("mid-autumn".into());
+        pack.promotion_label = Some("中秋加赠".into());
+
+        let view = credit_pack_view(&pack);
+        assert_eq!(view.price_cents.as_str(), "850");
+        assert_eq!(view.total_credits.as_str(), "1100");
+        assert_eq!(credit_pack_note(&pack), "会员 85 折 · 已优惠 ¥ 1.50");
+        assert!(pack_has_promotion_metadata(&pack));
+    }
+
+    #[test]
+    fn inactive_or_empty_promotion_keeps_ordinary_pack_usable() {
+        let pack = credit_pack(None);
+        let view = credit_pack_view(&pack);
+
+        assert_eq!(view.price_cents.as_str(), "1000");
+        assert_eq!(view.bonus_credits.as_str(), "0");
+        assert_eq!(view.total_credits.as_str(), "1000");
+        assert!(!pack_has_promotion_metadata(&pack));
+        assert_eq!(promotion_title(&pack), "");
+        assert_eq!(promotion_description(&pack), "");
+    }
+
+    #[test]
     fn missing_promotion_fields_fall_back_to_base_and_clear_projection() {
         i_slint_backend_testing::init_no_event_loop();
         let app = AppWindow::new().expect("projection fixture");

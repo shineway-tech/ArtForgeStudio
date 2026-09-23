@@ -1240,6 +1240,36 @@ mod tests {
     }
 
     #[test]
+    fn invoice_matching_uses_base_snapshot_when_bonus_inflates_total() {
+        let mut item = ledger_item("grant", "12000", "0", "order");
+        item.base_credits = Some("10000".into());
+        item.total_credits = Some("12000".into());
+        let order = invoice_order(
+            &item,
+            &[
+                invoice_pack("12000", "¥ 120.00", "12000"),
+                invoice_pack("10000", "¥ 100.00", "10000"),
+            ],
+        )
+        .expect("recharge invoice");
+
+        assert_eq!(order.amount_cents.as_str(), "10000");
+        assert!(order.eligible);
+        assert_eq!(order.title.as_str(), "充值 12000 积分");
+    }
+
+    #[test]
+    fn legacy_ledger_without_recharge_metadata_uses_delta_as_pack_base() {
+        let item = ledger_item("grant", "10000", "0", "order");
+        let order = invoice_order(&item, &[invoice_pack("10000", "¥ 100.00", "10000")])
+            .expect("legacy recharge invoice");
+
+        assert_eq!(order.amount_cents.as_str(), "10000");
+        assert!(order.eligible);
+        assert_eq!(order.title.as_str(), "充值 10000 积分");
+    }
+
+    #[test]
     fn non_recharge_ledger_entries_are_not_invoice_orders() {
         let item = ledger_item("grant", "10000", "0", "membership");
         assert!(invoice_order(&item, &[invoice_pack("10000", "¥ 100.00", "10000")],).is_none());
