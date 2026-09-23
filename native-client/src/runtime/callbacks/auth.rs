@@ -1936,7 +1936,7 @@ pub(super) fn clear_billing_snapshot_state(app: &AppWindow, context: &AppContext
     invalidate_credit_account_view(&context.store); reset_credit_ledger(app, &context.store, &[], None);
     state.set_credit_packs(ModelRc::new(VecModel::default())); state.set_invoice_orders(ModelRc::new(VecModel::default()));
     state.set_selected_credit_pack_code("".into()); state.set_selected_credit_amount("".into()); state.set_selected_credit_bonus("".into()); state.set_selected_credit_total("".into()); state.set_selected_credit_price("".into());
-    state.set_credit_promotion_active(false); state.set_credit_promotion_title("".into()); state.set_credit_promotion_description("".into()); state.set_credit_promotion_label("".into()); state.set_credit_promotion_ends_at("".into());
+    state.set_credit_promotion_active(false); state.set_credit_promotion_title("".into()); state.set_credit_promotion_description("".into()); state.set_credit_promotion_label("".into()); state.set_credit_promotion_ends_at("".into()); state.set_credit_promotion_deadline_label("".into());
     state.set_payment_active(false); state.set_payment_dialog_open(false); state.set_payment_browser_ready(false);
     state.set_payment_status_message("".into()); state.set_payment_waiting_message("".into());
     state.set_payment_success_message("".into()); state.set_payment_success_detail("".into());
@@ -1987,6 +1987,7 @@ pub(super) fn clear_account_snapshot_state(app: &AppWindow, context: &AppContext
     state.set_credit_promotion_description("".into());
     state.set_credit_promotion_label("".into());
     state.set_credit_promotion_ends_at("".into());
+    state.set_credit_promotion_deadline_label("".into());
     state.set_credit_payment_busy(false);
     state.set_credit_payment_message("".into());
     clear_credit_redemption_state(app);
@@ -2955,10 +2956,10 @@ fn first_promotion_pack<'a>(packs: &'a [CreditPack]) -> Option<&'a CreditPack> {
 fn promotion_title(pack: &CreditPack) -> String { pack.promotion_title.as_deref().filter(|v| !v.trim().is_empty()).or_else(|| pack.promotion_label.as_deref().filter(|v| !v.trim().is_empty())).unwrap_or_default().to_string() }
 fn promotion_description(pack: &CreditPack) -> String { pack.promotion_description.as_deref().filter(|v| !v.trim().is_empty()).or_else(|| pack.promotion_copy.as_deref().filter(|v| !v.trim().is_empty())).unwrap_or_default().to_string() }
 fn apply_promotion_state(ui: &mut PreparedUiProjection, packs: &[CreditPack]) {
-    if let Some(pack) = first_promotion_pack(packs) { ui.push(true, |s,v| s.set_credit_promotion_active(v)); ui.push(promotion_title(pack).into(), |s,v| s.set_credit_promotion_title(v)); ui.push(promotion_description(pack).into(), |s,v| s.set_credit_promotion_description(v)); ui.push(pack.promotion_label.clone().unwrap_or_default().into(), |s,v| s.set_credit_promotion_label(v)); ui.push(pack.promotion_ends_at.clone().unwrap_or_default().into(), |s,v| s.set_credit_promotion_ends_at(v)); } else { ui.push(false, |s,v| s.set_credit_promotion_active(v)); ui.push("".into(), |s,v| s.set_credit_promotion_title(v)); ui.push("".into(), |s,v| s.set_credit_promotion_description(v)); ui.push("".into(), |s,v| s.set_credit_promotion_label(v)); ui.push("".into(), |s,v| s.set_credit_promotion_ends_at(v)); }
+    if let Some(pack) = first_promotion_pack(packs) { ui.push(true, |s,v| s.set_credit_promotion_active(v)); ui.push(promotion_title(pack).into(), |s,v| s.set_credit_promotion_title(v)); ui.push(promotion_description(pack).into(), |s,v| s.set_credit_promotion_description(v)); ui.push(pack.promotion_label.clone().unwrap_or_default().into(), |s,v| s.set_credit_promotion_label(v)); ui.push(pack.promotion_ends_at.clone().unwrap_or_default().into(), |s,v| s.set_credit_promotion_ends_at(v)); ui.push(pack.promotion_deadline_label.clone().unwrap_or_default().into(), |s,v| s.set_credit_promotion_deadline_label(v)); } else { ui.push(false, |s,v| s.set_credit_promotion_active(v)); ui.push("".into(), |s,v| s.set_credit_promotion_title(v)); ui.push("".into(), |s,v| s.set_credit_promotion_description(v)); ui.push("".into(), |s,v| s.set_credit_promotion_label(v)); ui.push("".into(), |s,v| s.set_credit_promotion_ends_at(v)); ui.push("".into(), |s,v| s.set_credit_promotion_deadline_label(v)); }
 }
 fn apply_promotion_state_state(state: &AppState, packs: &[CreditPack]) {
-    if let Some(pack) = first_promotion_pack(packs) { state.set_credit_promotion_active(true); state.set_credit_promotion_title(promotion_title(pack).into()); state.set_credit_promotion_description(promotion_description(pack).into()); state.set_credit_promotion_label(pack.promotion_label.clone().unwrap_or_default().into()); state.set_credit_promotion_ends_at(pack.promotion_ends_at.clone().unwrap_or_default().into()); } else { state.set_credit_promotion_active(false); state.set_credit_promotion_title("".into()); state.set_credit_promotion_description("".into()); state.set_credit_promotion_label("".into()); state.set_credit_promotion_ends_at("".into()); }
+    if let Some(pack) = first_promotion_pack(packs) { state.set_credit_promotion_active(true); state.set_credit_promotion_title(promotion_title(pack).into()); state.set_credit_promotion_description(promotion_description(pack).into()); state.set_credit_promotion_label(pack.promotion_label.clone().unwrap_or_default().into()); state.set_credit_promotion_ends_at(pack.promotion_ends_at.clone().unwrap_or_default().into()); state.set_credit_promotion_deadline_label(pack.promotion_deadline_label.clone().unwrap_or_default().into()); } else { state.set_credit_promotion_active(false); state.set_credit_promotion_title("".into()); state.set_credit_promotion_description("".into()); state.set_credit_promotion_label("".into()); state.set_credit_promotion_ends_at("".into()); state.set_credit_promotion_deadline_label("".into()); }
 }
 
 fn credit_pack_note(pack: &CreditPack) -> String {
@@ -3925,6 +3926,7 @@ mod tests {
         pack.promotion_description = Some("活动期间充值额外到账".into());
         pack.promotion_label = Some("限时加赠".into());
         pack.promotion_ends_at = Some("2099-10-01T00:00:00Z".into());
+        pack.promotion_deadline_label = Some("活动截止北京时间 2099 年 9 月 30 日 23:59".into());
         let view = credit_pack_view(&pack);
         assert_eq!(view.credits.as_str(), "1000");
         assert_eq!(view.bonus_credits.as_str(), "200");
@@ -3942,6 +3944,7 @@ mod tests {
         assert_eq!(state.get_credit_promotion_description(), "活动期间充值额外到账");
         assert_eq!(state.get_credit_promotion_label(), "限时加赠");
         assert_eq!(state.get_credit_promotion_ends_at(), "2099-10-01T00:00:00Z");
+        assert_eq!(state.get_credit_promotion_deadline_label(), "活动截止北京时间 2099 年 9 月 30 日 23:59");
     }
 
     #[test]
@@ -3998,6 +4001,7 @@ mod tests {
         assert!(state.get_credit_promotion_description().is_empty());
         assert!(state.get_credit_promotion_label().is_empty());
         assert!(state.get_credit_promotion_ends_at().is_empty());
+        assert!(state.get_credit_promotion_deadline_label().is_empty());
     }
 
     #[test]

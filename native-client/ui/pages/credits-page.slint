@@ -150,9 +150,11 @@ component MidAutumnHero inherits Rectangle {
         y: 104px;
         width: parent.width - 172px;
         height: 20px;
-        text: AppState.credit-promotion-ends-at == ""
-            ? (AppState.en ? "Limited-time bonus" : "限时加赠")
-            : (AppState.en ? ("Ends " + AppState.credit-promotion-ends-at) : ("活动截止 " + AppState.credit-promotion-ends-at));
+        text: AppState.credit-promotion-deadline-label != ""
+            ? AppState.credit-promotion-deadline-label
+            : (AppState.credit-promotion-ends-at == ""
+                ? (AppState.en ? "Limited-time bonus" : "限时加赠")
+                : (AppState.en ? ("Ends " + AppState.credit-promotion-ends-at) : ("活动截止 " + AppState.credit-promotion-ends-at)));
         color: #f7d477;
         font-size: 11px;
         font-weight: 500;
