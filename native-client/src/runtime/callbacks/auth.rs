@@ -1936,6 +1936,7 @@ pub(super) fn clear_billing_snapshot_state(app: &AppWindow, context: &AppContext
     invalidate_credit_account_view(&context.store); reset_credit_ledger(app, &context.store, &[], None);
     state.set_credit_packs(ModelRc::new(VecModel::default())); state.set_invoice_orders(ModelRc::new(VecModel::default()));
     state.set_selected_credit_pack_code("".into()); state.set_selected_credit_amount("".into()); state.set_selected_credit_bonus("".into()); state.set_selected_credit_total("".into()); state.set_selected_credit_price("".into());
+    state.set_credit_promotion_active(false); state.set_credit_promotion_title("".into()); state.set_credit_promotion_description("".into()); state.set_credit_promotion_label("".into()); state.set_credit_promotion_ends_at("".into());
     state.set_payment_active(false); state.set_payment_dialog_open(false); state.set_payment_browser_ready(false);
     state.set_payment_status_message("".into()); state.set_payment_waiting_message("".into());
     state.set_payment_success_message("".into()); state.set_payment_success_detail("".into());
@@ -3891,6 +3892,15 @@ mod tests {
             discount_amount_cents: payable_price_cents.map(|_| "50".to_string()),
             recharge_discount_bps: payable_price_cents.map(|_| 9500),
             credits: "1000".to_string(),
+            bonus_credits: None,
+            total_credits: None,
+            promotion_id: None,
+            promotion_title: None,
+            promotion_description: None,
+            promotion_label: None,
+            promotion_ends_at: None,
+            promotion_copy: None,
+            promotion_deadline_label: None,
         }
     }
 
@@ -3902,6 +3912,46 @@ mod tests {
 
         let original = credit_pack(None);
         assert_eq!(format_cents(credit_pack_price_cents(&original)), "¥ 10.00");
+    }
+
+    #[test]
+    fn credit_pack_projection_preserves_base_and_projects_active_promotion() {
+        let mut pack = credit_pack(None);
+        pack.bonus_credits = Some("200".into());
+        pack.total_credits = Some("1200".into());
+        pack.promotion_id = Some("mid-autumn".into());
+        pack.promotion_title = Some("中秋充值加赠".into());
+        pack.promotion_description = Some("活动期间充值额外到账".into());
+        pack.promotion_label = Some("限时加赠".into());
+        pack.promotion_ends_at = Some("2099-10-01T00:00:00Z".into());
+        let view = credit_pack_view(&pack);
+        assert_eq!(view.credits.as_str(), "1000");
+        assert_eq!(view.bonus_credits.as_str(), "200");
+        assert_eq!(view.total_credits.as_str(), "1200");
+        assert_eq!(promotion_title(&pack), "中秋充值加赠");
+        assert_eq!(promotion_description(&pack), "活动期间充值额外到账");
+    }
+
+    #[test]
+    fn missing_promotion_fields_fall_back_to_base_and_clear_projection() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("projection fixture");
+        let state = app.global::<AppState>();
+        let legacy = credit_pack(None);
+        assert_eq!(credit_pack_bonus_credits(&legacy), "0");
+        assert_eq!(credit_pack_total_credits(&legacy), "1000");
+        let mut active = PreparedUiProjection::default();
+        apply_promotion_state(&mut active, &[legacy.clone()]);
+        active.publish(&state);
+        assert!(!state.get_credit_promotion_active());
+        let mut cleared = PreparedUiProjection::default();
+        apply_promotion_state(&mut cleared, &[]);
+        cleared.publish(&state);
+        assert!(!state.get_credit_promotion_active());
+        assert!(state.get_credit_promotion_title().is_empty());
+        assert!(state.get_credit_promotion_description().is_empty());
+        assert!(state.get_credit_promotion_label().is_empty());
+        assert!(state.get_credit_promotion_ends_at().is_empty());
     }
 
     #[test]
