@@ -10,7 +10,7 @@ import { SectionTitle } from "../components/section-title.slint";
 import { AppTheme } from "../theme.slint";
 
 component CreditBalanceCard inherits Rectangle {
-    height: 132px;
+    height: 148px;
     background: AppTheme.panel;
     border-radius: 14px;
     border-width: 1px;
@@ -27,18 +27,29 @@ component CreditBalanceCard inherits Rectangle {
     Text {
         x: 22px;
         y: 48px;
-        width: parent.width - 44px;
-        height: 48px;
+        width: parent.width - 180px;
+        height: 42px;
         text: AppState.credit-balance;
         color: AppTheme.text;
         font-size: 40px;
         font-weight: 600;
     }
     Text {
+        x: parent.width - 146px;
+        y: 54px;
+        width: 124px;
+        height: 24px;
+        text: AppState.en ? ("Frozen " + AppState.credit-reserved) : ("冻结 " + AppState.credit-reserved);
+        color: AppTheme.muted;
+        font-size: 13px;
+        font-weight: 500;
+        horizontal-alignment: right;
+    }
+    Text {
         x: 22px;
         y: 98px;
         width: parent.width - 44px;
-        height: 20px;
+        height: 36px;
         text: AppState.en
             ? "Credits are used for image generation and prompt services."
             : "积分用于图片生成、提示词优化等服务。";
@@ -46,6 +57,125 @@ component CreditBalanceCard inherits Rectangle {
         font-size: 13px;
         font-weight: 400;
         overflow: elide;
+    }
+}
+
+component MidAutumnHero inherits Rectangle {
+    height: 154px;
+    background: #1f2452;
+    border-radius: 16px;
+    clip: true;
+
+    Rectangle {
+        x: parent.width - 118px;
+        y: 18px;
+        width: 72px;
+        height: 72px;
+        background: #f7d477;
+        border-radius: 36px;
+    }
+    Rectangle { x: 26px; y: 24px; width: 4px; height: 4px; background: #f7d477; border-radius: 2px; }
+    Rectangle { x: 74px; y: 18px; width: 3px; height: 3px; background: #f7d477; border-radius: 2px; }
+    Rectangle { x: parent.width - 164px; y: 86px; width: 4px; height: 4px; background: #f7d477; border-radius: 2px; }
+    Rectangle { x: parent.width - 204px; y: 38px; width: 3px; height: 3px; background: #f7d477; border-radius: 2px; }
+
+    // A light, low-density rabbit outline keeps the seasonal cue quiet.
+    Rectangle {
+        x: parent.width - 196px;
+        y: 84px;
+        width: 34px;
+        height: 30px;
+        background: transparent;
+        border-width: 1px;
+        border-color: #d8c488;
+        border-radius: 17px;
+    }
+    Rectangle { x: parent.width - 190px; y: 67px; width: 7px; height: 22px; background: transparent; border-width: 1px; border-color: #d8c488; border-radius: 4px; }
+    Rectangle { x: parent.width - 175px; y: 67px; width: 7px; height: 22px; background: transparent; border-width: 1px; border-color: #d8c488; border-radius: 4px; }
+
+    Rectangle {
+        x: 22px;
+        y: 120px;
+        width: 12px;
+        height: 18px;
+        background: #e08c55;
+        border-radius: 5px;
+    }
+    Rectangle { x: 27px; y: 111px; width: 2px; height: 10px; background: #d8c488; }
+    Rectangle { x: 24px; y: 107px; width: 8px; height: 5px; background: #e08c55; border-radius: 2px; }
+    Rectangle {
+        x: 54px;
+        y: 128px;
+        width: 8px;
+        height: 12px;
+        background: #e08c55;
+        border-radius: 4px;
+    }
+
+    Text {
+        x: 24px;
+        y: 18px;
+        width: parent.width - 172px;
+        height: 26px;
+        text: AppState.credit-promotion-label == "" ? (AppState.en ? "Mid-Autumn Festival" : "中秋福利") : AppState.credit-promotion-label;
+        color: #f7d477;
+        font-size: 12px;
+        font-weight: 600;
+        overflow: elide;
+    }
+    Text {
+        x: 24px;
+        y: 44px;
+        width: parent.width - 172px;
+        height: 30px;
+        text: AppState.credit-promotion-title;
+        color: #ffffff;
+        font-size: 21px;
+        font-weight: 700;
+        overflow: elide;
+    }
+    Text {
+        x: 24px;
+        y: 78px;
+        width: parent.width - 172px;
+        height: 20px;
+        text: AppState.credit-promotion-description;
+        color: #e7e4d8;
+        font-size: 12px;
+        font-weight: 400;
+        overflow: elide;
+    }
+    Text {
+        x: 24px;
+        y: 104px;
+        width: parent.width - 172px;
+        height: 20px;
+        text: AppState.credit-promotion-ends-at == ""
+            ? (AppState.en ? "Limited-time bonus" : "限时加赠")
+            : (AppState.en ? ("Ends " + AppState.credit-promotion-ends-at) : ("活动截止 " + AppState.credit-promotion-ends-at));
+        color: #f7d477;
+        font-size: 11px;
+        font-weight: 500;
+        overflow: elide;
+    }
+    Text {
+        x: parent.width - 146px;
+        y: 118px;
+        width: 112px;
+        height: 20px;
+        text: AppState.en ? "View rules →" : "查看活动规则 →";
+        color: #f7d477;
+        font-size: 11px;
+        font-weight: 500;
+        horizontal-alignment: right;
+    }
+    TouchArea {
+        x: parent.width - 152px;
+        y: 110px;
+        width: 132px;
+        height: 34px;
+        mouse-cursor: pointer;
+        clicked => { AppState.open-agreement(AppState.purchase-credit-rules-title, AppState.purchase-credit-rules-url); }
     }
 }
 
@@ -269,7 +399,9 @@ export component CreditsPage {
             ? max(root.height + 80px, 860px)
             : (AppState.credits-tab == "redeem"
                 ? max(root.height - 48px, 520px)
-                : max(root.height + 80px, 860px + max(1, AppState.credit-records.length) * 96px));
+                : (AppState.credits-tab == "ledger"
+                    ? max(root.height + 80px, 470px + max(1, AppState.credit-records.length) * 96px)
+                    : max(root.height + 80px, 720px + (AppState.credit-promotion-active ? 170px : 0))));
     }
     Rectangle {
         background: AppTheme.bg;
@@ -328,6 +460,12 @@ export component CreditsPage {
                             clicked => { AppState.credits-tab = "recharge"; }
                         }
                         PillButton {
+                            width: 108px;
+                            text: AppState.en ? "Credit details" : "积分明细";
+                            active: AppState.credits-tab == "ledger";
+                            clicked => { AppState.credits-tab = "ledger"; }
+                        }
+                        PillButton {
                             width: 96px;
                             text: AppState.en ? "Redeem" : "兑换码";
                             active: AppState.credits-tab == "redeem";
@@ -381,77 +519,90 @@ export component CreditsPage {
                     }
                     if AppState.credits-tab == "recharge": VerticalLayout {
                         spacing: 16px;
-                    CreditBalanceCard { horizontal-stretch: 1; }
-                    SectionTitle { text: AppState.en ? "Recharge" : "充值积分"; }
-                    HorizontalLayout {
-                        height: 128px;
-                        spacing: 12px;
-                        for pack in AppState.credit-packs: CreditPlan {
-                            horizontal-stretch: 1;
-                            code: pack.code;
-                            amount: pack.credits;
-                            title: pack.name;
-                            note: pack.note;
-                            price: pack.price;
+                        CreditBalanceCard { horizontal-stretch: 1; }
+                        if AppState.credit-promotion-active: MidAutumnHero { horizontal-stretch: 1; }
+                        SectionTitle { text: AppState.en ? "Recharge" : "充值积分"; }
+                        HorizontalLayout {
+                            height: 174px;
+                            spacing: 12px;
+                            for pack in AppState.credit-packs: CreditPlan {
+                                horizontal-stretch: 1;
+                                code: pack.code;
+                                amount: pack.credits;
+                                bonus: pack.bonus-credits;
+                                total: pack.total-credits;
+                                title: pack.name;
+                                note: pack.note;
+                                price: pack.price;
+                            }
+                        }
+                        PurchaseAgreements { horizontal-stretch: 1; }
+                        Rectangle {
+                            height: AppState.credit-payment-message == "" ? 82px : 108px;
+                            background: transparent;
+                            Text {
+                                x: 0px;
+                                y: 4px;
+                                width: parent.width - 168px;
+                                height: 24px;
+                                text: AppState.selected-credit-pack-code == ""
+                                    ? (AppState.en ? "Choose a pack to continue" : "充值档位待定")
+                                    : (AppState.en
+                                        ? ("Receive " + AppState.selected-credit-total + " credits · " + AppState.selected-credit-price)
+                                        : ("到账 " + AppState.selected-credit-total + " 积分 · " + AppState.selected-credit-price));
+                                color: AppTheme.text;
+                                font-size: 14px;
+                                font-weight: 500;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            PillButton {
+                                x: parent.width - 144px;
+                                y: 0px;
+                                width: 144px;
+                                height: 42px;
+                                text: AppState.en ? "Recharge now" : "立即充值";
+                                primary: true;
+                                disabled: AppState.selected-credit-pack-code == "" || AppState.credit-payment-busy;
+                                clicked => { AppState.recharge-credits(AppState.selected-credit-pack-code); }
+                            }
+                            if AppState.credit-payment-message != "": Text {
+                                x: 0px;
+                                y: 52px;
+                                width: parent.width;
+                                height: 20px;
+                                text: AppState.credit-payment-message;
+                                color: AppState.credit-payment-busy ? AppTheme.accent : AppTheme.danger;
+                                font-size: 12px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                        Rectangle {
+                            height: 58px;
+                            background: AppTheme.panel-soft;
+                            border-radius: 10px;
+                            border-width: 1px;
+                            border-color: AppTheme.border;
+                            Text {
+                                x: 14px;
+                                width: parent.width - 28px;
+                                height: parent.height;
+                                text: AppState.en ? "Generation pricing and available qualities come from the current server model catalog." : "生图价格、可用画质和提示词服务价格均以服务端当前模型目录为准。";
+                                color: AppTheme.muted;
+                                font-size: 13px;
+                                font-weight: 400;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                            }
                         }
                     }
-                    PurchaseAgreements { horizontal-stretch: 1; }
-                    Rectangle {
-                        height: AppState.credit-payment-message == "" ? 54px : 76px;
-                        background: transparent;
-                        Text {
-                            x: 0px;
-                            width: parent.width - 150px;
-                            height: parent.height;
-                            text: AppState.en ? ("Selected: " + AppState.selected-credit-amount + " credits · " + AppState.selected-credit-price) : ("已选择：" + AppState.selected-credit-amount + " 积分 · " + AppState.selected-credit-price);
-                            color: AppTheme.text;
-                            font-size: 14px;
-                            font-weight: 400;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
-                        PillButton {
-                            x: parent.width - 132px;
-                            y: 8px;
-                            width: 132px;
-                            text: AppState.en ? "Recharge" : "充值";
-                            primary: true;
-                            disabled: AppState.selected-credit-pack-code == "" || AppState.credit-payment-busy;
-                            clicked => { AppState.recharge-credits(AppState.selected-credit-pack-code); }
-                        }
-                        if AppState.credit-payment-message != "": Text {
-                            x: 0px;
-                            y: 52px;
-                            width: parent.width;
-                            height: 20px;
-                            text: AppState.credit-payment-message;
-                            color: AppState.credit-payment-busy ? AppTheme.accent : AppTheme.danger;
-                            font-size: 12px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
+                    if AppState.credits-tab == "ledger": VerticalLayout {
+                        spacing: 16px;
+                        CreditBalanceCard { horizontal-stretch: 1; }
+                        CreditLedgerSection { horizontal-stretch: 1; }
                     }
-                    Rectangle {
-                        height: 58px;
-                        background: AppTheme.panel-soft;
-                        border-radius: 10px;
-                        border-width: 1px;
-                        border-color: AppTheme.border;
-                        Text {
-                            x: 14px;
-                            width: parent.width - 28px;
-                            height: parent.height;
-                            text: AppState.en ? "Generation pricing and available qualities come from the current server model catalog." : "生图价格、可用画质和提示词服务价格均以服务端当前模型目录为准。";
-                            color: AppTheme.muted;
-                            font-size: 13px;
-                            font-weight: 400;
-                            vertical-alignment: center;
-                            wrap: word-wrap;
-                        }
-                    }
-                    }
-                    if AppState.credits-tab == "recharge": CreditLedgerSection { horizontal-stretch: 1; }
                 }
             }
         }

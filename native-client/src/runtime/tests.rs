@@ -6331,8 +6331,24 @@ mod tests {
         assert!(redeem_api.contains("Some(client_request_id)"));
         assert!(auth_callbacks.contains("clear_credit_redemption_state"));
         assert!(credits.contains("CreditLedgerSection"));
+        assert!(credits.contains("text: AppState.en ? \"Credit details\" : \"积分明细\";"));
         assert!(credits.contains("兑换成功后，积分将自动到账你自己的主账号。"));
-        assert!(credits.contains("if AppState.credits-tab == \"recharge\": CreditLedgerSection"));
+        assert!(credits.contains("if AppState.credits-tab == \"ledger\": VerticalLayout"));
+        assert!(credits.contains("CreditBalanceCard { horizontal-stretch: 1; }\n                        CreditLedgerSection"));
+        assert!(!credits.contains("if AppState.credits-tab == \"recharge\": CreditLedgerSection"));
+        assert!(credits.contains("if AppState.credit-promotion-active: MidAutumnHero"));
+        assert!(credits.contains("credit-promotion-ends-at"));
+        assert!(!credits.contains("已选择"));
+        assert!(!credits.contains("Selected:"));
+        assert!(credits.contains("text: AppState.en ? \"Recharge now\" : \"立即充值\";"));
+        assert_eq!(credits.matches("AppState.recharge-credits(AppState.selected-credit-pack-code)").count(), 1);
+        let credit_plan = include_str!("../../ui/components/credit-plan.slint");
+        assert!(credit_plan.contains("in property <string> bonus;"));
+        assert!(credit_plan.contains("in property <string> total;"));
+        assert!(credit_plan.contains("AppState.selected-credit-bonus = root.bonus;"));
+        assert!(credit_plan.contains("text: \"✓\";"));
+        assert!(!credit_plan.contains("已选择"));
+        assert!(!credit_plan.contains("Selected"));
         let redeem_section = credits
             .split("if AppState.credits-tab == \"redeem\": VerticalLayout {")
             .nth(1)

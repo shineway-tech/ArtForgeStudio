@@ -4,31 +4,107 @@ import { AppTheme } from "../theme.slint";
 export component CreditPlan {
     in property <string> code;
     in property <string> amount;
+    in property <string> bonus;
+    in property <string> total;
     in property <string> price;
     in property <string> title;
     in property <string> note;
     min-width: 160px;
     preferred-width: 210px;
-    height: 128px;
+    height: 174px;
     Rectangle {
         background: AppState.selected-credit-pack-code == root.code ? AppTheme.accent.with-alpha(0.12) : AppTheme.panel;
         border-radius: 12px;
         border-width: 1px;
         border-color: AppState.selected-credit-pack-code == root.code ? AppTheme.accent : AppTheme.border;
-        Text { x: 12px; y: 12px; width: parent.width - 24px; height: 22px; text: root.title; color: AppTheme.text; font-size: 15px; font-weight: 500; overflow: elide; }
-        Text { x: 12px; y: 38px; width: parent.width - 24px; height: 18px; text: root.note; color: AppTheme.muted; font-size: 12px; font-weight: 400; overflow: elide; }
-        Text { x: 12px; y: 96px; width: 82px; height: 22px; text: root.price; color: AppTheme.accent-dark; font-size: 17px; font-weight: 500; }
+
         Text {
-            visible: AppState.selected-credit-pack-code == root.code;
-            x: parent.width - 74px;
-            y: 96px;
-            width: 62px;
+            x: 14px;
+            y: 12px;
+            width: parent.width - 48px;
             height: 22px;
-            text: AppState.en ? "Selected" : "已选择";
-            color: AppState.selected-credit-pack-code == root.code ? AppTheme.accent-dark : AppTheme.muted;
+            text: root.title;
+            color: AppTheme.text;
+            font-size: 15px;
+            font-weight: 600;
+            overflow: elide;
+        }
+        if root.bonus != "" && root.bonus != "0": Text {
+            x: parent.width - 74px;
+            y: 12px;
+            width: 60px;
+            height: 20px;
+            text: "+" + root.bonus;
+            color: AppTheme.accent-dark;
+            font-size: 12px;
+            font-weight: 600;
+            horizontal-alignment: right;
+        }
+        Text {
+            x: 14px;
+            y: 40px;
+            width: parent.width - 28px;
+            height: 18px;
+            text: AppState.en ? (root.amount + " base credits") : ("基础积分 " + root.amount);
+            color: AppTheme.muted;
             font-size: 12px;
             font-weight: 400;
-            horizontal-alignment: right;
+            overflow: elide;
+        }
+        if root.bonus != "" && root.bonus != "0": Text {
+            x: 14px;
+            y: 60px;
+            width: parent.width - 28px;
+            height: 18px;
+            text: AppState.en ? ("Mid-Autumn bonus +" + root.bonus) : ("中秋加赠 +" + root.bonus);
+            color: AppTheme.accent-dark;
+            font-size: 12px;
+            font-weight: 500;
+            overflow: elide;
+        }
+        Text {
+            x: 14px;
+            y: root.bonus != "" && root.bonus != "0" ? 84px : 64px;
+            width: parent.width - 28px;
+            height: 21px;
+            text: AppState.en ? ("Total " + root.total) : ("到账共 " + root.total);
+            color: AppTheme.text;
+            font-size: 14px;
+            font-weight: 600;
+            overflow: elide;
+        }
+        Text {
+            x: 14px;
+            y: 112px;
+            width: parent.width - 28px;
+            height: 18px;
+            text: root.note;
+            color: AppTheme.muted;
+            font-size: 11px;
+            font-weight: 400;
+            overflow: elide;
+        }
+        Text {
+            x: 14px;
+            y: 136px;
+            width: parent.width - 28px;
+            height: 24px;
+            text: AppState.en ? ("Pay " + root.price) : ("实付 " + root.price);
+            color: AppTheme.accent-dark;
+            font-size: 17px;
+            font-weight: 600;
+        }
+        Text {
+            visible: AppState.selected-credit-pack-code == root.code;
+            x: parent.width - 32px;
+            y: 136px;
+            width: 18px;
+            height: 18px;
+            text: "✓";
+            color: AppTheme.accent-dark;
+            font-size: 14px;
+            font-weight: 700;
+            horizontal-alignment: center;
         }
         TouchArea {
             width: parent.width;
@@ -37,6 +113,8 @@ export component CreditPlan {
             clicked => {
                 AppState.selected-credit-pack-code = root.code;
                 AppState.selected-credit-amount = root.amount;
+                AppState.selected-credit-bonus = root.bonus;
+                AppState.selected-credit-total = root.total;
                 AppState.selected-credit-price = root.price;
             }
         }
