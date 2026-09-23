@@ -9,6 +9,7 @@ export component CreditPlan {
     in property <string> price;
     in property <string> title;
     in property <string> note;
+    in property <string> promotion-label;
     min-width: 160px;
     preferred-width: 210px;
     height: 174px;
@@ -56,7 +57,9 @@ export component CreditPlan {
             y: 60px;
             width: parent.width - 28px;
             height: 18px;
-            text: AppState.en ? ("Mid-Autumn bonus +" + root.bonus) : ("中秋加赠 +" + root.bonus);
+            text: root.promotion-label != ""
+                ? root.promotion-label
+                : (AppState.en ? ("Mid-Autumn bonus +" + root.bonus) : ("中秋加赠 +" + root.bonus));
             color: AppTheme.accent-dark;
             font-size: 12px;
             font-weight: 500;

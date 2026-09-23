@@ -66,6 +66,14 @@ component MidAutumnHero inherits Rectangle {
     border-radius: 16px;
     clip: true;
 
+    Image {
+        width: parent.width;
+        height: parent.height;
+        source: @image-url("../../assets/mid-autumn-credit-hero.png");
+        image-fit: cover;
+        opacity: 0.92;
+    }
+
     // Soft atmospheric layers keep the background festive without competing
     // with the promotion copy on the left.
     Rectangle {
@@ -174,7 +182,7 @@ component MidAutumnHero inherits Rectangle {
         y: 18px;
         width: parent.width - 172px;
         height: 26px;
-        text: AppState.credit-promotion-label == "" ? (AppState.en ? "Mid-Autumn Festival" : "中秋福利") : AppState.credit-promotion-label;
+        text: AppState.en ? "Mid-Autumn recharge bonus" : "中秋充值福利";
         color: #f7d477;
         font-size: 12px;
         font-weight: 600;
@@ -592,6 +600,7 @@ export component CreditsPage {
                                 total: pack.total-credits;
                                 title: pack.name;
                                 note: pack.note;
+                                promotion-label: pack.promotion-label;
                                 price: pack.price;
                             }
                         }
