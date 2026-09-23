@@ -3916,6 +3916,7 @@ mod tests {
 
     #[test]
     fn credit_pack_projection_preserves_base_and_projects_active_promotion() {
+        i_slint_backend_testing::init_no_event_loop();
         let mut pack = credit_pack(None);
         pack.bonus_credits = Some("200".into());
         pack.total_credits = Some("1200".into());
@@ -3930,6 +3931,17 @@ mod tests {
         assert_eq!(view.total_credits.as_str(), "1200");
         assert_eq!(promotion_title(&pack), "中秋充值加赠");
         assert_eq!(promotion_description(&pack), "活动期间充值额外到账");
+
+        let app = AppWindow::new().expect("promotion projection fixture");
+        let state = app.global::<AppState>();
+        let mut prepared = PreparedUiProjection::default();
+        apply_promotion_state(&mut prepared, &[pack]);
+        prepared.publish(&state);
+        assert!(state.get_credit_promotion_active());
+        assert_eq!(state.get_credit_promotion_title(), "中秋充值加赠");
+        assert_eq!(state.get_credit_promotion_description(), "活动期间充值额外到账");
+        assert_eq!(state.get_credit_promotion_label(), "限时加赠");
+        assert_eq!(state.get_credit_promotion_ends_at(), "2099-10-01T00:00:00Z");
     }
 
     #[test]
@@ -3937,7 +3949,13 @@ mod tests {
         i_slint_backend_testing::init_no_event_loop();
         let app = AppWindow::new().expect("projection fixture");
         let state = app.global::<AppState>();
-        let legacy = credit_pack(None);
+        let legacy: CreditPack = serde_json::from_value(serde_json::json!({
+            "code": "pack_1000",
+            "name": "1000 积分",
+            "price_cents": "1000",
+            "credits": "1000"
+        }))
+        .expect("old server credit pack payload");
         assert_eq!(credit_pack_bonus_credits(&legacy), "0");
         assert_eq!(credit_pack_total_credits(&legacy), "1000");
         let mut active = PreparedUiProjection::default();
