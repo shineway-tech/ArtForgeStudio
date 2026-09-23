@@ -6289,6 +6289,19 @@ mod tests {
         assert!(credits.contains("text: AppState.en ? \"Recharge\" : \"充值\";"));
         assert!(credits.contains("text: AppState.en ? \"Redeem\" : \"兑换码\";"));
         assert!(credits.contains("text: AppState.en ? \"Subscription\" : \"订阅\";"));
+        let recharge_tab = credits
+            .find("text: AppState.en ? \"Recharge\" : \"充值\";")
+            .expect("recharge tab");
+        let ledger_tab = credits
+            .find("text: AppState.en ? \"Credit details\" : \"积分明细\";")
+            .expect("ledger tab");
+        let redeem_tab = credits
+            .find("text: AppState.en ? \"Redeem\" : \"兑换码\";")
+            .expect("redeem tab");
+        let membership_tab = credits
+            .find("text: AppState.en ? \"Subscription\" : \"订阅\";")
+            .expect("membership tab");
+        assert!(recharge_tab < ledger_tab && ledger_tab < redeem_tab && redeem_tab < membership_tab);
         assert!(credits.contains("active: AppState.credits-tab == \"recharge\";"));
         assert!(credits.contains("active: AppState.credits-tab == \"redeem\";"));
         assert!(credits.contains("active: AppState.credits-tab == \"membership\";"));
@@ -6337,6 +6350,7 @@ mod tests {
         assert!(credits.contains("CreditBalanceCard { horizontal-stretch: 1; }\n                        CreditLedgerSection"));
         assert!(!credits.contains("if AppState.credits-tab == \"recharge\": CreditLedgerSection"));
         assert!(credits.contains("if AppState.credit-promotion-active: MidAutumnHero"));
+        assert_eq!(credits.matches("MidAutumnHero").count(), 1);
         assert!(credits.contains("credit-promotion-ends-at"));
         assert!(!credits.contains("已选择"));
         assert!(!credits.contains("Selected:"));
