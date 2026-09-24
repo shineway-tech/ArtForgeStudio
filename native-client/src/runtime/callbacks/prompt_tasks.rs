@@ -10,6 +10,7 @@ struct PromptCapture {
     backend:Arc<BackendRuntime>,
     scope:SessionScope,
     active_namespace:Arc<Mutex<Option<NamespaceLease>>>,
+    cancelled_prompt_task_requests:Arc<Mutex<BTreeSet<String>>>,
 }
 impl PromptCapture {
     fn new(context:&AppContext)->std::result::Result<Self,ApiError>{
@@ -18,7 +19,7 @@ impl PromptCapture {
         let scope=backend.api.session().scope_for_user(persistence.lease().namespace.user_public_id())
             .filter(|scope|scope.auth_epoch==persistence.lease().auth_epoch).ok_or(ApiError::AuthenticationRequired)?;
         let authority=persistence.storage_authority().map_err(transition_error)?;
-        let capture=Self{persistence,authority,backend,scope,active_namespace:context.active_namespace.clone()};
+        let capture=Self{persistence,authority,backend,scope,active_namespace:context.active_namespace.clone(),cancelled_prompt_task_requests:context.cancelled_prompt_task_requests.clone()};
         if !capture.is_current(context){return Err(ApiError::AuthenticationRequired);}
         Ok(capture)
     }
@@ -46,6 +47,12 @@ struct PromptCancellation { cancelled:std::sync::atomic::AtomicBool, lock:Mutex<
 impl PromptCancellation {
     fn new()->Self{Self{cancelled:std::sync::atomic::AtomicBool::new(false),lock:Mutex::new(()),wake:std::sync::Condvar::new()}}
     fn cancel(&self){self.cancelled.store(true,std::sync::atomic::Ordering::Release);self.wake.notify_all();}
+}
+const PROMPT_TASK_CANCELLED_MESSAGE:&str="prompt task cancelled";
+fn prompt_task_cancelled_error()->ApiError{ApiError::LocalState{message:PROMPT_TASK_CANCELLED_MESSAGE.into()}}
+fn is_prompt_task_cancelled(error:&ApiError)->bool{matches!(error,ApiError::LocalState{message} if message==PROMPT_TASK_CANCELLED_MESSAGE)}
+fn prompt_request_cancelled(requests:&Arc<Mutex<BTreeSet<String>>>,request_id:&str)->bool{
+    requests.lock().unwrap_or_else(|error|error.into_inner()).contains(request_id)
 }
 struct PromptThread { id:String, lease:NamespaceLease, cancel:Arc<PromptCancellation>, handle:std::thread::JoinHandle<()> }
 thread_local! {
@@ -88,9 +95,17 @@ pub(super) fn shutdown_prompt_workers()->std::result::Result<(),String>{
     release_prompt_result_actions(None);
     joined
 }
-struct PromptWorker{capture:PromptCapture,cancel:Arc<PromptCancellation>}
+struct PromptWorker{capture:PromptCapture,cancel:Arc<PromptCancellation>,request_id:Option<String>}
 impl PromptWorker{
+    fn user_cancelled(&self)->bool{
+        self.request_id.as_ref().is_some_and(|id|prompt_request_cancelled(&self.capture.cancelled_prompt_task_requests,id))
+    }
     fn ensure(&self)->std::result::Result<(),ApiError>{
+        self.ensure_scope()?;
+        if self.user_cancelled(){return Err(prompt_task_cancelled_error());}
+        Ok(())
+    }
+    fn ensure_scope(&self)->std::result::Result<(),ApiError>{
         if self.cancel.cancelled.load(std::sync::atomic::Ordering::Acquire)
             || !self.capture.persistence.is_current()
             || self.capture.active_namespace.lock().ok().is_none_or(|active|active.as_ref()!=Some(self.capture.persistence.lease()))
@@ -113,10 +128,16 @@ fn spawn_prompt_job<T:Send+'static>(
     context:&AppContext,capture:&PromptCapture,
     work:impl FnOnce(&PromptWorker)->std::result::Result<T,ApiError>+Send+'static,
 )->std::result::Result<PromptJob<T>,ApiError>{
+    spawn_prompt_job_with_request_id(context,capture,None,work)
+}
+fn spawn_prompt_job_with_request_id<T:Send+'static>(
+    context:&AppContext,capture:&PromptCapture,request_id:Option<String>,
+    work:impl FnOnce(&PromptWorker)->std::result::Result<T,ApiError>+Send+'static,
+)->std::result::Result<PromptJob<T>,ApiError>{
     if !capture.is_current(context){return Err(ApiError::AuthenticationRequired);}
     let activity=capture.persistence.begin_activity().map_err(transition_error)?;
     let cancel=Arc::new(PromptCancellation::new());
-    let worker=PromptWorker{capture:capture.clone(),cancel:cancel.clone()};
+    let worker=PromptWorker{capture:capture.clone(),cancel:cancel.clone(),request_id};
     let id=Uuid::new_v4().to_string();let(sender,receiver)=mpsc::channel();
     #[cfg(test)]
     let after_send=PROMPT_AFTER_SEND.with(|hook|hook.borrow_mut().take());
@@ -304,6 +325,7 @@ pub(super) fn start_backend_prompt_task_with_billing_scope(
         || !context.billing_context.is_current(&billing_scope){return;}
     let (target_kind,target_id,target_category,target_input,append_result)=serialize_prompt_target(&task.target);
     let record=PendingPromptTaskRecord{
+        cancel_requested:false,submission_started:false,
         schema_version:PROMPT_TASK_RECOVERY_SCHEMA_VERSION,created_at_epoch_ms:Local::now().timestamp_millis(),
         client_request_id:Uuid::new_v4().simple().to_string(),owner_user_id:capture.scope.owner_user_id.clone(),
         billing_account_group_id:billing_scope.request.account_group_id.clone(),auth_epoch:capture.scope.auth_epoch,
@@ -357,7 +379,7 @@ fn launch_prompt_record(
     // Later LocalState errors may follow successful billing, so they still refresh.
     let needs_refresh = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let prepared = needs_refresh.clone();
-    let job=spawn_prompt_job(&context,&capture,move|worker|{
+    let job=spawn_prompt_job_with_request_id(&context,&capture,Some(record.client_request_id.clone()),move|worker|{
         let mut record=work_record;
         if new_record{
             let mut hashes=Vec::new();let mut sizes=Vec::new();
@@ -522,12 +544,18 @@ fn prompt_terminal_failure_message(code: Option<&str>) -> &'static str {
 
 fn run_prompt_record(worker:&PromptWorker,mut record:PendingPromptTaskRecord,billing:Option<&BillingScope>, progress:&mpsc::Sender<VideoPromptProgress>)
     ->std::result::Result<PromptTaskOutcome,ApiError>{
-    let capture=&worker.capture;worker.ensure()?;
+    let capture=&worker.capture;
+    let api=GenerationApi::new(capture.backend.api.clone()).with_saved_group(&record.billing_account_group_id);
+    worker.ensure()?;
     if record.owner_user_id!=capture.scope.owner_user_id || !valid_pending_prompt_task(&record){
         return Err(ApiError::LocalState{message:"提示词原始记录无效，已保留".into()});
     }
+    if record.cancel_requested{
+        cancel_prompt_record(worker,record)?;
+        return Err(prompt_task_cancelled_error());
+    }
     record=revalidate_prompt_epoch(worker,record)?;
-    let api=GenerationApi::new(capture.backend.api.clone()).with_saved_group(&record.billing_account_group_id);
+    worker.ensure()?;
     if prompt_task_completed_unclaimed(&record){return finish_prompt_terminal(worker,&api,record);}
     while record.uploaded_file_ids.len()<record.reference_paths.len(){
         worker.ensure()?;let index=record.uploaded_file_ids.len();let mut retry=PROMPT_TASK_RETRY_MIN_MS;
@@ -537,20 +565,24 @@ fn run_prompt_record(worker:&PromptWorker,mut record:PendingPromptTaskRecord,bil
                 &record.reference_sha256[index],record.reference_size_bytes[index]){
                 Ok(file_id)=>break file_id,
                 Err(error) if prompt_task_api_error_is_transient(&error)=>{
-                    if !worker.wait(Duration::from_millis(retry)){return Err(ApiError::AuthenticationRequired);}
+                    if !worker.wait(Duration::from_millis(retry)){return Err(if worker.user_cancelled(){prompt_task_cancelled_error()}else{ApiError::AuthenticationRequired});}
                     retry=next_prompt_task_retry_ms(retry);
                 }
                 Err(error)=>return Err(error),
             }
         };
-        worker.ensure()?;record.uploaded_file_ids.push(file_id);
+        worker.ensure_scope()?;record.uploaded_file_ids.push(file_id);
         require_prompt_patch(capture,&record,PromptTaskRecoveryPatch::UploadedFileIds(record.uploaded_file_ids.clone()))?;
+        worker.ensure()?;
     }
     let mut retry=PROMPT_TASK_RETRY_MIN_MS;
     let mut new_submission=billing.cloned();
     loop{
         worker.ensure()?;
         let result=if record.server_task_id.is_empty(){
+            require_prompt_patch(capture,&record,PromptTaskRecoveryPatch::BeginSubmission)?;
+            record.submission_started=true;
+            worker.ensure()?;
             if let Some(scope)=new_submission.take(){
                 api.create_task_billing(&prompt_task_create_request(&record),&scope)
             }else{
@@ -562,12 +594,12 @@ fn run_prompt_record(worker:&PromptWorker,mut record:PendingPromptTaskRecord,bil
             Ok(detail)=>detail,
             Err(error) if prompt_task_api_error_is_transient(&error)=>{
                 let _ = progress.send(VideoPromptProgress::Reconnecting);
-                if !worker.wait(Duration::from_millis(retry)){return Err(ApiError::AuthenticationRequired);}
+                if !worker.wait(Duration::from_millis(retry)){return Err(if worker.user_cancelled(){prompt_task_cancelled_error()}else{ApiError::AuthenticationRequired});}
                 retry=next_prompt_task_retry_ms(retry);continue;
             }
             Err(error)=>return Err(error),
         };
-        worker.ensure()?;
+        worker.ensure_scope()?;
         require_saved_group(&record.billing_account_group_id,&detail.billing_account_group_id)?;
         if detail.id.trim().is_empty() || (!record.server_task_id.is_empty() && record.server_task_id!=detail.id){
             return Err(ApiError::LocalState{message:"服务端提示词编号不匹配，原始任务已保留".into()});
@@ -581,6 +613,7 @@ fn run_prompt_record(worker:&PromptWorker,mut record:PendingPromptTaskRecord,bil
             require_prompt_patch(capture,&record,PromptTaskRecoveryPatch::ServerTaskId(detail.id.clone()))?;
             record.server_task_id=detail.id.clone();
         }
+        worker.ensure()?;
         if detail.terminal(){
             if matches!(detail.status.as_str(),"completed"|"partially_completed"){
                 if let Some(result)=detail.result_prompt.as_deref().map(normalize_prompt_task_result).filter(|value|!value.trim().is_empty()){
@@ -601,7 +634,7 @@ fn run_prompt_record(worker:&PromptWorker,mut record:PendingPromptTaskRecord,bil
             VideoPromptProgress::Processing
         });
         retry=PROMPT_TASK_RETRY_MIN_MS;
-        if !worker.wait(Duration::from_millis(IMAGE_POLL_INTERVAL_MS)){return Err(ApiError::AuthenticationRequired);}
+        if !worker.wait(Duration::from_millis(IMAGE_POLL_INTERVAL_MS)){return Err(if worker.user_cancelled(){prompt_task_cancelled_error()}else{ApiError::AuthenticationRequired});}
     }
 }
 fn require_prompt_patch(capture:&PromptCapture,record:&PendingPromptTaskRecord,patch:PromptTaskRecoveryPatch)->std::result::Result<(),ApiError>{
@@ -632,7 +665,124 @@ fn finish_prompt_terminal(worker:&PromptWorker,api:&GenerationApi,mut record:Pen
         Ok(PromptTaskOutcome::Settled(record))
     }else{Ok(PromptTaskOutcome::Ready(record))}
 }
+fn forget_prompt_cancellation(context:&AppContext,request_id:&str){
+    if let Ok(mut cancelled)=context.cancelled_prompt_task_requests.lock(){cancelled.remove(request_id);}
+}
+fn confirm_prompt_cancellation(worker:&PromptWorker,api:&GenerationApi,record:&PendingPromptTaskRecord)->std::result::Result<(),ApiError>{
+    let scope=&worker.capture.scope;
+    let mut cancellation=api.cancel_scoped(&record.server_task_id,scope);
+    for attempt in 0..6{
+        worker.ensure_scope()?;
+        if let Err(error)=&cancellation{
+            if prompt_task_api_error_requires_login(error) || error.is_client_update_required(){return Err(error.clone());}
+        }
+        match api.task_scoped(&record.server_task_id,scope){
+            Ok(detail)=>{
+                worker.ensure_scope()?;
+                require_saved_group(&record.billing_account_group_id,&detail.billing_account_group_id)?;
+                if detail.id!=record.server_task_id{
+                    return Err(ApiError::LocalState{message:"原服务端任务编号不匹配，取消记录已保留".into()});
+                }
+                if detail.terminal(){return Ok(());}
+                if let Err(error)=&cancellation{
+                    if !prompt_task_api_error_is_transient(error) && !matches!(error,ApiError::Http{status:409,..}){
+                        return Err(error.clone());
+                    }
+                }
+            }
+            Err(error) if prompt_task_api_error_is_transient(&error)
+                && !prompt_task_api_error_requires_login(&error) && !error.is_client_update_required()=>{},
+            Err(error)=>return Err(error),
+        }
+        if attempt==5{break;}
+        if !worker.wait(Duration::from_millis(PROMPT_TASK_RETRY_MIN_MS)){
+            worker.ensure()?;
+            return Err(ApiError::AuthenticationRequired);
+        }
+        if cancellation.as_ref().err().is_some_and(prompt_task_api_error_is_transient){
+            cancellation=api.cancel_scoped(&record.server_task_id,scope);
+        }
+    }
+    Err(ApiError::LocalState{message:"服务端取消尚未确认，任务记录已保留".into()})
+}
+fn cancel_prompt_record(worker:&PromptWorker,mut record:PendingPromptTaskRecord)->std::result::Result<(),ApiError>{
+    worker.ensure_scope()?;
+    let capture=&worker.capture;
+    if record.owner_user_id!=capture.scope.owner_user_id || !valid_pending_prompt_task(&record){
+        return Err(ApiError::LocalState{message:"原提示词任务无法核验，取消记录已保留".into()});
+    }
+    if record.auth_epoch!=capture.scope.auth_epoch{
+        if !rebind_pending_prompt_task_epoch_for_namespace(&capture.authority,&record.identity(),capture.scope.auth_epoch).map_err(transition_error)?{
+            return Err(ApiError::LocalState{message:"原提示词身份已变化，取消记录已保留".into()});
+        }
+        record.auth_epoch=capture.scope.auth_epoch;
+    }
+    require_prompt_patch(capture,&record,PromptTaskRecoveryPatch::RequestCancellation)?;
+    let api=GenerationApi::new(capture.backend.api.clone()).with_saved_group(&record.billing_account_group_id);
+    if !record.server_task_id.is_empty() || record.submission_started{
+        worker.ensure_scope()?;
+        let detail=if record.server_task_id.is_empty(){
+            let replay=SavedReplayRequest::prompt(capture.authority.clone(),&capture.scope,&record.client_request_id).map_err(transition_error)?;
+            capture.backend.api.replay_saved::<GenerationTaskDetail>(&replay)?.data
+        }else{api.task_scoped(&record.server_task_id,&capture.scope)?};
+        worker.ensure_scope()?;
+        require_saved_group(&record.billing_account_group_id,&detail.billing_account_group_id)?;
+        if detail.id.trim().is_empty() || (!record.server_task_id.is_empty() && detail.id!=record.server_task_id){
+            return Err(ApiError::LocalState{message:"原服务端任务编号不匹配，取消记录已保留".into()});
+        }
+        if record.server_task_id.is_empty(){
+            require_prompt_patch(capture,&record,PromptTaskRecoveryPatch::ServerTaskId(detail.id.clone()))?;
+            record.server_task_id=detail.id.clone();
+        }
+        if !detail.terminal(){
+            confirm_prompt_cancellation(worker,&api,&record)?;
+        }
+    }
+    if !cleanup_prompt_references_captured(worker,&api,&record.uploaded_file_ids)?{
+        return Err(ApiError::LocalState{message:"取消后的参考图清理尚未确认，任务记录已保留".into()});
+    }
+    worker.ensure_scope()?;
+    if !remove_pending_prompt_task_for_namespace(&capture.authority,&record.identity()).map_err(transition_error)?{
+        return Err(ApiError::LocalState{message:"原提示词记录已变化，取消记录已保留".into()});
+    }
+    Ok(())
+}
+fn finish_prompt_cancellation(app:&AppWindow,context:&AppContext,capture:&PromptCapture,expected:PendingPromptTaskRecord,refresh_account:bool){
+    let identity=expected.clone();
+    let job=spawn_prompt_job(context,capture,move|worker|{
+        let record=load_pending_prompt_tasks_for_namespace(&worker.capture.authority).map_err(transition_error)?
+            .into_iter().find(|record|record.client_request_id==identity.client_request_id
+                && record.owner_user_id==identity.owner_user_id && record.billing_account_group_id==identity.billing_account_group_id);
+        if let Some(record)=record{cancel_prompt_record(worker,record)?;}
+        Ok(())
+    });
+    match job{
+        Ok(job)=>poll_prompt_job(app.as_weak(),context.clone(),capture.clone(),job,move|app,context,capture,result|{
+            forget_prompt_cancellation(context,&expected.client_request_id);
+            if let Err(error)=&result{
+                if error.is_terminal_session_error(){report_prompt_recovery_error(app,context,capture,error);return;}
+            }
+            capture.apply(context,||{
+                clear_prompt_task_activity_if_owned(app,&expected);
+                let state=app.global::<AppState>();
+                if !state.get_optimizing_prompt() && prompt_target_matches(app,context,&expected){
+                    state.set_generation_status(if result.is_ok(){"提示词优化已停止"}else{"已停止接收优化结果，服务端取消待恢复重试"}.into());
+                }
+            });
+            if refresh_account && capture.namespace_current(context){
+                refresh_backend_snapshot_captured(app,context.clone(),capture.persistence.clone());
+            }
+        }),
+        Err(error)=>report_prompt_error(app,context,capture,&expected,&error),
+    }
+}
 fn finish_prompt_record(app:&AppWindow,context:&AppContext,capture:&PromptCapture,expected:PendingPromptTaskRecord,result:std::result::Result<PromptTaskOutcome,ApiError>,refresh_account:bool){
+    let cancelled=prompt_request_cancelled(&context.cancelled_prompt_task_requests,&expected.client_request_id);
+    if cancelled{
+        finish_prompt_cancellation(app,context,capture,expected,refresh_account);
+        return;
+    }
+    forget_prompt_cancellation(context,&expected.client_request_id);
     match result{
         Ok(PromptTaskOutcome::Ready(record))=>{
             if record.owner_user_id!=expected.owner_user_id || record.client_request_id!=expected.client_request_id
@@ -644,6 +794,11 @@ fn finish_prompt_record(app:&AppWindow,context:&AppContext,capture:&PromptCaptur
         }
         Ok(PromptTaskOutcome::Settled(_))=>{capture.apply(context,||clear_prompt_task_activity_if_owned(app,&expected));}
         Ok(_)=>{present_next_recovered_prompt_result(app,context);}
+        Err(error) if is_prompt_task_cancelled(&error)=>{
+            capture.apply(context,||{
+                clear_prompt_task_activity_if_owned(app,&expected);
+            });
+        }
         Err(error)=>report_prompt_error(app,context,capture,&expected,&error),
     }
     if refresh_account && capture.namespace_current(context) {
@@ -780,7 +935,7 @@ fn valid_pending_prompt_task(record: &PendingPromptTaskRecord) -> bool {
 }
 
 fn prompt_task_completed_unclaimed(record: &PendingPromptTaskRecord) -> bool {
-    !record.result_prompt.trim().is_empty() || !record.terminal_error.trim().is_empty()
+    !record.cancel_requested && (!record.result_prompt.trim().is_empty() || !record.terminal_error.trim().is_empty())
 }
 
 fn prompt_task_scope_suspended(record: PendingPromptTaskRecord) -> PromptTaskOutcome {
@@ -887,10 +1042,24 @@ fn prompt_target_matches(
     } else {
         Vec::new()
     };
+    let current_category = current_workspace_category(app);
+    let (composer_category, composer_input) = if record.target_kind == "composer"
+        && record.target_category != current_category
+    {
+        (
+            record.target_category.clone(),
+            prompt_draft_for_category(
+                &context.store.borrow().prompt_drafts,
+                &record.target_category,
+            ),
+        )
+    } else {
+        (current_category, state.get_prompt().to_string())
+    };
     let editor_matches = prompt_target_matches_snapshot(
         record,
-        &current_workspace_category(app),
-        state.get_prompt().as_str(),
+        &composer_category,
+        &composer_input,
         state.get_custom_prompt_editor_session_id().as_str(),
         state.get_custom_prompt_input().as_str(),
         canvas_input.as_deref(),
@@ -911,7 +1080,8 @@ fn prompt_target_matches_snapshot(
     let editor_matches = match record.target_kind.as_str() {
         "composer" => {
             record.target_category == composer_category
-                && (record.target_input == composer_input
+                && (composer_optimization_replaces_prompt(record)
+                    || record.target_input == composer_input
                     || (!record.result_prompt.trim().is_empty()
                         && record.result_prompt == composer_input))
         }
@@ -929,6 +1099,11 @@ fn prompt_target_matches_snapshot(
     editor_matches
         && (record.task_type != "image_style_analysis"
             || record.reference_paths == current_reference_paths)
+}
+
+fn composer_optimization_replaces_prompt(record:&PendingPromptTaskRecord)->bool{
+    record.target_kind=="composer" && record.activity_kind=="optimize"
+        && record.terminal_error.trim().is_empty() && !record.result_prompt.trim().is_empty()
 }
 
 fn durable_apply_before_result_commit(
@@ -1069,7 +1244,14 @@ fn begin_prompt_result_application(
                 if !prompt_target_matches(app,context,&target) || !staged_prompt_is_current(&context.store.borrow(),&target){return false;}
                 let state=app.global::<AppState>();
                         match target.target_kind.as_str(){
-                            "composer"=>state.set_prompt(target.result_prompt.clone().into()),
+                            "composer"=>if current_workspace_category(app)==target.target_category{
+                                state.set_prompt(target.result_prompt.clone().into());
+                                if target.activity_kind=="optimize"{
+                                    state.set_prompt_optimization_result_revision(
+                                        state.get_prompt_optimization_result_revision().saturating_add(1)
+                                    );
+                                }
+                            },
                             "video_prompt"=>{state.set_video_prompt(target.result_prompt.clone().into());}
                             "canvas_node"=>{
                                 if let PromptStoreBefore::Canvas(_,snapshot)=&before{
@@ -1083,7 +1265,9 @@ fn begin_prompt_result_application(
                             _=>{},
                         }
 
-                state.set_generation_status("结果已保存，正在确认原始恢复记录".into());
+                if target.target_kind!="composer" || current_workspace_category(app)==target.target_category{
+                    state.set_generation_status("结果已保存，正在确认原始恢复记录".into());
+                }
                 true
             }).unwrap_or(false);
             if !published{present_next_recovered_prompt_result(app,context);return;}
@@ -1121,7 +1305,9 @@ fn commit_prompt_result_after_ack(
                         let mut displayed=target.clone();displayed.target_input=target.result_prompt.clone();
                         if !prompt_target_matches(app,context,&displayed) || !staged_prompt_is_current(&context.store.borrow(),&target){return;}
                         let state=app.global::<AppState>();
-                        state.set_generation_status(prompt_task_success_message(&record).into());
+                        if target.target_kind!="composer" || current_workspace_category(app)==target.target_category{
+                            state.set_generation_status(prompt_task_success_message(&record).into());
+                        }
                         if target.target_kind=="video_prompt"{state.set_video_prompt_status("视频提示词已优化".into());}
                         if state.get_recovered_prompt_client_request_id().as_str()==record.client_request_id{clear_recovered_prompt_presentation(&state);}
                     });
@@ -1171,6 +1357,66 @@ fn prompt_task_success_message(record: &PendingPromptTaskRecord) -> &'static str
     }
 }
 
+pub(super) fn workspace_prompt_optimization_request_id(
+    state: &AppState,
+    category: &str,
+) -> String {
+    match resolve_category(category, "").as_str() {
+        "scene" => state.get_scene_prompt_optimization_request_id().to_string(),
+        "ui" => state.get_ui_prompt_optimization_request_id().to_string(),
+        "effect" => state.get_effect_prompt_optimization_request_id().to_string(),
+        _ => state
+            .get_character_prompt_optimization_request_id()
+            .to_string(),
+    }
+}
+
+fn set_workspace_prompt_optimization_request_id(
+    state: &AppState,
+    category: &str,
+    request_id: String,
+) {
+    match resolve_category(category, "").as_str() {
+        "scene" => state.set_scene_prompt_optimization_request_id(request_id.into()),
+        "ui" => state.set_ui_prompt_optimization_request_id(request_id.into()),
+        "effect" => state.set_effect_prompt_optimization_request_id(request_id.into()),
+        _ => state.set_character_prompt_optimization_request_id(request_id.into()),
+    }
+}
+
+pub(super) fn sync_prompt_task_activity_for_current_workspace(app: &AppWindow) {
+    let state = app.global::<AppState>();
+    let non_workspace = state
+        .get_non_workspace_prompt_optimization_request_id()
+        .to_string();
+    let request_id = if non_workspace.trim().is_empty() {
+        workspace_prompt_optimization_request_id(&state, &current_workspace_category(app))
+    } else {
+        non_workspace
+    };
+    state.set_optimizing_prompt(!request_id.trim().is_empty());
+    state.set_optimizing_prompt_request_id(request_id.into());
+}
+
+fn clear_prompt_optimization_request_id(state: &AppState, request_id: &str) -> bool {
+    let mut cleared = false;
+    for category in ["character", "scene", "ui", "effect"] {
+        if workspace_prompt_optimization_request_id(state, category) == request_id {
+            set_workspace_prompt_optimization_request_id(state, category, String::new());
+            cleared = true;
+        }
+    }
+    if state
+        .get_non_workspace_prompt_optimization_request_id()
+        .as_str()
+        == request_id
+    {
+        state.set_non_workspace_prompt_optimization_request_id("".into());
+        cleared = true;
+    }
+    cleared
+}
+
 fn set_prompt_task_activity(app: &AppWindow, record: &PendingPromptTaskRecord, active: bool) {
     let state = app.global::<AppState>();
     match record.activity_kind.as_str() {
@@ -1203,15 +1449,33 @@ fn set_prompt_task_activity(app: &AppWindow, record: &PendingPromptTaskRecord, a
             );
         }
         _ => {
-            state.set_optimizing_prompt(active);
-            state.set_optimizing_prompt_request_id(
-                if active {
-                    record.client_request_id.clone()
-                } else {
-                    String::new()
+            let request_id = if active {
+                record.client_request_id.clone()
+            } else {
+                String::new()
+            };
+            if record.target_kind == "composer" {
+                if active
+                    || workspace_prompt_optimization_request_id(
+                        &state,
+                        &record.target_category,
+                    ) == record.client_request_id
+                {
+                    set_workspace_prompt_optimization_request_id(
+                        &state,
+                        &record.target_category,
+                        request_id,
+                    );
                 }
-                .into(),
-            );
+            } else if active
+                || state
+                    .get_non_workspace_prompt_optimization_request_id()
+                    .as_str()
+                    == record.client_request_id
+            {
+                state.set_non_workspace_prompt_optimization_request_id(request_id.into());
+            }
+            sync_prompt_task_activity_for_current_workspace(app);
         }
     }
 }
@@ -1228,7 +1492,18 @@ fn clear_prompt_task_activity_if_owned(app: &AppWindow, record: &PendingPromptTa
         "custom_style_analysis" => {
             state.get_custom_style_analysis_request_id().as_str() == record.client_request_id
         }
-        _ => state.get_optimizing_prompt_request_id().as_str() == record.client_request_id,
+        _ if record.target_kind == "composer" => {
+            workspace_prompt_optimization_request_id(&state, &record.target_category)
+                == record.client_request_id
+        }
+        _ => {
+            state
+                .get_non_workspace_prompt_optimization_request_id()
+                .as_str()
+                == record.client_request_id
+                || state.get_optimizing_prompt_request_id().as_str()
+                    == record.client_request_id
+        }
     };
     if owns_activity {
         set_prompt_task_activity(app, record, false);
@@ -1244,12 +1519,12 @@ fn set_prompt_task_start_failure(app: &AppWindow, target: &PromptResultTarget, r
         }
         PromptResultTarget::CustomPrompt { .. } => {
             state.set_custom_prompt_analyzing(false);
-            state.set_optimizing_prompt(false);
+            sync_prompt_task_activity_for_current_workspace(app);
             state.set_custom_prompt_message(reason.into());
         }
         _ => {
-            state.set_optimizing_prompt(false);
             state.set_translating_prompt(false);
+            sync_prompt_task_activity_for_current_workspace(app);
             state.set_generation_status(reason.into());
         }
     }
@@ -1261,7 +1536,9 @@ fn set_prompt_task_failure(app: &AppWindow, record: &PendingPromptTaskRecord, re
         state.set_video_prompt_status(format!("视频提示词优化失败：{reason}").into());
     } else if record.target_kind == "custom_prompt" {
         state.set_custom_prompt_message(format!("提示词处理失败：{reason}").into());
-    } else {
+    } else if record.target_kind != "composer"
+        || current_workspace_category(app) == record.target_category
+    {
         state.set_generation_status(format!("提示词处理失败：{reason}").into());
     }
 }
@@ -1312,7 +1589,8 @@ fn present_next_recovered_prompt_result(app:&AppWindow,context:&AppContext){
 }
 fn next_recovered_prompt_record(records:Vec<PendingPromptTaskRecord>,owner:&str,tracked:&str)->Option<PendingPromptTaskRecord>{
     if !tracked.is_empty(){return None;}
-    let mut records=records.into_iter().filter(|record|record.owner_user_id==owner && prompt_task_completed_unclaimed(record) && !record.result_committed).collect::<Vec<_>>();
+    let mut records=records.into_iter().filter(|record|record.owner_user_id==owner && prompt_task_completed_unclaimed(record)
+        && !record.result_committed && !composer_optimization_replaces_prompt(record)).collect::<Vec<_>>();
     records.sort_by_key(|record|(record.created_at_epoch_ms,record.client_request_id.clone()));records.into_iter().next()
 }
 fn clear_recovered_prompt_presentation(state:&AppState){
@@ -1586,6 +1864,11 @@ pub(super) fn clear_prompt_task_account_state(app: &AppWindow) {
     state.set_translating_prompt(false);
     state.set_custom_prompt_analyzing(false);
     state.set_optimizing_prompt_request_id("".into());
+    state.set_character_prompt_optimization_request_id("".into());
+    state.set_scene_prompt_optimization_request_id("".into());
+    state.set_ui_prompt_optimization_request_id("".into());
+    state.set_effect_prompt_optimization_request_id("".into());
+    state.set_non_workspace_prompt_optimization_request_id("".into());
     state.set_translating_prompt_request_id("".into());
     state.set_custom_style_analysis_request_id("".into());
     state.set_custom_prompt_recovered_request_id("".into());
@@ -1595,6 +1878,20 @@ pub(super) fn clear_prompt_task_account_state(app: &AppWindow) {
     state.set_video_prompt_expanded_open(false);
     state.set_video_prompt("".into());
     clear_recovered_prompt_presentation(&state);
+}
+
+pub(super) fn cancel_current_prompt_task(app:&AppWindow,context:AppContext){
+    let state=app.global::<AppState>();
+    let request_id=state.get_optimizing_prompt_request_id().to_string();
+    if request_id.trim().is_empty(){return;}
+    context.cancelled_prompt_task_requests.lock().unwrap_or_else(|error|error.into_inner()).insert(request_id.clone());
+    if !clear_prompt_optimization_request_id(&state,&request_id){
+        state.set_optimizing_prompt(false);
+        state.set_optimizing_prompt_request_id("".into());
+    }else{
+        sync_prompt_task_activity_for_current_workspace(app);
+    }
+    state.set_generation_status("提示词优化已停止".into());
 }
 
 pub(super) fn normalize_prompt_task_result(raw: &str) -> String {
@@ -1671,6 +1968,8 @@ mod tests {
     fn pending_record(target_kind: &str) -> PendingPromptTaskRecord {
         PendingPromptTaskRecord {
             schema_version: 2,
+            cancel_requested: false,
+            submission_started: true,
             created_at_epoch_ms: 1,
             client_request_id: "fixed-request-id".to_string(),
             owner_user_id: "user-a".to_string(),
@@ -1697,6 +1996,120 @@ mod tests {
             applied_to_target: false,
             result_committed: false,
         }
+    }
+
+    #[test]
+    fn cancelling_current_prompt_marks_only_the_active_request_and_clears_optimizing_ui() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let context = AppContext::default();
+        let state = app.global::<AppState>();
+        state.set_optimizing_prompt(true);
+        state.set_optimizing_prompt_request_id("request-to-stop".into());
+        state.set_generation_status("正在优化提示词...".into());
+
+        cancel_current_prompt_task(&app, context.clone());
+
+        assert!(!state.get_optimizing_prompt());
+        assert!(state.get_optimizing_prompt_request_id().is_empty());
+        assert_eq!(state.get_generation_status(), "提示词优化已停止");
+        assert!(context
+            .cancelled_prompt_task_requests
+            .lock()
+            .unwrap()
+            .contains("request-to-stop"));
+
+        forget_prompt_cancellation(&context, "request-to-stop");
+        assert!(!context
+            .cancelled_prompt_task_requests
+            .lock()
+            .unwrap()
+            .contains("request-to-stop"));
+    }
+
+    #[test]
+    fn composer_prompt_optimization_activity_is_scoped_per_workspace() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_asset_type("ui".into());
+
+        let mut ui = pending_record("composer");
+        ui.client_request_id = "ui-request".into();
+        ui.target_category = "ui".into();
+        set_prompt_task_activity(&app, &ui, true);
+        assert!(state.get_optimizing_prompt());
+        assert_eq!(state.get_optimizing_prompt_request_id(), "ui-request");
+
+        state.set_asset_type("character".into());
+        sync_prompt_task_activity_for_current_workspace(&app);
+        assert!(!state.get_optimizing_prompt());
+        assert!(state.get_optimizing_prompt_request_id().is_empty());
+
+        let mut character = pending_record("composer");
+        character.client_request_id = "character-request".into();
+        character.target_category = "character".into();
+        set_prompt_task_activity(&app, &character, true);
+        assert!(state.get_optimizing_prompt());
+        assert_eq!(
+            state.get_optimizing_prompt_request_id(),
+            "character-request"
+        );
+
+        state.set_asset_type("ui".into());
+        sync_prompt_task_activity_for_current_workspace(&app);
+        assert!(state.get_optimizing_prompt());
+        assert_eq!(state.get_optimizing_prompt_request_id(), "ui-request");
+        set_prompt_task_activity(&app, &ui, false);
+        assert!(!state.get_optimizing_prompt());
+
+        state.set_asset_type("character".into());
+        sync_prompt_task_activity_for_current_workspace(&app);
+        assert!(state.get_optimizing_prompt());
+        assert_eq!(
+            state.get_optimizing_prompt_request_id(),
+            "character-request"
+        );
+        set_prompt_task_activity(&app, &character, false);
+        assert!(!state.get_optimizing_prompt());
+        assert!(state.get_optimizing_prompt_request_id().is_empty());
+    }
+
+    #[test]
+    fn hidden_workspace_optimization_overwrites_its_draft_without_changing_visible_workspace() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let context = AppContext::default();
+        let state = app.global::<AppState>();
+        state.set_asset_type("character".into());
+        state.set_prompt("character input must stay visible".into());
+        set_prompt_draft_for_category(
+            &mut context.store.borrow_mut().prompt_drafts,
+            "ui",
+            "original ui input".into(),
+        );
+
+        let mut ui = pending_record("composer");
+        ui.task_type = "prompt_optimize".into();
+        ui.target_category = "ui".into();
+        ui.target_input = "original ui input".into();
+        ui.result_prompt = "optimized ui input".into();
+        ui.reference_paths.clear();
+        assert!(prompt_target_matches(&app, &context, &ui));
+        assert_eq!(state.get_prompt(), "character input must stay visible");
+
+        set_prompt_draft_for_category(
+            &mut context.store.borrow_mut().prompt_drafts,
+            "ui",
+            "newer ui edit".into(),
+        );
+        assert!(prompt_target_matches(&app, &context, &ui));
+        assert_eq!(state.get_prompt(), "character input must stay visible");
+
+        let mut translation = ui;
+        translation.task_type = "prompt_translate".into();
+        translation.activity_kind = "translate".into();
+        assert!(!prompt_target_matches(&app, &context, &translation));
     }
 
     #[test]
@@ -1865,8 +2278,9 @@ mod tests {
     }
 
     #[test]
-    fn composer_result_requires_the_original_category_and_prompt_snapshot() {
-        let record = pending_record("composer");
+    fn composer_optimization_replaces_text_but_still_requires_its_category_and_references() {
+        let mut record = pending_record("composer");
+        record.result_prompt = "optimized prompt".into();
         assert!(prompt_target_matches_snapshot(
             &record,
             "character",
@@ -1885,7 +2299,7 @@ mod tests {
             None,
             &record.reference_paths,
         ));
-        assert!(!prompt_target_matches_snapshot(
+        assert!(prompt_target_matches_snapshot(
             &record,
             "character",
             "new prompt",
@@ -1893,6 +2307,18 @@ mod tests {
             "",
             None,
             &record.reference_paths,
+        ));
+        let mut translation = record.clone();
+        translation.task_type = "prompt_translate".into();
+        translation.activity_kind = "translate".into();
+        assert!(!prompt_target_matches_snapshot(
+            &translation,
+            "character",
+            "new prompt",
+            "",
+            "",
+            None,
+            &translation.reference_paths,
         ));
         assert!(!prompt_target_matches_snapshot(
             &record,
@@ -2123,6 +2549,26 @@ mod tests {
 
         assert_eq!(selected.client_request_id, "custom-second");
     }
+
+    #[test]
+    fn composer_optimization_results_skip_confirmation_recovery() {
+        let mut optimization = pending_record("composer");
+        optimization.result_prompt = "optimized prompt".to_string();
+        let mut translation = optimization.clone();
+        translation.client_request_id = "translation-result".to_string();
+        translation.created_at_epoch_ms = 2;
+        translation.task_type = "prompt_translate".to_string();
+        translation.activity_kind = "translate".to_string();
+
+        let selected = next_recovered_prompt_record(
+            vec![optimization, translation],
+            "user-a",
+            "",
+        )
+        .expect("translation still requires explicit recovery");
+
+        assert_eq!(selected.client_request_id, "translation-result");
+    }
 }
 
 #[cfg(test)]
@@ -2330,6 +2776,7 @@ mod core_prompt_tests {
     fn row(f:&Fixture,kind:&str)->PendingPromptTaskRecord {
         PendingPromptTaskRecord{
             schema_version:2,created_at_epoch_ms:1,client_request_id:KEY.into(),owner_user_id:OWNER.into(),
+            cancel_requested:false,submission_started:true,
             billing_account_group_id:PAYER.into(),auth_epoch:f.scope.request.session.auth_epoch,
             server_task_id:TASK.into(),task_type:"prompt_optimize".into(),model_code:"fixture-model".into(),
             prompt:"original input".into(),target_language:None,optimize:true,target_kind:kind.into(),
@@ -2338,6 +2785,13 @@ mod core_prompt_tests {
             reference_paths:vec![],reference_sha256:vec![],reference_size_bytes:vec![],uploaded_file_ids:vec![],
             result_prompt:"paid result".into(),terminal_error:String::new(),applied_to_target:false,result_committed:false,
         }
+    }
+    fn confirmable_row(f:&Fixture,kind:&str)->PendingPromptTaskRecord{
+        let mut record=row(f,kind);
+        if kind=="composer"{
+            record.task_type="prompt_translate".into();record.activity_kind="translate".into();record.optimize=false;
+        }
+        record
     }
     fn seed(f:&Fixture,record:PendingPromptTaskRecord){
         upsert_pending_prompt_task_for_namespace(&f.authority,&f.scope,record).unwrap();
@@ -2479,6 +2933,148 @@ mod core_prompt_tests {
         fn drop(&mut self){if let Some(handle)=self.0.take(){let joined=handle.join();if !std::thread::panicking(){assert!(joined.is_ok(),"fixture trip panicked");}}}
     }
 
+    fn cancellation_response(status:&str)->String {
+        response(200,serde_json::json!({"id":TASK,"billing_account_group_id":PAYER,
+            "status":status,"progress_percent":0,"success_count":0,"failure_count":0,
+            "failure":null,"prompt":"original input","result_prompt":null,"items":[]}),"")
+    }
+
+    #[test]
+    fn core_prompt_stop_cancels_inflight_and_polling_tasks_with_original_scope() {
+        i_slint_backend_testing::init_no_event_loop();
+        for polling in [false,true] {
+            let mut transport=Transport::new(4);let fixture=fixture(&transport.url);let window=app(&fixture);
+            start_backend_prompt_task(&window,fixture.context.clone(),request());transport.wait();
+            if polling {
+                transport.reply(0,cancellation_response("queued"));
+                pump(||rows(&fixture).first().is_some_and(|record|record.server_task_id==TASK));
+            }
+            cancel_current_prompt_task(&window,fixture.context.clone());
+            select(&fixture.context,&fixture.scope.request.session,OTHER,true);
+            if !polling { transport.reply(0,cancellation_response("queued")); }
+            transport.reply(1,cancellation_response("queued"));
+            transport.reply(2,cancellation_response("cancelled"));
+            transport.reply(3,cancellation_response("cancelled"));
+            pump(||rows(&fixture).is_empty() && fixture.context.cancelled_prompt_task_requests.lock().unwrap().is_empty());
+            assert_eq!(window.global::<AppState>().get_prompt(),"original input");
+            assert!(!window.global::<AppState>().get_optimizing_prompt());
+            assert!(!window.global::<AppState>().get_recovered_prompt_result_open());
+            pump_for(Duration::from_millis(150));
+            let requests=transport.finish();
+            assert_eq!(requests.len(),4,"polling={polling}");
+            assert_eq!(requests.iter().filter(|request|request.starts_with(&format!("POST /v1/generation/tasks/{TASK}/cancel "))).count(),1);
+            for request in &requests{
+                let headers=request.to_ascii_lowercase();
+                if request.starts_with("POST /v1/generation/tasks "){
+                    assert!(headers.contains(&format!("x-account-group-id: {PAYER}")));
+                }else{assert!(!headers.contains("x-account-group-id:"));}
+            }
+        }
+    }
+
+    #[test]
+    fn core_prompt_stop_discards_late_success_without_clearing_successor_activity() {
+        i_slint_backend_testing::init_no_event_loop();
+        let mut transport=Transport::new(2);let fixture=fixture(&transport.url);let window=app(&fixture);
+        start_backend_prompt_task(&window,fixture.context.clone(),request());transport.wait();
+        transport.reply(0,task_response());join_prompt_workers().unwrap();
+        cancel_current_prompt_task(&window,fixture.context.clone());
+        let state=window.global::<AppState>();
+        state.set_optimizing_prompt(true);state.set_optimizing_prompt_request_id("successor".into());
+        state.set_generation_status("successor status".into());
+        transport.reply(1,task_response());
+        pump(||rows(&fixture).is_empty() && fixture.context.cancelled_prompt_task_requests.lock().unwrap().is_empty());
+        assert_eq!(state.get_prompt(),"original input");
+        assert!(state.get_optimizing_prompt());
+        assert_eq!(state.get_optimizing_prompt_request_id(),"successor");
+        assert!(!state.get_recovered_prompt_result_open());
+        pump_for(Duration::from_millis(150));
+        assert_eq!(transport.finish().len(),2);
+    }
+
+    #[test]
+    fn core_prompt_stop_failure_retains_intent_and_recovery_only_retries_cancellation() {
+        i_slint_backend_testing::init_no_event_loop();
+        let mut transport=Transport::new(7);let fixture=fixture(&transport.url);let window=app(&fixture);
+        start_backend_prompt_task(&window,fixture.context.clone(),request());transport.wait();
+        cancel_current_prompt_task(&window,fixture.context.clone());
+        transport.reply(0,cancellation_response("queued"));
+        transport.reply(1,cancellation_response("queued"));
+        transport.reply(2,response(403,Value::Null,"cancellation_refused"));
+        transport.reply(3,cancellation_response("queued"));
+        pump(||fixture.context.cancelled_prompt_task_requests.lock().unwrap().is_empty());
+        pump_for(Duration::from_millis(150));
+        let saved=rows(&fixture);assert_eq!(saved.len(),1);assert!(saved[0].cancel_requested);
+        assert_eq!(saved[0].server_task_id,TASK);
+        assert_eq!(window.global::<AppState>().get_prompt(),"original input");
+        transport.reply(4,cancellation_response("queued"));
+        transport.reply(5,cancellation_response("cancelled"));
+        transport.reply(6,cancellation_response("cancelled"));
+        recover_pending_prompt_tasks(&window,fixture.context.clone());
+        pump(||rows(&fixture).is_empty());join_prompt_workers().unwrap();pump_for(Duration::from_millis(150));
+        assert!(!window.global::<AppState>().get_recovered_prompt_result_open());
+        let requests=transport.finish();assert_eq!(requests.len(),7);
+        assert_eq!(requests.iter().filter(|request|request.starts_with("POST /v1/generation/tasks ")).count(),1);
+    }
+
+    #[test]
+    fn core_prompt_stop_confirms_delayed_cancellation_and_completion_races() {
+        i_slint_backend_testing::init_no_event_loop();
+        for cancel_status in [200,409,503]{
+            let slots=if cancel_status==503{6}else{5};
+            let mut transport=Transport::new(slots);let fixture=fixture(&transport.url);let window=app(&fixture);
+            start_backend_prompt_task(&window,fixture.context.clone(),request());transport.wait();
+            cancel_current_prompt_task(&window,fixture.context.clone());
+            transport.reply(0,cancellation_response("queued"));
+            transport.reply(1,cancellation_response("running"));
+            transport.reply(2,if cancel_status==200{cancellation_response("running")}else{response(cancel_status,Value::Null,"cancel_race")});
+            transport.reply(3,cancellation_response("running"));
+            transport.reply(4,if cancel_status==409{task_response()}else{cancellation_response("cancelled")});
+            if cancel_status==503{transport.reply(5,cancellation_response("cancelled"));}
+            pump(||rows(&fixture).is_empty() && fixture.context.cancelled_prompt_task_requests.lock().unwrap().is_empty());
+            assert_eq!(window.global::<AppState>().get_prompt(),"original input");
+            assert!(!window.global::<AppState>().get_optimizing_prompt());
+            assert!(!window.global::<AppState>().get_recovered_prompt_result_open());
+            pump_for(Duration::from_millis(150));
+            let requests=transport.finish();assert_eq!(requests.len(),slots);
+            assert_eq!(requests.iter().filter(|request|request.starts_with("POST /v1/generation/tasks ")).count(),1);
+            assert_eq!(requests.iter().filter(|request|request.starts_with(&format!("POST /v1/generation/tasks/{TASK}/cancel "))).count(),if cancel_status==503{2}else{1});
+        }
+    }
+
+    #[test]
+    fn core_prompt_stop_unknown_submission_reuses_original_id_before_cancelling() {
+        i_slint_backend_testing::init_no_event_loop();
+        let mut transport=Transport::new(4);let fixture=fixture(&transport.url);let window=app(&fixture);
+        start_backend_prompt_task(&window,fixture.context.clone(),request());transport.wait();
+        let request_id=rows(&fixture)[0].client_request_id.clone();
+        cancel_current_prompt_task(&window,fixture.context.clone());
+        transport.reply(0,response(503,Value::Null,"temporary_failure"));
+        transport.reply(1,cancellation_response("queued"));
+        transport.reply(2,cancellation_response("cancelled"));
+        transport.reply(3,cancellation_response("cancelled"));
+        pump(||rows(&fixture).is_empty() && fixture.context.cancelled_prompt_task_requests.lock().unwrap().is_empty());
+        pump_for(Duration::from_millis(150));
+        let requests=transport.finish();assert_eq!(requests.len(),4);
+        let submissions=requests.iter().filter(|request|request.starts_with("POST /v1/generation/tasks ")).collect::<Vec<_>>();
+        assert_eq!(submissions.len(),2);
+        assert!(submissions.iter().all(|request|request.contains(&request_id)));
+        assert_eq!(window.global::<AppState>().get_prompt(),"original input");
+    }
+
+    #[test]
+    fn core_prompt_stop_before_submission_never_creates_remote_task() {
+        i_slint_backend_testing::init_no_event_loop();
+        let transport=Transport::new(0);let fixture=fixture(&transport.url);let window=app(&fixture);
+        let mut record=row(&fixture,"composer");
+        record.server_task_id.clear();record.result_prompt.clear();record.submission_started=false;record.cancel_requested=true;
+        seed(&fixture,record);
+        recover_pending_prompt_tasks(&window,fixture.context.clone());
+        pump(||rows(&fixture).is_empty());join_prompt_workers().unwrap();pump_for(Duration::from_millis(50));
+        assert_eq!(window.global::<AppState>().get_prompt(),"original input");
+        assert!(transport.finish().is_empty());
+    }
+
 
     #[test]
     fn video_prompt_worker_reports_queue_processing_reconnect_and_safe_failure() {
@@ -2566,7 +3162,7 @@ mod core_prompt_tests {
     fn core_prompt_claim_writer_rejection_keeps_original_visible_text_and_paid_row() {
         i_slint_backend_testing::init_no_event_loop();
         let transport=Transport::new(0);let f=fixture(&transport.url);let app=app(&f);
-        seed(&f,row(&f,"composer"));present_next_recovered_prompt_result(&app,&f.context);pump(||app.global::<AppState>().get_recovered_prompt_result_open());
+        seed(&f,confirmable_row(&f,"composer"));present_next_recovered_prompt_result(&app,&f.context);pump(||app.global::<AppState>().get_recovered_prompt_result_open());
         f.writer.deactivate(f.persistence.lease()).unwrap();
         app.global::<AppState>().invoke_apply_recovered_prompt_result();
         join_prompt_workers().unwrap();pump_for(Duration::from_millis(50));
@@ -2580,7 +3176,7 @@ mod core_prompt_tests {
         i_slint_backend_testing::init_no_event_loop();
         for discard in [false,true] {
             let transport=Transport::new(0);let f=fixture(&transport.url);let app=app(&f);
-            seed(&f,row(&f,"composer"));present_next_recovered_prompt_result(&app,&f.context);pump(||app.global::<AppState>().get_recovered_prompt_result_open());
+            seed(&f,confirmable_row(&f,"composer"));present_next_recovered_prompt_result(&app,&f.context);pump(||app.global::<AppState>().get_recovered_prompt_result_open());
             let path=f.persistence.lease().namespace.path(ManagedUserArea::Recovery).join("pending-prompt-tasks.json");
             // Fault injection only into this fixture's explicitly owned recovery file.
             fs::write(&path,b"retained-invalid-document").unwrap();
@@ -2597,7 +3193,7 @@ mod core_prompt_tests {
         i_slint_backend_testing::init_no_event_loop();
         for action in 0..4 {
             let transport=Transport::new(0);let f=fixture(&transport.url);let app=app(&f);
-            seed(&f,row(&f,"composer"));present_next_recovered_prompt_result(&app,&f.context);pump(||app.global::<AppState>().get_recovered_prompt_result_open());
+            seed(&f,confirmable_row(&f,"composer"));present_next_recovered_prompt_result(&app,&f.context);pump(||app.global::<AppState>().get_recovered_prompt_result_open());
             let state=app.global::<AppState>();state.set_custom_prompt_recovered_request_id(KEY.into());
             f.backend.api.upgrade_latch().trip(RequiredUpgrade{minimum_version:None});
             with_prompt_clipboard_test(|_|panic!("clipboard must not be called after upgrade"),||match action{
@@ -2614,7 +3210,7 @@ mod core_prompt_tests {
     fn core_prompt_clipboard_late_result_cannot_publish_into_replaced_store_binding() {
         i_slint_backend_testing::init_no_event_loop();
         let transport=Transport::new(0);let f=fixture(&transport.url);let app=app(&f);
-        seed(&f,row(&f,"composer"));present_next_recovered_prompt_result(&app,&f.context);pump(||app.global::<AppState>().get_recovered_prompt_result_open());
+        seed(&f,confirmable_row(&f,"composer"));present_next_recovered_prompt_result(&app,&f.context);pump(||app.global::<AppState>().get_recovered_prompt_result_open());
         let context=f.context.clone();let weak=app.as_weak();
         with_prompt_clipboard_test(move|text|{
             assert_eq!(text,"paid result");
@@ -2633,7 +3229,8 @@ mod core_prompt_tests {
             let transport=Transport::new(0);let f=fixture(&transport.url);let app=app(&f);
             let state=app.global::<AppState>();
             if video{state.set_page("video-generation".into());state.set_video_source_id(OTHER.into());state.set_video_prompt("original input".into());}
-            seed(&f,row(&f,if video{"video_prompt"}else{"composer"}));present_next_recovered_prompt_result(&app,&f.context);pump(||app.global::<AppState>().get_recovered_prompt_result_open());
+            let record=if video{row(&f,"video_prompt")}else{confirmable_row(&f,"composer")};
+            seed(&f,record);present_next_recovered_prompt_result(&app,&f.context);pump(||app.global::<AppState>().get_recovered_prompt_result_open());
             state.invoke_apply_recovered_prompt_result();
             pump(||if video{state.get_video_prompt()=="paid result"}else{state.get_prompt()=="paid result"});
             join_prompt_workers().unwrap();
@@ -2644,16 +3241,18 @@ mod core_prompt_tests {
         }
     }
     #[test]
-    fn core_prompt_edited_target_keeps_paid_result_until_explicit_accept() {
+    fn core_prompt_edited_composer_target_is_overwritten_without_confirmation() {
         i_slint_backend_testing::init_no_event_loop();
         let transport=Transport::new(0);let f=fixture(&transport.url);let app=app(&f);
         let record=row(&f,"composer");seed(&f,record.clone());
         app.global::<AppState>().set_prompt("user edited input".into());
-        assert!(matches!(apply_prompt_result_if_target_matches(&app,&f.context,&record),PromptResultApplication::NotApplied));
-        assert_eq!(app.global::<AppState>().get_prompt(),"user edited input");
-        assert!(!rows(&f)[0].result_committed);
-        present_next_recovered_prompt_result(&app,&f.context);pump(||app.global::<AppState>().get_recovered_prompt_result_open());app.global::<AppState>().invoke_apply_recovered_prompt_result();
+        assert!(matches!(apply_prompt_result_if_target_matches(&app,&f.context,&record),PromptResultApplication::AppliedWithCleanupPending));
         pump(||app.global::<AppState>().get_prompt()=="paid result");join_prompt_workers().unwrap();
+        pump(||rows(&f).iter().all(|record|record.result_committed));
+        assert!(!app.global::<AppState>().get_recovered_prompt_result_open());
+        assert_eq!(app.global::<AppState>().get_prompt_optimization_result_revision(),1);
+        let durable=f.writer.load_client_state_for_namespace(f.persistence.lease()).unwrap().unwrap();
+        assert_eq!(prompt_draft_for_category(&durable.prompt_drafts,"character"),"paid result");
         assert!(transport.finish().is_empty());
     }
 
@@ -2675,7 +3274,7 @@ mod core_prompt_tests {
     fn core_prompt_repeated_claim_and_copy_keep_one_actual_worker_until_result_disposal() {
         i_slint_backend_testing::init_no_event_loop();
         let transport=Transport::new(0);let f=fixture(&transport.url);let app=app(&f);
-        seed(&f,row(&f,"composer"));
+        seed(&f,confirmable_row(&f,"composer"));
         present_next_recovered_prompt_result(&app,&f.context);
         pump(||app.global::<AppState>().get_recovered_prompt_result_open());
         let(sent_tx,sent_rx)=mpsc::channel();let(release_tx,release_rx)=mpsc::channel();
@@ -2767,7 +3366,7 @@ mod core_prompt_tests {
     fn core_prompt_new_edit_before_queued_ack_completion_is_not_overwritten_or_committed() {
         i_slint_backend_testing::init_no_event_loop();
         let transport=Transport::new(0);let f=fixture(&transport.url);let app=app(&f);let state=app.global::<AppState>();
-        seed(&f,row(&f,"composer"));present_next_recovered_prompt_result(&app,&f.context);pump(||state.get_recovered_prompt_result_open());
+        seed(&f,confirmable_row(&f,"composer"));present_next_recovered_prompt_result(&app,&f.context);pump(||state.get_recovered_prompt_result_open());
         state.invoke_apply_recovered_prompt_result();
         // One dispatch at a time: the staging callback schedules the real ack
         // timer, which must not be dispatched before this test's new user edit.
@@ -2793,7 +3392,7 @@ mod core_prompt_tests {
     fn core_prompt_failed_cleanup_retry_never_reapplies_over_a_new_editor_value() {
         i_slint_backend_testing::init_no_event_loop();
         let transport=Transport::new(0);let f=fixture(&transport.url);let app=app(&f);let state=app.global::<AppState>();
-        seed(&f,row(&f,"composer"));present_next_recovered_prompt_result(&app,&f.context);pump(||state.get_recovered_prompt_result_open());
+        seed(&f,confirmable_row(&f,"composer"));present_next_recovered_prompt_result(&app,&f.context);pump(||state.get_recovered_prompt_result_open());
         let(tx,rx)=mpsc::channel();let(release_tx,release_rx)=mpsc::channel();
         PROMPT_BEFORE_REMOVE.with(|hook|*hook.borrow_mut()=Some(Box::new(move||{tx.send(()).unwrap();release_rx.recv_timeout(Duration::from_secs(3)).unwrap();})));
         let release=ReleasePromptWorker(Some(release_tx));state.invoke_apply_recovered_prompt_result();
@@ -2942,7 +3541,7 @@ mod core_prompt_tests {
     fn core_prompt_discard_write_failure_after_successful_read_preserves_paid_modal() {
         i_slint_backend_testing::init_no_event_loop();
         let transport=Transport::new(0);let f=fixture(&transport.url);let app=app(&f);
-        seed(&f,row(&f,"composer"));present_next_recovered_prompt_result(&app,&f.context);pump(||app.global::<AppState>().get_recovered_prompt_result_open());
+        seed(&f,confirmable_row(&f,"composer"));present_next_recovered_prompt_result(&app,&f.context);pump(||app.global::<AppState>().get_recovered_prompt_result_open());
         let(tx,rx)=mpsc::channel();let(release_tx,release_rx)=mpsc::channel();
         PROMPT_BEFORE_REMOVE.with(|hook|*hook.borrow_mut()=Some(Box::new(move||{tx.send(()).unwrap();release_rx.recv_timeout(Duration::from_secs(3)).unwrap();})));
         let release=ReleasePromptWorker(Some(release_tx));app.global::<AppState>().invoke_dismiss_recovered_prompt_result();
@@ -2953,7 +3552,7 @@ mod core_prompt_tests {
         assert_eq!(fs::read(path).unwrap(),b"changed-before-removal");assert!(transport.finish().is_empty());
     }
     #[test]
-    fn core_prompt_replaced_reference_prevents_automatic_paid_result_application() {
+    fn core_prompt_replaced_reference_is_retained_without_opening_confirmation() {
         i_slint_backend_testing::init_no_event_loop();
         let transport=Transport::new(0);let f=fixture(&transport.url);let app=app(&f);
         let source=f.root.path().join("reference.png");fs::write(&source,b"original-reference-bytes").unwrap();
@@ -2962,8 +3561,8 @@ mod core_prompt_tests {
         record.reference_paths=vec![source.display().to_string()];record.reference_sha256=vec![format!("{:x}",Sha256::digest(b"original-reference-bytes"))];record.reference_size_bytes=vec![24];
         seed(&f,record.clone());fs::write(&source,b"changed-reference-content").unwrap();
         let _=apply_prompt_result_if_target_matches(&app,&f.context,&record);
-        pump(||app.global::<AppState>().get_recovered_prompt_result_open());join_prompt_workers().unwrap();
-        assert_eq!(app.global::<AppState>().get_prompt(),"original input");assert_eq!(app.global::<AppState>().get_recovered_prompt_result(),"paid result");
+        join_prompt_workers().unwrap();pump_for(Duration::from_millis(50));
+        assert_eq!(app.global::<AppState>().get_prompt(),"original input");assert!(!app.global::<AppState>().get_recovered_prompt_result_open());
         assert!(!rows(&f)[0].result_committed);assert!(transport.finish().is_empty());
     }
 }

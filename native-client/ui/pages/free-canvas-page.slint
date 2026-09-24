@@ -171,6 +171,14 @@ component FreeCanvasCard {
             mouse-cursor: pointer;
             clicked => {
                 if root.import-mode {
+                    if root.card-id == "character-multi-direction" {
+                        AppState.canvas-workflow-direction-count = 8;
+                        AppState.canvas-workflow-action = "standing";
+                    } else if root.card-id == "skill-icon-generator" {
+                        AppState.canvas-workflow-skill-icon-count = 12;
+                        AppState.canvas-workflow-skill-icon-background = "white";
+                        AppState.canvas-workflow-skill-icon-shape = "circle";
+                    }
                     root.import-workflow(root.card-id, root.title,
                         AppState.en ? root.prompt-en : root.prompt-zh,
                         AppState.en ? root.hint-en : root.hint-zh, root.artwork);
@@ -181,6 +189,26 @@ component FreeCanvasCard {
                     AppState.ratio = "21:9";
                     AppState.count = 1;
                     AppState.mode = "game";
+                } else if root.card-id == "scene-composition" {
+                    AppState.asset-type = "scene";
+                    AppState.ratio = "16:9";
+                    AppState.count = 1;
+                    AppState.mode = "game";
+                } else if root.card-id == "skill-icon-generator" {
+                    AppState.asset-type = "ui";
+                    AppState.ratio = "4:3";
+                    AppState.count = 1;
+                    AppState.mode = "game";
+                    AppState.canvas-workflow-skill-icon-count = 12;
+                    AppState.canvas-workflow-skill-icon-background = "white";
+                    AppState.canvas-workflow-skill-icon-shape = "circle";
+                } else if root.card-id == "character-multi-direction" {
+                    AppState.asset-type = "character";
+                    AppState.ratio = "4:3";
+                    AppState.count = 1;
+                    AppState.mode = "game";
+                    AppState.canvas-workflow-direction-count = 8;
+                    AppState.canvas-workflow-action = "standing";
                 }
                 AppState.open-canvas-workspace(root.card-id);
                 AppState.canvas-workflow-artwork = root.artwork;
@@ -219,11 +247,11 @@ export component FreeCanvasPage {
     }
 
     function card-width() -> length {
-        return (root.cards-width() - root.card-gap() * 3) / 4;
+        return (root.cards-width() - root.card-gap() * 4) / 5;
     }
 
     function card-height() -> length {
-        return min(250px, max(178px, (root.height - 142px - root.card-gap() * 2) / 3));
+        return min(210px, max(176px, (root.card-width() - 16px) * 9 / 16 + 60px));
     }
 
     Rectangle {
@@ -326,8 +354,8 @@ export component FreeCanvasPage {
                 hint-en: "Upload a subject and follow its evolution from basic to ultimate form";
             }
             FreeCanvasCard {
-                x: 0px;
-                y: root.card-height() + root.card-gap();
+                x: (root.card-width() + root.card-gap()) * 4;
+                y: 0px;
                 width: root.card-width();
                 height: root.card-height();
                 card-id: "character-age";
@@ -342,7 +370,7 @@ export component FreeCanvasPage {
                 hint-en: "Upload a character and see the full age progression from baby to elder";
             }
             FreeCanvasCard {
-                x: root.card-width() + root.card-gap();
+                x: 0px;
                 y: root.card-height() + root.card-gap();
                 width: root.card-width();
                 height: root.card-height();
@@ -358,7 +386,7 @@ export component FreeCanvasPage {
                 hint-en: "Upload a character and explore body shapes from lean to powerful";
             }
             FreeCanvasCard {
-                x: (root.card-width() + root.card-gap()) * 2;
+                x: root.card-width() + root.card-gap();
                 y: root.card-height() + root.card-gap();
                 width: root.card-width();
                 height: root.card-height();
@@ -374,21 +402,9 @@ export component FreeCanvasPage {
                 hint-zh: BuildingDerivationPreset.hint-zh;
                 hint-en: BuildingDerivationPreset.hint-en;
             }
-            FreeCanvasCard {
-                x: (root.card-width() + root.card-gap()) * 3;
-                y: root.card-height() + root.card-gap();
-                width: root.card-width();
-                height: root.card-height();
-                card-id: "infinite-canvas";
-                import-mode: root.import-mode;
-                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
-                title: AppState.en ? "Infinite Canvas" : "无限画布";
-                description: AppState.en ? "Connect images, text and ideas freely" : "自由连接图片、文字与灵感";
-                opens-canvas: true;
-            }
             if !root.import-mode: FreeCanvasCard {
-                x: 0px;
-                y: (root.card-height() + root.card-gap()) * 2;
+                x: (root.card-width() + root.card-gap()) * 2;
+                y: root.card-height() + root.card-gap();
                 width: root.card-width();
                 height: root.card-height();
                 card-id: "side-scroll-map";
@@ -400,6 +416,69 @@ export component FreeCanvasPage {
                 prompt-en: "Side-scrolling seamless map specification:";
                 hint-zh: "上传风格参考图，生成前中后景分层、首尾无缝衔接的横版地图";
                 hint-en: "Upload a style reference and create a layered, seamless side-scrolling map";
+            }
+            FreeCanvasCard {
+                x: (root.card-width() + root.card-gap()) * (root.import-mode ? 2 : 3);
+                y: root.card-height() + root.card-gap();
+                width: root.card-width();
+                height: root.card-height();
+                card-id: "character-multi-direction";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
+                title: AppState.en ? "Character Multi-direction Sheet" : "角色多向图";
+                description: AppState.en ? "Three, four, or eight directions with action poses" : "三视图、四向图、八向图，支持站立/行走/奔跑";
+                category: "character";
+                artwork: @image-url("../../assets/free-canvas/character-multi-direction.png");
+                prompt-zh: "角色多向图规范：";
+                prompt-en: "Character multi-direction sheet specification:";
+                hint-zh: "上传角色参考图，选择三视图、四向图或八向图，以及站立、行走或奔跑动作";
+                hint-en: "Upload a character reference, then choose three, four, or eight directions and an action pose";
+            }
+            FreeCanvasCard {
+                x: (root.card-width() + root.card-gap()) * (root.import-mode ? 3 : 4);
+                y: root.card-height() + root.card-gap();
+                width: root.card-width();
+                height: root.card-height();
+                card-id: "scene-composition";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
+                title: AppState.en ? "Scene Composition" : "场景组合";
+                description: AppState.en ? "Merge multiple references into one unified scene" : "将多张参考图融合为画风统一的完整场景";
+                category: "scene";
+                artwork: @image-url("../../assets/free-canvas/scene-composition.png");
+                prompt-zh: "场景组合规范：";
+                prompt-en: "Scene composition specification:";
+                hint-zh: "上传2至8张参考图，融合为画风、透视和光影统一的完整场景";
+                hint-en: "Upload 2–8 references and merge them into one scene with a unified style, perspective, and lighting";
+            }
+            FreeCanvasCard {
+                x: root.import-mode ? (root.card-width() + root.card-gap()) * 4 : 0px;
+                y: root.import-mode ? root.card-height() + root.card-gap() : (root.card-height() + root.card-gap()) * 2;
+                width: root.card-width();
+                height: root.card-height();
+                card-id: "skill-icon-generator";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
+                title: AppState.en ? "Skill Icon Generator" : "技能图标生成";
+                description: AppState.en ? "Create 6–20 skill icons in the reference style" : "按参考画风生成6至20个技能图标";
+                category: "ui";
+                artwork: @image-url("../../assets/free-canvas/skill-icon-generator.png");
+                prompt-zh: "技能图标生成规范：";
+                prompt-en: "Skill icon generation specification:";
+                hint-zh: "上传1至8张风格参考图，描述想要生成的技能图标";
+                hint-en: "Upload 1–8 style references and describe the skill icons to create";
+            }
+            FreeCanvasCard {
+                x: root.import-mode ? 0px : root.card-width() + root.card-gap();
+                y: (root.card-height() + root.card-gap()) * 2;
+                width: root.card-width();
+                height: root.card-height();
+                card-id: "infinite-canvas";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
+                title: AppState.en ? "Infinite Canvas" : "无限画布";
+                description: AppState.en ? "Connect images, text and ideas freely" : "自由连接图片、文字与灵感";
+                opens-canvas: true;
             }
         }
     }

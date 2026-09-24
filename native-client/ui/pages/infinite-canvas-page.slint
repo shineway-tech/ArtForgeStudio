@@ -334,6 +334,9 @@ component CanvasChoiceButton {
         border-radius: 5px;
         border-width: 1px;
         border-color: root.selected ? AppTheme.accent : AppTheme.border;
+        accessible-role: button;
+        accessible-label: root.text;
+        accessible-action-default => { root.clicked(); }
         Text {
             width: parent.width;
             height: parent.height;
@@ -1048,7 +1051,7 @@ component CanvasNodeCard {
     in-out property <bool> media-settings-open: false;
     in-out property <string> video-quality: "720p";
     in-out property <string> video-layout: "square";
-    in-out property <string> video-duration: "6s";
+    in-out property <string> video-duration-input: "4";
     in-out property <string> audio-voice: "Alloy";
     in-out property <string> audio-format: "MP3";
     in-out property <string> audio-speed: "1x";
@@ -1116,6 +1119,10 @@ component CanvasNodeCard {
 
     function is-board-image() -> bool {
         return root.note.kind == "board-image";
+    }
+
+    function can-connect() -> bool {
+        return root.note.kind != "group";
     }
 
     function is-default-media-prompt() -> bool {
@@ -1214,14 +1221,28 @@ component CanvasNodeCard {
         if root.note.kind == "image" {
             return AppState.image-model-name == "" ? (AppState.en ? "Select image model" : "选择图片模型") : AppState.image-model-name;
         }
-        if root.note.kind == "video" { return AppState.en ? "Video model not configured" : "未配置视频模型"; }
+        if root.note.kind == "video" {
+            return AppState.video-model-name == "" ? (AppState.en ? "Select video model" : "选择视频模型") : AppState.video-model-name;
+        }
         return AppState.en ? "Audio model not configured" : "未配置音频模型";
     }
 
     function media-settings-text() -> string {
         if root.note.kind == "image" { return AppState.quality + " · " + AppState.ratio + " · " + AppState.count + (AppState.en ? " images" : "张"); }
-        if root.note.kind == "video" { return root.video-quality + " · " + root.video-layout-label() + " · " + root.video-duration; }
+        if root.note.kind == "video" { return root.video-quality + " · " + root.video-layout-label() + " · " + root.video-duration-seconds() + "s"; }
         return root.audio-voice + " · " + root.audio-format + " · " + root.audio-speed;
+    }
+
+    function video-duration-seconds() -> int {
+        return max(4, min(20, Math.round(root.video-duration-input.to-float())));
+    }
+
+    function set-video-duration(seconds: int) {
+        root.video-duration-input = "" + max(4, min(20, seconds));
+    }
+
+    function normalize-video-duration() {
+        root.set-video-duration(root.video-duration-seconds());
     }
 
     function video-layout-label() -> string {
@@ -1308,26 +1329,30 @@ component CanvasNodeCard {
                     : (root.note.kind == "group" ? AppTheme.accent.with-alpha(0.55) : #514c48)));
         animate border-color { duration: AppState.reduced-motion ? 0ms : 600ms; easing: ease-in-out; }
 
-        if root.note.kind != "group" && !root.is-board-image() && (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover || AppState.canvas-selected-id == root.note.id || root.connection-source-id != ""): Rectangle {
-            x: -5px * root.node-scale();
-            y: (parent.height - 10px * root.node-scale()) / 2;
-            width: 10px * root.node-scale();
+        if root.can-connect() && root.zoom-percent >= 30: Rectangle {
+            width: max(12px, 14px * root.node-scale());
             height: self.width;
-            background: AppTheme.panel;
+            x: -self.width / 2;
+            y: (parent.height - self.height) / 2;
+            background: input-connector-touch.has-hover || AppState.canvas-link-hover-target-id == root.note.id
+                ? AppTheme.accent
+                : AppTheme.panel;
             border-radius: self.width / 2;
-            border-width: 2px * root.node-scale();
+            border-width: max(2px, 2px * root.node-scale());
             border-color: AppState.canvas-link-hover-target-id == root.note.id
                 ? (AppState.canvas-link-hover-valid ? AppTheme.accent : #e5484d)
                 : (root.connection-source-id != "" && root.connection-source-id != root.note.id ? AppTheme.accent.with-alpha(0.72) : AppTheme.accent);
         }
-        if root.note.kind != "group" && !root.is-board-image() && (node-drag-touch.has-hover || input-connector-touch.has-hover || output-connector-touch.has-hover || AppState.canvas-selected-id == root.note.id || root.connection-source-id == root.note.id || root.connection-target-id != ""): Rectangle {
-            x: parent.width - 5px * root.node-scale();
-            y: (parent.height - 10px * root.node-scale()) / 2;
-            width: 10px * root.node-scale();
+        if root.can-connect() && root.zoom-percent >= 30: Rectangle {
+            width: max(12px, 14px * root.node-scale());
             height: self.width;
-            background: AppTheme.panel;
+            x: parent.width - self.width / 2;
+            y: (parent.height - self.height) / 2;
+            background: output-connector-touch.has-hover || root.connection-source-id == root.note.id
+                ? AppTheme.accent
+                : AppTheme.panel;
             border-radius: self.width / 2;
-            border-width: 2px * root.node-scale();
+            border-width: max(2px, 2px * root.node-scale());
             border-color: AppTheme.accent;
         }
 
@@ -1845,7 +1870,7 @@ component CanvasNodeCard {
         }
 
         if (root.is-visual-media() || root.is-board-image()) && AppState.canvas-selected-id == root.note.id && root.zoom-percent >= 30 && !root.image-processing(): media-action-bar := Rectangle {
-            width: root.split-mode ? root.split-action-bar-width() : (root.note.kind == "video" ? 380px : ((root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "" ? 612px : 312px)) * root.node-scale();
+            width: root.split-mode ? root.split-action-bar-width() : (root.note.kind == "video" ? 380px : ((root.note.kind == "image" || root.is-board-image()) ? (root.note.image-path != "" ? 408px : 104px) : 312px)) * root.node-scale();
             height: 46px * root.node-scale();
             x: (parent.width - self.width) / 2;
             y: root.action-bar-y();
@@ -1912,12 +1937,12 @@ component CanvasNodeCard {
                 padding-top: 4px * root.node-scale();
                 padding-bottom: 4px * root.node-scale();
                 spacing: 2px * root.node-scale();
-                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.show-canvas-node-info(root.note.id); } }
-                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
+                if root.note.kind == "audio": CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/info.svg"); text: AppState.en ? "Info" : "信息"; clicked => { AppState.show-canvas-node-info(root.note.id); } }
                 if (root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "": CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/download.svg"); text: AppState.en ? "Download" : "下载"; clicked => { AppState.save-canvas-image(root.note.id); } }
                 if (root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "": CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/group.svg"); text: AppState.en ? "Extract UI" : "提取元素"; clicked => { if !AppState.generating { AppState.extract-canvas-ui-elements(root.note.id); } } }
                 if (root.note.kind == "image" || root.is-board-image()) && root.note.image-path != "": CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/split.svg"); text: AppState.en ? "Split" : "分割"; clicked => { root.split-rows = "0"; root.split-columns = "0"; root.split-row-positions = []; root.split-column-positions = []; root.split-mode = true; } }
-                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/upload.svg"); text: (root.note.kind == "image" || root.is-board-image()) ? (AppState.en ? "Upload image" : "上传图片") : (AppState.en ? "Upload audio" : "上传音频"); clicked => { if root.note.kind == "image" || root.is-board-image() { AppState.choose-canvas-node-image(root.note.id); } else { AppState.generation-status = AppState.en ? "Audio upload requires a configured audio provider" : "请先配置音频生成服务"; } } }
+                if root.note.kind == "audio": CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/upload.svg"); text: AppState.en ? "Upload audio" : "上传音频"; clicked => { AppState.generation-status = AppState.en ? "Audio upload requires a configured audio provider" : "请先配置音频生成服务"; } }
+                CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url("../../assets/icons/trash.svg"); text: AppState.en ? "Delete" : "删除"; danger: true; clicked => { AppState.pending-delete-kind = "canvas-note"; AppState.pending-delete-id = root.note.id; AppState.pending-delete-source = "canvas"; AppState.delete-confirm-open = true; } }
             }
         }
 
@@ -2037,7 +2062,10 @@ component CanvasNodeCard {
                 clicked => {
                     root.media-settings-open = true;
                     if root.note.kind == "image" { image-settings-popup.show(); }
-                    else if root.note.kind == "video" { video-settings-popup.show(); }
+                    else if root.note.kind == "video" {
+                        root.normalize-video-duration();
+                        video-settings-popup.show();
+                    }
                     else { audio-settings-popup.show(); }
                 }
             }
@@ -2076,7 +2104,7 @@ component CanvasNodeCard {
         }
 
         input-connector-touch := TouchArea {
-            visible: root.note.kind != "group" && !root.is-board-image() && root.zoom-percent >= 30 && !root.image-processing();
+            visible: root.can-connect() && root.zoom-percent >= 30 && !root.image-processing();
             width: max(18px, 26px * root.node-scale());
             height: self.width;
             x: -self.width / 2;
@@ -2099,7 +2127,7 @@ component CanvasNodeCard {
         }
 
         output-connector-touch := TouchArea {
-            visible: root.note.kind != "group" && !root.is-board-image() && root.zoom-percent >= 30 && !root.image-processing();
+            visible: root.can-connect() && root.zoom-percent >= 30 && !root.image-processing();
             width: max(18px, 26px * root.node-scale());
             height: self.width;
             x: parent.width - self.width / 2;
@@ -2231,7 +2259,11 @@ component CanvasNodeCard {
 
         image-model-popup := PopupWindow {
             width: max(230px, min(320px, 280px * root.zoom-percent / 100));
-            height: root.note.kind == "image" ? min(270px, max(58px, 12px + AppState.model-image-options.length * 42px)) : 74px;
+            height: root.note.kind == "image"
+                ? min(270px, max(58px, 12px + AppState.model-image-options.length * 42px))
+                : (root.note.kind == "video"
+                    ? min(302px, max(70px, 12px + AppState.video-model-options.length * 58px))
+                    : 74px);
             x: root.dropdown-popup-x(self.width);
             y: root.dropdown-popup-y(self.height);
             close-policy: close-on-click-outside;
@@ -2283,7 +2315,76 @@ component CanvasNodeCard {
                         }
                     }
                 }
-                if root.note.kind != "image" || AppState.model-image-options.length == 0: Rectangle {
+                if root.note.kind == "video" && AppState.video-model-options.length > 0: Flickable {
+                    width: parent.width;
+                    height: parent.height;
+                    viewport-width: parent.width;
+                    viewport-height: max(parent.height, 12px + AppState.video-model-options.length * 58px);
+                    interactive: true;
+                    VerticalLayout {
+                        width: parent.viewport-width;
+                        height: parent.viewport-height;
+                        padding: 6px;
+                        spacing: 4px;
+                        for model in AppState.video-model-options: Rectangle {
+                            height: 54px;
+                            background: video-model-touch.has-hover ? #35312e : (AppState.video-model == model.code ? #302c29 : transparent);
+                            border-radius: 7px;
+                            Image {
+                                x: 10px;
+                                y: (parent.height - 16px) / 2;
+                                width: 16px;
+                                height: 16px;
+                                source: @image-url("../../assets/icons/video.svg");
+                                colorize: AppState.video-model == model.code ? AppTheme.accent : #eee9e4;
+                            }
+                            Text {
+                                x: 34px;
+                                y: 5px;
+                                width: parent.width - 64px;
+                                height: 22px;
+                                text: model.name;
+                                color: #eee9e4;
+                                font-size: 12px;
+                                font-weight: AppState.video-model == model.code ? 500 : 400;
+                                vertical-alignment: center;
+                                wrap: no-wrap;
+                                overflow: elide;
+                            }
+                            Text {
+                                x: 34px;
+                                y: 27px;
+                                width: parent.width - 64px;
+                                height: 18px;
+                                text: model.capabilities;
+                                color: #aaa39d;
+                                font-size: 10px;
+                                vertical-alignment: center;
+                                wrap: no-wrap;
+                                overflow: elide;
+                            }
+                            if AppState.video-model == model.code: Image {
+                                x: parent.width - 24px;
+                                y: (parent.height - 14px) / 2;
+                                width: 14px;
+                                height: 14px;
+                                source: @image-url("../../assets/icons/check.svg");
+                                colorize: AppTheme.accent;
+                            }
+                            video-model-touch := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                accessible-role: button;
+                                accessible-label: model.name;
+                                clicked => { AppState.select-video-model(model.code); root.media-model-open = false; image-model-popup.close(); }
+                            }
+                        }
+                    }
+                }
+                if (root.note.kind == "image" && AppState.model-image-options.length == 0)
+                    || (root.note.kind == "video" && AppState.video-model-options.length == 0)
+                    || (root.note.kind != "image" && root.note.kind != "video"): Rectangle {
                     x: 6px;
                     y: 6px;
                     width: parent.width - 12px;
@@ -2294,7 +2395,9 @@ component CanvasNodeCard {
                         x: 12px;
                         width: parent.width - 24px;
                         height: parent.height;
-                        text: AppState.en ? "Configure a compatible model" : "前往模型管理配置";
+                        text: root.note.kind == "video"
+                            ? (AppState.en ? "No video model available" : "暂无可用视频模型")
+                            : (AppState.en ? "Configure a compatible model" : "前往模型管理配置");
                         color: #eee9e4;
                         font-size: 12px;
                         vertical-alignment: center;
@@ -2415,18 +2518,108 @@ component CanvasNodeCard {
                     }
                 }
                 Text { x: 18px; y: 332px; width: parent.width - 36px; height: 20px; text: AppState.en ? "Duration" : "秒数"; color: #d7d1cb; font-size: 12px; vertical-alignment: center; }
-                GridLayout {
+                duration-slider := Rectangle {
                     x: 18px;
                     y: 358px;
-                    width: parent.width - 36px;
-                    height: 36px;
-                    spacing: 8px;
-                    Row {
-                        CanvasOptionPill { width: 58px; text: "6s"; selected: root.video-duration == "6s"; clicked => { root.video-duration = "6s"; } }
-                        CanvasOptionPill { width: 58px; text: "10s"; selected: root.video-duration == "10s"; clicked => { root.video-duration = "10s"; } }
-                        CanvasOptionPill { width: 58px; text: "12s"; selected: root.video-duration == "12s"; clicked => { root.video-duration = "12s"; } }
-                        CanvasOptionPill { width: 58px; text: "16s"; selected: root.video-duration == "16s"; clicked => { root.video-duration = "16s"; } }
-                        CanvasOptionPill { width: 58px; text: "20s"; selected: root.video-duration == "20s"; clicked => { root.video-duration = "20s"; } }
+                    width: 220px;
+                    height: 40px;
+                    background: #2d2926;
+                    border-radius: 10px;
+                    border-width: 1px;
+                    border-color: video-duration-slider-touch.has-hover ? #786df2 : #4f4a46;
+                    Text {
+                        x: 10px;
+                        width: 28px;
+                        height: parent.height;
+                        text: "4s";
+                        color: #aaa39d;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        x: 42px;
+                        y: 19px;
+                        width: 126px;
+                        height: 2px;
+                        border-radius: 1px;
+                        background: #4f4a46;
+                    }
+                    Rectangle {
+                        x: 42px;
+                        y: 19px;
+                        width: 126px * (root.video-duration-seconds() - 4) / 16;
+                        height: 2px;
+                        border-radius: 1px;
+                        background: #786df2;
+                    }
+                    Rectangle {
+                        x: 33px + 126px * (root.video-duration-seconds() - 4) / 16;
+                        y: 11px;
+                        width: 18px;
+                        height: 18px;
+                        border-radius: 9px;
+                        background: #f0eef6;
+                        border-width: 2px;
+                        border-color: #6258e8;
+                    }
+                    Text {
+                        x: 178px;
+                        width: 32px;
+                        height: parent.height;
+                        text: root.video-duration-seconds() + "s";
+                        color: #f0ebe7;
+                        font-size: 12px;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    video-duration-slider-touch := TouchArea {
+                        x: 36px;
+                        width: 144px;
+                        height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.set-video-duration(round((max(6px, min(132px, self.mouse-x)) - 6px) / 126px * 16 + 4));
+                        }
+                        moved => {
+                            if self.pressed {
+                                root.set-video-duration(round((max(6px, min(132px, self.mouse-x)) - 6px) / 126px * 16 + 4));
+                            }
+                        }
+                    }
+                }
+                duration-input-shell := Rectangle {
+                    x: 248px;
+                    y: 358px;
+                    width: 100px;
+                    height: 40px;
+                    background: #2d2926;
+                    border-radius: 10px;
+                    border-width: 1px;
+                    border-color: video-duration-input.has-focus ? #786df2 : #4f4a46;
+                    video-duration-input := TextInput {
+                        x: 8px;
+                        width: 56px;
+                        height: parent.height;
+                        text <=> root.video-duration-input;
+                        single-line: true;
+                        input-type: number;
+                        color: #f0ebe7;
+                        font-size: 13px;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        accepted => { root.normalize-video-duration(); }
+                    }
+                    Text {
+                        x: 66px;
+                        width: 26px;
+                        height: parent.height;
+                        text: AppState.en ? "s" : "秒";
+                        color: #aaa39d;
+                        font-size: 11px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
                     }
                 }
             }
@@ -2666,12 +2859,45 @@ export component InfiniteCanvasPage {
         return AppState.canvas-workflow-id != "" && AppState.canvas-tool == "hand";
     }
 
+    function character-direction-label() -> string {
+        return AppState.canvas-workflow-direction-count == 3
+            ? (AppState.en ? "3 views" : "三视图")
+            : (AppState.canvas-workflow-direction-count == 4
+                ? (AppState.en ? "4 directions" : "四向图")
+                : (AppState.en ? "8 directions · 2.5D" : "八向图 · 2.5D"));
+    }
+
+    function character-action-label() -> string {
+        return AppState.canvas-workflow-action == "walking"
+            ? (AppState.en ? "Walking" : "行走")
+            : (AppState.canvas-workflow-action == "running"
+                ? (AppState.en ? "Running" : "奔跑")
+                : (AppState.en ? "Standing" : "站立"));
+    }
+
+    function skill-icon-background-label() -> string {
+        return AppState.canvas-workflow-skill-icon-background == "black"
+            ? (AppState.en ? "Black" : "黑色")
+            : (AppState.en ? "White" : "白色");
+    }
+
+    function skill-icon-shape-label() -> string {
+        return AppState.canvas-workflow-skill-icon-shape == "square"
+            ? (AppState.en ? "Square" : "方形")
+            : (AppState.en ? "Circle" : "圆形");
+    }
+
     function switch-workflow(workflow-id: string) {
         AppState.open-canvas-workspace(workflow-id);
         AppState.canvas-workflow-id = workflow-id;
         AppState.canvas-tool = "select";
         AppState.canvas-grid-style = "dot";
         AppState.canvas-dark-background = true;
+        AppState.canvas-workflow-direction-count = 8;
+        AppState.canvas-workflow-action = "standing";
+        AppState.canvas-workflow-skill-icon-count = 12;
+        AppState.canvas-workflow-skill-icon-background = "white";
+        AppState.canvas-workflow-skill-icon-shape = "circle";
 
         if workflow-id == "plant-growth" {
             AppState.asset-type = "scene";
@@ -2722,6 +2948,47 @@ export component InfiniteCanvasPage {
             AppState.canvas-workflow-hint = AppState.en
                 ? "Upload a style reference and create a layered, seamless side-scrolling map"
                 : "上传风格参考图，生成前中后景分层、首尾无缝衔接的横版地图";
+        } else if workflow-id == "scene-composition" {
+            AppState.asset-type = "scene";
+            AppState.ratio = "16:9";
+            AppState.count = 1;
+            AppState.mode = "game";
+            AppState.canvas-workflow-title = AppState.en ? "Scene Composition" : "场景组合";
+            AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/scene-composition.png");
+            AppState.canvas-workflow-template = AppState.en
+                ? "Scene composition specification:"
+                : "场景组合规范：";
+            AppState.canvas-workflow-hint = AppState.en
+                ? "Upload 2–8 references and merge them into one scene with a unified style, perspective, and lighting"
+                : "上传2至8张参考图，融合为画风、透视和光影统一的完整场景";
+        } else if workflow-id == "skill-icon-generator" {
+            AppState.asset-type = "ui";
+            AppState.ratio = "4:3";
+            AppState.count = 1;
+            AppState.mode = "game";
+            AppState.canvas-workflow-title = AppState.en ? "Skill Icon Generator" : "技能图标生成";
+            AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/skill-icon-generator.png");
+            AppState.canvas-workflow-template = AppState.en
+                ? "Skill icon generation specification:"
+                : "技能图标生成规范：";
+            AppState.canvas-workflow-hint = AppState.en
+                ? "Upload 1–8 style references and describe the skill icons to create"
+                : "上传1至8张风格参考图，描述想要生成的技能图标";
+        } else if workflow-id == "character-multi-direction" {
+            AppState.asset-type = "character";
+            AppState.ratio = "4:3";
+            AppState.count = 1;
+            AppState.mode = "game";
+            AppState.canvas-workflow-direction-count = 8;
+            AppState.canvas-workflow-action = "standing";
+            AppState.canvas-workflow-title = AppState.en ? "Character Multi-direction Sheet" : "角色多向图";
+            AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-multi-direction.png");
+            AppState.canvas-workflow-template = AppState.en
+                ? "Character multi-direction sheet specification:"
+                : "角色多向图规范：";
+            AppState.canvas-workflow-hint = AppState.en
+                ? "Upload a character reference, then choose three, four, or eight directions and an action pose"
+                : "上传角色参考图，选择三视图、四向图或八向图，以及站立、行走或奔跑动作";
         } else if workflow-id == "upgrade-evolution" {
             AppState.asset-type = "scene";
             AppState.canvas-workflow-title = AppState.en ? "Upgrade Evolution" : "升级进化";
@@ -2755,21 +3022,41 @@ export component InfiniteCanvasPage {
         }
     }
 
+    function workflow-reference-required-message() -> string {
+        if AppState.canvas-workflow-id == "building-derivation" {
+            return AppState.en ? "Upload a building reference image first" : "请先上传建筑参考图";
+        }
+        if AppState.canvas-workflow-id == "side-scroll-map" {
+            return AppState.en ? "Upload a style reference image first" : "请先上传风格参考图";
+        }
+        if AppState.canvas-workflow-id == "scene-composition" {
+            return AppState.en ? "Upload at least 2 reference images first" : "请至少上传2张参考图";
+        }
+        if AppState.canvas-workflow-id == "skill-icon-generator" {
+            return AppState.en ? "Upload at least 1 style reference image first" : "请至少上传1张风格参考图";
+        }
+        if AppState.canvas-workflow-id == "character-multi-direction" {
+            return AppState.en ? "Upload a character reference image first" : "请先上传角色参考图";
+        }
+        return AppState.en ? "Upload a subject reference image first" : "请先上传主体参考图";
+    }
+
     function generate-workflow() {
         if AppState.generating {
             AppState.stop-generation();
             return;
         }
         let reference-driven-workflow = AppState.canvas-workflow-id != "";
-        if reference-driven-workflow && AppState.references.length == 0 {
-            AppState.generation-status = AppState.canvas-workflow-id == "building-derivation"
-                ? (AppState.en ? "Upload a building reference image first" : "请先上传建筑参考图")
-                : (AppState.canvas-workflow-id == "side-scroll-map"
-                    ? (AppState.en ? "Upload a style reference image first" : "请先上传风格参考图")
-                    : (AppState.en ? "Upload a subject reference image first" : "请先上传主体参考图"));
+        let workflow-prompt = AppState.canvas-workflow-prompt;
+        if AppState.canvas-workflow-id == "scene-composition" && AppState.references.length < 2 {
+            AppState.generation-status = root.workflow-reference-required-message();
             return;
         }
-        if AppState.canvas-workflow-prompt == "" && !reference-driven-workflow {
+        if reference-driven-workflow && AppState.references.length == 0 {
+            AppState.generation-status = root.workflow-reference-required-message();
+            return;
+        }
+        if workflow-prompt == "" && !reference-driven-workflow {
             AppState.generation-status = AppState.en ? "Enter a prompt first" : "请先输入提示词";
             return;
         }
@@ -2777,17 +3064,32 @@ export component InfiniteCanvasPage {
             AppState.generation-status = AppState.en ? "Select an image model first" : "请先选择生图模型";
             return;
         }
-        let submitted-prompt = AppState.compose-canvas-workflow-prompt(
-            AppState.canvas-workflow-template,
-            AppState.canvas-workflow-prompt,
-            AppState.canvas-workflow-step-count,
-            AppState.en,
-        );
+        let submitted-prompt = AppState.canvas-workflow-id == "character-multi-direction"
+            ? AppState.compose-character-multi-direction-prompt(
+                workflow-prompt,
+                AppState.canvas-workflow-direction-count,
+                AppState.canvas-workflow-action,
+                AppState.en,
+            )
+            : (AppState.canvas-workflow-id == "skill-icon-generator"
+                ? AppState.compose-skill-icon-prompt(
+                    workflow-prompt,
+                    AppState.canvas-workflow-skill-icon-count,
+                    AppState.canvas-workflow-skill-icon-background,
+                    AppState.canvas-workflow-skill-icon-shape,
+                    AppState.en,
+                )
+                : AppState.compose-canvas-workflow-prompt(
+                    AppState.canvas-workflow-template,
+                    workflow-prompt,
+                    AppState.canvas-workflow-step-count,
+                    AppState.en,
+                ));
         let world-x = (canvas.width / 2 - root.pan-x) * 100 / root.zoom-percent;
         let world-y = ((canvas.height - (canvas-workflow-dock.height - 23px)) / 2 - root.pan-y) * 100 / root.zoom-percent;
-        let source-prompt = AppState.canvas-workflow-prompt == ""
+        let source-prompt = workflow-prompt == ""
             ? AppState.canvas-workflow-title
-            : AppState.canvas-workflow-prompt;
+            : workflow-prompt;
         let source-id = AppState.create-canvas-generation-source(
             source-prompt,
             world-x / 1px,
@@ -3601,7 +3903,8 @@ export component InfiniteCanvasPage {
                             }
                         }
                     }
-                    if AppState.canvas-workflow-prompt == "" && !workflow-prompt-input.has-focus: Text {
+                    if AppState.canvas-workflow-prompt == ""
+                        && !workflow-prompt-input.has-focus: Text {
                         x: workflow-prompt-frame.reference-mention-width;
                         y: 0px;
                         width: parent.width - self.x;
@@ -3612,6 +3915,7 @@ export component InfiniteCanvasPage {
                         color: #9895a1;
                         font-size: 13px;
                         font-weight: 400;
+                        wrap: no-wrap;
                         vertical-alignment: center;
                     }
                 }
@@ -3832,7 +4136,11 @@ export component InfiniteCanvasPage {
                         }
                     }
                     workflow-step-count-control := Rectangle {
-                        visible: AppState.canvas-workflow-id != "" && AppState.canvas-workflow-id != "side-scroll-map";
+                        visible: AppState.canvas-workflow-id != ""
+                            && AppState.canvas-workflow-id != "side-scroll-map"
+                            && AppState.canvas-workflow-id != "scene-composition"
+                            && AppState.canvas-workflow-id != "character-multi-direction"
+                            && AppState.canvas-workflow-id != "skill-icon-generator";
                         x: 286px;
                         width: 190px;
                         height: parent.height;
@@ -3900,6 +4208,219 @@ export component InfiniteCanvasPage {
                                     AppState.canvas-workflow-step-count = max(4, min(12, round((max(6px, min(94px, self.mouse-x)) - 6px) / 88px * 8 + 4)));
                                 }
                             }
+                        }
+                    }
+                    skill-icon-count-control := Rectangle {
+                        visible: AppState.canvas-workflow-id == "skill-icon-generator";
+                        x: 286px;
+                        width: 190px;
+                        height: parent.height;
+                        background: skill-icon-count-touch.has-hover ? #302e38 : #25242b;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: skill-icon-count-touch.has-hover ? #6e63ef : #504d58;
+                        Text {
+                            x: 9px;
+                            width: 45px;
+                            height: parent.height;
+                            text: AppState.en ? "Icons" : "图标数";
+                            color: #c9c5cf;
+                            font-size: 10px;
+                            font-weight: 400;
+                            vertical-alignment: center;
+                        }
+                        Rectangle {
+                            x: 58px;
+                            y: 15px;
+                            width: 95px;
+                            height: 2px;
+                            border-radius: 1px;
+                            background: #4b4852;
+                        }
+                        Rectangle {
+                            x: 58px;
+                            y: 15px;
+                            width: 95px * (AppState.canvas-workflow-skill-icon-count - 6) / 14;
+                            height: 2px;
+                            border-radius: 1px;
+                            background: #786df2;
+                        }
+                        Rectangle {
+                            x: 58px + 87px * (AppState.canvas-workflow-skill-icon-count - 6) / 14;
+                            y: 8px;
+                            width: 16px;
+                            height: 16px;
+                            border-radius: 8px;
+                            background: #f0eef6;
+                            border-width: 2px;
+                            border-color: #6258e8;
+                        }
+                        Text {
+                            x: 162px;
+                            width: 20px;
+                            height: parent.height;
+                            text: AppState.canvas-workflow-skill-icon-count;
+                            color: #f0eef6;
+                            font-size: 11px;
+                            font-weight: 500;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        skill-icon-count-touch := TouchArea {
+                            x: 52px;
+                            width: 107px;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => {
+                                AppState.canvas-workflow-skill-icon-count = max(6, min(20, round((self.mouse-x - 6px) / 95px * 14 + 6)));
+                            }
+                            moved => {
+                                if self.pressed {
+                                    AppState.canvas-workflow-skill-icon-count = max(6, min(20, round((max(6px, min(101px, self.mouse-x)) - 6px) / 95px * 14 + 6)));
+                                }
+                            }
+                        }
+                    }
+                    skill-icon-background-control := Rectangle {
+                        visible: AppState.canvas-workflow-id == "skill-icon-generator";
+                        x: 484px;
+                        width: 100px;
+                        height: parent.height;
+                        background: skill-icon-background-touch.has-hover ? #302e38 : #25242b;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: skill-icon-background-touch.has-hover ? #6e63ef : #504d58;
+                        accessible-role: button;
+                        accessible-label: AppState.en ? "Background: " + root.skill-icon-background-label() : "背景颜色：" + root.skill-icon-background-label();
+                        accessible-action-default => { skill-icon-background-popup.show(); }
+                        Text {
+                            x: 9px;
+                            width: parent.width - 30px;
+                            height: parent.height;
+                            text: (AppState.en ? "BG · " : "背景 · ") + root.skill-icon-background-label();
+                            color: #e8e5ed;
+                            font-size: 10px;
+                            font-weight: 400;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Image { x: parent.width - 17px; y: 11px; width: 9px; height: 9px; source: @image-url("../../assets/icons/dropdown.svg"); colorize: #8f8c96; image-fit: contain; }
+                        skill-icon-background-touch := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => { skill-icon-background-popup.show(); }
+                        }
+                    }
+                    skill-icon-shape-control := Rectangle {
+                        visible: AppState.canvas-workflow-id == "skill-icon-generator";
+                        x: 592px;
+                        width: 100px;
+                        height: parent.height;
+                        background: skill-icon-shape-touch.has-hover ? #302e38 : #25242b;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: skill-icon-shape-touch.has-hover ? #6e63ef : #504d58;
+                        accessible-role: button;
+                        accessible-label: AppState.en ? "Icon shape: " + root.skill-icon-shape-label() : "图标形状：" + root.skill-icon-shape-label();
+                        accessible-action-default => { skill-icon-shape-popup.show(); }
+                        Text {
+                            x: 9px;
+                            width: parent.width - 30px;
+                            height: parent.height;
+                            text: (AppState.en ? "Shape · " : "形状 · ") + root.skill-icon-shape-label();
+                            color: #e8e5ed;
+                            font-size: 10px;
+                            font-weight: 400;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Image { x: parent.width - 17px; y: 11px; width: 9px; height: 9px; source: @image-url("../../assets/icons/dropdown.svg"); colorize: #8f8c96; image-fit: contain; }
+                        skill-icon-shape-touch := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => { skill-icon-shape-popup.show(); }
+                        }
+                    }
+                    workflow-direction-control := Rectangle {
+                        visible: AppState.canvas-workflow-id == "character-multi-direction";
+                        x: 286px;
+                        width: 190px;
+                        height: parent.height;
+                        background: workflow-direction-touch.has-hover ? #302e38 : #25242b;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: workflow-direction-touch.has-hover ? #6e63ef : #504d58;
+                        accessible-role: button;
+                        accessible-label: AppState.en ? "Directions: " + root.character-direction-label() : "方向：" + root.character-direction-label();
+                        accessible-action-default => { workflow-direction-popup.show(); }
+                        Text {
+                            x: 9px;
+                            width: parent.width - 40px;
+                            height: parent.height;
+                            text: AppState.canvas-workflow-direction-count == 8
+                                ? root.character-direction-label()
+                                : (AppState.en ? "Directions · " : "方向 · ") + root.character-direction-label();
+                            color: #e8e5ed;
+                            font-size: 11px;
+                            font-weight: 400;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Image {
+                            x: parent.width - 17px;
+                            y: 11px;
+                            width: 9px;
+                            height: 9px;
+                            source: @image-url("../../assets/icons/dropdown.svg");
+                            colorize: #8f8c96;
+                            image-fit: contain;
+                        }
+                        workflow-direction-touch := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => { workflow-direction-popup.show(); }
+                        }
+                    }
+                    workflow-action-control := Rectangle {
+                        visible: AppState.canvas-workflow-id == "character-multi-direction";
+                        x: 484px;
+                        width: 138px;
+                        height: parent.height;
+                        background: workflow-action-touch.has-hover ? #302e38 : #25242b;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: workflow-action-touch.has-hover ? #6e63ef : #504d58;
+                        accessible-role: button;
+                        accessible-label: AppState.en ? "Action: " + root.character-action-label() : "动作：" + root.character-action-label();
+                        accessible-action-default => { workflow-action-popup.show(); }
+                        Text {
+                            x: 9px;
+                            width: parent.width - 40px;
+                            height: parent.height;
+                            text: (AppState.en ? "Action · " : "动作 · ") + root.character-action-label();
+                            color: #e8e5ed;
+                            font-size: 11px;
+                            font-weight: 400;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Image {
+                            x: parent.width - 17px;
+                            y: 11px;
+                            width: 9px;
+                            height: 9px;
+                            source: @image-url("../../assets/icons/dropdown.svg");
+                            colorize: #8f8c96;
+                            image-fit: contain;
+                        }
+                        workflow-action-touch := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => { workflow-action-popup.show(); }
                         }
                     }
                     clear-workflow-action := Rectangle {
@@ -4351,7 +4872,7 @@ export component InfiniteCanvasPage {
         x: max(12px, min(root.width - self.width - 12px, canvas.x + canvas-workflow-dock.x + canvas-workflow-dock.width - self.width));
         y: max(12px, canvas.y + canvas-workflow-dock.y - self.height - 12px);
         width: 843px;
-        height: 326px;
+        height: 458px;
         close-policy: close-on-click-outside;
 
         Rectangle {
@@ -4465,6 +4986,36 @@ export component InfiniteCanvasPage {
                 artwork: @image-url("../../assets/free-canvas/side-scroll-map.png");
                 selected: AppState.canvas-workflow-id == self.workflow-id;
                 clicked => { root.switch-workflow("side-scroll-map"); workflow-switch-popup.close(); }
+            }
+            CanvasWorkflowQuickCard {
+                x: 16px;
+                y: 322px;
+                workflow-id: "character-multi-direction";
+                title: AppState.en ? "Character Multi-direction" : "角色多向图";
+                description: AppState.en ? "Three, four, or eight views and actions" : "三视图、四向图、八向图与动作选择";
+                artwork: @image-url("../../assets/free-canvas/character-multi-direction.png");
+                selected: AppState.canvas-workflow-id == self.workflow-id;
+                clicked => { root.switch-workflow("character-multi-direction"); workflow-switch-popup.close(); }
+            }
+            CanvasWorkflowQuickCard {
+                x: 223px;
+                y: 322px;
+                workflow-id: "scene-composition";
+                title: AppState.en ? "Scene Composition" : "场景组合";
+                description: AppState.en ? "Merge references into one scene" : "多张参考图融合为完整场景";
+                artwork: @image-url("../../assets/free-canvas/scene-composition.png");
+                selected: AppState.canvas-workflow-id == self.workflow-id;
+                clicked => { root.switch-workflow("scene-composition"); workflow-switch-popup.close(); }
+            }
+            CanvasWorkflowQuickCard {
+                x: 430px;
+                y: 322px;
+                workflow-id: "skill-icon-generator";
+                title: AppState.en ? "Skill Icon Generator" : "技能图标生成";
+                description: AppState.en ? "Reference-styled game skill icons" : "参考画风生成游戏技能图标";
+                artwork: @image-url("../../assets/free-canvas/skill-icon-generator.png");
+                selected: AppState.canvas-workflow-id == self.workflow-id;
+                clicked => { root.switch-workflow("skill-icon-generator"); workflow-switch-popup.close(); }
             }
         }
     }
@@ -4791,32 +5342,266 @@ export component InfiniteCanvasPage {
                 font-size: 11px;
                 vertical-alignment: center;
             }
-            GridLayout {
-                x: 16px;
-                y: 123px;
-                width: parent.width - 32px;
-                height: AppState.canvas-workflow-id == "side-scroll-map" ? 32px : 110px;
-                spacing: 7px;
-                if AppState.canvas-workflow-id == "side-scroll-map": Row {
-                    CanvasOptionPill { width: 72px; height: 32px; text: "3:2"; selected: AppState.ratio == "3:2"; clicked => { AppState.ratio = "3:2"; } }
-                    CanvasOptionPill { width: 72px; height: 32px; text: "4:3"; selected: AppState.ratio == "4:3"; clicked => { AppState.ratio = "4:3"; } }
-                    CanvasOptionPill { width: 72px; height: 32px; text: "16:9"; selected: AppState.ratio == "16:9"; clicked => { AppState.ratio = "16:9"; } }
-                    CanvasOptionPill { width: 72px; height: 32px; text: "21:9"; selected: AppState.ratio == "21:9"; clicked => { AppState.ratio = "21:9"; } }
+                GridLayout {
+                    x: 16px;
+                    y: 123px;
+                    width: parent.width - 32px;
+                    height: AppState.canvas-workflow-id == "side-scroll-map" ? 32px : 110px;
+                    spacing: 7px;
+                    if AppState.canvas-workflow-id == "side-scroll-map": Row {
+                        CanvasOptionPill { width: 72px; height: 32px; text: "3:2"; selected: AppState.ratio == "3:2"; clicked => { AppState.ratio = "3:2"; } }
+                        CanvasOptionPill { width: 72px; height: 32px; text: "4:3"; selected: AppState.ratio == "4:3"; clicked => { AppState.ratio = "4:3"; } }
+                        CanvasOptionPill { width: 72px; height: 32px; text: "16:9"; selected: AppState.ratio == "16:9"; clicked => { AppState.ratio = "16:9"; } }
+                        CanvasOptionPill { width: 72px; height: 32px; text: "21:9"; selected: AppState.ratio == "21:9"; clicked => { AppState.ratio = "21:9"; } }
+                    }
+                    if AppState.canvas-workflow-id != "side-scroll-map": Row {
+                        CanvasOptionPill { width: 72px; height: 32px; text: "1:1"; selected: AppState.ratio == "1:1"; clicked => { AppState.ratio = "1:1"; } }
+                        CanvasOptionPill { width: 72px; height: 32px; text: "3:2"; selected: AppState.ratio == "3:2"; clicked => { AppState.ratio = "3:2"; } }
+                        CanvasOptionPill { width: 72px; height: 32px; text: "2:3"; selected: AppState.ratio == "2:3"; clicked => { AppState.ratio = "2:3"; } }
+                        CanvasOptionPill { width: 72px; height: 32px; text: "4:3"; selected: AppState.ratio == "4:3"; clicked => { AppState.ratio = "4:3"; } }
+                    }
+                    if AppState.canvas-workflow-id != "side-scroll-map": Row {
+                        CanvasOptionPill { width: 72px; height: 32px; text: "3:4"; selected: AppState.ratio == "3:4"; clicked => { AppState.ratio = "3:4"; } }
+                        CanvasOptionPill { width: 72px; height: 32px; text: "16:9"; selected: AppState.ratio == "16:9"; clicked => { AppState.ratio = "16:9"; } }
+                        CanvasOptionPill { width: 72px; height: 32px; text: "9:16"; selected: AppState.ratio == "9:16"; clicked => { AppState.ratio = "9:16"; } }
+                    }
+                    if AppState.canvas-workflow-id != "side-scroll-map": Row {
+                        CanvasOptionPill { width: 72px; height: 32px; text: "21:9"; selected: AppState.ratio == "21:9"; clicked => { AppState.ratio = "21:9"; } }
+                        CanvasOptionPill { width: 72px; height: 32px; text: "9:21"; selected: AppState.ratio == "9:21"; clicked => { AppState.ratio = "9:21"; } }
+                    }
+            }
+        }
+    }
+
+    workflow-direction-popup := PopupWindow {
+        x: max(12px, min(root.width - self.width - 12px, canvas.x + canvas-workflow-dock.x + 286px));
+        y: max(12px, canvas.y + canvas-workflow-dock.y + 161px - self.height);
+        width: 230px;
+        height: 166px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: #211f26;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #514d5c;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #00000088;
+            drop-shadow-offset-y: 6px;
+            Text {
+                x: 14px;
+                y: 10px;
+                width: parent.width - 28px;
+                height: 24px;
+                text: AppState.en ? "Direction layout" : "方向布局";
+                color: #f1eef5;
+                font-size: 14px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            VerticalLayout {
+                x: 10px;
+                y: 42px;
+                width: parent.width - 20px;
+                height: parent.height - 50px;
+                spacing: 5px;
+                CanvasChoiceButton {
+                    width: parent.width;
+                    text: AppState.en ? "3 views" : "三视图";
+                    selected: AppState.canvas-workflow-direction-count == 3;
+                    clicked => {
+                        AppState.canvas-workflow-direction-count = 3;
+                        workflow-direction-popup.close();
+                    }
                 }
-                if AppState.canvas-workflow-id != "side-scroll-map": Row {
-                    CanvasOptionPill { width: 72px; height: 32px; text: "1:1"; selected: AppState.ratio == "1:1"; clicked => { AppState.ratio = "1:1"; } }
-                    CanvasOptionPill { width: 72px; height: 32px; text: "3:2"; selected: AppState.ratio == "3:2"; clicked => { AppState.ratio = "3:2"; } }
-                    CanvasOptionPill { width: 72px; height: 32px; text: "2:3"; selected: AppState.ratio == "2:3"; clicked => { AppState.ratio = "2:3"; } }
-                    CanvasOptionPill { width: 72px; height: 32px; text: "4:3"; selected: AppState.ratio == "4:3"; clicked => { AppState.ratio = "4:3"; } }
+                CanvasChoiceButton {
+                    width: parent.width;
+                    text: AppState.en ? "4 directions" : "四向图";
+                    selected: AppState.canvas-workflow-direction-count == 4;
+                    clicked => {
+                        AppState.canvas-workflow-direction-count = 4;
+                        workflow-direction-popup.close();
+                    }
                 }
-                if AppState.canvas-workflow-id != "side-scroll-map": Row {
-                    CanvasOptionPill { width: 72px; height: 32px; text: "3:4"; selected: AppState.ratio == "3:4"; clicked => { AppState.ratio = "3:4"; } }
-                    CanvasOptionPill { width: 72px; height: 32px; text: "16:9"; selected: AppState.ratio == "16:9"; clicked => { AppState.ratio = "16:9"; } }
-                    CanvasOptionPill { width: 72px; height: 32px; text: "9:16"; selected: AppState.ratio == "9:16"; clicked => { AppState.ratio = "9:16"; } }
+                CanvasChoiceButton {
+                    width: parent.width;
+                    text: AppState.en ? "8 directions · 2.5D" : "八向图 · 2.5D";
+                    selected: AppState.canvas-workflow-direction-count == 8;
+                    clicked => {
+                        AppState.canvas-workflow-direction-count = 8;
+                        workflow-direction-popup.close();
+                    }
                 }
-                if AppState.canvas-workflow-id != "side-scroll-map": Row {
-                    CanvasOptionPill { width: 72px; height: 32px; text: "21:9"; selected: AppState.ratio == "21:9"; clicked => { AppState.ratio = "21:9"; } }
-                    CanvasOptionPill { width: 72px; height: 32px; text: "9:21"; selected: AppState.ratio == "9:21"; clicked => { AppState.ratio = "9:21"; } }
+            }
+        }
+    }
+
+    workflow-action-popup := PopupWindow {
+        x: max(12px, min(root.width - self.width - 12px, canvas.x + canvas-workflow-dock.x + 484px));
+        y: max(12px, canvas.y + canvas-workflow-dock.y + 161px - self.height);
+        width: 190px;
+        height: 166px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: #211f26;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #514d5c;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #00000088;
+            drop-shadow-offset-y: 6px;
+            Text {
+                x: 14px;
+                y: 10px;
+                width: parent.width - 28px;
+                height: 24px;
+                text: AppState.en ? "Action" : "动作";
+                color: #f1eef5;
+                font-size: 14px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            VerticalLayout {
+                x: 10px;
+                y: 42px;
+                width: parent.width - 20px;
+                height: parent.height - 50px;
+                spacing: 5px;
+                CanvasChoiceButton {
+                    width: parent.width;
+                    text: AppState.en ? "Standing" : "站立";
+                    selected: AppState.canvas-workflow-action == "standing";
+                    clicked => {
+                        AppState.canvas-workflow-action = "standing";
+                        workflow-action-popup.close();
+                    }
+                }
+                CanvasChoiceButton {
+                    width: parent.width;
+                    text: AppState.en ? "Walking" : "行走";
+                    selected: AppState.canvas-workflow-action == "walking";
+                    clicked => {
+                        AppState.canvas-workflow-action = "walking";
+                        workflow-action-popup.close();
+                    }
+                }
+                CanvasChoiceButton {
+                    width: parent.width;
+                    text: AppState.en ? "Running" : "奔跑";
+                    selected: AppState.canvas-workflow-action == "running";
+                    clicked => {
+                        AppState.canvas-workflow-action = "running";
+                        workflow-action-popup.close();
+                    }
+                }
+            }
+        }
+    }
+
+    skill-icon-background-popup := PopupWindow {
+        x: max(12px, min(root.width - self.width - 12px, canvas.x + canvas-workflow-dock.x + 484px));
+        y: max(12px, canvas.y + canvas-workflow-dock.y + 161px - self.height);
+        width: 190px;
+        height: 128px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: #211f26;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #514d5c;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #00000088;
+            drop-shadow-offset-y: 6px;
+            Text {
+                x: 14px;
+                y: 10px;
+                width: parent.width - 28px;
+                height: 24px;
+                text: AppState.en ? "Background color" : "背景颜色";
+                color: #f1eef5;
+                font-size: 14px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            VerticalLayout {
+                x: 10px;
+                y: 42px;
+                width: parent.width - 20px;
+                height: parent.height - 50px;
+                spacing: 5px;
+                CanvasChoiceButton {
+                    width: parent.width;
+                    text: AppState.en ? "White" : "白色";
+                    selected: AppState.canvas-workflow-skill-icon-background == "white";
+                    clicked => {
+                        AppState.canvas-workflow-skill-icon-background = "white";
+                        skill-icon-background-popup.close();
+                    }
+                }
+                CanvasChoiceButton {
+                    width: parent.width;
+                    text: AppState.en ? "Black" : "黑色";
+                    selected: AppState.canvas-workflow-skill-icon-background == "black";
+                    clicked => {
+                        AppState.canvas-workflow-skill-icon-background = "black";
+                        skill-icon-background-popup.close();
+                    }
+                }
+            }
+        }
+    }
+
+    skill-icon-shape-popup := PopupWindow {
+        x: max(12px, min(root.width - self.width - 12px, canvas.x + canvas-workflow-dock.x + 592px));
+        y: max(12px, canvas.y + canvas-workflow-dock.y + 161px - self.height);
+        width: 190px;
+        height: 128px;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: #211f26;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #514d5c;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #00000088;
+            drop-shadow-offset-y: 6px;
+            Text {
+                x: 14px;
+                y: 10px;
+                width: parent.width - 28px;
+                height: 24px;
+                text: AppState.en ? "Icon shape" : "图标形状";
+                color: #f1eef5;
+                font-size: 14px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            VerticalLayout {
+                x: 10px;
+                y: 42px;
+                width: parent.width - 20px;
+                height: parent.height - 50px;
+                spacing: 5px;
+                CanvasChoiceButton {
+                    width: parent.width;
+                    text: AppState.en ? "Circle" : "圆形";
+                    selected: AppState.canvas-workflow-skill-icon-shape == "circle";
+                    clicked => {
+                        AppState.canvas-workflow-skill-icon-shape = "circle";
+                        skill-icon-shape-popup.close();
+                    }
+                }
+                CanvasChoiceButton {
+                    width: parent.width;
+                    text: AppState.en ? "Square" : "方形";
+                    selected: AppState.canvas-workflow-skill-icon-shape == "square";
+                    clicked => {
+                        AppState.canvas-workflow-skill-icon-shape = "square";
+                        skill-icon-shape-popup.close();
+                    }
                 }
             }
         }

@@ -1,5 +1,6 @@
 import { AppState } from "../app-state.slint";
 import { EmptyState } from "empty-state.slint";
+import { GenerationBatchMenu } from "generation-batch-menu.slint";
 import { GalleryLayoutToggle } from "gallery-layout-toggle.slint";
 import { VirtualizedGallery } from "virtualized-gallery.slint";
 import { AppTheme } from "../theme.slint";
@@ -9,7 +10,10 @@ export component GenerationResultPanel {
     property <bool> load-more-armed: true;
     property <length> last-load-bottom: -10000px;
     property <string> viewport-key: root.pagination-key + ":" + AppState.generation-gallery-layout + ":" + AppState.language + ":" + root.loading-count();
-    changed pagination-key => { root.reset-pagination-latch(); }
+    changed pagination-key => {
+        AppState.clear-generation-selection();
+        root.reset-pagination-latch();
+    }
     init => { root.update-viewport(); }
     changed viewport-key => { root.update-viewport(); }
     changed width => { root.update-viewport(); }
@@ -21,11 +25,15 @@ export component GenerationResultPanel {
         Text {
             x: 20px;
             y: 18px;
-            width: parent.width - 164px;
+            width: parent.width - 288px;
             text: AppState.en ? "Generated Images" : "生成结果";
             color: AppTheme.text;
             font-size: 16px;
             font-weight: 500;
+        }
+        GenerationBatchMenu {
+            x: parent.width - 256px;
+            y: 14px;
         }
         GalleryLayoutToggle {
             x: parent.width - 132px;

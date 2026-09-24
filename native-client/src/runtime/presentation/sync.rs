@@ -56,6 +56,7 @@ fn prepare_private_visuals(
     let existing_reference_previews=current.map(|state|state.get_references().iter()
         .filter(|row|row.image.size().width>0 && row.image.size().height>0)
         .map(|row|((row.id.to_string(),row.source_path.to_string()),row.image)).collect::<BTreeMap<_,_>>()).unwrap_or_default();
+    let selected_generation_ids=current.map(generation_selection_ids).unwrap_or_default();
     let video_outputs = sorted_video_outputs(store);
     let video_groups = build_video_groups(&video_outputs, language);
     let videos = video_outputs.into_iter().map(|output| {
@@ -92,7 +93,11 @@ fn prepare_private_visuals(
             let layout=&cache.rows[*index];
             let asset=&source[layout.source_index];
             let item_index=items.len() as i32;
-            items.push(to_asset_view_with_previews(asset,&existing));
+            let mut item=to_asset_view_with_previews(asset,&existing);
+            if collection==PreviewCollection::Generations {
+                item.selected=selected_generation_ids.contains(&asset.id);
+            }
+            items.push(item);
             placements.push(GalleryPlacement { item_index,x:layout.x,y:layout.y,width:layout.width,gap:layout.gap,masonry:layout.masonry });
             if (current.is_none() || active_preview_collection==Some(collection))
                 && !asset.source_path.is_empty() && asset.source_path!="failed" && !existing.contains_key(&(asset.id.clone(),asset.source_path.clone())) {
@@ -117,6 +122,9 @@ fn prepare_private_visuals(
             ui.push(groups,|state,value|state.set_generation_groups(value));
             ui.push(false,|state,value|state.set_generation_has_more(value));
             ui.push(filtered.len().min(i32::MAX as usize) as i32,|state,value|state.set_generation_visible_limit(value));
+            ui.push(filtered.len().min(i32::MAX as usize) as i32,|state,value|state.set_generation_result_count(value));
+            let failed_count=filtered.iter().filter(|index|source[**index].source_path=="failed").count();
+            ui.push(failed_count.min(i32::MAX as usize) as i32,|state,value|state.set_generation_failed_count(value));
         } else {
             ui.push(items,|state,value|state.set_assets(value));
             ui.push(placements,|state,value|state.set_asset_layout_items(value));
@@ -1230,6 +1238,8 @@ pub(super) fn clear_retired_private_projection(state: &AppState) {
     state.set_canvas_workflow_prompt("".into());
     state.set_canvas_workflow_template("".into());
     state.set_canvas_workflow_hint("".into());
+    state.set_canvas_workflow_direction_count(8);
+    state.set_canvas_workflow_action("standing".into());
     state.set_canvas_workflow_artwork(Image::default());
     state.set_canvas_node_info_open(false);
     state.set_canvas_group_name_edit_id("".into());
@@ -1346,6 +1356,11 @@ fn release_inactive_page_images(state: &AppState, target_page: &str) {
         state.set_generation_layout_headers(ModelRc::new(VecModel::default()));
         state.set_generation_layout_loaders(ModelRc::new(VecModel::default()));
         state.set_generation_layout_height(1.0);
+        state.set_generation_result_count(0);
+        state.set_generation_failed_count(0);
+        state.set_generation_selection_mode(false);
+        state.set_generation_selected_count(0);
+        state.set_generation_selected_ids(ModelRc::new(VecModel::default()));
         state.set_conversations(ModelRc::new(VecModel::<ConversationItem>::default()));
         state.set_references(ModelRc::new(VecModel::<ReferenceItem>::default()));
     }
@@ -2297,6 +2312,7 @@ fn update_virtual_gallery(
     layout_mode: &str,
 ) {
     let state = app.global::<AppState>();
+    let selected_generation_ids = generation_selection_ids(&state);
     let category = gallery_filter_category(&state, collection);
     let language = state.get_language().to_string();
     let key = GalleryLayoutKey {
@@ -2374,7 +2390,11 @@ fn update_virtual_gallery(
             continue;
         };
         let item_index = visible_assets.len() as i32;
-        visible_assets.push(to_asset_view_with_previews(asset, &existing_previews));
+        let mut item = to_asset_view_with_previews(asset, &existing_previews);
+        if collection == PreviewCollection::Generations {
+            item.selected = selected_generation_ids.contains(&asset.id);
+        }
+        visible_assets.push(item);
         preview_items.push(asset);
         placements.push(GalleryPlacement {
             item_index,
@@ -2943,8 +2963,15 @@ pub(super) fn push_generations(app: &AppWindow, store: &Store) {
         .iter()
         .filter(|item| item.category == category)
         .count();
+    let failed_count = store
+        .generations
+        .iter()
+        .filter(|item| item.category == category && item.source_path == "failed")
+        .count();
     state.set_generation_has_more(false);
     state.set_generation_visible_limit(count.min(i32::MAX as usize) as i32);
+    state.set_generation_result_count(count.min(i32::MAX as usize) as i32);
+    state.set_generation_failed_count(failed_count.min(i32::MAX as usize) as i32);
     invalidate_virtual_gallery(PreviewCollection::Generations);
     refresh_virtual_gallery(app, store, PreviewCollection::Generations);
 }
@@ -3809,7 +3836,16 @@ pub(super) fn to_asset_view_metadata(asset: &AssetData) -> AssetItem {
         is_new: asset.is_new,
         delivery_recoverable: asset.delivery_recoverable,
         delivery_downloading: asset.delivery_downloading,
+        selected: false,
     }
+}
+
+pub(super) fn generation_selection_ids(state: &AppState) -> BTreeSet<String> {
+    state
+        .get_generation_selected_ids()
+        .iter()
+        .map(|id| id.to_string())
+        .collect()
 }
 
 fn schedule_gallery_previews(

@@ -7,10 +7,16 @@ import { PillButton } from "pill-button.slint";
 export component PromptExpandedEditor {
     visible: AppState.prompt-expanded-open;
     property <bool> editor-focus-pending: false;
+    property <int> observed-prompt-optimization-result-revision: AppState.prompt-optimization-result-revision;
     property <length> prompt-editor-font-size: AppState.settings-font-size * 1px + 3px;
 
     changed visible => {
         if self.visible {
+            root.editor-focus-pending = true;
+        }
+    }
+    changed observed-prompt-optimization-result-revision => {
+        if root.visible {
             root.editor-focus-pending = true;
         }
     }
@@ -106,7 +112,8 @@ export component PromptExpandedEditor {
                     width: expanded-scroll.visible-width - 10px;
                     text <=> AppState.prompt;
                     single-line: false;
-                    color: AppTheme.text;
+                    color: AppState.optimizing-prompt ? AppTheme.muted : AppTheme.text;
+                    read-only: AppState.optimizing-prompt;
                     font-family: "Nirmala Text";
                     font-size: root.prompt-editor-font-size;
                     font-weight: 400;
@@ -138,6 +145,7 @@ export component PromptExpandedEditor {
                 viewport-y: expanded-scroll.viewport-y;
                 editor-font-size: root.prompt-editor-font-size;
                 editor-background: AppTheme.panel-soft;
+                muted: AppState.optimizing-prompt;
                 color-index: index;
             }
         }

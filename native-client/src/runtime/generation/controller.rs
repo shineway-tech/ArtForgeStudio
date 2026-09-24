@@ -922,6 +922,8 @@ fn restore_asset_regeneration_inputs(
         state.set_canvas_workflow_title("".into());
         state.set_canvas_workflow_template("".into());
         state.set_canvas_workflow_hint("".into());
+        state.set_canvas_workflow_direction_count(8);
+        state.set_canvas_workflow_action("standing".into());
         state.set_canvas_workflow_artwork(Image::default());
         state.set_canvas_workflow_prompt(item.prompt.clone().into());
         state.set_canvas_tool("select".into());

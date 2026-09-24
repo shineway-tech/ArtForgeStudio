@@ -221,6 +221,12 @@ export global AppState {
     in-out property <string> recovered-prompt-result: "";
     in-out property <string> recovered-prompt-error: "";
     in-out property <string> optimizing-prompt-request-id: "";
+    in-out property <int> prompt-optimization-result-revision: 0;
+    in-out property <string> character-prompt-optimization-request-id: "";
+    in-out property <string> scene-prompt-optimization-request-id: "";
+    in-out property <string> ui-prompt-optimization-request-id: "";
+    in-out property <string> effect-prompt-optimization-request-id: "";
+    in-out property <string> non-workspace-prompt-optimization-request-id: "";
     in-out property <string> translating-prompt-request-id: "";
     in-out property <string> custom-style-analysis-request-id: "";
     in-out property <string> custom-prompt-recovered-request-id: "";
@@ -326,6 +332,11 @@ export global AppState {
     in-out property <string> canvas-workflow-template: "";
     in-out property <string> canvas-workflow-hint: "";
     in-out property <int> canvas-workflow-step-count: 5;
+    in-out property <int> canvas-workflow-direction-count: 8;
+    in-out property <string> canvas-workflow-action: "standing";
+    in-out property <int> canvas-workflow-skill-icon-count: 12;
+    in-out property <string> canvas-workflow-skill-icon-background: "white";
+    in-out property <string> canvas-workflow-skill-icon-shape: "circle";
     in-out property <image> canvas-workflow-artwork;
     in-out property <int> canvas-workspace-switch-request: 0;
     in-out property <string> canvas-selected-id: "";
@@ -450,6 +461,11 @@ export global AppState {
     in-out property <float> generation-layout-height: 1;
     in-out property <int> generation-visible-limit: 24;
     in-out property <bool> generation-has-more: false;
+    in-out property <int> generation-result-count: 0;
+    in-out property <int> generation-failed-count: 0;
+    in-out property <bool> generation-selection-mode: false;
+    in-out property <int> generation-selected-count: 0;
+    in-out property <[string]> generation-selected-ids: [];
     in-out property <[AssetItem]> generation-col-0: [];
     in-out property <[AssetItem]> generation-col-1: [];
     in-out property <[AssetItem]> generation-col-2: [];
@@ -734,6 +750,8 @@ export global AppState {
     in-out property <length> thumbnail-drag-preview-x: 0px;
     in-out property <length> thumbnail-drag-preview-y: 0px;
     in-out property <length> thumbnail-drag-preview-size: 112px;
+    in-out property <string> thumbnail-action-menu-id: "";
+    in-out property <string> thumbnail-action-menu-source: "";
 
     in-out property <bool> delete-confirm-open: false;
     in-out property <string> pending-delete-kind: "";
@@ -911,6 +929,8 @@ export global AppState {
     callback add-canvas-node(string, float, float);
     callback normalize-canvas-workflow-prompt(string) -> string;
     callback compose-canvas-workflow-prompt(string, string, int, bool) -> string;
+    callback compose-character-multi-direction-prompt(string, int, string, bool) -> string;
+    callback compose-skill-icon-prompt(string, int, string, string, bool) -> string;
     callback create-canvas-generation-source(string, float, float) -> string;
     callback update-canvas-node(string, string, float, float);
     callback rename-canvas-group(string, string) -> bool;
@@ -957,9 +977,14 @@ export global AppState {
     callback load-more-assets();
     callback load-more-generations();
     callback load-more-inspiration();
+    callback select-all-generations();
+    callback toggle-generation-selection(string);
+    callback clear-generation-selection();
+    callback delete-all-failed-generations();
     callback update-gallery-viewport(string, float, float, float, string, float, int);
     callback add-reference();
     callback add-reference-from-asset(string) -> bool;
+    callback use-thumbnail-as-reference(string, string) -> bool;
     callback add-reference-from-transfer(data-transfer) -> bool;
     callback clear-references();
     callback start-thumbnail-drag-preview(string) -> bool;
@@ -971,6 +996,7 @@ export global AppState {
     callback remove-reference(string);
     callback open-reference(string);
     callback optimize-current-prompt();
+    callback cancel-current-prompt();
     callback optimize-custom-prompt-content();
     callback visual-optimize-current-prompt();
     callback open-deep-optimization();

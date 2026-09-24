@@ -1480,6 +1480,17 @@ pub(super) fn start_backend_generation_with_billing_scope(
     let state = app.global::<AppState>();
     let side_scroll_map_canvas = matches!(&destination, GenerationDestination::Canvas { .. })
         && state.get_canvas_workflow_id().as_str() == "side-scroll-map";
+    let character_multi_direction_canvas =
+        matches!(&destination, GenerationDestination::Canvas { .. })
+            && state.get_canvas_workflow_id().as_str() == "character-multi-direction";
+    let scene_composition_canvas = matches!(&destination, GenerationDestination::Canvas { .. })
+        && state.get_canvas_workflow_id().as_str() == "scene-composition";
+    let skill_icon_canvas = matches!(&destination, GenerationDestination::Canvas { .. })
+        && state.get_canvas_workflow_id().as_str() == "skill-icon-generator";
+    let single_canvas_workflow = side_scroll_map_canvas
+        || character_multi_direction_canvas
+        || scene_composition_canvas
+        || skill_icon_canvas;
     let model_code = state.get_image_model().to_string();
     if model_code.trim().is_empty() {
         state.set_generation_status("服务端没有可用的图像模型".into());
@@ -1517,12 +1528,12 @@ pub(super) fn start_backend_generation_with_billing_scope(
         ratio
     };
     let quality = state.get_quality().to_string();
-    let count = if side_scroll_map_canvas {
+    let count = if single_canvas_workflow {
         1
     } else {
         forced_count.unwrap_or_else(|| state.get_count().clamp(1, 4))
     };
-    let mode = if side_scroll_map_canvas {
+    let mode = if single_canvas_workflow {
         "game".to_string()
     } else {
         state.get_mode().to_string()
@@ -1593,7 +1604,7 @@ pub(super) fn start_backend_generation_with_billing_scope(
     } else {
         raw_prompt.clone()
     };
-    let language = if side_scroll_map_canvas {
+    let language = if single_canvas_workflow {
         if state.get_language().as_str() == "en" {
             PromptLanguage::English
         } else {

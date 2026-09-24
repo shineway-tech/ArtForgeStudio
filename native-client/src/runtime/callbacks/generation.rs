@@ -522,6 +522,17 @@ pub(super) fn wire_generation_callbacks(app: &AppWindow, context: AppContext) {
     {
         let app_weak = app.as_weak();
         let context = context.clone();
+        state.on_cancel_current_prompt(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            cancel_current_prompt_task(&app, context.clone());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let context = context.clone();
         state.on_optimize_canvas_text_node(move |id, prompt| {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -692,7 +703,11 @@ pub(super) fn optimize_current_prompt(app: &AppWindow, context: AppContext, visu
     if !require_online_operation(app, "优化提示词") {
         return;
     }
-    if state.get_optimizing_prompt() {
+    let category = current_workspace_category(app);
+    if !workspace_prompt_optimization_request_id(&state, &category)
+        .trim()
+        .is_empty()
+    {
         return;
     }
     let target_input = state.get_prompt().to_string();
@@ -742,7 +757,6 @@ pub(super) fn optimize_current_prompt(app: &AppWindow, context: AppContext, visu
     } else {
         "正在优化提示词...".into()
     });
-    state.set_optimizing_prompt(true);
     start_backend_prompt_task(
         app,
         context.clone(),
@@ -763,7 +777,7 @@ pub(super) fn optimize_current_prompt(app: &AppWindow, context: AppContext, visu
             target_language: None,
             optimize: true,
             target: PromptResultTarget::Composer {
-                category: current_workspace_category(app),
+                category,
                 input: target_input,
             },
             reference_paths,
