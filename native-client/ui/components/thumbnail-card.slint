@@ -98,7 +98,7 @@ export component ThumbnailCard {
                     font-weight: 400;
                     overflow: elide;
                 }
-                if root.item.source-path != "failed" && hover.has-hover: Rectangle {
+                if root.item.source-path != "failed" && (hover.has-hover || root.item.selected): Rectangle {
                     y: parent.height - 42px;
                     width: parent.width;
                     height: 42px;
@@ -114,6 +114,18 @@ export component ThumbnailCard {
                         vertical-alignment: center;
                         overflow: elide;
                     }
+                }
+                Rectangle {
+                    visible: root.can-actions() && (hover.has-hover || root.action-menu-open());
+                    x: parent.width - 38px;
+                    y: 8px;
+                    width: 30px;
+                    height: 30px;
+                    background: root.actions-hit() && hover.pressed ? AppTheme.accent : #000000b8;
+                    border-radius: AppState.card-style == "rounded" ? 6px : 0px;
+                    Rectangle { x: 6px; y: 13px; width: 4px; height: 4px; border-radius: 2px; background: #ffffff; }
+                    Rectangle { x: 13px; y: 13px; width: 4px; height: 4px; border-radius: 2px; background: #ffffff; }
+                    Rectangle { x: 20px; y: 13px; width: 4px; height: 4px; border-radius: 2px; background: #ffffff; }
                 }
                 Rectangle {
                     visible: hover.has-hover && root.can-delete();
@@ -133,7 +145,7 @@ export component ThumbnailCard {
                         image-fit: contain;
                     }
                 }
-                if root.new-tag-visible(): Rectangle {
+                if root.new-tag-visible() && !root.selection-enabled(): Rectangle {
                     x: 8px;
                     y: 8px;
                     width: 36px;
@@ -152,13 +164,30 @@ export component ThumbnailCard {
                     }
                 }
             }
-            if root.item.source-path != "failed" && hover.has-hover: hover-outline := Rectangle {
+            if root.item.source-path != "failed" && (hover.has-hover || root.item.selected): hover-outline := Rectangle {
                 width: parent.width;
                 height: parent.height;
                 background: transparent;
                 border-radius: AppState.card-style == "rounded" ? 10px : 0px;
                 border-width: 2px;
                 border-color: AppTheme.accent;
+            }
+            if root.item.selected: Rectangle {
+                x: 8px;
+                y: 8px;
+                width: 26px;
+                height: 26px;
+                background: AppTheme.accent;
+                border-radius: 13px;
+                Image {
+                    x: 6px;
+                    y: 6px;
+                    width: 14px;
+                    height: 14px;
+                    source: @image-url("../../assets/icons/check.svg");
+                    colorize: #ffffff;
+                    image-fit: contain;
+                }
             }
             hover := TouchArea {
                 width: parent.width;
@@ -167,7 +196,7 @@ export component ThumbnailCard {
                 mouse-cursor: pointer;
                 pointer-event(event) => {
                     if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
-                        if root.delete-hit() || root.new-tag-hit() {
+                        if root.selection-enabled() || root.actions-hit() || root.delete-hit() || root.action-menu-open() || root.new-tag-hit() {
                             root.hide-drag-preview();
                         } else {
                             root.drag-armed = true;
@@ -192,12 +221,24 @@ export component ThumbnailCard {
                 }
                 clicked => {
                     root.hide-drag-preview();
+                    if root.selection-enabled() {
+                        AppState.toggle-generation-selection(root.item.id);
+                        return;
+                    }
                     if root.new-tag-visible() {
                         AppState.dismiss-new-generation(root.item.id);
                     }
-                    if root.delete-hit() {
+                    if root.action-menu-open() {
+                        root.close-action-menu();
+                        thumbnail-action-popup.close();
+                    } else if root.actions-hit() {
+                        AppState.thumbnail-action-menu-id = root.item.id;
+                        AppState.thumbnail-action-menu-source = root.source;
+                        thumbnail-action-popup.show();
+                    } else if root.delete-hit() {
                         AppState.request-delete-thumbnail(root.item.id, root.source);
                     } else if root.item.source-path != "failed" {
+                        root.close-action-menu();
                         AppState.open-viewer(root.item.id, root.source);
                     }
                 }
@@ -221,6 +262,12 @@ export component ThumbnailCard {
             failed-hover := TouchArea {
                 width: parent.width;
                 height: parent.height;
+                mouse-cursor: root.selection-enabled() ? pointer : default;
+                clicked => {
+                    if root.selection-enabled() {
+                        AppState.toggle-generation-selection(root.item.id);
+                    }
+                }
             }
             Text {
                 x: 12px;
@@ -238,6 +285,7 @@ export component ThumbnailCard {
                 overflow: elide;
             }
             PillButton {
+                visible: !root.selection-enabled();
                 x: (parent.width - 74px) / 2;
                 y: parent.height / 2 + 2px;
                 width: 74px;
@@ -247,7 +295,7 @@ export component ThumbnailCard {
                 disabled: AppState.generating && AppState.generation-active-category == root.item.category;
                 clicked => { AppState.retry-generation(root.item.id); }
             }
-            if root.item.delivery-recoverable: Rectangle {
+            if root.item.delivery-recoverable && !root.selection-enabled(): Rectangle {
                 x: parent.width - 38px;
                 y: 8px;
                 width: 30px;
@@ -287,6 +335,7 @@ export component ThumbnailCard {
                 }
             }
             failed-delete-touch := TouchArea {
+                visible: !root.selection-enabled();
                 x: root.item.delivery-recoverable ? parent.width - 76px : parent.width - 38px;
                 y: 8px;
                 width: 30px;
@@ -297,7 +346,7 @@ export component ThumbnailCard {
                 }
             }
             Rectangle {
-                visible: failed-hover.has-hover || failed-delete-touch.has-hover;
+                visible: !root.selection-enabled() && (failed-hover.has-hover || failed-delete-touch.has-hover);
                 x: root.item.delivery-recoverable ? parent.width - 76px : parent.width - 38px;
                 y: 8px;
                 width: 30px;
@@ -312,6 +361,107 @@ export component ThumbnailCard {
                     source: @image-url("../../assets/icons/trash.svg");
                     colorize: #ffffff;
                     image-fit: contain;
+                }
+            }
+            if root.item.selected: Rectangle {
+                width: parent.width;
+                height: parent.height;
+                background: transparent;
+                border-radius: AppState.card-style == "rounded" ? 10px : 0px;
+                border-width: 2px;
+                border-color: AppTheme.accent;
+                Rectangle {
+                    x: 8px;
+                    y: 8px;
+                    width: 26px;
+                    height: 26px;
+                    background: AppTheme.accent;
+                    border-radius: 13px;
+                    Image {
+                        x: 6px;
+                        y: 6px;
+                        width: 14px;
+                        height: 14px;
+                        source: @image-url("../../assets/icons/check.svg");
+                        colorize: #ffffff;
+                        image-fit: contain;
+                    }
+                }
+            }
+        }
+    }
+    thumbnail-action-popup := PopupWindow {
+        x: root.card-width + 8px;
+        y: 8px;
+        width: 152px;
+        height: 100px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            background: AppTheme.panel;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            border-radius: AppState.card-style == "rounded" ? 8px : 0px;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #00000055;
+            Rectangle {
+                x: 5px;
+                y: 5px;
+                width: parent.width - 10px;
+                height: 43px;
+                background: reference-action-touch.has-hover ? AppTheme.panel-soft : transparent;
+                border-radius: 6px;
+                Text {
+                    x: 14px;
+                    width: parent.width - 28px;
+                    height: parent.height;
+                    text: AppState.en ? "Use as reference" : "用作参考";
+                    color: AppTheme.text;
+                    font-size: 13px;
+                    font-weight: 400;
+                    vertical-alignment: center;
+                    wrap: no-wrap;
+                    overflow: elide;
+                }
+                reference-action-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => {
+                        AppState.use-thumbnail-as-reference(root.item.id, root.source);
+                        root.close-action-menu();
+                        thumbnail-action-popup.close();
+                    }
+                }
+            }
+            Rectangle { x: 5px; y: 49px; width: parent.width - 10px; height: 1px; background: AppTheme.border; }
+            Rectangle {
+                x: 5px;
+                y: 50px;
+                width: parent.width - 10px;
+                height: 44px;
+                background: delete-action-touch.has-hover ? AppTheme.panel-soft : transparent;
+                border-radius: 6px;
+                Text {
+                    x: 14px;
+                    width: parent.width - 28px;
+                    height: parent.height;
+                    text: AppState.en ? "Delete" : "删除";
+                    color: AppTheme.danger;
+                    font-size: 13px;
+                    font-weight: 400;
+                    vertical-alignment: center;
+                    wrap: no-wrap;
+                    overflow: elide;
+                }
+                delete-action-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: pointer;
+                    clicked => {
+                        AppState.request-delete-thumbnail(root.item.id, root.source);
+                        root.close-action-menu();
+                        thumbnail-action-popup.close();
+                    }
                 }
             }
         }
@@ -336,17 +486,41 @@ export component ThumbnailCard {
         return max(1px, root.image-height() - root.outline-pad * 2);
     }
     function can-drag-preview() -> bool {
-        return root.active && root.item.source-path != "" && root.item.source-path != "failed";
+        return root.active && !root.selection-enabled()
+            && root.item.source-path != "" && root.item.source-path != "failed";
+    }
+    function selection-enabled() -> bool {
+        return root.source == "generation" && AppState.generation-selection-mode;
+    }
+    function can-actions() -> bool {
+        return root.can-drag-preview()
+            && root.source == "generation";
+    }
+    function actions-hit() -> bool {
+        return root.can-actions()
+            && hover.mouse-x >= root.card-width - root.outline-pad - 40px
+            && hover.mouse-x < root.card-width - root.outline-pad
+            && hover.mouse-y >= root.outline-pad + 6px
+            && hover.mouse-y <= root.outline-pad + 40px;
     }
     function can-delete() -> bool {
-        return root.can-drag-preview()
-            && (root.source == "asset" || root.source == "generation");
+        return root.can-drag-preview() && root.source == "asset";
     }
     function delete-hit() -> bool {
         return root.can-delete()
             && hover.mouse-x >= root.card-width - root.outline-pad - 40px
             && hover.mouse-x < root.card-width - root.outline-pad
+            && hover.mouse-y >= root.outline-pad + 6px
             && hover.mouse-y <= root.outline-pad + 40px;
+    }
+    function action-menu-open() -> bool {
+        return AppState.thumbnail-action-menu-id == root.item.id
+            && AppState.thumbnail-action-menu-source == root.source
+            && thumbnail-action-popup.is-open;
+    }
+    function close-action-menu() {
+        AppState.thumbnail-action-menu-id = "";
+        AppState.thumbnail-action-menu-source = "";
     }
     function new-tag-visible() -> bool {
         return root.item.is-new && root.source == "generation" && root.item.source-path != "failed";

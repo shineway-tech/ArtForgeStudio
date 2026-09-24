@@ -554,6 +554,7 @@ struct AppContext {
     active_payment: Rc<RefCell<Option<ActivePaymentSession>>>,
     cancelled_generation_requests: Arc<Mutex<BTreeSet<String>>>,
     active_prompt_task_requests: Arc<Mutex<BTreeSet<String>>>,
+    cancelled_prompt_task_requests: Arc<Mutex<BTreeSet<String>>>,
     auth_operation_epoch: Arc<AtomicU64>,
     current_user_id: Arc<Mutex<Option<String>>>,
     account_snapshot_scope: Arc<Mutex<Option<SessionScope>>>,

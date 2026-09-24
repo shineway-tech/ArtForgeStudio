@@ -299,7 +299,13 @@ pub(super) struct PendingPromptTaskRecord {
     pub(super) applied_to_target: bool,
     #[serde(default)]
     pub(super) result_committed: bool,
+    #[serde(default)]
+    pub(super) cancel_requested: bool,
+    #[serde(default = "prompt_submission_may_have_started")]
+    pub(super) submission_started: bool,
 }
+
+fn prompt_submission_may_have_started() -> bool { true }
 
 #[derive(Serialize, Deserialize)]
 struct PromptTaskRecoveryFile {
@@ -1083,6 +1089,8 @@ pub(super) enum GenerationRecoveryPatch {
 }
 #[derive(Clone)]
 pub(super) enum PromptTaskRecoveryPatch {
+    RequestCancellation,
+    BeginSubmission,
     UploadedFileIds(Vec<String>),
     ServerTaskId(String),
     TerminalError(String),
@@ -1158,6 +1166,11 @@ pub(super) fn apply_prompt_task_patch_for_namespace(
         };
         let record = &mut file.prompt_tasks[index];
         match patch.clone() {
+            PromptTaskRecoveryPatch::RequestCancellation => record.cancel_requested = true,
+            PromptTaskRecoveryPatch::BeginSubmission => {
+                anyhow::ensure!(!record.cancel_requested, "cancelled prompt cannot be submitted");
+                record.submission_started = true;
+            }
             PromptTaskRecoveryPatch::UploadedFileIds(ids) => record.uploaded_file_ids = ids,
             PromptTaskRecoveryPatch::ServerTaskId(id) => record.server_task_id = id,
             PromptTaskRecoveryPatch::TerminalError(error) => record.terminal_error = error,
@@ -2104,6 +2117,8 @@ mod tests {
             schema_version: 2,
             created_at_epoch_ms: 1,
             client_request_id: "prompt-request".to_string(),
+            cancel_requested: false,
+            submission_started: false,
             owner_user_id: OWNER.to_owned(),
             billing_account_group_id: PAYER.to_owned(),
             auth_epoch: 9,
