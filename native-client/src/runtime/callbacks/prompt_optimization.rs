@@ -226,7 +226,15 @@ fn poll_deep_job(
                         Err(error) => {
                             let message = show_credit_rejection(&state, &error).unwrap_or_else(|| error.user_message());
                             state.set_deep_optimization_error(message.into());
-                            if expected_visible.is_empty() { state.set_deep_optimization_stage("settings".into()); }
+                            if expected_visible.is_empty() {
+                                state.set_deep_optimization_stage("settings".into());
+                            } else if !matches!(error, ApiError::Network { .. }) {
+                                // A server-side response means the current polling attempt is
+                                // over. Keep the durable job id for recovery, but leave the
+                                // running state so the interruption view can show the error.
+                                state.set_deep_optimization_stage("failed".into());
+                                state.set_deep_optimization_can_retry(false);
+                            }
                             retry_read = !expected_visible.is_empty() && matches!(error, ApiError::Network { .. });
                         }
                         Ok(Some(_)) => unreachable!(),
@@ -2436,6 +2444,36 @@ mod core_deep_caller_patch_tests {
         assert_eq!(serde_json::to_value(load_pending_prompt_optimizations_for_namespace(&f.authority).unwrap()).unwrap(), serde_json::json!([original]));
         assert_eq!(app.global::<AppState>().get_deep_optimization_stage().as_str(), "failed");
     }
+
+    #[test]
+    fn core_deep_refresh_http_error_surfaces_interruption_instead_of_staying_running() {
+        let (listener, url) = listener();
+        let (f, app) = setup(&url);
+        let saved = source_record(&f);
+        upsert_pending_prompt_optimization_for_namespace(&f.authority, &f.scope, saved).unwrap();
+        app.global::<AppState>().set_deep_optimization_job_id(SOURCE.into());
+        app.global::<AppState>().set_deep_optimization_stage("running".into());
+
+        let transport = JoinedTransport::spawn(move || {
+            let mut stream = accept(&listener);
+            let request = read_request(&mut stream);
+            assert!(request.starts_with(&format!("GET /v1/prompt-optimizations/{SOURCE} ")));
+            reply(
+                &mut stream,
+                "503 Service Unavailable",
+                serde_json::Value::Null,
+                serde_json::json!({"code":"service_unavailable","message":"temporary failure","details":null}),
+            );
+        });
+
+        app.global::<AppState>().invoke_open_deep_optimization();
+        pump(|| !app.global::<AppState>().get_deep_optimization_error().is_empty());
+        transport.join();
+
+        assert_eq!(app.global::<AppState>().get_deep_optimization_stage().as_str(), "failed");
+        assert_eq!(app.global::<AppState>().get_deep_optimization_error().as_str(), "服务暂时异常，请稍后重试");
+    }
+
     #[test]
     fn core_deep_exact_upgrade_blocks_real_restore_effect_and_keeps_source() {
         let (_listener, url) = listener();
