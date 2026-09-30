@@ -1882,6 +1882,11 @@ pub(super) fn compose_canvas_workflow_prompt(
     {
         return compose_side_scroll_map_prompt(user_description, english);
     }
+    if template.contains("场景组合规范：")
+        || template.contains("Scene composition specification:")
+    {
+        return compose_scene_composition_prompt(user_description, english);
+    }
 
     let step_count = requested_step_count.clamp(4, 12);
     let top_count = (step_count + 1) / 2;
@@ -2025,6 +2030,27 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
             template.as_str(),
             prompt.as_str(),
             step_count,
+            english,
+        )
+        .into()
+    });
+    state.on_compose_character_multi_direction_prompt(
+        |prompt, direction_count, action, english| {
+            compose_character_multi_direction_prompt(
+                prompt.as_str(),
+                direction_count,
+                action.as_str(),
+                english,
+            )
+            .into()
+        },
+    );
+    state.on_compose_skill_icon_prompt(|prompt, icon_count, background, shape, english| {
+        compose_skill_icon_prompt(
+            prompt.as_str(),
+            icon_count,
+            background.as_str(),
+            shape.as_str(),
             english,
         )
         .into()
@@ -3164,8 +3190,9 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
             };
             let query = query.trim().to_lowercase();
             let options = [
-                ("text", ["text", "文本", "prompt", "提示词"]),
                 ("image", ["image", "图片", "picture", "图像"]),
+                ("text", ["text", "文本", "prompt", "提示词"]),
+                ("video", ["video", "视频", "movie", "影片"]),
             ];
             let results = options
                 .into_iter()
@@ -3204,10 +3231,9 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                 show_canvas_capacity_status(&app);
                 return None;
             }
-            let node_kind = if kind.as_str() == "image" {
-                "image".to_string()
-            } else {
-                "text".to_string()
+            let node_kind = match kind.as_str() {
+                "image" | "video" => kind.to_string(),
+                _ => "text".to_string(),
             };
             let state = app.global::<AppState>();
             let (content, width, height) =
@@ -3626,6 +3652,48 @@ mod tests {
         }];
         assert!(link_reaches(&links, "source", "target"));
         assert!(!link_reaches(&links, "target", "source"));
+    }
+
+    #[test]
+    fn actual_canvas_connection_picker_creates_a_connected_video_node() {
+        i_slint_backend_testing::init_no_event_loop();
+        let fixture = video_image_callbacks::tests::scoped_inputs::Fixture::new();
+        let temp = tempfile::tempdir().unwrap();
+        let _seams = CanvasTestSeams::for_fixtures(temp.path(), &[&fixture]);
+        fixture.context.store.borrow_mut().canvas_notes = vec![node("source")];
+        let app = AppWindow::new().unwrap();
+        wire_infinite_canvas_callbacks(&app, fixture.context.clone());
+        let state = app.global::<AppState>();
+
+        state.invoke_search_canvas_node_types("".into());
+        let results = state.get_canvas_node_search_results();
+        assert_eq!(results.row_count(), 3);
+        assert_eq!(results.row_data(0).as_deref(), Some("image"));
+        assert_eq!(results.row_data(1).as_deref(), Some("text"));
+        assert_eq!(results.row_data(2).as_deref(), Some("video"));
+
+        state.invoke_add_connected_canvas_node("video".into(), "source".into(), 420.0, 160.0);
+        let video_id = {
+            let store = fixture.context.store.borrow();
+            let video = store.canvas_notes.iter().find(|note| note.kind == "video")
+                .expect("connected video node");
+            assert_eq!((video.x, video.y, video.width, video.height), (420.0, 160.0, 400.0, 270.0));
+            assert!(store.canvas_links.iter().any(|link| {
+                link.source_id == "source" && link.target_id == video.id
+            }));
+            video.id.clone()
+        };
+        video_image_callbacks::tests::scoped_inputs::pump(|| {
+            canvas_workers().lock().unwrap().workers.is_empty()
+        });
+        let saved = fixture.writer
+            .load_client_state_for_namespace(fixture.persistence.lease())
+            .unwrap()
+            .expect("saved canvas state");
+        assert!(saved.canvas_notes.iter().any(|note| {
+            note.id == video_id && note.kind == "video"
+        }));
+        assert!(saved.canvas_links.iter().any(|link| link.target_id == video_id));
     }
 
     #[test]

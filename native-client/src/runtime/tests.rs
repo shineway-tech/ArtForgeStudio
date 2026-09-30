@@ -2037,6 +2037,8 @@ mod tests {
         assert!(reference_thumb.contains("in property <int> ordinal;"));
         assert!(reference_thumb.contains("text: root.ordinal;"));
         assert!(reference_thumb.contains("background: AppTheme.accent;"));
+        assert!(reference_thumb.contains("x: -4px;"));
+        assert!(reference_thumb.contains("x: parent.width - 22px;"));
         assert!(!composer.contains("root.height - 80px"));
     }
 
@@ -2524,7 +2526,7 @@ mod tests {
     }
 
     #[test]
-    fn ai_creation_entry_opens_a_nine_choice_launcher_with_a_shared_canvas_map_generator() {
+    fn ai_creation_entry_opens_a_twelve_choice_launcher_with_shared_canvas_workflows() {
         let app = include_str!("../../ui/app.slint");
         let sidebar = include_str!("../../ui/components/sidebar.slint");
         let nav_glyph = include_str!("../../ui/components/nav-glyph.slint");
@@ -2549,7 +2551,36 @@ mod tests {
         assert!(app.contains("AppState.page == \"free-canvas\": FreeCanvasPage"));
         assert!(app.contains("AppState.page == \"canvas\": InfiniteCanvasPage"));
         assert!(!app.contains("SideScrollMapPage"));
-        assert_eq!(page.matches("card-id: \"").count(), 9);
+        assert_eq!(page.matches("card-id: \"").count(), 12);
+        assert!(page.contains(
+            "return (root.cards-width() - root.card-gap() * 4) / 5;"
+        ));
+        let card_ids = page
+            .match_indices("card-id: \"")
+            .map(|(offset, _)| {
+                page[offset + "card-id: \"".len()..]
+                    .split('"')
+                    .next()
+                    .expect("card id")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            card_ids,
+            vec![
+                "plant-growth",
+                "character-outfit",
+                "monster-generator",
+                "upgrade-evolution",
+                "character-age",
+                "character-body",
+                "building-derivation",
+                "side-scroll-map",
+                "character-multi-direction",
+                "scene-composition",
+                "skill-icon-generator",
+                "infinite-canvas",
+            ]
+        );
         for (card_id, title) in [
             ("plant-growth", "植物生成器"),
             ("character-outfit", "角色换装"),
@@ -2560,12 +2591,15 @@ mod tests {
             ("building-derivation", "建筑衍生器"),
             ("infinite-canvas", "无限画布"),
             ("side-scroll-map", "横版地图生成器"),
+            ("character-multi-direction", "角色多向图"),
+            ("scene-composition", "场景组合"),
+            ("skill-icon-generator", "技能图标生成"),
         ] {
             assert!(page.contains(&format!("card-id: \"{card_id}\"")));
             assert!(page.contains(title));
         }
-        assert_eq!(page.matches("prompt-zh:").count(), 9);
-        assert_eq!(page.matches("prompt-en:").count(), 9);
+        assert_eq!(page.matches("prompt-zh:").count(), 12);
+        assert_eq!(page.matches("prompt-en:").count(), 12);
         assert!(!page.contains("AppState.navigate(\"generation\")"));
         assert!(!page.contains("AppState.navigate(\"side-scroll-map\")"));
         assert!(page.contains("AppState.navigate(\"canvas\")"));
@@ -2599,12 +2633,25 @@ mod tests {
             "character-body.png",
             "building-derivation.png",
             "side-scroll-map.png",
+            "character-multi-direction.png",
+            "scene-composition.png",
+            "skill-icon-generator.png",
         ] {
             assert!(manifest.join("assets/free-canvas").join(image).is_file());
         }
         assert_eq!(
             image::image_dimensions(manifest.join("assets/free-canvas/side-scroll-map.png"))
                 .expect("side-scrolling map cover dimensions"),
+            (1448, 1086)
+        );
+        assert_eq!(
+            image::image_dimensions(manifest.join("assets/free-canvas/scene-composition.png"))
+                .expect("scene-composition cover dimensions"),
+            (1448, 1086)
+        );
+        assert_eq!(
+            image::image_dimensions(manifest.join("assets/free-canvas/skill-icon-generator.png"))
+                .expect("skill-icon cover dimensions"),
             (1448, 1086)
         );
     }
@@ -2628,7 +2675,8 @@ mod tests {
         assert!(canvas.contains("workflow-id: \"side-scroll-map\""));
         assert!(canvas.contains("AppState.canvas-workflow-id != \"side-scroll-map\""));
         assert!(canvas.contains("AppState.references.length < 8 && !root.workflow-composer-collapsed"));
-        assert!(canvas.contains("height: AppState.canvas-workflow-id == \"side-scroll-map\" ? 172px : 250px"));
+        assert!(canvas.contains("AppState.canvas-workflow-id == \"side-scroll-map\""));
+        assert!(canvas.contains("AppState.canvas-workflow-id == \"character-multi-direction\""));
         assert_eq!(canvas.matches("if AppState.canvas-workflow-id == \"side-scroll-map\": Row").count(), 2);
         for landscape_ratio in ["3:2", "4:3", "16:9", "21:9"] {
             assert!(canvas.contains(&format!("text: \"{landscape_ratio}\"")));
@@ -2641,11 +2689,43 @@ mod tests {
             12,
             false,
         );
-        for required in ["云海仙山栈道", "横屏比例", "前景", "中景", "后景", "右边缘", "左边缘", "接缝必须不可见"] {
+        for required in [
+            "云海仙山栈道",
+            "横屏比例",
+            "前景",
+            "中景",
+            "后景",
+            "右边缘",
+            "左边缘",
+            "接缝必须不可见",
+            "画面只允许出现地图场景和环境内容",
+            "NPC",
+            "怪物",
+            "不得添加任何游戏特效或后期特效",
+            "纯地图限制优先于参考图和用户描述",
+            "水印",
+        ] {
             assert!(prompt.contains(required), "missing map rule: {required}");
         }
         assert!(!prompt.contains("必须使用单一纯色背景"));
         assert!(!prompt.contains("恰好12个完整主体"));
+        let english_prompt = compose_canvas_workflow_prompt(
+            "Side-scrolling seamless map specification:",
+            "Add enemies and monsters",
+            12,
+            true,
+        );
+        for required in [
+            "map scenery and environment only",
+            "player characters",
+            "NPCs",
+            "monsters",
+            "Do not add gameplay or post-processing special effects",
+            "map-only restrictions override any conflicting content",
+            "watermark",
+        ] {
+            assert!(english_prompt.contains(required), "missing English map rule: {required}");
+        }
         let submitted = build_side_scroll_map_generation_prompt(
             &prompt,
             "21:9",
@@ -2655,6 +2735,220 @@ mod tests {
         assert!(submitted.contains("最终宽高比：21:9"));
         assert!(submitted.contains("最终清晰度：4K"));
         assert!(!submitted.contains("AI创作最终抠图规范"));
+    }
+
+    #[test]
+    fn scene_composition_merges_multiple_references_in_the_shared_canvas() {
+        let launcher = include_str!("../../ui/pages/free-canvas-page.slint");
+        let canvas = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let card = launcher
+            .split_once("card-id: \"scene-composition\"")
+            .expect("scene-composition card")
+            .1;
+
+        assert!(card.contains("title: AppState.en ? \"Scene Composition\" : \"场景组合\""));
+        assert!(card.contains("category: \"scene\""));
+        assert!(card.contains("scene-composition.png"));
+        assert!(card.contains("prompt-zh: \"场景组合规范：\""));
+        assert!(card.contains("上传2至8张参考图"));
+        assert!(launcher.contains("AppState.ratio = \"16:9\""));
+        assert!(canvas.contains("workflow-id: \"scene-composition\""));
+        assert!(canvas.contains("AppState.canvas-workflow-id == \"scene-composition\" && AppState.references.length < 2"));
+        assert!(canvas.contains("请至少上传2张参考图"));
+        assert!(canvas.contains("AppState.canvas-workflow-id != \"scene-composition\""));
+
+        let prompt = compose_canvas_workflow_prompt(
+            "场景组合规范：",
+            "把古代石门、紫色水晶和灯笼集市融合成夜晚场景",
+            12,
+            false,
+        );
+        for required in [
+            "每张参考图都必须至少",
+            "第一张参考图作为统一画风基准",
+            "同一个环境中重新构建",
+            "统一相机、视角、透视",
+            "禁止输出拼贴图",
+            "只输出一张铺满画布的最终场景",
+            "水印",
+        ] {
+            assert!(prompt.contains(required), "missing scene-composition rule: {required}");
+        }
+        assert!(!prompt.contains("恰好12个完整主体"));
+        assert!(!prompt.contains("必须使用单一纯色背景"));
+
+        let submitted = build_canvas_generation_prompt(&prompt, "16:9", "4K", false);
+        assert!(submitted.contains("宽高比16:9"));
+        assert!(submitted.contains("清晰度4K"));
+        assert!(!submitted.contains("AI创作最终抠图规范"));
+        assert!(!submitted.contains("禁止共享底座"));
+
+        let english = compose_canvas_workflow_prompt(
+            "Scene composition specification:",
+            "Combine the arch, crystals, market props, and character",
+            4,
+            true,
+        );
+        for required in [
+            "Every uploaded reference must contribute",
+            "canonical art-style anchor",
+            "one consistent camera, viewpoint, perspective",
+            "Do not output a collage",
+            "watermarks",
+        ] {
+            assert!(english.contains(required), "missing English scene-composition rule: {required}");
+        }
+    }
+
+    #[test]
+    fn skill_icon_generator_uses_multiple_style_references_and_configurable_sheet_rules() {
+        let launcher = include_str!("../../ui/pages/free-canvas-page.slint");
+        let canvas = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let backend = include_str!("generation/backend.rs");
+        let card = launcher
+            .split_once("card-id: \"skill-icon-generator\"")
+            .expect("skill-icon-generator card")
+            .1;
+
+        assert!(card.contains("title: AppState.en ? \"Skill Icon Generator\" : \"技能图标生成\""));
+        assert!(card.contains("category: \"ui\""));
+        assert!(card.contains("skill-icon-generator.png"));
+        assert!(card.contains("prompt-zh: \"技能图标生成规范：\""));
+        assert!(launcher.contains("AppState.canvas-workflow-skill-icon-count = 12"));
+        assert!(launcher.contains("AppState.canvas-workflow-skill-icon-background = \"white\""));
+        assert!(launcher.contains("AppState.canvas-workflow-skill-icon-shape = \"circle\""));
+        assert!(canvas.contains("workflow-id: \"skill-icon-generator\""));
+        assert!(card.contains("上传1至8张风格参考图，描述想要生成的技能图标"));
+        assert!(canvas.contains("if AppState.references.length < 8"));
+        assert!(!canvas.contains("AppState.canvas-workflow-id == \"skill-icon-generator\" && AppState.references.length != 1"));
+        assert!(canvas.contains("请至少上传1张风格参考图"));
+        assert!(canvas.contains("AppState.canvas-workflow-skill-icon-count - 6"));
+        assert!(canvas.contains("max(6, min(20"));
+        assert!(canvas.contains("背景颜色："));
+        assert!(canvas.contains("图标形状："));
+        assert!(canvas.contains("AppState.compose-skill-icon-prompt("));
+        assert!(canvas.contains("text <=> AppState.canvas-workflow-prompt"));
+        assert!(!canvas.contains("skill-icon-fields := Rectangle"));
+        assert!(!canvas.contains("游戏类型："));
+        assert!(!canvas.contains("技能类型："));
+        assert!(!canvas.contains("技能描述："));
+        assert!(state.contains("canvas-workflow-skill-icon-count: 12"));
+        assert!(!state.contains("canvas-workflow-skill-icon-game-genre"));
+        assert!(!state.contains("canvas-workflow-skill-icon-skill-type"));
+        assert!(!state.contains("canvas-workflow-skill-icon-description"));
+        assert!(state.contains("callback compose-skill-icon-prompt(string, int, string, string, bool) -> string"));
+        assert!(backend.contains("skill_icon_canvas"));
+        assert!(backend.contains("|| skill_icon_canvas"));
+
+        let prompt = compose_skill_icon_prompt(
+            "三国SLG计谋技能，包含火攻、鼓舞、伏兵",
+            20,
+            "black",
+            "square",
+            false,
+        );
+        for required in [
+            "三国SLG",
+            "恰好20个",
+            "5列、最多4行",
+            "纯黑色（#000000）背景",
+            "标准方形图标框",
+            "统一视觉系统",
+            "不得绘制可见网格线",
+            "水印",
+        ] {
+            assert!(prompt.contains(required), "missing skill-icon rule: {required}");
+        }
+        let submitted = build_canvas_generation_prompt(&prompt, "4:3", "4K", false);
+        assert!(submitted.contains("宽高比4:3"));
+        assert!(submitted.contains("清晰度4K"));
+        assert!(!submitted.contains("AI创作最终抠图规范"));
+    }
+
+    #[test]
+    fn skill_icon_workflow_controls_submit_the_selected_contract() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_image_model("test-image-model".into());
+        state.on_compose_canvas_workflow_prompt(|template, prompt, count, english| {
+            compose_canvas_workflow_prompt(template.as_str(), prompt.as_str(), count, english).into()
+        });
+        state.on_compose_character_multi_direction_prompt(|prompt, count, action, english| {
+            compose_character_multi_direction_prompt(
+                prompt.as_str(), count, action.as_str(), english,
+            ).into()
+        });
+        state.on_compose_skill_icon_prompt(|prompt, count, background, shape, english| {
+            compose_skill_icon_prompt(
+                prompt.as_str(), count, background.as_str(), shape.as_str(), english,
+            ).into()
+        });
+        state.on_create_canvas_generation_source(|_, _, _| "skill-icon-source".into());
+        let submitted = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed = submitted.clone();
+        state.on_generate_canvas_node(move |_, prompt| observed.borrow_mut().push(prompt.to_string()));
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        state.set_page("free-canvas".into());
+        app.show().expect("show app window");
+
+        ElementHandle::find_by_accessible_label(&app, "技能图标生成")
+            .next().expect("skill-icon card")
+            .mock_single_click(PointerEventButton::Left);
+        assert_eq!(state.get_canvas_workflow_id(), "skill-icon-generator");
+        assert_eq!(state.get_asset_type(), "ui");
+        assert_eq!(state.get_ratio(), "4:3");
+        assert_eq!(state.get_canvas_workflow_skill_icon_count(), 12);
+        assert_eq!(state.get_canvas_workflow_skill_icon_background(), "white");
+        assert_eq!(state.get_canvas_workflow_skill_icon_shape(), "circle");
+
+        state.set_page("canvas".into());
+        ElementHandle::find_by_accessible_label(&app, "背景颜色：白色")
+            .next().expect("skill background control")
+            .invoke_accessible_default_action();
+        ElementHandle::find_by_accessible_label(&app, "黑色")
+            .next().expect("black background option")
+            .invoke_accessible_default_action();
+        ElementHandle::find_by_accessible_label(&app, "图标形状：圆形")
+            .next().expect("skill shape control")
+            .invoke_accessible_default_action();
+        ElementHandle::find_by_accessible_label(&app, "方形")
+            .next().expect("square shape option")
+            .invoke_accessible_default_action();
+        state.set_canvas_workflow_skill_icon_count(20);
+        state.set_canvas_workflow_prompt("三国SLG计谋技能，包含火攻、伏兵、鼓舞".into());
+
+        let generate = ElementHandle::find_by_element_id(&app, "InfiniteCanvasPage::workflow-generate-button")
+            .next().expect("skill-icon generate button");
+        generate.mock_single_click(PointerEventButton::Left);
+        assert!(submitted.borrow().is_empty());
+        assert_eq!(state.get_generation_status(), "请至少上传1张风格参考图");
+
+        state.set_references(ModelRc::new(VecModel::from(vec![ReferenceItem {
+            id: "style-reference".into(), image: Image::default(), source_path: "style.png".into(),
+        }])));
+        generate.mock_single_click(PointerEventButton::Left);
+        assert_eq!(submitted.borrow().len(), 1);
+        let prompt = submitted.borrow()[0].clone();
+        assert!(prompt.contains("恰好20个"));
+        assert!(prompt.contains("纯黑色（#000000）背景"));
+        assert!(prompt.contains("标准方形图标框"));
+        assert!(prompt.contains("三国SLG计谋技能，包含火攻、伏兵、鼓舞"));
+
+        state.set_references(ModelRc::new(VecModel::from(vec![
+            ReferenceItem { id: "style-1".into(), image: Image::default(), source_path: "one.png".into() },
+            ReferenceItem { id: "style-2".into(), image: Image::default(), source_path: "two.png".into() },
+        ])));
+        generate.mock_single_click(PointerEventButton::Left);
+        assert_eq!(submitted.borrow().len(), 2);
+        assert!(submitted.borrow()[1].contains("全部已上传的1至8张参考图"));
+        assert!(submitted.borrow()[1].contains("第一张参考图作为主要画风基准"));
     }
 
     #[test]
@@ -3120,6 +3414,16 @@ mod tests {
         state.on_compose_canvas_workflow_prompt(|template, prompt, count, english| {
             compose_canvas_workflow_prompt(template.as_str(), prompt.as_str(), count, english).into()
         });
+        state.on_compose_character_multi_direction_prompt(|prompt, direction_count, action, english| {
+            compose_character_multi_direction_prompt(
+                prompt.as_str(), direction_count, action.as_str(), english,
+            ).into()
+        });
+        state.on_compose_skill_icon_prompt(|prompt, count, background, shape, english| {
+            compose_skill_icon_prompt(
+                prompt.as_str(), count, background.as_str(), shape.as_str(), english,
+            ).into()
+        });
         state.on_create_canvas_generation_source(|_, _, _| "preset-source".into());
         let submitted = Rc::new(RefCell::new(Vec::<String>::new()));
         let observed = submitted.clone();
@@ -3135,6 +3439,8 @@ mod tests {
             ("角色年龄变化", "character-age", "婴儿到老年", "上传角色图，查看从婴儿到老年的连续年龄变化"),
             ("角色体型修改器", "character-body", "体型", "上传角色图，探索从纤细到魁梧的多种体型"),
             ("建筑衍生器", "building-derivation", "不同功能的新建筑", "上传建筑图，自动衍生同风格建筑；可指定用途，例如：铁匠铺、酒馆、仓库"),
+            ("角色多向图", "character-multi-direction", "严格使用3列3行九宫格", "上传角色参考图，选择三视图、四向图或八向图，以及站立、行走或奔跑动作"),
+            ("技能图标生成", "skill-icon-generator", "恰好12个", "上传1至8张风格参考图，描述想要生成的技能图标"),
         ] {
             submitted.borrow_mut().clear();
             state.set_page("free-canvas".into());
@@ -3163,7 +3469,8 @@ mod tests {
             state.set_canvas_workflow_prompt("水彩风格".into());
             generate.mock_single_click(PointerEventButton::Left);
             assert_eq!(submitted.borrow().len(), 2);
-            assert!(submitted.borrow()[1].contains("用户描述：水彩风格"));
+            assert!(submitted.borrow()[1].contains("用户描述：水彩风格")
+                || submitted.borrow()[1].contains("用户技能需求：水彩风格"));
         }
         // The infinite canvas still needs a prompt even when an image is attached.
         submitted.borrow_mut().clear();
@@ -3173,6 +3480,176 @@ mod tests {
         ElementHandle::find_by_element_id(&app, "InfiniteCanvasPage::workflow-generate-button")
             .next().unwrap().mock_single_click(PointerEventButton::Left);
         assert!(submitted.borrow().is_empty());
+    }
+
+    #[test]
+    fn character_multi_direction_workflow_exposes_layout_and_action_choices() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_contact_popup_open(false);
+        state.set_image_model("test-image-model".into());
+        state.on_compose_canvas_workflow_prompt(|template, prompt, count, english| {
+            compose_canvas_workflow_prompt(template.as_str(), prompt.as_str(), count, english).into()
+        });
+        state.on_compose_character_multi_direction_prompt(|prompt, direction_count, action, english| {
+            compose_character_multi_direction_prompt(
+                prompt.as_str(), direction_count, action.as_str(), english,
+            ).into()
+        });
+        state.on_create_canvas_generation_source(|_, _, _| "multi-direction-source".into());
+        let submitted = Rc::new(RefCell::new(Vec::<String>::new()));
+        let observed = submitted.clone();
+        state.on_generate_canvas_node(move |_, prompt| observed.borrow_mut().push(prompt.to_string()));
+        app.window().set_size(slint::LogicalSize::new(1440.0, 900.0));
+        state.set_page("free-canvas".into());
+        app.show().unwrap();
+
+        ElementHandle::find_by_accessible_label(&app, "角色多向图")
+            .next()
+            .expect("character multi-direction card")
+            .mock_single_click(PointerEventButton::Left);
+        assert_eq!(state.get_canvas_workflow_id(), "character-multi-direction");
+        assert_eq!(state.get_asset_type(), "character");
+        assert_eq!(state.get_ratio(), "4:3");
+        assert_eq!(state.get_canvas_workflow_direction_count(), 8);
+        assert_eq!(state.get_canvas_workflow_action(), "standing");
+
+        state.set_page("canvas".into());
+        let direction_control = ElementHandle::find_by_accessible_label(&app, "方向：八向图 · 2.5D")
+            .next()
+            .expect("direction control");
+        direction_control.invoke_accessible_default_action();
+        ElementHandle::find_by_accessible_label(&app, "四向图")
+            .next()
+            .expect("four-direction option")
+            .invoke_accessible_default_action();
+        assert_eq!(state.get_canvas_workflow_direction_count(), 4);
+
+        ElementHandle::find_by_accessible_label(&app, "方向：四向图")
+            .next()
+            .expect("direction control after selection")
+            .invoke_accessible_default_action();
+        ElementHandle::find_by_accessible_label(&app, "三视图")
+            .next()
+            .expect("three-view option")
+            .invoke_accessible_default_action();
+        assert_eq!(state.get_canvas_workflow_direction_count(), 3);
+
+        ElementHandle::find_by_accessible_label(&app, "动作：站立")
+            .next()
+            .expect("action control")
+            .invoke_accessible_default_action();
+        ElementHandle::find_by_accessible_label(&app, "奔跑")
+            .next()
+            .expect("running option")
+            .invoke_accessible_default_action();
+        assert_eq!(state.get_canvas_workflow_action(), "running");
+
+        state.set_references(ModelRc::new(VecModel::from(vec![ReferenceItem {
+            id: "character-reference".into(), image: Image::default(), source_path: "character.png".into(),
+        }])));
+        let generate = ElementHandle::find_by_element_id(&app, "InfiniteCanvasPage::workflow-generate-button")
+            .next()
+            .expect("character multi-direction generate button");
+        generate.mock_single_click(PointerEventButton::Left);
+        assert_eq!(submitted.borrow().len(), 1);
+        assert!(submitted.borrow()[0].contains("严格使用3列1行"));
+        assert!(submitted.borrow()[0].contains("只能出现且必须恰好出现3个完整角色"));
+        assert!(submitted.borrow()[0].contains("角色总数必须等于3，多一个也不允许"));
+        assert!(!submitted.borrow()[0].contains("四个斜向介于正面与侧面之间"));
+        assert!(submitted.borrow()[0].contains("奔跑动作"));
+        assert!(submitted.borrow()[0].contains("全部3个角色必须逐格处于明确的奔跑状态"));
+        assert!(submitted.borrow()[0].contains("角色自身的左腿始终是向前冲出的前导腿"));
+        assert!(submitted.borrow()[0].contains("3个角色必须全部以角色自身左脚向前的同一相位奔跑"));
+        assert!(submitted.borrow()[0].contains("完全透明背景"));
+        assert!(!submitted.borrow()[0].contains("{count}"));
+        assert!(!submitted.borrow()[0].contains("2.5D"));
+
+        ElementHandle::find_by_accessible_label(&app, "方向：三视图")
+            .next().unwrap().invoke_accessible_default_action();
+        ElementHandle::find_by_accessible_label(&app, "八向图 · 2.5D")
+            .next().unwrap().invoke_accessible_default_action();
+        assert_eq!(state.get_canvas_workflow_direction_count(), 8);
+        assert!(ElementHandle::find_by_accessible_label(&app, "方向：八向图 · 2.5D").next().is_some());
+        let eight_direction_prompt = state.invoke_compose_character_multi_direction_prompt(
+            state.get_canvas_workflow_prompt(),
+            state.get_canvas_workflow_direction_count(),
+            state.get_canvas_workflow_action(),
+            state.get_en(),
+        );
+        assert!(eight_direction_prompt.contains("固定相机规则"));
+        assert!(eight_direction_prompt.contains("2.5D俯斜视角"));
+        assert!(eight_direction_prompt.contains("严格使用3列3行九宫格"));
+        assert!(eight_direction_prompt.contains("中心格（第2行第2列）必须完全留空并保持透明"));
+        assert!(eight_direction_prompt.contains("奔跑动作"));
+        assert!(eight_direction_prompt.contains("全部8个角色必须逐格处于明确的奔跑状态"));
+        assert!(eight_direction_prompt.contains("角色自身的左腿始终是向前冲出的前导腿"));
+        assert!(eight_direction_prompt.contains("禁止任何格子改成角色自身右脚向前"));
+        assert!(eight_direction_prompt.contains("8个角色必须全部以角色自身左脚向前的同一相位奔跑"));
+        assert!(eight_direction_prompt.contains("完全透明背景"));
+
+        ElementHandle::find_by_accessible_label(&app, "动作：奔跑")
+            .next().unwrap().invoke_accessible_default_action();
+        ElementHandle::find_by_accessible_label(&app, "行走")
+            .next().unwrap().invoke_accessible_default_action();
+        assert_eq!(state.get_canvas_workflow_action(), "walking");
+        let walking_prompt = state.invoke_compose_character_multi_direction_prompt(
+            state.get_canvas_workflow_prompt(),
+            state.get_canvas_workflow_direction_count(),
+            state.get_canvas_workflow_action(),
+            state.get_en(),
+        );
+        assert!(walking_prompt.contains("全部8个角色必须逐格处于明确的行走状态"));
+        assert!(walking_prompt.contains("不得只有正面、顶部或部分格子在行走"));
+        assert!(walking_prompt.contains("角色自身的左腿始终是向前迈出的前导腿"));
+        assert!(walking_prompt.contains("禁止任何格子改成角色自身右脚向前"));
+        assert!(walking_prompt.contains("8个角色必须全部以角色自身左脚向前的同一相位行走"));
+
+        ElementHandle::find_by_accessible_label(&app, "动作：行走")
+            .next().unwrap().invoke_accessible_default_action();
+        ElementHandle::find_by_accessible_label(&app, "站立")
+            .next().unwrap().invoke_accessible_default_action();
+        assert_eq!(state.get_canvas_workflow_action(), "standing");
+        let standing_prompt = state.invoke_compose_character_multi_direction_prompt(
+            state.get_canvas_workflow_prompt(),
+            state.get_canvas_workflow_direction_count(),
+            state.get_canvas_workflow_action(),
+            state.get_en(),
+        );
+        assert!(standing_prompt.contains("全部8个角色必须逐格处于明确的站立状态"));
+        assert!(standing_prompt.contains("禁止在不同视角切换承重腿"));
+        assert!(standing_prompt.contains("8个角色必须全部保持同一个肢体相位站立"));
+    }
+
+    #[test]
+    fn character_multi_direction_workflow_keeps_the_full_aspect_ratio_grid() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let settings = page
+            .split("workflow-settings-popup := PopupWindow")
+            .nth(1)
+            .and_then(|value| value.split("workflow-direction-popup := PopupWindow").next())
+            .expect("workflow settings popup");
+
+        assert!(settings.contains(
+            "height: AppState.canvas-workflow-id == \"side-scroll-map\" ? 172px : 250px;"
+        ));
+        assert!(settings.contains(
+            "height: AppState.canvas-workflow-id == \"side-scroll-map\" ? 32px : 110px;"
+        ));
+        assert!(!settings.contains(
+            "AppState.canvas-workflow-id == \"character-multi-direction\": Row"
+        ));
+        assert!(!settings.contains(
+            "AppState.canvas-workflow-id != \"character-multi-direction\""
+        ));
+        for ratio in ["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", "21:9", "9:21"] {
+            assert!(settings.contains(&format!("text: \"{ratio}\"")), "missing aspect ratio {ratio}");
+        }
     }
 
     #[test]
@@ -3290,6 +3767,11 @@ mod tests {
             "canvas-workflow-prompt",
             "canvas-workflow-template",
             "canvas-workflow-hint",
+            "canvas-workflow-direction-count",
+            "canvas-workflow-action",
+            "canvas-workflow-skill-icon-count",
+            "canvas-workflow-skill-icon-background",
+            "canvas-workflow-skill-icon-shape",
             "canvas-workflow-artwork",
             "canvas-workspace-switch-request",
         ] {
@@ -3327,6 +3809,9 @@ mod tests {
             "上传角色图，查看从婴儿到老年的连续年龄变化",
             "上传角色图，探索从纤细到魁梧的多种体型",
             "上传风格参考图，生成前中后景分层、首尾无缝衔接的横版地图",
+            "上传角色参考图，选择三视图、四向图或八向图，以及站立、行走或奔跑动作",
+            "上传2至8张参考图，融合为画风、透视和光影统一的完整场景",
+            "上传1至8张风格参考图，描述想要生成的技能图标",
         ] {
             assert!(launcher.contains(hint) || canvas.contains(hint), "missing AI creation hint: {hint}");
         }
@@ -3338,6 +3823,10 @@ mod tests {
         assert!(canvas.contains("workflow-model-control := Rectangle"));
         assert!(canvas.contains("workflow-model-popup := PopupWindow"));
         assert!(canvas.contains("workflow-settings-popup := PopupWindow"));
+        assert!(canvas.contains("workflow-direction-popup := PopupWindow"));
+        assert!(canvas.contains("workflow-action-popup := PopupWindow"));
+        assert!(canvas.contains("skill-icon-background-popup := PopupWindow"));
+        assert!(canvas.contains("skill-icon-shape-popup := PopupWindow"));
         assert!(canvas.contains("AppState.select-image-model(model.code)"));
         assert!(canvas.contains("workflow-model-popup.show()"));
         assert!(canvas.contains("workflow-settings-popup.show()"));
@@ -3352,7 +3841,11 @@ mod tests {
         assert!(canvas.contains("AppState.clear-references()"));
         assert!(canvas.contains("AppState.create-canvas-generation-source"));
         assert!(canvas.contains("AppState.compose-canvas-workflow-prompt("));
+        assert!(canvas.contains("AppState.compose-character-multi-direction-prompt("));
+        assert!(canvas.contains("AppState.compose-skill-icon-prompt("));
         assert!(canvas.contains("AppState.canvas-workflow-step-count"));
+        assert!(canvas.contains("AppState.canvas-workflow-direction-count"));
+        assert!(canvas.contains("AppState.canvas-workflow-action"));
         assert!(canvas.contains(
             "AppState.generate-canvas-node(AppState.canvas-generation-loading-node-id, submitted-prompt)"
         ));
@@ -3363,8 +3856,16 @@ mod tests {
         assert!(state.contains(
             "callback compose-canvas-workflow-prompt(string, string, int, bool) -> string"
         ));
+        assert!(state.contains(
+            "callback compose-character-multi-direction-prompt(string, int, string, bool) -> string"
+        ));
+        assert!(state.contains(
+            "callback compose-skill-icon-prompt(string, int, string, string, bool) -> string"
+        ));
         assert!(callbacks.contains("state.on_create_canvas_generation_source"));
         assert!(callbacks.contains("state.on_compose_canvas_workflow_prompt"));
+        assert!(callbacks.contains("state.on_compose_character_multi_direction_prompt"));
+        assert!(callbacks.contains("state.on_compose_skill_icon_prompt"));
         assert!(callbacks.contains("state.on_open_canvas_workspace"));
         assert!(callbacks.contains("switch_canvas_workspace"));
         assert!(state.contains("callback clear-references()"));
@@ -4427,16 +4928,74 @@ mod tests {
         let composer = include_str!("../../ui/components/prompt-composer.slint");
 
         assert!(composer.contains("component PromptOptimizationAction"));
-        assert_eq!(composer.matches("PromptOptimizationAction {").count(), 5);
+        assert_eq!(composer.matches("PromptOptimizationAction {").count(), 6);
         assert!(composer.contains("background: transparent;"));
         assert!(composer.contains("border-width: 1px;"));
         assert!(composer.contains("border-radius: 12px;"));
-        assert!(composer.contains("? AppTheme.accent : AppTheme.muted;"));
+        assert!(composer.contains("root.danger"));
+        assert!(composer.contains("text: AppState.en ? \"Stop\" : \"停止\";"));
+        assert!(composer.contains("AppState.cancel-current-prompt();"));
         assert!(composer.contains("font-size: 12px;"));
         assert!(composer.contains("font-weight: 400;"));
         assert!(
             !composer.contains("primary: true;\n            disabled: AppState.reasoning-model")
         );
+    }
+
+    #[test]
+    fn prompt_stop_button_click_cancels_only_active_optimization_and_preserves_input() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+        i_slint_backend_testing::init_no_event_loop();
+        for width in [1000.0,1351.0,1800.0] {
+            let app=AppWindow::new().unwrap();
+            let context=AppContext::default();
+            wire_generation_callbacks(&app,context.clone());
+            let state=app.global::<AppState>();
+            state.set_logged_in(true);state.set_page("generation".into());
+            state.set_prompt("保留原始提示词".into());
+            app.window().set_size(slint::LogicalSize::new(width,1000.0));
+            app.show().unwrap();
+            assert!(ElementHandle::find_by_accessible_label(&app,"停止").next().is_none());
+            state.set_optimizing_prompt(true);state.set_optimizing_prompt_request_id("active-request".into());
+            state.set_translating_prompt(true);state.set_translating_prompt_request_id("translation-request".into());
+            let stop=ElementHandle::find_by_accessible_label(&app,"停止").next().expect("optimization stop button");
+            let clear=ElementHandle::find_by_accessible_label(&app,"清空").next().unwrap();
+            let stop_position=stop.absolute_position();
+            let clear_position=clear.absolute_position();
+            assert!(stop_position.x+52.0<=clear_position.x || stop_position.y>=clear_position.y+24.0);
+            stop.mock_single_click(PointerEventButton::Left);
+            assert!(!state.get_optimizing_prompt(),"width={width}");
+            assert!(state.get_translating_prompt());
+            assert_eq!(state.get_translating_prompt_request_id(),"translation-request");
+            assert_eq!(state.get_prompt(),"保留原始提示词");
+            assert!(context.cancelled_prompt_task_requests.lock().unwrap().contains("active-request"));
+            assert!(ElementHandle::find_by_accessible_label(&app,"停止").next().is_none());
+        }
+    }
+
+    #[test]
+    fn prompt_inputs_are_read_only_and_muted_during_optimization_then_focus_the_result_end() {
+        let state = include_str!("../../ui/app-state.slint");
+        let composer = include_str!("../../ui/components/prompt-composer.slint");
+        let expanded = include_str!("../../ui/components/prompt-expanded-editor.slint");
+        let prompt_tasks = include_str!("callbacks/prompt_tasks.rs");
+
+        assert!(state.contains("in-out property <int> prompt-optimization-result-revision: 0;"));
+        for editor in [composer, expanded] {
+            assert!(editor.contains("color: AppState.optimizing-prompt ? AppTheme.muted : AppTheme.text;"));
+            assert!(editor.contains("read-only: AppState.optimizing-prompt;"));
+            assert!(editor.contains("observed-prompt-optimization-result-revision"));
+            assert!(editor.contains("set-selection-offsets(2147483647, 2147483647);"));
+        }
+        assert!(composer.contains(
+            "disabled: AppState.optimizing-prompt || (AppState.prompt == \"\" && AppState.selected-custom-prompt-items.length == 0);"
+        ));
+        assert!(composer.contains("changed observed-prompt-optimization-result-revision =>"));
+        assert!(composer.contains("muted: AppState.optimizing-prompt;"));
+        assert!(expanded.contains("muted: AppState.optimizing-prompt;"));
+        assert!(prompt_tasks.contains("state.set_prompt_optimization_result_revision("));
+        assert!(prompt_tasks.contains("if target.activity_kind==\"optimize\""));
     }
 
     #[test]
@@ -5191,7 +5750,7 @@ mod tests {
     }
 
     #[test]
-    fn infinite_canvas_only_offers_text_and_image_media_nodes_for_new_work() {
+    fn infinite_canvas_connection_picker_offers_image_text_and_video_nodes() {
         let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
         let callbacks = include_str!("callbacks/infinite_canvas.rs");
         let toolbar = page
@@ -5209,8 +5768,51 @@ mod tests {
         assert!(!toolbar.contains("root.add-node(\"audio\")"));
         assert!(toolbar.contains("root.add-node(\"text\")"));
         assert!(toolbar.contains("root.add-node(\"image\")"));
-        assert!(!search.contains("(\"video\","));
+        assert!(search.contains("(\"image\","));
+        assert!(search.contains("(\"text\","));
+        assert!(search.contains("(\"video\","));
         assert!(!search.contains("(\"audio\","));
+        assert!(page.contains("root.node-type-label(kind)"));
+        assert!(page.contains("root.create-searched-node(kind)"));
+    }
+
+    #[test]
+    fn infinite_canvas_video_duration_uses_a_slider_and_manual_numeric_input() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .and_then(|value| value.split("export component InfiniteCanvasPage").next())
+            .expect("canvas node component");
+
+        assert!(node.contains("in-out property <string> video-duration-input: \"4\""));
+        assert!(node.contains("function video-duration-seconds() -> int"));
+        assert!(node.contains("max(4, min(20"));
+        assert!(node.contains("video-duration-slider-touch := TouchArea"));
+        assert!(node.contains("text <=> root.video-duration-input"));
+        assert!(node.contains("input-type: number"));
+        assert!(node.contains("accepted => { root.normalize-video-duration(); }"));
+        for fixed_option in ["text: \"6s\"; selected:", "text: \"10s\"; selected:", "text: \"20s\"; selected:"] {
+            assert!(!node.contains(fixed_option));
+        }
+    }
+
+    #[test]
+    fn infinite_canvas_video_nodes_use_the_shared_server_model_catalog() {
+        let page = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        let node = page
+            .split("component CanvasNodeCard")
+            .nth(1)
+            .and_then(|value| value.split("export component InfiniteCanvasPage").next())
+            .expect("canvas node component");
+
+        assert!(node.contains("AppState.video-model-name == \"\""));
+        assert!(node.contains("for model in AppState.video-model-options"));
+        assert!(node.contains("AppState.video-model == model.code"));
+        assert!(node.contains("AppState.select-video-model(model.code)"));
+        assert!(node.contains("model.capabilities"));
+        assert!(!node.contains("Video model not configured"));
+        assert!(!node.contains("未配置视频模型"));
     }
 
     #[test]
@@ -5356,6 +5958,8 @@ mod tests {
             let references = drain_activation_preview_workers_for_lease_for_test(lease);
             let previews = drain_canvas_preview_workers_for_lease_for_test(lease);
             let canvas = drain_canvas_workers_for_lease_for_test(lease);
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(50));
+            slint::platform::update_timers_and_animations();
             let retired = self.scoped.context.user_activity.begin_quiesce(lease).map(|guard| guard.retire());
             if !std::thread::panicking() {
                 delivery.unwrap(); references.unwrap(); previews.unwrap(); canvas.unwrap(); retired.unwrap();
@@ -5482,7 +6086,9 @@ mod tests {
         assert!(page.contains("AppState.add-canvas-uploaded-image"));
         assert!(page.contains("root.add-node(\"image\")"));
         assert!(page.contains("function is-board-image() -> bool"));
-        assert!(page.contains("!root.is-board-image() && root.zoom-percent >= 30"));
+        assert!(page.contains("function can-connect() -> bool"));
+        assert!(page.contains("visible: root.can-connect() && root.zoom-percent >= 30"));
+        assert!(!page.contains("root.note.kind != \"group\" && !root.is-board-image()"));
         assert!(callbacks.contains("state.on_add_canvas_uploaded_image"));
         assert!(callbacks.contains("kind: \"board-image\".into()"));
         let upload = core_canvas_contract_block(callbacks, "state.on_add_canvas_uploaded_image(",
@@ -5816,6 +6422,28 @@ mod tests {
             6
         );
         assert!(other_actions.contains("AppState.save-canvas-image(root.note.id)"));
+        assert!(other_actions.contains(
+            "if root.note.kind == \"audio\": CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url(\"../../assets/icons/info.svg\")"
+        ));
+        assert!(other_actions.contains(
+            "if root.note.kind == \"audio\": CanvasMediaAction { horizontal-stretch: 1; scale-factor: root.node-scale(); icon: @image-url(\"../../assets/icons/upload.svg\")"
+        ));
+        assert!(!other_actions.contains("Upload image"));
+        assert!(!other_actions.contains("上传图片"));
+        let download = other_actions.find("AppState.save-canvas-image(root.note.id)").unwrap();
+        let extract = other_actions
+            .find("AppState.extract-canvas-ui-elements(root.note.id)")
+            .unwrap();
+        let split = other_actions
+            .find("AppState.split-canvas-image")
+            .unwrap_or_else(|| other_actions.find("root.split-mode = true").unwrap());
+        let delete = other_actions
+            .find("AppState.pending-delete-kind = \"canvas-note\"")
+            .unwrap();
+        assert!(download < extract && extract < split && split < delete);
+        assert!(media_bar.contains(
+            "root.note.image-path != \"\" ? 408px : 104px"
+        ));
         assert!(!text_bar.contains("CanvasMediaAction { scale-factor: root.node-scale(); width:"));
         assert!(!media_bar.contains("CanvasMediaAction { scale-factor: root.node-scale(); width:"));
     }
@@ -6040,6 +6668,8 @@ mod tests {
             "root.connection-started(root.note.id, root.x + root.width, root.y + root.height / 2)"
         ));
         assert!(output_connector.contains("root.connection-finished"));
+        assert!(node.contains("if root.can-connect() && root.zoom-percent >= 30: Rectangle"));
+        assert!(node.contains("width: max(12px, 14px * root.node-scale())"));
     }
 
     #[test]
@@ -6517,23 +7147,63 @@ mod tests {
     }
 
     #[test]
-    fn thumbnail_hover_delete_reuses_confirmation_with_explicit_source() {
+    fn thumbnail_hover_actions_offer_direct_reference_and_confirmed_delete() {
         let card = include_str!("../../ui/components/thumbnail-card.slint");
         let state = include_str!("../../ui/app-state.slint");
         let viewer = include_str!("../../ui/dialogs/viewer-overlay.slint");
+        let reference_callbacks = include_str!("callbacks/reference.rs");
         let callbacks = include_str!("callbacks/viewer.rs");
 
-        assert!(card.contains("@image-url(\"../../assets/icons/trash.svg\")"));
+        assert!(card.contains("AppState.thumbnail-action-menu-id = root.item.id"));
+        assert!(card.contains("AppState.thumbnail-action-menu-source = root.source"));
+        assert!(card.contains("thumbnail-action-popup := PopupWindow"));
+        assert!(card.contains("x: root.card-width + 8px;"));
+        assert!(card.contains("width: 152px;"));
+        assert!(card.contains("height: 100px;"));
+        assert!(card.contains("y: 50px;"));
+        assert!(card.contains("close-policy: close-on-click-outside;"));
+        assert!(card.contains("drop-shadow-blur: 18px;"));
+        assert!(!card.contains("if root.action-menu-open(): Rectangle"));
+        assert_eq!(card.matches("width: 4px; height: 4px; border-radius: 2px; background: #ffffff;").count(), 3);
+        assert!(card.contains("AppState.en ? \"Use as reference\" : \"用作参考\""));
+        assert!(card.contains("AppState.en ? \"Delete\" : \"删除\""));
+        assert!(card.contains("root.source == \"generation\""));
+        assert!(card.contains("root.source == \"asset\""));
         assert!(card.contains("visible: hover.has-hover && root.can-delete()"));
-        assert!(card.contains("root.delete-hit()"));
-        assert!(card.contains("root.source == \"asset\" || root.source == \"generation\""));
         assert!(!card.contains("root.source == \"inspiration\""));
+        assert!(card.contains("AppState.use-thumbnail-as-reference(root.item.id, root.source)"));
         assert!(card.contains("AppState.request-delete-thumbnail(root.item.id, root.source)"));
+        assert!(state.contains("thumbnail-action-menu-id: \"\""));
+        assert!(state.contains("thumbnail-action-menu-source: \"\""));
+        assert!(state.contains("callback use-thumbnail-as-reference(string, string) -> bool;"));
+        assert!(reference_callbacks.contains("state.on_use_thumbnail_as_reference"));
         assert!(state.contains("callback request-delete-thumbnail(string, string);"));
         assert!(callbacks.contains("state.on_request_delete_thumbnail"));
 
         assert!(state.contains("callback request-delete-asset(string);"));
         assert!(viewer.contains("AppState.request-delete-asset(AppState.viewer-id)"));
+    }
+
+    #[test]
+    fn generation_results_offer_batch_selection_and_failed_cleanup() {
+        let panel = include_str!("../../ui/components/generation-result-panel.slint");
+        let menu = include_str!("../../ui/components/generation-batch-menu.slint");
+        let card = include_str!("../../ui/components/thumbnail-card.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        let callbacks = include_str!("callbacks/viewer.rs");
+
+        assert!(panel.contains("GenerationBatchMenu"));
+        assert!(panel.contains("x: parent.width - 256px;"));
+        assert!(menu.contains("AppState.en ? \"Batch\" : \"批量操作\""));
+        assert!(menu.contains("AppState.en ? \"Select all\" : \"全选\""));
+        assert!(menu.contains("AppState.en ? \"Delete all failed\" : \"删除全部失败\""));
+        assert!(menu.contains("AppState.delete-all-failed-generations();"));
+        assert!(card.contains("AppState.toggle-generation-selection(root.item.id);"));
+        assert!(card.contains("root.item.selected"));
+        assert!(state.contains("callback select-all-generations();"));
+        assert!(state.contains("callback delete-all-failed-generations();"));
+        assert!(callbacks.contains("state.on_delete_all_failed_generations"));
+        assert!(callbacks.contains("item.category == category && item.source_path == \"failed\""));
     }
 
     #[test]
@@ -6966,7 +7636,7 @@ mod tests {
             .next()
             .expect("context menu import action")
             .mock_single_click(PointerEventButton::Left);
-        assert_eq!(ElementHandle::find_by_element_type_name(&app, "FreeCanvasCard").count(), 8);
+        assert_eq!(ElementHandle::find_by_element_type_name(&app, "FreeCanvasCard").count(), 11);
     }
 
     #[test]
@@ -7149,7 +7819,8 @@ mod tests {
         state.set_logged_in(true);
         let source_path = fixture.source_path.clone();
         for id in ["character-outfit", "character-age", "character-body", "plant-growth",
-            "monster-generator", "upgrade-evolution", "building-derivation"] {
+            "monster-generator", "upgrade-evolution", "building-derivation",
+            "character-multi-direction", "scene-composition", "skill-icon-generator"] {
             state.set_viewer_id("integration-original".into());
             state.set_viewer_source("asset".into());
             state.set_page("assets".into());
@@ -7171,7 +7842,12 @@ mod tests {
         state.invoke_viewer_open_creation_workflow("unknown".into(), "".into(), "".into(), "".into());
         assert_eq!(state.get_page(), "assets");
         assert!(state.get_viewer_open());
-        assert_eq!(context.store.borrow().active_canvas_workspace_id, "building-derivation");
+        assert_eq!(context.store.borrow().active_canvas_workspace_id, "skill-icon-generator");
+
+        drop(state);
+        drop(context);
+        drop(app);
+        drop(fixture);
 
     }
 
@@ -8116,6 +8792,10 @@ mod tests {
         assert!(!submission.contains("push_references(app"));
         assert!(!submission.contains("canvas_references.clear()"));
         assert!(submission.contains("side_scroll_map_canvas"));
+        assert!(submission.contains("scene_composition_canvas"));
+        assert!(submission.contains("|| scene_composition_canvas"));
+        assert!(submission.contains("skill_icon_canvas"));
+        assert!(submission.contains("|| skill_icon_canvas"));
         assert!(submission.contains("build_side_scroll_map_generation_prompt"));
         assert!(submission.contains("destination == GenerationDestination::Gallery"));
         // No actual thumbnail submission fixture is implied by these source checks.

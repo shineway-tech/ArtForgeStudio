@@ -12,21 +12,29 @@ component PromptOptimizationAction {
     in property <string> text;
     in property <bool> active: false;
     in property <bool> disabled: false;
+    in property <bool> danger: false;
     callback clicked();
     height: 28px;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { if !root.disabled { root.clicked(); } }
 
     Rectangle {
         opacity: root.disabled ? 0.38 : 1;
         background: transparent;
         border-width: 1px;
-        border-color: root.active || (action-touch.has-hover && !root.disabled) ? AppTheme.accent : AppTheme.border;
+        border-color: root.danger
+            ? AppTheme.danger
+            : (root.active || (action-touch.has-hover && !root.disabled) ? AppTheme.accent : AppTheme.border);
         border-radius: 12px;
 
         Text {
             width: parent.width;
             height: parent.height;
             text: root.text;
-            color: root.active || (action-touch.has-hover && !root.disabled) ? AppTheme.accent : AppTheme.muted;
+            color: root.danger
+                ? AppTheme.danger
+                : (root.active || (action-touch.has-hover && !root.disabled) ? AppTheme.accent : AppTheme.muted);
             font-size: 12px;
             font-weight: 400;
             horizontal-alignment: center;
@@ -65,6 +73,8 @@ export component PromptComposer {
     property <int> custom-prompt-insert-offset: 0;
     property <bool> custom-prompt-selection-pending: false;
     property <string> observed-prompt: AppState.prompt;
+    property <bool> observed-optimizing-prompt: AppState.optimizing-prompt;
+    property <int> observed-prompt-optimization-result-revision: AppState.prompt-optimization-result-revision;
     property <string> prompt-editor-text: AppState.prompt;
     property <bool> prompt-editor-focus-pending: false;
     property <length> prompt-editor-font-size: AppState.settings-font-size * 1px + 2px;
@@ -89,6 +99,22 @@ export component PromptComposer {
     changed geometry-sidebar-collapsed => { root.sync-reference-drop-bounds(); }
     changed geometry-logged-in => { root.sync-reference-drop-bounds(); }
     changed observed-prompt => { root.sync-prompt-editor-text(); }
+    changed observed-optimizing-prompt => {
+        if root.observed-optimizing-prompt {
+            root.custom-prompt-selection-pending = false;
+            root.pending-custom-prompt-content = "";
+            AppState.prompt-history-open = false;
+            AppState.custom-prompt-open = false;
+            root.close-history-preview();
+            history-popup.close();
+            custom-prompt-popup.close();
+        }
+    }
+    changed observed-prompt-optimization-result-revision => {
+        if !AppState.prompt-expanded-open {
+            root.prompt-editor-focus-pending = true;
+        }
+    }
 
     function sync-prompt-editor-text() {
         let expected = AppState.prompt;
@@ -98,11 +124,17 @@ export component PromptComposer {
     }
 
     function queue-custom-prompt-selection(value: string) {
+        if AppState.optimizing-prompt {
+            return;
+        }
         root.pending-custom-prompt-content = value;
         root.custom-prompt-selection-pending = true;
     }
 
     function apply-selected-prompt(value: string) {
+        if AppState.optimizing-prompt {
+            return;
+        }
         AppState.prompt-history-open = false;
         AppState.custom-prompt-open = false;
         root.close-history-preview();
@@ -118,6 +150,9 @@ export component PromptComposer {
     }
 
     function clear-current-prompt() {
+        if AppState.optimizing-prompt {
+            return;
+        }
         AppState.prompt-history-open = false;
         AppState.custom-prompt-open = false;
         root.close-history-preview();
@@ -274,13 +309,23 @@ export component PromptComposer {
             disabled: AppState.optimizing-prompt || AppState.translating-prompt;
             clicked => { AppState.open-deep-optimization(); }
         }
+        if AppState.optimizing-prompt: PromptOptimizationAction {
+            x: root.action-status-wraps() ? min(220px, parent.width - 76px) : parent.width - 136px;
+            y: root.action-status-wraps() ? 46px : 14px;
+            width: 52px;
+            height: 24px;
+            text: AppState.en ? "Stop" : "停止";
+            active: true;
+            danger: true;
+            clicked => { AppState.cancel-current-prompt(); }
+        }
         PromptOptimizationAction {
             x: parent.width - 76px;
             y: 14px;
             width: 52px;
             height: 24px;
             text: AppState.en ? "Clear" : "清空";
-            disabled: AppState.prompt == "" && AppState.selected-custom-prompt-items.length == 0;
+            disabled: AppState.optimizing-prompt || (AppState.prompt == "" && AppState.selected-custom-prompt-items.length == 0);
             clicked => { root.clear-current-prompt(); }
         }
         if AppState.optimizing-prompt: LoadingDots {
@@ -293,7 +338,9 @@ export component PromptComposer {
             visible: AppState.optimizing-prompt || AppState.translating-prompt;
             x: root.action-status-wraps() ? 24px : (AppState.deep-optimization-active ? 358px : 326px);
             y: root.action-status-wraps() ? 48px : 20px;
-            width: root.action-status-wraps() ? parent.width - 48px : parent.width - self.x - 88px;
+            width: root.action-status-wraps()
+                ? (AppState.optimizing-prompt ? min(184px, parent.width - 112px) : parent.width - 48px)
+                : parent.width - self.x - (AppState.optimizing-prompt ? 148px : 88px);
             height: 18px;
             text: AppState.optimizing-prompt ? (AppState.en ? "Optimizing prompt..." : "正在优化提示词...")
                 : (AppState.en ? "Translating prompt..." : "正在翻译提示词...");
@@ -313,7 +360,7 @@ export component PromptComposer {
                 y: 0px;
                 width: parent.width;
                 height: root.prompt-input-height();
-                mouse-cursor: text;
+                mouse-cursor: AppState.optimizing-prompt ? default : text;
                 prompt-scroll := ScrollView {
                     y: 0px;
                     width: parent.width;
@@ -323,7 +370,8 @@ export component PromptComposer {
                     prompt-input := TextInput {
                     text <=> root.prompt-editor-text;
                     single-line: false;
-                    color: AppTheme.text;
+                    color: AppState.optimizing-prompt ? AppTheme.muted : AppTheme.text;
+                    read-only: AppState.optimizing-prompt;
                     font-family: "Nirmala Text";
                     font-size: root.prompt-editor-font-size;
                     font-weight: 400;
@@ -479,6 +527,7 @@ export component PromptComposer {
                 viewport-y: prompt-scroll.viewport-y;
                 editor-font-size: root.prompt-editor-font-size;
                 editor-background: AppTheme.panel-soft;
+                muted: AppState.optimizing-prompt;
                 color-index: index;
             }
 
@@ -941,7 +990,7 @@ export component PromptComposer {
 
     function action-status-wraps() -> bool {
         return (AppState.optimizing-prompt || AppState.translating-prompt)
-            && (root.width < 680px || AppState.settings-font-size > 16);
+            && (root.width < (AppState.optimizing-prompt ? 760px : 680px) || AppState.settings-font-size > 16);
     }
 
     function prompt-input-height() -> length {

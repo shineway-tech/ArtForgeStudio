@@ -593,7 +593,7 @@ fn clear_retired_private_state(app: &AppWindow, context: &AppContext) {
     clear_retired_private_projection(&app.global::<AppState>());
     let state = app.global::<AppState>(); state.set_logged_in(false); state.set_session_state("signed_out".into());
     state.set_material_dir("".into()); state.set_input_dir("".into()); state.set_output_dir("".into()); state.set_prompt_dir("".into());
-    state.set_nickname("".into()); state.set_email_mask("".into()); state.set_prompt("".into()); state.set_negative_prompt("".into()); state.set_canvas_workflow_prompt("".into());
+    state.set_nickname("".into()); state.set_email_mask("".into()); state.set_prompt("".into()); state.set_negative_prompt("".into()); state.set_canvas_workflow_prompt("".into()); state.set_canvas_workflow_direction_count(8); state.set_canvas_workflow_action("standing".into());
 }
 /// Captured at model preparation, never reconstructed from mutable UI identity.
 #[derive(Clone)]

@@ -729,6 +729,17 @@ fn start_reference_native_drag(app:&AppWindow,context:AppContext,data:String,pre
     if !started{ticket.cancel.store(true,Ordering::Release);}
     started
 }
+fn start_reference_from_library_item(app:&AppWindow,context:&AppContext,id:&str,source:&str)->bool{
+    let Some(capture)=ReferenceCapture::new(app,context)else{return false;};
+    if reference_retry_before_action(app,context,&capture){return true;}
+    let path=capture.apply(app,context,||{
+        let store=context.store.borrow();
+        let rows=match source{"asset"=>&store.assets,"generation"=>&store.generations,_=>return None};
+        rows.iter().find(|asset|asset.id==id).map(|asset|PathBuf::from(&asset.source_path))
+    }).flatten();
+    let Some(path)=path else{return false;};
+    start_reference_import(app,context.clone(),capture,ReferenceSource::Paths(vec![path]));true
+}
 pub(super) fn wire_reference_callbacks(app:&AppWindow,context:AppContext){
     let state=app.global::<AppState>();
     {
@@ -751,14 +762,14 @@ pub(super) fn wire_reference_callbacks(app:&AppWindow,context:AppContext){
         let weak = app.as_weak(); let context = context.clone();
         state.on_add_reference_from_asset(move |id| {
             let Some(app) = weak.upgrade() else { return false; };
-            let Some(capture) = ReferenceCapture::new(&app, &context) else { return false; };
-            if reference_retry_before_action(&app, &context, &capture) { return true; }
-            let path = capture.apply(&app, &context, || context.store.borrow().assets.iter()
-                .find(|asset| asset.id == id.as_str())
-                .map(|asset| PathBuf::from(&asset.source_path))).flatten();
-            let Some(path) = path else { return false; };
-            start_reference_import(&app, context.clone(), capture, ReferenceSource::Paths(vec![path]));
-            true
+            start_reference_from_library_item(&app,&context,id.as_str(),"asset")
+        });
+    }
+    {
+        let weak=app.as_weak();let context=context.clone();
+        state.on_use_thumbnail_as_reference(move|id,source|{
+            let Some(app)=weak.upgrade()else{return false;};
+            start_reference_from_library_item(&app,&context,id.as_str(),source.as_str())
         });
     }
     {
@@ -1163,6 +1174,27 @@ mod core_reference_tests{
         assert_eq!(f.context.store.borrow().references.character, references);
     }
     #[test]
+    fn core_generation_thumbnail_can_be_used_directly_as_a_reference() {
+        let (f, app) = fixture(); let item = owned(&f);
+        f.context.store.borrow_mut().generations.push(AssetData { id: "generation-reference".into(),
+            source_path: item.source_path.clone(), conversation_id: String::new(), title: "Generation".into(),
+            category: "character".into(), kind: "game".into(), time: String::new(), prompt: String::new(),
+            ratio: "1:1".into(), quality: String::new(), model: String::new(), origin: String::new(),
+            width: 2, height: 2, reference_paths: vec![], cutout_done: false, remove_black_done: false,
+            upscale_done: false, is_new: false, delivery_recoverable: false, delivery_downloading: false });
+
+        let state = app.global::<AppState>();
+        assert!(state.invoke_use_thumbnail_as_reference("generation-reference".into(), "generation".into()));
+        pump_until(|| !f.context.store.borrow().references.character.is_empty());
+        drain_reference_test_workers(); pump_for(Duration::from_millis(80));
+
+        let references = saved(&f).references.character;
+        assert_eq!(references.len(), 1);
+        assert!(f.persistence.owns_path(Path::new(&references[0].source_path)));
+        assert!(!state.invoke_use_thumbnail_as_reference("generation-reference".into(), "unknown".into()));
+        assert_eq!(f.context.store.borrow().references.character, references);
+    }
+    #[test]
     fn side_scroll_map_reference_import_appends_like_other_creation_workflows(){
         let(f,app)=fixture();let original=owned(&f);
         app.global::<AppState>().set_page("canvas".into());
@@ -1356,6 +1388,20 @@ mod core_reference_tests{
         let imported=PathBuf::from(&f.context.store.borrow().references.character[0].source_path);
         assert!(f.persistence.owns_path(&imported));assert_eq!(std::fs::read(imported).unwrap(),png());
         assert_eq!(std::fs::read(source).unwrap(),png());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn core_reference_imports_configured_removable_source_without_mutating_it(){
+        let Some(source)=std::env::var_os("ELUNVI_TEST_REMOVABLE_REFERENCE").map(PathBuf::from)else{return;};
+        let original=std::fs::read(&source).unwrap();let(f,app)=fixture();
+        assert!(start_reference_paths_for_context(&app,f.context.clone(),vec![source.clone()]));
+        pump_until(||app.global::<AppState>().get_generation_status().as_str()=="已添加参考图");
+        drain_reference_test_workers();pump_for(Duration::from_millis(80));
+
+        let imported=PathBuf::from(&f.context.store.borrow().references.character[0].source_path);
+        assert!(f.persistence.owns_path(&imported));
+        assert!(decode_owned_reference_source(&f.persistence.storage_authority().unwrap(),&imported).is_ok());
+        assert_eq!(std::fs::read(source).unwrap(),original);
     }
     #[test]
     fn legacy_visible_asset_drag_migrates_to_current_account_before_os_drag(){

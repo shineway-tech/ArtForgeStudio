@@ -86,6 +86,45 @@ pub(super) fn wire_model_catalog_callbacks(app: &AppWindow, store: Rc<RefCell<St
     {
         let app_weak = app.as_weak();
         let store = store.clone();
+        state.on_select_all_generations(move || {
+            let Some(app) = app_weak.upgrade() else { return; };
+            let state = app.global::<AppState>();
+            let category = resolve_category(&state.get_asset_type().to_string(), "");
+            let selected = store
+                .borrow()
+                .generations
+                .iter()
+                .filter(|item| item.category == category)
+                .map(|item| item.id.clone())
+                .collect::<BTreeSet<_>>();
+            publish_generation_selection(&state, selected);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_toggle_generation_selection(move |id| {
+            let Some(app) = app_weak.upgrade() else { return; };
+            let state = app.global::<AppState>();
+            let mut selected = generation_selection_ids(&state);
+            if !selected.remove(id.as_str()) {
+                selected.insert(id.to_string());
+            }
+            publish_generation_selection(&state, selected);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        state.on_clear_generation_selection(move || {
+            let Some(app) = app_weak.upgrade() else { return; };
+            publish_generation_selection(&app.global::<AppState>(), BTreeSet::new());
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let store = store.clone();
         state.on_update_gallery_viewport(
             move |source,
                   top,
@@ -206,6 +245,25 @@ pub(super) fn wire_model_catalog_callbacks(app: &AppWindow, store: Rc<RefCell<St
     }
 }
 
+fn publish_generation_selection(state: &AppState, selected: BTreeSet<String>) {
+    let generations = state.get_generations();
+    for row in 0..generations.row_count() {
+        let Some(mut item) = generations.row_data(row) else { continue; };
+        item.selected = selected.contains(item.id.as_str());
+        generations.set_row_data(row, item);
+    }
+    let selected_count = selected.len().min(i32::MAX as usize) as i32;
+    state.set_generation_selected_ids(ModelRc::new(VecModel::from(
+        selected.into_iter().map(SharedString::from).collect::<Vec<_>>(),
+    )));
+    state.set_generation_selected_count(selected_count);
+    state.set_generation_selection_mode(selected_count > 0);
+    if selected_count == 0 {
+        state.set_thumbnail_action_menu_id("".into());
+        state.set_thumbnail_action_menu_source("".into());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,5 +324,69 @@ mod tests {
         assert!(selection.model_code.is_empty());
         assert!(selection.display_name.is_empty());
         assert!(selection.credit_cost.is_empty());
+    }
+
+    fn generation(id: &str, category: &str) -> AssetData {
+        AssetData {
+            id: id.into(),
+            conversation_id: String::new(),
+            title: id.into(),
+            category: category.into(),
+            kind: "generate".into(),
+            time: "2026-09-24 00:00".into(),
+            prompt: String::new(),
+            ratio: "1:1".into(),
+            quality: "1K".into(),
+            model: "model".into(),
+            origin: "backend".into(),
+            width: 0,
+            height: 0,
+            source_path: "failed".into(),
+            reference_paths: Vec::new(),
+            cutout_done: false,
+            remove_black_done: false,
+            upscale_done: false,
+            is_new: false,
+            delivery_recoverable: false,
+            delivery_downloading: false,
+        }
+    }
+
+    #[test]
+    fn generation_batch_selection_selects_current_category_and_can_be_cleared() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().expect("create app window");
+        let store = Rc::new(RefCell::new(Store::default()));
+        store.borrow_mut().generations = vec![
+            generation("scene-a", "scene"),
+            generation("scene-b", "scene"),
+            generation("character-a", "character"),
+        ];
+        let state = app.global::<AppState>();
+        state.set_asset_type("scene".into());
+        state.set_generations(ModelRc::new(VecModel::from(vec![
+            to_asset_view_metadata(&store.borrow().generations[0]),
+            to_asset_view_metadata(&store.borrow().generations[1]),
+        ])));
+        wire_model_catalog_callbacks(&app, store);
+
+        state.invoke_select_all_generations();
+        assert!(state.get_generation_selection_mode());
+        assert_eq!(state.get_generation_selected_count(), 2);
+        assert!(state.get_generations().iter().all(|item| item.selected));
+        assert_eq!(
+            generation_selection_ids(&state),
+            BTreeSet::from(["scene-a".to_string(), "scene-b".to_string()])
+        );
+
+        state.invoke_toggle_generation_selection("scene-a".into());
+        assert_eq!(state.get_generation_selected_count(), 1);
+        assert!(!state.get_generations().row_data(0).unwrap().selected);
+        assert!(state.get_generations().row_data(1).unwrap().selected);
+
+        state.invoke_clear_generation_selection();
+        assert!(!state.get_generation_selection_mode());
+        assert_eq!(state.get_generation_selected_count(), 0);
+        assert!(state.get_generations().iter().all(|item| !item.selected));
     }
 }

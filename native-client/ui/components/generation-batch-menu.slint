@@ -1,0 +1,154 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component GenerationBatchMenu {
+    property <bool> open: false;
+    width: 112px;
+    height: 34px;
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: touch.has-hover || root.open ? AppTheme.panel-soft : AppTheme.panel;
+        border-radius: 17px;
+        border-width: 1px;
+        border-color: touch.has-hover || root.open ? AppTheme.accent : AppTheme.border;
+        Image {
+            x: 13px;
+            y: 9px;
+            width: 16px;
+            height: 16px;
+            source: @image-url("../../assets/icons/select.svg");
+            colorize: touch.has-hover || root.open ? AppTheme.accent : AppTheme.muted;
+            image-fit: contain;
+        }
+        Text {
+            x: 36px;
+            width: parent.width - 46px;
+            height: parent.height;
+            text: AppState.en ? "Batch" : "批量操作";
+            color: touch.has-hover || root.open ? AppTheme.accent : AppTheme.text;
+            font-size: 12px;
+            font-weight: 400;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            accessible-role: button;
+            accessible-label: AppState.en ? "Batch actions" : "批量操作";
+            clicked => {
+                root.open = true;
+                popup.show();
+            }
+        }
+    }
+
+    popup := PopupWindow {
+        x: root.width - self.width;
+        y: root.height + 8px;
+        width: 156px;
+        height: 76px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            background: AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            Rectangle {
+                x: 5px;
+                y: 5px;
+                width: parent.width - 10px;
+                height: 31px;
+                background: select-touch.has-hover ? AppTheme.panel-soft : transparent;
+                border-radius: 6px;
+                Image {
+                    x: 9px;
+                    y: 8px;
+                    width: 15px;
+                    height: 15px;
+                    source: @image-url("../../assets/icons/check.svg");
+                    colorize: AppTheme.text;
+                    image-fit: contain;
+                }
+                Text {
+                    x: 33px;
+                    width: parent.width - 42px;
+                    height: parent.height;
+                    text: AppState.generation-result-count > 0
+                            && AppState.generation-selected-count == AppState.generation-result-count
+                        ? (AppState.en ? "Clear selection" : "取消全选")
+                        : (AppState.en ? "Select all" : "全选");
+                    color: AppTheme.text;
+                    font-size: 12px;
+                    font-weight: 400;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                select-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    enabled: AppState.generation-result-count > 0;
+                    mouse-cursor: self.enabled ? pointer : default;
+                    accessible-role: button;
+                    accessible-label: AppState.en ? "Select all generated results" : "全选生成结果";
+                    clicked => {
+                        if AppState.generation-selected-count == AppState.generation-result-count {
+                            AppState.clear-generation-selection();
+                        } else {
+                            AppState.select-all-generations();
+                        }
+                        root.open = false;
+                        popup.close();
+                    }
+                }
+            }
+            Rectangle {
+                x: 5px;
+                y: 40px;
+                width: parent.width - 10px;
+                height: 31px;
+                opacity: AppState.generation-failed-count > 0 ? 1 : 0.42;
+                background: failed-touch.has-hover && AppState.generation-failed-count > 0
+                    ? AppTheme.panel-soft
+                    : transparent;
+                border-radius: 6px;
+                Image {
+                    x: 9px;
+                    y: 8px;
+                    width: 15px;
+                    height: 15px;
+                    source: @image-url("../../assets/icons/trash.svg");
+                    colorize: AppTheme.danger;
+                    image-fit: contain;
+                }
+                Text {
+                    x: 33px;
+                    width: parent.width - 42px;
+                    height: parent.height;
+                    text: AppState.en ? "Delete all failed" : "删除全部失败";
+                    color: AppTheme.danger;
+                    font-size: 12px;
+                    font-weight: 400;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                failed-touch := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    enabled: AppState.generation-failed-count > 0;
+                    mouse-cursor: self.enabled ? pointer : default;
+                    accessible-role: button;
+                    accessible-label: AppState.en ? "Delete all failed generated results" : "删除全部失败";
+                    clicked => {
+                        AppState.delete-all-failed-generations();
+                        root.open = false;
+                        popup.close();
+                    }
+                }
+            }
+        }
+    }
+}

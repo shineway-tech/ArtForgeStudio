@@ -579,6 +579,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
             reset_generation_gallery_page(&app);
             push_generations(&app, &store.borrow());
             sync_generation_state_for_current_category(&context, &app);
+            sync_prompt_task_activity_for_current_workspace(&app);
         });
     }
 

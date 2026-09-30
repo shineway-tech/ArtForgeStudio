@@ -38,17 +38,17 @@ impl DataRootCapability {
         }).collect::<Result<Vec<_>>>()?;
         let (leaf, parents) = names.split_last().ok_or_else(|| anyhow!("image filename missing"))?;
         let mut anchor = PathBuf::from(prefix.as_os_str()); anchor.push("\\");
-        let root = open_absolute_anchor(&anchor, TRAVERSE_ACCESS, SHARE_LOCK)?;
+        let root = open_absolute_external_anchor(&anchor, TRAVERSE_ACCESS, SHARE_LOCK)?;
         prove_external_volume_root(&root)?;
         let mut chain = vec![root];
         for name in parents {
-            chain.push(nt_open(chain.last().unwrap(), name, TRAVERSE_ACCESS, SHARE_LOCK, NT_OPEN, true)?);
+            chain.push(nt_open_external(chain.last().unwrap(), name, TRAVERSE_ACCESS, SHARE_LOCK, NT_OPEN, true)?);
         }
         ensure!(identify(&self.handle, true)? == self.identity, "private root changed");
-        reject_private_chain(&chain, self.identity)?;
-        let handle = nt_open(chain.last().unwrap(), leaf,
+        reject_external_source_chain(&chain, self.identity)?;
+        let handle = nt_open_external(chain.last().unwrap(), leaf,
             FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE, FILE_SHARE_READ, NT_OPEN, false)?;
-        identify(&handle, false)?;
+        identify_external(&handle, false)?;
         ensure!(file_link_count(&handle)? == 1, "linked image source");
         // Read-only sharing pins this exact regular object against write/delete; all
         // ancestor handles deny deletion. No pathname is reopened for the bytes.
@@ -57,7 +57,7 @@ impl DataRootCapability {
         ensure!(before.len() <= limit, "image source too large");
         let mut bytes = Vec::new();
         (&mut file).take(limit + 1).read_to_end(&mut bytes)?;
-        reject_private_chain(&chain, self.identity)?;
+        reject_external_source_chain(&chain, self.identity)?;
         ensure!(bytes.len() as u64 == before.len() && bytes.len() as u64 <= limit, "image source size changed");
         Ok(bytes)
     }
@@ -133,6 +133,12 @@ extern "system" {
 struct Identity {
     volume: u64,
     file: [u8; 16],
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ExternalIdentity {
+    Extended(Identity),
+    Legacy { volume: u32, file: u64 },
 }
 
 pub(crate) struct DataRootCapability {
@@ -455,6 +461,37 @@ fn reject_private_chain(chain: &[OwnedHandle], private: Identity) -> Result<()> 
         );
     }
     Ok(())
+}
+
+fn reject_external_source_chain(chain: &[OwnedHandle], private: Identity) -> Result<()> {
+    let volume = identify_external(
+        chain
+            .first()
+            .ok_or_else(|| anyhow!("missing external anchor"))?,
+        true,
+    )?;
+    for handle in chain.iter().rev() {
+        let identity = identify_external(handle, true)?;
+        if let ExternalIdentity::Extended(identity) = identity {
+            reject_mapped_private_identity(StableFileIdentity::Windows {
+                volume: identity.volume,
+                file_id: identity.file,
+            })?;
+            ensure!(identity != private, "external source is inside private app storage");
+        }
+        ensure!(identity.same_volume(volume), "external source cannot cross a mount boundary");
+    }
+    Ok(())
+}
+
+impl ExternalIdentity {
+    fn same_volume(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::Extended(left), Self::Extended(right)) => left.volume == right.volume,
+            (Self::Legacy { volume: left, .. }, Self::Legacy { volume: right, .. }) => left == right,
+            _ => false,
+        }
+    }
 }
 
 impl NamespaceFs {
@@ -1481,6 +1518,20 @@ fn identify_with_links(
     directory: bool,
     require_one_link: bool,
 ) -> Result<Identity> {
+    validate_identity_handle(handle, directory, require_one_link)?;
+    query_extended_identity(handle)
+}
+
+fn validate_identity_handle(
+    handle: &OwnedHandle,
+    directory: bool,
+    require_one_link: bool,
+) -> Result<()> {
+    let tag = query_attribute_tag(handle)?;
+    validate_handle_attributes(handle, directory, require_one_link, tag.FileAttributes, tag.ReparseTag)
+}
+
+fn query_attribute_tag(handle: &OwnedHandle) -> Result<FILE_ATTRIBUTE_TAG_INFO> {
     let mut tag: FILE_ATTRIBUTE_TAG_INFO = unsafe { std::mem::zeroed() };
     check_bool(unsafe {
         GetFileInformationByHandleEx(
@@ -1490,12 +1541,22 @@ fn identify_with_links(
             size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
         )
     })?;
+    Ok(tag)
+}
+
+fn validate_handle_attributes(
+    handle: &OwnedHandle,
+    directory: bool,
+    require_one_link: bool,
+    attributes: u32,
+    reparse_tag: u32,
+) -> Result<()> {
     ensure!(
-        tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT == 0 && tag.ReparseTag == 0,
+        attributes & FILE_ATTRIBUTE_REPARSE_POINT == 0 && reparse_tag == 0,
         "reparse points are not namespace authority"
     );
     ensure!(
-        (tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0) == directory,
+        (attributes & FILE_ATTRIBUTE_DIRECTORY != 0) == directory,
         "wrong managed object type"
     );
     ensure!(
@@ -1510,6 +1571,10 @@ fn identify_with_links(
             "hardlinked or unlinked files are not managed regular files"
         );
     }
+    Ok(())
+}
+
+fn query_extended_identity(handle: &OwnedHandle) -> Result<Identity> {
     let mut id: FILE_ID_INFO = unsafe { std::mem::zeroed() };
     check_bool(unsafe {
         GetFileInformationByHandleEx(
@@ -1523,6 +1588,38 @@ fn identify_with_links(
         volume: id.VolumeSerialNumber,
         file: id.FileId.Identifier,
     })
+}
+
+fn identify_external(handle: &OwnedHandle, directory: bool) -> Result<ExternalIdentity> {
+    let mut legacy: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    check_bool(unsafe { GetFileInformationByHandle(handle.as_raw_handle(), &mut legacy) })?;
+    let (attributes, reparse_tag) = match query_attribute_tag(handle) {
+        Ok(tag) => (tag.FileAttributes, tag.ReparseTag),
+        Err(error) if external_capability_unavailable(&error) => (legacy.dwFileAttributes, 0),
+        Err(error) => return Err(error),
+    };
+    validate_handle_attributes(handle, directory, true, attributes, reparse_tag)?;
+    external_identity_with_fallback(query_extended_identity(handle), || {
+        Ok(ExternalIdentity::Legacy {
+            volume: legacy.dwVolumeSerialNumber,
+            file: (u64::from(legacy.nFileIndexHigh) << 32) | u64::from(legacy.nFileIndexLow),
+        })
+    })
+}
+
+fn external_capability_unavailable(error: &anyhow::Error) -> bool {
+    is_win_error(error, &[1, 50, 87])
+}
+
+fn external_identity_with_fallback(
+    extended: Result<Identity>,
+    legacy: impl FnOnce() -> Result<ExternalIdentity>,
+) -> Result<ExternalIdentity> {
+    match extended {
+        Ok(identity) => Ok(ExternalIdentity::Extended(identity)),
+        Err(error) if external_capability_unavailable(&error) => legacy(),
+        Err(error) => Err(error),
+    }
 }
 
 fn leaf_wide(name: &OsStr) -> Result<Vec<u16>> {
@@ -1547,6 +1644,29 @@ fn nt_open(
     share: u32,
     disposition: u32,
     directory: bool,
+) -> Result<OwnedHandle> {
+    nt_open_checked(parent, name, access, share, disposition, directory, false)
+}
+
+fn nt_open_external(
+    parent: &OwnedHandle,
+    name: &OsStr,
+    access: u32,
+    share: u32,
+    disposition: u32,
+    directory: bool,
+) -> Result<OwnedHandle> {
+    nt_open_checked(parent, name, access, share, disposition, directory, true)
+}
+
+fn nt_open_checked(
+    parent: &OwnedHandle,
+    name: &OsStr,
+    access: u32,
+    share: u32,
+    disposition: u32,
+    directory: bool,
+    external: bool,
 ) -> Result<OwnedHandle> {
     let mut wide = leaf_wide(name)?;
     let mut unicode = UnicodeString {
@@ -1603,7 +1723,11 @@ fn nt_open(
         "invalid native namespace handle"
     );
     let handle = unsafe { OwnedHandle::from_raw_handle(raw) };
-    identify(&handle, directory)?;
+    if external {
+        identify_external(&handle, directory)?;
+    } else {
+        identify(&handle, directory)?;
+    }
     Ok(handle)
 }
 
@@ -1760,6 +1884,19 @@ fn open_absolute_directory_chain(path: &Path) -> Result<Vec<OwnedHandle>> {
 }
 
 fn open_absolute_anchor(anchor: &Path, access: u32, share: u32) -> Result<OwnedHandle> {
+    open_absolute_anchor_checked(anchor, access, share, false)
+}
+
+fn open_absolute_external_anchor(anchor: &Path, access: u32, share: u32) -> Result<OwnedHandle> {
+    open_absolute_anchor_checked(anchor, access, share, true)
+}
+
+fn open_absolute_anchor_checked(
+    anchor: &Path,
+    access: u32,
+    share: u32,
+    external: bool,
+) -> Result<OwnedHandle> {
     let wide: Vec<u16> = anchor.as_os_str().encode_wide().chain(Some(0)).collect();
     ensure!(
         !wide[..wide.len() - 1].contains(&0),
@@ -1784,7 +1921,11 @@ fn open_absolute_anchor(anchor: &Path, access: u32, share: u32) -> Result<OwnedH
         std::io::Error::last_os_error()
     );
     let handle = unsafe { OwnedHandle::from_raw_handle(raw) };
-    identify(&handle, true)?;
+    if external {
+        identify_external(&handle, true)?;
+    } else {
+        identify(&handle, true)?;
+    }
     Ok(handle)
 }
 
@@ -1858,11 +1999,32 @@ fn rename_handle(
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use super::{identify, open_lock, relative_parent, MutationLock, LOCK_NAME};
+    use super::{external_identity_with_fallback, identify, open_lock, relative_parent, ExternalIdentity, Identity, MutationLock, LOCK_NAME};
     use std::fs;
     use std::os::windows::fs::{symlink_dir, symlink_file};
 
     const USER: &str = "11111111-1111-4111-8111-111111111111";
+
+    #[test]
+    fn external_identity_uses_legacy_ids_only_when_extended_ids_are_unsupported() {
+        let fallback = ExternalIdentity::Legacy { volume: 42, file: 91 };
+        let unavailable: Result<Identity> = Err(std::io::Error::from_raw_os_error(87).into());
+        assert!(external_identity_with_fallback(unavailable, || Ok(fallback)).unwrap() == fallback);
+
+        let denied: Result<Identity> = Err(std::io::Error::from_raw_os_error(5).into());
+        assert!(external_identity_with_fallback(denied, || panic!("access failures must not downgrade identity checks")).is_err());
+    }
+
+    #[test]
+    fn windows_external_source_reads_configured_removable_reference_without_mutating_it() {
+        let Some(source) = std::env::var_os("ELUNVI_TEST_REMOVABLE_REFERENCE").map(PathBuf::from) else { return; };
+        let expected = fs::read(&source).unwrap();
+        let private = tempfile::tempdir().unwrap();
+        let data_root = NamespaceFs::open_data_root(private.path()).unwrap();
+        let copied = data_root.read_external_source(&source, expected.len() as u64 + 1).unwrap();
+        assert_eq!(copied, expected);
+        assert_eq!(fs::read(source).unwrap(), expected);
+    }
 
     #[test]
     fn managed_metadata_preserves_platform_identity_and_rejects_hardlinks() {
