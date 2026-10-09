@@ -3941,8 +3941,14 @@ mod tests {
             name: "nano-banana".to_string(),
             ..model
         };
+        let v21 = ModelCatalogItem {
+            code: "nano_banana_2_1".to_string(),
+            name: "nano-banana-2.1".to_string(),
+            ..fast.clone()
+        };
         assert_eq!(model_display_name(&pro), "nano-banana-pro");
         assert_eq!(model_display_name(&fast), "nano-banana");
+        assert_eq!(model_display_name(&v21), "nano-banana-2.1");
     }
 
     #[test]
