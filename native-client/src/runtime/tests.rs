@@ -5133,10 +5133,10 @@ mod tests {
         let api = include_str!("api/notifications.rs");
         let callbacks = include_str!("callbacks/notification.rs");
 
-        assert!(page.contains("text: item.success"));
+        assert!(page.contains("text: item.announcement ? item.reason : (item.success"));
         assert!(page.contains("\"成功说明：\" + item.reason"));
         assert!(page.contains("\"失败原因：\" + item.reason"));
-        assert!(page.contains("color: item.success ? AppTheme.success : AppTheme.danger"));
+        assert!(page.contains("color: item.announcement ? AppTheme.muted : (item.success ? AppTheme.success : AppTheme.danger)"));
         assert!(page.contains("AppState.pending-delete-kind = \"notification\""));
         assert!(page.contains("AppState.pending-delete-kind = \"notifications-all\""));
         assert!(page.contains("一键删除"));
@@ -8718,6 +8718,7 @@ mod tests {
             reason: "initial delivery failure".to_string(),
             success: false,
             read: false,
+            announcement: false,
         });
 
         assert!(retain_failed_delivery_after_replacement_failure(

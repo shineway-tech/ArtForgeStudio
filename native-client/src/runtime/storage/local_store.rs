@@ -1175,6 +1175,7 @@ mod generated_asset_persistence_tests {
             reason: String::new(),
             success: true,
             read: false,
+            announcement: false,
         }
     }
 
@@ -1364,6 +1365,7 @@ mod failed_card_replacement_tests {
             reason: String::new(),
             success: true,
             read: false,
+            announcement: false,
         }
     }
 

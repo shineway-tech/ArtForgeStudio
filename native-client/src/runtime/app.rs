@@ -72,6 +72,7 @@ pub(super) fn run() -> Result<()> {
     let player_shutdown = drain_video_player_workers_for_shutdown();
     let toolbox_shutdown = drain_toolbox_workers_for_shutdown();
     let preview_shutdown = drain_activation_preview_workers_for_shutdown();
+    shutdown_announcement_polling(&context);
     let notification_shutdown = notification_callbacks::shutdown_notification_workers();
     let payment_shutdown = payment_callbacks::shutdown_payment_workers();
     let delivery_shutdown = drain_delivery_commit_workers_for_shutdown();
@@ -422,6 +423,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
                     && app.global::<AppState>().get_session_state().as_str() == "online"
                 {
                     refresh_server_notifications(&app, context.clone());
+                    request_announcement_check(&app, context.clone(), true);
                 }
                 if page.as_str() == "settings" {
                     refresh_storage_usage_async(&app);
@@ -636,7 +638,8 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
     wire_prompt_task_recovery_callbacks(app, context.clone());
     wire_viewer_callbacks(app, context.clone());
     wire_video_generation_callbacks(app, context.clone());
-    wire_notification_callbacks(app, context);
+    wire_notification_callbacks(app, context.clone());
+    wire_announcement_callbacks(app, context);
 }
 
 fn observe_required_upgrade(weak: Weak<AppWindow>, context: AppContext) {

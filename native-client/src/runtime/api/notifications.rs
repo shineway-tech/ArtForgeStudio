@@ -28,6 +28,12 @@ pub(crate) struct NotificationPage {
     pub(crate) next_cursor: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct AnnouncementClaim {
+    pub(crate) claimed: bool,
+    pub(crate) item: Option<ServerNotification>,
+}
+
 #[derive(Clone)]
 pub(crate) struct NotificationsApi {
     client: ApiClient,
@@ -36,6 +42,27 @@ pub(crate) struct NotificationsApi {
 impl NotificationsApi {
     pub(crate) fn new(client: ApiClient) -> Self {
         Self { client }
+    }
+
+    pub(crate) fn announcements_scoped(&self, scope: &SessionScope) -> Result<Vec<ServerNotification>, ApiError> {
+        self.client.authenticated_json_scoped::<NotificationList>(
+            Method::GET, "/v1/notifications/announcements", None, None, scope,
+        ).map(|response| response.data.items)
+    }
+
+    pub(crate) fn claim_announcement_scoped(&self, id: &str, scope: &SessionScope) -> Result<AnnouncementClaim, ApiError> {
+        let id = super::uuid_path_segment(id)?;
+        self.client.authenticated_json_scoped::<AnnouncementClaim>(
+            Method::POST, &format!("/v1/notifications/{id}/claim_popup"), None, None, scope,
+        ).map(|response| response.data)
+    }
+
+    pub(crate) fn announcement_shown_scoped(&self, id: &str, scope: &SessionScope) -> Result<(), ApiError> {
+        let id = super::uuid_path_segment(id)?;
+        self.client.authenticated_json_scoped::<Value>(
+            Method::POST, &format!("/v1/notifications/{id}/popup_shown"), None, None, scope,
+        )?;
+        Ok(())
     }
 
     pub(crate) fn list(&self) -> Result<Vec<ServerNotification>, ApiError> {

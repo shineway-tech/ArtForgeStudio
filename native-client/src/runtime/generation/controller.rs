@@ -620,7 +620,7 @@ fn stage_namespace_delivery(store:&mut Store, prepared:&PreparedNamespaceDeliver
     let notification=NotificationData {
         id:notification_id,title:if enhancement{format!("图片清晰增强完成：{title}")}else if cutout{format!("智能抠图完成：{title}")}else{format!("{}：{}",toolbox.map(|(_,name)|name).unwrap_or("Generation succeeded"),short_text(&record.raw_prompt,24))},
         model:toolbox.map(|(_,name)|name.to_owned()).unwrap_or_else(||record.model_code.clone()),
-        time:time.to_owned(),reason:String::new(),success:true,read:false,
+        time:time.to_owned(),reason:String::new(),success:true,read: false, announcement: false,
     };
     if confirmation.failed_asset_id.is_some() {
         let [failed]=generations.as_slice() else {anyhow::bail!("failed delivery card missing or ambiguous");};
@@ -1416,6 +1416,7 @@ pub(super) fn add_stream_success_item(
         reason: String::new(),
         success: true,
         read: false,
+        announcement: false,
     };
     let mut store_mut = store.borrow_mut();
     persist_generated_asset_checked(
@@ -1486,6 +1487,7 @@ pub(super) fn replace_failed_delivery_asset_checked(
         reason: String::new(),
         success: true,
         read: false,
+        announcement: false,
     };
     let persisted = {
         let mut store = store.borrow_mut();
@@ -1878,6 +1880,7 @@ pub(super) fn add_stream_failure_item(
             reason: reason.to_string(),
             success: false,
             read: false,
+            announcement: false,
         },
     );
     save_local_store(app, &store_mut);

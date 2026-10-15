@@ -572,6 +572,7 @@ export component ToolboxCompressionPage {
                     }
 
                     quality-touch := TouchArea {
+                        changed pressed => { AppState.announcement-pointer-interaction-active = self.pressed; }
                         y: -10px;
                         width: parent.width;
                         height: 24px;

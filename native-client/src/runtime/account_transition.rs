@@ -1432,7 +1432,7 @@ mod tests {
                 context.store.borrow_mut().notifications = vec![NotificationData {
                     id: "a-private-notification".into(), title: "A notification".into(),
                     model: "A model".into(), time: "2026-09-07 12:00".into(),
-                    reason: "A-only".into(), success: true, read: false,
+                    reason: "A-only".into(), success: true, read: false, announcement: false,
                 }];
                 context.billing_context.bind_authenticated_session(scope.clone()).unwrap();
                 let account: AccountSnapshot = serde_json::from_value(snapshot(USER_A, choice(GROUP_A, "Original team", "1"))).unwrap();

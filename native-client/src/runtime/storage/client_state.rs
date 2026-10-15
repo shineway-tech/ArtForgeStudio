@@ -6,7 +6,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::OnceLock;
 
 const CLIENT_STATE_FILE_NAME: &str = "client-state.sqlite3";
-const CLIENT_STATE_SCHEMA_VERSION: i32 = 2;
+const CLIENT_STATE_SCHEMA_VERSION: i32 = 3;
 pub(super) const KNOWN_DEVICE_SETTING_KEYS: [&str; 10] = [
     "export_directory",
     "theme_id",
@@ -1097,10 +1097,15 @@ fn migrate_schema_with_checkpoint(
             checkpoint(index)?;
         }
     }
-    tx.execute_batch(V2_SCHEMA)?;
+    if version < 2 {
+        tx.execute_batch(V2_SCHEMA)?;
+    }
     if version == 1 {
         extract_legacy_device_settings(&tx, data_root)?;
     }
+    tx.execute_batch(
+        "ALTER TABLE notifications ADD COLUMN announcement INTEGER NOT NULL DEFAULT 0;",
+    )?;
     tx.pragma_update(None, "user_version", CLIENT_STATE_SCHEMA_VERSION)?;
     tx.commit()?;
     Ok(())
@@ -1604,14 +1609,14 @@ fn write_notifications(
         notifications.iter().map(|item| item.id.as_str()),
     )?;
     let mut statement = transaction.prepare_cached(
-        "INSERT INTO notifications(user_public_id, id, position, title, model, time, reason, success, read)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        "INSERT INTO notifications(user_public_id, id, position, title, model, time, reason, success, read, announcement)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
          ON CONFLICT(user_public_id, id) DO UPDATE SET position=excluded.position, title=excluded.title,
             model=excluded.model, time=excluded.time, reason=excluded.reason,
-            success=excluded.success, read=excluded.read
+            success=excluded.success, read=excluded.read, announcement=excluded.announcement
          WHERE user_public_id = ?1 AND (position != excluded.position OR title != excluded.title OR model != excluded.model
             OR time != excluded.time OR reason != excluded.reason
-            OR success != excluded.success OR read != excluded.read)",
+            OR success != excluded.success OR read != excluded.read OR announcement != excluded.announcement)",
     )?;
     for (position, item) in notifications.iter().enumerate() {
         statement.execute(params![
@@ -1624,6 +1629,7 @@ fn write_notifications(
             item.reason,
             item.success,
             item.read,
+            item.announcement,
         ])?;
     }
     Ok(())
@@ -1923,7 +1929,7 @@ fn read_notifications(
     user_public_id: &str,
 ) -> Result<Vec<NotificationData>> {
     let mut statement = transaction.prepare(
-        "SELECT id, title, model, time, reason, success, read
+        "SELECT id, title, model, time, reason, success, read, announcement
          FROM notifications WHERE user_public_id = ?1 ORDER BY position, id",
     )?;
     let values = statement
@@ -1936,6 +1942,7 @@ fn read_notifications(
                 reason: row.get(4)?,
                 success: row.get(5)?,
                 read: row.get(6)?,
+                announcement: row.get(7)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -4610,8 +4617,47 @@ fn core_cutout_atomic_settle_rejects_extra_out_of_count_delivery_after_real_remo
             reason: String::new(),
             success: true,
             read: false,
+            announcement: false,
         }
     }
+    #[test]
+    fn legacy_notification_json_defaults_to_an_ordinary_notification() {
+        let old = serde_json::json!({
+            "id": "legacy", "title": "Complete", "model": "model", "time": "time",
+            "reason": "", "success": true, "read": false
+        });
+        let notification: NotificationData = serde_json::from_value(old).unwrap();
+        assert_eq!(serde_json::to_value(notification).unwrap()["announcement"], false);
+    }
+
+    #[test]
+    fn announcement_kind_round_trips_and_updates_only_the_leased_user() {
+        let repo = test_repository_v2();
+        let a = repo.lease(USER_A, 1, 1);
+        let b = repo.lease(USER_B, 2, 2);
+        repo.activate(b.clone()).unwrap();
+        repo.persist_client_state_checked_for_namespace(&b, store_with_asset("b"))
+            .unwrap();
+        let other_before = durable_json(&repo, &b);
+
+        let mut encoded = serde_json::to_value(store_with_asset("a")).unwrap();
+        encoded["notifications"][0]["announcement"] = serde_json::json!(true);
+        let announcement: LocalStoreData = serde_json::from_value(encoded).unwrap();
+        repo.activate(a.clone()).unwrap();
+        repo.persist_client_state_checked_for_namespace(&a, announcement).unwrap();
+        let saved = durable_json(&repo, &a).unwrap();
+        assert_eq!(saved["notifications"][0]["announcement"], true);
+        assert_eq!(other_before, durable_json(&repo, &b));
+
+        let mut updated = saved;
+        updated["notifications"][0]["announcement"] = serde_json::json!(false);
+        repo.persist_client_state_checked_for_namespace(
+            &a, serde_json::from_value(updated).unwrap(),
+        ).unwrap();
+        assert_eq!(durable_json(&repo, &a).unwrap()["notifications"][0]["announcement"], false);
+        assert_eq!(other_before, durable_json(&repo, &b));
+    }
+
     fn durable_json(repo: &Fixture, lease: &NamespaceLease) -> Option<serde_json::Value> {
         repo.load_client_state_for_namespace(lease)
             .unwrap()
@@ -4742,6 +4788,7 @@ fn core_cutout_atomic_settle_rejects_extra_out_of_count_delivery_after_real_remo
         reason: String,
         success: bool,
         read: bool,
+        announcement: bool,
     }
     impl From<&NotificationData> for NotificationMemorySnapshot {
         fn from(item: &NotificationData) -> Self {
@@ -4753,6 +4800,7 @@ fn core_cutout_atomic_settle_rejects_extra_out_of_count_delivery_after_real_remo
                 reason: item.reason.clone(),
                 success: item.success,
                 read: item.read,
+                announcement: item.announcement,
             }
         }
     }
@@ -5504,6 +5552,61 @@ fn core_cutout_atomic_settle_rejects_extra_out_of_count_delivery_after_real_remo
         c.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
             .unwrap()
     }
+    #[test]
+    fn v2_announcement_migration_preserves_all_rows_and_their_owners() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = NamespaceFs::open_data_root(&directory.path().canonicalize().unwrap()).unwrap();
+        let mut c = open_client_state_connection(&directory.path().join("v2.sqlite3")).unwrap();
+        c.execute_batch(V2_SCHEMA).unwrap();
+        c.pragma_update(None, "user_version", 2).unwrap();
+        for owner in [USER_A, USER_B] {
+            c.execute_batch(&format!(r#"
+                INSERT INTO user_meta VALUES ('{owner}', 'marker', 'private-{owner}');
+                INSERT INTO assets VALUES ('{owner}','asset','same',0,'conversation','private','scene','game','time','private prompt','1:1','2k','model','generation',1,1,'private.png',0,0,0);
+                INSERT INTO asset_references VALUES ('{owner}','asset','same',0,'private-ref.png');
+                INSERT INTO notifications VALUES ('{owner}','same',0,'private','model','time','private',1,0);
+                INSERT INTO canvas_nodes VALUES ('{owner}','same',0,'text','private',0,0,10,10,'',0,'',12);
+                INSERT INTO canvas_links VALUES ('{owner}','same',0,'same','other',0);
+                INSERT INTO custom_prompts VALUES ('{owner}','private',0,'time','{{}}');
+                INSERT INTO user_settings VALUES ('{owner}','user_profile','{{"nickname":"private-{owner}"}}');
+                INSERT INTO billing_context_preferences VALUES ('{owner}','device','{GROUP_A}',42);
+            "#)).unwrap();
+        }
+        c.execute("INSERT INTO device_settings VALUES ('theme_id','\"dark\"')", []).unwrap();
+        let projections = [
+            ("user_meta", "*"), ("assets", "*"), ("asset_references", "*"),
+            ("notifications", "user_public_id,id,position,title,model,time,reason,success,read"),
+            ("canvas_nodes", "*"), ("canvas_links", "*"), ("custom_prompts", "*"),
+            ("user_settings", "*"), ("billing_context_preferences", "*"), ("device_settings", "*"),
+        ];
+        let snapshot = |connection: &Connection| {
+            projections.iter().map(|(table, columns)| {
+                let mut statement = connection.prepare(&format!(
+                    "SELECT {columns} FROM {table} ORDER BY rowid"
+                )).unwrap();
+                let count = statement.column_count();
+                let rows = statement.query_map([], |row| {
+                    (0..count).map(|index| row.get::<_, rusqlite::types::Value>(index))
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+                (*table, rows)
+            }).collect::<BTreeMap<_, _>>()
+        };
+        let before = snapshot(&c);
+
+        migrate_client_state_schema(&mut c, &root).unwrap();
+        migrate_client_state_schema(&mut c, &root).unwrap();
+
+        assert_eq!(snapshot(&c), before);
+        assert_eq!(c.pragma_query_value::<i32, _>(None, "user_version", |r| r.get(0)).unwrap(), 3);
+        let transaction = c.transaction().unwrap();
+        for owner in [USER_A, USER_B] {
+            let notifications = read_notifications(&transaction, owner).unwrap();
+            assert_eq!(notifications.len(), 1);
+            assert_eq!(serde_json::to_value(&notifications[0]).unwrap()["announcement"], false);
+        }
+    }
+
     fn legacy_bytes(c: &Connection, key: &str) -> String {
         c.query_row(
             "SELECT value_json FROM legacy_unassigned_client_settings WHERE key=?1",
@@ -5538,7 +5641,7 @@ fn core_cutout_atomic_settle_rejects_extra_out_of_count_delivery_after_real_remo
         assert_eq!(
             c.pragma_query_value::<i32, _>(None, "user_version", |r| r.get(0))
                 .unwrap(),
-            2
+            3
         );
     }
     #[test]

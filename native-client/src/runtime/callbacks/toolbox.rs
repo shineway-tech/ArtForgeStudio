@@ -5113,6 +5113,7 @@ fn prepare_crop_asset(
             reason: String::new(),
             success: true,
             read: false,
+            announcement: false,
         };
     Ok((result_path, item, notification))
 }
@@ -8108,6 +8109,7 @@ mod local_image_tests {
             reason: String::new(),
             success: true,
             read: false,
+            announcement: false,
         });
         let (sender, receiver) = mpsc::channel::<std::result::Result<(), &'static str>>();
         sender.send(Err("controlled writer failure")).unwrap();

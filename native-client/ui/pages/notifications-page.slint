@@ -68,24 +68,36 @@ export component NotificationsPage {
                             border-radius: 12px;
                             border-width: 1px;
                             border-color: AppTheme.border;
-                            Rectangle { x: 14px; y: 22px; width: 9px; height: 9px; border-radius: 5px; background: item.read ? transparent : (item.success ? AppTheme.success : AppTheme.danger); }
-                            Text { x: 42px; y: 14px; width: parent.width - 258px; text: item.title; color: item.success ? AppTheme.text : AppTheme.danger; font-size: 14px; font-weight: 400; overflow: elide; }
+                            Rectangle { x: 14px; y: 22px; width: 9px; height: 9px; border-radius: 5px; background: item.read ? transparent : (item.announcement ? AppTheme.accent : (item.success ? AppTheme.success : AppTheme.danger)); }
+                            Text { x: 42px; y: 14px; width: parent.width - 258px; text: item.title; color: item.announcement || item.success ? AppTheme.text : AppTheme.danger; font-size: 14px; font-weight: 400; overflow: elide; }
                             Text { x: parent.width - 210px; y: 14px; width: 130px; text: item.time; color: AppTheme.muted; font-size: 12px; font-weight: 400; horizontal-alignment: right; overflow: elide; }
-                            Text { x: 42px; y: 38px; width: parent.width - 154px; text: AppState.en ? ("Model: " + item.model) : ("模型：" + item.model); color: AppTheme.muted; font-size: 12px; font-weight: 400; overflow: elide; }
+                            Text { x: 42px; y: 38px; width: parent.width - 154px; text: item.announcement ? (AppState.en ? "System announcement" : "系统公告") : (AppState.en ? ("Model: " + item.model) : ("模型：" + item.model)); color: AppTheme.muted; font-size: 12px; font-weight: 400; overflow: elide; }
                             if item.reason != "": Text {
                                 x: 42px;
                                 y: 64px;
                                 width: parent.width - 154px;
-                                text: item.success
+                                height: 18px;
+                                text: item.announcement ? item.reason : (item.success
                                     ? (AppState.en ? ("Details: " + item.reason) : ("成功说明：" + item.reason))
-                                    : (AppState.en ? ("Reason: " + item.reason) : ("失败原因：" + item.reason));
-                                color: item.success ? AppTheme.success : AppTheme.danger;
+                                    : (AppState.en ? ("Reason: " + item.reason) : ("失败原因：" + item.reason)));
+                                color: item.announcement ? AppTheme.muted : (item.success ? AppTheme.success : AppTheme.danger);
                                 font-size: 12px;
                                 font-weight: 400;
                                 overflow: elide;
                             }
-                            TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { AppState.mark-notification-read(item.id); } }
-                            PillButton {
+                            notification-touch := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    if item.announcement {
+                                        AppState.open-announcement(item.id);
+                                    } else {
+                                        AppState.mark-notification-read(item.id);
+                                    }
+                                }
+                            }
+                            delete-button := PillButton {
                                 x: parent.width - 84px;
                                 y: item.reason == "" ? 34px : 56px;
                                 width: 68px;

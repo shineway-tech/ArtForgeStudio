@@ -1,0 +1,180 @@
+import { ScrollView } from "std-widgets.slint";
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+import { DialogCloseButton } from "../components/dialog-close-button.slint";
+import { PillButton } from "../components/pill-button.slint";
+
+export component AnnouncementDialog inherits Rectangle {
+    background: #00000066;
+    property <bool> focus-pending: true;
+
+    Timer {
+        interval: 1ms;
+        running: root.focus-pending;
+        triggered => { dialog-focus.focus(); root.focus-pending = false; }
+    }
+
+    // Consume backdrop clicks without dismissing the announcement.
+    backdrop := TouchArea { width: parent.width; height: parent.height; }
+
+    dialog-focus := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        capture-key-pressed(event) => {
+            if event.text == Key.Escape {
+                AppState.close-announcement();
+                return accept;
+            }
+            return reject;
+        }
+        key-pressed(event) => {
+            if event.text == Key.Return {
+                AppState.close-announcement();
+            }
+            return accept;
+        }
+
+        card := Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: min(520px, parent.width - 48px);
+            height: min(parent.height - 48px, max(348px,
+                time-label.y + time-label.height + 22px + min(body-text.preferred-height, 300px)
+                + (AppState.announcement-pending-count > 0 ? 124px : 96px)));
+            background: AppTheme.panel;
+            border-radius: 18px;
+            border-width: 1px;
+            border-color: AppTheme.border;
+            drop-shadow-blur: 32px;
+            drop-shadow-color: #00000044;
+            drop-shadow-offset-y: 12px;
+
+            Rectangle {
+                x: 24px;
+                y: 22px;
+                width: level-label.preferred-width + 46px;
+                height: 28px;
+                background: AppTheme.accent.with-alpha(AppState.announcement-important ? 0.13 : 0.07);
+                border-radius: 14px;
+                Image {
+                    x: 10px;
+                    y: 6px;
+                    width: 16px;
+                    height: 16px;
+                    source: AppState.icon-notifications;
+                    colorize: AppTheme.text;
+                    image-fit: contain;
+                }
+                level-label := Text {
+                    x: 33px;
+                    width: self.preferred-width;
+                    height: parent.height;
+                    text: AppState.announcement-important
+                        ? (AppState.en ? "Important announcement" : "重要公告")
+                        : (AppState.en ? "System announcement" : "系统公告");
+                    color: AppTheme.text;
+                    font-size: 12px;
+                    font-weight: 500;
+                    vertical-alignment: center;
+                }
+            }
+
+            close-button := DialogCloseButton {
+                x: parent.width - self.width - 18px;
+                y: 18px;
+                accessible-role: button;
+                accessible-label: AppState.en ? "Close announcement" : "关闭公告";
+                accessible-action-default => { AppState.close-announcement(); }
+                clicked => { AppState.close-announcement(); }
+            }
+
+            title-label := Text {
+                x: 24px;
+                y: 66px;
+                width: parent.width - 48px;
+                height: max(28px, min(80px, self.preferred-height));
+                text: AppState.announcement-title;
+                color: AppTheme.text;
+                font-size: 21px;
+                font-weight: 600;
+                wrap: word-wrap;
+                overflow: elide;
+            }
+            time-label := Text {
+                x: 24px;
+                y: title-label.y + title-label.height + 8px;
+                width: parent.width - 48px;
+                height: 18px;
+                text: AppState.announcement-time;
+                color: AppTheme.muted;
+                font-size: 12px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            body-scroll := ScrollView {
+                x: 24px;
+                y: time-label.y + time-label.height + 22px;
+                width: parent.width - 48px;
+                height: max(0px, footer.y - self.y - (AppState.announcement-pending-count > 0 ? 48px : 24px));
+                viewport-width: self.visible-width;
+                viewport-height: max(self.visible-height, body-text.preferred-height);
+                vertical-scrollbar-policy: ScrollBarPolicy.as-needed;
+                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                mouse-drag-pan-enabled: true;
+                body-text := Text {
+                    width: body-scroll.visible-width - 8px;
+                    height: self.preferred-height;
+                    text: AppState.announcement-body;
+                    color: AppTheme.text;
+                    font-size: AppState.settings-font-size * 1px;
+                    wrap: word-wrap;
+                }
+            }
+
+            if AppState.announcement-pending-count > 0: pending-label := Text {
+                x: 24px;
+                y: footer.y - 30px;
+                width: parent.width - 48px;
+                height: 18px;
+                text: AppState.en
+                    ? AppState.announcement-pending-count + " more announcements in Notifications"
+                    : "另有 " + AppState.announcement-pending-count + " 条公告，可在通知中心查看";
+                color: AppTheme.muted;
+                font-size: 12px;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+
+            footer := HorizontalLayout {
+                x: 24px;
+                y: parent.height - 68px;
+                width: parent.width - 48px;
+                height: 40px;
+                spacing: 12px;
+                center-button := PillButton {
+                    width: AppState.en
+                        ? min(264px, max(168px, AppState.settings-font-size * 11px))
+                        : min(192px, max(144px, AppState.settings-font-size * 8px));
+                    height: 40px;
+                    text: AppState.en ? "View notifications" : "查看通知中心";
+                    accessible-role: button;
+                    accessible-label: self.text;
+                    accessible-action-default => { AppState.view-announcement-center(); }
+                    clicked => { AppState.view-announcement-center(); }
+                }
+                Rectangle { horizontal-stretch: 1; background: transparent; }
+                primary-button := PillButton {
+                    width: 108px;
+                    height: 40px;
+                    text: AppState.en ? "Got it" : "我知道了";
+                    primary: true;
+                    accessible-role: button;
+                    accessible-label: self.text;
+                    accessible-action-default => { AppState.close-announcement(); }
+                    clicked => { AppState.close-announcement(); }
+                }
+            }
+        }
+    }
+}

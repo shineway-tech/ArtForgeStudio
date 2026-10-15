@@ -98,6 +98,7 @@ component CropHandle {
     }
 
     resize-touch := TouchArea {
+        changed pressed => { AppState.announcement-pointer-interaction-active = self.pressed; }
         property <length> start-pointer-x: 0px;
         property <length> start-pointer-y: 0px;
         property <float> start-crop-x: 0;
@@ -351,6 +352,7 @@ export component ToolboxCropPage {
                     }
 
                     move-touch := TouchArea {
+                        changed pressed => { AppState.announcement-pointer-interaction-active = self.pressed; }
                         property <length> start-pointer-x: 0px;
                         property <length> start-pointer-y: 0px;
                         property <float> start-crop-x: 0;

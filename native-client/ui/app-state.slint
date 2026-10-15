@@ -495,6 +495,34 @@ export global AppState {
     in-out property <bool> notification-page-has-more: false;
     in-out property <string> notification-next-cursor: "";
     in-out property <string> notification-page-message: "";
+    in-out property <bool> announcement-open: false;
+    in-out property <string> announcement-title: "";
+    in-out property <string> announcement-body: "";
+    in-out property <string> announcement-time: "";
+    in-out property <bool> announcement-important: true;
+    in-out property <int> announcement-pending-count: 0;
+    in-out property <bool> announcement-pointer-interaction-active: false;
+    changed page => { AppState.announcement-pointer-interaction-active = false; }
+    // Automatic announcements wait until the current modal, editor or drag is finished.
+    // Persistent inline settings such as the ratio expander and minimap do not block.
+    out property <bool> announcement-interaction-blocked: auth-open || password-reset-open
+        || agreement-update-open || agreement-viewer-open || profile-open || team-registration-open
+        || team-form-action != "" || account-group-switching || membership-open
+        || payment-active || payment-dialog-open || credit-insufficient-open
+        || email-bind-open || password-manage-open || wechat-bind-open || wechat-unbind-confirm-open
+        || update-result-open || update-active || update-required
+        || viewer-open || video-player-open || cutout-open || upscale-open
+        || delete-confirm-open || model-required-open || canvas-group-name-dialog-open
+        || directory-migration-open || close-choice-open || recovered-prompt-result-open
+        || prompt-expanded-open || video-prompt-expanded-open || video-image-dialog != ""
+        || deep-optimization-open || prompt-history-open
+        || custom-prompt-open || custom-prompt-editor-open || toolbox-coming-soon-open
+        || theme-menu-open || thumbnail-action-menu-id != ""
+        || thumbnail-drag-preview-visible || canvas-drag-preview-id != "" || canvas-node-info-open
+        || announcement-pointer-interaction-active || TextInputInterface.text-input-focused
+        || image-editor-generating || compression-processing || compression-saving
+        || conversion-processing || conversion-saving || crop-processing
+        || enhance-processing || watermark-processing || colorize-processing;
     in-out property <bool> theme-menu-open: false;
     in-out property <image> showcase-character;
     in-out property <image> showcase-scene;
@@ -1063,6 +1091,9 @@ export global AppState {
     callback confirm-delete();
     callback confirm-delete-local-file();
     callback mark-notification-read(string);
+    callback close-announcement();
+    callback view-announcement-center();
+    callback open-announcement(string);
     callback mark-all-notifications-read();
     callback delete-notification(string);
     callback clear-all-notifications();

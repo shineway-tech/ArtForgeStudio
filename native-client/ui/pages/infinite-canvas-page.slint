@@ -1357,6 +1357,7 @@ component CanvasNodeCard {
         }
 
         node-drag-touch := TouchArea {
+            changed pressed => { AppState.announcement-pointer-interaction-active = self.pressed; }
             property <length> start-pointer-x: 0px;
             property <length> start-pointer-y: 0px;
             width: parent.width;
@@ -2104,6 +2105,7 @@ component CanvasNodeCard {
         }
 
         input-connector-touch := TouchArea {
+            changed pressed => { AppState.announcement-pointer-interaction-active = self.pressed; }
             visible: root.can-connect() && root.zoom-percent >= 30 && !root.image-processing();
             width: max(18px, 26px * root.node-scale());
             height: self.width;
@@ -2127,6 +2129,7 @@ component CanvasNodeCard {
         }
 
         output-connector-touch := TouchArea {
+            changed pressed => { AppState.announcement-pointer-interaction-active = self.pressed; }
             visible: root.can-connect() && root.zoom-percent >= 30 && !root.image-processing();
             width: max(18px, 26px * root.node-scale());
             height: self.width;
@@ -2151,6 +2154,7 @@ component CanvasNodeCard {
         }
 
         group-resize-touch := TouchArea {
+            changed pressed => { AppState.announcement-pointer-interaction-active = self.pressed; }
             in-out property <length> start-width: 0px;
             in-out property <length> start-height: 0px;
             in-out property <length> start-pointer-x: 0px;
@@ -2216,6 +2220,7 @@ component CanvasNodeCard {
             }
 
             image-resize-touch := TouchArea {
+                changed pressed => { AppState.announcement-pointer-interaction-active = self.pressed; }
                 in-out property <length> start-width: 0px;
                 in-out property <length> start-height: 0px;
                 in-out property <length> start-pointer-x: 0px;
@@ -2574,6 +2579,7 @@ component CanvasNodeCard {
                         vertical-alignment: center;
                     }
                     video-duration-slider-touch := TouchArea {
+                        changed pressed => { AppState.announcement-pointer-interaction-active = self.pressed; }
                         x: 36px;
                         width: 144px;
                         height: parent.height;
@@ -3275,6 +3281,7 @@ export component InfiniteCanvasPage {
             }
 
             canvas-touch := TouchArea {
+                changed pressed => { AppState.announcement-pointer-interaction-active = self.pressed; }
                 in-out property <length> start-pan-x: 0px;
                 in-out property <length> start-pan-y: 0px;
                 in-out property <length> start-pointer-x: 0px;
@@ -3481,6 +3488,7 @@ export component InfiniteCanvasPage {
             }
 
             if root.space-pan-active || root.workflow-hand-mode(): hand-pan-overlay := TouchArea {
+                changed pressed => { AppState.announcement-pointer-interaction-active = self.pressed; }
                 in-out property <length> start-pan-x: 0px;
                 in-out property <length> start-pan-y: 0px;
                 in-out property <length> start-pointer-x: 0px;
@@ -4196,6 +4204,7 @@ export component InfiniteCanvasPage {
                             vertical-alignment: center;
                         }
                         workflow-step-count-touch := TouchArea {
+                            changed pressed => { AppState.announcement-pointer-interaction-active = self.pressed; }
                             x: 62px;
                             width: 100px;
                             height: parent.height;
@@ -4267,6 +4276,7 @@ export component InfiniteCanvasPage {
                             vertical-alignment: center;
                         }
                         skill-icon-count-touch := TouchArea {
+                            changed pressed => { AppState.announcement-pointer-interaction-active = self.pressed; }
                             x: 52px;
                             width: 107px;
                             height: parent.height;
@@ -4576,6 +4586,7 @@ export component InfiniteCanvasPage {
                         border-color: #ffffff;
                     }
                     zoom-touch := TouchArea {
+                        changed pressed => { AppState.announcement-pointer-interaction-active = self.pressed; }
                         width: parent.width;
                         height: 24px;
                         y: -10px;

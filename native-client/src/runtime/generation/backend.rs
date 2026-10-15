@@ -509,7 +509,7 @@ fn stage_paid_viewer_failure(
         cutout_done:false,remove_black_done:false,upscale_done:false,is_new:false,delivery_recoverable:failed_id.is_some(),delivery_downloading:false,
     };
     let notification=NotificationData{id:Uuid::new_v4().to_string(),title:format!("Generation failed: {}",short_text(&record.raw_prompt,24)),
-        model:record.model_code.clone(),time,reason:reason.clone(),success:false,read:false};
+        model:record.model_code.clone(),time,reason:reason.clone(),success:false,read: false, announcement: false};
     let mut write=Some(write);
     let queued=context.apply_user_completion(persistence.lease(),||{
         if !paid_viewer_binding_matches(&context,&persistence) || !paid_viewer_task_matches(&context,&record){return None;}

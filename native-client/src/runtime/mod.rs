@@ -126,6 +126,10 @@ use prompt_optimization_callbacks::*;
 #[path = "callbacks/notification.rs"]
 mod notification_callbacks;
 use notification_callbacks::*;
+mod announcement_schedule;
+#[path = "callbacks/announcement.rs"]
+mod announcement_callbacks;
+use announcement_callbacks::*;
 #[path = "callbacks/model_catalog.rs"]
 mod model_catalog_callbacks;
 use model_catalog_callbacks::*;

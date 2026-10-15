@@ -154,6 +154,8 @@ struct NotificationData {
     reason: String,
     success: bool,
     read: bool,
+    #[serde(default)]
+    announcement: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -559,6 +561,7 @@ struct AppContext {
     current_user_id: Arc<Mutex<Option<String>>>,
     account_snapshot_scope: Arc<Mutex<Option<SessionScope>>>,
     prompt_optimization_polling: Rc<RefCell<Option<String>>>,
+    announcements: Rc<RefCell<AnnouncementRuntime>>,
     backend: Option<Arc<BackendRuntime>>,
 }
 

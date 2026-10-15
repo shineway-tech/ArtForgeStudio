@@ -103,6 +103,7 @@ export component ImageEditorPage inherits Rectangle {
                 }
 
                 draw-touch := TouchArea {
+                    changed pressed => { AppState.announcement-pointer-interaction-active = self.pressed; }
                     width: parent.width;
                     height: parent.height;
                     mouse-cursor: none;
@@ -273,6 +274,7 @@ export component ImageEditorPage inherits Rectangle {
                     width: parent.width;
                     height: parent.height;
                     mouse-cursor: pointer;
+                    changed pressed => { AppState.announcement-pointer-interaction-active = self.pressed; }
                     clicked => {
                         AppState.image-editor-brush-size = max(8, min(80, round(self.mouse-x / self.width * 72 + 8)));
                     }

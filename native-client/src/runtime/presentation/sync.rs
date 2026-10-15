@@ -438,6 +438,7 @@ pub(super) fn prepare_startup_projection(store:&Store,category:&str,initial_prom
                 reason: n.reason.clone().into(),
                 success: n.success,
                 read: n.read,
+                announcement: n.announcement,
             })
             .collect::<Vec<_>>(),
     )), |state, value| state.set_notifications(value));
@@ -3766,6 +3767,7 @@ pub(super) fn push_notifications(app: &AppWindow, store: &Store) {
                 reason: n.reason.clone().into(),
                 success: n.success,
                 read: n.read,
+                announcement: n.announcement,
             })
             .collect::<Vec<_>>(),
     )));

@@ -2,13 +2,13 @@ use super::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone)]
-struct NotificationCapture {
-    persistence: PrivatePersistence,
-    scope: SessionScope,
+pub(super) struct NotificationCapture {
+    pub(super) persistence: PrivatePersistence,
+    pub(super) scope: SessionScope,
     cancelled: Arc<AtomicBool>,
 }
 impl NotificationCapture {
-    fn new(context: &AppContext) -> Option<Self> {
+    pub(super) fn new(context: &AppContext) -> Option<Self> {
         let persistence = context.store.borrow().private_persistence.clone()?;
         let scope = context.backend.as_ref()?.api.session()
             .scope_for_user(persistence.lease().namespace.user_public_id())?;
@@ -30,7 +30,7 @@ impl NotificationCapture {
                 .is_some_and(|active| active.as_ref() == Some(self.persistence.lease()))
             && self.persistence.is_current()
     }
-    fn is_current(&self, context: &AppContext) -> bool {
+    pub(super) fn is_current(&self, context: &AppContext) -> bool {
         self.namespace_is_current(context)
             && context.backend.as_ref().is_some_and(|backend|
                 backend.api.session().is_scope_current(&self.scope))
@@ -49,7 +49,7 @@ thread_local! {
     static NOTIFICATION_SHUTDOWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static NOTIFICATION_JOIN_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
-fn reap_notification_workers() -> bool {
+pub(super) fn reap_notification_workers() -> bool {
     let ready = NOTIFICATION_THREADS.with(|threads| {
         let mut threads = threads.borrow_mut();
         let mut ready = Vec::new();
@@ -65,7 +65,7 @@ fn reap_notification_workers() -> bool {
     if !joined { NOTIFICATION_JOIN_FAILED.with(|failed| failed.set(true)); }
     !NOTIFICATION_JOIN_FAILED.with(|failed| failed.get())
 }
-fn notification_worker_pending(capture: &NotificationCapture) -> bool {
+pub(super) fn notification_worker_pending(capture: &NotificationCapture) -> bool {
     NOTIFICATION_THREADS.with(|threads| threads.borrow().iter()
         .any(|worker| Arc::ptr_eq(&worker.cancelled, &capture.cancelled)))
 }
@@ -93,7 +93,7 @@ pub(super) fn shutdown_notification_workers() -> std::result::Result<(), String>
     });
     join_notification_workers()
 }
-fn spawn_notification_thread<T: Send + 'static>(
+pub(super) fn spawn_notification_thread<T: Send + 'static>(
     context: &AppContext,
     capture: &NotificationCapture,
     work: impl FnOnce(NotificationsApi, &SessionScope) -> std::result::Result<T, ApiError> + Send + 'static,
@@ -126,7 +126,7 @@ fn spawn_notification_thread<T: Send + 'static>(
     Ok(receiver)
 }
 
-fn apply_notification_ui<R>(
+pub(super) fn apply_notification_ui<R>(
     context: &AppContext, capture: &NotificationCapture, apply: impl FnOnce() -> R,
 ) -> Option<R> {
     if !capture.is_current(context) { return None; }
@@ -137,7 +137,7 @@ fn apply_notification_ui<R>(
 
 /// Snapshot and enqueue are ordered on the UI thread. Guard-owning enqueue
 /// errors and unused prepared writes leave the completion intact before Drop.
-fn update_notification_store(
+pub(super) fn update_notification_store(
     app: &AppWindow, context: &AppContext, capture: &NotificationCapture,
     epoch: Option<u64>, update: impl FnOnce(&mut Store),
 ) -> bool {
@@ -292,6 +292,7 @@ pub(super) fn refresh_server_notifications(app: &AppWindow, context: AppContext)
 /// Control-plane cleanup called for the namespace currently being retired.
 /// It intentionally does not require an ordinary admission that is now closed.
 pub(super) fn clear_notification_account_state(app: &AppWindow, context: &AppContext) {
+    clear_announcement_account_state(app, context);
     if let Some(persistence) = context.store.borrow().private_persistence.as_ref() {
         cancel_notification_workers_for_retirement(persistence.lease());
     }
@@ -333,10 +334,10 @@ fn start_notification_page(app: &AppWindow, context: AppContext, cursor: Option<
     }
 }
 
-fn notification_session_ended(error: &ApiError) -> bool {
+pub(super) fn notification_session_ended(error: &ApiError) -> bool {
     matches!(error, ApiError::AuthenticationRequired) || error.is_terminal_session_error()
 }
-fn notification_error(
+pub(super) fn notification_error(
     app: &AppWindow, context: &AppContext, capture: &NotificationCapture,
     page_epoch: Option<u64>, operation: bool, error: ApiError,
 ) {
@@ -486,9 +487,10 @@ fn notification_display_model(item: &ServerNotification) -> String {
     }
 }
 
-fn notification_data(item: ServerNotification) -> NotificationData {
+pub(super) fn notification_data(item: ServerNotification) -> NotificationData {
     let model = notification_display_model(&item);
-    let success = notification_is_success(&item);
+    let announcement = item.notification_type == "system.announcement";
+    let success = announcement || notification_is_success(&item);
     NotificationData {
         id: item.id,
         title: item.title,
@@ -497,10 +499,11 @@ fn notification_data(item: ServerNotification) -> NotificationData {
         reason: item.body,
         success,
         read: item.read_at.is_some(),
+        announcement,
     }
 }
 
-fn format_notification_time(value: &str) -> String {
+pub(super) fn format_notification_time(value: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(value)
         .map(|time| {
             time.with_timezone(&Local)
@@ -513,6 +516,16 @@ fn format_notification_time(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_announcements_have_a_distinct_persisted_kind() {
+        let mut item = server_notification("", "");
+        item.notification_type = "system.announcement".into();
+        item.title = "生成失败问题修复通知".into();
+        let data = notification_data(item);
+        assert_eq!(serde_json::to_value(&data).unwrap()["announcement"], true);
+        assert!(data.success, "announcement titles must not inherit task failure styling");
+    }
 
     fn server_notification(task_type: &str, model_name: &str) -> ServerNotification {
         ServerNotification {
@@ -791,6 +804,122 @@ mod core_notification_tests {
     }
     fn ids(context: &AppContext) -> Vec<String> {
         context.store.borrow().notifications.iter().map(|item| item.id.clone()).collect()
+    }
+
+    const ANNOUNCEMENT_ID: &str = "33333333-3333-4333-8333-333333333333";
+    fn announcement_json() -> Value {
+        serde_json::json!({"id":ANNOUNCEMENT_ID,"type":"system.announcement","title":"服务维护公告",
+            "body":"第一段维护说明。\n第二段说明。", "created_at":"2026-10-15T00:00:00Z","read_at":null,
+            "metadata":{"importance":"important","expires_at":"2099-01-01T00:00:00Z","revoked_at":null}})
+    }
+    fn online_announcement_app(fixture: &Fixture) -> AppWindow {
+        let app = fixture.setup();
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_session_state("online".into());
+        state.set_auth_open(false);
+        state.set_page("settings".into());
+        app.show().unwrap();
+        slint::private_unstable_api::re_exports::WindowInner::from_pub(app.window()).set_active(true);
+        app
+    }
+
+    #[test]
+    fn announcement_global_poll_starts_once_and_does_not_overlap_across_navigation() {
+        i_slint_backend_testing::init_no_event_loop();
+        let mut transport = Transport::new(1);
+        let fixture = Fixture::new(&transport.url);
+        let app = online_announcement_app(&fixture);
+        wire_announcement_callbacks(&app, fixture.context.clone());
+        wire_announcement_callbacks(&app, fixture.context.clone());
+        transport.wait_request();
+        app.global::<AppState>().set_page("generation".into());
+        request_announcement_check(&app, fixture.context.clone(), true);
+        pump_for(Duration::from_millis(30));
+        transport.reply(0, response(200, serde_json::json!({"items":[]})));
+        join_notification_workers().unwrap(); pump_for(Duration::from_millis(30));
+        shutdown_announcement_polling(&fixture.context);
+        let paths = transport.finish();
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].starts_with("GET /v1/notifications/announcements "));
+    }
+
+    #[test]
+    fn announcement_waits_for_payment_then_claims_shows_closes_and_reopens_history() {
+        i_slint_backend_testing::init_no_event_loop();
+        let mut transport = Transport::new(4);
+        let fixture = Fixture::new(&transport.url);
+        let app = online_announcement_app(&fixture);
+        app.global::<AppState>().set_payment_dialog_open(true);
+        wire_announcement_callbacks(&app, fixture.context.clone());
+        transport.wait_request();
+        transport.reply(0, response(200, serde_json::json!({"items":[announcement_json()]})));
+        pump(|| fixture.context.store.borrow().notifications.iter().any(|item| item.id == ANNOUNCEMENT_ID));
+        assert!(!app.global::<AppState>().get_announcement_open());
+        app.global::<AppState>().set_payment_dialog_open(false);
+        pump_for(Duration::from_millis(100)); transport.wait_request();
+        transport.reply(1, response(200, serde_json::json!({"claimed":true,"item":announcement_json()})));
+        pump(|| app.global::<AppState>().get_announcement_open());
+        assert_eq!(app.global::<AppState>().get_announcement_title(), "服务维护公告");
+        transport.wait_request();
+        transport.reply(2, response(200, serde_json::json!({"recorded":true})));
+        app.global::<AppState>().invoke_close_announcement();
+        assert!(!app.global::<AppState>().get_announcement_open());
+        transport.wait_request();
+        transport.reply(3, response(200, announcement_json()));
+        join_notification_workers().unwrap(); pump_for(Duration::from_millis(50));
+        assert!(fixture.context.store.borrow().notifications.iter().any(|item|
+            item.id == ANNOUNCEMENT_ID && item.read && item.announcement));
+        app.global::<AppState>().invoke_open_announcement(ANNOUNCEMENT_ID.into());
+        assert!(app.global::<AppState>().get_announcement_open());
+        shutdown_announcement_polling(&fixture.context);
+        clear_announcement_account_state(&app, &fixture.context);
+        let paths = transport.finish();
+        assert_eq!(paths.len(), 4);
+        assert!(paths[1].contains("/claim_popup "));
+        assert!(paths[2].contains("/popup_shown "));
+        assert!(paths[3].contains("/read "));
+    }
+
+    #[test]
+    fn announcement_retired_account_response_cannot_fill_another_accounts_history() {
+        i_slint_backend_testing::init_no_event_loop();
+        let mut transport = Transport::new(1);
+        let fixture = Fixture::new(&transport.url);
+        let app = online_announcement_app(&fixture);
+        wire_announcement_callbacks(&app, fixture.context.clone());
+        transport.wait_request();
+        fixture.retire();
+        fixture.context.store.borrow_mut().private_persistence = None;
+        fixture.context.store.borrow_mut().notifications = vec![notification_data(item("account-b"))];
+        transport.reply(0, response(200, serde_json::json!({"items":[announcement_json()]})));
+        join_notification_workers().unwrap(); pump_for(Duration::from_millis(50));
+        assert_eq!(ids(&fixture.context), vec!["account-b"]);
+        assert!(!app.global::<AppState>().get_announcement_open());
+        shutdown_announcement_polling(&fixture.context);
+        assert_eq!(transport.finish().len(), 1);
+    }
+
+    #[test]
+    fn announcement_offline_reconnect_rejects_a_late_response_from_the_previous_poll() {
+        i_slint_backend_testing::init_no_event_loop();
+        let mut transport = Transport::new(2);
+        let fixture = Fixture::new(&transport.url);
+        let app = online_announcement_app(&fixture);
+        wire_announcement_callbacks(&app, fixture.context.clone());
+        transport.wait_request();
+        app.global::<AppState>().set_session_state("offline".into());
+        announcement_tick(&app, fixture.context.clone());
+        app.global::<AppState>().set_session_state("online".into());
+        announcement_tick(&app, fixture.context.clone());
+        transport.wait_request();
+        transport.reply(1, response(200, serde_json::json!({"items":[]})));
+        transport.reply(0, response(200, serde_json::json!({"items":[announcement_json()]})));
+        join_notification_workers().unwrap(); pump_for(Duration::from_millis(50));
+        assert_eq!(ids(&fixture.context), vec!["first"]);
+        assert!(!app.global::<AppState>().get_announcement_open());
+        shutdown_announcement_polling(&fixture.context);
+        assert_eq!(transport.finish().len(), 2);
     }
     fn invoke_mutations(app: &AppWindow) {
         let state = app.global::<AppState>();
