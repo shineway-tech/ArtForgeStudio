@@ -353,7 +353,7 @@ impl FileIndex {
             connection: Arc::new(Mutex::new(connection)),
         })
     }
-    pub(super) fn prepare_directory_rebind(&self, source: &NamespaceStorageAuthority, target: &NamespaceStorageAuthority, area: ManagedUserArea) -> anyhow::Result<Vec<super::MigratedIndexIdentity>> {
+    pub(super) fn prepare_directory_rebind(&self, source: &NamespaceStorageAuthority, target: &NamespaceStorageAuthority, area: ManagedUserArea, manifest: &[crate::directory_migration::MigrationManifestEntry]) -> anyhow::Result<Vec<super::MigratedIndexIdentity>> {
         let records = {
             let c = self.lock_connection()?;
             let mut stmt = c.prepare(&format!("{FILE_SELECT} WHERE user_public_id=?1 AND managed_area=?2"))?;
@@ -362,32 +362,46 @@ impl FileIndex {
             while let Some(row) = rows.next()? { records.push(map_file(row)?); }
             records
         };
+        let planned_files: std::collections::HashSet<_> = manifest.iter()
+            .filter(|entry| !entry.directory).map(|entry| entry.relative.as_path()).collect();
         records.into_iter().map(|record| {
-            let key = ManagedFileKey::new(area, &record.path.to_string_lossy())?;
-            let mut old_file = source.open_existing_regular(&key)?;
-            let old = source.inspect_regular(&old_file)?;
-            anyhow::ensure!(migration_source_identity_matches(record.physical_identity, record.byte_size, old.identity, old.byte_size),
-                "文件索引与源文件不一致：{}，原文件已保留", key.relative_name().as_str());
-            let mut new_file = target.open_existing_regular(&key)?;
-            let new = target.inspect_regular(&new_file)?;
-            anyhow::ensure!(old.byte_size == new.byte_size, "indexed migration size changed");
-            if old.identity != record.physical_identity {
-                // macOS device numbers can change after remount/reboot. Only the
-                // migration path reconciles that legacy index value, after proving
-                // the current held source and destination contain identical bytes.
-                use sha2::{Digest, Sha256};
-                let mut old_hash = Sha256::new();
-                let old_bytes = source.read_regular_to(&mut old_file, &mut old_hash)?;
-                let mut new_hash = Sha256::new();
-                let new_bytes = target.read_regular_to(&mut new_file, &mut new_hash)?;
-                anyhow::ensure!(old_bytes == old.byte_size && new_bytes == old.byte_size
-                    && old_hash.finalize() == new_hash.finalize()
-                    && source.inspect_regular(&old_file)? == old && target.inspect_regular(&new_file)? == new,
-                    "迁移文件内容校验失败：{}，原文件已保留", key.relative_name().as_str());
-            }
-            // Replay compares against the persisted row, including its old device
-            // number; using the currently observed identity would break recovery.
-            Ok(super::MigratedIndexIdentity { path: key.relative_name().as_str().into(), before: record.physical_identity, after: new.identity, bytes: new.byte_size })
+            let source_path = source.lease().namespace.path(area).join(&record.path);
+            let result = (|| {
+                let key = ManagedFileKey::new(area, &record.path.to_string_lossy())?;
+                let planned = planned_files.contains(record.path.as_path());
+                if !planned {
+                    // The verified disk snapshot may no longer have this file:
+                    // it was removed, moved, or replaced by a normal directory.
+                    // Do not traverse an obsolete indexed path to decide this.
+                    return Ok(super::MigratedIndexIdentity {
+                        path: key.relative_name().as_str().into(), before: record.physical_identity,
+                        after: None, bytes: record.byte_size,
+                    });
+                }
+                let mut old_file = source.open_existing_regular(&key)?;
+                let old = source.inspect_regular(&old_file)?;
+                let mut new_file = target.open_existing_regular(&key)?;
+                let new = target.inspect_regular(&new_file)?;
+                anyhow::ensure!(old.byte_size == new.byte_size, "源文件与迁移副本大小不同");
+                // An external editor may replace an inode/file ID or change its size.
+                // The current snapshot is authoritative; prove both held files agree
+                // before preparing an index update. Ordinary reads remain strict.
+                {
+                    use sha2::{Digest, Sha256};
+                    let mut old_hash = Sha256::new();
+                    let old_bytes = source.read_regular_to(&mut old_file, &mut old_hash)?;
+                    let mut new_hash = Sha256::new();
+                    let new_bytes = target.read_regular_to(&mut new_file, &mut new_hash)?;
+                    anyhow::ensure!(old_bytes == old.byte_size && new_bytes == old.byte_size
+                        && old_hash.finalize() == new_hash.finalize()
+                        && source.inspect_regular(&old_file)? == old && target.inspect_regular(&new_file)? == new,
+                        "迁移文件内容校验失败：{}，原文件已保留", key.relative_name().as_str());
+                }
+                // Replay compares against the persisted row, including its old device
+                // number; using the currently observed identity would break recovery.
+                Ok(super::MigratedIndexIdentity { path: key.relative_name().as_str().into(), before: record.physical_identity, after: Some(new.identity), bytes: new.byte_size })
+            })();
+            result.map_err(|error: anyhow::Error| anyhow::anyhow!("核对文件 {} 失败：{error:#}", source_path.display()))
         }).collect()
     }
     pub(super) fn replay_directory_rebind(&self, target: &NamespaceStorageAuthority) -> anyhow::Result<()> {
@@ -395,17 +409,31 @@ impl FileIndex {
             if mapping.pending_rebind.is_empty() { continue; }
             let area = ManagedUserArea::from_storage_name(&mapping.area)?;
             for entry in &mapping.pending_rebind {
+                let Some(after) = entry.after else { continue; };
                 let file = target.open_existing_regular(&ManagedFileKey::new(area, &entry.path)?)?;
                 let metadata = target.inspect_regular(&file)?;
-                anyhow::ensure!(metadata.identity == entry.after && metadata.byte_size == entry.bytes, "migrated file changed before index rebind");
+                anyhow::ensure!(metadata.identity == after && metadata.byte_size == entry.bytes, "迁移副本在更新索引前发生变化：{}", entry.path);
             }
             let mut c = self.lock_connection()?;
             let tx = c.transaction()?;
             for entry in &mapping.pending_rebind {
                 let key = ManagedFileKey::new(area, &entry.path)?;
-                let record = query_key(&tx, target.user_public_id(), &key)?.ok_or_else(|| anyhow::anyhow!("migrated index row disappeared"))?;
-                anyhow::ensure!(record.physical_identity == entry.before || record.physical_identity == entry.after, "migrated index identity conflict");
-                tx.execute("UPDATE managed_files SET physical_identity=?3,byte_size=?4 WHERE user_public_id=?1 AND id=?2", params![target.user_public_id(),record.id.0,entry.after.to_storage_bytes(),to_sql_i64("migration bytes",entry.bytes)?])?;
+                let record = query_key(&tx, target.user_public_id(), &key)?;
+                let Some(after) = entry.after else {
+                    // Replaying a committed removal is idempotent. Cascades only
+                    // remove file references/previews, never creation history.
+                    if let Some(record) = record {
+                        anyhow::ensure!(record.physical_identity == entry.before, "缺失文件索引在迁移后发生变化：{}", entry.path);
+                        tx.execute("DELETE FROM managed_files WHERE user_public_id=?1 AND id=?2", params![target.user_public_id(), record.id.0])?;
+                    }
+                    continue;
+                };
+                let record = record.ok_or_else(|| anyhow::anyhow!("迁移文件索引已丢失：{}", entry.path))?;
+                anyhow::ensure!(record.physical_identity == entry.before || record.physical_identity == after, "迁移文件索引发生变化：{}", entry.path);
+                if record.physical_identity != after {
+                    tx.execute("DELETE FROM preview_cache WHERE user_public_id=?1 AND source_file_id=?2", params![target.user_public_id(), record.id.0])?;
+                }
+                tx.execute("UPDATE managed_files SET physical_identity=?3,byte_size=?4 WHERE user_public_id=?1 AND id=?2", params![target.user_public_id(),record.id.0,after.to_storage_bytes(),to_sql_i64("migration bytes",entry.bytes)?])?;
             }
             tx.commit()?;
         }
@@ -988,43 +1016,6 @@ fn identity_conflict() -> FileIndexError {
     FileIndexError::Capability(anyhow::anyhow!(
         "logical and physical file identity conflict"
     ))
-}
-
-fn migration_source_identity_matches(
-    indexed: StableFileIdentity,
-    indexed_bytes: u64,
-    current: StableFileIdentity,
-    current_bytes: u64,
-) -> bool {
-    if indexed == current { return true; }
-    #[cfg(target_os = "macos")]
-    if let (StableFileIdentity::Unix { device: before, inode: old }, StableFileIdentity::Unix { device: after, inode: new }) = (indexed, current) {
-        return before != after && old == new && indexed_bytes == current_bytes;
-    }
-    let _ = (indexed_bytes, current_bytes);
-    false
-}
-
-#[cfg(test)]
-mod migration_identity_tests {
-    use super::*;
-
-    #[test]
-    fn directory_migration_identity_accepts_macos_device_renumbering() {
-        let indexed = StableFileIdentity::Unix { device: 16777225, inode: 21082673 };
-        let current = StableFileIdentity::Unix { device: 16777220, inode: 21082673 };
-        assert_eq!(migration_source_identity_matches(indexed, 8440782, current, 8440782), cfg!(target_os = "macos"));
-    }
-
-    #[test]
-    fn directory_migration_identity_rejects_changed_inode_size_or_windows_volume() {
-        let indexed = StableFileIdentity::Unix { device: 9, inode: 42 };
-        assert!(!migration_source_identity_matches(indexed, 10, StableFileIdentity::Unix { device: 4, inode: 43 }, 10));
-        assert!(!migration_source_identity_matches(indexed, 10, StableFileIdentity::Unix { device: 4, inode: 42 }, 11));
-        let windows = StableFileIdentity::Windows { volume: 9, file_id: [7; 16] };
-        assert!(!migration_source_identity_matches(windows, 10, StableFileIdentity::Windows { volume: 4, file_id: [7; 16] }, 10));
-        assert!(migration_source_identity_matches(indexed, 10, indexed, 10));
-    }
 }
 
 fn register_guarded(
@@ -1688,10 +1679,11 @@ mod tests {
         }).unwrap();
         let root = Arc::new(NamespaceFs::open_data_root(&f.directory.path().canonicalize().unwrap()).unwrap());
         let target = NamespaceStorageAuthority::open(root, &NamespaceLease { namespace, ..f.a.lease().clone() }).unwrap();
-        let error = f.index.prepare_directory_rebind(&f.a, &target, ManagedUserArea::Output).unwrap_err();
+        let manifest = crate::directory_migration::MigrationPlan::prepare(&source, &out, &[]).unwrap().manifest();
+        let error = f.index.prepare_directory_rebind(&f.a, &target, ManagedUserArea::Output, &manifest).unwrap_err();
         assert!(error.to_string().contains("内容校验失败"), "{error}");
         fs::write(out.join("image.png"), b"image").unwrap();
-        let prepared = f.index.prepare_directory_rebind(&f.a, &target, ManagedUserArea::Output).unwrap();
+        let prepared = f.index.prepare_directory_rebind(&f.a, &target, ManagedUserArea::Output, &manifest).unwrap();
         assert_eq!(prepared.len(), 1);
         assert_eq!(prepared[0].before, stale);
         assert!(f.index.find_file_by_path_for_namespace(&f.a, ManagedUserArea::Output, "image.png").is_err());

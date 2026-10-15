@@ -1653,7 +1653,9 @@ pub(crate) fn prepare_material_directory(data_root: &DataRootCapability, chosen:
 pub(crate) struct MigratedIndexIdentity {
     pub(crate) path: String,
     pub(crate) before: StableFileIdentity,
-    pub(crate) after: StableFileIdentity,
+    /// None records a source missing from the migration snapshot. Its stale
+    /// index row is removed only after the location transaction commits.
+    pub(crate) after: Option<StableFileIdentity>,
     pub(crate) bytes: u64,
 }
 

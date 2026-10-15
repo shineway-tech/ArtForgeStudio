@@ -6,6 +6,7 @@ import { ScrollView } from "std-widgets.slint";
 export component DirectoryMigrationDialog inherits Rectangle {
     background: #00000070;
     property <bool> focus-pending: true;
+    property <bool> has-result: AppState.directory-migration-stage == "complete" || AppState.directory-migration-stage == "recovery" || AppState.directory-migration-stage == "error";
     Timer {
         interval: 1ms;
         running: root.focus-pending;
@@ -42,13 +43,41 @@ export component DirectoryMigrationDialog inherits Rectangle {
             viewport-height: max(content.preferred-height, self.height);
             content := VerticalLayout {
                 width: parent.width; spacing: 10px; padding: 0px;
+                if root.has-result: Text {
+                    text: AppState.directory-migration-message;
+                    color: AppState.directory-migration-stage == "error" ? AppTheme.danger : AppTheme.text;
+                    font-size: 14px; wrap: char-wrap;
+                }
+                if AppState.directory-migration-stage == "confirm": VerticalLayout {
+                    spacing: 10px;
+                    Text { text: AppState.en ? "Migration method" : "选择迁移方式"; color: AppTheme.text; font-size: 15px; font-weight: 600; }
+                    HorizontalLayout {
+                        spacing: 12px;
+                        copy-mode := PillButton {
+                            text: AppState.en ? "Copy" : "拷贝";
+                            primary: !AppState.directory-migration-move-source;
+                            clicked => { AppState.directory-migration-move-source = false; }
+                        }
+                        move-mode := PillButton {
+                            text: AppState.en ? "Cut" : "剪切";
+                            primary: AppState.directory-migration-move-source;
+                            clicked => { AppState.directory-migration-move-source = true; }
+                        }
+                    }
+                    Text {
+                        text: AppState.directory-migration-move-source
+                            ? (AppState.en ? "After verification and saving the new location, remove unchanged originals. Any files that cannot be removed will be kept and listed in the report." : "校验成功并保存新位置后，清理未发生变化的原文件。无法清理的文件会保留，并在统计中列出原因。")
+                            : (AppState.en ? "Copy to the new location and keep all original files." : "将文件拷贝到新位置，保留全部原文件。缺失的旧文件会跳过。") ;
+                        color: AppTheme.muted; font-size: 14px; wrap: word-wrap;
+                    }
+                }
                 Text { text: AppState.en ? "Current folder" : "原文件夹"; color: AppTheme.muted; font-size: 13px; }
                 Text { text: AppState.directory-migration-source; color: AppTheme.text; font-size: 14px; wrap: char-wrap; }
                 Rectangle { height: 10px; background: transparent; }
                 Text { text: AppState.en ? "New folder" : "新文件夹"; color: AppTheme.muted; font-size: 13px; }
                 Text { text: AppState.directory-migration-target; color: AppTheme.text; font-size: 14px; wrap: char-wrap; }
                 Rectangle { height: 12px; background: transparent; }
-                Text { text: AppState.directory-migration-message; color: AppState.directory-migration-stage == "error" ? AppTheme.danger : AppTheme.muted; font-size: 14px; wrap: word-wrap; }
+                if !root.has-result: Text { text: AppState.directory-migration-message; color: AppTheme.muted; font-size: 14px; wrap: word-wrap; }
                 Rectangle { vertical-stretch: 1; background: transparent; }
             }
         }
@@ -56,7 +85,7 @@ export component DirectoryMigrationDialog inherits Rectangle {
             x: 28px; y: parent.height - 162px; width: parent.width - 56px; height: 82px;
             spacing: 8px; padding: 0px;
             restart-notice := Text {
-                text: AppState.en ? "The app will restart after migration. It will read materials from the new folder." : "迁移完成后将重启软件，之后将从新目录读取素材。";
+                text: AppState.en ? "Review the migration report, then restart to read materials from the new folder." : "迁移完成后可查看统计，再点击重启软件，从新目录读取素材。";
                 color: AppTheme.accent-dark; font-size: 14px; wrap: word-wrap;
             }
             if AppState.directory-migration-stage == "copying" || AppState.directory-migration-stage == "restarting": progress-track := Rectangle {
@@ -77,8 +106,13 @@ export component DirectoryMigrationDialog inherits Rectangle {
                 clicked => { AppState.close-directory-migration(); }
             }
             if AppState.directory-migration-stage == "confirm": confirm-button := PillButton {
-                width: 120px; primary: true; text: AppState.en ? "Confirm move" : "确认迁移";
+                width: 120px; primary: true;
+                text: AppState.directory-migration-move-source ? (AppState.en ? "Confirm cut" : "确认剪切") : (AppState.en ? "Confirm copy" : "确认拷贝");
                 clicked => { AppState.confirm-directory-migration(); }
+            }
+            if AppState.directory-migration-stage == "complete" || AppState.directory-migration-stage == "recovery": restart-button := PillButton {
+                width: 120px; primary: true; text: AppState.en ? "Restart app" : "重启软件";
+                clicked => { AppState.restart-after-directory-migration(); }
             }
         }
     }

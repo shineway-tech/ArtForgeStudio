@@ -1187,7 +1187,8 @@ impl AccountDirectoryMigrationSession {
         for mapping in &mut mappings {
             ensure!(NamespaceFs::directory_identity_at(&mapping.target)? == mapping.identity && NamespaceFs::directory_identity_at(&mapping.source)? == mapping.source_identity, "migration directory identity changed during copy");
             let area = ManagedUserArea::from_storage_name(&mapping.area)?;
-            mapping.pending_rebind = self.core.index.prepare_directory_rebind(source, destination, area)?;
+            let manifest: Vec<crate::directory_migration::MigrationManifestEntry> = serde_json::from_str(&mapping.manifest_json)?;
+            mapping.pending_rebind = self.core.index.prepare_directory_rebind(source, destination, area, &manifest)?;
         }
         let namespace = mappings.into_iter().try_fold(self.lease.namespace.clone(), |namespace, mapping| namespace.with_mapping(mapping))?;
         namespace.validate_active_material_owners()?;
@@ -1197,11 +1198,25 @@ impl AccountDirectoryMigrationSession {
         self.committed = Some(candidate);
         Ok(())
     }
-    pub(super) fn finish(mut self) -> Result<AccountDirectoryMigrationCompletion> {
+    pub(super) fn finish(self) -> Result<AccountDirectoryMigrationCompletion> {
+        self.finish_inner(None)
+    }
+    pub(super) fn missing_source_paths(&self) -> Vec<PathBuf> {
+        self.committed.as_ref().into_iter().flat_map(|lease| lease.namespace.mappings())
+            .flat_map(|mapping| mapping.pending_rebind.iter().filter(|entry| entry.after.is_none())
+                .map(|entry| mapping.source.join(&entry.path))).collect()
+    }
+    pub(super) fn finish_with_source_cleanup(self, plans: &[(ManagedUserArea, crate::directory_migration::MigrationPlan)], report: &mut crate::directory_migration::MigrationReport) -> Result<AccountDirectoryMigrationCompletion> {
+        self.finish_inner(Some((plans, report)))
+    }
+    fn finish_inner(mut self, cleanup: Option<(&[(ManagedUserArea, crate::directory_migration::MigrationPlan)], &mut crate::directory_migration::MigrationReport)>) -> Result<AccountDirectoryMigrationCompletion> {
         let mut candidate = self.committed.clone().ok_or_else(|| anyhow!("migration was not committed"))?;
         let authority = NamespaceStorageAuthority::open_prepublication(self.core.root.clone(), &candidate)?;
         self.core.index.replay_directory_rebind(&authority)?;
         candidate.namespace = self.core.writer.complete_directory_rebind(&candidate.namespace)?;
+        if let Some((plans, report)) = cleanup {
+            self.cleanup_verified_sources(plans, report);
+        }
         let mut transition = self.transition.take().ok_or_else(|| anyhow!("migration transition missing"))?;
         transition.retire_flushed(self.flushed.take().ok_or_else(|| anyhow!("migration writer reservation missing"))?)?;
         self.quiesced.take().unwrap().retire();
@@ -1218,6 +1233,37 @@ impl AccountDirectoryMigrationSession {
         activity.publish();
         self.committed = None;
         Ok(AccountDirectoryMigrationCompletion { lease: candidate, _admission: self.admission.take().unwrap(), _effect: self._effect.take().unwrap() })
+    }
+
+    fn cleanup_verified_sources(&self, plans: &[(ManagedUserArea, crate::directory_migration::MigrationPlan)], report: &mut crate::directory_migration::MigrationReport) {
+        use sha2::{Digest, Sha256};
+        let Some((source, target)) = self.pinned.as_ref() else { return; };
+        for (area, plan) in plans {
+            for entry in plan.manifest().into_iter().filter(|entry| !entry.directory) {
+                let result = (|| -> Result<()> {
+                    let name = entry.relative.to_str().ok_or_else(|| anyhow!("文件名无法识别，原文件已保留"))?;
+                    let key = ManagedFileKey::new(*area, name)?;
+                    let Some(mut old_file) = source.open_optional_regular(&key)? else { return Ok(()); };
+                    let old = source.inspect_regular(&old_file)?;
+                    ensure!(old.byte_size == entry.size && old.modified_at == entry.modified, "复制后原文件发生变化，已保留");
+                    let mut new_file = target.open_existing_regular(&key)?;
+                    let new = target.inspect_regular(&new_file)?;
+                    let mut old_hash = Sha256::new();
+                    let mut new_hash = Sha256::new();
+                    let old_bytes = source.read_regular_to(&mut old_file, &mut old_hash)?;
+                    let new_bytes = target.read_regular_to(&mut new_file, &mut new_hash)?;
+                    ensure!(old_bytes == entry.size && new_bytes == entry.size
+                        && old_hash.finalize() == new_hash.finalize()
+                        && source.inspect_regular(&old_file)? == old && target.inspect_regular(&new_file)? == new,
+                        "清理前校验发现文件变化，原文件已保留");
+                    source.unlink_regular(old_file)
+                })();
+                match result {
+                    Ok(()) => report.removed_source_files += 1,
+                    Err(error) => report.retained_source_files.push((plan.source.join(&entry.relative), format!("{error:#}"))),
+                }
+            }
+        }
     }
 }
 impl Drop for AccountDirectoryMigrationSession {
@@ -2608,6 +2654,15 @@ fn select_finance_fixture_group(context: &AppContext, session: &SessionScope, pa
     fn unified_migration_failed_commit_keeps_all_original_locations() {
         let (_fixture, core, _, lease) = active_transition_fixture(false);
         let destination = tempfile::tempdir().unwrap();
+        let authority = NamespaceStorageAuthority::open_active(core.root.clone(), &lease, core.backend.api.clone(), core.index.clone()).unwrap();
+        let source = lease.namespace.path(ManagedUserArea::Output).join("deleted.txt");
+        fs::write(&source, b"original").unwrap();
+        let key = ManagedFileKey::new(ManagedUserArea::Output, "deleted.txt").unwrap();
+        let registration = file_index::NamespacedManagedFileRegistration::new(
+            &authority, authority.open_existing_regular(&key).unwrap(), "image", "user").unwrap();
+        let record = core.index.register_file_for_namespace(&authority, &registration).unwrap();
+        drop(registration);
+        fs::remove_file(source).unwrap();
         let plans = unified_migration_plans(&lease, destination.path());
         let worker = AccountDirectoryMigrationWorker { core: core.clone() };
         let mut session = worker.begin(&lease).unwrap();
@@ -2622,6 +2677,187 @@ fn select_finance_fixture_group(context: &AppContext, session: &SessionScope, pa
         assert_eq!(core.active_namespace.lock().unwrap().as_ref(), Some(&lease));
         assert!(core.activity.begin_recovery_unit(&lease).is_ok());
         assert!(core.writer.take_account_directory_migration_notice(lease.namespace.user_public_id()).unwrap().is_some());
+        let connection = rusqlite::Connection::open(core.index.database_path()).unwrap();
+        assert_eq!(connection.query_row("SELECT COUNT(*) FROM managed_files WHERE id=?1", [record.id.0], |row| row.get::<_, i64>(0)).unwrap(), 1,
+            "failed location commit must not delete stale index rows");
+    }
+
+    #[test]
+    fn unified_migration_accepts_manually_deleted_file_and_recovers_after_restart() {
+        assert_unified_migration_external_edit("deleted");
+    }
+
+    #[test]
+    fn unified_migration_accepts_manually_deleted_parent_directory() {
+        assert_unified_migration_external_edit("deleted-parent");
+    }
+
+    #[test]
+    fn unified_migration_accepts_file_and_directory_type_changes_before_migration() {
+        assert_unified_migration_external_edit("file-to-directory");
+        assert_unified_migration_external_edit("parent-to-file");
+    }
+
+    #[test]
+    fn unified_migration_missing_file_does_not_adopt_an_unrelated_existing_target() {
+        assert_unified_migration_external_edit("missing-target-existing");
+    }
+
+    #[test]
+    fn unified_migration_accepts_manually_replaced_file_and_preserves_its_logical_id() {
+        assert_unified_migration_external_edit("replaced");
+    }
+
+    #[test]
+    fn unified_migration_accepts_manually_renamed_file() {
+        assert_unified_migration_external_edit("renamed");
+    }
+
+    #[test]
+    fn unified_migration_accepts_manually_edited_file() {
+        assert_unified_migration_external_edit("edited");
+    }
+
+    #[test]
+    fn unified_migration_move_cleans_only_unchanged_verified_originals() {
+        let (_fixture, core, _, lease) = active_transition_fixture(false);
+        let destination = tempfile::tempdir().unwrap();
+        let source = lease.namespace.path(ManagedUserArea::Output);
+        fs::write(source.join("clean.txt"), b"copied").unwrap();
+        fs::write(source.join("edited.txt"), b"original").unwrap();
+        fs::write(source.join("target-edited.txt"), b"original").unwrap();
+        let plans = unified_migration_plans(&lease, destination.path());
+        let mut session = AccountDirectoryMigrationWorker { core: core.clone() }.begin(&lease).unwrap();
+        session.prepare_all(&plans).unwrap();
+        let files: Vec<_> = plans.iter().map(|(_, plan)| plan.clone()).collect();
+        crate::directory_migration::copy_batch_retaining_source(&files,
+            || session.commit_all().map_err(std::io::Error::other), |_, _| Ok(())).unwrap();
+        fs::write(source.join("edited.txt"), b"edited after copy").unwrap();
+        fs::write(destination.path().join("out/target-edited.txt"), b"replaced").unwrap();
+        let mut report = crate::directory_migration::MigrationReport { move_source: true, ..Default::default() };
+        session.finish_with_source_cleanup(&plans, &mut report).unwrap();
+        assert!(!source.join("clean.txt").exists());
+        assert_eq!(fs::read(source.join("edited.txt")).unwrap(), b"edited after copy");
+        assert_eq!(fs::read(destination.path().join("out/clean.txt")).unwrap(), b"copied");
+        assert_eq!(fs::read(destination.path().join("out/edited.txt")).unwrap(), b"original");
+        assert_eq!(report.removed_source_files, 1);
+        assert_eq!(report.retained_source_files.len(), 2);
+        assert_eq!(report.retained_source_files[0].0, source.join("edited.txt"));
+        assert_eq!(fs::read(source.join("target-edited.txt")).unwrap(), b"original");
+    }
+
+    #[test]
+    fn unified_migration_move_requires_a_committed_location_before_cleanup() {
+        let (_fixture, core, _, lease) = active_transition_fixture(false);
+        let destination = tempfile::tempdir().unwrap();
+        let source = lease.namespace.path(ManagedUserArea::Output).join("keep.txt");
+        fs::write(&source, b"original").unwrap();
+        let plans = unified_migration_plans(&lease, destination.path());
+        let mut session = AccountDirectoryMigrationWorker { core: core.clone() }.begin(&lease).unwrap();
+        session.prepare_all(&plans).unwrap();
+        let mut report = crate::directory_migration::MigrationReport::default();
+        assert!(session.finish_with_source_cleanup(&plans, &mut report).is_err());
+        assert_eq!(fs::read(source).unwrap(), b"original");
+        assert_eq!(report.removed_source_files, 0);
+    }
+
+    fn assert_unified_migration_external_edit(edit: &str) {
+        let (_fixture, core, _, lease) = active_transition_fixture(false);
+        let destination = tempfile::tempdir().unwrap();
+        let authority = NamespaceStorageAuthority::open_active(core.root.clone(), &lease, core.backend.api.clone(), core.index.clone()).unwrap();
+        let root = lease.namespace.path(ManagedUserArea::Output);
+        let nested = matches!(edit, "deleted-parent" | "parent-to-file");
+        let source = if nested { root.join("nested") } else { root.clone() };
+        fs::create_dir_all(&source).unwrap();
+        let relative = if nested { "nested/sample.txt" } else { "sample.txt" };
+        fs::write(source.join("sample.txt"), b"original").unwrap();
+        let key = ManagedFileKey::new(ManagedUserArea::Output, relative).unwrap();
+        let registration = file_index::NamespacedManagedFileRegistration::new(
+            &authority, authority.open_existing_regular(&key).unwrap(), "image", "user",
+        ).unwrap();
+        let record = core.index.register_file_for_namespace(&authority, &registration).unwrap();
+        drop(registration);
+        core.index.attach_reference_for_namespace(&authority, record.id, "generation", "migration-history").unwrap();
+        let history = StoredAssetData {
+            id: "migration-history".into(), conversation_id: "fixture-conversation".into(),
+            title: "保留的生成历史".into(), category: "image".into(), kind: "image".into(),
+            time: "2026-10-15".into(), prompt: "fixture prompt".into(), ratio: "1:1".into(),
+            quality: "fixture".into(), model: "fixture".into(), origin: "generation".into(),
+            width: 1, height: 1, source_path: source.join("sample.txt").display().to_string(),
+            reference_paths: Vec::new(), cutout_done: false, remove_black_done: false, upscale_done: false,
+        };
+        core.writer.persist_client_state_checked_for_namespace(&lease, LocalStoreData {
+            generations: vec![history], ..Default::default()
+        }).unwrap();
+        match edit {
+            "deleted" | "missing-target-existing" => fs::remove_file(source.join("sample.txt")).unwrap(),
+            "deleted-parent" => fs::remove_dir_all(&source).unwrap(),
+            "file-to-directory" => {
+                fs::remove_file(source.join("sample.txt")).unwrap();
+                fs::create_dir(source.join("sample.txt")).unwrap();
+                fs::write(source.join("sample.txt/child.txt"), b"new child").unwrap();
+            }
+            "parent-to-file" => {
+                fs::remove_dir_all(&source).unwrap();
+                fs::write(&source, b"new parent file").unwrap();
+            }
+            "renamed" => fs::rename(source.join("sample.txt"), source.join("renamed.txt")).unwrap(),
+            "replaced" => {
+                fs::write(source.join("replacement.tmp"), b"external replacement").unwrap();
+                fs::remove_file(source.join("sample.txt")).unwrap();
+                fs::rename(source.join("replacement.tmp"), source.join("sample.txt")).unwrap();
+            }
+            "edited" => fs::write(source.join("sample.txt"), b"external replacement").unwrap(),
+            _ => unreachable!(),
+        }
+        fs::write(root.join("new.txt"), b"manually added").unwrap();
+        let plans = unified_migration_plans(&lease, destination.path());
+        if edit == "missing-target-existing" {
+            fs::write(destination.path().join("out/sample.txt"), b"unrelated target").unwrap();
+        }
+        let mut session = AccountDirectoryMigrationWorker { core: core.clone() }.begin(&lease).unwrap();
+        session.prepare_all(&plans).unwrap();
+        let files: Vec<_> = plans.iter().map(|(_, plan)| plan.clone()).collect();
+        crate::directory_migration::copy_batch_retaining_source(&files,
+            || session.commit_all().map_err(std::io::Error::other), |_, _| Ok(())).unwrap();
+        let missing = matches!(edit, "deleted" | "deleted-parent" | "renamed" | "missing-target-existing" | "file-to-directory" | "parent-to-file");
+        assert_eq!(session.missing_source_paths(), if missing { vec![root.join(relative)] } else { Vec::new() });
+        // Index changes are replayed only after the location transaction commits.
+        let connection = rusqlite::Connection::open(core.index.database_path()).unwrap();
+        assert_eq!(connection.query_row("SELECT COUNT(*) FROM managed_files WHERE id=?1", [record.id.0], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        let loaded = core.writer.load_account_directory_namespace(&core.root_path, lease.namespace.user_public_id()).unwrap();
+        drop(session);
+        let restored = NamespaceStorageAuthority::open_prepublication(core.root.clone(),
+            &NamespaceLease { namespace: loaded, namespace_epoch: 2, ..lease.clone() }).unwrap();
+        core.index.replay_directory_rebind(&restored).unwrap();
+        core.index.replay_directory_rebind(&restored).unwrap();
+        core.writer.complete_directory_rebind(&restored.lease().namespace).unwrap();
+        let history = core.writer.load_client_state_for_namespace(restored.lease()).unwrap().unwrap().generations;
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].id, "migration-history");
+        assert_eq!(history[0].prompt, "fixture prompt");
+        assert_eq!(connection.query_row("SELECT COUNT(*) FROM file_references WHERE file_id=?1", [record.id.0], |row| row.get::<_, i64>(0)).unwrap(), if missing { 0 } else { 1 });
+        let indexed = core.index.find_file_by_path_for_namespace(&restored, ManagedUserArea::Output, relative).unwrap();
+        if missing {
+            assert!(indexed.is_none(), "missing source must not leave an unusable index row");
+            if edit == "missing-target-existing" {
+                assert_eq!(fs::read(destination.path().join("out/sample.txt")).unwrap(), b"unrelated target");
+            } else if edit == "file-to-directory" {
+                assert_eq!(fs::read(destination.path().join("out/sample.txt/child.txt")).unwrap(), b"new child");
+            } else if edit == "parent-to-file" {
+                assert_eq!(fs::read(destination.path().join("out/nested")).unwrap(), b"new parent file");
+            } else { assert!(!destination.path().join("out").join(relative).exists()); }
+        } else {
+            let indexed = indexed.unwrap();
+            assert_eq!(indexed.id, record.id);
+            assert_eq!(indexed.byte_size, 20);
+            assert_eq!(fs::read(destination.path().join("out/sample.txt")).unwrap(), b"external replacement");
+            assert_eq!(fs::read(source.join("sample.txt")).unwrap(), b"external replacement");
+        }
+        if edit == "renamed" {
+            assert_eq!(fs::read(destination.path().join("out/renamed.txt")).unwrap(), b"original");
+        }
+        assert_eq!(fs::read(destination.path().join("out/new.txt")).unwrap(), b"manually added");
     }
 
     #[test]
