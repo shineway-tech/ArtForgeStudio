@@ -12,6 +12,22 @@ component VideoCard inherits Rectangle {
     border-radius: AppState.card-style == "rounded" ? 10px : 0px;
     clip: true;
 
+    Timer {
+        interval: 250ms;
+        running: card-touch.has-hover
+            && !AppState.video-player-open
+            && AppState.video-hover-preview-id != root.video.id;
+        triggered => {
+            AppState.sync-video-preview(
+                root.video.id,
+                card-touch.absolute-position.x / 1px,
+                card-touch.absolute-position.y / 1px,
+                card-touch.width / 1px,
+                card-touch.height / 1px
+            );
+        }
+    }
+
     if root.video.has-preview: Image {
         x: card-touch.has-hover ? -parent.width * 0.05 : 0px;
         y: card-touch.has-hover ? -parent.height * 0.05 : 0px;

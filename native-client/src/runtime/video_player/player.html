@@ -18,16 +18,15 @@
     #volume { width: 72px; accent-color: #00d982; cursor: pointer; }
     #centerPlay { position: absolute; z-index: 3; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 66px; height: 66px; border-radius: 50%; background: rgba(0,217,130,.92); font-size: 27px; box-shadow: 0 12px 40px rgba(0,0,0,.35); }
     #centerPlay:hover { background: #00d982; color: #fff; transform: translate(-50%,-50%) scale(1.04); }
-    #closeButton { position: absolute; z-index: 5; left: 18px; top: 18px; min-width: 72px; border: 1px solid rgba(255,255,255,.18); background: rgba(10,15,24,.82); backdrop-filter: blur(14px); }
     #playerMessage { position: absolute; z-index: 4; left: 50%; top: 42%; transform: translate(-50%,-50%); max-width: min(460px, calc(100% - 48px)); padding: 10px 16px; border-radius: 8px; background: rgba(10,15,24,.88); color: rgba(255,255,255,.86); font-size: 14px; text-align: center; pointer-events: none; }
     #playerMessage.error { color: #ffb6b6; border: 1px solid rgba(255,120,120,.42); }
     .hidden { opacity: 0; pointer-events: none; }
+    body.preview #controls, body.preview #centerPlay { display: none; }
   </style>
 </head>
 <body>
   <div id="player">
     <video id="video" preload="metadata" playsinline></video>
-    <button id="closeButton" aria-label="返回历史记录">← 返回</button>
     <div id="playerMessage">正在加载视频...</div>
     <button id="centerPlay" aria-label="播放">▶</button>
     <div id="controls">
@@ -44,10 +43,11 @@
     </div>
   </div>
   <script>
+    const previewMode = __PREVIEW_MODE__;
+    if (previewMode) document.body.classList.add('preview');
     const video = document.getElementById('video');
     const player = document.getElementById('player');
     const playerMessage = document.getElementById('playerMessage');
-    const closeButton = document.getElementById('closeButton');
     const playButton = document.getElementById('playButton');
     const centerPlay = document.getElementById('centerPlay');
     const seek = document.getElementById('seek');
@@ -60,7 +60,6 @@
     const folderButton = document.getElementById('folderButton');
     const regenerateButton = document.getElementById('regenerateButton');
     const send = command => window.ipc.postMessage(JSON.stringify({ command }));
-    closeButton.onclick = () => send('close');
     let readyReported = false;
     let errorReported = false;
     const formatTime = value => {
@@ -90,11 +89,24 @@
     };
     playButton.onclick = togglePlay;
     centerPlay.onclick = togglePlay;
-    video.onclick = togglePlay;
+    if (!previewMode) video.onclick = togglePlay;
+    if (previewMode) {
+      video.muted = true;
+      video.loop = true;
+      player.style.cursor = 'pointer';
+      player.addEventListener('pointerdown', event => {
+        if (event.button === 0) send('preview_open');
+      });
+      player.addEventListener('pointerleave', () => send('preview_leave'));
+    }
     video.onplay = syncPlay;
     video.onpause = syncPlay;
-    video.onloadedmetadata = reportReady;
-    video.oncanplay = reportReady;
+    const startPreview = () => {
+      reportReady();
+      if (previewMode) video.play().catch(() => {});
+    };
+    video.onloadedmetadata = startPreview;
+    video.oncanplay = startPreview;
     video.onerror = reportError;
     video.ontimeupdate = () => {
       seek.value = video.duration ? String(Math.round(video.currentTime / video.duration * 1000)) : '0';

@@ -5258,6 +5258,7 @@ pub(super) fn start_watermark_removal_with_billing_scope(
     let record = PendingGenerationRecord {
         video_request: None,
         source_asset_id: String::new(),
+        video_preview_path: String::new(),
         schema_version: 2,
             cancel_requested: false,
         created_at_epoch_ms: Local::now().timestamp_millis(),
@@ -5289,6 +5290,7 @@ pub(super) fn start_watermark_removal_with_billing_scope(
         terminal: false,
         expected_success_count: 0,
         canvas_source_node_id: String::new(),
+        canvas_workflow_id: String::new(),
         canvas_ui_extraction: false,
     };
     if upsert_pending_generation_for_namespace(&authority, &billing_scope, record.clone()).is_err()
@@ -5982,6 +5984,7 @@ pub(super) fn start_image_colorization_with_billing_scope(
     let record = PendingGenerationRecord {
         video_request: None,
         source_asset_id: String::new(),
+        video_preview_path: String::new(),
         schema_version: 2,
             cancel_requested: false,
         created_at_epoch_ms: Local::now().timestamp_millis(),
@@ -6013,6 +6016,7 @@ pub(super) fn start_image_colorization_with_billing_scope(
         terminal: false,
         expected_success_count: 0,
         canvas_source_node_id: String::new(),
+        canvas_workflow_id: String::new(),
         canvas_ui_extraction: false,
     };
     if upsert_pending_generation_for_namespace(&authority, &billing_scope, record.clone()).is_err()
@@ -7025,6 +7029,7 @@ mod local_image_tests {
     fn pending_toolbox_record(task_type: &str) -> PendingGenerationRecord {
         PendingGenerationRecord {
             source_asset_id: String::new(),
+            video_preview_path: String::new(),
             schema_version: 2,
             cancel_requested: false,
             created_at_epoch_ms: 1,
@@ -7057,6 +7062,7 @@ mod local_image_tests {
             terminal: false,
             expected_success_count: 0,
             canvas_source_node_id: String::new(),
+            canvas_workflow_id: String::new(),
             canvas_ui_extraction: false,
         }
     }

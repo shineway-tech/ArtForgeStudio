@@ -947,6 +947,29 @@ mod update_state_tests {
     }
 
     #[test]
+    fn available_update_exposes_manifest_release_notes_to_about_page() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        apply_update_manifest(
+            &app,
+            UpdateManifest {
+                version: "99.0.0".into(),
+                notes: "新增功能\n修复问题".into(),
+                ..Default::default()
+            },
+            false,
+        );
+        assert!(state.get_update_available());
+        assert_eq!(state.get_update_release_notes(), "新增功能\n修复问题");
+
+        let settings = include_str!("../../../ui/pages/settings-page.slint");
+        assert!(settings.contains("AppState.settings-section == \"about\" && AppState.update-available"));
+        assert!(settings.contains("text: AppState.update-release-notes;"));
+        assert!(settings.contains("viewport-height: max(self.visible-height, notes-text.preferred-height);"));
+    }
+
+    #[test]
     fn manifest_refresh_preserves_installation_failures_and_active_progress() {
         i_slint_backend_testing::init_no_event_loop();
         let app = AppWindow::new().unwrap();

@@ -447,7 +447,7 @@ pub(super) fn start_image_enhancement_with_billing_scope(
 }
 fn new_enhancement_record(scope:&BillingScope,key:String,local_task:String,source:&Path,quality:&str,bytes:&[u8])->Result<PendingGenerationRecord>{
     Ok(PendingGenerationRecord{
-        source_asset_id:String::new(),video_request:None,schema_version:2,cancel_requested:false,
+        source_asset_id:String::new(),video_preview_path:String::new(),video_request:None,schema_version:2,cancel_requested:false,
         created_at_epoch_ms:Local::now().timestamp_millis(),client_request_id:key,
         owner_user_id:scope.request.session.owner_user_id.clone(),billing_account_group_id:scope.request.account_group_id.clone(),auth_epoch:scope.request.session.auth_epoch,
         local_task_id:local_task,server_task_id:String::new(),raw_prompt:"图片清晰增强".into(),generation_prompt:String::new(),
@@ -456,7 +456,7 @@ fn new_enhancement_record(scope:&BillingScope,key:String,local_task:String,sourc
         reference_paths:vec![source.to_str().ok_or_else(||anyhow!("invalid source path"))?.to_owned()],
         reference_sha256:vec![sha256_hex(bytes)],reference_size_bytes:vec![bytes.len() as u64],
         lineage_reference_paths:vec![source.to_str().unwrap().to_owned()],uploaded_file_ids:vec![],deliveries:vec![],terminal:false,expected_success_count:0,
-        canvas_source_node_id:String::new(),canvas_ui_extraction:false,
+        canvas_source_node_id:String::new(),canvas_workflow_id:String::new(),canvas_ui_extraction:false,
     })
 }
 pub(super) fn resume_pending_image_enhancement(app:&AppWindow,context:AppContext,record:PendingGenerationRecord){

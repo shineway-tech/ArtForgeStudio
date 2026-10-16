@@ -115,6 +115,19 @@ pub(super) fn materialize_delivery_preview(preview: &PreparedDeliveryPreview) ->
     Image::from_rgba8(pixels)
 }
 
+pub(super) fn prepare_video_cover_pixels(frame: image::DynamicImage) -> PreparedDeliveryPreview {
+    let (width, height) = (frame.width(), frame.height());
+    let edge = PreviewPurpose::Gallery.longest_edge();
+    let rgba = if width.max(height) > edge { frame.thumbnail(edge, edge) } else { frame }.to_rgba8();
+    PreparedDeliveryPreview {
+        width,
+        height,
+        preview_width: rgba.width(),
+        preview_height: rgba.height(),
+        rgba: rgba.into_raw(),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PreviewPurpose {
     Gallery,

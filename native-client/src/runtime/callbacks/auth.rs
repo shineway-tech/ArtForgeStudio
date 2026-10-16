@@ -160,6 +160,7 @@ fn prepare_activation_catalog_projection(ui:&mut PreparedUiProjection,available_
             purpose: model.purpose.clone().into(),
             version: model.version.min(i32::MAX as u32) as i32,
             capabilities: model_capabilities_text(model).into(),
+            capability_json: model.capabilities.to_string().into(),
             pricing: model
                 .prices
                 .iter()
@@ -284,7 +285,7 @@ fn prepare_activation_catalog_projection(ui:&mut PreparedUiProjection,available_
         ui.push("".into(), |state, value| state.set_video_model(value));
         ui.push("".into(), |state, value| state.set_video_model_name(value));
         ui.push("".into(), |state, value| state.set_video_model_description(value));
-        ui.push(false, |state, value| state.set_video_service_available(value));
+        ui.push(false, |state, value| { state.set_video_service_available(value); sync_video_resolutions(state); });
     }
     ui.append(prepare_activation_style_projection(style_models,selected_prompt.map(|model|model.code.as_str()).unwrap_or_default()));
     if available_models.is_empty() {
@@ -2625,6 +2626,7 @@ pub(super) fn apply_model_catalog_projection(
             purpose: model.purpose.clone().into(),
             version: model.version.min(i32::MAX as u32) as i32,
             capabilities: model_capabilities_text(model).into(),
+            capability_json: model.capabilities.to_string().into(),
             pricing: model
                 .prices
                 .iter()
@@ -2754,6 +2756,7 @@ pub(super) fn apply_model_catalog_projection(
         state.set_video_model_name("".into());
         state.set_video_model_description("".into());
         state.set_video_service_available(false);
+        sync_video_resolutions(&state);
     }
     sync_style_analysis_selection(&state);
     if available_models.is_empty() {

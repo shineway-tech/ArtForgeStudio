@@ -1,5 +1,5 @@
 pub(crate) fn optimization_input(input: &str, duration_seconds: i32) -> String {
-    let duration = duration_seconds.clamp(4, 15);
+    let duration = duration_seconds.clamp(4, 3600);
     // Keep short clips multi-stage, with no stage longer than four seconds.
     let count = ((duration + 3) / 4).max(2);
     let mut request = format!(
@@ -79,8 +79,8 @@ mod tests {
             (8, vec!["0–4秒", "4–8秒"]),
             (10, vec!["0–4秒", "4–7秒", "7–10秒"]),
             (15, vec!["0–4秒", "4–8秒", "8–12秒", "12–15秒"]),
-            (16, vec!["0–4秒", "4–8秒", "8–12秒", "12–15秒"]),
-            (i32::MAX, vec!["0–4秒", "4–8秒", "8–12秒", "12–15秒"]),
+            (16, vec!["0–4秒", "4–8秒", "8–12秒", "12–16秒"]),
+            (20, vec!["0–4秒", "4–8秒", "8–12秒", "12–16秒", "16–20秒"]),
         ] {
             let request = optimization_input("保留主体和环境。", duration);
             let ranges: Vec<_> = request

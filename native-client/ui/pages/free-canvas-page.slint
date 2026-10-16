@@ -202,6 +202,11 @@ component FreeCanvasCard {
                     AppState.canvas-workflow-skill-icon-count = 12;
                     AppState.canvas-workflow-skill-icon-background = "white";
                     AppState.canvas-workflow-skill-icon-shape = "circle";
+                } else if root.card-id == "character-split" {
+                    AppState.asset-type = "character";
+                    AppState.ratio = "4:3";
+                    AppState.count = 1;
+                    AppState.mode = "game";
                 } else if root.card-id == "character-multi-direction" {
                     AppState.asset-type = "character";
                     AppState.ratio = "4:3";
@@ -470,6 +475,23 @@ export component FreeCanvasPage {
             }
             FreeCanvasCard {
                 x: root.import-mode ? 0px : root.card-width() + root.card-gap();
+                y: (root.card-height() + root.card-gap()) * 2;
+                width: root.card-width();
+                height: root.card-height();
+                card-id: "character-split";
+                import-mode: root.import-mode;
+                import-workflow(id, title, template, hint, artwork) => { root.import-workflow(id, title, template, hint, artwork); }
+                title: AppState.en ? "Character Parts" : "角色拆分";
+                description: AppState.en ? "Separate a character into transparent PNG parts" : "立绘拆分为透明底五官与各部件";
+                category: "character";
+                artwork: @image-url("../../assets/free-canvas/character-split.png");
+                prompt-zh: "角色拆分规范：";
+                prompt-en: "Character part breakdown specification:";
+                hint-zh: "上传一张角色立绘，自动拆出五官、发型、身体、服饰、配饰和光效的透明 PNG";
+                hint-en: "Upload a character illustration to extract facial features, hair, body, outfit, accessories, and effects as transparent PNGs";
+            }
+            FreeCanvasCard {
+                x: (root.card-width() + root.card-gap()) * (root.import-mode ? 1 : 2);
                 y: (root.card-height() + root.card-gap()) * 2;
                 width: root.card-width();
                 height: root.card-height();

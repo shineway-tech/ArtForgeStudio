@@ -1,50 +1,6 @@
 import { AppState } from "../app-state.slint";
-import { PillButton } from "../components/pill-button.slint";
+import { ContactItem } from "../components/contact-item.slint";
 import { AppTheme } from "../theme.slint";
-
-component ContactItem inherits Rectangle {
-    in property <string> label;
-    in property <string> value;
-
-    height: 78px;
-    background: AppTheme.panel-soft;
-    border-radius: 12px;
-    border-width: 1px;
-    border-color: AppTheme.accent.with-alpha(0.42);
-
-    Text {
-        x: 16px;
-        y: 12px;
-        width: parent.width - 122px;
-        height: 22px;
-        text: root.label;
-        color: AppTheme.muted;
-        font-size: 12px;
-        font-weight: 400;
-        vertical-alignment: center;
-    }
-    Text {
-        x: 16px;
-        y: 38px;
-        width: parent.width - 122px;
-        height: 26px;
-        text: root.value;
-        color: AppTheme.text;
-        font-size: 16px;
-        font-weight: 500;
-        vertical-alignment: center;
-        overflow: elide;
-    }
-    PillButton {
-        x: parent.width - 88px;
-        y: 21px;
-        width: 72px;
-        height: 36px;
-        label-font-size: 12px;
-        text: AppState.en ? "Copy" : "复制";
-        clicked => { AppState.copy-contact-detail(root.value); }
-    }
-}
 
 export component ContactPopup inherits Rectangle {
     background: AppTheme.panel;
@@ -131,6 +87,7 @@ export component ContactPopup inherits Rectangle {
         width: parent.width - 40px;
         label: AppState.en ? "Official group" : "官方群";
         value: "1090665775";
+        join-group: true;
     }
     ContactItem {
         x: 20px;

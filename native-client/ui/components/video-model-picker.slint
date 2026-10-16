@@ -5,7 +5,14 @@ import { AppTheme } from "../theme.slint";
 
 export component VideoModelPicker inherits Rectangle {
     in property <bool> disabled: false;
+    in property <length> space-above: 0px;
+    in property <length> space-below: 326px;
+    property <length> desired-popup-height: min(326px, max(74px, 12px + AppState.video-model-options.length * 64px));
+    property <bool> open-above: root.space-below < root.desired-popup-height && root.space-above > root.space-below;
+    out property <bool> opens-above: root.open-above;
     callback select-model(string);
+
+    changed open-above => { AppState.video-model-popup-opens-above = root.open-above; }
 
     height: 58px;
     opacity: root.disabled ? 0.55 : 1;
@@ -61,12 +68,15 @@ export component VideoModelPicker inherits Rectangle {
         mouse-cursor: self.enabled ? pointer : default;
         accessible-role: combobox;
         accessible-label: AppState.en ? "Select video model" : "选择视频模型";
-        clicked => { popup.show(); }
+        clicked => {
+            AppState.video-model-popup-opens-above = root.open-above;
+            popup.show();
+        }
     }
 
     popup := PopupWindow {
         x: 0px;
-        y: root.height + 6px;
+        y: root.open-above ? -self.height - 6px : root.height + 6px;
         width: root.width;
         height: root.popup-height();
         close-policy: close-on-click-outside;
@@ -158,6 +168,6 @@ export component VideoModelPicker inherits Rectangle {
     }
 
     function popup-height() -> length {
-        return min(326px, max(74px, 12px + AppState.video-model-options.length * 64px));
+        return min(root.desired-popup-height, max(0px, root.open-above ? root.space-above : root.space-below));
     }
 }

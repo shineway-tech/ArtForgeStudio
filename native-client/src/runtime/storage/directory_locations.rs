@@ -127,6 +127,7 @@ impl DirectoryLocations {
         }
         for output in data.video_outputs.values_mut() {
             self.remap(&mut output.source_path);
+            self.remap(&mut output.preview_source_path);
         }
     }
 
@@ -159,6 +160,7 @@ impl DirectoryLocations {
         }
         for output in store.video_outputs.values_mut() {
             self.remap(&mut output.source_path);
+            self.remap(&mut output.preview_source_path);
         }
         for category in ["character", "scene", "ui", "effect"] {
             for reference in references_for_category_mut(&mut store.references, category) {
@@ -245,6 +247,7 @@ mod tests {
                 resolution: "720P".into(),
                 duration_secs: 5,
                 source_asset_id: "asset".into(),
+                preview_source_path: old.replace("image.png", "preview.png"),
                 prompt: "prompt".into(),
                 source_path: old.clone(),
                 client_request_id: "request".into(),
@@ -266,11 +269,13 @@ mod tests {
             vec![expected, unrelated]
         );
         assert_eq!(data.video_outputs["task:file"].source_path, target.join("image.png").display().to_string());
+        assert_eq!(data.video_outputs["task:file"].preview_source_path, target.join("preview.png").display().to_string());
 
         let mut store = Store::default();
         store.video_outputs = data.video_outputs.clone();
         locations.remap_store(&mut store);
         assert_eq!(store.video_outputs["task:file"].source_path, target.join("image.png").display().to_string());
+        assert_eq!(store.video_outputs["task:file"].preview_source_path, target.join("preview.png").display().to_string());
     }
 
     #[test]

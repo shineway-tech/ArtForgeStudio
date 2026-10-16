@@ -94,27 +94,12 @@ pub(super) fn wire_deferred_video_generation_callbacks(app: &AppWindow, context:
 mod pricing;
 use pricing::*;
 
+#[path = "video_capabilities.rs"]
+mod capabilities;
+use capabilities::*;
+
 pub(super) fn sync_video_resolutions(state: &AppState) {
-    let model = state
-        .get_catalog_models()
-        .iter()
-        .find(|row| row.code == state.get_video_model());
-    let available = |quality: &str| {
-        model
-            .as_ref()
-            .is_some_and(|row| !video_rate(row, quality).is_empty())
-    };
-    state.set_video_480_available(available("480P"));
-    state.set_video_720_available(available("720P"));
-    state.set_video_1080_available(available("1080P"));
-    if !available(state.get_video_resolution().as_str()) {
-        if let Some(quality) = ["720P", "480P", "1080P"]
-            .into_iter()
-            .find(|quality| available(quality))
-        {
-            state.set_video_resolution(quality.into());
-        }
-    }
+    sync_video_capabilities(state);
 }
 
 fn apply_video_model_selection(state: &AppState, model_code: &str) -> bool {
@@ -146,13 +131,20 @@ fn apply_video_model_selection(state: &AppState, model_code: &str) -> bool {
 }
 
 fn apply_saved_video_selection(state: &AppState, output: &SavedVideoOutput, prompt: String) {
-    if state.get_page() != "video-generation" {
-        state.set_video_return_page("assets".into());
+    let source_page = state.get_page();
+    state.set_video_player_return_page(source_page.clone());
+    if source_page != "video-generation" {
+        state.set_video_return_page(source_page);
         state.set_video_return_to_viewer(false);
     }
     state.set_video_page_tab("history".into());
+    state.set_video_hover_preview_id("".into());
+    state.set_video_player_error("".into());
+    state.set_video_folder_status("".into());
+    state.set_video_result_id(output.key().into());
     state.set_video_result_path(output.source_path.clone().into());
     state.set_video_player_open(true);
+    state.set_video_status("正在加载视频...".into());
     state.set_video_source_title(output.title.clone().into());
     state.set_video_prompt(prompt.into());
     if !output.model.is_empty() {
@@ -207,8 +199,10 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
         });
     }
     {
+        let weak = app.as_weak();
         let context = context.clone();
         state.on_reveal_saved_video(move |id| {
+            let Some(app) = weak.upgrade() else { return; };
             let Some(persistence) = context.store.borrow().private_persistence.clone() else {
                 return;
             };
@@ -221,7 +215,11 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
             else {
                 return;
             };
-            let _ = reveal_saved_video_folder(&context, persistence, output);
+            let state = app.global::<AppState>();
+            state.set_video_folder_status("正在打开保存目录...".into());
+            if reveal_saved_video_folder(&app, &context, persistence, output).is_err() {
+                state.set_video_folder_status("无法打开视频保存目录".into());
+            }
         });
     }
     let store = context.store.clone();
@@ -258,6 +256,24 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
     {
         let app_weak = app.as_weak();
         let context = context.clone();
+        state.on_sync_video_preview(move |id, x, y, width, height| {
+            let Some(app) = app_weak.upgrade() else { return; };
+            let state = app.global::<AppState>();
+            if state.get_page() != "video-generation" || state.get_video_player_open() || state.get_video_prompt_expanded_open()
+                || state.get_recovered_prompt_result_open() || state.get_video_image_dialog() != "" {
+                return;
+            }
+            let Some(persistence) = context.store.borrow().private_persistence.clone() else { return; };
+            let Some(output) = context.store.borrow().video_outputs.get(id.as_str()).cloned() else { return; };
+            if sync_video_player_captured(&app, &context, persistence, &output, (x, y, width, height), true).is_ok() {
+                state.set_video_hover_preview_id(id);
+            }
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let context = context.clone();
         state.on_sync_video_player(move |x, y, width, height| {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -276,6 +292,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
                 return;
             }
             let Some(persistence) = context.store.borrow().private_persistence.clone() else {
+                state.set_video_player_error("视频文件暂时无法访问".into());
                 return;
             };
             let Some(output) = context
@@ -286,6 +303,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
                 .find(|output| Path::new(&output.source_path) == path)
                 .cloned()
             else {
+                state.set_video_player_error("视频记录已失效，请返回列表重试".into());
                 return;
             };
             let lease = persistence.lease().clone();
@@ -295,9 +313,11 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
                 persistence,
                 &output,
                 (x, y, width, height),
+                false,
             ) {
                 let _ = context.apply_user_completion(&lease, || {
-                    state.set_video_status(format!("播放器打开失败：{error}").into())
+                    state.set_video_player_error("无法打开视频播放器，请返回列表重试".into());
+                    state.set_video_status(format!("播放器打开失败：{error}").into());
                 });
             }
         });
@@ -379,6 +399,7 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
                     state.set_video_player_open(false);
                     state.set_video_task_id("".into());
                     state.set_video_return_page(state.get_page());
+                    state.set_video_player_return_page("".into());
                     state.set_video_return_to_viewer(true);
                     state.set_video_status(if state.get_video_service_available() {
                         "正在获取服务端报价...".into()
@@ -434,9 +455,16 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
             cancel_video_image_work(&state, &image_epoch);
             let return_page = state.get_video_return_page().to_string();
             let return_to_viewer = state.get_video_return_to_viewer();
+            let return_to_video_assets = return_page == "assets"
+                && state.get_video_player_return_page() == "assets"
+                && !return_to_viewer;
+            state.set_video_player_return_page("".into());
             state.set_video_prompt_expanded_open(false);
             state.set_video_quote_loading(false);
             navigate_to_with_store(&app, &store.borrow(), &return_page);
+            if return_to_video_assets {
+                state.set_asset_category_filter("video".into());
+            }
             state.set_viewer_open(return_to_viewer && !state.get_viewer_id().is_empty());
         });
     }
@@ -474,6 +502,26 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn saved_video_for_navigation() -> SavedVideoOutput {
+        SavedVideoOutput {
+            model: "seedance-2.0-fast".into(),
+            resolution: "1080P".into(),
+            duration_secs: 8,
+            source_asset_id: "source".into(),
+            preview_source_path: "C:/images/source.png".into(),
+            prompt: "saved prompt".into(),
+            client_request_id: "request".into(),
+            server_task_id: "task".into(),
+            file_id: "file".into(),
+            billing_account_group_id: "group".into(),
+            sha256: "0".repeat(64),
+            size_bytes: 1,
+            source_path: "C:/videos/history.mp4".into(),
+            title: "历史视频".into(),
+            created_at: "2026-09-17T12:30:00+08:00".into(),
+        }
+    }
 
     fn captured_video_fixture() -> (
         video_image_callbacks::tests::scoped_inputs::Fixture,
@@ -543,22 +591,7 @@ mod tests {
         state.set_page("video-generation".into());
         state.set_video_page_tab("history".into());
         state.set_video_return_page("generation".into());
-        let output = SavedVideoOutput {
-            model: "seedance-2.0-fast".into(),
-            resolution: "1080P".into(),
-            duration_secs: 8,
-            source_asset_id: "source".into(),
-            prompt: "saved prompt".into(),
-            client_request_id: "request".into(),
-            server_task_id: "task".into(),
-            file_id: "file".into(),
-            billing_account_group_id: "group".into(),
-            sha256: "0".repeat(64),
-            size_bytes: 1,
-            source_path: "C:/videos/history.mp4".into(),
-            title: "历史视频".into(),
-            created_at: "2026-09-17T12:30:00+08:00".into(),
-        };
+        let output = saved_video_for_navigation();
 
         apply_saved_video_selection(&state, &output, output.prompt.clone());
 
@@ -566,12 +599,42 @@ mod tests {
         assert!(state.get_video_player_open());
         assert_eq!(state.get_page(), "video-generation");
         assert_eq!(state.get_video_return_page(), "generation");
+        assert_eq!(state.get_video_player_return_page(), "video-generation");
         assert_eq!(state.get_video_result_path(), output.source_path);
         assert_eq!(state.get_video_source_title(), output.title);
         assert_eq!(state.get_video_prompt(), output.prompt);
         assert_eq!(state.get_video_model(), output.model);
         assert_eq!(state.get_video_resolution(), output.resolution);
         assert_eq!(state.get_video_duration_seconds(), 8);
+
+        crate::runtime::app::back_from_video_generation(&state);
+        assert_eq!(state.get_page(), "video-generation");
+        assert!(!state.get_video_player_open());
+        assert_eq!(state.get_video_player_return_page(), "");
+    }
+
+    #[test]
+    fn saved_video_from_assets_returns_to_video_gallery() {
+        i_slint_backend_testing::init_no_event_loop();
+        let fixture = video_image_callbacks::tests::scoped_inputs::Fixture::new();
+        let app = AppWindow::new().unwrap();
+        wire_video_generation_callbacks(&app, fixture.context.clone());
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_page("assets".into());
+        state.set_asset_category_filter("video".into());
+        let output = saved_video_for_navigation();
+
+        apply_saved_video_selection(&state, &output, output.prompt.clone());
+        assert_eq!(state.get_video_player_return_page(), "assets");
+        assert_eq!(state.get_video_return_page(), "assets");
+
+        crate::runtime::app::back_from_video_generation(&state);
+        assert_eq!(state.get_page(), "assets");
+        assert_eq!(state.get_asset_category_filter(), "video");
+        assert!(!state.get_video_player_open());
+        assert_eq!(state.get_video_player_return_page(), "");
+        fixture.drain();
     }
 
     #[test]
@@ -611,7 +674,7 @@ mod tests {
     }
 
     #[test]
-    fn video_workspace_starts_with_a_thumbnail_and_offers_both_image_sources() {
+    fn video_prompt_contains_reference_thumbnail_and_offers_both_image_sources() {
         use i_slint_backend_testing::{ElementHandle, TestingBackend, TestingBackendOptions};
         use slint::platform::PointerEventButton;
 
@@ -642,24 +705,24 @@ mod tests {
             app.window()
                 .set_size(slint::LogicalSize::new(width, height));
             let cards: Vec<_> =
-                ElementHandle::find_by_element_type_name(&app, "VideoImageCard").collect();
+                ElementHandle::find_by_element_type_name(&app, "VideoReferenceThumb").collect();
             assert_eq!(
                 cards.len(),
                 1,
-                "the original image must appear as one thumbnail"
+                "the original image must appear inside the prompt composer"
             );
             assert!(
-                cards[0].size().width <= 240.0 && cards[0].size().height <= 280.0,
-                "a source image must not grow into a full-height preview"
+                cards[0].size().width <= 64.0 && cards[0].size().height <= 64.0,
+                "reference images should remain compact thumbnails"
             );
-            let add = ElementHandle::find_by_element_id(&app, "VideoImageGrid::add-image")
+            let add = ElementHandle::find_by_accessible_label(&app, "添加参考图")
                 .next()
-                .expect("add tile beside the image");
+                .expect("reference upload control in the prompt composer");
             assert!(
                 add.absolute_position().x >= cards[0].absolute_position().x + cards[0].size().width
             );
         }
-        ElementHandle::find_by_element_id(&app, "VideoImageGrid::add-image")
+        ElementHandle::find_by_accessible_label(&app, "添加参考图")
             .next()
             .unwrap()
             .mock_single_click(PointerEventButton::Left);
@@ -675,83 +738,63 @@ mod tests {
     }
 
     #[test]
-    fn video_workspace_tabs_open_history_and_history_cards_open_the_player_view() {
+    fn video_hover_preview_uses_the_hovered_card_id_and_bounds() {
         use i_slint_backend_testing::{ElementHandle, TestingBackend, TestingBackendOptions};
-        use slint::platform::PointerEventButton;
+        use slint::platform::WindowEvent;
 
         slint::platform::set_platform(Box::new(TestingBackend::new(TestingBackendOptions {
             mock_time: true,
             renderer_name: Some("software".into()),
             ..Default::default()
-        })))
-        .unwrap();
+        }))).unwrap();
         let app = AppWindow::new().unwrap();
         let state = app.global::<AppState>();
         state.set_logged_in(true);
         state.set_page("video-generation".into());
-        state.set_saved_videos(ModelRc::new(VecModel::from(vec![VideoImageItem {
-            id: "video-history-id".into(),
-            title: "历史视频".into(),
-            subtitle: "2026-09-17 12:30 · 1080P · 8s".into(),
+        state.set_saved_videos(ModelRc::new(VecModel::from((0..6).map(|index| VideoImageItem {
+            id: format!("video-{index}").into(),
+            title: format!("Video {index}").into(),
             ..Default::default()
-        }])));
-        let opened = Rc::new(RefCell::new(String::new()));
+        }).collect::<Vec<_>>())));
+        let previews = Rc::new(RefCell::new(Vec::new()));
         {
-            let opened = opened.clone();
+            let previews = previews.clone();
             let weak = app.as_weak();
-            state.on_play_saved_video(move |id| {
-                *opened.borrow_mut() = id.to_string();
+            state.on_sync_video_preview(move |id, x, y, width, height| {
+                previews.borrow_mut().push((id.to_string(), x, y, width, height));
                 if let Some(app) = weak.upgrade() {
-                    let state = app.global::<AppState>();
-                    state.set_video_result_path("C:/videos/history.mp4".into());
-                    state.set_video_player_open(true);
+                    app.global::<AppState>().set_video_hover_preview_id(id);
                 }
             });
         }
         app.show().unwrap();
-
-        for (width, height) in [(1180.0, 760.0), (1440.0, 900.0)] {
+        for (width, height) in [(1180.0, 900.0), (1440.0, 1080.0), (1920.0, 1080.0)] {
+            app.window().dispatch_event(WindowEvent::PointerExited);
             app.window().set_size(slint::LogicalSize::new(width, height));
-            let tabs = ElementHandle::find_by_element_id(&app, "VideoGenerationPage::video-page-tabs")
-                .next()
-                .expect("video page tabs");
-            assert!(tabs.absolute_position().x >= 0.0);
-            assert!(tabs.absolute_position().x + tabs.size().width <= width);
+            for index in 0..6 {
+                let card = ElementHandle::find_by_accessible_label(&app, &format!("播放 Video {index}"))
+                    .next().unwrap();
+                let position = card.absolute_position();
+                let size = card.size();
+                if position.y + size.height > height { continue; }
+                state.set_video_hover_preview_id("".into());
+                previews.borrow_mut().clear();
+                app.window().dispatch_event(WindowEvent::PointerMoved {
+                    position: slint::LogicalPosition::new(position.x + 15.0, position.y + 15.0),
+                });
+                i_slint_backend_testing::mock_elapsed_time(Duration::ZERO);
+                i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(300));
+                slint::platform::update_timers_and_animations();
+                let previews = previews.borrow();
+                assert_eq!(previews.len(), 1, "only the hovered card should request preview");
+                let (id, x, y, preview_width, preview_height) = &previews[0];
+                assert_eq!(id, &format!("video-{index}"));
+                assert!((x - position.x).abs() < 1.0, "preview x {x} differs from card x {}", position.x);
+                assert!((y - position.y).abs() < 1.0, "preview y {y} differs from card y {}", position.y);
+                assert!((preview_width - size.width).abs() < 1.0);
+                assert!((preview_height - size.height).abs() < 1.0);
+            }
         }
-        save_video_prompt_test_snapshot(&app, "video-create-tab.png");
-
-        ElementHandle::find_by_accessible_label(&app, "历史记录")
-            .next()
-            .expect("history tab")
-            .mock_single_click(PointerEventButton::Left);
-        assert_eq!(state.get_video_page_tab(), "history");
-        let history = ElementHandle::find_by_element_id(&app, "VideoGenerationPage::history-card")
-            .next()
-            .expect("history occupies the left workspace");
-        let settings = ElementHandle::find_by_element_id(&app, "VideoGenerationPage::settings-card")
-            .next()
-            .expect("settings stay mounted beside history");
-        assert!(history.absolute_position().x + history.size().width <= settings.absolute_position().x);
-        save_video_prompt_test_snapshot(&app, "video-history-tab.png");
-
-        ElementHandle::find_by_accessible_label(&app, "播放 历史视频")
-            .next()
-            .expect("saved video card")
-            .mock_single_click(PointerEventButton::Left);
-        assert_eq!(opened.borrow().as_str(), "video-history-id");
-        assert_eq!(state.get_video_page_tab(), "history");
-        assert!(state.get_video_player_open());
-
-        state.set_video_player_open(false);
-        ElementHandle::find_by_accessible_label(&app, "历史记录")
-            .next()
-            .unwrap()
-            .mock_single_click(PointerEventButton::Left);
-        ElementHandle::find_by_accessible_label(&app, "创作")
-            .next()
-            .expect("create tab")
-            .mock_single_click(PointerEventButton::Left);
-        assert_eq!(state.get_video_page_tab(), "create");
     }
 
     #[test]
@@ -871,14 +914,15 @@ mod tests {
             purpose: purpose.into(),
             version: 1,
             capabilities: "支持图生视频".into(),
+            capability_json: serde_json::json!({"aspect_ratios":["16:9","9:16"], "duration_secs":{"min":4,"max":15}}).to_string().into(),
             pricing: String::new().into(),
             price_1k: 0,
             price_2k: 0,
             price_4k: 0,
             price_standard: String::new().into(),
             video_price_480: String::new().into(),
-            video_price_720: String::new().into(),
-            video_price_1080: String::new().into(),
+            video_price_720: "200".into(),
+            video_price_1080: "450".into(),
             supports_image_edit: false,
             supports_style_analysis: false,
         }

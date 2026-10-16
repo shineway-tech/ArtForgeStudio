@@ -157,6 +157,10 @@ pub(super) fn store_references_path(store: &Store, path: &Path) -> bool {
     if store.assets.iter().any(asset_references_path)
         || store.generations.iter().any(asset_references_path)
         || store.inspiration.iter().any(asset_references_path)
+        || store.video_outputs.values().any(|output| {
+            !output.preview_source_path.is_empty()
+                && paths_refer_to_same_file(Path::new(&output.preview_source_path), path)
+        })
         || all_store_references(&store.references).any(|reference| {
             paths_refer_to_same_file(Path::new(&reference.source_path), path)
         })

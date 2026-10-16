@@ -1,0 +1,73 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+export component ContactItem inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> join-group: false;
+
+    height: 78px;
+    background: AppTheme.panel-soft;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: AppTheme.accent.with-alpha(0.42);
+
+    Text {
+        x: 16px;
+        y: 12px;
+        width: parent.width - 132px;
+        height: 22px;
+        text: root.label;
+        color: AppTheme.muted;
+        font-size: 12px;
+        vertical-alignment: center;
+    }
+    Text {
+        x: 16px;
+        y: 38px;
+        width: parent.width - 132px;
+        height: 26px;
+        text: root.value;
+        color: AppTheme.text;
+        font-size: 16px;
+        font-weight: 500;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Rectangle {
+        x: parent.width - 104px;
+        y: 21px;
+        width: 88px;
+        height: 36px;
+        background: action-touch.has-hover ? AppTheme.accent.with-alpha(0.22) : AppTheme.panel;
+        border-radius: 18px;
+        border-width: 1px;
+        border-color: AppTheme.accent;
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.join-group ? (AppState.en ? "Join group" : "一键加群") : (AppState.en ? "Copy" : "复制");
+            color: AppTheme.text;
+            font-size: 12px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        action-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            accessible-role: button;
+            accessible-label: root.join-group
+                ? (AppState.en ? "Join official group" : "一键加入官方群")
+                : (AppState.en ? "Copy " + root.label : "复制" + root.label);
+            clicked => {
+                if root.join-group {
+                    AppState.open-external-link("https://qm.qq.com/q/ugUpnQFL2M");
+                } else {
+                    AppState.copy-contact-detail(root.value);
+                }
+            }
+        }
+    }
+}

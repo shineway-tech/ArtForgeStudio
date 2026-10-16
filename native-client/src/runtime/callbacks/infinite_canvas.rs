@@ -717,10 +717,18 @@ fn extract_canvas_elements_for_authority(
     authority: &NamespaceStorageAuthority,
     source_path: &Path,
     cancel: &std::sync::atomic::AtomicBool,
+    character_parts: bool,
 ) -> Result<Vec<CanvasExtractedElement>> {
     let bytes = authority.read_image_source(source_path, 100 * 1024 * 1024)?;
     let (decoded, _) = decode_image_bytes(source_path, &bytes)?;
-    let components = extract_ui_components(&decoded.to_rgba8())?;
+    let components = if character_parts {
+        extract_character_parts(&decoded.to_rgba8())?
+    } else {
+        extract_ui_components(&decoded.to_rgba8())?
+    };
+    if character_parts {
+        anyhow::ensure!(components.len() >= 10, "角色拆件图中的独立部件不足");
+    }
     let mut elements = Vec::with_capacity(components.len());
     for (index, component) in components.into_iter().enumerate() {
         anyhow::ensure!(!cancel.load(Ordering::Acquire), "canvas extraction cancelled");
@@ -745,6 +753,33 @@ fn remove_canvas_extracted_elements(elements: &[CanvasExtractedElement]) {
 fn clear_canvas_extraction_loading(state: &AppState, source_id: &str) {
     if state.get_canvas_extraction_loading_node_id().as_str() == source_id {
         state.set_canvas_extraction_loading_node_id("".into());
+    }
+}
+
+fn pending_character_parts_source(store: &Store) -> Option<String> {
+    store.assets.iter().filter(|asset| asset.origin == CHARACTER_SPLIT_ORIGIN)
+        .find_map(|asset| {
+            let note = store.canvas_notes.iter().find(|note| {
+                note.kind == "image" && note.image_path == asset.source_path
+            })?;
+            let extracted = store.canvas_links.iter().any(|link| {
+                link.source_id == note.id && store.canvas_notes.iter().any(|child| {
+                    child.id == link.target_id && child.kind == "board-image"
+                })
+            });
+            (!extracted).then(|| note.id.clone())
+        })
+}
+
+pub(super) fn start_pending_character_parts_extraction(app: &AppWindow, store: &Rc<RefCell<Store>>) {
+    let state = app.global::<AppState>();
+    if !state.get_canvas_extraction_loading_node_id().is_empty()
+        || !state.get_canvas_split_loading_node_id().is_empty() {
+        return;
+    }
+    let pending = pending_character_parts_source(&store.borrow());
+    if let Some(source_id) = pending {
+        state.invoke_extract_canvas_ui_elements(source_id.into());
     }
 }
 
@@ -810,12 +845,24 @@ fn poll_canvas_element_extraction(
         let elements = match outcome {
             Ok(elements) => elements,
             Err(_error) => {
+                let character_parts = store.borrow().assets.iter().any(|asset| {
+                    asset.origin == CHARACTER_SPLIT_ORIGIN && asset.source_path == source.image_path
+                });
                 let _ = capture.apply(&store, || {
                     let state = app.global::<AppState>();
                     clear_canvas_extraction_loading(&state, &source.id);
                     state.set_generation_status(
-                        (if state.get_language().as_str() == "en" { "Unable to extract canvas elements" }
-                        else { "无法提取画布元素" }).into(),
+                        (if character_parts {
+                            if state.get_language().as_str() == "en" {
+                                "Unable to isolate enough character parts; the original sheet was kept"
+                            } else {
+                                "未能分离出足够的角色部件，已保留原始汇总图"
+                            }
+                        } else if state.get_language().as_str() == "en" {
+                            "Unable to extract canvas elements"
+                        } else {
+                            "无法提取画布元素"
+                        }).into(),
                     );
                 });
                 return;
@@ -1767,6 +1814,9 @@ fn poll_canvas_save_status(
         if let Some((completed, result)) = viewer_completion {
             complete_viewer_canvas_import(&completed, result);
         }
+        if acknowledged && matches!(completion, CanvasSaveCompletion::Extraction { .. }) {
+            start_pending_character_parts_extraction(&app, &store);
+        }
     });
 }
 
@@ -1867,6 +1917,22 @@ pub(super) fn normalize_canvas_workflow_prompt(prompt: &str) -> String {
         .join(" ")
 }
 
+fn compose_character_split_prompt(user_description: &str, english: bool) -> String {
+    let specification = if english {
+        "Using the single uploaded full-body character illustration as the exact design reference, create a clean character-parts atlas, not a new character or a set of poses. Preserve the original identity, facial anatomy, palette, outfit details, materials, perspective, line work, and painting style. Semantically identify and separate every visible part: face and skin base, front and back hair, left and right eyebrows, left and right eyes, nose, mouth, left and right ears, neck, torso and clothing, left and right arms and hands, left and right legs and feet, and any visible accessories, weapon, or special effects. In addition, separate the base-color shapes from their visible shadow and highlight/light-effect overlays where the source design has these layers. Keep each eye, eyebrow, ear, nose, and mouth as its own independent, legible piece; enlarge tiny facial details within their individual areas rather than merging them into the face. Do not invent hidden anatomy, accessories, or effects absent from the reference. Arrange all pieces as one orderly atlas on a single uniform, high-contrast solid background. Every piece and every shadow, highlight, accessory, or effect must have a wide, uninterrupted background gap from every other piece; no touching, overlap, connecting line, shared silhouette, cast shadow, or continuous ground. Keep all silhouettes fully inside the image, and scale pieces down as needed without reducing the number of visible parts. No assembled full-body duplicate, inset reference image, checkerboard, gradient, scenery, labels, letters, numbers, watermark, or PSD icon. The background is only a temporary extraction matte; output the isolated parts clearly so the application can remove it and save each part as a transparent PNG."
+    } else {
+        "以唯一上传的角色立绘为准确设计依据，生成一张角色独立部件汇总图，而不是新角色或多姿势图。保持原角色的身份、五官结构、配色、服饰细节、材质、透视、线条和绘画风格。自动识别并分别绘制所有可见部分：脸部与肤色底色、前发与后发、左眉和右眉、左眼和右眼、鼻子、嘴巴、左耳和右耳、颈部、躯干与服饰、左右手臂和手、左右腿和脚，以及原图确实存在的配饰、武器和特效。对原图存在的层次，另行拆出独立的基础色块、阴影层和高光/光效层。每只眼睛、眉毛、耳朵、鼻子、嘴巴都必须是独立且清晰可见的部件；五官太小时应在各自区域适度放大，不能合并进脸部。不要臆造原图不可见的身体结构、饰品或特效。将全部部件整齐排在一张图上，背景只能是与部件形成反差的单一纯色。每个部件、阴影、高光、饰品、特效之间必须留出宽阔且连续的纯色背景间距；不能接触、重叠、用线连接、共用轮廓、投影或地面。所有部件完整入镜；空间不足时缩小部件，不能减少可见部件数量。不要出现完整角色复本、原图小窗、棋盘格、渐变、场景、标签、文字、数字、水印或 PSD 图标。纯色背景只作临时提取底色，务必使各部件边界清晰，以便程序去底并分别保存为透明 PNG。"
+    };
+    let description = user_description.trim();
+    if description.is_empty() {
+        specification.to_string()
+    } else if english {
+        format!("{specification} Additional user requirements: {description}")
+    } else {
+        format!("{specification} 用户补充要求：{description}")
+    }
+}
+
 pub(super) fn compose_canvas_workflow_prompt(
     template: &str,
     user_description: &str,
@@ -1886,6 +1952,11 @@ pub(super) fn compose_canvas_workflow_prompt(
         || template.contains("Scene composition specification:")
     {
         return compose_scene_composition_prompt(user_description, english);
+    }
+    if template.contains("角色拆分规范：")
+        || template.contains("Character part breakdown specification:")
+    {
+        return compose_character_split_prompt(user_description, english);
     }
 
     let step_count = requested_step_count.clamp(4, 12);
@@ -2089,6 +2160,7 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                 start_canvas_reference_preview_effects(
                     &app, capture.persistence.clone(), effects,
                 );
+                start_pending_character_parts_extraction(&app, &store);
             }
         });
     }
@@ -2134,12 +2206,6 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                     return None;
                 }
                 let store_ref = store.borrow();
-                if store_ref.canvas_notes.len() + MAX_EXTRACTED_COMPONENTS > MAX_CANVAS_NODES
-                    || store_ref.canvas_links.len() + MAX_EXTRACTED_COMPONENTS > MAX_CANVAS_LINKS
-                {
-                    show_canvas_capacity_status(&app);
-                    return None;
-                }
                 let Some(note) = store_ref.canvas_notes.iter().find(|note| {
                     note.id == source_node_id.as_str()
                         && matches!(note.kind.as_str(), "image" | "board-image")
@@ -2155,6 +2221,16 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                     );
                     return None;
                 };
+                let character_parts = store_ref.assets.iter().any(|asset| {
+                    asset.origin == CHARACTER_SPLIT_ORIGIN && asset.source_path == note.image_path
+                });
+                let maximum = if character_parts { MAX_EXTRACTED_CHARACTER_PARTS } else { MAX_EXTRACTED_COMPONENTS };
+                if store_ref.canvas_notes.len() + maximum > MAX_CANVAS_NODES
+                    || store_ref.canvas_links.len() + maximum > MAX_CANVAS_LINKS
+                {
+                    show_canvas_capacity_status(&app);
+                    return None;
+                }
                 let source = CanvasSplitSource {
                     id: note.id.clone(),
                     image_path: note.image_path.clone(),
@@ -2172,16 +2248,16 @@ pub(super) fn wire_infinite_canvas_callbacks(app: &AppWindow, context: AppContex
                 .into(),
                 );
                 state.set_canvas_extraction_loading_node_id(source.id.clone().into());
-                Some(source)
+                Some((source, character_parts))
             }).flatten();
-            let Some(source) = source else { return; };
+            let Some((source, character_parts)) = source else { return; };
             let source_path = PathBuf::from(&source.image_path);
             let (sender, receiver) = mpsc::channel::<CanvasExtractionOutcome>();
             let persistence = capture.persistence.clone();
             let worker_persistence = persistence.clone();
             let ticket = match spawn_canvas_worker(persistence, move |cancel, _activity| {
                 let outcome = worker_persistence.storage_authority()
-                    .and_then(|authority| extract_canvas_elements_for_authority(&authority, &source_path, &cancel))
+                    .and_then(|authority| extract_canvas_elements_for_authority(&authority, &source_path, &cancel, character_parts))
                     .map_err(|error| error.to_string());
                 let _ = sender.send(outcome);
                 wait_at_canvas_worker_exit_for_test();
@@ -4573,4 +4649,37 @@ mod tests {
         assert_eq!(fs::read(source_path).unwrap(), bytes);
         assert!(!configured_output_root.exists());
     }
+
+    #[test]
+    fn character_parts_auto_extraction_only_targets_unprocessed_generated_sheets() {
+        let mut store = Store::default();
+        store.canvas_notes.push(CanvasNoteData {
+            id: "sheet".into(), kind: "image".into(), image_path: "parts.png".into(),
+            ..Default::default()
+        });
+        store.assets.push(AssetData {
+            id: "asset".into(), conversation_id: String::new(), title: String::new(),
+            category: "other".into(), kind: "game".into(), time: String::new(),
+            prompt: String::new(), ratio: "4:3".into(), quality: "2K".into(),
+            model: String::new(), origin: CHARACTER_SPLIT_ORIGIN.into(),
+            width: 2048, height: 1536, source_path: "parts.png".into(),
+            reference_paths: Vec::new(), cutout_done: false, remove_black_done: false,
+            upscale_done: false, is_new: true, delivery_recoverable: false,
+            delivery_downloading: false,
+        });
+        assert_eq!(pending_character_parts_source(&store).as_deref(), Some("sheet"));
+        store.canvas_notes.push(CanvasNoteData {
+            id: "part-1".into(), kind: "board-image".into(), image_path: "part-1.png".into(),
+            ..Default::default()
+        });
+        store.canvas_links.push(CanvasLinkData {
+            id: "link".into(), source_id: "sheet".into(), target_id: "part-1".into(),
+            ..Default::default()
+        });
+        assert!(pending_character_parts_source(&store).is_none());
+        store.canvas_links.clear();
+        store.assets[0].origin = "generation".into();
+        assert!(pending_character_parts_source(&store).is_none());
+    }
+
 }

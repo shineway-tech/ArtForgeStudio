@@ -43,6 +43,51 @@ component InvitationGiftButton {
     }
 }
 
+component VideoCreditBalance {
+    width: 150px;
+    height: 36px;
+    accessible-role: button;
+    accessible-label: AppState.en ? "Remaining credits" : "剩余积分";
+
+    Rectangle {
+        y: 2px;
+        width: parent.width;
+        height: parent.height - 4px;
+        background: balance-touch.has-hover ? AppTheme.panel-soft : transparent;
+        border-radius: 16px;
+        border-width: 1px;
+        border-color: balance-touch.has-hover ? AppTheme.accent : AppTheme.border;
+
+        Image {
+            x: 13px;
+            y: (parent.height - 16px) / 2;
+            width: 16px;
+            height: 16px;
+            source: @image-url("../../assets/icons/credits.svg");
+            colorize: AppTheme.accent;
+            image-fit: contain;
+        }
+        Text {
+            x: 36px;
+            width: parent.width - 47px;
+            height: parent.height;
+            text: (AppState.en ? "Credits " : "剩余积分 ")
+                + (AppState.credit-balance == "" ? "—" : AppState.credit-balance);
+            color: AppTheme.text;
+            font-size: 13px;
+            font-weight: 500;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        balance-touch := TouchArea {
+            width: parent.width;
+            height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { AppState.navigate("credits"); }
+        }
+    }
+}
+
 export component TopBar {
     property <length> action-gap: 8px;
     property <length> gift-width: 48px;
@@ -129,6 +174,7 @@ export component TopBar {
                     text: AppState.en ? "Payment status" : "查看支付状态";
                     clicked => { AppState.payment-dialog-open = true; }
                 }
+                if AppState.page == "video-generation" && AppState.logged-in: VideoCreditBalance {}
                 if AppState.logged-in: InvitationGiftButton {}
                 PillButton { width: 94px; text: AppState.language == "zh" ? "中文" : "English"; clicked => { AppState.set-language(AppState.language == "zh" ? "en" : "zh"); } }
                 if !AppState.logged-in && AppState.page != "welcome": PillButton {
@@ -146,10 +192,14 @@ export component TopBar {
         }
     }
     function actions-width() -> length {
-        let count = 1 + (AppState.logged-in || AppState.page != "welcome" ? 1 : 0) + (AppState.payment-active ? 1 : 0);
+        let count = 1 + (AppState.logged-in || AppState.page != "welcome" ? 1 : 0)
+            + (AppState.payment-active ? 1 : 0)
+            + (AppState.page == "video-generation" && AppState.logged-in ? 1 : 0);
         return root.language-width
             + (AppState.logged-in ? (AppState.en ? 112px : 98px) : (AppState.page != "welcome" ? root.login-width : 0px))
-            + (AppState.payment-active ? root.payment-width : 0px) + (count - 1) * root.action-gap;
+            + (AppState.payment-active ? root.payment-width : 0px)
+            + (AppState.page == "video-generation" && AppState.logged-in ? root.balance-width : 0px)
+            + (count - 1) * root.action-gap;
     }
     function model-picker-width() -> length {
         return min(280px, (root.width - (root.models-on-second-row ? 36px : root.actions-width() + 56px) - 2 * 18px) / 3);

@@ -2,6 +2,7 @@ use super::*;
 
 const MAX_ANALYSIS_EDGE: u32 = 1_024;
 pub(super) const MAX_EXTRACTED_COMPONENTS: usize = 24;
+pub(super) const MAX_EXTRACTED_CHARACTER_PARTS: usize = 40;
 
 #[derive(Debug)]
 pub(super) struct ExtractedUiComponent {
@@ -19,6 +20,22 @@ struct ComponentBounds {
 
 pub(super) fn extract_ui_components(
     source: &image::RgbaImage,
+) -> Result<Vec<ExtractedUiComponent>> {
+    extract_components(source, MAX_EXTRACTED_COMPONENTS, 10, 3_200, 40)
+}
+
+pub(super) fn extract_character_parts(
+    source: &image::RgbaImage,
+) -> Result<Vec<ExtractedUiComponent>> {
+    extract_components(source, MAX_EXTRACTED_CHARACTER_PARTS, 6, 10_000, 20)
+}
+
+fn extract_components(
+    source: &image::RgbaImage,
+    max_components: usize,
+    min_dimension: u32,
+    min_pixels_divisor: u32,
+    min_pixels_floor: u32,
 ) -> Result<Vec<ExtractedUiComponent>> {
     if source.width() < 32 || source.height() < 32 {
         return Err(anyhow!("组件汇总图尺寸过小"));
@@ -44,18 +61,18 @@ pub(super) fn extract_ui_components(
         .collect::<Vec<_>>();
     let bridge_radius = (analysis_width.max(analysis_height) / 220).clamp(2, 6);
     mask = dilate_mask(&mask, analysis_width, analysis_height, bridge_radius);
-    let minimum_pixels = (analysis_width * analysis_height / 3_200).max(40);
+    let minimum_pixels = (analysis_width * analysis_height / min_pixels_divisor).max(min_pixels_floor);
     let mut bounds =
         connected_component_bounds(&mask, analysis_width, analysis_height, minimum_pixels);
     bounds.retain(|item| {
         let width = item.right - item.left + 1;
         let height = item.bottom - item.top + 1;
-        width >= 10
-            && height >= 10
+        width >= min_dimension
+            && height >= min_dimension
             && !(width > analysis_width * 94 / 100 && height > analysis_height * 94 / 100)
     });
     sort_component_bounds_reading_order(&mut bounds);
-    bounds.truncate(MAX_EXTRACTED_COMPONENTS);
+    bounds.truncate(max_components);
     if bounds.is_empty() {
         return Err(anyhow!("未识别到可拆分的独立 UI 元素"));
     }
@@ -297,6 +314,31 @@ mod tests {
         assert!(components
             .iter()
             .all(|component| { component.image.pixels().any(|pixel| pixel[3] == 0) }));
+    }
+
+    #[test]
+    fn character_parts_keep_small_facial_details_separate_and_transparent() {
+        let mut atlas = image::RgbaImage::from_pixel(600, 360, image::Rgba([250, 249, 245, 255]));
+        for row in 0..2 {
+            for column in 0..6 {
+                let left = 30 + column * 90;
+                let top = 30 + row * 150;
+                let width = if row == 0 { 12 } else { 55 };
+                let height = if row == 0 { 10 } else { 85 };
+                for y in top..top + height {
+                    for x in left..left + width {
+                        atlas.put_pixel(x, y, image::Rgba([55, 85, 175, 255]));
+                    }
+                }
+            }
+        }
+
+        let parts = extract_character_parts(&atlas).expect("extract facial and body parts");
+        assert_eq!(parts.len(), 12);
+        assert!(parts.iter().all(|part| {
+            part.image.pixels().any(|pixel| pixel[3] == 0)
+                && part.image.pixels().any(|pixel| pixel[3] == 255)
+        }));
     }
 
     #[test]

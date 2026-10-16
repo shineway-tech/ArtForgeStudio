@@ -15,9 +15,9 @@ git push origin vX.Y.Z
 
 ## Local packages
 
-普通本地构建（包括 `cargo build --release`）使用 `local` 构建渠道，界面标记“本地开发版”，不会自动弹出普通更新提示，也不允许安装线上更新包覆盖未发布修改。手动检查仍可查看线上版本；服务端最低版本要求不受此保护影响，不能通过本地标记绕过。
+直接执行 Cargo 的普通本地构建（包括 `cargo build --release`）使用 `local` 构建渠道，界面标记“本地开发版”，不会自动弹出普通更新提示，也不允许安装线上更新包覆盖未发布修改。手动检查仍可查看线上版本；服务端最低版本要求不受此保护影响，不能通过本地标记绕过。
 
-正式发布工作流显式设置 `ELUNVI_BUILD_CHANNEL=release`，生成保留正常自动更新能力的发布包。只有确认所需修改已经合并并通过验证后，才应使用该渠道构建；Cargo 的 release 优化配置与正式发布渠道不是同一概念。
+`package-native-client.ps1` 默认使用 `release` 构建渠道，因此本地组装出的 Windows 包可以直接检查、下载并安装线上最新版本。需要保留开发版覆盖保护时，显式传入 `-BuildChannel local`。正式发布工作流同样显式使用 `release` 渠道；只有确认所需修改已经合并并通过验证后，才应生成可升级包，Cargo 的 release 优化配置与更新渠道不是同一概念。
 
 macOS DMG：
 
@@ -42,6 +42,12 @@ Windows PowerShell：
 ```
 
 该命令生成完整免安装目录和 portable ZIP。`scripts/build-release.ps1` 会先执行测试和检查，再调用同一个 Windows 打包入口；可用 `-SkipTests` 跳过前置验证，但正式发布不应跳过。
+
+如需生成禁止线上安装包覆盖的本地开发包：
+
+```powershell
+./scripts/package-native-client.ps1 -Target windows -BuildChannel local
+```
 
 ## Release workflow
 

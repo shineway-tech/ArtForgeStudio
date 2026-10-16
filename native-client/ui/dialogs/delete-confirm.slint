@@ -10,6 +10,7 @@ export component DeleteConfirm {
         AppState.pending-delete-id = "";
         AppState.pending-delete-source = "";
         AppState.pending-delete-can-remove-file = false;
+        AppState.pending-generation-delete-ids = [];
     }
 
     function confirm-pending-delete-local-file() {
@@ -33,6 +34,8 @@ export component DeleteConfirm {
             AppState.remove-canvas-selection();
         } else if AppState.pending-delete-kind == "canvas-link" {
             AppState.remove-canvas-link(AppState.pending-delete-id);
+        } else if AppState.pending-delete-kind == "generation-selection" {
+            AppState.confirm-delete-selected-generations();
         } else {
             AppState.confirm-delete();
             AppState.delete-confirm-open = false;
@@ -46,7 +49,7 @@ export component DeleteConfirm {
         TouchArea { width: parent.width; height: parent.height; }
         dialog := Rectangle {
             width: min(330px, root.width - 32px);
-            height: min(AppState.pending-delete-can-remove-file ? 232px : 180px, root.height - 40px);
+            height: min(AppState.pending-delete-can-remove-file ? 232px : (AppState.pending-delete-kind == "generation-selection" ? 216px : 180px), root.height - 40px);
             x: (root.width - self.width) / 2;
             y: (root.height - self.height) / 2;
             background: AppTheme.panel;
@@ -60,6 +63,8 @@ export component DeleteConfirm {
                 Text {
                     text: AppState.pending-delete-kind == "custom-prompt"
                         ? (AppState.en ? "Delete this prompt?" : "确认删除这条提示词？")
+                        : (AppState.pending-delete-kind == "generation-selection"
+                            ? (AppState.en ? "Delete " + AppState.pending-generation-delete-ids.length + " selected results?" : "确认删除选中的 " + AppState.pending-generation-delete-ids.length + " 个结果？")
                         : (AppState.pending-delete-kind == "canvas-group"
                             ? (AppState.en ? "Delete this group and all nodes inside it?" : "是否删除当前分组以及组内节点？")
                             : (AppState.pending-delete-kind == "canvas-note"
@@ -72,24 +77,28 @@ export component DeleteConfirm {
                             ? (AppState.en ? "Delete this notification?" : "确认删除这条通知？")
                             : (AppState.pending-delete-kind == "notifications-all"
                                 ? (AppState.en ? "Delete all notifications?" : "确认删除全部通知？")
-                                : (AppState.en ? "Delete this asset?" : "确认删除这个资产？")))))));
+                                : (AppState.en ? "Delete this asset?" : "确认删除这个资产？"))))))));
                     color: AppTheme.text;
                     font-size: 18px;
                     font-weight: 600;
+                    wrap: word-wrap;
                 }
                 Text {
                     text: AppState.pending-delete-kind == "notifications-all"
                         ? (AppState.en ? "All notifications will be permanently deleted." : "所有通知都将被删除，且无法恢复。")
+                        : (AppState.pending-delete-kind == "generation-selection"
+                            ? (AppState.en ? "The results will be removed; local image files are kept." : "结果将从列表中移除，本地图片文件会保留。")
                         : (AppState.pending-delete-kind == "canvas-group"
                             ? (AppState.en ? "You can restore it with Undo." : "可通过画布撤销恢复。")
                             : (AppState.pending-delete-kind == "custom-prompt" || AppState.pending-delete-kind == "notification" || AppState.pending-delete-kind == "canvas-note" || AppState.pending-delete-kind == "canvas-selection" || AppState.pending-delete-kind == "canvas-link"
                             ? (AppState.en ? "This action cannot be undone." : "删除后无法恢复。")
                             : (AppState.pending-delete-can-remove-file
                                 ? (AppState.en ? "The local file is kept by default. Shared or in-use files are always protected." : "默认只移除记录并保留本地文件；共享或使用中的文件始终会被保护。")
-                                : (AppState.en ? "It will be removed from My Assets." : "删除后将从我的资产中移除。"))));
+                                : (AppState.en ? "It will be removed from My Assets." : "删除后将从我的资产中移除。")))));
                     color: AppTheme.muted;
                     font-size: 13px;
                     font-weight: 400;
+                    wrap: word-wrap;
                 }
                 HorizontalLayout {
                     spacing: 10px;

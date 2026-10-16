@@ -153,17 +153,16 @@ impl CreateVideoQuote {
             || self.reference_file_ids.iter().any(|id| id.trim().is_empty()) {
             return Err(video_parameter_error("视频模型或源图片无效"));
         }
-        if !matches!(
-            self.aspect_ratio.as_str(),
-            "21:9" | "16:9" | "4:3" | "1:1" | "3:4" | "9:16"
-        ) {
+        if !self.aspect_ratio.split_once(':').is_some_and(|(width, height)| {
+            [width, height].into_iter().all(|part| part.parse::<u32>().is_ok_and(|value| value > 0))
+        }) {
             return Err(video_parameter_error("视频尺寸无效"));
         }
         if !matches!(self.resolution.as_str(), "480P" | "720P" | "1080P") {
             return Err(video_parameter_error("视频清晰度无效"));
         }
-        if !(4..=15).contains(&self.duration_secs) {
-            return Err(video_parameter_error("视频时长必须在 4 到 15 秒之间"));
+        if self.duration_secs < 4 {
+            return Err(video_parameter_error("视频时长不能少于 4 秒"));
         }
         Ok(())
     }
@@ -1579,14 +1578,14 @@ mod tests {
         assert_eq!(serde_json::to_value(&request).unwrap()["reference_file_ids"], serde_json::json!(["first", "second"]));
         request.reference_file_ids.clear(); assert!(request.validate().is_err());
         request.reference_file_ids = vec!["second".into()]; assert!(request.validate().is_err());
-        request.reference_file_ids = vec!["first".into()]; request.duration_secs=16; assert!(request.validate().is_err());
+        request.reference_file_ids = vec!["first".into()]; request.duration_secs=3; assert!(request.validate().is_err());
     }
 
     #[test]
     fn video_quote_accepts_only_supported_parameters_and_serializes_decimal_credits() {
-        for ratio in ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] {
+        for ratio in ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16", "3:2"] {
             for resolution in ["480P", "720P", "1080P"] {
-                for duration_secs in [4, 15] {
+                for duration_secs in [4, 15, 20] {
                     let request = CreateVideoQuote {
                         model_code: "seedance".to_string(),
                         source_file_id: "source-file".to_string(), reference_file_ids: vec!["source-file".to_string()],
@@ -1600,10 +1599,10 @@ mod tests {
         }
 
         for (ratio, resolution, duration_secs) in [
-            ("2:1", "720P", 4),
+            ("0:1", "720P", 4),
             ("16:9", "2K", 4),
             ("16:9", "720P", 3),
-            ("16:9", "720P", 16),
+            ("invalid", "720P", 16),
         ] {
             assert!(CreateVideoQuote {
                 model_code: "seedance".to_string(),

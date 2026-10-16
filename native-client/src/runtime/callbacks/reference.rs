@@ -43,7 +43,7 @@ impl ReferenceTarget{
     fn rows_mut<'a>(&self,store:&'a mut Store)->&'a mut Vec<ReferenceData>{match self{
         Self::Category(category)=>references_for_category_mut(&mut store.references,category),Self::Canvas(_)=>&mut store.canvas_references,Self::NativePage(_)|Self::NativeViewer{..}=>&mut store.canvas_references,
     }}
-    fn limit(&self)->usize{match self{Self::Category(category)=>max_reference_images_for_category(category),Self::Canvas(_)|Self::NativePage(_)|Self::NativeViewer{..}=>MAX_REFERENCE_IMAGES}}
+    fn limit(&self)->usize{match self{Self::Category(category)=>max_reference_images_for_category(category),Self::Canvas(workspace) if workspace=="character-split"=>1,Self::Canvas(_)|Self::NativePage(_)|Self::NativeViewer{..}=>MAX_REFERENCE_IMAGES}}
 }
 #[derive(Clone)]
 struct ReferenceCapture{persistence:PrivatePersistence,scope:SessionScope,target:ReferenceTarget,require_target:bool}
@@ -280,7 +280,7 @@ fn stage_reference_change(app:&AppWindow,context:AppContext,capture:ReferenceCap
     if !capture.current(app,&context){return;}
     if let ReferenceMutation::Append(rows)=&mutation{
         if rows.is_empty(){return;}
-        if capture.target.rows(&context.store.borrow()).len()>=capture.target.limit(){
+        if capture.target.rows(&context.store.borrow()).len().saturating_add(rows.len())>capture.target.limit(){
             capture.status(app,&context,&reference_limit_message(capture.target.limit()));return;
         }
     }
@@ -740,6 +740,13 @@ fn start_reference_from_library_item(app:&AppWindow,context:&AppContext,id:&str,
     let Some(path)=path else{return false;};
     start_reference_import(app,context.clone(),capture,ReferenceSource::Paths(vec![path]));true
 }
+fn selected_generation_reference_paths(store:&Store,category:&str,selected:&BTreeSet<String>)->Vec<PathBuf>{
+    store.generations.iter()
+        .filter(|item|item.category==category && selected.contains(&item.id)
+            && !item.source_path.is_empty() && item.source_path!="failed")
+        .map(|item|PathBuf::from(&item.source_path))
+        .collect()
+}
 pub(super) fn wire_reference_callbacks(app:&AppWindow,context:AppContext){
     let state=app.global::<AppState>();
     {
@@ -770,6 +777,26 @@ pub(super) fn wire_reference_callbacks(app:&AppWindow,context:AppContext){
         state.on_use_thumbnail_as_reference(move|id,source|{
             let Some(app)=weak.upgrade()else{return false;};
             start_reference_from_library_item(&app,&context,id.as_str(),source.as_str())
+        });
+    }
+    {
+        let weak=app.as_weak();let context=context.clone();
+        state.on_use_selected_generations_as_references(move||{
+            let Some(app)=weak.upgrade()else{return;};
+            let state=app.global::<AppState>();
+            if !state.get_generation_selection_mode(){return;}
+            let Some(capture)=ReferenceCapture::new(&app,&context)else{return;};
+            let ReferenceTarget::Category(category)=&capture.target else{return;};
+            let selected=generation_selection_ids(&state);
+            let paths=selected_generation_reference_paths(&context.store.borrow(),category,&selected);
+            if paths.is_empty(){
+                capture.status(&app,&context,"所选结果没有可用图片，无法用作参考图");return;
+            }
+            let remaining=capture.target.limit().saturating_sub(capture.target.rows(&context.store.borrow()).len());
+            if paths.len()>remaining{
+                capture.status(&app,&context,&reference_limit_message(capture.target.limit()));return;
+            }
+            start_reference_import(&app,context.clone(),capture,ReferenceSource::Paths(paths));
         });
     }
     {
@@ -1193,6 +1220,60 @@ mod core_reference_tests{
         assert!(f.persistence.owns_path(Path::new(&references[0].source_path)));
         assert!(!state.invoke_use_thumbnail_as_reference("generation-reference".into(), "unknown".into()));
         assert_eq!(f.context.store.borrow().references.character, references);
+    }
+    #[test]
+    fn selected_generation_images_import_together_into_current_composer() {
+        let (fixture, app) = fixture();
+        let first = owned(&fixture);
+        let second = owned(&fixture);
+        let mut first_row = legacy_asset("selected-first", Path::new(&first.source_path));
+        first_row.category = "character".into();
+        let mut second_row = legacy_asset("selected-second", Path::new(&second.source_path));
+        second_row.category = "character".into();
+        let mut other_category = legacy_asset("other-category", Path::new(&first.source_path));
+        other_category.category = "scene".into();
+        let mut failed = legacy_asset("failed", Path::new("failed"));
+        failed.category = "character".into();
+        fixture.context.store.borrow_mut().generations = vec![first_row, other_category, second_row, failed];
+        let state = app.global::<AppState>();
+        state.set_generation_selection_mode(true);
+        state.set_generation_selected_ids(ModelRc::new(VecModel::from(vec![
+            "selected-first".into(), "selected-second".into(), "other-category".into(), "failed".into(),
+        ])));
+
+        state.invoke_use_selected_generations_as_references();
+        pump_until(|| fixture.context.store.borrow().references.character.len() == 2);
+        drain_reference_test_workers(); pump_for(Duration::from_millis(80));
+
+        let references = saved(&fixture).references.character;
+        assert_eq!(references.len(), 2);
+        assert!(references.iter().all(|item| fixture.persistence.owns_path(Path::new(&item.source_path))));
+        assert_eq!(fixture.context.store.borrow().generations.len(), 4);
+    }
+
+    #[test]
+    fn selected_generation_import_rejects_over_limit_without_partial_addition() {
+        let (fixture, app) = fixture();
+        let original = owned(&fixture);
+        let limit = max_reference_images_for_category("character");
+        assert!(limit >= 2);
+        fixture.context.store.borrow_mut().references.character = (0..limit - 1)
+            .map(|index| ReferenceData { id: format!("existing-{index}"), source_path: original.source_path.clone() })
+            .collect();
+        fixture.context.store.borrow_mut().generations = ["first", "second"].into_iter()
+            .map(|id| {
+                let mut item = legacy_asset(id, Path::new(&original.source_path));
+                item.category = "character".into();
+                item
+            }).collect();
+        let state = app.global::<AppState>();
+        state.set_generation_selection_mode(true);
+        state.set_generation_selected_ids(ModelRc::new(VecModel::from(vec!["first".into(), "second".into()])));
+
+        state.invoke_use_selected_generations_as_references();
+
+        assert_eq!(fixture.context.store.borrow().references.character.len(), limit - 1);
+        assert_eq!(state.get_generation_status().to_string(), reference_limit_message(limit));
     }
     #[test]
     fn side_scroll_map_reference_import_appends_like_other_creation_workflows(){

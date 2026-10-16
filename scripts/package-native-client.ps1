@@ -1,6 +1,8 @@
 param(
     [ValidateSet("all", "windows", "macos-x64", "macos-arm64")]
     [string[]]$Target = @("all"),
+    [ValidateSet("local", "release")]
+    [string]$BuildChannel = "release",
     [switch]$SkipBuild
 )
 
@@ -115,9 +117,20 @@ function Build-Client {
     if ($RustTarget -ne "") {
         $args += @("--target", $RustTarget)
     }
-    & cargo @args
-    if ($LASTEXITCODE -ne 0) {
-        throw "Cargo build failed with exit code $LASTEXITCODE. Packaging stopped."
+    $previousBuildChannel = $env:ELUNVI_BUILD_CHANNEL
+    try {
+        $env:ELUNVI_BUILD_CHANNEL = $BuildChannel
+        & cargo @args
+        if ($LASTEXITCODE -ne 0) {
+            throw "Cargo build failed with exit code $LASTEXITCODE. Packaging stopped."
+        }
+    }
+    finally {
+        if ($null -eq $previousBuildChannel) {
+            Remove-Item Env:\ELUNVI_BUILD_CHANNEL -ErrorAction SilentlyContinue
+        } else {
+            $env:ELUNVI_BUILD_CHANNEL = $previousBuildChannel
+        }
     }
 }
 

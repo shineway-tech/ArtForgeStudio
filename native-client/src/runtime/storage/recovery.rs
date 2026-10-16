@@ -172,6 +172,8 @@ pub(super) struct PendingGenerationRecord {
     #[serde(default)]
     pub(super) source_asset_id: String,
     #[serde(default)]
+    pub(super) video_preview_path: String,
+    #[serde(default)]
     pub(super) video_request: Option<CreateVideoGenerationTask>,
     pub(super) schema_version: u32,
     #[serde(default)]
@@ -220,6 +222,8 @@ pub(super) struct PendingGenerationRecord {
     pub(super) expected_success_count: usize,
     #[serde(default)]
     pub(super) canvas_source_node_id: String,
+    #[serde(default)]
+    pub(super) canvas_workflow_id: String,
     #[serde(default)]
     pub(super) canvas_ui_extraction: bool,
 }
@@ -782,7 +786,8 @@ pub(super) fn load_pending_generations_for_namespace(
         .load_generations()?
         .generations;
     for record in &mut records {
-        for path in record.reference_paths.iter_mut().chain(record.lineage_reference_paths.iter_mut()) {
+        for path in record.reference_paths.iter_mut().chain(record.lineage_reference_paths.iter_mut())
+            .chain(std::iter::once(&mut record.video_preview_path)) {
             authority.lease().namespace.remap_path(path);
         }
     }
@@ -1487,6 +1492,13 @@ pub(super) fn pending_recovery_file_references_for_namespace(
                 path.clone(),
             ));
         }
+        if !record.video_preview_path.trim().is_empty() {
+            references.push((
+                "pending-generation".to_owned(),
+                record.client_request_id.clone(),
+                record.video_preview_path.clone(),
+            ));
+        }
         for delivery in record.deliveries {
             if !delivery.local_path.trim().is_empty() {
                 references.push((
@@ -2060,7 +2072,7 @@ mod tests {
     }
     fn pending_record() -> PendingGenerationRecord {
         PendingGenerationRecord {
-            source_asset_id: String::new(),            video_request: None,
+            source_asset_id: String::new(), video_preview_path: String::new(), video_request: None,
             schema_version: 2,
             cancel_requested: false,
             created_at_epoch_ms: Local::now().timestamp_millis(),
@@ -2095,8 +2107,22 @@ mod tests {
             terminal: true,
             expected_success_count: 1,
             canvas_source_node_id: String::new(),
+            canvas_workflow_id: String::new(),
             canvas_ui_extraction: false,
         }
+    }
+    #[test]
+    fn character_split_workflow_marker_survives_recovery_and_defaults_for_older_tasks() {
+        let mut record = pending_record();
+        record.canvas_workflow_id = "character-split".into();
+        let encoded = serde_json::to_value(&record).unwrap();
+        let recovered: PendingGenerationRecord = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(recovered.canvas_workflow_id, "character-split");
+
+        let mut legacy = encoded;
+        legacy.as_object_mut().unwrap().remove("canvas_workflow_id");
+        let recovered: PendingGenerationRecord = serde_json::from_value(legacy).unwrap();
+        assert!(recovered.canvas_workflow_id.is_empty());
     }
     fn pending_order_record(owner_user_id: &str, auth_epoch: u64) -> PendingOrderRecord {
         PendingOrderRecord {

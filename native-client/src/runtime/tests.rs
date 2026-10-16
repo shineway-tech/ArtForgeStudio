@@ -2435,6 +2435,16 @@ mod tests {
     }
 
     #[test]
+    fn local_packaging_builds_an_update_capable_client_by_default() {
+        let windows_package = include_str!("../../../scripts/package-native-client.ps1");
+        let release_build = include_str!("../../../scripts/build-release.ps1");
+
+        assert!(windows_package.contains("[string]$BuildChannel = \"release\""));
+        assert!(windows_package.contains("$env:ELUNVI_BUILD_CHANNEL = $BuildChannel"));
+        assert!(release_build.contains("-BuildChannel release"));
+    }
+
+    #[test]
     fn loading_dots_use_staggered_bouncing_motion() {
         let dots = include_str!("../../ui/components/loading-dots.slint");
 
@@ -2551,7 +2561,7 @@ mod tests {
         assert!(app.contains("AppState.page == \"free-canvas\": FreeCanvasPage"));
         assert!(app.contains("AppState.page == \"canvas\": InfiniteCanvasPage"));
         assert!(!app.contains("SideScrollMapPage"));
-        assert_eq!(page.matches("card-id: \"").count(), 12);
+        assert_eq!(page.matches("card-id: \"").count(), 13);
         assert!(page.contains(
             "return (root.cards-width() - root.card-gap() * 4) / 5;"
         ));
@@ -2578,6 +2588,7 @@ mod tests {
                 "character-multi-direction",
                 "scene-composition",
                 "skill-icon-generator",
+                "character-split",
                 "infinite-canvas",
             ]
         );
@@ -2594,12 +2605,13 @@ mod tests {
             ("character-multi-direction", "角色多向图"),
             ("scene-composition", "场景组合"),
             ("skill-icon-generator", "技能图标生成"),
+            ("character-split", "角色拆分"),
         ] {
             assert!(page.contains(&format!("card-id: \"{card_id}\"")));
             assert!(page.contains(title));
         }
-        assert_eq!(page.matches("prompt-zh:").count(), 12);
-        assert_eq!(page.matches("prompt-en:").count(), 12);
+        assert_eq!(page.matches("prompt-zh:").count(), 13);
+        assert_eq!(page.matches("prompt-en:").count(), 13);
         assert!(!page.contains("AppState.navigate(\"generation\")"));
         assert!(!page.contains("AppState.navigate(\"side-scroll-map\")"));
         assert!(page.contains("AppState.navigate(\"canvas\")"));
@@ -2636,6 +2648,7 @@ mod tests {
             "character-multi-direction.png",
             "scene-composition.png",
             "skill-icon-generator.png",
+            "character-split.png",
         ] {
             assert!(manifest.join("assets/free-canvas").join(image).is_file());
         }
@@ -2652,6 +2665,11 @@ mod tests {
         assert_eq!(
             image::image_dimensions(manifest.join("assets/free-canvas/skill-icon-generator.png"))
                 .expect("skill-icon cover dimensions"),
+            (1448, 1086)
+        );
+        assert_eq!(
+            image::image_dimensions(manifest.join("assets/free-canvas/character-split.png"))
+                .expect("character-split cover dimensions"),
             (1448, 1086)
         );
     }
@@ -2674,7 +2692,7 @@ mod tests {
         assert!(launcher.contains("AppState.mode = \"game\""));
         assert!(canvas.contains("workflow-id: \"side-scroll-map\""));
         assert!(canvas.contains("AppState.canvas-workflow-id != \"side-scroll-map\""));
-        assert!(canvas.contains("AppState.references.length < 8 && !root.workflow-composer-collapsed"));
+        assert!(canvas.contains("AppState.references.length < (AppState.canvas-workflow-id == \"character-split\" ? 1 : 8)"));
         assert!(canvas.contains("AppState.canvas-workflow-id == \"side-scroll-map\""));
         assert!(canvas.contains("AppState.canvas-workflow-id == \"character-multi-direction\""));
         assert_eq!(canvas.matches("if AppState.canvas-workflow-id == \"side-scroll-map\": Row").count(), 2);
@@ -4025,8 +4043,16 @@ mod tests {
         assert!(canvas.contains("text: (AppState.en ? \"Image\" : \"图片\") + (index + 1)"));
         assert!(canvas.contains("x: workflow-prompt-frame.reference-mention-width"));
         assert!(canvas.contains("workflow-prompt-input.set-selection-offsets(2147483647, 2147483647)"));
-        assert!(canvas.contains("x: 14px;\n                    y: 117px"));
-        assert!(canvas.contains("x: 62px + index * 48px"));
+        let upload_reference = canvas
+            .split_once("if AppState.references.length < (AppState.canvas-workflow-id == \"character-split\" ? 1 : 8)")
+            .unwrap()
+            .1
+            .split_once("for reference[index] in AppState.references")
+            .unwrap()
+            .0;
+        assert!(upload_reference.contains("x: 14px;"));
+        assert!(upload_reference.contains("y: 117px;"));
+        assert!(canvas.contains("x: (AppState.canvas-workflow-id == \"character-split\" ? 14px : 62px) + index * 48px"));
 
         assert!(state.contains("canvas-generation-loading-node-id"));
         assert!(canvas.contains("function generation-loading() -> bool"));
@@ -4082,6 +4108,44 @@ mod tests {
         assert!(prompt.contains("不得出现编号、序号、文字标签、标题、说明文字或水印"));
         assert!(prompt.contains("将全部5个对象按演变顺序排列在同一行"));
         assert!(prompt.ends_with("用户描述：番茄"));
+    }
+
+    #[test]
+    fn character_split_hides_model_and_size_options_without_hiding_generation() {
+        let canvas = include_str!("../../ui/pages/infinite-canvas-page.slint");
+        assert!(canvas.contains("AppState.references.length < (AppState.canvas-workflow-id == \"character-split\" ? 1 : 8)"));
+        assert!(canvas.contains("x: (AppState.canvas-workflow-id == \"character-split\" ? 14px : 62px) + index * 48px"));
+        let bottom_controls = canvas.split_once("workflow-bottom-controls := Rectangle {").unwrap().1;
+        let model_control = bottom_controls.split_once("workflow-model-control := Rectangle {").unwrap().1
+            .split_once("quality-control := Rectangle {").unwrap().0;
+        let quality_control = bottom_controls.split_once("quality-control := Rectangle {").unwrap().1
+            .split_once("workflow-step-count-control := Rectangle {").unwrap().0;
+
+        let hidden_for_character_split = "visible: AppState.canvas-workflow-id != \"character-split\";";
+        assert!(model_control.contains(hidden_for_character_split));
+        assert!(quality_control.contains(hidden_for_character_split));
+        assert!(bottom_controls.contains("workflow-generate-button := Rectangle {"));
+        assert!(bottom_controls.contains("root.generate-workflow();"));
+    }
+
+    #[test]
+    fn character_split_prompt_keeps_facial_features_and_layers_independent() {
+        let chinese = compose_canvas_workflow_prompt("角色拆分规范：", "保持原立绘", 5, false);
+        for part in ["左眉和右眉", "左眼和右眼", "鼻子", "嘴巴", "左耳和右耳", "基础色块", "阴影层", "高光/光效层", "配饰"] {
+            assert!(chinese.contains(part), "missing {part}");
+        }
+        assert!(chinese.contains("透明 PNG"));
+        assert!(chinese.contains("不能接触、重叠"));
+        assert!(chinese.ends_with("用户补充要求：保持原立绘"));
+        assert!(!chinese.contains("恰好5个"));
+
+        let english = compose_canvas_workflow_prompt(
+            "Character part breakdown specification:", "preserve the original pose", 8, true,
+        );
+        assert!(english.contains("left and right eyes"));
+        assert!(english.contains("shadow and highlight/light-effect overlays"));
+        assert!(english.contains("transparent PNG"));
+        assert!(english.ends_with("Additional user requirements: preserve the original pose"));
     }
 
     #[test]
@@ -7193,17 +7257,38 @@ mod tests {
         let callbacks = include_str!("callbacks/viewer.rs");
 
         assert!(panel.contains("GenerationBatchMenu"));
-        assert!(panel.contains("x: parent.width - 256px;"));
+        assert!(panel.contains("x: parent.width - 144px - self.width;"));
         assert!(menu.contains("AppState.en ? \"Batch\" : \"批量操作\""));
+        assert!(menu.contains("AppState.begin-generation-selection();"));
         assert!(menu.contains("AppState.en ? \"Select all\" : \"全选\""));
-        assert!(menu.contains("AppState.en ? \"Delete all failed\" : \"删除全部失败\""));
+        assert!(menu.contains("AppState.en ? \"Clear all\" : \"取消全选\""));
+        assert!(menu.contains("AppState.en ? \"Delete invalid\" : \"删除全部失效\""));
+        assert!(menu.contains("AppState.en ? \"Exit\" : \"退出\""));
         assert!(menu.contains("AppState.delete-all-failed-generations();"));
+        assert!(menu.contains("AppState.clear-generation-selection();"));
+        assert!(!menu.contains("PopupWindow"));
         assert!(card.contains("AppState.toggle-generation-selection(root.item.id);"));
+        assert_eq!(card.matches("if root.selection-enabled(): Rectangle {").count(), 2);
         assert!(card.contains("root.item.selected"));
+        assert!(state.contains("callback begin-generation-selection();"));
         assert!(state.contains("callback select-all-generations();"));
         assert!(state.contains("callback delete-all-failed-generations();"));
         assert!(callbacks.contains("state.on_delete_all_failed_generations"));
-        assert!(callbacks.contains("item.category == category && item.source_path == \"failed\""));
+        assert!(callbacks.contains("Self::Failed(category) => item.category == *category && item.source_path == \"failed\""));
+    }
+
+    #[test]
+    fn selected_generation_actions_use_confirmation_and_current_reference_input() {
+        let panel = include_str!("../../ui/components/generation-result-panel.slint");
+        let dialog = include_str!("../../ui/dialogs/delete-confirm.slint");
+        let state = include_str!("../../ui/app-state.slint");
+        assert!(panel.contains("AppState.generation-selection-mode && AppState.generation-selected-count > 0"));
+        assert!(panel.contains("AppState.use-selected-generations-as-references();"));
+        assert!(panel.contains("AppState.request-delete-selected-generations();"));
+        assert!(dialog.contains("AppState.confirm-delete-selected-generations();"));
+        assert!(dialog.contains("AppState.pending-generation-delete-ids = [];"));
+        assert!(state.contains("callback use-selected-generations-as-references();"));
+        assert!(state.contains("callback request-delete-selected-generations();"));
     }
 
     #[test]
@@ -7390,6 +7475,69 @@ mod tests {
     }
 
     #[test]
+    fn video_dropdown_placement_and_model_settings_follow_available_space() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true, renderer_name: Some("software".into()), ..Default::default()
+            },
+        ))).unwrap();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_page("video-generation".into());
+        state.set_contact_popup_open(false);
+        state.set_video_ratio_options(ModelRc::new(VecModel::from(vec![SharedString::from("16:9"), SharedString::from("9:16")])));
+        state.set_video_duration_options(ModelRc::new(VecModel::from(vec![5, 10])));
+        state.set_video_duration_seconds(5);
+        app.show().unwrap();
+        for (width, height, count) in [(1180., 760., 6), (1440., 900., 8), (1920., 1080., 1)] {
+            app.window().set_size(slint::LogicalSize::new(width, height));
+            state.set_video_model_options(ModelRc::new(VecModel::from((0..count).map(|index| CatalogModelView {
+                code: format!("model-{index}").into(), name: format!("Model {index}").into(), ..Default::default()
+            }).collect::<Vec<_>>())));
+            let picker = ElementHandle::find_by_element_id(&app, "VideoModelPicker::picker-touch").next().unwrap();
+            picker.mock_single_click(PointerEventButton::Left);
+            let row = ElementHandle::find_by_element_id(&app, "VideoModelPicker::model-touch").next().expect("model popup row");
+            assert_eq!(state.get_video_model_popup_opens_above(), count > 1);
+            row.mock_single_click(PointerEventButton::Left);
+            let settings = ElementHandle::find_by_element_id(&app, "VideoGenerationPage::settings-touch").next().unwrap();
+            settings.mock_single_click(PointerEventButton::Left);
+            assert!(state.get_video_settings_popup_opens_above());
+            app.window().dispatch_event(slint::platform::WindowEvent::PointerPressed {
+                position: slint::LogicalPosition::new(width - 10., 100.), button: PointerEventButton::Left,
+            });
+            app.window().dispatch_event(slint::platform::WindowEvent::PointerReleased {
+                position: slint::LogicalPosition::new(width - 10., 100.), button: PointerEventButton::Left,
+            });
+            assert!(ElementHandle::find_by_element_id(&app, "VideoGenerationPage::duration-input").next().is_none());
+        }
+    }
+
+    #[test]
+    fn video_model_and_settings_buttons_have_matching_styles() {
+        let picker = include_str!("../../ui/components/video-model-picker.slint");
+        let page = include_str!("../../ui/pages/video-generation-page.slint");
+        let settings = page.split("video-settings-button := Rectangle {").nth(1)
+            .and_then(|body| body.split("settings-touch := TouchArea").next())
+            .expect("video settings button")
+            .replace("settings-touch", "picker-touch")
+            .replace("AppState.video-generating", "root.disabled");
+        for style in [
+            "height: 58px;", "opacity: root.disabled ? 0.55 : 1;", "border-radius: 9px;",
+            "border-width: 1px;", "width: 20px;", "height: 20px;", "x: 12px;",
+            "colorize: AppTheme.accent-dark;", "font-size: 14px;", "font-weight: 600;",
+            "width: parent.width - 82px;", "DropdownIcon {", "x: parent.width - 28px;",
+            "y: (parent.height - 12px) / 2;",
+            "background: picker-touch.has-hover && !root.disabled ? AppTheme.panel-soft : AppTheme.panel;",
+            "border-color: picker-touch.has-hover && !root.disabled ? AppTheme.accent : AppTheme.border;",
+        ] {
+            assert!(picker.contains(style), "model picker style missing: {style}");
+            assert!(settings.contains(style), "settings button style missing: {style}");
+        }
+    }
+
+    #[test]
     fn viewer_opens_the_image_to_video_workspace() {
         let app = include_str!("../../ui/app.slint");
         let state = include_str!("../../ui/app-state.slint");
@@ -7406,19 +7554,28 @@ mod tests {
         assert!(state.contains("property <string> video-page-tab: \"create\";"));
         assert!(state.contains("property <bool> video-player-open: false;"));
         assert!(state.contains("callback update-video-player-visibility(bool);"));
-        assert!(page.contains("first-text: AppState.en ? \"Create\" : \"创作\";"));
-        assert!(page.contains("second-text: AppState.en ? \"History\" : \"历史记录\";"));
-        assert!(page.contains("AppState.video-page-tab == \"history\""));
         assert!(page.contains("VideoGallery"));
-        assert!(page.contains("width: preview-card.width;"));
+        assert!(page.contains("preview-card := Rectangle"));
         assert!(page.contains("visible: AppState.video-player-open && AppState.video-result-path != \"\";"));
         assert!(page.contains("video-generation-spinner := ProgressSpinner"));
-        let settings = page
-            .split("settings-card := Rectangle")
-            .nth(1)
-            .and_then(|value| value.split("history-card := Rectangle").next())
-            .expect("video settings card");
-        assert!(!settings.contains("visible: AppState.video-page-tab == \"create\""));
+        assert!(page.contains("video-prompt-toolbar := HorizontalLayout"));
+        assert!(page.contains("x: 28px;"));
+        assert!(page.contains("y: 28px;"));
+        assert!(page.contains("height: 30px;"));
+        assert!(page.contains("z: 1;"));
+        assert!(page.contains("prompt-box := Rectangle"));
+        assert!(page.contains("y: 16px;"));
+        assert!(page.contains("item-size: 82px;"));
+        assert!(page.contains("y: 90px;"));
+        assert!(page.contains("height: parent.height - 110px;"));
+        assert!(page.contains("model-settings-row := HorizontalLayout"));
+        assert!(page.contains("VideoModelPicker {"));
+        assert!(page.contains("width: 244px;"));
+        assert!(page.contains("text: AppState.video-aspect-ratio + \" · \" + AppState.video-resolution"));
+        assert!(page.contains("settings-popup := PopupWindow"));
+        assert!(!page.contains("video-page-tab"));
+        assert!(!page.contains("history-card := Rectangle"));
+        assert!(!page.contains("video-page-tabs := SegmentedControl"));
         assert!(assets_page.contains("group-by-date: true;"));
         assert!(!page.contains("group-by-date: true;"));
 
@@ -7445,22 +7602,19 @@ mod tests {
         assert!(repeat.contains("label: AppState.en ? \"Use Prompt\" : \"使用提示词\";"));
         assert!(repeat.contains("clicked => { AppState.viewer-edit(); }"));
 
-        for ratio in ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] {
-            assert!(page.contains(ratio), "missing video ratio {ratio}");
-        }
+        assert!(page.contains("for ratio[index] in AppState.video-ratio-options"));
         for resolution in ["480P", "720P", "1080P"] {
             assert!(page.contains(resolution), "missing video resolution {resolution}");
         }
-        assert!(page.contains("max(4, min(15"));
-        assert!(page.contains("AppState.video-duration-seconds - 1"));
-        assert!(page.contains("AppState.video-duration-seconds + 1"));
+        assert!(page.contains("video-duration-options"));
+        assert!(page.contains("duration-control := Rectangle"));
+        assert!(page.contains("duration-input := TextInput"));
         assert!(page.contains("text <=> AppState.video-prompt"));
         assert!(page.contains("AppState.video-credit-cost"));
         assert!(page.contains("credit-cost: AppState.video-quote-loading ? \"\" : AppState.video-credit-cost;"));
         assert!(!page.contains("secondary-text:"));
         assert!(!page.contains("需要 \" + AppState.video-credit-cost"));
         assert!(page.contains("AppState.submit-video-generation();"));
-        assert!(page.contains("AppState.video-page-tab = \"create\";\n                    AppState.submit-video-generation();"));
         assert_eq!(
             page.matches("AppState.en ? \"Generate Video\" : \"生成视频\"")
                 .count(),
@@ -7565,6 +7719,9 @@ mod tests {
         ] {
             assert!(html.contains(control), "missing player control {control}");
         }
+        assert!(!html.contains("closeButton"));
+        assert!(html.contains("player.addEventListener('pointerdown'"));
+        assert!(html.contains("if (event.button === 0) send('preview_open');"));
         assert!(!html.contains("controls autoplay"));
     }
 
@@ -7820,7 +7977,7 @@ mod tests {
         let source_path = fixture.source_path.clone();
         for id in ["character-outfit", "character-age", "character-body", "plant-growth",
             "monster-generator", "upgrade-evolution", "building-derivation",
-            "character-multi-direction", "scene-composition", "skill-icon-generator"] {
+            "character-multi-direction", "scene-composition", "skill-icon-generator", "character-split"] {
             state.set_viewer_id("integration-original".into());
             state.set_viewer_source("asset".into());
             state.set_page("assets".into());
@@ -7842,7 +7999,7 @@ mod tests {
         state.invoke_viewer_open_creation_workflow("unknown".into(), "".into(), "".into(), "".into());
         assert_eq!(state.get_page(), "assets");
         assert!(state.get_viewer_open());
-        assert_eq!(context.store.borrow().active_canvas_workspace_id, "skill-icon-generator");
+        assert_eq!(context.store.borrow().active_canvas_workspace_id, "character-split");
 
         drop(state);
         drop(context);
@@ -8808,6 +8965,7 @@ mod tests {
         let app = include_str!("../../ui/app.slint");
         let popup = include_str!("../../ui/dialogs/contact-popup.slint");
         let settings = include_str!("../../ui/pages/settings-page.slint");
+        let item = include_str!("../../ui/components/contact-item.slint");
         let sidebar = include_str!("../../ui/components/sidebar.slint");
         let callbacks = include_str!("callbacks/contact.rs");
 
@@ -8831,8 +8989,14 @@ mod tests {
         assert!(callbacks.contains("state.set_contact_copy_toast_visible(true)"));
         assert!(callbacks.contains("Duration::from_millis(1400)"));
         assert!(callbacks.contains("state.get_contact_copy_sequence() == sequence"));
-        assert!(popup.contains("AppState.copy-contact-detail(root.value)"));
-        assert_eq!(settings.matches("AppState.copy-contact-detail(").count(), 3);
+        assert_eq!(popup.matches("ContactItem {").count(), 3);
+        assert_eq!(settings.matches("ContactItem {").count(), 3);
+        assert!(popup.contains("join-group: true"));
+        assert!(settings.contains("join-group: true"));
+        assert!(item.contains("AppState.copy-contact-detail(root.value)"));
+        assert!(item.contains("AppState.open-external-link(\"https://qm.qq.com/q/ugUpnQFL2M\")"));
+        assert!(item.contains("一键加群"));
+        assert!(item.contains("复制"));
         assert!(app.contains("if AppState.contact-copy-toast-visible: Rectangle"));
         assert!(app.contains("AppState.en ? \"Copied\" : \"已复制\""));
         assert!(!popup.contains("AppState.contact-copied-value"));

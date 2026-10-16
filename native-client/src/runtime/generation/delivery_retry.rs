@@ -1340,7 +1340,7 @@ mod tests {
 
     fn recoverable_record(scope: &SessionScope) -> PendingGenerationRecord {
         PendingGenerationRecord {
-            source_asset_id: String::new(),            video_request: None,
+            source_asset_id: String::new(), video_preview_path: String::new(), video_request: None,
             schema_version: 2,
             cancel_requested: false,
             created_at_epoch_ms: 0,
@@ -1372,6 +1372,7 @@ mod tests {
             terminal: true,
             expected_success_count: 1,
             canvas_source_node_id: String::new(),
+            canvas_workflow_id: String::new(),
             canvas_ui_extraction: false,
         }
     }

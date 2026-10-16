@@ -11,8 +11,12 @@ pub(super) struct PreparedActivationVisuals {
     jobs: Vec<ActivationPreviewJob>,
 }
 #[derive(Clone, Copy)]
-enum ActivationPreviewKind { Gallery(PreviewCollection), Conversation, Reference, Video }
+enum ActivationPreviewKind { Gallery(PreviewCollection), Conversation, Reference, Video, VideoFrame }
 struct ActivationPreviewJob { kind: ActivationPreviewKind, id: String, path: String }
+enum ActivationPreviewCompletion {
+    Preview(ActivationPreviewJob, PreparedDeliveryPreview),
+    VideoAvailability(Vec<(String, String, bool)>),
+}
 pub(super) struct ActivationVisualEffects { persistence: PrivatePersistence, jobs: Vec<ActivationPreviewJob> }
 impl PreparedActivationVisuals {
     pub(super) fn take_ui(&mut self) -> PreparedUiProjection { std::mem::take(&mut self.ui) }
@@ -57,16 +61,28 @@ fn prepare_private_visuals(
         .filter(|row|row.image.size().width>0 && row.image.size().height>0)
         .map(|row|((row.id.to_string(),row.source_path.to_string()),row.image)).collect::<BTreeMap<_,_>>()).unwrap_or_default();
     let selected_generation_ids=current.map(generation_selection_ids).unwrap_or_default();
-    let video_outputs = sorted_video_outputs(store);
+    let missing_video_ids=current.map(video_missing_ids).unwrap_or_default();
+    if current.is_none() {
+        ui.push(Vec::<SharedString>::new(), |state, ids| state.set_video_missing_ids(ModelRc::new(VecModel::from(ids))));
+    }
+    let video_outputs = visible_video_outputs(store, &missing_video_ids);
     let video_groups = build_video_groups(&video_outputs, language);
     let videos = video_outputs.into_iter().map(|output| {
         let key=output.key();
         let image=existing_videos.get(&key).cloned().unwrap_or_default();
         let has_preview=image.size().width>0 && image.size().height>0;
         if !has_preview {
-            if let Some(source)=video_source_asset(store,output).filter(|source|!source.source_path.is_empty() && source.source_path!="failed") {
-                jobs.push(ActivationPreviewJob { kind:ActivationPreviewKind::Video,id:key.clone(),path:source.source_path.clone() });
-            }
+            let source_path = if !output.preview_source_path.is_empty() && output.preview_source_path != "failed" {
+                Some(output.preview_source_path.clone())
+            } else {
+                video_source_asset(store,output)
+                    .filter(|source|!source.source_path.is_empty() && source.source_path!="failed")
+                    .map(|source| source.source_path.clone())
+            };
+            if let Some(path)=source_path { jobs.push(ActivationPreviewJob { kind:ActivationPreviewKind::Video,id:key.clone(),path }); }
+        }
+        if cfg!(windows) && !output.source_path.is_empty() && output.source_path != "failed" {
+            jobs.push(ActivationPreviewJob { kind:ActivationPreviewKind::VideoFrame,id:key.clone(),path:output.source_path.clone() });
         }
         VideoImageItem { id:key.into(), image, has_preview,
             title:output.title.clone().into(),
@@ -218,18 +234,48 @@ pub(super) fn start_activation_visual_effects(app:&AppWindow,context:AppContext,
     if ACTIVATION_PREVIEW_CLOSING.with(Cell::get) { return; }
     let ActivationVisualEffects { persistence,jobs }=effects;
     let epoch=ACTIVATION_VISUAL_EPOCH.fetch_add(1,Ordering::AcqRel).wrapping_add(1);
-    if jobs.is_empty() { return; }
+    let video_outputs=context.store.borrow().video_outputs.clone();
+    if jobs.is_empty() && video_outputs.is_empty() { return; }
     let Ok(activity)=persistence.begin_activity() else { return; };
     let cancel=Arc::new(std::sync::atomic::AtomicBool::new(false));
     let worker_cancel=cancel.clone(); let captured=persistence.clone();
     let (sender,receiver)=mpsc::sync_channel(4);
     let worker=std::thread::Builder::new().name("activation-previews".into()).spawn(move || {
+        if !video_outputs.is_empty() {
+            if let Ok(authority)=captured.storage_authority() {
+                let mut checked=Vec::new();
+                for output in video_outputs.values() {
+                    if worker_cancel.load(Ordering::SeqCst) || activity.is_quiescing()
+                        || ACTIVATION_VISUAL_EPOCH.load(Ordering::Acquire)!=epoch { return; }
+                    if let Ok(available)=owned_video_source_available(&captured,&authority,output) {
+                        checked.push((output.key(),output.source_path.clone(),available));
+                    }
+                }
+                let mut value=ActivationPreviewCompletion::VideoAvailability(checked);
+                loop {
+                    if worker_cancel.load(Ordering::SeqCst) || activity.is_quiescing() || !captured.is_current()
+                        || ACTIVATION_VISUAL_EPOCH.load(Ordering::Acquire)!=epoch { return; }
+                    match sender.try_send(value) {
+                        Ok(())=>break,
+                        Err(mpsc::TrySendError::Disconnected(_))=>return,
+                        Err(mpsc::TrySendError::Full(pending))=>{ value=pending; std::thread::sleep(Duration::from_millis(5)); },
+                    }
+                }
+            }
+        }
         for job in jobs {
             if worker_cancel.load(Ordering::SeqCst) || activity.is_quiescing()
                 || ACTIVATION_VISUAL_EPOCH.load(Ordering::Acquire)!=epoch { break; }
             let purpose=if matches!(job.kind,ActivationPreviewKind::Gallery(_)) { PreviewPurpose::Gallery } else { PreviewPurpose::Reference };
-            let Ok(preview)=prepare_owned_preview(&captured,Path::new(&job.path),purpose) else { continue; };
-            let mut value=(job,preview);
+            let should_continue=|| !worker_cancel.load(Ordering::SeqCst) && !activity.is_quiescing()
+                && ACTIVATION_VISUAL_EPOCH.load(Ordering::Acquire)==epoch;
+            let prepared=if matches!(job.kind,ActivationPreviewKind::VideoFrame) {
+                video_outputs.get(&job.id).filter(|output|output.source_path==job.path)
+                    .ok_or_else(||anyhow!("video cover source changed"))
+                    .and_then(|output|prepare_owned_video_cover(&captured,output,should_continue))
+            } else { prepare_owned_preview(&captured,Path::new(&job.path),purpose) };
+            let Ok(preview)=prepared else { continue; };
+            let mut value=ActivationPreviewCompletion::Preview(job,preview);
             loop {
                 if worker_cancel.load(Ordering::SeqCst) || activity.is_quiescing() || !captured.is_current()
                     || ACTIVATION_VISUAL_EPOCH.load(Ordering::Acquire)!=epoch { return; }
@@ -249,7 +295,7 @@ pub(super) fn start_activation_visual_effects(app:&AppWindow,context:AppContext,
     poll_activation_previews(app.as_weak(),context,persistence,epoch,cancel,receiver);
 }
 fn poll_activation_previews(weak:Weak<AppWindow>,context:AppContext,persistence:PrivatePersistence,epoch:u64,
-    cancel:Arc<std::sync::atomic::AtomicBool>,receiver:mpsc::Receiver<(ActivationPreviewJob,PreparedDeliveryPreview)>) {
+    cancel:Arc<std::sync::atomic::AtomicBool>,receiver:mpsc::Receiver<ActivationPreviewCompletion>) {
     slint::Timer::single_shot(Duration::from_millis(50),move || {
         reap_activation_preview_workers();
         let Some(app)=weak.upgrade() else { return; };
@@ -258,7 +304,7 @@ fn poll_activation_previews(weak:Weak<AppWindow>,context:AppContext,persistence:
         }
         let mut processed=0;
         while processed<ACTIVATION_PREVIEW_COMPLETIONS_PER_TICK {
-            let (job,preview)=match receiver.try_recv() {
+            let completion=match receiver.try_recv() {
                 Ok(value)=>value,
                 Err(TryRecvError::Empty)=>{ poll_activation_previews(weak,context,persistence,epoch,cancel,receiver); return; },
                 Err(TryRecvError::Disconnected)=>return,
@@ -267,6 +313,23 @@ fn poll_activation_previews(weak:Weak<AppWindow>,context:AppContext,persistence:
             if !context.store.borrow().private_persistence.as_ref().is_some_and(|current|current.same_binding(&persistence)) { return; }
             let _=context.apply_user_completion(persistence.lease(),|| {
                 let state=app.global::<AppState>();
+                let (job,preview)=match completion {
+                    ActivationPreviewCompletion::VideoAvailability(checked)=>{
+                        let previous=video_missing_ids(&state);
+                        let mut missing=previous.clone();
+                        let store=context.store.borrow();
+                        for (id,path,available) in checked {
+                            if !store.video_outputs.get(&id).is_some_and(|output|output.source_path==path) { continue; }
+                            if available { missing.remove(&id); } else { missing.insert(id); }
+                        }
+                        if missing!=previous {
+                            state.set_video_missing_ids(ModelRc::new(VecModel::from(missing.into_iter().map(SharedString::from).collect::<Vec<_>>())));
+                            push_video_assets(&app,&store);
+                        }
+                        return;
+                    }
+                    ActivationPreviewCompletion::Preview(job,preview)=>(job,preview),
+                };
                 let image=materialize_delivery_preview(&preview);
                 match job.kind {
                     ActivationPreviewKind::Gallery(collection)=>{
@@ -297,7 +360,9 @@ fn poll_activation_previews(weak:Weak<AppWindow>,context:AppContext,persistence:
                             }
                         }
                     }
-                    ActivationPreviewKind::Video=>{
+                    ActivationPreviewKind::Video | ActivationPreviewKind::VideoFrame=>{
+                        if matches!(job.kind,ActivationPreviewKind::VideoFrame) && !context.store.borrow().video_outputs
+                            .get(&job.id).is_some_and(|output|output.source_path==job.path) { return; }
                         let model=state.get_saved_videos();
                         for index in 0..model.row_count() {
                             if let Some(mut row)=model.row_data(index).filter(|row|row.id.as_str()==job.id) {
@@ -742,7 +807,7 @@ mod core_owned_viewer_projection_tests {
         let mut store=Store::default();
         let output=|task:&str,title:&str,created_at:&str| SavedVideoOutput {
             model:"seedance-2.0-fast".into(),resolution:"1080P".into(),duration_secs:8,
-            source_asset_id:String::new(),prompt:String::new(),client_request_id:format!("request-{task}"),
+            source_asset_id:String::new(),preview_source_path:String::new(),prompt:String::new(),client_request_id:format!("request-{task}"),
             server_task_id:task.into(),file_id:format!("file-{task}"),billing_account_group_id:"group".into(),
             sha256:"0".repeat(64),size_bytes:1,source_path:format!("C:/videos/{task}.mp4"),
             title:title.into(),created_at:created_at.into(),
@@ -766,6 +831,122 @@ mod core_owned_viewer_projection_tests {
         assert_eq!(groups[1].start_index,2);
         assert_eq!(groups[1].item_count,1);
         assert_eq!(groups[1].title,time_group_label("2026-09-16 08:00:00+08:00","zh-CN"));
+        let visible=visible_video_outputs(&store,&BTreeSet::from([videos[1].key()]));
+        assert_eq!(visible.len(),2);
+        let compacted=build_video_groups(&visible,"zh-CN");
+        assert_eq!(compacted[0].start_index,0);
+        assert_eq!(compacted[0].item_count,1);
+        assert_eq!(compacted[1].start_index,1);
+        assert_eq!(compacted[1].item_count,1);
+    }
+
+    #[test]
+    fn missing_video_source_is_hidden_without_removing_its_receipt() {
+        i_slint_backend_testing::init_no_event_loop();
+        let f=Fixture(video_image_callbacks::tests::scoped_inputs::Fixture::new());
+        let app=AppWindow::new().unwrap();
+        let state=app.global::<AppState>();
+        state.set_page("video-generation".into());
+        let authority=f.authority.clone();
+        std::thread::scope(|threads|threads.spawn(move || {
+            let key=ManagedFileKey::new(ManagedUserArea::Videos,"present.mp4").unwrap();
+            let mut file=authority.create_new_regular(&key).unwrap();
+            authority.write_new_regular_from(&mut file,&mut &b"x"[..]).unwrap();
+            authority.sync_regular(&mut file).unwrap();
+        }).join().unwrap());
+        let directory=f.persistence.lease().namespace.path(ManagedUserArea::Videos);
+        let output=|name:&str,created_at:&str| SavedVideoOutput {
+            model:"test-model".into(),resolution:"720P".into(),duration_secs:4,
+            source_asset_id:String::new(),preview_source_path:String::new(),prompt:String::new(),
+            client_request_id:format!("request-{name}"),server_task_id:name.into(),file_id:"file".into(),
+            billing_account_group_id:"group".into(),sha256:"0".repeat(64),size_bytes:1,
+            source_path:directory.join(format!("{name}.mp4")).to_string_lossy().into_owned(),
+            title:name.into(),created_at:created_at.into(),
+        };
+        let present=output("present","2026-09-16T08:00:00+08:00");
+        let missing=output("missing","2026-09-17T08:00:00+08:00");
+        let missing_key=missing.key();
+        assert!(owned_video_source_available(&f.persistence,&f.authority,&present).unwrap());
+        assert!(!owned_video_source_available(&f.persistence,&f.authority,&missing).unwrap());
+        {
+            let mut store=f.context.store.borrow_mut();
+            store.video_outputs.insert(missing_key.clone(),missing);
+        }
+        let prepared=prepare_delivery_visuals(&app,&f.context.store.borrow());
+        let effects=f.context.apply_user_completion(f.persistence.lease(),||prepared.publish_metadata(&app,f.persistence.clone())).unwrap();
+        assert_eq!(state.get_saved_videos().row_count(),1);
+        start_activation_visual_effects(&app,f.context.clone(),effects);
+        pump(||state.get_saved_videos().row_count()==0);
+        pump(||ACTIVATION_PREVIEW_WORKERS.with(|workers|workers.borrow().is_empty()));
+        assert_eq!(state.get_saved_video_groups().row_count(),0);
+        assert_eq!(video_missing_ids(&state),BTreeSet::from([missing_key.clone()]));
+        assert_eq!(f.context.store.borrow().video_outputs.len(),1);
+        push_video_assets(&app,&f.context.store.borrow());
+        assert_eq!(state.get_saved_videos().row_count(),0);
+    }
+
+    #[test]
+    fn video_history_queues_uploaded_reference_preview_without_asset_id() {
+        let mut store=Store::default();
+        let output=SavedVideoOutput {
+            model:"seedance-2.0-fast".into(),resolution:"720P".into(),duration_secs:4,
+            source_asset_id:String::new(),preview_source_path:"C:/owned/references/source.png".into(),
+            prompt:"prompt".into(),client_request_id:"request".into(),server_task_id:"task".into(),
+            file_id:"file".into(),billing_account_group_id:"group".into(),sha256:"0".repeat(64),
+            size_bytes:1,source_path:"C:/owned/videos/output.mp4".into(),title:"video".into(),created_at:"now".into(),
+        };
+        let key=output.key();
+        store.video_outputs.insert(key.clone(),output);
+
+        let prepared=prepare_activation_visuals(&store,"other","zh-CN","grid","grid");
+        let preview=prepared.jobs.iter().find(|job|matches!(job.kind,ActivationPreviewKind::Video)).unwrap();
+        assert_eq!(preview.id,key);
+        assert_eq!(preview.path,"C:/owned/references/source.png");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn video_cover_is_queued_without_a_reference_image() {
+        let output=SavedVideoOutput {
+            source_path:"C:/owned/videos/output.mp4".into(),server_task_id:"task".into(),
+            file_id:"file".into(),model:String::new(),resolution:String::new(),duration_secs:3,
+            source_asset_id:String::new(),preview_source_path:String::new(),prompt:String::new(),
+            client_request_id:String::new(),billing_account_group_id:String::new(),sha256:"0".repeat(64),
+            size_bytes:1,title:String::new(),created_at:String::new(),
+        };
+        let key=output.key();
+        let mut store=Store::default();
+        store.video_outputs.insert(key.clone(),output);
+        let prepared=prepare_activation_visuals(&store,"other","zh-CN","grid","grid");
+        let job=prepared.jobs.iter().find(|job|matches!(job.kind,ActivationPreviewKind::VideoFrame)).unwrap();
+        assert_eq!(job.id,key);
+        assert_eq!(job.path,"C:/owned/videos/output.mp4");
+    }
+
+    #[test]
+    fn newly_generated_video_uses_uploaded_reference_thumbnail_without_asset_id() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app=AppWindow::new().unwrap();
+        let thumbnail=Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(2,2));
+        app.global::<AppState>().set_video_images(ModelRc::new(VecModel::from(vec![VideoImageItem {
+            source_path:"C:/references/upload.png".into(),image:thumbnail.clone(),has_preview:true,
+            ..Default::default()
+        }])));
+        let output=SavedVideoOutput {
+            model:"video-model".into(),resolution:"720P".into(),duration_secs:4,
+            source_asset_id:String::new(),preview_source_path:"C:/references/upload.png".into(),
+            prompt:"prompt".into(),client_request_id:"request".into(),server_task_id:"task".into(),
+            file_id:"file".into(),billing_account_group_id:"group".into(),sha256:"0".repeat(64),
+            size_bytes:1,source_path:"C:/videos/output.mp4".into(),title:"video".into(),created_at:"now".into(),
+        };
+        let mut store=Store::default();
+        store.video_outputs.insert(output.key(),output);
+
+        push_video_assets(&app,&store);
+
+        let video=app.global::<AppState>().get_saved_videos().row_data(0).unwrap();
+        assert!(video.has_preview);
+        assert_eq!(video.image.size(),thumbnail.size());
     }
 }
 
@@ -1277,6 +1458,7 @@ pub(super) fn clear_retired_private_projection(state: &AppState) {
     state.set_video_source_id("".into());
     state.set_saved_videos(ModelRc::default());
     state.set_saved_video_groups(ModelRc::default());
+    state.set_video_missing_ids(ModelRc::default());
     state.set_video_page_tab("create".into());
     state.set_video_images(ModelRc::new(VecModel::default()));
     state.set_video_asset_choices(ModelRc::new(VecModel::default()));
@@ -2872,11 +3054,17 @@ pub(super) fn push_video_assets(app: &AppWindow, store: &Store) {
     let source_images=state.get_assets().iter().chain(state.get_generations().iter())
         .filter(|row|row.image.size().width>0 && row.image.size().height>0)
         .map(|row|(row.id.to_string(),row.image)).collect::<BTreeMap<_,_>>();
-    let video_outputs = sorted_video_outputs(store);
+    let input_previews=state.get_video_images().iter()
+        .filter(|row|row.image.size().width>0 && row.image.size().height>0)
+        .map(|row|(row.source_path.to_string(),row.image)).collect::<BTreeMap<_,_>>();
+    let video_outputs = visible_video_outputs(store, &video_missing_ids(&state));
     let groups = build_video_groups(&video_outputs, state.get_language().as_str());
     let rows = video_outputs.into_iter().map(|output| {
             let key=output.key();
-            let image=existing.get(&key).or_else(||source_images.get(&output.source_asset_id)).cloned().unwrap_or_default();
+            let image=existing.get(&key)
+                .or_else(||source_images.get(&output.source_asset_id))
+                .or_else(||input_previews.get(&output.preview_source_path))
+                .cloned().unwrap_or_default();
             VideoImageItem {
             id: key.into(),
             image:image.clone(),
@@ -2899,6 +3087,29 @@ fn sorted_video_outputs(store: &Store) -> Vec<&SavedVideoOutput> {
             .then_with(|| right.key().cmp(&left.key()))
     });
     outputs
+}
+
+fn video_missing_ids(state: &AppState) -> BTreeSet<String> {
+    state.get_video_missing_ids().iter().map(|id|id.to_string()).collect()
+}
+
+fn visible_video_outputs<'a>(store: &'a Store, missing: &BTreeSet<String>) -> Vec<&'a SavedVideoOutput> {
+    sorted_video_outputs(store).into_iter().filter(|output|!missing.contains(&output.key())).collect()
+}
+
+fn owned_video_source_available(
+    persistence: &PrivatePersistence, authority: &NamespaceStorageAuthority, output: &SavedVideoOutput,
+) -> Result<bool> {
+    let relative=Path::new(&output.source_path)
+        .strip_prefix(persistence.lease().namespace.path(ManagedUserArea::Videos))?;
+    let key=ManagedFileKey::new(ManagedUserArea::Videos,
+        relative.to_str().ok_or_else(||anyhow!("invalid video source path"))?)?;
+    match authority.open_optional_regular(&key) {
+        Ok(file)=>Ok(file.is_some()),
+        Err(error) if error.chain().any(|cause|cause.downcast_ref::<std::io::Error>()
+            .is_some_and(|io|io.kind()==std::io::ErrorKind::NotFound))=>Ok(false),
+        Err(error)=>Err(error),
+    }
 }
 
 fn build_video_groups(outputs: &[&SavedVideoOutput], language: &str) -> Vec<VideoGroup> {

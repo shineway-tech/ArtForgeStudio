@@ -14,7 +14,7 @@ try {
         cargo check -p artforge-studio-native
     }
 
-    & (Join-Path $ScriptDir "package-native-client.ps1") -Target windows
+    & (Join-Path $ScriptDir "package-native-client.ps1") -Target windows -BuildChannel release
 }
 finally {
     Pop-Location

@@ -153,7 +153,7 @@ fn validated_local_video_url(
     anyhow::ensure!(address.ip() == std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
         && address.port() != 0 && token.len() == 32 && token.bytes().all(|byte| byte.is_ascii_hexdigit()),
         "invalid owned player endpoint");
-    anyhow::ensure!(matches!(endpoint, "media" | "player"), "invalid owned player route");
+    anyhow::ensure!(matches!(endpoint, "media" | "player" | "player-preview"), "invalid owned player route");
     Ok(reqwest::Url::parse(&format!(
         "http://127.0.0.1:{}/{endpoint}/{token}",
         address.port()
@@ -162,10 +162,10 @@ fn validated_local_video_url(
 
 fn prepare_video_playback(persistence: PrivatePersistence, output: SavedVideoOutput) -> Result<PreparedVideoPlayback> {
     let cancel = Arc::new(AtomicBool::new(false));
-    prepare_video_playback_with_cancel(persistence, output, cancel)
+    prepare_video_playback_with_cancel(persistence, output, cancel, false)
 }
 fn prepare_video_playback_with_cancel(
-    persistence: PrivatePersistence, output: SavedVideoOutput, cancel: Arc<AtomicBool>,
+    persistence: PrivatePersistence, output: SavedVideoOutput, cancel: Arc<AtomicBool>, preview_mode: bool,
 ) -> Result<PreparedVideoPlayback> {
     let activity = persistence.begin_activity()?;
     anyhow::ensure!(!cancel.load(Ordering::SeqCst) && !activity.is_quiescing(), "video preparation cancelled");
@@ -183,7 +183,8 @@ fn prepare_video_playback_with_cancel(
     let source = {
         let _effect = persistence.begin_effect()?;
         let authority = persistence.storage_authority()?;
-        let file = authority.open_existing_regular(&key)?;
+        let file = authority.open_optional_regular(&key)?
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "retained video source missing"))?;
         let metadata = authority.inspect_regular(&file)?;
         anyhow::ensure!(metadata.link_count == 1 && metadata.byte_size == output.size_bytes, "video receipt size mismatch");
         Arc::new(OwnedVideoSource { authority, file: Mutex::new(file), size: output.size_bytes, receipt: output.clone() })
@@ -204,7 +205,7 @@ fn prepare_video_playback_with_cancel(
     let token = Uuid::new_v4().simple().to_string();
     let address = listener.local_addr()?;
     let url = validated_local_video_url(address, &token, "media")?;
-    let player_url = validated_local_video_url(address, &token, "player")?;
+    let player_url = validated_local_video_url(address, &token, if preview_mode { "player-preview" } else { "player" })?;
     let port = url.port().ok_or_else(|| anyhow!("missing player port"))?;
     let worker_source = source.clone();
     let worker_cancel = cancel.clone();
@@ -316,9 +317,10 @@ fn serve_video_connection(
     let first = lines.next().unwrap_or_default().split(' ').collect::<Vec<_>>();
     let media_path = format!("/media/{token}");
     let player_path = format!("/player/{token}");
+    let preview_path = format!("/player-preview/{token}");
     if first.len() != 3
         || !matches!(first[0], "GET" | "HEAD")
-        || !matches!(first[1], path if path == media_path || path == player_path)
+        || !matches!(first[1], path if path == media_path || path == player_path || path == preview_path)
         || first[2] != "HTTP/1.1"
     {
         return empty_video_response(stream, 404, None);
@@ -340,14 +342,14 @@ fn serve_video_connection(
         }
     }
     if host != Some(format!("127.0.0.1:{port}").as_str()) { return empty_video_response(stream, 404, None); }
-    if first[1] == player_path {
+    if first[1] == player_path || first[1] == preview_path {
         if range.is_some() { return empty_video_response(stream, 400, None); }
         let media_url = validated_local_video_url(
             std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port)),
             token,
             "media",
         )?;
-        let html = player_html(&media_url)?;
+        let html = player_html(&media_url, first[1] == preview_path)?;
         let body = html.as_bytes();
         let headers = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'\r\nConnection: close\r\n\r\n",
@@ -406,6 +408,8 @@ enum PlayerCommand {
     Regenerate,
     Ready,
     PlaybackError,
+    PreviewLeave,
+    PreviewOpen,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -449,13 +453,17 @@ fn parse_player_command(body: &str) -> Option<PlayerCommand> {
         "regenerate" => Some(PlayerCommand::Regenerate),
         "player_ready" => Some(PlayerCommand::Ready),
         "playback_error" => Some(PlayerCommand::PlaybackError),
+        "preview_leave" => Some(PlayerCommand::PreviewLeave),
+        "preview_open" => Some(PlayerCommand::PreviewOpen),
         _ => None,
     }
 }
 
-fn player_html(video_url: &reqwest::Url) -> Result<String> {
+fn player_html(video_url: &reqwest::Url, preview_mode: bool) -> Result<String> {
     let encoded_url = serde_json::to_string(video_url.as_str()).context("视频地址编码失败")?;
-    Ok(include_str!("video_player/player.html").replace("__VIDEO_SRC_JSON__", &encoded_url))
+    Ok(include_str!("video_player/player.html")
+        .replace("__VIDEO_SRC_JSON__", &encoded_url)
+        .replace("__PREVIEW_MODE__", if preview_mode { "true" } else { "false" }))
 }
 
 
@@ -465,6 +473,7 @@ struct ActiveVideoSession {
     output: SavedVideoOutput,
     cancel: Arc<AtomicBool>,
     bounds: VideoPlayerBounds,
+    preview_mode: bool,
     playback: Option<PreparedVideoPlayback>,
 }
 thread_local! {
@@ -528,7 +537,7 @@ pub(super) fn set_video_player_visible(visible: bool) {
 }
 pub(super) fn sync_video_player_captured(
     app: &AppWindow, context: &AppContext, persistence: PrivatePersistence,
-    output: &SavedVideoOutput, logical_bounds: (f32, f32, f32, f32),
+    output: &SavedVideoOutput, logical_bounds: (f32, f32, f32, f32), preview_mode: bool,
 ) -> Result<()> {
     let bounds = VideoPlayerBounds::from_logical(logical_bounds.0, logical_bounds.1, logical_bounds.2,
         logical_bounds.3, app.window().scale_factor()).ok_or_else(|| anyhow!("播放器区域无效"))?;
@@ -536,7 +545,8 @@ pub(super) fn sync_video_player_captured(
         let reused = ACTIVE_VIDEO_SESSION.with(|slot| {
             let mut slot = slot.borrow_mut();
             if let Some(active) = slot.as_mut().filter(|active| active.persistence.lease() == persistence.lease()
-                && &active.output == output && !active.cancel.load(Ordering::SeqCst)) {
+                && &active.output == output && active.preview_mode == preview_mode
+                && !active.cancel.load(Ordering::SeqCst)) {
                 active.bounds = bounds;
                 Some(active.cancel.clone())
             } else { None }
@@ -551,6 +561,7 @@ pub(super) fn sync_video_player_captured(
         ACTIVE_VIDEO_SESSION.with(|slot| *slot.borrow_mut() = Some(ActiveVideoSession {
             context: context.clone(), persistence: persistence.clone(), output: output.clone(),
             cancel: cancel.clone(), bounds, playback: None,
+            preview_mode,
         }));
         Some(cancel)
     }).ok_or_else(|| anyhow!("播放器账号上下文已失效"))?;
@@ -560,8 +571,13 @@ pub(super) fn sync_video_player_captured(
     let worker_cancel = cancel.clone();
     let (sender, receiver) = mpsc::channel();
     if let Err(error) = spawn_video_player_worker(persistence.lease().clone(), cancel.clone(), move || {
-        let result = prepare_video_playback_with_cancel(worker_persistence, worker_output, worker_cancel)
-            .map_err(|_| "视频文件校验或播放器准备失败".to_string());
+        let result = prepare_video_playback_with_cancel(worker_persistence, worker_output, worker_cancel, preview_mode)
+            .map_err(|error| if error.root_cause().downcast_ref::<std::io::Error>()
+                .is_some_and(|source| source.kind() == std::io::ErrorKind::NotFound) {
+                "原视频文件已丢失，无法预览；可打开保存目录确认".to_string()
+            } else {
+                "视频文件无法读取或校验失败，无法预览".to_string()
+            });
         let _ = sender.send(result);
     }) {
         clear_active_video_player(Some(persistence.lease()));
@@ -587,9 +603,10 @@ fn poll_video_player_preparation(
         let Some(app) = weak.upgrade() else { cancel.store(true, Ordering::SeqCst); return; };
         let mut result = Some(result);
         let applied = apply_video_player(&context, &persistence, &output, || {
-            let bounds = ACTIVE_VIDEO_SESSION.with(|slot| slot.borrow().as_ref()
-                .filter(|active| Arc::ptr_eq(&active.cancel, &cancel)).map(|active| active.bounds));
-            let Some(bounds) = bounds.filter(|_| !cancel.load(Ordering::SeqCst)) else { return false };
+            let session = ACTIVE_VIDEO_SESSION.with(|slot| slot.borrow().as_ref()
+                .filter(|active| Arc::ptr_eq(&active.cancel, &cancel))
+                .map(|active| (active.bounds, active.preview_mode)));
+            let Some((bounds, preview_mode)) = session.filter(|_| !cancel.load(Ordering::SeqCst)) else { return false };
             match result.take().expect("single playback result") {
                 Ok(playback) => {
                     #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -603,13 +620,25 @@ fn poll_video_player_preparation(
                         }),
                         Err(_) => {
                             cancel.store(true, Ordering::SeqCst);
-                            app.global::<AppState>().set_video_status("应用内视频播放器初始化失败，文件仍保留".into());
+                            let state = app.global::<AppState>();
+                            if preview_mode {
+                                state.set_video_folder_status("无法预览视频，请点击卡片查看详情".into());
+                            } else {
+                                state.set_video_player_error("应用内视频播放器初始化失败，请返回列表重试".into());
+                                state.set_video_status("应用内视频播放器初始化失败".into());
+                            }
                         }
                     }
                 }
-                Err(_) => {
+                Err(message) => {
                     cancel.store(true, Ordering::SeqCst);
-                    app.global::<AppState>().set_video_status("视频文件校验或播放器准备失败，文件仍保留".into());
+                    let state = app.global::<AppState>();
+                    if preview_mode {
+                        state.set_video_folder_status(message.into());
+                    } else {
+                        state.set_video_player_error(message.clone().into());
+                        state.set_video_status(message.into());
+                    }
                 }
             }
             true
@@ -659,7 +688,15 @@ fn handle_player_command(
         PlayerCommand::Download => start_captured_video_export(app, context, persistence, output),
         PlayerCommand::Ready => {
             let _ = apply_video_player(context, persistence, output, || {
-                app.global::<AppState>().set_video_status("视频已加载".into());
+                let state = app.global::<AppState>();
+                let preview_mode = ACTIVE_VIDEO_SESSION.with(|slot| slot.borrow().as_ref()
+                    .is_some_and(|active| active.preview_mode && active.output == *output));
+                if preview_mode {
+                    state.set_video_folder_status("".into());
+                } else {
+                    state.set_video_player_error("".into());
+                    state.set_video_status("视频已加载".into());
+                }
             });
         }
         PlayerCommand::PlaybackError => {
@@ -668,6 +705,31 @@ fn handle_player_command(
                     "视频无法解码，请下载后使用系统播放器查看".into(),
                 );
             });
+        }
+        PlayerCommand::PreviewLeave => {
+            let closed = apply_video_player(context, persistence, output, || {
+                let is_preview = ACTIVE_VIDEO_SESSION.with(|slot| slot.borrow().as_ref()
+                    .is_some_and(|active| active.preview_mode && active.output == *output));
+                if !is_preview { return false; }
+                clear_active_video_player(Some(persistence.lease()));
+                app.global::<AppState>().set_video_hover_preview_id("".into());
+                true
+            }).unwrap_or(false);
+            if closed { schedule_video_worker_reap(); }
+        }
+        PlayerCommand::PreviewOpen => {
+            let opened = apply_video_player(context, persistence, output, || {
+                let is_preview = ACTIVE_VIDEO_SESSION.with(|slot| slot.borrow().as_ref()
+                    .is_some_and(|active| active.preview_mode && active.output == *output));
+                if !is_preview { return false; }
+                clear_active_video_player(Some(persistence.lease()));
+                app.global::<AppState>().set_video_hover_preview_id("".into());
+                true
+            }).unwrap_or(false);
+            if opened {
+                schedule_video_worker_reap();
+                app.global::<AppState>().invoke_play_saved_video(output.key().into());
+            }
         }
     }
 }
@@ -751,6 +813,7 @@ fn poll_video_export(
 }
 
 pub(super) fn reveal_saved_video_folder(
+    app: &AppWindow,
     context: &AppContext,
     persistence: PrivatePersistence,
     output: SavedVideoOutput,
@@ -762,37 +825,74 @@ pub(super) fn reveal_saved_video_folder(
     let (activity, effect) = persistence.begin_effect()?;
     let cancel = Arc::new(AtomicBool::new(false));
     let worker_cancel = cancel.clone();
-    spawn_video_player_worker(persistence.lease().clone(), cancel, move || {
+    let worker_persistence = persistence.clone();
+    let worker_output = output.clone();
+    let (sender, receiver) = mpsc::channel();
+    spawn_video_player_worker(persistence.lease().clone(), cancel.clone(), move || {
         let _effect = effect;
-        let result = (|| -> Result<()> {
-            let authority = persistence.storage_authority()?;
-            let directory = persistence.lease().namespace.path(ManagedUserArea::Videos);
-            let path = Path::new(&output.source_path);
-            let relative = path.strip_prefix(directory)?;
-            let key = ManagedFileKey::new(
-                ManagedUserArea::Videos,
-                relative
-                    .to_str()
-                    .ok_or_else(|| anyhow!("invalid video path"))?,
-            )?;
-            let file = authority.open_existing_regular(&key)?;
-            let metadata = authority.inspect_regular(&file)?;
+        let result = (|| -> Result<bool> {
+            let (target, file_present) = saved_video_reveal_target(&worker_persistence, &worker_output)?;
             anyhow::ensure!(
-                metadata.link_count == 1 && metadata.byte_size == output.size_bytes,
-                "video file changed"
-            );
-            anyhow::ensure!(
-                persistence.is_current()
+                worker_persistence.is_current()
                     && !activity.is_quiescing()
                     && !worker_cancel.load(Ordering::SeqCst),
                 "video owner changed"
             );
-            reveal_path_in_file_manager(path)
+            reveal_path_in_file_manager(&target)?;
+            Ok(file_present)
         })();
-        drop(result);
+        let _ = sender.send(result.ok());
     })?;
-    schedule_video_worker_reap();
+    poll_saved_video_reveal(app.as_weak(), context.clone(), persistence, output, cancel, receiver);
     Ok(())
+}
+
+fn saved_video_reveal_target(
+    persistence: &PrivatePersistence,
+    output: &SavedVideoOutput,
+) -> Result<(PathBuf, bool)> {
+    let authority = persistence.storage_authority()?;
+    let directory = persistence.lease().namespace.path(ManagedUserArea::Videos);
+    let path = Path::new(&output.source_path);
+    let relative = path.strip_prefix(&directory)?;
+    let key = ManagedFileKey::new(
+        ManagedUserArea::Videos,
+        relative.to_str().ok_or_else(|| anyhow!("invalid video path"))?,
+    )?;
+    if let Some(file) = authority.open_optional_regular(&key)? {
+        let metadata = authority.inspect_regular(&file)?;
+        anyhow::ensure!(metadata.link_count == 1 && metadata.byte_size == output.size_bytes, "video file changed");
+        Ok((path.to_path_buf(), true))
+    } else {
+        authority.enumerate_regular_names(ManagedUserArea::Videos)?;
+        Ok((directory.to_path_buf(), false))
+    }
+}
+
+fn poll_saved_video_reveal(
+    weak: Weak<AppWindow>, context: AppContext, persistence: PrivatePersistence, output: SavedVideoOutput,
+    cancel: Arc<AtomicBool>, receiver: mpsc::Receiver<Option<bool>>,
+) {
+    slint::Timer::single_shot(Duration::from_millis(50), move || {
+        let _ = reap_video_player_workers();
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => {
+                poll_saved_video_reveal(weak, context, persistence, output, cancel, receiver);
+                return;
+            }
+            Err(TryRecvError::Disconnected) => None,
+        };
+        let Some(app) = weak.upgrade() else { return; };
+        if cancel.load(Ordering::SeqCst) { return; }
+        let _ = apply_video_player(&context, &persistence, &output, || {
+            app.global::<AppState>().set_video_folder_status(match result {
+                Some(true) => "已打开视频所在文件夹",
+                Some(false) => "原视频文件已丢失，已打开保存目录",
+                None => "无法打开视频保存目录",
+            }.into());
+        });
+    });
 }
 
 fn start_captured_video_reveal(
@@ -915,6 +1015,24 @@ mod desktop_video_player {
                     && active.persistence.lease() == persistence.lease() && active.output == output));
                 if !current { return; }
                 let Some(command) = parse_player_command(request.body()) else { return; };
+                if matches!(command, PlayerCommand::PreviewOpen | PlayerCommand::PreviewLeave) {
+                    let weak = weak.clone();
+                    let context = context.clone();
+                    let persistence = persistence.clone();
+                    let output = output.clone();
+                    let command_cancel = command_cancel.clone();
+                    slint::Timer::single_shot(Duration::ZERO, move || {
+                        let current = ACTIVE_VIDEO_SESSION.with(|slot| slot.borrow().as_ref().is_some_and(|active|
+                            Arc::ptr_eq(&active.cancel, &command_cancel)
+                            && !command_cancel.load(Ordering::SeqCst)));
+                        if current {
+                            if let Some(app) = weak.upgrade() {
+                                handle_player_command(&app, &context, &persistence, &output, command);
+                            }
+                        }
+                    });
+                    return;
+                }
                 let Some(app) = weak.upgrade() else { return; };
                 handle_player_command(&app, &context, &persistence, &output, command);
             })
@@ -972,6 +1090,8 @@ mod tests {
             parse_player_command(r#"{"command":"player_ready"}"#),
             Some(PlayerCommand::Ready)
         );
+        assert_eq!(parse_player_command(r#"{"command":"preview_leave"}"#), Some(PlayerCommand::PreviewLeave));
+        assert_eq!(parse_player_command(r#"{"command":"preview_open"}"#), Some(PlayerCommand::PreviewOpen));
         assert_eq!(
             parse_player_command(r#"{"command":"playback_error"}"#),
             Some(PlayerCommand::PlaybackError)
@@ -1062,7 +1182,7 @@ mod core_player_tests {
                 authority.sync_regular(&mut file).unwrap();
             }).join().unwrap());
             let output = SavedVideoOutput { model: String::new(), resolution: String::new(), duration_secs: 0,
-                source_asset_id:String::new(),prompt:String::new(),
+                source_asset_id:String::new(), preview_source_path:String::new(), prompt:String::new(),
                 client_request_id: "44444444-4444-4444-8444-444444444444".into(), server_task_id: "55555555-5555-4555-8555-555555555555".into(),
                 file_id: "66666666-6666-4666-8666-666666666666".into(), billing_account_group_id: "33333333-3333-4333-8333-333333333333".into(),
                 sha256: format!("{:x}", Sha256::digest(bytes)), size_bytes: bytes.len() as u64,
@@ -1087,6 +1207,54 @@ mod core_player_tests {
             assert_eq!(core_video_player_worker_count(&self.lease), 0, "every owned player worker must be joined");
         }
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn video_cover_uses_owned_video_and_recovers_cached_frame_without_reference() {
+        let fixture = Fixture::new("11111111-1111-4111-8111-111111111111");
+        let output = fixture.output(include_bytes!("../../tests/fixtures/video-cover-black-intro.mp4"));
+        let extract = |output: &SavedVideoOutput| std::thread::scope(|threads| {
+            threads.spawn(||prepare_owned_video_cover(&fixture.persistence,output,||true)).join().unwrap()
+        });
+        let preview = extract(&output).unwrap();
+        assert_eq!(preview.dimensions(),(64,48));
+        let key = ManagedFileKey::new(ManagedUserArea::Previews,
+            &format!("video-cover-v1-{}.png",output.sha256)).unwrap();
+        assert!(fixture.authority.open_existing_regular(&key).is_ok());
+        let cached = extract(&output).unwrap();
+        assert_eq!(cached.dimensions(),preview.dimensions());
+        let mut invalid = output.clone();
+        invalid.sha256 = "0".repeat(64);
+        assert!(extract(&invalid).is_err());
+        invalid = output.clone();
+        invalid.source_path = fixture.lease.namespace.path(ManagedUserArea::Previews)
+            .join("foreign.mp4").to_string_lossy().into_owned();
+        assert!(extract(&invalid).is_err());
+        fixture.stop();
+    }
+
+    #[test]
+    fn missing_saved_video_stops_playback_and_reveals_its_owned_directory() {
+        let fixture = Fixture::new(A);
+        let output = fixture.output(b"retained video");
+        let (target, file_present) = saved_video_reveal_target(&fixture.persistence, &output).unwrap();
+        assert_eq!(target, PathBuf::from(&output.source_path));
+        assert!(file_present);
+
+        fs::remove_file(&output.source_path).unwrap();
+        let playback = std::thread::scope(|threads| {
+            let persistence = fixture.persistence.clone();
+            let output = output.clone();
+            threads.spawn(move || prepare_video_playback(persistence, output)).join().unwrap()
+        });
+        let error = match playback { Ok(_) => panic!("missing video must not play"), Err(error) => error };
+        assert_eq!(error.root_cause().downcast_ref::<std::io::Error>().unwrap().kind(), std::io::ErrorKind::NotFound);
+
+        let (target, file_present) = saved_video_reveal_target(&fixture.persistence, &output).unwrap();
+        assert_eq!(target, fixture.lease.namespace.path(ManagedUserArea::Videos));
+        assert!(!file_present);
+        fixture.stop();
+    }
     impl Drop for Fixture {
         fn drop(&mut self) {
             close_video_player_for_retirement(&self.lease);
@@ -1102,6 +1270,44 @@ mod core_player_tests {
     const B: &str = "22222222-2222-4222-8222-222222222222";
 
     #[test]
+    fn preview_open_enters_the_selected_video_details() {
+        i_slint_backend_testing::init_no_event_loop();
+        let fixture = Fixture::new(A);
+        let output = fixture.output(b"private video");
+        let app = AppWindow::new().unwrap();
+        wire_video_generation_callbacks(&app, fixture.context.clone());
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_page("video-generation".into());
+        state.set_video_return_page("generation".into());
+        state.set_video_hover_preview_id(output.key().into());
+        state.set_video_player_error("上次播放失败".into());
+        state.set_video_folder_status("上次打开失败".into());
+        let cancel = Arc::new(AtomicBool::new(false));
+        ACTIVE_VIDEO_SESSION.with(|slot| *slot.borrow_mut() = Some(ActiveVideoSession {
+            context: fixture.context.clone(),
+            persistence: fixture.persistence.clone(),
+            output: output.clone(),
+            cancel: cancel.clone(),
+            bounds: VideoPlayerBounds { x: 0, y: 0, width: 100, height: 100 },
+            preview_mode: true,
+            playback: None,
+        }));
+
+        handle_player_command(&app, &fixture.context, &fixture.persistence, &output, PlayerCommand::PreviewOpen);
+
+        assert!(cancel.load(Ordering::SeqCst));
+        assert!(state.get_video_player_open());
+        assert_eq!(state.get_video_result_path(), output.source_path);
+        assert_eq!(state.get_video_player_return_page(), "video-generation");
+        assert_eq!(state.get_video_hover_preview_id(), "");
+        assert_eq!(state.get_video_player_error(), "");
+        assert_eq!(state.get_video_folder_status(), "");
+        assert_eq!(state.get_video_result_id(), output.key());
+        fixture.stop();
+    }
+
+    #[test]
     fn core_shared_upgrade_observer_stops_captured_player_when_ordinary_result_is_dropped() {
         i_slint_backend_testing::init_no_event_loop();
         let fixture = Fixture::new(A);
@@ -1115,7 +1321,7 @@ mod core_player_tests {
         ACTIVE_VIDEO_SESSION.with(|slot| *slot.borrow_mut() = Some(ActiveVideoSession {
             context: fixture.context.clone(), persistence: fixture.persistence.clone(),
             output, cancel: cancelled.clone(), bounds: VideoPlayerBounds { x:0,y:0,width:10,height:10 },
-            playback: Some(playback),
+            preview_mode: false, playback: Some(playback),
         }));
         // No ordinary HTTP completion delivers the error to the UI.
         fixture.persistence.upgrade_latch().trip(RequiredUpgrade { minimum_version: Some("99.0.0".into()) });
@@ -1173,6 +1379,26 @@ mod core_player_tests {
         assert!(html.contains(playback.url.as_str()));
         assert!(html.contains("player_ready"));
         assert!(html.contains("playback_error"));
+        fixture.stop();
+    }
+
+    #[test]
+    fn core_video_preview_is_muted_and_uses_the_owned_local_media_route() {
+        let fixture = Fixture::new(A);
+        let output = fixture.output(b"private video preview");
+        let playback = prepare_video_playback_with_cancel(
+            fixture.persistence.clone(), output, Arc::new(AtomicBool::new(false)), true,
+        ).unwrap();
+        assert_eq!(playback.player_url.origin(), playback.url.origin());
+        assert!(playback.player_url.path().starts_with("/player-preview/"));
+        let (headers, body) = request(&playback.player_url, "GET", playback.player_url.path(), "");
+        let html = String::from_utf8(body).unwrap();
+        assert!(headers.starts_with("HTTP/1.1 200 "));
+        assert!(html.contains("const previewMode = true;"));
+        assert!(html.contains("video.muted = true"));
+        assert!(html.contains("video.loop = true"));
+        assert!(html.contains(playback.url.as_str()));
+        drop(playback);
         fixture.stop();
     }
 

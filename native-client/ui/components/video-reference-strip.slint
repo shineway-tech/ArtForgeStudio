@@ -1,0 +1,132 @@
+import { AppState } from "../app-state.slint";
+import { AppTheme } from "../theme.slint";
+
+component VideoReferenceThumb inherits Rectangle {
+    in property <image> source-image;
+    in property <int> number;
+    in property <bool> enabled: true;
+    callback remove();
+
+    background: AppTheme.panel;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: AppTheme.border;
+    clip: true;
+
+    Image {
+        x: 2px;
+        y: 2px;
+        width: parent.width - 4px;
+        height: parent.height - 4px;
+        source: root.source-image;
+        image-fit: contain;
+    }
+    Rectangle {
+        x: 5px;
+        y: 5px;
+        width: 20px;
+        height: 18px;
+        background: #090d16dd;
+        border-radius: 5px;
+
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: "" + root.number;
+            color: #ffffff;
+            font-size: 10px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+    Rectangle {
+        x: parent.width - 20px;
+        y: 2px;
+        width: 16px;
+        height: 16px;
+        background: remove-touch.has-hover ? AppTheme.danger : #090d16cc;
+        border-radius: 8px;
+        Image {
+            x: 4px;
+            y: 4px;
+            width: 8px;
+            height: 8px;
+            source: @image-url("../../assets/icons/close.svg");
+            colorize: #ffffff;
+        }
+        remove-touch := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: self.enabled ? pointer : default;
+            clicked => { root.remove(); }
+        }
+    }
+}
+
+export component VideoReferenceStrip inherits Rectangle {
+    in property <bool> enabled: true;
+    in property <length> item-size: 82px;
+    in property <length> item-gap: 8px;
+    property <int> item-count: AppState.video-images.length + 1;
+    callback remove(string);
+    callback add();
+
+    height: root.item-size + 4px;
+    background: transparent;
+
+    Flickable {
+        width: parent.width;
+        height: parent.height;
+        viewport-width: max(self.width, root.item-count * (root.item-size + root.item-gap));
+        viewport-height: self.height;
+        interactive: true;
+
+        for item[index] in AppState.video-images: VideoReferenceThumb {
+            x: index * (root.item-size + root.item-gap);
+            y: 2px;
+            width: root.item-size;
+            height: root.item-size;
+            source-image: item.image;
+            number: index + 1;
+            enabled: root.enabled;
+            remove => { root.remove(item.id); }
+        }
+
+        add-card := Rectangle {
+            x: AppState.video-images.length * (root.item-size + root.item-gap);
+            y: 2px;
+            width: root.item-size;
+            height: root.item-size;
+            background: add-touch.has-hover ? AppTheme.accent.with-alpha(0.08) : AppTheme.panel;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: add-touch.has-hover ? AppTheme.accent : AppTheme.border;
+            opacity: root.enabled ? 1 : 0.45;
+            Image {
+                x: (parent.width - 18px) / 2;
+                y: 16px;
+                width: 18px;
+                height: 18px;
+                source: @image-url("../../assets/icons/plus.svg");
+                colorize: AppTheme.accent;
+            }
+            Text {
+                y: 52px;
+                width: parent.width;
+                height: 18px;
+                text: AppState.en ? "Add" : "添加";
+                color: AppTheme.muted;
+                font-size: 11px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            add-touch := TouchArea {
+                enabled: root.enabled;
+                mouse-cursor: self.enabled ? pointer : default;
+                accessible-role: button;
+                accessible-label: AppState.en ? "Add reference image" : "添加参考图";
+                clicked => { root.add(); }
+            }
+        }
+    }
+}

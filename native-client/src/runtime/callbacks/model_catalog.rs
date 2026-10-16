@@ -85,18 +85,34 @@ pub(super) fn wire_model_catalog_callbacks(app: &AppWindow, store: Rc<RefCell<St
 
     {
         let app_weak = app.as_weak();
+        state.on_begin_generation_selection(move || {
+            let Some(app) = app_weak.upgrade() else { return; };
+            let state = app.global::<AppState>();
+            publish_generation_selection(&state, BTreeSet::new());
+            state.set_generation_selection_mode(true);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
         let store = store.clone();
         state.on_select_all_generations(move || {
             let Some(app) = app_weak.upgrade() else { return; };
             let state = app.global::<AppState>();
+            if !state.get_generation_selection_mode() { return; }
             let category = resolve_category(&state.get_asset_type().to_string(), "");
-            let selected = store
+            let all = store
                 .borrow()
                 .generations
                 .iter()
                 .filter(|item| item.category == category)
                 .map(|item| item.id.clone())
                 .collect::<BTreeSet<_>>();
+            let selected = if generation_selection_ids(&state) == all {
+                BTreeSet::new()
+            } else {
+                all
+            };
             publish_generation_selection(&state, selected);
         });
     }
@@ -106,6 +122,7 @@ pub(super) fn wire_model_catalog_callbacks(app: &AppWindow, store: Rc<RefCell<St
         state.on_toggle_generation_selection(move |id| {
             let Some(app) = app_weak.upgrade() else { return; };
             let state = app.global::<AppState>();
+            if !state.get_generation_selection_mode() { return; }
             let mut selected = generation_selection_ids(&state);
             if !selected.remove(id.as_str()) {
                 selected.insert(id.to_string());
@@ -118,7 +135,9 @@ pub(super) fn wire_model_catalog_callbacks(app: &AppWindow, store: Rc<RefCell<St
         let app_weak = app.as_weak();
         state.on_clear_generation_selection(move || {
             let Some(app) = app_weak.upgrade() else { return; };
-            publish_generation_selection(&app.global::<AppState>(), BTreeSet::new());
+            let state = app.global::<AppState>();
+            publish_generation_selection(&state, BTreeSet::new());
+            state.set_generation_selection_mode(false);
         });
     }
 
@@ -257,11 +276,22 @@ fn publish_generation_selection(state: &AppState, selected: BTreeSet<String>) {
         selected.into_iter().map(SharedString::from).collect::<Vec<_>>(),
     )));
     state.set_generation_selected_count(selected_count);
-    state.set_generation_selection_mode(selected_count > 0);
     if selected_count == 0 {
         state.set_thumbnail_action_menu_id("".into());
         state.set_thumbnail_action_menu_source("".into());
     }
+}
+
+pub(super) fn reconcile_generation_selection(state: &AppState, store: &Store) {
+    let category = resolve_category(&state.get_asset_type().to_string(), "");
+    let selected = generation_selection_ids(state);
+    let retained = store
+        .generations
+        .iter()
+        .filter(|item| item.category == category && selected.contains(&item.id))
+        .map(|item| item.id.clone())
+        .collect();
+    publish_generation_selection(state, retained);
 }
 
 #[cfg(test)]
@@ -280,6 +310,7 @@ mod tests {
             purpose: purpose.into(),
             version: 1,
             capabilities: String::new().into(),
+            capability_json: String::new().into(),
             pricing: String::new().into(),
             price_1k: 0,
             price_2k: 0,
@@ -353,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn generation_batch_selection_selects_current_category_and_can_be_cleared() {
+    fn generation_batch_selection_stays_active_until_explicit_exit() {
         i_slint_backend_testing::init_no_event_loop();
         let app = AppWindow::new().expect("create app window");
         let store = Rc::new(RefCell::new(Store::default()));
@@ -370,6 +401,9 @@ mod tests {
         ])));
         wire_model_catalog_callbacks(&app, store);
 
+        state.invoke_begin_generation_selection();
+        assert!(state.get_generation_selection_mode());
+        assert_eq!(state.get_generation_selected_count(), 0);
         state.invoke_select_all_generations();
         assert!(state.get_generation_selection_mode());
         assert_eq!(state.get_generation_selected_count(), 2);
@@ -379,10 +413,20 @@ mod tests {
             BTreeSet::from(["scene-a".to_string(), "scene-b".to_string()])
         );
 
+        state.invoke_select_all_generations();
+        assert!(state.get_generation_selection_mode());
+        assert_eq!(state.get_generation_selected_count(), 0);
+        assert!(state.get_generations().iter().all(|item| !item.selected));
+
+        state.invoke_select_all_generations();
         state.invoke_toggle_generation_selection("scene-a".into());
         assert_eq!(state.get_generation_selected_count(), 1);
         assert!(!state.get_generations().row_data(0).unwrap().selected);
         assert!(state.get_generations().row_data(1).unwrap().selected);
+
+        state.invoke_toggle_generation_selection("scene-b".into());
+        assert!(state.get_generation_selection_mode());
+        assert_eq!(state.get_generation_selected_count(), 0);
 
         state.invoke_clear_generation_selection();
         assert!(!state.get_generation_selection_mode());

@@ -443,7 +443,7 @@ pub(super) fn start_image_cutout_with_billing_scope(
 fn new_cutout_record(scope:&BillingScope,key:String,local_task:String,view:&CutoutView,source:&Path,subject:&str,bytes:&[u8])->Result<PendingGenerationRecord>{
     let path=source.to_str().ok_or_else(||anyhow!("invalid owned cutout path"))?.to_owned();
     Ok(PendingGenerationRecord{
-        source_asset_id:if view.kind!="reference"{view.id.clone()}else{String::new()},video_request:None,
+        source_asset_id:if view.kind!="reference"{view.id.clone()}else{String::new()},video_preview_path:String::new(),video_request:None,
         schema_version:2,cancel_requested:false,created_at_epoch_ms:Local::now().timestamp_millis(),client_request_id:key,
         owner_user_id:scope.request.session.owner_user_id.clone(),billing_account_group_id:scope.request.account_group_id.clone(),auth_epoch:scope.request.session.auth_epoch,
         local_task_id:local_task,server_task_id:String::new(),raw_prompt:if view.title.trim().is_empty(){"图片".into()}else{view.title.clone()},
@@ -451,7 +451,7 @@ fn new_cutout_record(scope:&BillingScope,key:String,local_task:String,view:&Cuto
         quality:subject.into(),model_code:"aliyun_image_segmentation".into(),conversation_id:String::new(),count:1,target_width:0,target_height:0,create_conversation:false,
         reference_paths:vec![path.clone()],reference_sha256:vec![cutout_sha256_hex(bytes)],reference_size_bytes:vec![bytes.len() as u64],
         lineage_reference_paths:vec![path],uploaded_file_ids:vec![],deliveries:vec![],terminal:false,expected_success_count:0,
-        canvas_source_node_id:String::new(),canvas_ui_extraction:false,
+        canvas_source_node_id:String::new(),canvas_workflow_id:String::new(),canvas_ui_extraction:false,
     })
 }
 pub(super) fn resume_pending_image_cutout(app:&AppWindow,context:AppContext,record:PendingGenerationRecord){

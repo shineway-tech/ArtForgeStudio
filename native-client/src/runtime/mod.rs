@@ -194,6 +194,9 @@ use image_processing::*;
 #[path = "services/preview.rs"]
 mod preview;
 use preview::*;
+#[path = "services/video_cover.rs"]
+mod video_cover;
+use video_cover::*;
 #[path = "services/ui_component_extraction.rs"]
 mod ui_component_extraction;
 use ui_component_extraction::*;

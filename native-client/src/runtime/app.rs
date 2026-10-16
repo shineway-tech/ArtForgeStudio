@@ -6,11 +6,22 @@ pub(super) fn prepare_direct_video_navigation(state: &AppState) -> bool {
         return false;
     }
     state.set_video_return_page(state.get_page());
+    state.set_video_player_return_page("".into());
     state.set_video_return_to_viewer(false);
     state.set_video_page_tab("create".into());
     state.set_video_player_open(false);
     state.set_viewer_open(false);
     true
+}
+
+pub(super) fn back_from_video_generation(state: &AppState) {
+    if state.get_video_player_open() && state.get_video_player_return_page() == "video-generation" {
+        close_video_player();
+        state.set_video_player_open(false);
+        state.set_video_player_return_page("".into());
+    } else {
+        state.invoke_close_video_generation();
+    }
 }
 
 pub(super) fn run() -> Result<()> {
@@ -441,7 +452,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
                 let state = app.global::<AppState>();
                 let page = state.get_page().to_string();
                 if page == "video-generation" {
-                    state.invoke_close_video_generation();
+                    back_from_video_generation(&state);
                     return;
                 }
                 if page == "custom-prompt-editor" {

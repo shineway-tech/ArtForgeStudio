@@ -150,7 +150,7 @@ fn paid_viewer_record(scope:&BillingScope,prompt:String,model:String,quality:Str
     ratio:String,conversation:String,task_type:&str,width:u32,height:u32,references:&[PreparedPaidImageFile],lineage:Vec<String>,source_id:String)
     ->PendingGenerationRecord {
     PendingGenerationRecord {
-        source_asset_id:source_id,video_request:None,schema_version:2,cancel_requested:false,
+        source_asset_id:source_id,video_preview_path:String::new(),video_request:None,schema_version:2,cancel_requested:false,
         created_at_epoch_ms:Local::now().timestamp_millis(),client_request_id:Uuid::new_v4().to_string(),
         owner_user_id:scope.request.session.owner_user_id.clone(),billing_account_group_id:scope.request.account_group_id.clone(),
         auth_epoch:scope.request.session.auth_epoch,local_task_id:Uuid::new_v4().to_string(),server_task_id:String::new(),
@@ -159,7 +159,7 @@ fn paid_viewer_record(scope:&BillingScope,prompt:String,model:String,quality:Str
         reference_paths:references.iter().map(|file|file.path.to_string_lossy().into_owned()).collect(),
         reference_sha256:references.iter().map(|file|file.sha256.clone()).collect(),reference_size_bytes:references.iter().map(|file|file.size).collect(),
         lineage_reference_paths:lineage,uploaded_file_ids:Vec::new(),deliveries:Vec::new(),terminal:false,expected_success_count:0,
-        canvas_source_node_id:String::new(),canvas_ui_extraction:false,
+        canvas_source_node_id:String::new(),canvas_workflow_id:String::new(),canvas_ui_extraction:false,
     }
 }
 pub(super) fn start_backend_image_edit_with_prepared_inputs(
@@ -205,6 +205,7 @@ pub(super) fn start_backend_video(
     scope: &BillingScope,
     request: CreateVideoGenerationTask,
     source_id: String,
+    preview_source_path: String,
 ) -> bool {
     let mut record = paid_viewer_record(
         scope,
@@ -222,6 +223,7 @@ pub(super) fn start_backend_video(
         vec![],
         source_id,
     );
+    record.video_preview_path = preview_source_path;
     record.client_request_id = request.client_request_id.clone();
     record.uploaded_file_ids = request.reference_file_ids.clone();
     record.video_request = Some(request);
@@ -472,7 +474,7 @@ fn finish_paid_viewer_results(
                 let _=context.apply_user_completion(persistence.lease(),||{
                     if !paid_viewer_binding_matches(&context,&persistence) || !paid_viewer_task_matches(&context,&record){return;}
                     let Some(task)=remove_active_generation(&context,&record.category,&record.local_task_id)else{return;};
-                    set_stream_final_status(&context,&app,&record.category,task.success_count,task.failed_count,task.last_failure_reason.as_deref());
+                    set_stream_final_status(&context,&app,&record.category,task.success_count,task.failed_count,task.total_count,task.last_failure_reason.as_deref());
                     sync_generation_state_for_current_category(&context,&app);
                     if let Some(viewer)=viewer{effects=Some(viewer.publish_metadata(&app));}
                 });
@@ -1194,11 +1196,15 @@ fn report_unhandled_terminal_failures(
     handled_failure: &mut BTreeSet<usize>,
     fallback: &str,
 ) {
-    if !detail.terminal()
-        || (detail.failure.is_none() && !detail.status.eq_ignore_ascii_case("failed"))
-    {
+    if !detail.terminal() {
         return;
     }
+    let reported_server_failures = detail.items.iter().filter(|item| {
+        matches!(item.status.as_str(), "failed" | "cancelled")
+            && handled_failure.contains(&item.index)
+    }).count();
+    let unreported_server_failures = (detail.failure_count.max(0) as usize)
+        .saturating_sub(reported_server_failures);
     let reason = detail
         .failure
         .as_ref()
@@ -1206,6 +1212,14 @@ fn report_unhandled_terminal_failures(
         .unwrap_or_else(|| fallback.to_string());
     let reported = handled_success.len() + handled_failure.len();
     let missing = expected_count.saturating_sub(reported);
+    let missing = missing.min(if unreported_server_failures == 0
+        && detail.status.eq_ignore_ascii_case("failed")
+        && detail.failure_count <= 0
+    {
+        missing
+    } else {
+        unreported_server_failures
+    });
     let time = Local::now().format("%Y-%m-%d %H:%M").to_string();
     for synthetic_index in 0..missing {
         handled_failure.insert(usize::MAX.saturating_sub(synthetic_index));
@@ -1487,10 +1501,13 @@ pub(super) fn start_backend_generation_with_billing_scope(
         && state.get_canvas_workflow_id().as_str() == "scene-composition";
     let skill_icon_canvas = matches!(&destination, GenerationDestination::Canvas { .. })
         && state.get_canvas_workflow_id().as_str() == "skill-icon-generator";
+    let character_split_canvas = matches!(&destination, GenerationDestination::Canvas { .. })
+        && state.get_canvas_workflow_id().as_str() == "character-split";
     let single_canvas_workflow = side_scroll_map_canvas
         || character_multi_direction_canvas
         || scene_composition_canvas
-        || skill_icon_canvas;
+        || skill_icon_canvas
+        || character_split_canvas;
     let model_code = state.get_image_model().to_string();
     if model_code.trim().is_empty() {
         state.set_generation_status("服务端没有可用的图像模型".into());
@@ -1550,6 +1567,14 @@ pub(super) fn start_backend_generation_with_billing_scope(
             .cloned()
             .collect::<Vec<_>>()
     };
+    if character_split_canvas && original_references.len() != 1 {
+        state.set_generation_status(if state.get_language().as_str() == "en" {
+            "Upload exactly one character illustration"
+        } else {
+            "请只上传一张角色立绘"
+        }.into());
+        return;
+    }
     let reference_paths = original_references
         .iter()
         .map(|item| PathBuf::from(&item.source_path))
@@ -1651,7 +1676,7 @@ pub(super) fn start_backend_generation_with_billing_scope(
     let local_task_id = Uuid::new_v4().to_string();
     let request_id = Uuid::new_v4().simple().to_string();
     let recovery_record = PendingGenerationRecord {
-        source_asset_id: String::new(),        video_request: None,
+        source_asset_id: String::new(), video_preview_path: String::new(), video_request: None,
         schema_version: 2,
             cancel_requested: false,
         created_at_epoch_ms: Local::now().timestamp_millis(),
@@ -1685,6 +1710,11 @@ pub(super) fn start_backend_generation_with_billing_scope(
         canvas_source_node_id: match &destination {
             GenerationDestination::Canvas { source_node_id } => source_node_id.clone(),
             GenerationDestination::Gallery => String::new(),
+        },
+        canvas_workflow_id: if matches!(&destination, GenerationDestination::Canvas { .. }) {
+            state.get_canvas_workflow_id().to_string()
+        } else {
+            String::new()
         },
         canvas_ui_extraction: false,
     };
@@ -2226,7 +2256,7 @@ pub(super) fn start_backend_image_edit_with_billing_scope(
             }
         };
     let record = PendingGenerationRecord {
-        source_asset_id: String::new(),        video_request: None,
+        source_asset_id: String::new(), video_preview_path: String::new(), video_request: None,
         schema_version: 2,
             cancel_requested: false,
         created_at_epoch_ms: Local::now().timestamp_millis(),
@@ -2258,6 +2288,7 @@ pub(super) fn start_backend_image_edit_with_billing_scope(
         terminal: false,
         expected_success_count: 0,
         canvas_source_node_id: String::new(),
+        canvas_workflow_id: String::new(),
         canvas_ui_extraction: false,
     };
     if upsert_pending_generation_for_namespace(&authority, &billing_scope, record.clone()).is_err()
@@ -2834,7 +2865,7 @@ pub(super) fn start_backend_upscale_with_billing_scope(
             }
         };
     let recovery_record = PendingGenerationRecord {
-        source_asset_id: String::new(),        video_request: None,
+        source_asset_id: String::new(), video_preview_path: String::new(), video_request: None,
         schema_version: 2,
             cancel_requested: false,
         created_at_epoch_ms: Local::now().timestamp_millis(),
@@ -2866,6 +2897,7 @@ pub(super) fn start_backend_upscale_with_billing_scope(
         terminal: false,
         expected_success_count: 0,
         canvas_source_node_id: String::new(),
+        canvas_workflow_id: String::new(),
         canvas_ui_extraction: false,
     };
     let submission = match PreparedUpscaleSubmission::new(
@@ -3373,7 +3405,7 @@ fn retained_generation_paths(records: &[PendingGenerationRecord]) -> BTreeSet<Pa
                     .deliveries
                     .iter()
                     .map(|delivery| delivery.local_path.as_str()),
-            )
+            ).chain(std::iter::once(record.video_preview_path.as_str()))
         })
         .filter(|path| !path.trim().is_empty())
         .map(Path::new)
@@ -4473,6 +4505,50 @@ mod tests {
         }
     }
 
+    #[test]
+    fn partial_task_reports_failed_images_without_item_rows() {
+        let (sender, receiver) = mpsc::channel();
+        let mut detail = completed_task_with_available_file("file-1");
+        detail.status = "partially_completed".to_string();
+        detail.requested_count = 2;
+        detail.failure_count = 1;
+        let mut handled_failure = BTreeSet::new();
+
+        report_unhandled_terminal_failures(
+            &sender,
+            &detail,
+            2,
+            &BTreeSet::from([0]),
+            &mut handled_failure,
+            "服务端未能生成该图片",
+        );
+
+        assert_eq!(handled_failure.len(), 1);
+        assert!(matches!(receiver.try_recv(), Ok(GenerationOutcome::ImageFailure { .. })));
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn missing_success_is_not_misreported_as_a_failed_generation() {
+        let (sender, receiver) = mpsc::channel();
+        let mut detail = completed_task_with_available_file("file-1");
+        detail.requested_count = 2;
+        detail.success_count = 2;
+        let mut handled_failure = BTreeSet::new();
+
+        report_unhandled_terminal_failures(
+            &sender,
+            &detail,
+            2,
+            &BTreeSet::from([0]),
+            &mut handled_failure,
+            "服务端未能生成该图片",
+        );
+
+        assert!(handled_failure.is_empty());
+        assert!(receiver.try_recv().is_err());
+    }
+
     fn test_png_bytes() -> Vec<u8> {
         let image = image::RgbaImage::from_pixel(2, 2, image::Rgba([12, 34, 56, 255]));
         let mut output = Cursor::new(Vec::new());
@@ -4497,7 +4573,7 @@ mod tests {
 
     fn recovery_record(deliveries: Vec<PendingDeliveryRecord>) -> PendingGenerationRecord {
         PendingGenerationRecord {
-            source_asset_id: String::new(),            video_request: None,
+            source_asset_id: String::new(), video_preview_path: String::new(), video_request: None,
             schema_version: 2,
             cancel_requested: false,
             created_at_epoch_ms: Local::now().timestamp_millis(),
@@ -4529,6 +4605,7 @@ mod tests {
             terminal: true,
             expected_success_count: 1,
             canvas_source_node_id: String::new(),
+            canvas_workflow_id: String::new(),
             canvas_ui_extraction: false,
         }
     }
@@ -5056,7 +5133,7 @@ pub(in crate::runtime) mod billing_capture_test_support {
         task_type: &str,
     ) -> PendingGenerationRecord {
         PendingGenerationRecord {
-            source_asset_id: String::new(),            video_request: None,
+            source_asset_id: String::new(), video_preview_path: String::new(), video_request: None,
             schema_version: 2,
             cancel_requested: false,
             created_at_epoch_ms: 1,
@@ -5092,6 +5169,7 @@ pub(in crate::runtime) mod billing_capture_test_support {
             terminal: false,
             expected_success_count: 0,
             canvas_source_node_id: String::new(),
+            canvas_workflow_id: String::new(),
             canvas_ui_extraction: false,
         }
     }

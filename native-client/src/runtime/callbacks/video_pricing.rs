@@ -10,7 +10,7 @@ pub(super) fn video_rate(model: &CatalogModelView, quality: &str) -> String {
 }
 
 fn checked_video_price(rate: &str, seconds: i32) -> Option<String> {
-    if !(4..=15).contains(&seconds) {
+    if seconds < 4 {
         return None;
     }
     let rate = rate.parse::<u64>().ok().filter(|rate| *rate > 0)?;
@@ -31,6 +31,7 @@ pub(super) fn estimate_video_price(state: &AppState) {
                 state.get_video_duration_seconds(),
             )
         });
+    let total = total.filter(|_| video_parameters_supported(state));
     state.set_video_quote_ready(total.is_some() && state.get_video_service_available());
     state.set_video_credit_cost(total.unwrap_or_default().into());
     state.set_video_status(
@@ -148,7 +149,7 @@ pub(super) fn wire_video_submission(
                 state.set_video_status(error.into());
                 return;
             }
-            if !state.get_video_quote_ready() || state.get_video_credit_cost().is_empty() {
+            if !state.get_video_quote_ready() || state.get_video_credit_cost().is_empty() || !video_parameters_supported(&state) {
                 state.set_video_status("请先获取模型价格".into());
                 return;
             }
@@ -174,6 +175,10 @@ pub(super) fn wire_video_submission(
                 .iter()
                 .map(|row| PathBuf::from(row.source_path.as_str()))
                 .collect();
+            let preview_source_path = paths
+                .first()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_default();
             let mut key = pending.lock().unwrap_or_else(|p| p.into_inner());
             if key.is_empty() {
                 *key = Uuid::new_v4().to_string();
@@ -290,6 +295,7 @@ pub(super) fn wire_video_submission(
                             &scope,
                             request,
                             source_id,
+                            preview_source_path,
                         );
                     }
                     Err(error) => state
@@ -354,6 +360,7 @@ mod tests {
             code: "seedance-test".into(),
             purpose: "video_generation".into(),
             video_price_720: "200".into(),
+            capability_json: serde_json::json!({"aspect_ratios":["16:9"],"duration_secs":{"min":4,"max":15}}).to_string().into(),
             ..Default::default()
         }
     }
@@ -490,7 +497,7 @@ mod tests {
         assert_eq!(checked_video_price("", 4), None);
         assert_eq!(checked_video_price("0", 4), None);
         assert_eq!(checked_video_price("-1", 4), None);
-        assert_eq!(checked_video_price("200", 16), None);
+        assert_eq!(checked_video_price("200", 16), Some("3200".into()));
         assert_eq!(checked_video_price(&u64::MAX.to_string(), 15), None);
         assert_eq!(checked_video_price(&i64::MAX.to_string(), 4), None);
     }

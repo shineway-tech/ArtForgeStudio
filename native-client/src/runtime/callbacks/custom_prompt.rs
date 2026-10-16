@@ -1567,7 +1567,7 @@ mod core_custom_effect_tests{
     fn set_model(app:&AppWindow){
         app.global::<AppState>().set_catalog_models(ModelRc::new(VecModel::from(vec![CatalogModelView{
             code:"fixture-style-model".into(),name:"Fixture style".into(),purpose:"prompt_processing".into(),version:1,
-            capabilities:"".into(),pricing:"".into(),price_1k:0,price_2k:0,price_4k:0,price_standard:"13".into(),
+            capabilities:"".into(),capability_json:"".into(),pricing:"".into(),price_1k:0,price_2k:0,price_4k:0,price_standard:"13".into(),
             supports_image_edit:false,supports_style_analysis:true,
             video_price_480:"".into(),video_price_720:"".into(),video_price_1080:"".into(),
         }])));

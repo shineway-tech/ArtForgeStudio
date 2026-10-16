@@ -2980,6 +2980,19 @@ export component InfiniteCanvasPage {
             AppState.canvas-workflow-hint = AppState.en
                 ? "Upload 1–8 style references and describe the skill icons to create"
                 : "上传1至8张风格参考图，描述想要生成的技能图标";
+        } else if workflow-id == "character-split" {
+            AppState.asset-type = "character";
+            AppState.ratio = "4:3";
+            AppState.count = 1;
+            AppState.mode = "game";
+            AppState.canvas-workflow-title = AppState.en ? "Character Parts" : "角色拆分";
+            AppState.canvas-workflow-artwork = @image-url("../../assets/free-canvas/character-split.png");
+            AppState.canvas-workflow-template = AppState.en
+                ? "Character part breakdown specification:"
+                : "角色拆分规范：";
+            AppState.canvas-workflow-hint = AppState.en
+                ? "Upload one character illustration to extract facial features and body parts as transparent PNGs"
+                : "上传一张角色立绘，拆出五官、身体、服饰和特效的透明 PNG";
         } else if workflow-id == "character-multi-direction" {
             AppState.asset-type = "character";
             AppState.ratio = "4:3";
@@ -3044,6 +3057,9 @@ export component InfiniteCanvasPage {
         if AppState.canvas-workflow-id == "character-multi-direction" {
             return AppState.en ? "Upload a character reference image first" : "请先上传角色参考图";
         }
+        if AppState.canvas-workflow-id == "character-split" {
+            return AppState.en ? "Upload one character illustration first" : "请先上传一张角色立绘";
+        }
         return AppState.en ? "Upload a subject reference image first" : "请先上传主体参考图";
     }
 
@@ -3056,6 +3072,10 @@ export component InfiniteCanvasPage {
         let workflow-prompt = AppState.canvas-workflow-prompt;
         if AppState.canvas-workflow-id == "scene-composition" && AppState.references.length < 2 {
             AppState.generation-status = root.workflow-reference-required-message();
+            return;
+        }
+        if AppState.canvas-workflow-id == "character-split" && AppState.references.length != 1 {
+            AppState.generation-status = AppState.en ? "Upload exactly one character illustration" : "请只上传一张角色立绘";
             return;
         }
         if reference-driven-workflow && AppState.references.length == 0 {
@@ -3938,7 +3958,7 @@ export component InfiniteCanvasPage {
                     }
                 }
 
-                if AppState.references.length < 8 && !root.workflow-composer-collapsed: Rectangle {
+                if AppState.references.length < (AppState.canvas-workflow-id == "character-split" ? 1 : 8) && !root.workflow-composer-collapsed: Rectangle {
                     x: 14px;
                     y: 117px;
                     width: 42px;
@@ -3978,7 +3998,7 @@ export component InfiniteCanvasPage {
 
                 for reference[index] in AppState.references: Rectangle {
                     visible: !root.workflow-composer-collapsed;
-                    x: 62px + index * 48px;
+                    x: (AppState.canvas-workflow-id == "character-split" ? 14px : 62px) + index * 48px;
                     y: 117px;
                     width: 42px;
                     height: 42px;
@@ -4108,6 +4128,7 @@ export component InfiniteCanvasPage {
                     background: transparent;
 
                     workflow-model-control := Rectangle {
+                        visible: AppState.canvas-workflow-id != "character-split";
                         x: 0px;
                         width: 132px;
                         height: parent.height;
@@ -4126,6 +4147,7 @@ export component InfiniteCanvasPage {
                         }
                     }
                     quality-control := Rectangle {
+                        visible: AppState.canvas-workflow-id != "character-split";
                         x: 140px;
                         width: 138px;
                         height: parent.height;
@@ -4148,6 +4170,7 @@ export component InfiniteCanvasPage {
                             && AppState.canvas-workflow-id != "side-scroll-map"
                             && AppState.canvas-workflow-id != "scene-composition"
                             && AppState.canvas-workflow-id != "character-multi-direction"
+                            && AppState.canvas-workflow-id != "character-split"
                             && AppState.canvas-workflow-id != "skill-icon-generator";
                         x: 286px;
                         width: 190px;
@@ -4918,6 +4941,16 @@ export component InfiniteCanvasPage {
                 vertical-alignment: center;
             }
 
+            CanvasWorkflowQuickCard {
+                x: 637px;
+                y: 322px;
+                workflow-id: "character-split";
+                title: AppState.en ? "Character Parts" : "角色拆分";
+                description: AppState.en ? "Transparent character part PNGs" : "五官与身体部件透明 PNG";
+                artwork: @image-url("../../assets/free-canvas/character-split.png");
+                selected: AppState.canvas-workflow-id == self.workflow-id;
+                clicked => { root.switch-workflow("character-split"); workflow-switch-popup.close(); }
+            }
             CanvasWorkflowQuickCard {
                 x: 16px;
                 y: 58px;

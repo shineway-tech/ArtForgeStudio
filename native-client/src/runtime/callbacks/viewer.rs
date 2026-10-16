@@ -779,7 +779,14 @@ fn commit_captured_viewer_reference(
                     store.canvas_workspaces.get(&target)
                         .map(|workspace| workspace.references.len()).unwrap_or(0)
                 };
-                if count >= MAX_REFERENCE_IMAGES { return None; }
+                let limit = if workflow_id == "character-split" { 1 } else { MAX_REFERENCE_IMAGES };
+                if count >= limit {
+                    app.global::<AppState>().set_viewer_message(
+                        if workflow_id == "character-split" { "角色拆分只能使用一张立绘参考图" }
+                        else { "参考图数量已达上限" }.into(),
+                    );
+                    return None;
+                }
                 let prompt = switch_canvas_workspace(&mut store, original_prompt, &target);
                 store.canvas_references.push(reference);
                 app.global::<AppState>().set_canvas_workflow_prompt(prompt.into());
@@ -902,6 +909,11 @@ fn poll_captured_reference_store_ack(
                     state.set_canvas_workflow_skill_icon_count(12);
                     state.set_canvas_workflow_skill_icon_background("white".into());
                     state.set_canvas_workflow_skill_icon_shape("circle".into());
+                    if workflow_id == "character-split" {
+                        state.set_ratio("4:3".into());
+                        state.set_count(1);
+                        state.set_mode("game".into());
+                    }
                     state.set_viewer_message("".into()); state.set_viewer_open(false); state.set_viewer_image(Image::default());
                     state.set_viewer_category("".into()); state.set_viewer_source_path("".into());
                     *context.canvas_history.borrow_mut() = CanvasController::default();
@@ -914,6 +926,7 @@ fn poll_captured_reference_store_ack(
                 if let Some((canvas, references)) = effects {
                     start_canvas_preview_effects(&app, persistence.clone(), canvas);
                     start_canvas_reference_preview_effects(&app, persistence, references);
+                    start_pending_character_parts_extraction(&app, &context.store);
                 }
             }
         }
@@ -1689,6 +1702,7 @@ mod viewer_canvas_bridge_tests {
 
 pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
+    let pending_generation_delete = Rc::new(RefCell::new(None::<(NamespaceLease, String, BTreeSet<String>)>));
     let store = context.store.clone();
     let canvas_history = context.canvas_history.clone();
     let image_editor_points = Rc::new(VecModel::<BrushPoint>::default());
@@ -2204,7 +2218,7 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
             let is_character_workflow = matches!(
                 workflow_id.as_str(),
                 "character-age" | "character-outfit" | "character-body"
-                    | "character-multi-direction"
+                    | "character-multi-direction" | "character-split"
             );
             let is_ui_workflow = workflow_id.as_str() == "skill-icon-generator";
             if !is_scene_workflow && !is_character_workflow && !is_ui_workflow {
@@ -2265,7 +2279,55 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
         let context = context.clone();
         state.on_delete_all_failed_generations(move || {
             let Some(app) = app_weak.upgrade() else { return; };
-            start_captured_failed_generation_delete(&app, context.clone());
+            let state = app.global::<AppState>();
+            let category = resolve_category(state.get_asset_type().as_str(), "");
+            start_captured_generation_batch_delete(&app, context.clone(), GenerationBatchDeleteTarget::Failed(category));
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let context = context.clone();
+        let pending_generation_delete = pending_generation_delete.clone();
+        state.on_request_delete_selected_generations(move || {
+            let Some(app) = app_weak.upgrade() else { return; };
+            let Some(capture) = ViewerActionCapture::capture(&context) else { return; };
+            let _ = capture.apply(&context, || {
+                let state = app.global::<AppState>();
+                if !state.get_generation_selection_mode() || state.get_page() != "generation" { return; }
+                let category = resolve_category(state.get_asset_type().as_str(), "");
+                let selected = generation_selection_ids(&state);
+                let valid = context.store.borrow().generations.iter()
+                    .filter(|item| item.category == category && selected.contains(&item.id))
+                    .map(|item| item.id.clone()).collect::<Vec<_>>();
+                if valid.is_empty() { return; }
+                *pending_generation_delete.borrow_mut() = Some((capture.persistence.lease().clone(),
+                    category.clone(), valid.iter().cloned().collect()));
+                state.set_pending_generation_delete_ids(ModelRc::new(VecModel::from(
+                    valid.into_iter().map(SharedString::from).collect::<Vec<_>>(),
+                )));
+                state.set_pending_delete_kind("generation-selection".into());
+                state.set_pending_delete_id("".into());
+                state.set_pending_delete_source("".into());
+                state.set_pending_delete_can_remove_file(false);
+                state.set_delete_confirm_open(true);
+            });
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let context = context.clone();
+        let pending_generation_delete = pending_generation_delete.clone();
+        state.on_confirm_delete_selected_generations(move || {
+            let Some(app) = app_weak.upgrade() else { return; };
+            let state = app.global::<AppState>();
+            if state.get_pending_delete_kind() != "generation-selection" { return; }
+            let Some((lease, category, ids)) = pending_generation_delete.borrow_mut().take() else { return; };
+            let Some(capture) = ViewerActionCapture::capture(&context) else { return; };
+            if capture.persistence.lease() != &lease || category.is_empty() || ids.is_empty() { return; }
+            start_captured_generation_batch_delete(&app, context.clone(),
+                GenerationBatchDeleteTarget::Selected { category, ids });
         });
     }
 
@@ -2294,11 +2356,11 @@ pub(super) fn wire_viewer_callbacks(app: &AppWindow, context: AppContext) {
     }
 }
 
-struct RemovedFailedGenerationSet {
+struct RemovedGenerationSet {
     records: Vec<(usize, AssetData)>,
 }
 
-impl RemovedFailedGenerationSet {
+impl RemovedGenerationSet {
     fn len(&self) -> usize {
         self.records.len()
     }
@@ -2306,7 +2368,7 @@ impl RemovedFailedGenerationSet {
     fn recoverable_ids(&self) -> Vec<String> {
         self.records
             .iter()
-            .filter(|(_, item)| item.delivery_recoverable)
+            .filter(|(_, item)| item.source_path == "failed" && item.delivery_recoverable)
             .map(|(_, item)| item.id.clone())
             .collect()
     }
@@ -2324,18 +2386,40 @@ impl RemovedFailedGenerationSet {
     }
 }
 
-fn take_failed_generations(store: &mut Store, category: &str) -> RemovedFailedGenerationSet {
+enum GenerationBatchDeleteTarget {
+    Failed(String),
+    Selected { category: String, ids: BTreeSet<String> },
+}
+
+impl GenerationBatchDeleteTarget {
+    fn matches(&self, item: &AssetData) -> bool {
+        match self {
+            Self::Failed(category) => item.category == *category && item.source_path == "failed",
+            Self::Selected { category, ids } => item.category == *category && ids.contains(&item.id),
+        }
+    }
+
+    fn is_selected(&self) -> bool {
+        matches!(self, Self::Selected { .. })
+    }
+}
+
+fn take_generation_batch(store: &mut Store, target: &GenerationBatchDeleteTarget) -> RemovedGenerationSet {
     let mut removed = Vec::new();
     let mut retained = Vec::with_capacity(store.generations.len());
     for (index, item) in store.generations.drain(..).enumerate() {
-        if item.category == category && item.source_path == "failed" {
+        if target.matches(&item) {
             removed.push((index, item));
         } else {
             retained.push(item);
         }
     }
     store.generations = retained;
-    RemovedFailedGenerationSet { records: removed }
+    RemovedGenerationSet { records: removed }
+}
+
+fn take_failed_generations(store: &mut Store, category: &str) -> RemovedGenerationSet {
+    take_generation_batch(store, &GenerationBatchDeleteTarget::Failed(category.to_string()))
 }
 
 enum CapturedFailedGenerationDeleteWorkerResult {
@@ -2343,32 +2427,24 @@ enum CapturedFailedGenerationDeleteWorkerResult {
     Committed { cleanup_pending: bool },
 }
 
-fn clear_generation_selection_state(state: &AppState) {
-    state.set_generation_selection_mode(false);
-    state.set_generation_selected_count(0);
-    state.set_generation_selected_ids(ModelRc::new(VecModel::default()));
-    state.set_thumbnail_action_menu_id("".into());
-    state.set_thumbnail_action_menu_source("".into());
-}
-
-fn start_captured_failed_generation_delete(app: &AppWindow, context: AppContext) {
+fn start_captured_generation_batch_delete(
+    app: &AppWindow, context: AppContext, target: GenerationBatchDeleteTarget,
+) {
     let Some(capture) = ViewerActionCapture::capture(&context) else { return; };
     let Ok(write) = capture.persistence.prepare_ordered_save() else { return; };
     let mut write = Some(write);
     let mut staged = None;
     let queued = capture.apply(&context, || {
-        let state = app.global::<AppState>();
-        let category = resolve_category(&state.get_asset_type().to_string(), "");
         let mut store = context.store.borrow_mut();
-        let removed = take_failed_generations(&mut store, &category);
+        let removed = take_generation_batch(&mut store, &target);
         if removed.records.is_empty() {
-            state.set_generation_failed_count(0);
+            if !target.is_selected() { app.global::<AppState>().set_generation_failed_count(0); }
             return None;
         }
         let recoverable_ids = removed.recoverable_ids();
         let receiver = write
             .take()
-            .expect("single failed-generation batch write")
+            .expect("single generation batch write")
             .enqueue(local_store_data(app, &store));
         staged = Some((removed, recoverable_ids));
         Some(receiver)
@@ -2380,12 +2456,12 @@ fn start_captured_failed_generation_delete(app: &AppWindow, context: AppContext)
         Some(Ok(receiver)) => receiver,
         Some(Err(error)) => {
             drop(error);
-            restore_captured_failed_generation_delete(
+            restore_rejected_generation_batch_delete(
                 app,
-                context,
-                capture,
+                &context,
+                &capture,
                 removed,
-                "失败结果未能安全删除，原记录已恢复",
+                "生成结果未能安全删除，原记录已恢复",
             );
             return;
         }
@@ -2428,32 +2504,54 @@ fn start_captured_failed_generation_delete(app: &AppWindow, context: AppContext)
         Ok(CapturedFailedGenerationDeleteWorkerResult::Committed { cleanup_pending })
     });
     match launched {
-        Ok((cancel, receiver)) => poll_captured_failed_generation_delete(
+        Ok((cancel, receiver)) => poll_captured_generation_batch_delete(
             app.as_weak(),
             context,
             capture,
             removed,
             removed_count,
+            target,
             cancel,
             receiver,
         ),
         Err(_) => {
-            restore_captured_failed_generation_delete(
+            restore_captured_generation_batch_delete(
                 app,
                 context,
                 capture,
                 removed,
-                "失败结果删除未能启动，原记录已恢复",
+                "生成结果删除未能启动，原记录已恢复",
             );
         }
     }
 }
 
-fn restore_captured_failed_generation_delete(
+fn restore_rejected_generation_batch_delete(
+    app: &AppWindow,
+    context: &AppContext,
+    capture: &ViewerActionCapture,
+    removed: RemovedGenerationSet,
+    message: &'static str,
+) {
+    let restored = capture.apply(context, || {
+        let mut store = context.store.borrow_mut();
+        if removed.conflicts_with_current(&store) { return false; }
+        removed.restore(&mut store);
+        true
+    }).unwrap_or(false);
+    if restored {
+        let _ = capture.apply(context, || {
+            app.global::<AppState>().set_generation_status(message.into());
+            push_generations(app, &context.store.borrow());
+        });
+    }
+}
+
+fn restore_captured_generation_batch_delete(
     app: &AppWindow,
     context: AppContext,
     capture: ViewerActionCapture,
-    removed: RemovedFailedGenerationSet,
+    removed: RemovedGenerationSet,
     message: &'static str,
 ) {
     let Ok(write) = capture.persistence.prepare_ordered_save() else { return; };
@@ -2471,17 +2569,20 @@ fn restore_captured_failed_generation_delete(
         }
         removed
             .take()
-            .expect("single failed-generation batch rollback")
+            .expect("single generation batch rollback")
             .restore(&mut store);
         Some(
             write
                 .take()
-                .expect("single failed-generation rollback write")
+                .expect("single generation rollback write")
                 .enqueue(local_store_data(app, &store)),
         )
     }).flatten();
     drop(write);
     drop(removed);
+    if queued.is_some() {
+        let _ = capture.apply(&context, || app.global::<AppState>().set_generation_status(message.into()));
+    }
     let Some(Ok(receiver)) = queued else { return; };
     if let Ok((cancel, receiver)) = spawn_delivery_preparation(&capture.persistence, move |_, _, _| {
         receiver
@@ -2527,7 +2628,6 @@ fn poll_captured_failed_generation_rollback(
         if matches!(receiver.try_recv(), Ok(Ok(()))) {
             let _ = capture.apply(&context, || {
                 let state = app.global::<AppState>();
-                clear_generation_selection_state(&state);
                 state.set_generation_status(message.into());
                 push_generations(&app, &context.store.borrow());
             });
@@ -2535,12 +2635,13 @@ fn poll_captured_failed_generation_rollback(
     });
 }
 
-fn poll_captured_failed_generation_delete(
+fn poll_captured_generation_batch_delete(
     weak: Weak<AppWindow>,
     context: AppContext,
     capture: ViewerActionCapture,
-    removed: RemovedFailedGenerationSet,
+    removed: RemovedGenerationSet,
     removed_count: usize,
+    target: GenerationBatchDeleteTarget,
     cancel: Arc<AtomicBool>,
     receiver: mpsc::Receiver<
         std::result::Result<CapturedFailedGenerationDeleteWorkerResult, DeliveryRetryError>,
@@ -2553,18 +2654,18 @@ fn poll_captured_failed_generation_delete(
         };
         match finish_delivery_preparation(&cancel) {
             Ok(true) => {
-                poll_captured_failed_generation_delete(
-                    weak, context, capture, removed, removed_count, cancel, receiver,
+                poll_captured_generation_batch_delete(
+                    weak, context, capture, removed, removed_count, target, cancel, receiver,
                 );
                 return;
             }
             Err(_) => {
-                restore_captured_failed_generation_delete(
+                restore_captured_generation_batch_delete(
                     &app,
                     context,
                     capture,
                     removed,
-                    "失败结果删除未确认，原记录已恢复",
+                    "生成结果删除未确认，原记录已恢复",
                 );
                 return;
             }
@@ -2572,12 +2673,12 @@ fn poll_captured_failed_generation_delete(
         }
         let cleanup_pending = match receiver.try_recv() {
             Ok(Ok(CapturedFailedGenerationDeleteWorkerResult::WriterRejected)) => {
-                restore_captured_failed_generation_delete(
+                restore_rejected_generation_batch_delete(
                     &app,
-                    context,
-                    capture,
+                    &context,
+                    &capture,
                     removed,
-                    "失败结果未能保存删除状态，原记录已恢复",
+                    "生成结果未能保存删除状态，原记录已恢复",
                 );
                 return;
             }
@@ -2585,21 +2686,27 @@ fn poll_captured_failed_generation_delete(
                 cleanup_pending
             }
             _ => {
-                restore_captured_failed_generation_delete(
+                restore_captured_generation_batch_delete(
                     &app,
                     context,
                     capture,
                     removed,
-                    "失败结果删除未确认，原记录已恢复",
+                    "生成结果删除未确认，原记录已恢复",
                 );
                 return;
             }
         };
         let _ = capture.apply(&context, || {
             let state = app.global::<AppState>();
-            clear_generation_selection_state(&state);
-            let message = if cleanup_pending {
+            reconcile_generation_selection(&state, &context.store.borrow());
+            let message = if cleanup_pending && target.is_selected() {
+                format!("已删除 {removed_count} 个所选结果；恢复记录清理待重试")
+            } else if cleanup_pending {
                 format!("已清除 {removed_count} 个失败结果；恢复记录清理待重试")
+            } else if target.is_selected() && state.get_language().as_str() == "en" {
+                format!("Deleted {removed_count} selected results")
+            } else if target.is_selected() {
+                format!("已删除 {removed_count} 个所选结果")
             } else if state.get_language().as_str() == "en" {
                 format!("Cleared {removed_count} failed results")
             } else {
@@ -3612,7 +3719,7 @@ mod actual_viewer_callback_tests {
 
     fn pending_failed_delivery(scope: &BillingScope, id: &str) -> PendingGenerationRecord {
         PendingGenerationRecord {
-            source_asset_id: String::new(), video_request: None, schema_version: 2,
+            source_asset_id: String::new(), video_preview_path: String::new(), video_request: None, schema_version: 2,
             cancel_requested: false, created_at_epoch_ms: Local::now().timestamp_millis(),
             client_request_id: "viewer-delete-request".into(), owner_user_id: scope.request.session.owner_user_id.clone(),
             billing_account_group_id: scope.request.account_group_id.clone(), auth_epoch: scope.request.session.auth_epoch,
@@ -3629,6 +3736,7 @@ mod actual_viewer_callback_tests {
                 failed_asset_id: id.into(), abandoned: false,
             }],
             terminal: true, expected_success_count: 1, canvas_source_node_id: String::new(),
+            canvas_workflow_id: String::new(),
             canvas_ui_extraction: false,
         }
     }
@@ -3781,6 +3889,11 @@ mod actual_viewer_callback_tests {
             .unwrap();
         let state = app.global::<AppState>();
         state.set_asset_type("scene".into());
+        state.set_generation_selection_mode(true);
+        state.set_generation_selected_ids(ModelRc::new(VecModel::from(vec![
+            "scene-failed-a".into(), "scene-success".into(),
+        ])));
+        state.set_generation_selected_count(2);
 
         state.invoke_delete_all_failed_generations();
         video_image_callbacks::tests::scoped_inputs::pump(|| {
@@ -3809,8 +3922,75 @@ mod actual_viewer_callback_tests {
         .unwrap()
         .is_none());
         assert_eq!(state.get_generation_failed_count(), 0);
-        assert!(!state.get_generation_selection_mode());
+        assert!(state.get_generation_selection_mode());
+        assert_eq!(state.get_generation_selected_count(), 1);
+        assert_eq!(generation_selection_ids(&state), BTreeSet::from(["scene-success".to_string()]));
         assert!(state.get_generation_status().contains("2"));
+    }
+
+    #[test]
+    fn selected_generation_delete_waits_for_confirmation_and_uses_snapshot() {
+        let (fixture, app) = setup();
+        let mut first = failed_card("scene-first", false);
+        first.source_path = "scene-first.png".into();
+        let mut second = failed_card("scene-second", false);
+        second.source_path = "scene-second.png".into();
+        let mut other = failed_card("character-other", false);
+        other.category = "character".into();
+        fixture.context.store.borrow_mut().generations = vec![first, other, second];
+        fixture.persistence.save_store(local_store_data(&app, &fixture.context.store.borrow())).unwrap();
+        let state = app.global::<AppState>();
+        state.set_asset_type("scene".into());
+        state.set_generation_selection_mode(true);
+        state.set_generation_selected_ids(ModelRc::new(VecModel::from(vec![
+            "scene-first".into(), "scene-second".into(), "character-other".into(),
+        ])));
+
+        state.invoke_request_delete_selected_generations();
+        assert!(state.get_delete_confirm_open());
+        assert_eq!(state.get_pending_delete_kind(), "generation-selection");
+        assert_eq!(state.get_pending_generation_delete_ids().row_count(), 2);
+        assert_eq!(fixture.context.store.borrow().generations.len(), 3);
+        state.set_generation_selected_ids(ModelRc::new(VecModel::from(vec!["character-other".into()])));
+        state.invoke_confirm_delete_selected_generations();
+        video_image_callbacks::tests::scoped_inputs::pump(|| {
+            state.get_generation_status().contains("2")
+        });
+
+        let remaining = fixture.context.store.borrow();
+        assert_eq!(remaining.generations.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
+            vec!["character-other"]);
+        drop(remaining);
+        let saved = fixture.writer.load_client_state_for_namespace(fixture.persistence.lease())
+            .unwrap().unwrap();
+        assert_eq!(saved.generations.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
+            vec!["character-other"]);
+    }
+
+    #[test]
+    fn selected_generation_delete_restores_records_after_store_failure() {
+        let (fixture, app) = setup();
+        let mut image = failed_card("selected-image", false);
+        image.source_path = "selected-image.png".into();
+        fixture.context.store.borrow_mut().generations.push(image);
+        fixture.persistence.save_store(local_store_data(&app, &fixture.context.store.borrow())).unwrap();
+        let root = fixture.persistence.lease().namespace.root().parent().unwrap().parent().unwrap();
+        let sql = rusqlite::Connection::open(root.join("fixture.sqlite3")).unwrap();
+        sql.execute_batch("CREATE TRIGGER reject_selected_delete BEFORE INSERT ON user_settings BEGIN SELECT RAISE(ABORT,'controlled selected delete failure'); END;").unwrap();
+        let state = app.global::<AppState>();
+        state.set_asset_type("scene".into());
+        state.set_generation_selection_mode(true);
+        state.set_generation_selected_ids(ModelRc::new(VecModel::from(vec!["selected-image".into()])));
+
+        state.invoke_request_delete_selected_generations();
+        state.invoke_confirm_delete_selected_generations();
+        video_image_callbacks::tests::scoped_inputs::pump(|| !state.get_generation_status().is_empty());
+
+        assert!(fixture.context.store.borrow().generations.iter().any(|item| item.id == "selected-image"));
+        sql.execute_batch("DROP TRIGGER reject_selected_delete").unwrap();
+        let saved = fixture.writer.load_client_state_for_namespace(fixture.persistence.lease()).unwrap().unwrap();
+        assert!(saved.generations.iter().any(|item| item.id == "selected-image"));
+        assert!(!state.get_generation_status().contains("controlled selected delete failure"));
     }
 
     #[test]

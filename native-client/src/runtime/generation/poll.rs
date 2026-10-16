@@ -594,6 +594,7 @@ pub(super) fn poll_generation_stream(
                     &category,
                     task.success_count,
                     task.failed_count,
+                    task.total_count,
                     task.last_failure_reason.as_deref(),
                 );
                 sync_generation_state_for_current_category(&context, &app);
@@ -696,6 +697,7 @@ pub(super) fn poll_generation_stream(
                     &category,
                     task.success_count,
                     task.failed_count + remaining,
+                    task.total_count,
                     Some(&reason),
                 );
                 sync_generation_state_for_current_category(&context, &app);

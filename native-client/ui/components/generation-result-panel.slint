@@ -2,6 +2,7 @@ import { AppState } from "../app-state.slint";
 import { EmptyState } from "empty-state.slint";
 import { GenerationBatchMenu } from "generation-batch-menu.slint";
 import { GalleryLayoutToggle } from "gallery-layout-toggle.slint";
+import { PillButton } from "pill-button.slint";
 import { VirtualizedGallery } from "virtualized-gallery.slint";
 import { AppTheme } from "../theme.slint";
 
@@ -10,12 +11,14 @@ export component GenerationResultPanel {
     property <bool> load-more-armed: true;
     property <length> last-load-bottom: -10000px;
     property <string> viewport-key: root.pagination-key + ":" + AppState.generation-gallery-layout + ":" + AppState.language + ":" + root.loading-count();
+    property <bool> show-selection-actions: AppState.generation-selection-mode && AppState.generation-selected-count > 0;
     changed pagination-key => {
         AppState.clear-generation-selection();
         root.reset-pagination-latch();
     }
     init => { root.update-viewport(); }
     changed viewport-key => { root.update-viewport(); }
+    changed show-selection-actions => { root.update-viewport(); }
     changed width => { root.update-viewport(); }
     changed height => { root.update-viewport(); }
     Rectangle {
@@ -25,14 +28,15 @@ export component GenerationResultPanel {
         Text {
             x: 20px;
             y: 18px;
-            width: parent.width - 288px;
+            width: max(0px, batch-menu.x - 28px);
             text: AppState.en ? "Generated Images" : "生成结果";
             color: AppTheme.text;
             font-size: 16px;
             font-weight: 500;
+            overflow: elide;
         }
-        GenerationBatchMenu {
-            x: parent.width - 256px;
+        batch-menu := GenerationBatchMenu {
+            x: parent.width - 144px - self.width;
             y: 14px;
         }
         GalleryLayoutToggle {
@@ -46,7 +50,7 @@ export component GenerationResultPanel {
             x: 20px;
             y: 70px;
             width: parent.width - 40px;
-            height: parent.height - 90px;
+            height: max(0px, parent.height - (root.show-selection-actions ? 148px : 90px));
             clip: true;
             background: transparent;
             result-scroll := Flickable {
@@ -77,6 +81,27 @@ export component GenerationResultPanel {
                         source: "generation";
                     }
                 }
+            }
+        }
+        if root.show-selection-actions: HorizontalLayout {
+            x: parent.width - self.width - 20px;
+            y: parent.height - 58px;
+            width: 288px;
+            height: 38px;
+            spacing: 10px;
+            PillButton {
+                width: 154px;
+                height: 38px;
+                text: AppState.en ? "Use as reference" : "用作参考图";
+                primary: true;
+                clicked => { AppState.use-selected-generations-as-references(); }
+            }
+            PillButton {
+                width: 124px;
+                height: 38px;
+                text: AppState.en ? "Delete" : "删除";
+                danger: true;
+                clicked => { AppState.request-delete-selected-generations(); }
             }
         }
     }

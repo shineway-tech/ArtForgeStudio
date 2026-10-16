@@ -172,14 +172,16 @@ export component ThumbnailCard {
                 border-width: 2px;
                 border-color: AppTheme.accent;
             }
-            if root.item.selected: Rectangle {
+            if root.selection-enabled(): Rectangle {
                 x: 8px;
                 y: 8px;
                 width: 26px;
                 height: 26px;
-                background: AppTheme.accent;
+                background: root.item.selected ? AppTheme.accent : #000000b8;
                 border-radius: 13px;
-                Image {
+                border-width: root.item.selected ? 0px : 1px;
+                border-color: #ffffff;
+                if root.item.selected: Image {
                     x: 6px;
                     y: 6px;
                     width: 14px;
@@ -363,21 +365,23 @@ export component ThumbnailCard {
                     image-fit: contain;
                 }
             }
-            if root.item.selected: Rectangle {
+            if root.selection-enabled(): Rectangle {
                 width: parent.width;
                 height: parent.height;
                 background: transparent;
                 border-radius: AppState.card-style == "rounded" ? 10px : 0px;
-                border-width: 2px;
+                border-width: root.item.selected ? 2px : 0px;
                 border-color: AppTheme.accent;
                 Rectangle {
                     x: 8px;
                     y: 8px;
                     width: 26px;
                     height: 26px;
-                    background: AppTheme.accent;
+                    background: root.item.selected ? AppTheme.accent : #000000b8;
                     border-radius: 13px;
-                    Image {
+                    border-width: root.item.selected ? 0px : 1px;
+                    border-color: #ffffff;
+                    if root.item.selected: Image {
                         x: 6px;
                         y: 6px;
                         width: 14px;

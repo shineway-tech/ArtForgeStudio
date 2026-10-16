@@ -402,6 +402,7 @@ fn poll_image_delivery_commit(
             return;
         }
         if !bound || !persistence.is_current(){return;}
+        let extract_character_parts = canvas_target.is_some() && result.is_ok();
         let mut effects=None;let mut canvas_effects=None;
         let canvas_visuals=canvas_target.as_ref().filter(|_|result.is_ok()).map(|_|prepare_canvas_projection(&app,&context.store.borrow()));
         let visuals=result.as_ref().ok().map(|_|prepare_delivery_visuals(&app,&context.store.borrow()));
@@ -434,6 +435,9 @@ fn poll_image_delivery_commit(
         // Includes enhancement/cutout/toolbox deliveries, which do not use the main generation poller.
         refresh_backend_snapshot_captured(&app,context.clone(),persistence.clone());
         if let Some(effects)=canvas_effects {start_canvas_preview_effects(&app,persistence,effects);}
+        if extract_character_parts {
+            start_pending_character_parts_extraction(&app, &context.store);
+        }
         if let Some(effects)=effects {start_activation_visual_effects(&app,context,effects);}
     });
 }
@@ -527,13 +531,14 @@ fn stage_canvas_namespace_delivery(
         else {let workspace=&store.canvas_workspaces[target];(workspace.notes.clone(),workspace.links.clone())};
     let source=notes.iter().find(|note|note.id==*source_id).cloned().ok_or_else(||anyhow!("Canvas source missing"))?;
     let id=confirmation.file_id.clone();let path=prepared.source_path();
+    let origin=if record.canvas_workflow_id=="character-split" {CHARACTER_SPLIT_ORIGIN} else {"generation"};
     let node_id=format!("delivery-{}-{}",record.client_request_id,confirmation.item_index);
     anyhow::ensure!(!store.generations.iter().any(|asset|asset.id==id || asset.source_path==path),"Canvas output cannot adopt generation history");
     anyhow::ensure!(!store.assets.iter().any(|asset|asset.source_path==path && asset.id!=id),"Canvas output path conflict");
     let assets=store.assets.iter().filter(|asset|asset.id==id).collect::<Vec<_>>();
     anyhow::ensure!(assets.len()<=1,"Canvas output asset ambiguous");
     if let [asset]=assets.as_slice(){
-        anyhow::ensure!(asset.source_path==path && asset.category=="other" && asset.origin=="generation"
+        anyhow::ensure!(asset.source_path==path && asset.category=="other" && asset.origin==origin
             && asset.conversation_id==record.conversation_id && asset.model==record.model_code
             && !asset.delivery_recoverable && !asset.delivery_downloading,"Canvas output retry metadata changed");
         let matching=notes.iter().filter(|note|note.kind=="image" && note.image_path==path
@@ -563,7 +568,7 @@ fn stage_canvas_namespace_delivery(
         category:"other".into(),kind:record.mode.clone(),time:time.into(),prompt:display_generation_prompt(&record.generation_prompt),
         ratio:ratio_from_actual_dimensions(width as i32,height as i32),
         quality:quality_from_actual_dimensions(width as i32,height as i32),model:record.model_code.clone(),
-        origin:"generation".into(),width:width as i32,height:height as i32,source_path:path.into(),reference_paths:references,
+        origin:origin.into(),width:width as i32,height:height as i32,source_path:path.into(),reference_paths:references,
         cutout_done:false,remove_black_done:false,upscale_done:false,is_new:true,delivery_recoverable:false,delivery_downloading:false};
     if target==&active {store.canvas_notes=notes;store.canvas_links=links;}
     else {let workspace=store.canvas_workspaces.get_mut(target).unwrap();workspace.notes=notes;workspace.links=links;}
@@ -715,6 +720,7 @@ fn stage_video_delivery(store:&mut Store,prepared:&PreparedNamespaceVideoDeliver
     let output=SavedVideoOutput {
         model: record.model_code.clone(), resolution: record.quality.clone(), duration_secs: record.video_request.as_ref().map(|request| request.duration_secs).unwrap_or(0),
         source_asset_id:record.source_asset_id.clone(),
+        preview_source_path:record.video_preview_path.clone(),
         prompt:record.raw_prompt.clone(),
         client_request_id:record.client_request_id.clone(),server_task_id:confirmation.task_id.clone(),
         file_id:confirmation.file_id.clone(),billing_account_group_id:record.billing_account_group_id.clone(),
@@ -725,7 +731,8 @@ fn stage_video_delivery(store:&mut Store,prepared:&PreparedNamespaceVideoDeliver
     anyhow::ensure!(!store.video_outputs.iter().any(|(other,value)|other!=&key && value.source_path==output.source_path),
         "video path belongs to another retained output");
     if let Some(existing)=store.video_outputs.get(&key) {
-        anyhow::ensure!(existing.source_asset_id==output.source_asset_id && existing.client_request_id==output.client_request_id && existing.server_task_id==output.server_task_id
+        anyhow::ensure!(existing.source_asset_id==output.source_asset_id && existing.preview_source_path==output.preview_source_path
+            && existing.client_request_id==output.client_request_id && existing.server_task_id==output.server_task_id
             && existing.file_id==output.file_id && existing.billing_account_group_id==output.billing_account_group_id
             && existing.sha256==output.sha256 && existing.size_bytes==output.size_bytes && existing.source_path==output.source_path,
             "retained video output identity conflicts");
@@ -1910,15 +1917,25 @@ pub(super) fn restore_stream_inputs(
     push_all(app, &store_mut);
 }
 
+fn missing_generation_result_status(success_count: i32, failed_count: i32, total_count: i32) -> Option<String> {
+    let pending_count = (total_count - success_count - failed_count).max(0);
+    (pending_count > 0).then(|| format!(
+        "已收到 {success_count} 项、失败 {failed_count} 项，另有 {pending_count} 项未显示；重启可尝试恢复，积分请查看明细"
+    ))
+}
+
 pub(super) fn set_stream_final_status(
     context: &AppContext,
     app: &AppWindow,
     category: &str,
     success_count: i32,
     failed_count: i32,
+    total_count: i32,
     failure_reason: Option<&str>,
 ) {
-    if failed_count <= 0 {
+    if let Some(status) = missing_generation_result_status(success_count, failed_count, total_count) {
+        set_generation_status_for_category(context, app, category, &status);
+    } else if failed_count <= 0 {
         set_generation_status_for_category(context, app, category, "生成成功");
     } else if success_count > 0 {
         let status = failure_reason
@@ -1935,5 +1952,18 @@ pub(super) fn set_stream_final_status(
                 .filter(|reason| !reason.trim().is_empty())
                 .unwrap_or("生成失败"),
         );
+    }
+}
+
+#[cfg(test)]
+mod terminal_status_tests {
+    use super::missing_generation_result_status;
+
+    #[test]
+    fn incomplete_task_does_not_claim_all_results_succeeded() {
+        let status = missing_generation_result_status(1, 1, 4).unwrap();
+        assert!(status.contains("2 项未显示"));
+        assert!(status.contains("积分请查看明细"));
+        assert!(missing_generation_result_status(2, 2, 4).is_none());
     }
 }
