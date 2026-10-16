@@ -536,9 +536,12 @@ struct GenerationRegistry {
 
 #[derive(Clone)]
 struct ActivePaymentSession {
+    kind: PaymentOrderKind,
+    presentation_dismissed: Arc<std::sync::atomic::AtomicBool>,
     client_request_id: String,
     billing_account_group_id: String,
     checkout_url: Option<String>,
+    order: Option<OrderDetail>,
     session_scope: SessionScope,
 }
 
@@ -556,6 +559,7 @@ struct AppContext {
     canvas_history: Rc<RefCell<CanvasController>>,
     generations: Rc<GenerationRegistry>,
     recovering_orders: Rc<RefCell<BTreeSet<String>>>,
+    dismissed_payment_requests: Rc<RefCell<BTreeSet<String>>>,
     active_payment: Rc<RefCell<Option<ActivePaymentSession>>>,
     cancelled_generation_requests: Arc<Mutex<BTreeSet<String>>>,
     active_prompt_task_requests: Arc<Mutex<BTreeSet<String>>>,

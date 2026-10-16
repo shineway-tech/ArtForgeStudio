@@ -265,11 +265,11 @@ export component CreditsPage {
         return root.width - 48px;
     }
     function content-height() -> length {
-        return AppState.credits-tab == "membership"
+        return (AppState.payment-active ? 88px : 0px) + (AppState.credits-tab == "membership"
             ? max(root.height + 80px, 860px)
             : (AppState.credits-tab == "redeem"
                 ? max(root.height - 48px, 520px)
-                : max(root.height + 80px, 860px + max(1, AppState.credit-records.length) * 96px));
+                : max(root.height + 80px, 860px + max(1, AppState.credit-records.length) * 96px)));
     }
     Rectangle {
         background: AppTheme.bg;
@@ -340,6 +340,29 @@ export component CreditsPage {
                             clicked => { AppState.credits-tab = "membership"; }
                         }
                         Rectangle { horizontal-stretch: 1; background: transparent; }
+                    }
+                    if AppState.payment-active: payment-progress := Rectangle {
+                        height: 72px;
+                        background: AppTheme.accent.with-alpha(0.06);
+                        border-width: 1px;
+                        border-color: AppTheme.border;
+                        border-radius: 12px;
+                        Text {
+                            x: 16px; y: 12px; width: parent.width - 180px; height: 22px;
+                            text: (AppState.payment-kind == "membership" ? (AppState.en ? "Subscription order" : "会员订阅订单") : (AppState.en ? "Credit recharge order" : "积分充值订单"))
+                                + (AppState.payment-amount == "" ? "" : " · " + AppState.payment-amount);
+                            color: AppTheme.text; font-size: 14px; font-weight: 600; overflow: elide;
+                        }
+                        Text {
+                            x: 16px; y: 38px; width: parent.width - 180px; height: 20px;
+                            text: AppState.en ? "Closing this window lets you start a new order." : "关闭支付窗口后，可重新选择并创建新订单";
+                            color: AppTheme.muted; font-size: 12px; overflow: elide;
+                        }
+                        payment-action := PillButton {
+                            x: parent.width - 148px; y: 18px; width: 132px;
+                            text: AppState.en ? "View payment" : "查看本次支付";
+                            clicked => { AppState.retry-payment-browser(); }
+                        }
                     }
                     if AppState.credits-tab == "membership": MembershipPlans { horizontal-stretch: 1; }
                     if AppState.credits-tab == "redeem": VerticalLayout {
@@ -416,7 +439,7 @@ export component CreditsPage {
                             width: 132px;
                             text: AppState.en ? "Recharge" : "充值";
                             primary: true;
-                            disabled: AppState.selected-credit-pack-code == "" || AppState.credit-payment-busy;
+                            disabled: AppState.selected-credit-pack-code == "" || AppState.credit-payment-busy || AppState.payment-active;
                             clicked => { AppState.recharge-credits(AppState.selected-credit-pack-code); }
                         }
                         if AppState.credit-payment-message != "": Text {

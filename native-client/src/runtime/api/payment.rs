@@ -20,6 +20,8 @@ pub(crate) struct PaymentCheckout {
     pub(crate) status: String,
     pub(crate) checkout_url: Option<String>,
     pub(crate) checkout_expires_at: Option<String>,
+    #[serde(default)]
+    pub(crate) checkout_mode: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -193,6 +195,12 @@ impl PaymentApi {
             scope,
         )?;
         order_page(response)
+    }
+
+    pub(crate) fn cancel_order_scoped(&self, order_id: &str, scope: &SessionScope) -> Result<OrderDetail, ApiError> {
+        self.client.identity_json_scoped::<OrderDetail>(
+            Method::POST, &format!("/v1/orders/{order_id}/cancel"), None, None, scope,
+        ).map(|response| response.data)
     }
 
     pub(crate) fn sync_order(&self, order_id: &str) -> Result<OrderDetail, ApiError> {

@@ -219,7 +219,7 @@ export component MembershipPlans {
                     if plan.code != "free": PillButton {
                         height: 36px;
                         primary: plan.tier-rank > AppState.membership-tier-rank;
-                        disabled: AppState.membership-payment-busy || plan.tier-rank < AppState.membership-tier-rank;
+                        disabled: AppState.membership-payment-busy || AppState.payment-active || plan.tier-rank < AppState.membership-tier-rank;
                         text: plan.tier-rank > AppState.membership-tier-rank ? (AppState.en ? "Upgrade" : "升级") : (plan.code == AppState.membership-plan-code ? (AppState.en ? "Renew" : "续费") : (AppState.en ? "Purchase" : "购买"));
                         clicked => { AppState.purchase-membership(plan.code); }
                     }

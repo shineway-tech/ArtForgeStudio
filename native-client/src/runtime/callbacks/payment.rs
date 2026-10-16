@@ -21,7 +21,7 @@ struct PaymentPresentation {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PaymentOrderKind {
+pub(super) enum PaymentOrderKind {
     Credit,
     Membership,
 }
@@ -39,7 +39,7 @@ impl PaymentPresentation {
     fn credit(credits: &str) -> Self {
         let credits = credits.trim();
         Self {
-            waiting_message: "已在浏览器中打开支付宝，客户端正在等待积分充值结果".to_string(),
+            waiting_message: "请使用支付宝扫码，积分充值结果将自动更新".to_string(),
             success_message: if credits.is_empty() {
                 "积分已到账".to_string()
             } else {
@@ -52,7 +52,7 @@ impl PaymentPresentation {
     fn membership(plan_name: &str) -> Self {
         let plan_name = plan_name.trim();
         Self {
-            waiting_message: "已在浏览器中打开支付宝，客户端正在等待会员权益生效".to_string(),
+            waiting_message: "请使用支付宝扫码，会员权益将自动生效".to_string(),
             success_message: if plan_name.is_empty() {
                 "会员权益已生效".to_string()
             } else if plan_name.ends_with("会员") {
@@ -97,6 +97,76 @@ fn payment_order_phase(order: &OrderDetail) -> PaymentOrderPhase {
     } else {
         PaymentOrderPhase::PendingPayment
     }
+}
+
+fn payment_qr_remaining(order: &OrderDetail, now: i64) -> Option<i64> {
+    let expiry = order.payment.as_ref()?.checkout_expires_at.as_deref()?;
+    chrono::DateTime::parse_from_rfc3339(expiry).ok().map(|expiry| (expiry.timestamp() - now).max(0))
+}
+
+fn payment_qr_mode(order: &OrderDetail, now: i64) -> &'static str {
+    match payment_order_phase(order) {
+        PaymentOrderPhase::Fulfilled => "success",
+        PaymentOrderPhase::PaidFulfilling => "fulfilling",
+        PaymentOrderPhase::Closed => "closed",
+        PaymentOrderPhase::PendingPayment => {
+            if payment_qr_remaining(order, now) == Some(0) { return "expired"; }
+            match &order.payment {
+                Some(payment) if payment.checkout_mode.as_deref() == Some("qr")
+                    && payment.checkout_url.is_some() && payment_qr_remaining(order, now).is_some() => "waiting",
+                _ => "error",
+            }
+        }
+    }
+}
+
+fn update_payment_countdown(state: &AppState, order: &OrderDetail) {
+    let seconds = payment_qr_remaining(order, chrono::Utc::now().timestamp());
+    state.set_payment_countdown(seconds.map(|seconds| format!("{:02}:{:02}", seconds / 60, seconds % 60)).unwrap_or_default().into());
+    if seconds == Some(0) && payment_order_phase(order) == PaymentOrderPhase::PendingPayment {
+        close_payment_checkout();
+        state.set_payment_dialog_mode("expired".into());
+        state.set_payment_browser_ready(false);
+        state.set_payment_status_message("二维码已失效，正在确认原订单状态".into());
+    }
+}
+
+fn apply_payment_order_details(state: &AppState, context: &AppContext, order: &OrderDetail) {
+    state.set_payment_amount(format_cents(&order.payable_amount_cents).into());
+    if let Some(snapshot) = context.billing_context.confirmed_snapshot()
+        .filter(|snapshot| snapshot.billing_group.group_id == order.billing_account_group_id) {
+        state.set_payment_payer(snapshot.billing_group.name.into());
+    }
+    let mode = payment_qr_mode(order, chrono::Utc::now().timestamp());
+    // Keep a visible load failure until the user refreshes; polling must not
+    // continually recreate a failed WebView every three seconds.
+    if mode != "waiting" || state.get_payment_dialog_mode() != "error" {
+        state.set_payment_dialog_mode(mode.into());
+    }
+    state.set_payment_browser_ready(mode == "waiting");
+    if mode != "waiting" { close_payment_checkout(); }
+    if matches!(mode, "success" | "fulfilling" | "closed") {
+        state.set_payment_countdown("".into());
+    } else { update_payment_countdown(state, order); }
+}
+
+fn payment_ui_is_current(context: &AppContext, capture: &PaymentCapture, payer: &str) -> bool {
+    capture.is_current(context) && context.billing_context.current_scope(KnownCapability::ReadGroupFinance)
+        .ok().is_some_and(|visible| visible.request.session == capture.session && visible.request.account_group_id == payer)
+}
+
+fn payment_surface_visible(state: &AppState) -> bool {
+    state.get_payment_dialog_open() && !state.get_close_choice_open()
+        && !state.get_update_result_open() && !state.get_update_required()
+        && !state.get_agreement_viewer_open() && !state.get_directory_migration_open()
+        && !state.get_viewer_open() && !state.get_delete_confirm_open()
+        && !state.get_credit_insufficient_open() && !state.get_model_required_open()
+        && !state.get_cutout_open() && !state.get_upscale_open()
+        && !state.get_prompt_expanded_open() && !state.get_deep_optimization_open()
+        && !state.get_canvas_group_name_dialog_open() && !state.get_recovered_prompt_result_open()
+        && !state.get_video_player_open()
+        && !(state.get_page() == "video-generation"
+            && (state.get_video_prompt_expanded_open() || !state.get_video_image_dialog().is_empty()))
 }
 
 fn required_purchase_acceptances(
@@ -203,8 +273,10 @@ fn new_payment_work_pending(context:&AppContext,capture:&PaymentCapture)->bool {
     // UI busy/active state is presentation only. A worker can own a NEW key
     // before its first durable row exists, and billing-only clear hides that UI.
     let prefix=format!("{}:{}:",capture.session.owner_user_id,capture.session.auth_epoch);
-    context.recovering_orders.borrow().iter().any(|key|key.starts_with(&prefix))
-        || PAYMENT_THREADS.with(|threads|threads.borrow().iter().any(|worker|worker.lease==*capture.persistence.lease()))
+    let dismissed=context.dismissed_payment_requests.borrow();
+    context.recovering_orders.borrow().iter().any(|key|key.starts_with(&prefix) && !dismissed.contains(key))
+        || PAYMENT_THREADS.with(|threads|threads.borrow().iter().any(|worker|worker.lease==*capture.persistence.lease()
+            && !dismissed.contains(&recovering_order_key(&capture.session,&worker.key))))
 }
 fn join_payment_workers()->std::result::Result<(),String>{
     let workers=PAYMENT_THREADS.with(|threads|std::mem::take(&mut *threads.borrow_mut()));
@@ -229,6 +301,7 @@ pub(super) fn shutdown_payment_workers()->std::result::Result<(),String>{
 }
 struct PaymentWorker {
     capture:PaymentCapture,cancelled:Arc<std::sync::atomic::AtomicBool>,
+    presentation_dismissed:Arc<std::sync::atomic::AtomicBool>,
     #[cfg(test)]
     before_create_record:Option<Box<dyn FnOnce()+Send>>,
 }
@@ -248,7 +321,10 @@ fn spawn_payment_thread(
     if !capture.is_current(context) || payment_worker_pending(capture,key){return Err(ApiError::AuthenticationRequired);}
     let activity=capture.persistence.begin_activity().map_err(transition_error)?;
     let cancelled=Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let worker=PaymentWorker{capture:capture.clone(),cancelled:cancelled.clone(),
+    let presentation_dismissed=context.active_payment.borrow().as_ref()
+        .filter(|active|active.client_request_id==key && active.session_scope==capture.session)
+        .map(|active|active.presentation_dismissed.clone()).unwrap_or_default();
+    let worker=PaymentWorker{capture:capture.clone(),cancelled:cancelled.clone(),presentation_dismissed,
         #[cfg(test)]
         before_create_record:PAYMENT_BEFORE_CREATE_RECORD.with(|hook|hook.borrow_mut().take()),
     };
@@ -288,6 +364,7 @@ fn payment_error_is_transient(error:&ApiError)->bool {
 fn release_payment_tracking(context:&AppContext,capture:&PaymentCapture,key:&str){
     capture.apply(context,||{
         remove_recovering_order(context,&capture.session,key);
+        context.dismissed_payment_requests.borrow_mut().remove(&recovering_order_key(&capture.session,key));
         if payment_matches(context,&capture.session,key){context.active_payment.borrow_mut().take();}
     });
 }
@@ -302,8 +379,12 @@ fn report_payment_error(
         }
     }
     let matched=payment_matches(context,&capture.session,key);
-    release_payment_tracking(context,capture,key);
+    let retained=matched && payment_error_preserves_order_recovery(&error) && find_saved_payment(capture,key).is_ok();
+    if retained {
+        capture.apply(context,||remove_recovering_order(context,&capture.session,key));
+    } else { release_payment_tracking(context,capture,key); }
     apply_payment_ui(app,context,capture,payer,|state|{
+        if !matched {return;}
         apply_agreements_from_payment_error(app,&error);
         // Only this locally constructed, fixed disclosure is public. Preserve
         // general LocalState sanitization for storage paths and internal errors.
@@ -312,9 +393,13 @@ fn report_payment_error(
             _=>error.user_message(),
         };
         let message=format!("付款操作暂未完成：{}",detail);
-        if matched {state.set_payment_active(false);state.set_payment_browser_ready(false);}
-        state.set_payment_status_message(message.clone().into());
-        set_payment_kind_status(state,kind,false,&message);
+        if matched {
+            close_payment_checkout();
+            state.set_payment_active(retained);state.set_payment_browser_ready(false);
+            state.set_payment_dialog_mode("error".into());
+            state.set_payment_status_message(message.clone().into());
+        }
+        if matched {set_payment_kind_status(state,kind,false,&message);}
     });
 }
 fn find_saved_payment(capture:&PaymentCapture,key:&str)->std::result::Result<PendingOrderRecord,ApiError>{
@@ -343,6 +428,12 @@ fn bind_and_settle_order(
     update_pending_order_id_for_namespace(&worker.capture.authority,&record.identity(),&order.id)
         .and_then(require_order_recovery_update).map_err(transition_error)?;
     record.order_id=order.id.clone();
+    // A close during creation stays hidden, including after restart.
+    if worker.presentation_dismissed.load(std::sync::atomic::Ordering::Acquire) {
+        dismiss_pending_order_for_namespace(&worker.capture.authority,&record.identity())
+            .and_then(require_order_recovery_update).map_err(transition_error)?;
+    }
+    record.presentation_dismissed=find_saved_payment(&worker.capture,&record.client_request_id)?.presentation_dismissed;
     let settled=matches!(payment_order_phase(&order),PaymentOrderPhase::Fulfilled|PaymentOrderPhase::Closed);
     if settled {
         worker.ensure()?;
@@ -375,7 +466,8 @@ fn sync_payment_worker(worker:PaymentWorker,key:String,order_id:String,kind:Paym
     let record=find_saved_payment(&worker.capture,&key)?;
     if record.order_id!=order_id{return Err(ApiError::LocalState{message:"原始订单编号已变化，记录已保留".into()});}
     worker.ensure()?;
-    let order=PaymentApi::new(worker.capture.backend.api.clone()).sync_order_scoped(&order_id,&worker.capture.session)?;
+    let api=PaymentApi::new(worker.capture.backend.api.clone());
+    let order=api.sync_order_scoped(&order_id,&worker.capture.session)?;
     bind_and_settle_order(&worker,record,order,kind,presentation)
 }
 
@@ -436,19 +528,22 @@ fn continue_payment_order(app:&AppWindow,context:AppContext,capture:PaymentCaptu
     let phase=payment_order_phase(&started.order);
     if started.settled {
         let matched=payment_matches(&context,&capture.session,&key);
+        if matched { close_payment_checkout(); }
         release_payment_tracking(&context,&capture,&key);
         let visible=apply_payment_ui(app,&context,&capture,&payer,|state|{
-            apply_payment_presentation(state,started.kind,&started.presentation);
             if matched {
+                apply_payment_presentation(state,started.kind,&started.presentation);
+                apply_payment_order_details(state, &context, &started.order);
                 state.set_payment_active(false);state.set_payment_browser_ready(false);
                 if phase==PaymentOrderPhase::Fulfilled {
                     state.set_payment_dialog_mode("success".into());state.set_payment_dialog_open(true);
                     state.set_payment_status_message("支付成功".into());
-                }else{state.set_payment_status_message("订单已关闭或过期".into());}
+                }else{state.set_payment_dialog_mode("closed".into());state.set_payment_status_message("订单已关闭或过期，请返回重新下单".into());}
             }
+            if !matched {return;}
             let message=if phase==PaymentOrderPhase::Fulfilled{
                 if started.kind==PaymentOrderKind::Credit{"支付成功，积分已到账"}else{state.set_membership_open(false);"支付成功，会员权益已更新"}
-            }else{"订单已关闭或过期，请重新发起支付"};
+            }else{"订单已关闭，可重新选择充值或订阅"};
             set_payment_kind_status(state,started.kind,false,message);
         }).is_some();
         if visible && phase==PaymentOrderPhase::Fulfilled {
@@ -457,23 +552,27 @@ fn continue_payment_order(app:&AppWindow,context:AppContext,capture:PaymentCaptu
         }
         return;
     }
-    let checkout=started.order.payment.as_ref().and_then(|payment|payment.checkout_url.clone());
-    if phase==PaymentOrderPhase::PendingPayment && checkout.is_none(){
-        report_payment_error(app,&context,&capture,&key,&payer,started.kind,ApiError::LocalState{
-            message:"暂时无法获取支付宝支付地址".into()});return;
-    }
+    let checkout=if phase==PaymentOrderPhase::PendingPayment {
+        started.order.payment.as_ref().and_then(|payment|payment.checkout_url.clone())
+    } else { None };
     let present=payment_matches(&context,&capture.session,&key);
     if present {
         apply_payment_ui(app,&context,&capture,&payer,|state|{
             if let Some(active)=context.active_payment.borrow_mut().as_mut(){
-                if active.client_request_id==key && active.session_scope==capture.session {active.checkout_url=checkout.clone();}
+                if active.client_request_id==key && active.session_scope==capture.session {active.checkout_url=checkout.clone();active.order=Some(started.order.clone());}
             }
             apply_payment_presentation(state,started.kind,&started.presentation);
-            state.set_payment_active(true);state.set_payment_browser_ready(checkout.is_some());
-            let message=if phase==PaymentOrderPhase::PaidFulfilling{"付款已确认，正在等待权益生效..."}else{"已恢复未完成订单，可重新打开支付宝继续支付"};
+            state.set_payment_active(true);
+            apply_payment_order_details(state, &context, &started.order);
+            let message=match state.get_payment_dialog_mode().as_str() {
+                "fulfilling"=>"付款已确认，正在等待权益生效...",
+                "expired"=>"二维码已失效，正在确认原订单状态",
+                "error"=>"二维码暂时不可用，请刷新重试；原订单已保留",
+                _=>"等待扫码，支付结果将自动更新",
+            };
             state.set_payment_status_message(message.into());set_payment_kind_status(state,started.kind,true,message);
         });
-        if matches!(poll,PaymentPoll::Initial{launch:true}) && checkout.is_some(){
+        if matches!(poll,PaymentPoll::Initial{launch:true}) && app.global::<AppState>().get_payment_browser_ready(){
             schedule_payment_checkout(app.as_weak(),context.clone(),capture.clone(),key.clone(),payer.clone());
         }
     }
@@ -481,7 +580,7 @@ fn continue_payment_order(app:&AppWindow,context:AppContext,capture:PaymentCaptu
     if attempt>=200{
         report_payment_error(app,&context,&capture,&key,&payer,started.kind,ApiError::LocalState{message:PAYMENT_STATUS_UNAVAILABLE.into()});
     }else{
-        poll_payment_order(app.as_weak(),context,capture,started.record,started.kind,started.presentation,attempt);
+        poll_payment_order(app.as_weak(),context,capture,started.record,started.kind,started.presentation,attempt+1);
     }
 }
 
@@ -490,11 +589,48 @@ pub(super) fn wire_payment_callbacks(app:&AppWindow,context:AppContext){
     let state=app.global::<AppState>();
     {
         let weak=app.as_weak();let context=context.clone();
+        state.on_sync_payment_qr(move |x,y,width,height| {
+            let Some(app)=weak.upgrade() else { close_payment_checkout(); return; };
+            let Ok(capture)=PaymentCapture::new(&context) else { close_payment_checkout(); return; };
+            let active=context.active_payment.borrow().clone();
+            let Some(active)=active.filter(|active| active.session_scope==capture.session) else { close_payment_checkout(); return; };
+            if !payment_surface_visible(&app.global::<AppState>()) || !payment_ui_is_current(&context,&capture,&active.billing_account_group_id) {
+                close_payment_checkout(); return;
+            }
+            if let Some(order)=active.order.as_ref() {
+                update_payment_countdown(&app.global::<AppState>(),order);
+            }
+            let state=app.global::<AppState>();
+            if state.get_payment_dialog_mode()!="waiting" || !state.get_payment_browser_ready() {
+                close_payment_checkout(); return;
+            }
+            if !payment_checkout_is_open() {
+                launch_payment_checkout(&app,&context,&capture,&active.client_request_id,&active.billing_account_group_id);
+            }
+            resize_payment_checkout(&app,x,y,width,height);
+        });
+    }
+    {
+        let weak=app.as_weak();let context=context.clone();
         state.on_retry_payment_browser(move||{
             let Some(app)=weak.upgrade()else{return;};let Ok(capture)=PaymentCapture::new(&context)else{return;};
             let active=context.active_payment.borrow().clone();
             if let Some(active)=active {
-                if active.session_scope==capture.session {launch_payment_checkout(&app,&context,&capture,&active.client_request_id,&active.billing_account_group_id);}
+                if active.session_scope==capture.session && payment_ui_is_current(&context,&capture,&active.billing_account_group_id) {
+                    let tracking=context.recovering_orders.borrow().contains(&recovering_order_key(&capture.session,&active.client_request_id));
+                    if active.order.is_none() && active.checkout_url.is_none() {
+                        app.global::<AppState>().set_payment_dialog_open(true);
+                        recover_pending_orders(&app,context.clone());return;
+                    }
+                    if !tracking {recover_pending_orders(&app,context.clone());}
+                    close_payment_checkout();
+                    let state=app.global::<AppState>();
+                    state.set_payment_dialog_open(true);
+                    state.set_payment_dialog_mode("waiting".into());state.set_payment_qr_loaded(false);
+                    if let Some(order)=active.order.as_ref() { apply_payment_order_details(&state,&context,order); }
+                    if state.get_payment_dialog_mode()=="waiting" { launch_payment_checkout(&app,&context,&capture,&active.client_request_id,&active.billing_account_group_id); }
+                    else { state.set_payment_status_message("正在确认原订单状态，请稍候".into());recover_pending_orders(&app,context.clone()); }
+                }
             }else{recover_pending_orders(&app,context.clone());}
         });
     }
@@ -504,16 +640,27 @@ pub(super) fn wire_payment_callbacks(app:&AppWindow,context:AppContext){
             let Some(app)=weak.upgrade()else{return;};let Ok(capture)=PaymentCapture::new(&context)else{return;};
             let active=context.active_payment.borrow().clone();
             if let Some(active)=active {
-                apply_payment_ui(&app,&context,&capture,&active.billing_account_group_id,|state|{
-                    if payment_matches(&context,&capture.session,&active.client_request_id){
-                        // Hide presentation only; background order confirmation and
-                        // its retained intent remain owned by the original lease.
-                        context.active_payment.borrow_mut().take();
-                        state.set_payment_active(false);state.set_payment_dialog_open(false);state.set_payment_browser_ready(false);
-                        state.set_credit_payment_busy(false);state.set_membership_payment_busy(false);
-                        state.set_payment_status_message("支付窗口已隐藏，原始订单仍会保留并确认".into());
+                let dismissed=apply_payment_ui(&app,&context,&capture,&active.billing_account_group_id,|state|{
+                    if !payment_matches(&context,&capture.session,&active.client_request_id){return false;}
+                    active.presentation_dismissed.store(true,std::sync::atomic::Ordering::Release);
+                    context.dismissed_payment_requests.borrow_mut().insert(recovering_order_key(&capture.session,&active.client_request_id));
+                    context.active_payment.borrow_mut().take();
+                    close_payment_checkout();state.set_payment_dialog_open(false);
+                    state.set_payment_active(false);state.set_payment_browser_ready(false);
+                    set_payment_kind_status(state,active.kind,false,"");
+                    true
+                })==Some(true);
+                if dismissed {
+                    if let Ok(record)=find_saved_payment(&capture,&active.client_request_id) {
+                        if let Err(error)=dismiss_pending_order_for_namespace(&capture.authority,&record.identity())
+                            .and_then(require_order_recovery_update) {
+                            apply_payment_ui(&app,&context,&capture,&active.billing_account_group_id,|state|
+                                set_payment_kind_status(state,active.kind,false,&transition_error(error).user_message()));
+                        }
                     }
-                });
+                }
+            } else {
+                capture.apply(&context,||{close_payment_checkout();app.global::<AppState>().set_payment_dialog_open(false);});
             }
         });
     }
@@ -553,18 +700,31 @@ pub(super) fn wire_payment_callbacks(app:&AppWindow,context:AppContext){
         });
     }
 }
+fn payment_presentation_dismissed(context:&AppContext,capture:&PaymentCapture,record:&PendingOrderRecord)->bool {
+    record.presentation_dismissed || context.dismissed_payment_requests.borrow()
+        .contains(&recovering_order_key(&capture.session,&record.client_request_id))
+}
 fn recover_before_new_purchase(app:&AppWindow,context:&AppContext,capture:&PaymentCapture,kind:PaymentOrderKind)->bool{
+    let active=context.active_payment.borrow().clone();
+    if let Some(active)=active.filter(|active|active.session_scope==capture.session) {
+        apply_payment_ui(app,context,capture,&active.billing_account_group_id,|state|{
+            let message=if active.kind==PaymentOrderKind::Credit {"有一笔积分充值订单待处理，请先关闭或完成该订单"}
+                else {"有一笔会员订阅订单待处理，请先关闭或完成该订单"};
+            set_payment_kind_status(state,kind,kind==active.kind,message);
+        });
+        return true;
+    }
     if new_payment_work_pending(context,capture){
         let payer=context.billing_context.confirmed_scope().map(|scope|scope.request.account_group_id);
         if let Some(payer)=payer {
-            apply_payment_ui(app,context,capture,&payer,|state|set_payment_kind_status(state,kind,true,"原始付款请求仍在确认中，请勿重复下单"));
+            apply_payment_ui(app,context,capture,&payer,|state|set_payment_kind_status(state,kind,false,"原始付款请求仍在确认中，请勿重复下单"));
         }
-        recover_pending_orders(app,context.clone());
+        recover_pending_orders_for_purchase(app,context.clone(),Some(kind));
         return true;
     }
     match load_pending_orders_for_namespace(&capture.authority){
-        Ok(rows) if rows.is_empty()=>false,
-        Ok(_)=>{recover_pending_orders(app,context.clone());true}
+        Ok(rows) if rows.iter().all(|row|payment_presentation_dismissed(context,capture,row))=>false,
+        Ok(_)=>{recover_pending_orders_for_purchase(app,context.clone(),Some(kind));true}
         Err(_)=>{
             capture.apply(context,||set_payment_kind_status(&app.global::<AppState>(),kind,false,"未完成订单记录无法读取，原文件已保留，请勿重复下单"));
             true
@@ -572,25 +732,31 @@ fn recover_before_new_purchase(app:&AppWindow,context:&AppContext,capture:&Payme
     }
 }
 fn show_payment_recovery(app:&AppWindow,context:&AppContext,capture:&PaymentCapture,record:&PendingOrderRecord,kind:PaymentOrderKind,presentation:&PaymentPresentation){
+    if payment_presentation_dismissed(context,capture,record) {
+        context.dismissed_payment_requests.borrow_mut().insert(recovering_order_key(&capture.session,&record.client_request_id));
+        return;
+    }
     apply_payment_ui(app,context,capture,&record.billing_account_group_id,|state|{
-        if context.active_payment.borrow().as_ref().is_some_and(|active|
-            active.client_request_id!=record.client_request_id || active.session_scope!=capture.session){return;}
-        if payment_matches(context,&capture.session,&record.client_request_id) && context.active_payment.borrow().as_ref().is_some_and(|active|active.checkout_url.is_some()) {
-            // Billing-only clear resets all of these fields but preserves the
-            // original active slot/checkout. Restore it without waiting for I/O.
-            apply_payment_presentation(state,kind,presentation);
-            state.set_payment_dialog_open(true);state.set_payment_dialog_mode("waiting".into());
-            state.set_payment_active(true);state.set_payment_browser_ready(true);
-            let message="已恢复未完成订单，可重新打开支付宝继续支付";
-            state.set_payment_status_message(message.into());set_payment_kind_status(state,kind,true,message);
-            return;
+        let active=context.active_payment.borrow().clone();
+        if active.as_ref().is_some_and(|active|active.client_request_id!=record.client_request_id || active.session_scope!=capture.session){return;}
+        if let Some(active)=active {
+            let was_hidden=state.get_payment_active() && !state.get_payment_dialog_open();
+            apply_payment_presentation(state,active.kind,presentation);
+            state.set_payment_active(true);state.set_payment_dialog_mode("waiting".into());
+            state.set_payment_dialog_open(!was_hidden);state.set_payment_browser_ready(active.checkout_url.is_some());
+            if let Some(order)=active.order.as_ref() {apply_payment_order_details(state,context,order);}
+        }else{
+            begin_payment_session(state,context,&record.client_request_id,kind,presentation,capture.session.clone(),record.billing_account_group_id.clone(),
+                "检测到未完成订单，正在恢复原始付款请求...");
         }
-        begin_payment_session(state,context,&record.client_request_id,kind,presentation,capture.session.clone(),record.billing_account_group_id.clone(),
-            "检测到未完成订单，正在恢复原始付款请求...");
-        set_payment_kind_status(state,kind,true,"检测到未完成订单，正在恢复原始付款请求...");
+        let message="正在确认原订单状态，请稍候...";
+        state.set_payment_status_message(message.into());set_payment_kind_status(state,kind,true,message);
     });
 }
 pub(super) fn recover_pending_orders(app:&AppWindow,context:AppContext){
+    recover_pending_orders_for_purchase(app,context,None);
+}
+fn recover_pending_orders_for_purchase(app:&AppWindow,context:AppContext,requested_kind:Option<PaymentOrderKind>){
     let Ok(capture)=PaymentCapture::new(&context)else{return;};
     let records=match load_pending_orders_for_namespace(&capture.authority){
         Ok(records)=>records,
@@ -600,11 +766,17 @@ pub(super) fn recover_pending_orders(app:&AppWindow,context:AppContext){
         if record.owner_user_id!=capture.session.owner_user_id {continue;}
         let kind=pending_order_kind(&record);
         if !valid_pending_order(&record){
+            if payment_presentation_dismissed(&context,&capture,&record) {continue;}
             apply_payment_ui(app,&context,&capture,&record.billing_account_group_id,|state|set_payment_kind_status(state,kind,false,"历史订单记录不完整，已保留，请勿重复下单"));
             continue;
         }
         let presentation=payment_presentation_for_product(&app.global::<AppState>(),kind,&record.product_code);
         show_payment_recovery(app,&context,&capture,&record,kind,&presentation);
+        if requested_kind.is_some_and(|requested|requested!=kind) {
+            apply_payment_ui(app,&context,&capture,&record.billing_account_group_id,|state|{
+                if payment_matches(&context,&capture.session,&record.client_request_id) {state.set_payment_dialog_open(false);}
+            });
+        }
         let key=record.client_request_id.clone();
         let inserted=capture.apply(&context,||context.recovering_orders.borrow_mut().insert(recovering_order_key(&capture.session,&key))).unwrap_or(false);
         if !inserted {continue;}
@@ -668,9 +840,9 @@ fn start_new_payment(
         return;
     }
     // This lower entry never replays: the actual callbacks run the recovery
-    // front door first. A direct caller must still never create a second key.
+    // front door first. Only an explicitly dismissed checkout permits a new key.
     match load_pending_orders_for_namespace(&authority){
-        Ok(rows) if rows.is_empty()=>{},
+        Ok(rows) if rows.iter().all(|row|payment_presentation_dismissed(&context,&capture,row))=>{},
         _=>{
             apply_payment_ui(app,&context,&capture,&payer,|state|set_payment_kind_status(state,kind,false,"检测到未完成订单，记录已保留，请先恢复原始订单"));
             return;
@@ -680,7 +852,7 @@ fn start_new_payment(
     if !capture.is_current(&context) || !context.billing_context.is_current(&scope){return;}
     let state=app.global::<AppState>();
     if state.get_payment_active(){
-        apply_payment_ui(app,&context,&capture,&payer,|state|state.set_payment_dialog_open(true));
+        apply_payment_ui(app,&context,&capture,&payer,|state|set_payment_kind_status(state,kind,false,"请先关闭或完成当前支付订单"));
         return;
     }
     if (kind==PaymentOrderKind::Credit && state.get_credit_payment_busy())
@@ -702,7 +874,7 @@ fn start_new_payment(
         PaymentPresentation::membership(target.name.as_str())
     }else{PaymentPresentation::credit(state.get_selected_credit_amount().as_str())};
     let key=Uuid::new_v4().simple().to_string();
-    let record=PendingOrderRecord{
+    let record=PendingOrderRecord{ presentation_dismissed: false,
         schema_version:2,kind:if kind==PaymentOrderKind::Credit{"credit"}else if is_upgrade{"membership_upgrade"}else{"membership"}.into(),
         client_request_id:key.clone(),owner_user_id:capture.session.owner_user_id.clone(),billing_account_group_id:payer.clone(),
         auth_epoch:capture.session.auth_epoch,order_id:String::new(),product_code:product,upgrade_quote_id:String::new(),created_at:Local::now().to_rfc3339(),
@@ -724,14 +896,19 @@ fn start_new_payment(
     }
 }
 fn create_payment_worker(
-    worker:PaymentWorker,scope:BillingScope,record:PendingOrderRecord,kind:PaymentOrderKind,
+    worker:PaymentWorker,scope:BillingScope,mut record:PendingOrderRecord,kind:PaymentOrderKind,
     presentation:PaymentPresentation,acceptances:Vec<AgreementAcceptance>,
 )->std::result::Result<PaymentStarted,ApiError>{
     worker.ensure()?;
     #[cfg(test)]
     let worker={let mut worker=worker;if let Some(before)=worker.before_create_record.take(){before();}worker};
     worker.ensure()?;
+    record.presentation_dismissed=worker.presentation_dismissed.load(std::sync::atomic::Ordering::Acquire);
     upsert_pending_order_for_namespace(&worker.capture.authority,&scope,record.clone()).map_err(transition_error)?;
+    if worker.presentation_dismissed.load(std::sync::atomic::Ordering::Acquire) {
+        dismiss_pending_order_for_namespace(&worker.capture.authority,&record.identity())
+            .and_then(require_order_recovery_update).map_err(transition_error)?;
+    }
     let result=(||{
         worker.ensure()?;
         AuthApi::new(worker.capture.backend.api.clone()).accept_agreements_scoped(&acceptances,&worker.capture.session)?;
@@ -788,12 +965,13 @@ fn schedule_payment_checkout(weak:Weak<AppWindow>,context:AppContext,capture:Pay
     });
 }
 fn launch_payment_checkout(app:&AppWindow,context:&AppContext,capture:&PaymentCapture,key:&str,payer:&str){
-    if !capture.is_current(context){return;}
+    if !capture.is_current(context) || !payment_surface_visible(&app.global::<AppState>()){return;}
     let Some(visible)=context.billing_context.current_scope(KnownCapability::ReadGroupFinance).ok()else{return;};
     if visible.request.session!=capture.session || visible.request.account_group_id!=payer{return;}
     let active=context.active_payment.borrow().clone();
     let Some(active)=active.filter(|active|active.client_request_id==key && active.session_scope==capture.session
         && active.billing_account_group_id==payer)else{return;};
+    if active.order.as_ref().is_some_and(|order| payment_qr_mode(order,chrono::Utc::now().timestamp())!="waiting") { return; }
     // Re-read the retained original order through the held authority, outside the
     // short UI lock. An arbitrary checkout string is not its own order authority.
     let Ok(record)=find_saved_payment(capture,key)else{return;};
@@ -802,12 +980,13 @@ fn launch_payment_checkout(app:&AppWindow,context:&AppContext,capture:&PaymentCa
         apply_payment_ui(app,context,capture,payer,|state|state.set_payment_status_message("支付地址尚未准备好，请稍候".into()));return;
     };
     if !capture.is_current(context) || !context.billing_context.is_current(&visible){return;}
-    let result=open_payment_checkout(&checkout,capture.backend.api.base_url(),&capture.persistence,&record.order_id);
+    let result=open_payment_checkout(app,&checkout,capture.backend.api.base_url(),&capture.persistence,&record.order_id);
     // Native launch and effect/activity Drop have finished before re-entry.
     if context.billing_context.is_current(&visible) && payment_matches(context,&capture.session,key){
         apply_payment_ui(app,context,capture,payer,|state|{
             state.set_payment_dialog_open(true);
-            state.set_payment_status_message(if result.is_ok(){state.get_payment_waiting_message()}else{"无法打开系统浏览器，请点击“重新打开支付宝”重试".into()});
+            if result.is_err() {state.set_payment_dialog_mode("error".into());}
+            state.set_payment_status_message(if result.is_ok(){"等待扫码，支付结果将自动更新".into()}else{"二维码加载失败，请点击刷新重试".into()});
         });
     }
 }
@@ -821,13 +1000,24 @@ fn begin_payment_session(
     billing_account_group_id: String,
     message: &str,
 ) {
+    close_payment_checkout();
     *context.active_payment.borrow_mut() = Some(ActivePaymentSession {
+        kind,
+        presentation_dismissed: Default::default(),
         client_request_id: client_request_id.to_string(),
         billing_account_group_id,
         checkout_url: None,
+        order: None,
         session_scope,
     });
+    state.set_payment_amount("".into());
+    state.set_payment_countdown("".into());
+    state.set_payment_qr_loaded(false);
+    state.set_payment_payer(context.billing_context.confirmed_snapshot().map(|s| s.billing_group.name).unwrap_or_default().into());
     state.set_payment_active(true);
+
+    state.set_credit_payment_busy(false);
+    state.set_membership_payment_busy(false);
     state.set_payment_dialog_open(true);
     state.set_payment_dialog_mode("waiting".into());
     state.set_payment_browser_ready(false);
@@ -885,6 +1075,7 @@ fn set_payment_kind_status(state: &AppState, kind: PaymentOrderKind, busy: bool,
 
 
 fn close_payment_success(state: &AppState) {
+    close_payment_checkout();
     state.set_payment_dialog_open(false);
     state.set_payment_dialog_mode("waiting".into());
     state.set_payment_status_message("".into());
@@ -894,6 +1085,7 @@ fn close_payment_success(state: &AppState) {
 
 
 pub(super) fn clear_payment_account_state(app: &AppWindow, context: &AppContext) {
+    close_payment_checkout();
     if let Some(persistence)=context.store.borrow().private_persistence.as_ref(){
         cancel_payment_workers_for_retirement(persistence.lease());
     }
@@ -901,6 +1093,7 @@ pub(super) fn clear_payment_account_state(app: &AppWindow, context: &AppContext)
     context.recovering_orders.borrow_mut().clear();
     let state = app.global::<AppState>();
     state.set_payment_active(false);
+
     state.set_payment_dialog_open(false);
     state.set_payment_dialog_mode("waiting".into());
     state.set_payment_browser_ready(false);
@@ -983,6 +1176,16 @@ fn payment_presentation_for_product(
 }
 
 #[cfg(test)]
+fn retained_payment_fixture_rows(authority: &NamespaceStorageAuthority) -> Vec<PendingOrderRecord> {
+    // Forensic inspection after fixture workers and retirement have joined.
+    // Runtime authority must stay revoked; this helper is never in the client.
+    let bytes = std::fs::read(authority.lease().namespace.path(ManagedUserArea::Recovery)
+        .join("pending-orders.json")).unwrap();
+    let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    serde_json::from_value(document["orders"].clone()).unwrap()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -998,7 +1201,7 @@ mod tests {
     }
 
     fn pending(owner_user_id: &str, product_code: &str) -> PendingOrderRecord {
-        PendingOrderRecord {
+        PendingOrderRecord { presentation_dismissed: false,
             schema_version: 2,
             kind: "credit".to_string(),
             client_request_id: "request-1".to_string(),
@@ -1010,6 +1213,30 @@ mod tests {
             upgrade_quote_id: String::new(),
             created_at: "2026-08-10T00:00:00+08:00".to_string(),
         }
+    }
+
+    #[test]
+    fn qr_expiry_hides_payment_but_never_claims_fulfillment_or_creates_an_order() {
+        let mut order: OrderDetail = serde_json::from_value(serde_json::json!({
+            "id":"original", "billing_account_group_id":"payer", "status":"pending_payment",
+            "fulfillment_status":"pending", "payable_amount_cents":"9900",
+            "payment":{"status":"waiting_buyer", "checkout_mode":"qr", "checkout_url":"https://example.test/checkout",
+                "checkout_expires_at":"2026-10-17T00:05:00Z"}
+        })).unwrap();
+        let expiry=chrono::DateTime::parse_from_rfc3339("2026-10-17T00:05:00Z").unwrap().timestamp();
+        assert_eq!(payment_qr_mode(&order,expiry-1),"waiting");
+        assert_eq!(payment_qr_remaining(&order,expiry-1),Some(1));
+        assert_eq!(payment_qr_mode(&order,expiry),"expired");
+        assert_eq!(payment_qr_mode(&order,expiry+10),"expired");
+        assert_eq!(payment_order_phase(&order),PaymentOrderPhase::PendingPayment);
+        order.payment.as_mut().unwrap().checkout_mode=None;
+        assert_eq!(payment_qr_mode(&order,expiry-1),"error");
+        order.status="paid".into();
+        assert_eq!(payment_qr_mode(&order,expiry+10),"fulfilling");
+        order.fulfillment_status="fulfilled".into();
+        assert_eq!(payment_qr_mode(&order,expiry+10),"success");
+        order.status="closed".into();
+        assert_eq!(payment_qr_mode(&order,expiry+10),"closed");
     }
 
     #[test]
@@ -1260,7 +1487,7 @@ mod billing_capture_tests {
     }
 
     fn upgrade_record(scope: &BillingScope, request_id: &str) -> PendingOrderRecord {
-        PendingOrderRecord {
+        PendingOrderRecord { presentation_dismissed: false,
             schema_version: 2,
             kind: "membership_upgrade".into(),
             client_request_id: request_id.into(),
@@ -1315,7 +1542,7 @@ mod billing_capture_tests {
         .unwrap();
         let mut saved_scope = fixture.scope.clone();
         saved_scope.request.session.auth_epoch = saved_epoch;
-        let record = PendingOrderRecord {
+        let record = PendingOrderRecord { presentation_dismissed: false,
             schema_version: 2,
             kind: "credit".into(),
             client_request_id: "unfinished-original-request".into(),
@@ -1398,7 +1625,7 @@ mod billing_capture_tests {
     #[test]
     fn billing_capture_order_update_requires_an_exact_persisted_record() {
         let fixture = fixture("http://127.0.0.1:9/");
-        let record = PendingOrderRecord {
+        let record = PendingOrderRecord { presentation_dismissed: false,
             schema_version: 2,
             kind: "credit".into(),
             client_request_id: "order-fixture".into(),
@@ -1430,7 +1657,7 @@ mod billing_capture_tests {
         use std::io::Write;
         let (listener, url) = listener();
         let fixture = fixture(&url);
-        let record = PendingOrderRecord {
+        let record = PendingOrderRecord { presentation_dismissed: false,
             schema_version: 2,
             kind: "membership_upgrade".into(),
             client_request_id: "upgrade-fixture".into(),
@@ -1620,7 +1847,9 @@ mod billing_capture_tests {
         assert!(payment_error_preserves_order_recovery(&error));
         let listener = transport.join().unwrap();
         assert_no_request(&listener);
-        assert_single_upgrade_record(&fixture.authority, &record, "");
+        assert!(load_pending_orders_for_namespace(&fixture.authority).is_err());
+        assert_eq!(serde_json::to_value(retained_payment_fixture_rows(&fixture.authority)).unwrap(),
+            serde_json::to_value(vec![record]).unwrap());
     }
 
     fn app() -> AppWindow {
@@ -1824,7 +2053,7 @@ mod core_payment_tests {
         app
     }
     fn record(f: &Fixture, kind: &str, order_id: &str) -> PendingOrderRecord {
-        PendingOrderRecord { schema_version:2,kind:kind.into(),client_request_id:KEY.into(),owner_user_id:OWNER.into(),
+        PendingOrderRecord { presentation_dismissed: false, schema_version:2,kind:kind.into(),client_request_id:KEY.into(),owner_user_id:OWNER.into(),
             billing_account_group_id:PAYER.into(),auth_epoch:f.scope.request.session.auth_epoch,order_id:order_id.into(),
             product_code:if kind=="credit" {"fixture-pack".into()}else{"fixture-plan".into()},
             upgrade_quote_id:String::new(),created_at:"fixture".into() }
@@ -1993,7 +2222,9 @@ mod core_payment_tests {
         app.global::<AppState>().set_payment_status_message("upgrade boundary".into());
         transport.reply(0,order_response("closed","pending"));trip.join();join_payment_workers().unwrap();
         pump_for(Duration::from_millis(40));
-        assert_eq!(rows(&f)[0].client_request_id,saved[0].client_request_id);
+        assert!(load_pending_orders_for_namespace(&f.authority).is_err());
+        assert_eq!(serde_json::to_value(retained_payment_fixture_rows(&f.authority)).unwrap(),
+            serde_json::to_value(saved).unwrap());
         assert_eq!(app.global::<AppState>().get_credit_payment_message(),"upgrade boundary");
         assert_eq!(app.global::<AppState>().get_payment_status_message(),"upgrade boundary");
         assert_eq!(transport.finish().len(),1);
@@ -2046,13 +2277,252 @@ mod core_payment_tests {
     }
 
     #[test]
+    fn core_payment_other_purchase_kind_does_not_reopen_or_claim_the_pending_order() {
+        i_slint_backend_testing::init_no_event_loop();
+        for kind in [PaymentOrderKind::Credit, PaymentOrderKind::Membership] {
+            let transport=Transport::new(0);let f=fixture(&transport.url);let app=app(&f);
+            let capture=PaymentCapture::new(&f.context).unwrap();let state=app.global::<AppState>();
+            seed(&f,record(&f,kind.state_value(),ORDER));
+            let presentation=payment_presentation_for_product(&state,kind,"fixture-plan");
+            begin_payment_session(&state,&f.context,KEY,kind,&presentation,capture.session.clone(),PAYER.into(),"waiting");
+            f.context.recovering_orders.borrow_mut().insert(recovering_order_key(&capture.session,KEY));
+            state.set_payment_dialog_open(false);
+            if kind==PaymentOrderKind::Credit {state.invoke_purchase_membership("fixture-plan".into());}
+            else {state.invoke_recharge_credits("fixture-pack".into());}
+            assert!(!state.get_payment_dialog_open(),"a different purchase must not open the old payment");
+            assert_eq!(state.get_payment_kind(),kind.state_value());
+            assert!(!(if kind==PaymentOrderKind::Credit {state.get_membership_payment_busy()} else {state.get_credit_payment_busy()}));
+            assert_eq!(rows(&f)[0].client_request_id,KEY);
+            assert!(transport.finish().is_empty(),"no replacement order may be submitted");
+        }
+    }
+
+    #[test]
+    fn core_payment_background_terminal_order_does_not_relabel_the_open_payment() {
+        i_slint_backend_testing::init_no_event_loop();
+        let f=fixture("http://127.0.0.1:9/");let app=app(&f);
+        let capture=PaymentCapture::new(&f.context).unwrap();let state=app.global::<AppState>();
+        begin_payment_session(&state,&f.context,KEY,PaymentOrderKind::Credit,
+            &PaymentPresentation::credit("10"),capture.session.clone(),PAYER.into(),"current credit");
+        let order:OrderDetail=serde_json::from_value(serde_json::json!({
+            "id":ORDER,"billing_account_group_id":PAYER,"status":"closed","fulfillment_status":"pending",
+            "payable_amount_cents":"100","payment":null
+        })).unwrap();
+        let mut other=record(&f,"membership",ORDER);other.client_request_id="other-request".into();
+        let started=PaymentStarted{order,client_request_id:other.client_request_id.clone(),kind:PaymentOrderKind::Membership,
+            presentation:PaymentPresentation::membership("Other"),session_scope:capture.session.clone(),record:other,settled:true};
+        continue_payment_order(&app,f.context.clone(),capture,started,PaymentPoll::Sync{attempt:0});
+        assert_eq!(state.get_payment_kind(),"credit");
+        assert_eq!(state.get_payment_success_message(),"10 积分已到账");
+        assert_eq!(state.get_payment_status_message(),"current credit");
+        assert!(state.get_payment_dialog_open());
+    }
+
+    #[test]
+    fn core_payment_background_error_does_not_replace_the_open_payment_status() {
+        i_slint_backend_testing::init_no_event_loop();
+        let f=fixture("http://127.0.0.1:9/");let app=app(&f);
+        let capture=PaymentCapture::new(&f.context).unwrap();let state=app.global::<AppState>();
+        begin_payment_session(&state,&f.context,KEY,PaymentOrderKind::Credit,
+            &PaymentPresentation::credit("10"),capture.session.clone(),PAYER.into(),"current credit");
+        state.set_credit_payment_busy(true);
+        report_payment_error(&app,&f.context,&capture,"other-request",PAYER,PaymentOrderKind::Credit,
+            ApiError::LocalState{message:PAYMENT_STATUS_UNAVAILABLE.into()});
+        assert!(state.get_credit_payment_busy());
+        assert_eq!(state.get_payment_status_message(),"current credit");
+        assert_eq!(state.get_payment_dialog_mode(),"waiting");
+    }
+
+    #[test]
+    fn core_payment_close_then_purchase_creates_a_fresh_order_without_cancelling() {
+        i_slint_backend_testing::init_no_event_loop();
+        for kind in [PaymentOrderKind::Credit, PaymentOrderKind::Membership] {
+            let mut transport=Transport::new(1);let f=fixture(&transport.url);let app=app(&f);
+            let capture=PaymentCapture::new(&f.context).unwrap();let state=app.global::<AppState>();
+            seed(&f,record(&f,kind.state_value(),ORDER));
+            begin_payment_session(&state,&f.context,KEY,kind,
+                &PaymentPresentation::credit("10"),capture.session.clone(),PAYER.into(),"waiting");
+            state.invoke_dismiss_payment();
+            assert!(!state.get_payment_dialog_open());
+            assert!(!state.get_payment_active(),"closing must immediately release the purchase UI");
+            assert!(f.context.active_payment.borrow().is_none());
+            if kind==PaymentOrderKind::Credit {state.invoke_purchase_membership("fixture-plan".into());}
+            else {state.invoke_recharge_credits("fixture-pack".into());}
+            transport.wait();
+            let saved=rows(&f);assert_eq!(saved.len(),2);
+            let fresh=saved.iter().find(|row|row.client_request_id!=KEY).unwrap();
+            assert_eq!(state.get_payment_kind(),if kind==PaymentOrderKind::Credit {"membership"}else{"credit"});
+            transport.reply(0,order_response("closed","pending"));join_payment_workers().unwrap();
+            pump(||rows(&f).len()==1 && !state.get_payment_active());
+            let requests=transport.finish();assert_eq!(requests.len(),1);
+            assert!(requests[0].starts_with(if kind==PaymentOrderKind::Credit {"POST /v1/membership/orders "}else{"POST /v1/credits/orders "}));
+            assert!(requests[0].contains(&fresh.client_request_id));
+        }
+    }
+
+    #[test]
+    fn core_payment_retry_after_create_failure_replays_the_original_request() {
+        i_slint_backend_testing::init_no_event_loop();
+        let mut transport=Transport::new(2);let f=fixture(&transport.url);let app=app(&f);
+        let state=app.global::<AppState>();
+        state.invoke_recharge_credits("fixture-pack".into());transport.wait();
+        let key=rows(&f)[0].client_request_id.clone();
+        transport.reply(0,response(502,Value::Null,"payment_initialization_failed"));join_payment_workers().unwrap();
+        pump(||state.get_payment_dialog_mode()=="error");
+        state.invoke_retry_payment_browser();transport.wait();
+        transport.reply(1,order_response("closed","pending"));join_payment_workers().unwrap();
+        pump(||!state.get_payment_active());
+        let requests=transport.finish();assert_eq!(requests.len(),2);
+        assert!(requests.iter().all(|request|request.starts_with("POST /v1/credits/orders ") && request.contains(&key)));
+    }
+
+    #[test]
+    fn core_payment_dismissal_survives_old_epoch_failure_and_restart_without_cancellation() {
+        i_slint_backend_testing::init_no_event_loop();
+        let mut transport=Transport::new(2);let f=fixture(&transport.url);let app=app(&f);
+        let mut saved=record(&f,"credit",ORDER);seed(&f,saved.clone());
+        saved.auth_epoch=f.scope.request.session.auth_epoch.saturating_sub(1);
+        let bytes=serde_json::to_vec(&serde_json::json!({"schema_version":2,"orders":[saved]})).unwrap();
+        fs::write(f.authority.lease().namespace.path(ManagedUserArea::Recovery).join("pending-orders.json"),&bytes).unwrap();
+        recover_pending_orders(&app,f.context.clone());transport.wait();
+        let state=app.global::<AppState>();state.invoke_dismiss_payment();
+        assert!(rows(&f)[0].presentation_dismissed);
+        transport.reply(0,response(502,Value::Null,"fixture_failure"));join_payment_workers().unwrap();
+        pump(||f.context.recovering_orders.borrow().is_empty());
+        assert!(!state.get_payment_dialog_open());assert!(!state.get_payment_active());
+        f.context.dismissed_payment_requests.borrow_mut().clear();
+        recover_pending_orders(&app,f.context.clone());transport.wait();
+        assert!(!state.get_payment_dialog_open());assert!(!state.get_payment_active());
+        transport.reply(1,order_response("closed","pending"));join_payment_workers().unwrap();
+        pump(||rows(&f).is_empty());
+        let requests=transport.finish();assert_eq!(requests.len(),2);
+        assert!(requests.iter().all(|request|request.starts_with(&format!("GET /v1/orders/{ORDER} "))));
+    }
+
+    #[test]
+    fn core_payment_close_during_creation_allows_new_same_kind_order_and_ignores_old_response() {
+        i_slint_backend_testing::init_no_event_loop();
+        let mut transport=Transport::new(2);let f=fixture(&transport.url);let app=app(&f);
+        let state=app.global::<AppState>();
+        state.invoke_recharge_credits("fixture-pack".into());transport.wait();
+        let original=rows(&f)[0].client_request_id.clone();
+        state.invoke_dismiss_payment();assert!(rows(&f)[0].presentation_dismissed);
+        state.invoke_recharge_credits("second-pack".into());transport.wait();
+        let fresh=f.context.active_payment.borrow().as_ref().unwrap().client_request_id.clone();
+        assert_ne!(fresh,original);assert_eq!(rows(&f).len(),2);
+        // Old completion must not change the newer same-kind busy/message/modal.
+        transport.reply(0,order_response("closed","pending"));
+        pump(||rows(&f).len()==1);
+        assert!(state.get_credit_payment_busy());assert!(state.get_payment_active());
+        assert!(state.get_payment_dialog_open());assert_eq!(state.get_payment_dialog_mode(),"waiting");
+        assert_eq!(f.context.active_payment.borrow().as_ref().unwrap().client_request_id,fresh);
+        transport.reply(1,order_response("closed","pending"));join_payment_workers().unwrap();
+        pump(||rows(&f).is_empty());
+        let requests=transport.finish();assert_eq!(requests.len(),2);
+        assert!(requests.iter().all(|request|request.starts_with("POST /v1/credits/orders ")));
+    }
+
+    #[test]
+    fn core_payment_restart_keeps_dismissed_paid_order_in_background_until_fulfilled() {
+        i_slint_backend_testing::init_no_event_loop();
+        let mut transport=Transport::new(1);let f=fixture(&transport.url);let app=app(&f);
+        let saved=record(&f,"membership",ORDER);seed(&f,saved.clone());
+        let mut legacy=serde_json::to_value(saved).unwrap();
+        legacy.as_object_mut().unwrap().remove("presentation_dismissed");legacy["cancel_requested"]=true.into();
+        fs::write(f.authority.lease().namespace.path(ManagedUserArea::Recovery).join("pending-orders.json"),
+            serde_json::to_vec(&serde_json::json!({"schema_version":2,"orders":[legacy]})).unwrap()).unwrap();
+        recover_pending_orders(&app,f.context.clone());transport.wait();
+        let state=app.global::<AppState>();assert!(!state.get_payment_dialog_open());
+        transport.reply(0,order_response("paid","retry_pending"));join_payment_workers().unwrap();
+        pump_for(Duration::from_millis(20));
+        assert_eq!(rows(&f).len(),1,"paid order must remain tracked until fulfillment");
+        assert!(!state.get_payment_active());assert!(!state.get_payment_dialog_open());
+        let requests=transport.finish();assert_eq!(requests.len(),1);
+        assert!(requests[0].starts_with(&format!("GET /v1/orders/{ORDER} ")));
+    }
+
+    #[test]
+    fn core_payment_hidden_or_covered_surface_does_not_launch_but_keeps_original_intent() {
+        i_slint_backend_testing::init_no_event_loop();
+        let f=fixture("http://127.0.0.1:9/");let app=app(&f);
+        let capture=PaymentCapture::new(&f.context).unwrap();
+        let record=record(&f,"credit",ORDER);seed(&f,record);
+        let state=app.global::<AppState>();
+        begin_payment_session(&state,&f.context,KEY,PaymentOrderKind::Credit,
+            &PaymentPresentation::credit("10"),capture.session.clone(),PAYER.into(),"waiting");
+        f.context.active_payment.borrow_mut().as_mut().unwrap().checkout_url=Some(
+            format!("http://127.0.0.1:9/v1/payments/alipay/checkout#order_id={ORDER}&token=fixture"));
+        state.set_payment_dialog_open(false);
+        assert!(state.get_payment_active());
+        with_payment_checkout_test_launcher(|_|panic!("hidden QR must not launch"),||{
+            launch_payment_checkout(&app,&f.context,&capture,KEY,PAYER);
+        });
+        state.set_payment_dialog_open(true);state.set_close_choice_open(true);
+        with_payment_checkout_test_launcher(|_|panic!("QR must not cover close confirmation"),||{
+            launch_payment_checkout(&app,&f.context,&capture,KEY,PAYER);
+        });
+        assert_eq!(rows(&f).len(),1);
+        state.set_close_choice_open(false);
+        with_payment_checkout_test_launcher(|_|panic!("QR must not cover another foreground dialog"),||{
+            state.set_recovered_prompt_result_open(true);
+            launch_payment_checkout(&app,&f.context,&capture,KEY,PAYER);
+            state.set_recovered_prompt_result_open(false);
+            state.set_canvas_group_name_dialog_open(true);
+            launch_payment_checkout(&app,&f.context,&capture,KEY,PAYER);
+            state.set_canvas_group_name_dialog_open(false);
+            state.set_video_player_open(true);
+            launch_payment_checkout(&app,&f.context,&capture,KEY,PAYER);
+            state.set_video_player_open(false);
+            state.set_page("video-generation".into());
+            state.set_video_prompt_expanded_open(true);
+            launch_payment_checkout(&app,&f.context,&capture,KEY,PAYER);
+            state.set_video_prompt_expanded_open(false);
+            state.set_video_image_dialog("source".into());
+            launch_payment_checkout(&app,&f.context,&capture,KEY,PAYER);
+            state.set_video_image_dialog("".into());
+        });
+        let opened=Rc::new(Cell::new(0));let observed=opened.clone();
+        with_payment_checkout_test_launcher(move |url|{
+            assert!(url.contains("/v1/payments/alipay/qr#"));observed.set(observed.get()+1);Ok(())
+        },||launch_payment_checkout(&app,&f.context,&capture,KEY,PAYER));
+        assert_eq!(opened.get(),1);
+    }
+
+    #[test]
+    fn core_payment_paid_confirmation_removes_qr_before_fulfillment() {
+        i_slint_backend_testing::init_no_event_loop();
+        let f = fixture("http://127.0.0.1:9/");
+        let app = app(&f);
+        let capture = PaymentCapture::new(&f.context).unwrap();
+        let record = record(&f, "credit", ORDER);
+        seed(&f, record.clone());
+        let presentation = PaymentPresentation::credit("10");
+        begin_payment_session(&app.global::<AppState>(), &f.context, KEY, PaymentOrderKind::Credit,
+            &presentation, capture.session.clone(), PAYER.into(), "waiting");
+        let order: OrderDetail = serde_json::from_value(serde_json::json!({
+            "id": ORDER, "billing_account_group_id": PAYER, "status": "paid",
+            "fulfillment_status": "retry_pending", "payable_amount_cents": "9900",
+            "payment": null
+        })).unwrap();
+        let started = PaymentStarted { order, client_request_id: KEY.into(), kind: PaymentOrderKind::Credit,
+            presentation, session_scope: capture.session.clone(), record, settled: false };
+        continue_payment_order(&app, f.context.clone(), capture, started, PaymentPoll::Sync { attempt: 0 });
+        assert_eq!(app.global::<AppState>().get_payment_dialog_mode(), "fulfilling");
+        assert!(!app.global::<AppState>().get_payment_browser_ready());
+        assert!(f.context.active_payment.borrow().as_ref().unwrap().checkout_url.is_none());
+        assert_eq!(rows(&f).len(), 1, "paid but unfulfilled order remains recoverable");
+    }
+
+    #[test]
     fn core_payment_browser_late_result_does_not_overwrite_selected_b() {
         i_slint_backend_testing::init_no_event_loop();
         let f=fixture("http://127.0.0.1:9/");let app=app(&f);
         seed(&f,record(&f,"credit",ORDER));
         *f.context.active_payment.borrow_mut()=Some(ActivePaymentSession {
+            kind:PaymentOrderKind::Credit,presentation_dismissed:Default::default(),
             client_request_id:KEY.into(),billing_account_group_id:PAYER.into(),
             checkout_url:Some(format!("http://127.0.0.1:9/v1/payments/alipay/checkout#order_id={ORDER}&token=fixture-token")),
+            order:None,
             session_scope:f.scope.request.session.clone(),
         });
         let context=f.context.clone();let session=f.scope.request.session.clone();let weak=app.as_weak();
@@ -2095,7 +2565,9 @@ mod core_payment_tests {
         app.global::<AppState>().set_payment_status_message("retired boundary".into());
         transport.reply(0,order_response("closed","pending"));
         retire.join().unwrap();join_payment_workers().unwrap();pump_for(Duration::from_millis(40));
-        assert_eq!(rows(&f)[0].client_request_id,saved[0].client_request_id);
+        assert!(load_pending_orders_for_namespace(&f.authority).is_err());
+        assert_eq!(serde_json::to_value(retained_payment_fixture_rows(&f.authority)).unwrap(),
+            serde_json::to_value(saved).unwrap());
         assert_eq!(app.global::<AppState>().get_credit_payment_message(),"retired boundary");
         assert_eq!(app.global::<AppState>().get_payment_status_message(),"retired boundary");
         assert_eq!(transport.finish().len(),1);
@@ -2123,7 +2595,52 @@ mod core_payment_tests {
         fn drop(&mut self) { if let Some(sender)=self.0.take(){let _=sender.send(());} }
     }
     #[test]
-    fn core_payment_pre_record_dismiss_and_billing_switch_cannot_create_second_key() {
+    fn core_payment_pre_record_dismissal_allows_fresh_key_and_keeps_old_creation_hidden() {
+        i_slint_backend_testing::init_no_event_loop();
+        let mut transport=Transport::new(2);let f=fixture(&transport.url);let app=app(&f);
+        let (entered_tx,entered_rx)=mpsc::channel();let (release_tx,release_rx)=mpsc::channel();
+        PAYMENT_BEFORE_CREATE_RECORD.with(|hook|*hook.borrow_mut()=Some(Box::new(move||{
+            entered_tx.send(()).unwrap();release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        })));
+        let release=BeforeRecordRelease(Some(release_tx));let state=app.global::<AppState>();
+        state.invoke_recharge_credits("fixture-pack".into());entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert!(rows(&f).is_empty());
+        let original=f.context.active_payment.borrow().as_ref().unwrap().client_request_id.clone();
+        state.invoke_dismiss_payment();state.invoke_recharge_credits("second-pack".into());transport.wait();
+        let fresh=f.context.active_payment.borrow().as_ref().unwrap().client_request_id.clone();assert_ne!(fresh,original);
+        transport.reply(0,order_response("closed","pending"));pump(||!state.get_payment_active());
+        state.invoke_dismiss_payment();
+        release.release();transport.wait();
+        assert!(rows(&f).iter().find(|row|row.client_request_id==original).unwrap().presentation_dismissed);
+        transport.reply(1,order_response("closed","pending"));join_payment_workers().unwrap();pump(||rows(&f).is_empty());
+        assert!(!state.get_payment_dialog_open());assert!(!state.get_payment_active());
+        let requests=transport.finish();assert_eq!(requests.len(),2);
+        assert!(requests[0].contains(&fresh));assert!(requests[1].contains(&original));
+        assert!(requests.iter().all(|request|request.starts_with("POST /v1/credits/orders ")));
+    }
+
+    #[test]
+    fn core_payment_dismissal_wins_before_the_worker_persists_its_dismissal_flag() {
+        i_slint_backend_testing::init_no_event_loop();
+        let mut transport=Transport::new(1);let f=fixture(&transport.url);let app=app(&f);
+        let capture=PaymentCapture::new(&f.context).unwrap();let state=app.global::<AppState>();
+        begin_payment_session(&state,&f.context,KEY,PaymentOrderKind::Credit,
+            &PaymentPresentation::credit("10"),capture.session.clone(),PAYER.into(),"creating");
+        state.invoke_dismiss_payment();
+        let old=record(&f,"credit",ORDER);seed(&f,old.clone());
+        // Model the real gap between first record creation and persisting the
+        // close flag: the in-memory user action must already win both gates.
+        show_payment_recovery(&app,&f.context,&capture,&old,PaymentOrderKind::Credit,&PaymentPresentation::credit("10"));
+        assert!(!state.get_payment_active());assert!(!state.get_payment_dialog_open());
+        state.invoke_recharge_credits("second-pack".into());transport.wait();
+        assert_ne!(f.context.active_payment.borrow().as_ref().unwrap().client_request_id,KEY);
+        transport.reply(0,order_response("closed","pending"));join_payment_workers().unwrap();
+        pump(||!state.get_payment_active());
+        assert_eq!(rows(&f).len(),1);assert_eq!(transport.finish().len(),1);
+    }
+
+    #[test]
+    fn core_payment_pre_record_billing_switch_cannot_create_second_key() {
         i_slint_backend_testing::init_no_event_loop();
         let mut transport=Transport::new(1);let f=fixture(&transport.url);let app=app(&f);
         let (entered_tx,entered_rx)=mpsc::channel();let (release_tx,release_rx)=mpsc::channel();
@@ -2136,7 +2653,7 @@ mod core_payment_tests {
         entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
         assert!(rows(&f).is_empty(),"worker must still be before the real durable upsert");
         let original=f.context.active_payment.borrow().as_ref().unwrap().client_request_id.clone();
-        state.invoke_dismiss_payment();state.invoke_recharge_credits("second-pack".into());
+        state.invoke_recharge_credits("second-pack".into());
         select(&f.context,&f.scope.request.session,OTHER,true);
         clear_billing_snapshot_state(&app,&f.context);
         state.invoke_recharge_credits("other-payer-pack".into());
@@ -2190,8 +2707,10 @@ mod core_payment_tests {
         let transport=Transport::new(0);let f=fixture(&transport.url);let app=app(&f);
         seed(&f,record(&f,"credit",ORDER));
         *f.context.active_payment.borrow_mut()=Some(ActivePaymentSession{
+            kind:PaymentOrderKind::Credit,presentation_dismissed:Default::default(),
             client_request_id:KEY.into(),billing_account_group_id:PAYER.into(),
             checkout_url:Some(format!("{}/v1/payments/alipay/checkout#order_id={ORDER}&token=fixture",transport.url.trim_end_matches('/'))),
+            order:None,
             session_scope:f.scope.request.session.clone(),
         });
         f.context.recovering_orders.borrow_mut().insert(recovering_order_key(&f.scope.request.session,KEY));
@@ -2207,3 +2726,7 @@ mod core_payment_tests {
         assert!(transport.finish().is_empty());
     }
 }
+
+#[cfg(test)]
+#[path = "payment_ui_tests.rs"]
+mod ui_tests;

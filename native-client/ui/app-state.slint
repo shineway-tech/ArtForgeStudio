@@ -119,6 +119,7 @@ export global AppState {
     callback dismiss-payment();
     callback confirm-payment-success();
     callback retry-payment-browser();
+    callback sync-payment-qr(float, float, float, float);
     callback dismiss-contact-popup();
     callback open-contact-settings();
     callback copy-contact-detail(string);
@@ -173,6 +174,10 @@ export global AppState {
     in-out property <bool> payment-dialog-open: false;
     in-out property <string> payment-dialog-mode: "waiting";
     in-out property <bool> payment-browser-ready: false;
+    in-out property <bool> payment-qr-loaded: false;
+    in-out property <string> payment-amount: "";
+    in-out property <string> payment-payer: "";
+    in-out property <string> payment-countdown: "";
     in-out property <string> payment-kind: "credit";
     in-out property <string> payment-waiting-message: "";
     in-out property <string> payment-status-message: "";

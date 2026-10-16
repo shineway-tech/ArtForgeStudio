@@ -374,7 +374,7 @@ fn cross_stack_immutable_billing_recovery() {
     let deep = PromptOptimizationApi::new(fixture.member.clone()).create_billing(&deep_request, &a).unwrap();
     require_saved_group(&a.request.account_group_id, &deep.billing_account_group_id).unwrap();
     let payment = PaymentApi::new(fixture.member.clone()); let pack = payment.packs_billing(&a).unwrap().remove(0); let key = Uuid::new_v4().to_string();
-    let order_record = PendingOrderRecord { schema_version:2,kind:"credit".into(),client_request_id:key.clone(),owner_user_id:fixture.member_scope.owner_user_id.clone(),billing_account_group_id:a.request.account_group_id.clone(),auth_epoch:fixture.member_scope.auth_epoch,order_id:String::new(),product_code:pack.code.clone(),upgrade_quote_id:String::new(),created_at:chrono::Utc::now().to_rfc3339() };
+    let order_record = PendingOrderRecord { presentation_dismissed: false, schema_version:2,kind:"credit".into(),client_request_id:key.clone(),owner_user_id:fixture.member_scope.owner_user_id.clone(),billing_account_group_id:a.request.account_group_id.clone(),auth_epoch:fixture.member_scope.auth_epoch,order_id:String::new(),product_code:pack.code.clone(),upgrade_quote_id:String::new(),created_at:chrono::Utc::now().to_rfc3339() };
     upsert_pending_order_for_namespace(&authority, &a, order_record).unwrap();
     let order = payment.create_credit_order_billing(&pack.code, &key, &a).unwrap();
     let b = joint_confirm(&fixture.member, &manager, &writer, joint_selected_member(&fixture), &fixture.member_scope, PreviousBillingAuthority::StillValid);

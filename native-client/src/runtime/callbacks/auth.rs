@@ -1933,6 +1933,7 @@ fn clear_credit_redemption_state(app: &AppWindow) {
 }
 
 pub(super) fn clear_billing_snapshot_state(app: &AppWindow, context: &AppContext) {
+    close_payment_checkout();
     *context.account_snapshot_scope.lock().unwrap_or_else(|poison| poison.into_inner()) = None;
     let state = app.global::<AppState>();
     state.set_membership_plan_code("".into()); state.set_membership_plan_name("".into());
@@ -2918,7 +2919,7 @@ fn format_membership_ends_at(ends_at: &str) -> String {
         .to_string()
 }
 
-fn format_cents(value: &str) -> String {
+pub(super) fn format_cents(value: &str) -> String {
     let value = value.trim();
     let (sign, digits) = value
         .strip_prefix('-')

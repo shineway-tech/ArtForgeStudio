@@ -248,6 +248,8 @@ pub(super) struct PendingOrderRecord {
     pub(super) product_code: String,
     #[serde(default)]
     pub(super) upgrade_quote_id: String,
+    #[serde(default, alias = "cancel_requested")]
+    pub(super) presentation_dismissed: bool,
     pub(super) created_at: String,
 }
 
@@ -868,6 +870,23 @@ pub(super) fn remove_pending_generation_for_namespace(
         },
     )
 }
+pub(super) fn retire_completed_generation_for_namespace(
+    authority: &NamespaceStorageAuthority,
+    expected: &RecoveryRecordIdentity,
+) -> Result<bool> {
+    // A completed record may belong to this owner's previous login. Recheck
+    // completion under the storage lock before removing only that exact row.
+    expected.require_authority(authority, false)?;
+    NamespaceRecoveryStore { authority }.mutate(
+        MutationPermission::Remove(RowKind::Generation, expected.clone()),
+        |file: &mut RecoveryFile| {
+            let Some(index) = exact_index(&file.generations, expected) else { return Ok(false); };
+            if !generation_record_complete(&file.generations[index]) { return Ok(false); }
+            file.generations.remove(index);
+            Ok(true)
+        },
+    )
+}
 pub(super) fn rebind_pending_generation_epoch_for_namespace(
     authority: &NamespaceStorageAuthority,
     expected: &RecoveryRecordIdentity,
@@ -1115,7 +1134,13 @@ pub(super) fn apply_generation_patch_for_namespace(
     patch: GenerationRecoveryPatch,
 ) -> Result<bool> {
     expected.require_authority(authority, true)?;
-    NamespaceRecoveryStore { authority }.mutate_generations(|file| {
+    let terminal = matches!(&patch, GenerationRecoveryPatch::Terminal { .. });
+    let permission = if terminal {
+        MutationPermission::Remove(RowKind::Generation, expected.clone())
+    } else {
+        MutationPermission::Preserve
+    };
+    NamespaceRecoveryStore { authority }.mutate(permission, |file: &mut RecoveryFile| {
         let Some(index) = exact_index(&file.generations, expected) else {
             return Ok(false);
         };
@@ -1156,6 +1181,9 @@ pub(super) fn apply_generation_patch_for_namespace(
                 record.expected_success_count = expected_success_count;
             }
         }
+        if terminal && generation_record_complete(record) {
+            file.generations.remove(index);
+        }
         Ok(true)
     })
 }
@@ -1187,6 +1215,20 @@ pub(super) fn apply_prompt_task_patch_for_namespace(
                 record.result_committed = true;
             }
         }
+        Ok(true)
+    })
+}
+
+pub(super) fn dismiss_pending_order_for_namespace(
+    authority: &NamespaceStorageAuthority,
+    expected: &RecoveryRecordIdentity,
+) -> Result<bool> {
+    // Recovery may still be resolving this same owner's historical auth epoch.
+    // Dismissing presentation retains the original payer/key for reconciliation.
+    expected.require_authority(authority, false)?;
+    NamespaceRecoveryStore { authority }.mutate_orders(|file: &mut OrderRecoveryFile| {
+        let Some(index) = exact_index(&file.orders, expected) else { return Ok(false); };
+        file.orders[index].presentation_dismissed = true;
         Ok(true)
     })
 }
@@ -1520,11 +1562,12 @@ pub(super) fn pending_recovery_file_references_for_namespace(
     }
     Ok(references)
 }
-fn generation_record_complete(record: &PendingGenerationRecord) -> bool {
+pub(super) fn generation_record_complete(record: &PendingGenerationRecord) -> bool {
     record.terminal
         && record.reference_paths.is_empty()
         && record.reference_sha256.is_empty()
         && record.reference_size_bytes.is_empty()
+        && record.deliveries.iter().all(|item| item.acknowledged || item.abandoned)
         && record
             .deliveries
             .iter()
@@ -1823,7 +1866,7 @@ mod tests {
             let index = FileIndex::initialize(fixture.root.path().join("runtime-index.sqlite3")).unwrap();
             let root = fixture.context.data_root_capability.clone().unwrap();
             let authority = NamespaceStorageAuthority::open_active(root.clone(), &lease, fixture.backend.api.clone(), index).unwrap();
-            let record = PendingOrderRecord { schema_version: 2, kind: "credit".into(), client_request_id: "exact-original-key".into(),
+            let record = PendingOrderRecord { presentation_dismissed: false, schema_version: 2, kind: "credit".into(), client_request_id: "exact-original-key".into(),
                 owner_user_id: fixture.scope.request.session.owner_user_id.clone(), billing_account_group_id: fixture.scope.request.account_group_id.clone(),
                 auth_epoch: lease.auth_epoch, order_id: String::new(), product_code: "original-pack".into(), upgrade_quote_id: String::new(), created_at: "fixture".into() };
             upsert_pending_order_for_namespace(&authority, &fixture.scope, record.clone()).unwrap();
@@ -2125,7 +2168,7 @@ mod tests {
         assert!(recovered.canvas_workflow_id.is_empty());
     }
     fn pending_order_record(owner_user_id: &str, auth_epoch: u64) -> PendingOrderRecord {
-        PendingOrderRecord {
+        PendingOrderRecord { presentation_dismissed: false,
             schema_version: 2,
             kind: "membership_upgrade".to_string(),
             client_request_id: "payment-request".to_string(),
@@ -2280,6 +2323,32 @@ mod tests {
         assert!(!generation_record_complete(&record));
         record.deliveries[0].acknowledged = true;
         assert!(generation_record_complete(&record));
+    }
+
+    #[test]
+    fn completed_generation_terminal_patch_releases_failed_and_already_delivered_tasks() {
+        for successful in [false, true] {
+            let (_root, authority, scope) = fixture(9);
+            let mut record = pending_record();
+            record.terminal = false;
+            if successful { record.deliveries[0].acknowledged = true; }
+            else { record.deliveries.clear(); }
+            upsert_pending_generation_for_namespace(&authority, &scope, record.clone()).unwrap();
+            assert!(apply_generation_patch_for_namespace(&authority, &record.identity(),
+                GenerationRecoveryPatch::Terminal { expected_success_count: usize::from(successful) }).unwrap());
+            assert!(load_pending_generations_for_namespace(&authority).unwrap().is_empty(),
+                "completed task must not be replayed as a new failure after restart");
+        }
+    }
+
+    #[test]
+    fn completed_generation_never_discards_unsettled_delivery_or_retained_inputs() {
+        let mut record = pending_record();
+        record.expected_success_count = 0;
+        assert!(!generation_record_complete(&record), "unsettled delivery must remain recoverable");
+        record.deliveries[0].acknowledged = true;
+        record.reference_paths.push("retained-input".into());
+        assert!(!generation_record_complete(&record));
     }
 
     #[test]

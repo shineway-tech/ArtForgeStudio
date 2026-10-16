@@ -1,241 +1,170 @@
 import { AppState } from "../app-state.slint";
 import { DialogCloseButton } from "../components/dialog-close-button.slint";
-import { PillButton } from "../components/pill-button.slint";
-import { AppTheme } from "../theme.slint";
+import { LoadingDots } from "../components/loading-dots.slint";
+
+component PaymentButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    callback clicked();
+    height: 42px;
+    border-radius: 21px;
+    border-width: focus.has-focus ? 2px : 1px;
+    border-color: focus.has-focus ? #1677ff : #92c0ff;
+    background: root.primary ? (touch.has-hover ? #0964df : #1677ff) : (touch.has-hover ? #eaf3ff : #f7faff);
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+    Text {
+        width: parent.width; height: parent.height;
+        text: root.text; color: root.primary ? #ffffff : #1677ff;
+        font-size: 15px; font-weight: 500;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+    focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == "\n" || event.text == " " { root.clicked(); return accept; }
+            return reject;
+        }
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { focus.focus(); root.clicked(); } }
+}
+
+component PaymentSpinner inherits Rectangle {
+    private property <int> step: 0;
+    background: transparent;
+    Rectangle {
+        x: parent.width / 12; y: parent.height / 12;
+        width: parent.width * 5 / 6; height: parent.height * 5 / 6;
+        background: transparent; border-radius: self.width / 2;
+        border-width: parent.width / 12; border-color: #c7dfff;
+    }
+    Image {
+        width: parent.width; height: parent.height;
+        source: @image-url("../../assets/icons/loader-circle.svg"); colorize: #1677ff;
+        transform-rotation: root.step * 30deg;
+    }
+    Timer {
+        interval: 90ms; running: !AppState.reduced-motion;
+        triggered => { root.step = Math.mod(root.step + 1, 12); }
+    }
+}
 
 export component AlipayPaymentDialog {
+    private property <bool> success: AppState.payment-dialog-mode == "success";
+    private property <bool> fulfilling: AppState.payment-dialog-mode == "fulfilling";
+    private property <bool> unavailable: AppState.payment-dialog-mode == "error" || AppState.payment-dialog-mode == "expired" || AppState.payment-dialog-mode == "closed";
+    private property <string> product: AppState.payment-kind == "membership" ? (AppState.en ? "Membership" : "会员购买") : (AppState.en ? "Credit recharge" : "积分充值");
+
     if AppState.payment-dialog-open: Rectangle {
-        background: #00000055;
+        background: #111b365c;
         TouchArea { width: parent.width; height: parent.height; }
-
-        dialog := Rectangle {
-            width: min(448px, root.width - 32px);
-            height: min(
-                AppState.payment-dialog-mode == "success" ? 292px : 258px,
-                root.height - 40px
-            );
-            x: (root.width - self.width) / 2;
-            y: (root.height - self.height) / 2;
-            background: AppTheme.panel;
-            border-radius: 18px;
-            border-width: 1px;
-            border-color: AppTheme.border;
-
+        card := Rectangle {
+            width: min(470px, root.width - 32px);
+            height: root.success ? 600px : 660px;
+            x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+            background: #ffffff; border-radius: 18px;
+            border-width: 1px; border-color: #e7ecf5;
+            Image { x: 28px; y: 24px; width: 48px; height: 48px; source: AppState.icon-alipay; image-fit: contain; }
+            Text {
+                x: 90px; y: 24px; width: parent.width - 142px; height: 28px;
+                text: root.success || root.fulfilling ? (AppState.en ? "Alipay" : "支付宝支付") : (AppState.en ? "Pay with Alipay" : "支付宝扫码支付");
+                color: #191e32; font-size: 22px; font-weight: 600; vertical-alignment: center;
+            }
+            Text {
+                x: 90px; y: 57px; width: parent.width - 130px; height: 18px;
+                text: root.success ? (AppState.en ? "Payment confirmed" : "支付结果已确认") : (root.fulfilling ? (AppState.en ? "Updating payment status" : "支付状态将自动更新") : (root.unavailable ? (AppState.en ? "Check the order before continuing" : "确认订单状态后继续支付") : (AppState.en ? "Scan with the Alipay app" : "打开支付宝扫一扫，完成支付")));
+                color: #77829a; font-size: 12px;
+            }
             DialogCloseButton {
-                x: parent.width - 44px;
-                y: 15px;
-                clicked => {
-                    if AppState.payment-dialog-mode == "success" {
-                        AppState.confirm-payment-success();
-                    } else {
-                        AppState.dismiss-payment();
-                    }
-                }
+                x: parent.width - 42px; y: 17px; icon-color: #58627b;
+                clicked => { if root.success { AppState.confirm-payment-success(); } else { AppState.dismiss-payment(); } }
             }
-
-            if AppState.payment-dialog-mode == "waiting": VerticalLayout {
-                padding-left: 24px;
-                padding-right: 24px;
-                padding-top: 26px;
-                padding-bottom: 16px;
-                spacing: 0px;
-
-                HorizontalLayout {
-                    height: 66px;
-                    spacing: 14px;
-                    alignment: start;
-
-                    Image {
-                        width: 46px;
-                        height: 46px;
-                        source: AppState.icon-alipay;
-                        image-fit: contain;
-                    }
-
-                    VerticalLayout {
-                        horizontal-stretch: 1;
-                        spacing: 2px;
-
-                        HorizontalLayout {
-                            height: 27px;
-                            spacing: 8px;
-
-                            Rectangle {
-                                width: 8px;
-                                height: 8px;
-                                y: 9px;
-                                border-radius: 4px;
-                                background: AppState.payment-active ? AppTheme.accent : AppTheme.weak;
-                            }
-
-                            Text {
-                                width: 300px;
-                                text: AppState.en
-                                    ? "Waiting for Alipay payment"
-                                    : (AppState.payment-kind == "membership"
-                                        ? "等待会员购买付款"
-                                        : "等待积分充值付款");
-                                color: AppTheme.text;
-                                font-size: 18px;
-                                font-weight: 600;
-                                vertical-alignment: center;
-                            }
-                        }
-
-                        Text {
-                            height: 37px;
-                            text: AppState.payment-kind == "membership"
-                                ? (AppState.en
-                                    ? "Complete payment in your browser. Membership will activate automatically."
-                                    : "请在浏览器中完成付款，支付成功后会员权益会自动生效")
-                                : (AppState.en
-                                    ? "Complete payment in your browser. Credits will arrive automatically."
-                                    : "请在浏览器中完成付款，支付成功后积分会自动到账");
-                            color: AppTheme.muted;
-                            font-size: 12px;
-                            vertical-alignment: top;
-                            wrap: word-wrap;
-                        }
+            if !root.success: Rectangle {
+                x: 28px; y: 98px; width: parent.width - 56px; height: 106px; background: transparent;
+                amount := Text { x: 0px; y: 0px; width: parent.width; height: 48px; text: AppState.payment-amount == "" ? "—" : AppState.payment-amount; color: #191e32; font-size: 38px; font-weight: 700; horizontal-alignment: center; }
+                product-label := Text { y: 54px; width: parent.width; height: 22px; text: root.product; color: #29334a; font-size: 14px; horizontal-alignment: center; }
+                Text { y: 81px; width: parent.width; height: 20px; text: (AppState.en ? "Account: " : "付款账号：") + AppState.payment-payer; color: #77829a; font-size: 13px; horizontal-alignment: center; overflow: elide; }
+            }
+            if !root.success && !root.fulfilling: qr-frame := Rectangle {
+                x: (parent.width - self.width) / 2; y: 214px; width: 256px; height: 256px;
+                background: #ffffff; border-width: 1px; border-color: #dceaff; border-radius: 12px;
+                qr-stage := Rectangle {
+                    x: 8px; y: 8px; width: 240px; height: 240px; background: #ffffff;
+                    if !root.unavailable: LoadingDots { x: (parent.width - self.width) / 2; y: 86px; dot-color: #1677ff; }
+                    if !root.unavailable: Text { x: 8px; y: 132px; width: parent.width - 16px; height: 25px; text: AppState.en ? "Preparing your QR code…" : "正在获取支付二维码…"; color: #77829a; font-size: 13px; horizontal-alignment: center; }
+                    Timer {
+                        interval: 100ms; running: AppState.payment-dialog-open;
+                        triggered => { AppState.sync-payment-qr(qr-stage.absolute-position.x / 1px, qr-stage.absolute-position.y / 1px, qr-stage.width / 1px, qr-stage.height / 1px); }
                     }
                 }
-
-                Rectangle {
-                    height: 32px;
-                    background: AppTheme.panel-soft;
-                    border-radius: 10px;
-
+                if root.unavailable: Rectangle {
+                    x: 1px; y: 1px; width: parent.width - 2px; height: parent.height - 2px; background: #f8fbff; border-radius: 12px;
+                    Image { x: (parent.width - 36px) / 2; y: 34px; width: 36px; height: 36px; source: @image-url("../../assets/icons/clock-3.svg"); colorize: #1677ff; }
                     Text {
-                        width: parent.width;
-                        height: parent.height;
-                        text: AppState.en
-                            ? "Checking every 3 seconds · Order valid for about 5 minutes"
-                            : "每 3 秒自动检测支付结果 · 订单约 5 分钟内有效";
-                        color: AppTheme.muted;
-                        font-size: 11px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
+                        x: 12px; y: 86px; width: parent.width - 24px; height: 32px;
+                        text: AppState.payment-dialog-mode == "error" ? (AppState.en ? "QR code unavailable" : "二维码暂时不可用") : (AppState.en ? "QR code expired" : "二维码已过期");
+                        color: #263550; font-size: 18px; font-weight: 600; horizontal-alignment: center;
                     }
+                    refresh := PaymentButton {
+                        x: 35px; y: 131px; width: parent.width - 70px; primary: true;
+                        text: AppState.payment-dialog-mode == "closed" ? (AppState.en ? "Return to purchase" : "返回重新下单") : (AppState.en ? "Refresh QR code" : "刷新二维码");
+                        clicked => { if AppState.payment-dialog-mode == "closed" { AppState.dismiss-payment(); } else { AppState.retry-payment-browser(); } }
+                    }
+                    Text { x: 16px; y: 188px; width: parent.width - 32px; height: 36px; text: AppState.payment-dialog-mode == "closed" ? (AppState.en ? "This order has been closed" : "原订单已确认关闭") : (AppState.en ? "We’ll check the original order first" : "刷新前会先确认原订单状态"); color: #77829a; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                 }
-
-                Rectangle { height: 12px; background: transparent; }
-
-                PillButton {
-                    height: 40px;
-                    text: AppState.en ? "Open Alipay again" : "重新打开支付宝";
-                    primary: true;
-                    disabled: !AppState.payment-browser-ready;
-                    clicked => { AppState.retry-payment-browser(); }
-                }
-
+            }
+            if !root.success && !root.fulfilling: Rectangle {
+                x: (parent.width - 256px) / 2; y: 480px; width: 256px; height: 34px; background: root.unavailable ? transparent : #eaf3ff; border-radius: 9px;
+                if !root.unavailable: Image { x: 31px; y: 7px; width: 20px; height: 20px; source: @image-url("../../assets/icons/scan-line.svg"); colorize: #1677ff; }
+                Text { x: root.unavailable ? 0px : 55px; width: root.unavailable ? parent.width : parent.width - 75px; height: parent.height; text: root.unavailable ? (AppState.en ? "Check the order before paying" : "请先确认原订单状态") : (AppState.en ? "Scan with Alipay" : "打开支付宝扫一扫"); color: root.unavailable ? #77829a : #1677ff; font-size: 14px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+            }
+            if !root.success && !root.fulfilling: Text {
+                x: 85px; y: 523px; width: 232px; height: 20px;
+                text: root.unavailable || AppState.payment-countdown == "" ? "" : (AppState.en ? "QR code expires in " : "二维码有效期 ") + AppState.payment-countdown;
+                color: #77829a; font-size: 12px; horizontal-alignment: center;
+            }
+            if AppState.payment-dialog-mode == "waiting" && AppState.payment-browser-ready: PaymentButton {
+                x: 319px; y: 520px; width: 62px; height: 26px;
+                text: AppState.en ? "Refresh" : "刷新";
+                clicked => { AppState.retry-payment-browser(); }
+            }
+            if root.fulfilling: Rectangle {
+                x: 28px; y: 225px; width: parent.width - 56px; height: 286px; background: transparent;
                 Rectangle {
-                    height: 38px;
-                    background: transparent;
-
-                    Text {
-                        width: parent.width;
-                        height: parent.height;
-                        text: AppState.en ? "Cancel and return" : "取消支付并返回";
-                        color: AppTheme.accent;
-                        font-size: 12px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    exit-touch := TouchArea {
-                        width: parent.width;
-                        height: parent.height;
-                        mouse-cursor: pointer;
-                        clicked => { AppState.dismiss-payment(); }
-                    }
+                    x: (parent.width - 144px) / 2; y: 0px; width: 144px; height: 144px; border-radius: 72px; background: #edf5ff;
+                    PaymentSpinner { x: 20px; y: 20px; width: 104px; height: 104px; }
                 }
-
-                Text {
-                    height: 16px;
-                    text: AppState.en
-                        ? "You can create a new order after exiting"
-                        : (AppState.payment-kind == "membership"
-                            ? "取消后可重新发起会员购买"
-                            : "取消后可重新发起积分充值");
-                    color: AppTheme.weak;
-                    font-size: 10px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
+                Text { y: 164px; width: parent.width; height: 36px; text: AppState.en ? "Payment confirmed" : "付款已确认"; color: #191e32; font-size: 26px; font-weight: 600; horizontal-alignment: center; }
+                Text { y: 210px; width: parent.width; height: 46px; text: AppState.payment-kind == "membership" ? (AppState.en ? "Activating your membership…" : "正在为你开通会员权益，请稍候") : (AppState.en ? "Adding credits to your account…" : "正在为你发放积分，请稍候"); color: #586780; font-size: 16px; horizontal-alignment: center; wrap: word-wrap; }
             }
-
-            if AppState.payment-dialog-mode == "success": VerticalLayout {
-                padding-left: 28px;
-                padding-right: 28px;
-                padding-top: 28px;
-                padding-bottom: 18px;
-                spacing: 0px;
-
-                HorizontalLayout {
-                    height: 84px;
-                    alignment: center;
-
-                    Rectangle {
-                        width: 84px;
-                        height: 84px;
-                        background: AppTheme.panel-soft;
-                        border-radius: 42px;
-
-                        Rectangle {
-                            width: 50px;
-                            height: 50px;
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
-                            background: AppTheme.accent;
-                            border-radius: 25px;
-
-                            Image {
-                                width: 28px;
-                                height: 28px;
-                                x: (parent.width - self.width) / 2;
-                                y: (parent.height - self.height) / 2;
-                                source: AppState.icon-check;
-                                image-fit: contain;
-                            }
-                        }
+            if !root.success: Text {
+                x: 28px; y: root.fulfilling ? 515px : 550px; width: parent.width - 56px; height: 32px;
+                text: root.fulfilling ? (AppState.en ? "Please don’t pay again. Status updates automatically." : "请勿重复付款，结果将自动更新") : AppState.payment-status-message;
+                color: root.unavailable ? #77829a : #1677ff; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap;
+            }
+            if !root.success: later := PaymentButton {
+                x: 28px; y: 590px; width: parent.width - 56px;
+                text: root.fulfilling ? (AppState.en ? "View later" : "稍后查看") : (AppState.en ? "Close" : "关闭");
+                clicked => { AppState.dismiss-payment(); }
+            }
+            if !root.success: Text { x: 28px; y: 640px; width: parent.width - 56px; height: 16px; text: root.fulfilling ? (AppState.en ? "Confirmation continues after closing" : "关闭后将继续确认到账结果") : (AppState.en ? "Your next purchase starts a new order" : "再次购买会创建新订单"); color: #8a94a9; font-size: 11px; horizontal-alignment: center; }
+            if root.success: Rectangle {
+                x: 28px; y: 102px; width: parent.width - 56px; height: 350px; background: transparent;
+                success-mark := Rectangle {
+                    x: (parent.width - 128px) / 2; y: 0px; width: 128px; height: 128px; background: #edf5ff; border-radius: 64px;
+                    Rectangle { x: 16px; y: 16px; width: 96px; height: 96px; background: #1677ff; border-radius: 48px;
+                        Image { x: 23px; y: 23px; width: 50px; height: 50px; source: AppState.icon-check; colorize: #ffffff; image-fit: contain; }
                     }
                 }
-
-                Text {
-                    height: 45px;
-                    text: AppState.en ? "Payment successful" : "支付成功";
-                    color: AppTheme.text;
-                    font-size: 23px;
-                    font-weight: 600;
-                    horizontal-alignment: center;
-                    vertical-alignment: bottom;
-                }
-
-                Text {
-                    height: 36px;
-                    text: AppState.payment-success-message;
-                    color: AppTheme.text;
-                    font-size: 16px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    overflow: elide;
-                }
-
-                Text {
-                    height: 32px;
-                    text: AppState.payment-success-detail;
-                    color: AppTheme.weak;
-                    font-size: 13px;
-                    horizontal-alignment: center;
-                    vertical-alignment: top;
-                }
-
-                PillButton {
-                    height: 42px;
-                    text: AppState.en ? "Done" : "完成";
-                    primary: true;
-                    clicked => { AppState.confirm-payment-success(); }
-                }
+                success-title := Text { y: 144px; width: parent.width; height: 38px; text: AppState.en ? "Payment successful" : "支付成功"; color: #191e32; font-size: 28px; font-weight: 600; horizontal-alignment: center; }
+                Text { y: 192px; width: parent.width; height: 24px; text: AppState.payment-success-message; color: #66748d; font-size: 16px; horizontal-alignment: center; overflow: elide; }
+                Text { x: 0px; y: 240px; width: parent.width; height: 24px; text: root.product; color: #29334a; font-size: 15px; horizontal-alignment: center; }
+                Text { x: 0px; y: 268px; width: parent.width; height: 48px; text: AppState.payment-amount; color: #191e32; font-size: 38px; font-weight: 700; horizontal-alignment: center; }
+                Text { x: 0px; y: 324px; width: parent.width; height: 20px; text: (AppState.en ? "Account: " : "付款账号：") + AppState.payment-payer; color: #77829a; font-size: 13px; horizontal-alignment: center; overflow: elide; }
             }
+            if root.success: Rectangle { x: 28px; y: 464px; width: parent.width - 56px; height: 1px; background: #edf2fa; }
+            if root.success: Text { x: 28px; y: 482px; width: parent.width - 56px; height: 20px; text: AppState.payment-success-detail; color: #77829a; font-size: 12px; horizontal-alignment: center; }
+            if root.success: done := PaymentButton { x: 28px; y: 528px; width: parent.width - 56px; height: 44px; primary: true; text: AppState.en ? "Done" : "完成"; clicked => { AppState.confirm-payment-success(); } }
         }
     }
 }

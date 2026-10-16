@@ -95,7 +95,7 @@ export component TopBar {
     property <length> theme-width: 94px;
     property <length> balance-width: 150px;
     property <length> profile-width: 128px;
-    property <length> payment-width: 112px;
+    property <length> payment-width: AppState.en ? 200px : 168px;
     property <length> login-width: 112px;
     property <bool> models-on-second-row: AppState.page == "generation"
         && root.width < root.actions-width() + 36px + 3 * 220px + 2 * 18px + 38px;
@@ -171,8 +171,8 @@ export component TopBar {
                 alignment: center;
                 if AppState.payment-active: PillButton {
                     width: root.payment-width;
-                    text: AppState.en ? "Payment status" : "查看支付状态";
-                    clicked => { AppState.payment-dialog-open = true; }
+                    text: (AppState.payment-kind == "membership" ? (AppState.en ? "Subscription payment" : "查看订阅支付") : (AppState.en ? "Credit payment" : "查看积分支付"));
+                    clicked => { AppState.retry-payment-browser(); }
                 }
                 if AppState.page == "video-generation" && AppState.logged-in: VideoCreditBalance {}
                 if AppState.logged-in: InvitationGiftButton {}

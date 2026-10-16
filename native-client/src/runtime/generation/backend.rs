@@ -3292,9 +3292,11 @@ pub(super) fn recover_pending_generations(app: &AppWindow, context: AppContext) 
                     | "image_watermark_removal" | "image_colorization" | "image_enhancement" | "image_cutout"
                     | "image_to_video")
                     || record.canvas_ui_extraction { blocked += 1; continue; }
-                if let Ok(Some(record)) = bind_generation_recovery_candidate(&backend, &authority, &worker_scope, record) {
-                    recovered.push(record);
-                } else { blocked += 1; }
+                match bind_generation_recovery_candidate(&backend, &authority, &worker_scope, record) {
+                    Ok(Some(record)) => recovered.push(record),
+                    Ok(None) => {},
+                    Err(_) => blocked += 1,
+                }
             }
             Ok(GenerationRecoveryScan { records: recovered, blocked })
         })();
@@ -3343,6 +3345,13 @@ fn bind_generation_recovery_candidate(
     if record.owner_user_id != session_scope.owner_user_id || authority.user_public_id() != session_scope.owner_user_id {
         return Ok(None);
     }
+    if !backend.api.user_work_is_current(session_scope) { return Err(ApiError::AuthenticationRequired); }
+    if generation_record_complete(&record) {
+        retire_completed_generation_for_namespace(authority, &record.identity()).map_err(transition_error)?;
+        // Another startup scan may already have retired this row. Never replay
+        // the stale snapshot or turn its old failure into a new history card.
+        return Ok(None);
+    }
     let api = GenerationApi::new(backend.api.clone()).with_saved_group(&record.billing_account_group_id);
     if record.cancel_requested && record.server_task_id.is_empty() { return Ok(None); }
     let mut detail = if record.server_task_id.is_empty() {
@@ -3380,6 +3389,62 @@ fn bind_generation_recovery_candidate(
 }
 
 const ORPHANED_GENERATION_INPUT_GRACE: Duration = Duration::from_secs(24 * 60 * 60);
+
+#[cfg(test)]
+mod completed_generation_recovery_tests {
+    use super::*;
+    use super::billing_capture_test_support::{fixture, generation_record};
+
+    #[test]
+    fn completed_generation_startup_retires_old_terminal_records_before_any_http() {
+        for historical in [false, true] {
+            let f = fixture("http://127.0.0.1:9/");
+            let mut record = generation_record(&f.scope, "image_generation");
+            record.server_task_id = "33333333-3333-4333-8333-333333333333".into();
+            record.terminal = true;
+            if historical { record.auth_epoch = record.auth_epoch.saturating_sub(1); }
+            let path = f.authority.lease().namespace.path(ManagedUserArea::Recovery).join("pending-generations.json");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, serde_json::to_vec(&serde_json::json!({"schema_version":2,"generations":[record]})).unwrap()).unwrap();
+            let result = bind_generation_recovery_candidate(&f.backend, &f.authority, &f.scope.request.session, record);
+            assert!(matches!(result, Ok(None)), "completed task must not query or replay its old failure");
+            assert!(load_pending_generations_for_namespace(&f.authority).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn completed_generation_stale_scan_cannot_replay_a_retired_failure() {
+        let f = fixture("http://127.0.0.1:9/");
+        let mut record = generation_record(&f.scope, "image_generation");
+        record.server_task_id = "33333333-3333-4333-8333-333333333333".into();
+        record.terminal = true;
+        upsert_pending_generation_for_namespace(&f.authority, &f.scope, record.clone()).unwrap();
+        for _ in 0..2 {
+            assert!(matches!(bind_generation_recovery_candidate(&f.backend, &f.authority,
+                &f.scope.request.session, record.clone()), Ok(None)));
+        }
+    }
+
+    #[test]
+    fn completed_generation_startup_preserves_partial_outputs_and_retained_inputs() {
+        for retained_input in [false, true] {
+            let f = fixture("http://127.0.0.1:9/");
+            let mut record = generation_record(&f.scope, "image_generation");
+            record.server_task_id = "33333333-3333-4333-8333-333333333333".into();
+            record.terminal = true;
+            record.expected_success_count = 1;
+            if retained_input {
+                record.deliveries.push(PendingDeliveryRecord { acknowledged: true, ..Default::default() });
+                record.reference_paths.push("retained-input".into());
+            }
+            upsert_pending_generation_for_namespace(&f.authority, &f.scope, record.clone()).unwrap();
+            assert!(bind_generation_recovery_candidate(&f.backend, &f.authority,
+                &f.scope.request.session, record.clone()).is_err());
+            let saved = load_pending_generations_for_namespace(&f.authority).unwrap();
+            assert_eq!(serde_json::to_value(saved).unwrap(), serde_json::to_value(vec![record]).unwrap());
+        }
+    }
+}
 
 #[derive(Default, Deserialize)]
 struct GenerationCleanupSnapshot {

@@ -6898,74 +6898,6 @@ mod tests {
     }
 
     #[test]
-    fn payment_ui_uses_external_alipay_website_flow() {
-        let credit_page = include_str!("../../ui/pages/credits-page.slint");
-        let checkout = include_str!("../../ui/dialogs/alipay-payment-dialog.slint");
-        let membership = include_str!("../../ui/components/membership-plans.slint");
-        let purchase_agreements = include_str!("../../ui/components/purchase-agreements.slint");
-        let callbacks = include_str!("callbacks/payment.rs");
-        let payment_checkout = include_str!("payment_checkout.rs");
-        let top_bar = include_str!("../../ui/components/top-bar.slint");
-
-        assert!(credit_page.contains(
-            "clicked => { AppState.recharge-credits(AppState.selected-credit-pack-code); }"
-        ));
-        assert!(!credit_page.contains("AppState.credit-pay-open = true"));
-        assert!(membership.contains("clicked => { AppState.purchase-membership(plan.code); }"));
-
-        assert!(checkout.contains("AppState.payment-dialog-open"));
-        assert!(checkout.contains("请在浏览器中完成付款"));
-        assert!(checkout.contains("每 3 秒自动检测支付结果"));
-        assert!(checkout.contains("取消后可重新发起"));
-        assert!(checkout.contains("AppState.retry-payment-browser()"));
-        assert!(!checkout.contains("PurchaseAgreement"));
-        assert!(!checkout.contains("二维码"));
-        assert!(payment_checkout.contains("Command::new(\"open\")"));
-        assert!(payment_checkout.contains("Command::new(\"rundll32.exe\")"));
-        assert!(payment_checkout.contains("Command::new(\"xdg-open\")"));
-        assert!(!payment_checkout.contains("WebViewBuilder"));
-        let launch = callbacks.split_once("fn launch_payment_checkout(").unwrap().1
-            .split_once("fn begin_payment_session(").unwrap().0;
-        let poll = callbacks.split_once("fn poll_payment_order(").unwrap().1
-            .split_once("fn continue_payment_order(").unwrap().0;
-        let recovery = callbacks.split_once("fn recover_pending_orders(").unwrap().1
-            .split_once("fn start_credit_order_with_billing_scope(").unwrap().0;
-        let create = callbacks.split_once("fn create_payment_worker(").unwrap().1
-            .split_once("fn create_upgrade_order_checked(").unwrap().0;
-        assert!(launch.contains("find_saved_payment(capture,key)"));
-        assert!(launch.contains("open_payment_checkout(&checkout,capture.backend.api.base_url(),&capture.persistence,&record.order_id)"));
-        assert!(poll.contains("Duration::from_secs(3)"));
-        assert!(recovery.contains("PaymentPoll::Initial{launch:false}"));
-        assert!(callbacks.contains("暂时无法确认支付结果，请稍后查看订单状态"));
-        assert!(membership.contains("PurchaseAgreements"));
-        assert!(credit_page.contains("PurchaseAgreements"));
-        assert!(purchase_agreements.contains("purchase-membership-accepted"));
-        assert!(purchase_agreements.contains("purchase-credit-rules-accepted"));
-        let agreements = create.find("accept_agreements_scoped(&acceptances,&worker.capture.session)?").unwrap();
-        let credit_order = create.find("create_credit_order_billing(").unwrap();
-        let membership_order = create.find("create_order_billing(").unwrap();
-        assert!(agreements < credit_order);
-        assert!(agreements < membership_order);
-        assert!(callbacks.contains("apply_agreements_from_payment_error"));
-        assert!(callbacks.contains("agreement_acceptance_required"));
-        assert!(!callbacks.contains("cancel_active_payment"));
-        assert!(!callbacks.contains("cancelled_payment_requests"));
-        assert!(checkout.contains("clicked => { AppState.dismiss-payment(); }"));
-        assert!(!callbacks.contains(
-            "if started.kind == PaymentOrderKind::Membership {\n            state.set_membership_open(false);"
-        ));
-        assert!(top_bar.contains("查看支付状态"));
-
-        let combined = format!("{checkout}\n{membership}\n{top_bar}");
-        for removed in ["支付宝扫码支付", "关闭支付码", "加载支付二维码"] {
-            assert!(
-                !combined.contains(removed),
-                "obsolete payment copy: {removed}"
-            );
-        }
-    }
-
-    #[test]
     fn credits_page_contains_recharge_redemption_and_subscription_tabs() {
         let credits = include_str!("../../ui/pages/credits-page.slint");
         let profile = include_str!("../../ui/dialogs/profile-dialog.slint");
@@ -8584,25 +8516,6 @@ mod tests {
         assert!(app_state.contains("in-out property <bool> reduced-motion: false"));
         assert!(manifest.contains("\"renderer-femtovg\""));
         assert!(manifest.contains("\"renderer-software\""));
-    }
-
-    #[test]
-    fn recovered_pending_payment_does_not_launch_the_browser_automatically() {
-        let callbacks = include_str!("callbacks/payment.rs");
-        let recovery = callbacks.split_once("fn recover_pending_orders(").unwrap().1
-            .split_once("fn start_credit_order_with_billing_scope(").unwrap().0;
-        let result = callbacks.split_once("fn poll_payment_result(").unwrap().1
-            .split_once("fn poll_payment_order(").unwrap().0;
-        let continuation = callbacks.split_once("fn continue_payment_order(").unwrap().1
-            .split_once("fn wire_payment_callbacks(").unwrap().0;
-        assert!(recovery.contains("recover_pending_order_worker(worker,record,kind,worker_presentation)"));
-        assert!(recovery.contains("PaymentPoll::Initial{launch:false},receiver)"));
-        assert!(result.contains("continue_payment_order(&app,context,capture,started,poll)"));
-        assert!(!recovery.contains("open_payment_checkout("));
-        assert!(!recovery.contains("schedule_payment_checkout("));
-        assert!(continuation.contains("if matches!(poll,PaymentPoll::Initial{launch:true}) && checkout.is_some(){"));
-        assert!(continuation.contains("schedule_payment_checkout("));
-        assert!(continuation.contains("已恢复未完成订单，可重新打开支付宝继续支付"));
     }
 
     #[test]

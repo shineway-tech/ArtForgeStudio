@@ -2,6 +2,7 @@ import { AppState } from "../app-state.slint";
 import { AppTheme } from "../theme.slint";
 
 export component LoadingDots {
+    in property <color> dot-color: AppTheme.accent;
     in-out property <int> step: 0;
     width: 42px;
     height: 42px;
@@ -18,7 +19,7 @@ export component LoadingDots {
         width: root.step == 0 ? 7px : 6px;
         height: self.width;
         border-radius: self.width / 2;
-        background: AppTheme.accent;
+        background: root.dot-color;
         opacity: root.step == 0 || root.step == 1 ? 1 : 0.72;
         animate y, width, height, opacity { duration: AppState.reduced-motion ? 0ms : 110ms; easing: ease-in-out; }
     }
@@ -29,7 +30,7 @@ export component LoadingDots {
         width: root.step == 2 ? 7px : 6px;
         height: self.width;
         border-radius: self.width / 2;
-        background: AppTheme.accent;
+        background: root.dot-color;
         opacity: root.step == 2 || root.step == 3 ? 1 : 0.72;
         animate y, width, height, opacity { duration: AppState.reduced-motion ? 0ms : 110ms; easing: ease-in-out; }
     }
@@ -40,7 +41,7 @@ export component LoadingDots {
         width: root.step == 4 ? 7px : 6px;
         height: self.width;
         border-radius: self.width / 2;
-        background: AppTheme.accent;
+        background: root.dot-color;
         opacity: root.step == 4 || root.step == 5 ? 1 : 0.72;
         animate y, width, height, opacity { duration: AppState.reduced-motion ? 0ms : 110ms; easing: ease-in-out; }
     }
