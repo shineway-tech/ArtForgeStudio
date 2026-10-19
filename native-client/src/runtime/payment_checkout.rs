@@ -192,8 +192,8 @@ mod desktop_payment_webview {
             .with_background_color((255, 255, 255, 255))
             .with_url(checkout)
             .with_bounds(Rect {
-                position: LogicalPosition::new((size.width - 240.0) / 2.0, (size.height - 660.0) / 2.0 + 222.0).into(),
-                size: LogicalSize::new(240.0, 240.0).into(),
+                position: LogicalPosition::new((size.width - 320.0) / 2.0, (size.height - 720.0) / 2.0 + 222.0).into(),
+                size: LogicalSize::new(320.0, 320.0).into(),
             })
             .with_devtools(false).with_clipboard(false).with_incognito(true)
             .with_initialization_script(include_str!("payment_qr_ready.js"))

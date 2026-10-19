@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
-pub(super) const FILE_INDEX_SCHEMA_VERSION: i32 = 2;
+pub(super) const FILE_INDEX_SCHEMA_VERSION: i32 = 3;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(3_000);
 #[derive(Debug, Error)]
 pub(super) enum FileIndexError {
@@ -175,6 +175,11 @@ WHEN NEW.user_public_id != (SELECT user_public_id FROM managed_files WHERE id = 
 OR NEW.user_public_id != (SELECT user_public_id FROM managed_files WHERE id = NEW.preview_file_id)
 BEGIN SELECT RAISE(ABORT, 'preview namespace mismatch'); END;
 "#;
+
+fn schema_v3() -> String {
+    SCHEMA_V2.replace("substr(physical_identity,1,1)=X'02'",
+        "substr(physical_identity,1,1) IN (X'02', X'03')")
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) struct ManagedFileId(pub(super) i64);
@@ -442,6 +447,40 @@ impl FileIndex {
     pub(super) fn database_path(&self) -> &Path {
         self.database_path.as_path()
     }
+    #[cfg(target_os = "macos")]
+    pub(super) fn upgrade_legacy_macos_identities(&self, authority: &NamespaceStorageAuthority) -> anyhow::Result<()> {
+        let records = {
+            let connection = self.lock_connection()?;
+            let mut statement = connection.prepare(&format!("{FILE_SELECT} WHERE user_public_id=?1 AND substr(physical_identity,1,1)=X'01'"))?;
+            let mut rows = statement.query([authority.user_public_id()])?;
+            let mut records = Vec::new();
+            while let Some(row) = rows.next()? { records.push(map_file(row)?); }
+            records
+        };
+        for record in records {
+            let key = ManagedFileKey::new(record.managed_area, record.path.to_str().ok_or_else(|| anyhow::anyhow!("invalid indexed path"))?)?;
+            let file = match authority.open_optional_regular(&key) {
+                Ok(Some(file)) => file,
+                Ok(None) => continue,
+                Err(_) => {
+                    // A stale entry may have lost a parent or become non-regular.
+                    // Preserve it, but do not suppress a changed namespace/root.
+                    authority.validate_macos_upgrade_directory(record.managed_area)?;
+                    continue;
+                }
+            };
+            if authority.legacy_macos_file_identity(&file)? != record.physical_identity { continue; }
+            authority.with_current_regular_files(&[NamespaceManagedFileCheck { file: &file, expected: None }], |metadata| {
+                let connection = self.lock_connection()?;
+                let changed = connection.execute("UPDATE managed_files SET physical_identity=?1 WHERE user_public_id=?2 AND id=?3 AND managed_area=?4 AND path=?5 AND physical_identity=?6",
+                    params![metadata[0].identity.to_storage_bytes(), authority.user_public_id(), record.id.0,
+                        record.managed_area.storage_name(), record.path.to_string_lossy(), record.physical_identity.to_storage_bytes()])?;
+                anyhow::ensure!(changed == 1, "file index changed during identity upgrade");
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
     fn lock_connection(&self) -> FileIndexResult<MutexGuard<'_, Connection>> {
         self.connection
             .lock()
@@ -656,6 +695,9 @@ fn validate_schema(connection: &Connection, version: i32, quarantine: bool) -> F
     if version == 2 {
         manifest.execute_batch(SCHEMA_V2)?;
     }
+    if version == 3 {
+        manifest.execute_batch(&schema_v3())?;
+    }
     if schema_signature(connection)? != schema_signature(&manifest)? {
         return Err(FileIndexError::Damaged(
             "schema differs from the complete version manifest".into(),
@@ -704,13 +746,13 @@ fn validated_schema_version(connection: &Connection) -> FileIndexResult<i32> {
     match version {
         0 => validate_schema(connection, 0, false)?,
         1 => validate_schema(connection, 1, false)?,
-        2 => {
+        2 | 3 => {
             let quarantine: bool = connection.query_row(
                 "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name GLOB 'legacy_unassigned_*')",
                 [],
                 |r| r.get(0),
             )?;
-            validate_schema(connection, 2, quarantine)?;
+            validate_schema(connection, version, quarantine)?;
         }
         _ => {
             return Err(FileIndexError::Damaged(
@@ -725,10 +767,12 @@ fn migrate_schema(connection: &mut Connection) -> FileIndexResult<()> {
     // and every migration statement share one SQLite snapshot and commit.
     let transaction = connection.transaction()?;
     let version = validated_schema_version(&transaction)?;
-    if version == 2 {
+    if version == 3 {
         transaction.commit()?;
         return Ok(());
     }
+    let quarantine: bool = version == 1 || transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name GLOB 'legacy_unassigned_*')", [], |r| r.get(0))?;
     if version == 1 {
         for (position, rename) in LEGACY_RENAMES.iter().enumerate() {
             transaction.execute_batch(rename)?;
@@ -737,10 +781,26 @@ fn migrate_schema(connection: &mut Connection) -> FileIndexResult<()> {
             }
         }
     }
-    transaction.execute_batch(SCHEMA_V2)?;
-    validate_schema(&transaction, 2, version == 1)?;
+    if version == 2 {
+        // Rebuild all three related tables within one transaction. Drop children
+        // first, restore parents first, and preserve IDs, references and previews.
+        for table in ["managed_files", "file_references", "preview_cache"] {
+            transaction.execute_batch(&format!("CREATE TEMP TABLE identity_upgrade_{table} AS SELECT * FROM {table}"))?;
+        }
+        for table in ["preview_cache", "file_references", "managed_files"] {
+            transaction.execute_batch(&format!("DROP TABLE {table}"))?;
+        }
+        migration_checkpoint(4)?;
+    }
+    transaction.execute_batch(&schema_v3())?;
+    if version == 2 {
+        for table in ["managed_files", "file_references", "preview_cache"] {
+            transaction.execute_batch(&format!("INSERT INTO {table} SELECT * FROM identity_upgrade_{table}; DROP TABLE identity_upgrade_{table}"))?;
+        }
+    }
+    validate_schema(&transaction, 3, quarantine)?;
     migration_checkpoint(2)?;
-    transaction.pragma_update(None, "user_version", 2)?;
+    transaction.pragma_update(None, "user_version", 3)?;
     transaction.commit()?;
     Ok(())
 }
@@ -1663,8 +1723,9 @@ mod tests {
         use super::super::user_namespace::AccountDirectoryMapping;
         let f = Fixture::new();
         let record = f.register(&f.a, ManagedUserArea::Output, "image.png");
-        let StableFileIdentity::Unix { device, inode } = record.physical_identity else { panic!("expected Unix identity"); };
-        let stale = StableFileIdentity::Unix { device: device + 1, inode };
+        use std::os::unix::fs::MetadataExt;
+        let raw = fs::metadata(f.a.lease().namespace.output_dir().join("image.png")).unwrap();
+        let stale = StableFileIdentity::Unix { device: raw.dev() + 1, inode: raw.ino() };
         f.index.lock_connection().unwrap().execute("UPDATE managed_files SET physical_identity=?1 WHERE id=?2", params![stale.to_storage_bytes(), record.id.0]).unwrap();
         let destination = tempfile::tempdir().unwrap();
         let out = destination.path().canonicalize().unwrap().join("out");
@@ -1793,6 +1854,142 @@ mod tests {
         c.execute_batch(SCHEMA_V1).unwrap();
         c.execute_batch("INSERT INTO managed_files VALUES(1,'/legacy/a','output',7,1,'user',1,1,0); INSERT INTO managed_files VALUES(2,'/legacy/b','preview',3,1,'cache',1,1,0); INSERT INTO file_references VALUES(1,'asset','saved',1); INSERT INTO preview_cache VALUES(1,1,2,'gallery',64,7,1,1,'ready',1,1,1); PRAGMA user_version=1;").unwrap();
     }
+
+    #[test]
+    fn v2_identity_upgrade_preserves_rows_references_and_rolls_back_atomically() {
+        for failure in [0, 4, 2] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("v2.sqlite3");
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(SCHEMA_V2).unwrap();
+            for id in [1, 2] {
+                let old = StableFileIdentity::Unix { device: 12, inode: id };
+                c.execute("INSERT INTO managed_files(id,user_public_id,managed_area,path,physical_identity,kind,retention_policy,byte_size,created_at,last_accessed_at) VALUES(?1,?2,'output',?3,?4,'image','durable',5,1,2)",
+                    params![id, A, format!("{id}.png"), old.to_storage_bytes()]).unwrap();
+            }
+            c.execute("INSERT INTO file_references VALUES(?1,1,'asset','saved',1)", [A]).unwrap();
+            c.execute("INSERT INTO preview_cache VALUES(?1,1,1,2,'gallery',64,5,1,1,'ready',1,1,1)", [A]).unwrap();
+            c.pragma_update(None, "user_version", 2).unwrap();
+            let signature = schema_signature(&c).unwrap();
+            drop(c);
+            if failure != 0 {
+                MIGRATION_FAILURE.with(|p| p.set(failure));
+                let failed = FileIndex::initialize(&path);
+                MIGRATION_FAILURE.with(|p| p.set(0));
+                assert!(failed.is_err());
+                let c = Connection::open(&path).unwrap();
+                assert_eq!(schema_signature(&c).unwrap(), signature);
+                assert_eq!(count(&c, "managed_files"), 2);
+                assert_eq!(count(&c, "file_references"), 1);
+                assert_eq!(count(&c, "preview_cache"), 1);
+                assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0)).unwrap(), 2);
+            }
+            let index = FileIndex::initialize(&path).unwrap();
+            let c = index.lock_connection().unwrap();
+            assert_eq!(count(&c, "managed_files"), 2);
+            assert_eq!(count(&c, "file_references"), 1);
+            assert_eq!(count(&c, "preview_cache"), 1);
+            let new = StableFileIdentity::MacOs { volume_uuid: [12; 16], inode: 1 };
+            c.execute("UPDATE managed_files SET physical_identity=?1 WHERE id=1", [new.to_storage_bytes()]).unwrap();
+            assert_eq!(query_file(&c, A, ManagedFileId(1)).unwrap().unwrap().physical_identity, new);
+            assert!(!c.prepare("PRAGMA foreign_key_check").unwrap().exists([]).unwrap());
+            assert!(c.execute("UPDATE managed_files SET physical_identity=?1 WHERE id=1", [vec![3u8; 24]]).is_err());
+            drop(c);
+            drop(index);
+            FileIndex::initialize(&path).unwrap();
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_legacy_index_upgrade_is_exact_scoped_and_idempotent() {
+        use std::os::unix::fs::MetadataExt;
+        let f = Fixture::new();
+        let a = f.register(&f.a, ManagedUserArea::Output, "a.png");
+        let b = f.register(&f.b, ManagedUserArea::Output, "b.png");
+        let stale = f.register(&f.a, ManagedUserArea::Output, "stale.png");
+        for (authority, record, wrong_device) in [(&f.a, &a, false), (&f.b, &b, false), (&f.a, &stale, true)] {
+            let raw = fs::metadata(authority.lease().namespace.output_dir().join(&record.path)).unwrap();
+            let old = StableFileIdentity::Unix { device: raw.dev() + u64::from(wrong_device), inode: raw.ino() };
+            f.index.lock_connection().unwrap().execute("UPDATE managed_files SET physical_identity=?1 WHERE id=?2", params![old.to_storage_bytes(),record.id.0]).unwrap();
+        }
+        f.index.upgrade_legacy_macos_identities(&f.a).unwrap();
+        f.index.upgrade_legacy_macos_identities(&f.a).unwrap();
+        assert_eq!(f.index.find_file_by_path_for_namespace(&f.a, ManagedUserArea::Output, "a.png").unwrap().unwrap().physical_identity, a.physical_identity);
+        assert!(matches!(f.index.owned_file(B, b.id).unwrap().unwrap().physical_identity, StableFileIdentity::Unix { .. }));
+        assert!(matches!(f.index.owned_file(A, stale.id).unwrap().unwrap().physical_identity, StableFileIdentity::Unix { .. }));
+        assert!(f.index.find_file_by_path_for_namespace(&f.a, ManagedUserArea::Output, "stale.png").is_err());
+        assert_eq!(fs::read(f.a.lease().namespace.output_dir().join("stale.png")).unwrap(), b"image");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_identity_upgrade_preserves_unavailable_descendants_but_rejects_replaced_roots() {
+        use std::os::unix::fs::MetadataExt;
+        let f = Fixture::new();
+        let output = f.a.lease().namespace.output_dir();
+        fs::create_dir(output.join("nested")).unwrap();
+        let missing = f.register(&f.a, ManagedUserArea::Output, "nested/image.png");
+        let replaced = f.register(&f.a, ManagedUserArea::Output, "replaced.png");
+        for record in [&missing, &replaced] {
+            let raw = fs::metadata(output.join(&record.path)).unwrap();
+            let old = StableFileIdentity::Unix { device: raw.dev(), inode: raw.ino() };
+            f.index.lock_connection().unwrap().execute("UPDATE managed_files SET physical_identity=?1 WHERE id=?2", params![old.to_storage_bytes(),record.id.0]).unwrap();
+        }
+        fs::remove_dir_all(output.join("nested")).unwrap();
+        fs::remove_file(output.join("replaced.png")).unwrap();
+        fs::create_dir(output.join("replaced.png")).unwrap();
+        f.index.upgrade_legacy_macos_identities(&f.a).unwrap();
+        for record in [&missing, &replaced] {
+            assert!(matches!(f.index.owned_file(A, record.id).unwrap().unwrap().physical_identity, StableFileIdentity::Unix { .. }));
+        }
+        fs::rename(&output, output.with_file_name("old-output")).unwrap();
+        fs::create_dir(&output).unwrap();
+        assert!(f.index.upgrade_legacy_macos_identities(&f.a).is_err());
+        assert_eq!(count(&f.index.lock_connection().unwrap(), "managed_files"), 2);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_identity_upgrade_replays_migrations_before_and_after_old_index_commit() {
+        use super::super::user_namespace::{AccountDirectoryMapping, MigratedIndexIdentity};
+        use std::os::unix::fs::MetadataExt;
+        let legacy = |path: &Path| {
+            let raw = fs::metadata(path).unwrap();
+            StableFileIdentity::Unix { device: raw.dev(), inode: raw.ino() }
+        };
+        for already_replayed in [false, true] {
+            let f = Fixture::new();
+            let record = f.register(&f.a, ManagedUserArea::Output, "image.png");
+            let source = f.a.lease().namespace.output_dir();
+            let destination = tempfile::tempdir().unwrap();
+            let target = destination.path().canonicalize().unwrap().join("out");
+            fs::create_dir(&target).unwrap();
+            fs::write(target.join("image.png"), b"image").unwrap();
+            let before = legacy(&source.join("image.png"));
+            let after = legacy(&target.join("image.png"));
+            let old_namespace = f.a.lease().namespace.clone().with_mapping(AccountDirectoryMapping {
+                version: 2, area: "output".into(), source: source.clone(), target: target.clone(),
+                identity: legacy(&target), source_identity: legacy(&source), manifest_json: "[]".into(), material_owner: None,
+                pending_rebind: vec![MigratedIndexIdentity { path: "image.png".into(), before, after: Some(after), bytes: 5 }],
+            }).unwrap();
+            f.index.lock_connection().unwrap().execute("UPDATE managed_files SET physical_identity=?1 WHERE id=?2",
+                params![if already_replayed { after } else { before }.to_storage_bytes(),record.id.0]).unwrap();
+            let upgraded = old_namespace.upgrade_legacy_macos_identities().unwrap();
+            let root = Arc::new(NamespaceFs::open_data_root(&f.directory.path().canonicalize().unwrap()).unwrap());
+            let authority = NamespaceStorageAuthority::open(root, &NamespaceLease { namespace: upgraded, ..f.a.lease().clone() }).unwrap();
+            // Same ordering as account activation, including a repeated retry.
+            for _ in 0..2 {
+                f.index.upgrade_legacy_macos_identities(&authority).unwrap();
+                f.index.replay_directory_rebind(&authority).unwrap();
+            }
+            let row = f.index.find_file_by_path_for_namespace(&authority, ManagedUserArea::Output, "image.png").unwrap().unwrap();
+            assert!(matches!(row.physical_identity, StableFileIdentity::MacOs { .. }));
+            assert_eq!(row.id, record.id);
+            assert_eq!(fs::read(source.join("image.png")).unwrap(), b"image");
+            assert_eq!(fs::read(target.join("image.png")).unwrap(), b"image");
+        }
+    }
     fn count(c: &Connection, table: &str) -> i64 {
         c.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
             .unwrap()
@@ -1808,7 +2005,7 @@ mod tests {
             assert_eq!(
                 c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                     .unwrap(),
-                2
+                3
             );
             assert_eq!(count(&c, "legacy_unassigned_managed_files"), 2);
             assert_eq!(count(&c, "legacy_unassigned_file_references"), 1);
@@ -1872,7 +2069,7 @@ mod tests {
     #[test]
     fn unsupported_partial_unknown_and_malformed_databases_are_preserved() {
         for sql in [
-            "PRAGMA user_version=3",
+            "PRAGMA user_version=4",
             "CREATE TABLE managed_files(id INTEGER)",
             "CREATE TABLE unrelated(value TEXT)",
             "CREATE TABLE sqliteX_hidden(value TEXT)",
@@ -2862,7 +3059,7 @@ mod tests {
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            2
+            3
         );
         assert_eq!(
             c.query_row(

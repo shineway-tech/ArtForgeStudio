@@ -905,6 +905,8 @@ impl TransitionCore {
             auth_epoch: scope.auth_epoch, namespace_epoch: ticket.id,
         };
         let authority = NamespaceStorageAuthority::open_prepublication(self.root.clone(), &lease).map_err(transition_error)?;
+        #[cfg(target_os = "macos")]
+        self.index.upgrade_legacy_macos_identities(&authority).map_err(transition_error)?;
         if !lease.namespace.mappings().is_empty() {
             self.index.replay_directory_rebind(&authority).map_err(transition_error)?;
             lease.namespace = self.writer.complete_directory_rebind(&lease.namespace).map_err(transition_error)?;
@@ -2613,9 +2615,11 @@ fn select_finance_fixture_group(context: &AppContext, session: &SessionScope, pa
         // this fixture's DELETE-capable file handle would conflict on Windows.
         drop(registration);
         let mut indexed_identity = original_record.physical_identity;
+        #[cfg(unix)]
         if remounted_device {
-            let StableFileIdentity::Unix { device, inode } = indexed_identity else { panic!("expected Unix fixture"); };
-            indexed_identity = StableFileIdentity::Unix { device: device + 1, inode };
+            use std::os::unix::fs::MetadataExt;
+            let raw = fs::metadata(lease.namespace.output_dir().join("sample.txt")).unwrap();
+            indexed_identity = StableFileIdentity::Unix { device: raw.dev() + 1, inode: raw.ino() };
             let connection = rusqlite::Connection::open(core.index.database_path()).unwrap();
             connection.execute("UPDATE managed_files SET physical_identity=?1 WHERE id=?2", rusqlite::params![indexed_identity.to_storage_bytes(), original_record.id.0]).unwrap();
         }

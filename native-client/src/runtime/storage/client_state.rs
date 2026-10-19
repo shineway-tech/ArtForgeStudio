@@ -528,7 +528,21 @@ impl ClientStateWriter {
     pub(super) fn load_account_directory_namespace(&self, data_root: &Path, user: &str) -> Result<UserNamespace> {
         let connection = open_client_state_connection(&self.path)?;
         let mappings: Vec<AccountDirectoryMapping> = read_setting_json_or_default(&connection, user, "account_directory_mappings_v1")?;
-        mappings.into_iter().try_fold(UserNamespace::new(data_root, user)?, |namespace, mapping| namespace.with_mapping(mapping))
+        let namespace = mappings.into_iter().try_fold(UserNamespace::new(data_root, user)?, |namespace, mapping| namespace.with_mapping(mapping))?;
+        #[cfg(target_os = "macos")]
+        {
+            let upgraded = namespace.upgrade_legacy_macos_identities()?;
+            if upgraded != namespace {
+                let tx = connection.unchecked_transaction()?;
+                let saved: Vec<AccountDirectoryMapping> = read_setting_json_or_default(&tx, user, "account_directory_mappings_v1")?;
+                ensure!(saved == namespace.mappings(), "directory mapping changed during identity upgrade");
+                write_setting_json(&tx, user, "account_directory_mappings_v1", &upgraded.mappings())?;
+                tx.commit()?;
+            }
+            return Ok(upgraded);
+        }
+        #[cfg(not(target_os = "macos"))]
+        Ok(namespace)
     }
     pub(super) fn prepare_account_directory_migration(&self, proof: &FlushedWriterRetirement, attempt: &serde_json::Value) -> Result<()> {
         let pending = self.pending.lock().map_err(local_error)?;

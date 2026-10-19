@@ -137,6 +137,10 @@ fn payment_dialog_states_fit_and_remove_the_code_after_confirmation() {
                     assert_eq!(refreshes.get(), before + 1);
                 }
                 if mode == "waiting" {
+                    let before = refreshes.get();
+                    element(&app, "refresh-link").unwrap()
+                        .mock_single_click(slint::platform::PointerEventButton::Left);
+                    assert_eq!(refreshes.get(), before + 1);
                     let before = dismissals.get();
                     action.mock_single_click(slint::platform::PointerEventButton::Left);
                     assert_eq!(dismissals.get(), before + 1);

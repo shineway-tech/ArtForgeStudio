@@ -12,6 +12,10 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[cfg(target_os = "macos")]
+#[path = "macos_file_identity.rs"]
+mod macos_file_identity;
+
 static MAPPED_PRIVATE_IDENTITIES: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<StableFileIdentity>>> = std::sync::OnceLock::new();
 pub(crate) fn register_mapped_private_identity(identity: StableFileIdentity) -> Result<()> {
     MAPPED_PRIVATE_IDENTITIES.get_or_init(Default::default).lock().map_err(|_| anyhow::anyhow!("private identity registry poisoned"))?.insert(identity);
@@ -1822,6 +1826,35 @@ impl ManagedFileKey {
 pub(crate) enum StableFileIdentity {
     Unix { device: u64, inode: u64 },
     Windows { volume: u64, file_id: [u8; 16] },
+    MacOs { volume_uuid: [u8; 16], inode: u64 },
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_persistent_identity_tests {
+    use super::*;
+    use std::os::unix::fs::MetadataExt;
+
+    #[test]
+    fn macos_persisted_directory_identity_uses_volume_uuid_not_mount_number() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().canonicalize().unwrap();
+        // diskutil is an independent OS view of the persistent volume identity.
+        let df = std::process::Command::new("/bin/df")
+            .args(["-P", path.to_str().unwrap()]).output().unwrap();
+        assert!(df.status.success());
+        let df = String::from_utf8(df.stdout).unwrap();
+        let device = df.lines().last().unwrap().split_whitespace().next().unwrap();
+        let output = std::process::Command::new("/usr/sbin/diskutil")
+            .args(["info", device]).output().unwrap();
+        assert!(output.status.success());
+        let text = String::from_utf8(output.stdout).unwrap();
+        let uuid = text.lines().find_map(|line| line.trim().strip_prefix("Volume UUID:"))
+            .map(str::trim).map(|value| Uuid::parse_str(value).unwrap()).unwrap();
+        let identity = NamespaceFs::directory_identity_at(&path).unwrap();
+        assert_eq!(serde_json::to_value(identity).unwrap(), serde_json::json!({
+            "MacOs": { "volume_uuid": uuid.as_bytes(), "inode": path.metadata().unwrap().ino() }
+        }));
+    }
 }
 
 impl StableFileIdentity {
@@ -1836,6 +1869,9 @@ impl StableFileIdentity {
             Self::Windows { volume, file_id } => {
                 [vec![2], volume.to_be_bytes().to_vec(), file_id.to_vec()].concat()
             }
+            Self::MacOs { volume_uuid, inode } => {
+                [vec![3], volume_uuid.to_vec(), inode.to_be_bytes().to_vec()].concat()
+            }
         }
     }
     pub(crate) fn from_storage_bytes(bytes: &[u8]) -> Result<Self> {
@@ -1847,6 +1883,10 @@ impl StableFileIdentity {
             Some(2) if bytes.len() == 25 => Ok(Self::Windows {
                 volume: u64::from_be_bytes(bytes[1..9].try_into()?),
                 file_id: bytes[9..25].try_into()?,
+            }),
+            Some(3) if bytes.len() == 25 => Ok(Self::MacOs {
+                volume_uuid: bytes[1..17].try_into()?,
+                inode: u64::from_be_bytes(bytes[17..25].try_into()?),
             }),
             _ => anyhow::bail!("invalid tagged file identity encoding"),
         }
@@ -2186,7 +2226,9 @@ fn reject_private_ancestry(directory: &OwnedFd, private: ObjectIdentity) -> Resu
     // follows retained handles, never a resolved display pathname.
     for _ in 0..1024 {
         let identity = directory_identity(&current)?;
+        // Other accounts may still have legacy persisted Unix bindings.
         reject_mapped_private_identity(StableFileIdentity::Unix { device: identity.device, inode: identity.inode })?;
+        reject_mapped_private_identity(persistent_identity(&current, identity)?)?;
         ensure!(
             identity != private,
             "export destination is inside private app storage"
@@ -2320,6 +2362,8 @@ impl NamespaceFs {
         let root_id = directory_identity(&root)?;
         let descriptor = open_regular_at(&root, OsStr::new(MATERIAL_OWNER_FILE))?;
         let file_id = regular_file_identity(&descriptor)?;
+        let persistent_root = persistent_identity(&root, root_id)?;
+        let persistent_file = persistent_identity(&descriptor, file_id)?;
         ensure!(rustix::fs::fstat(&descriptor)?.st_nlink == 1, "linked material ownership file");
         let mut file = std::fs::File::from(descriptor);
         ensure!(file.metadata()?.len() <= 2048, "material ownership file is too large");
@@ -2328,8 +2372,7 @@ impl NamespaceFs {
         ensure!(bytes.len() <= 2048, "material ownership file is too large");
         ensure!(regular_file_identity(&open_regular_at(&root, OsStr::new(MATERIAL_OWNER_FILE))?)? == file_id
             && directory_identity(&open_absolute_directory(path)?)? == root_id, "material ownership changed during read");
-        Ok((StableFileIdentity::Unix { device: root_id.device, inode: root_id.inode },
-            StableFileIdentity::Unix { device: file_id.device, inode: file_id.inode }, bytes))
+        Ok((persistent_root, persistent_file, bytes))
     }
 
     pub(crate) fn open_optional_regular(
@@ -2670,13 +2713,9 @@ impl NamespaceFs {
             file.binding_id == self.binding_id && file.area == directory.area,
             "foreign managed file authority"
         );
-        let info = managed_metadata(&file.descriptor)?;
+        managed_metadata(&file.descriptor)?;
         ensure!(
-            info.identity
-                == StableFileIdentity::Unix {
-                    device: file.identity.device,
-                    inode: file.identity.inode
-                },
+            regular_file_identity(&file.descriptor)? == file.identity,
             "retained identity changed"
         );
         let mut chain = self.checked_directory_chain(directory)?;
@@ -2744,14 +2783,14 @@ impl NamespaceFs {
         if let Some(mapping) = self.namespace.mappings.iter().rev().find(|m| m.area == area.storage_name()) {
             let descriptor = open_absolute_directory(&mapping.target)?;
             let actual = directory_identity(&descriptor)?;
-            ensure!(mapping.identity == StableFileIdentity::Unix { device: actual.device, inode: actual.inode }, "mapped directory is unavailable or has been replaced");
+            ensure!(mapping.identity == persistent_identity(&descriptor, actual)?, "mapped directory is unavailable or has been replaced");
             Ok(descriptor)
         } else { walk_fixed_directories(namespace, area.relative_path(), mode) }
     }
     pub(crate) fn directory_identity_at(path: &Path) -> Result<StableFileIdentity> {
         let descriptor = open_absolute_directory(path)?;
         let id = directory_identity(&descriptor)?;
-        Ok(StableFileIdentity::Unix { device: id.device, inode: id.inode })
+        persistent_identity(&descriptor, id)
     }
 
     pub(crate) fn ensure_managed_dirs(&self) -> Result<ManagedNamespaceDirectories> {
@@ -3139,10 +3178,7 @@ fn managed_metadata(descriptor: &OwnedFd) -> Result<ManagedFileMetadata> {
         "managed file must be regular with one link"
     );
     Ok(ManagedFileMetadata {
-        identity: StableFileIdentity::Unix {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        },
+        identity: persistent_identity(descriptor, ObjectIdentity { device: metadata.dev(), inode: metadata.ino() })?,
         byte_size: metadata.len(),
         modified_at: metadata.modified()?,
         link_count: metadata.nlink(),
@@ -3344,6 +3380,16 @@ fn object_identity(descriptor: &OwnedFd) -> Result<(ObjectIdentity, rustix::fs::
         },
         rustix::fs::FileType::from_raw_mode(stat.st_mode),
     ))
+}
+
+// Live capabilities retain dev/inode to detect changes during this process.
+// Persisted macOS identities use the volume UUID because st_dev changes on remount.
+#[cfg(unix)]
+fn persistent_identity(descriptor: &OwnedFd, identity: ObjectIdentity) -> Result<StableFileIdentity> {
+    #[cfg(target_os = "macos")]
+    { macos_file_identity::from_descriptor(descriptor, identity) }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = descriptor; Ok(StableFileIdentity::Unix { device: identity.device, inode: identity.inode }) }
 }
 
 #[cfg(unix)]
@@ -3747,6 +3793,7 @@ mod tests {
             .unwrap();
         let actual = fs::metadata(&path).unwrap();
         let info = fs.inspect_regular(&dir, &file).unwrap();
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(
             info.identity,
             StableFileIdentity::Unix {
@@ -3754,6 +3801,9 @@ mod tests {
                 inode: actual.ino()
             }
         );
+        #[cfg(target_os = "macos")]
+        assert!(matches!(info.identity, StableFileIdentity::MacOs { inode, volume_uuid }
+            if inode == actual.ino() && volume_uuid != [0; 16]));
         assert_eq!(info.byte_size, 8);
         assert_eq!(info.modified_at, actual.modified().unwrap());
         assert_eq!(info.link_count, 1);
@@ -4806,6 +4856,7 @@ mod tests {
         for id in [
             unix,
             windows,
+            StableFileIdentity::MacOs { volume_uuid: [129; 16], inode: u64::MAX },
             StableFileIdentity::Windows {
                 volume: u64::MAX,
                 file_id: [129; 16],
@@ -4832,6 +4883,8 @@ mod tests {
             vec![1; 18],
             vec![2; 24],
             vec![2; 26],
+            vec![3; 24],
+            vec![3; 26],
         ] {
             assert!(StableFileIdentity::from_storage_bytes(&bad).is_err());
         }
