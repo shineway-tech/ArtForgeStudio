@@ -90,6 +90,8 @@ component VideoCreditBalance {
 
 export component TopBar {
     property <length> action-gap: 8px;
+    property <bool> image-creation-page: AppState.page == "free-canvas" || AppState.page == "canvas";
+    property <bool> show-models: AppState.page == "generation" || root.image-creation-page;
     property <length> gift-width: 48px;
     property <length> language-width: 94px;
     property <length> theme-width: 94px;
@@ -97,8 +99,8 @@ export component TopBar {
     property <length> profile-width: 128px;
     property <length> payment-width: AppState.en ? 200px : 168px;
     property <length> login-width: 112px;
-    property <bool> models-on-second-row: AppState.page == "generation"
-        && root.width < root.actions-width() + 36px + 3 * 220px + 2 * 18px + 38px;
+    property <bool> models-on-second-row: root.show-models
+        && root.width < root.actions-width() + (root.image-creation-page ? 170px : 56px) + 3 * 220px + 2 * 18px + 38px;
     height: root.models-on-second-row ? 112px : 58px;
     Rectangle {
         width: root.width;
@@ -121,13 +123,13 @@ export component TopBar {
             }
         }
         Rectangle {
-            x: 18px;
+            x: root.models-on-second-row ? 18px : (root.image-creation-page ? 132px : 18px);
             y: root.models-on-second-row ? 58px : 0px;
-            width: root.models-on-second-row ? parent.width - 36px : parent.width - root.actions-width() - 56px;
+            width: root.models-on-second-row ? parent.width - 36px : parent.width - root.actions-width() - (root.image-creation-page ? 170px : 56px);
             height: 54px;
             background: transparent;
             clip: true;
-            if AppState.page == "generation": Rectangle {
+            if root.show-models: Rectangle {
                 width: parent.width;
                 height: parent.height;
                 background: transparent;
@@ -202,6 +204,6 @@ export component TopBar {
             + (count - 1) * root.action-gap;
     }
     function model-picker-width() -> length {
-        return min(280px, (root.width - (root.models-on-second-row ? 36px : root.actions-width() + 56px) - 2 * 18px) / 3);
+        return min(280px, (root.width - (root.models-on-second-row ? 36px : root.actions-width() + (root.image-creation-page ? 170px : 56px)) - 2 * 18px) / 3);
     }
 }

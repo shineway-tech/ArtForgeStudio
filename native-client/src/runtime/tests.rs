@@ -4111,7 +4111,7 @@ mod tests {
     }
 
     #[test]
-    fn character_split_hides_model_and_size_options_without_hiding_generation() {
+    fn character_split_shows_model_but_hides_size_options() {
         let canvas = include_str!("../../ui/pages/infinite-canvas-page.slint");
         assert!(canvas.contains("AppState.references.length < (AppState.canvas-workflow-id == \"character-split\" ? 1 : 8)"));
         assert!(canvas.contains("x: (AppState.canvas-workflow-id == \"character-split\" ? 14px : 62px) + index * 48px"));
@@ -4122,10 +4122,61 @@ mod tests {
             .split_once("workflow-step-count-control := Rectangle {").unwrap().0;
 
         let hidden_for_character_split = "visible: AppState.canvas-workflow-id != \"character-split\";";
-        assert!(model_control.contains(hidden_for_character_split));
+        assert!(!model_control.contains(hidden_for_character_split));
+        assert!(model_control.contains("clicked => { workflow-model-popup.show(); }"));
         assert!(quality_control.contains(hidden_for_character_split));
         assert!(bottom_controls.contains("workflow-generate-button := Rectangle {"));
         assert!(bottom_controls.contains("root.generate-workflow();"));
+    }
+
+    #[test]
+    fn ai_creation_pages_show_all_model_pickers_in_top_bar() {
+        let bar = include_str!("../../ui/components/top-bar.slint");
+        let canvas = include_str!("../../ui/pages/infinite-canvas-page.slint");
+
+        assert!(bar.contains("AppState.page == \"free-canvas\" || AppState.page == \"canvas\""));
+        assert!(bar.contains("AppState.page == \"generation\" || root.image-creation-page"));
+        assert!(bar.contains("if root.show-models: Rectangle {"));
+        for (kind, callback) in [
+            ("image", "select-image-model"),
+            ("reasoning", "select-reasoning-model"),
+            ("video", "select-video-model"),
+        ] {
+            assert!(bar.contains(&format!("kind: \"{kind}\";")));
+            assert!(bar.contains(&format!("AppState.{callback}(model);")));
+        }
+        assert!(canvas.contains("AppState.generate-canvas-node(AppState.canvas-generation-loading-node-id, submitted-prompt)"));
+    }
+
+    #[test]
+    fn canvas_page_renders_all_three_model_pickers() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                ..Default::default()
+            },
+        )))
+        .unwrap();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        app.window().set_size(slint::LogicalSize::new(1600.0, 900.0));
+        app.show().unwrap();
+
+        state.set_page("canvas".into());
+        let canvas_pixels = app.window().take_snapshot().unwrap();
+        state.set_page("video-generation".into());
+        let video_pixels = app.window().take_snapshot().unwrap();
+        assert_eq!(canvas_pixels.width(), video_pixels.width());
+
+        for position in [170_usize, 470, 770] {
+            let offset = (20 * canvas_pixels.width() as usize + position) * 4;
+            assert_ne!(
+                &canvas_pixels.as_bytes()[offset..offset + 4],
+                &video_pixels.as_bytes()[offset..offset + 4],
+                "model picker missing at header x={position}"
+            );
+        }
     }
 
     #[test]

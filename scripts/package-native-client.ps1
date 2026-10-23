@@ -9,6 +9,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $ScriptDir "windows-runtime.ps1")
 $Root = Resolve-Path (Join-Path $ScriptDir "..")
 $DistRoot = Join-Path $Root "dist"
 $ClientDir = Join-Path $Root "native-client"
@@ -104,6 +105,53 @@ function New-ZipFromDirectory {
     )
 }
 
+function Assert-WindowsPortableArchive {
+    param(
+        [Parameter(Mandatory = $true)][string]$PackageRoot,
+        [Parameter(Mandatory = $true)][string]$ZipPath
+    )
+
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        $entries = @($archive.Entries)
+        $rootPrefix = (Split-Path -Leaf $PackageRoot) + [System.IO.Path]::DirectorySeparatorChar
+        foreach ($relativePath in @(
+            "$AppName.exe",
+            "vcruntime140.dll",
+            "vcruntime140_1.dll",
+            "assets$([System.IO.Path]::DirectorySeparatorChar)app.ico",
+            "data$([System.IO.Path]::DirectorySeparatorChar)input$([System.IO.Path]::DirectorySeparatorChar)",
+            "data$([System.IO.Path]::DirectorySeparatorChar)out$([System.IO.Path]::DirectorySeparatorChar)",
+            "data$([System.IO.Path]::DirectorySeparatorChar)prompt$([System.IO.Path]::DirectorySeparatorChar)"
+        )) {
+            $entryName = $rootPrefix + $relativePath
+            $matches = @($entries | Where-Object { $_.FullName -eq $entryName })
+            if ($matches.Count -ne 1) {
+                throw "Windows portable ZIP is missing or duplicates $relativePath"
+            }
+            if ($relativePath -in @("vcruntime140.dll", "vcruntime140_1.dll")) {
+                $sourcePath = Join-Path $PackageRoot $relativePath
+                $entryStream = $matches[0].Open()
+                $sha256 = [System.Security.Cryptography.SHA256]::Create()
+                try {
+                    $archiveHash = [BitConverter]::ToString($sha256.ComputeHash($entryStream)).Replace("-", "")
+                }
+                finally {
+                    $entryStream.Dispose()
+                    $sha256.Dispose()
+                }
+                $sourceHash = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash
+                if ($archiveHash -ne $sourceHash) {
+                    throw "Windows portable ZIP contains a damaged runtime DLL: $relativePath"
+                }
+            }
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+}
+
 function Build-Client {
     param(
         [string]$RustTarget
@@ -135,6 +183,7 @@ function Build-Client {
 }
 
 function Package-Windows {
+    $runtimeFiles = @(Get-WindowsRuntimeFiles)
     $outDir = Join-Path $DistRoot "$AppName-windows-x64"
     $zipPath = Join-Path $DistRoot "${AppName}_${ClientVersion}_windows_x64_portable.zip"
     $existingData = Join-Path $outDir "data"
@@ -153,9 +202,11 @@ function Package-Windows {
         New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
         Copy-Item -LiteralPath (Join-Path $Root "target/release/$AppName.exe") -Destination (Join-Path $outDir "$AppName.exe") -Force
+        Copy-Item -LiteralPath $runtimeFiles -Destination $outDir -Force
         Copy-ClientAssets -Destination (Join-Path $outDir "assets")
         New-DataDirs -PackageRoot $outDir
         New-ZipFromDirectory -Source $outDir -ZipPath $zipPath
+        Assert-WindowsPortableArchive -PackageRoot $outDir -ZipPath $zipPath
 
         Write-Host "Windows package: $zipPath"
     }

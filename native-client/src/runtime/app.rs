@@ -25,8 +25,11 @@ pub(super) fn back_from_video_generation(state: &AppState) {
 }
 
 pub(super) fn run() -> Result<()> {
+    use crate::startup::{set_stage, Stage};
+
     // The local Store, SQLite index and preview cache are shared process resources. Keeping a
     // second process out avoids cross-process reference rebuilds and cache/write races.
+    set_stage(Stage::Instance);
     let instance_name = native_client_instance_name();
     let instance =
         single_instance::SingleInstance::new(&instance_name).context("无法创建客户端单实例锁")?;
@@ -34,6 +37,7 @@ pub(super) fn run() -> Result<()> {
         anyhow::bail!("客户端已在运行");
     }
     let _instance_guard = instance;
+    set_stage(Stage::Window);
     let app = AppWindow::new()?;
     configure_rendering_profile(&app);
     register_external_image_drop_wakeup(&app);
@@ -43,6 +47,7 @@ pub(super) fn run() -> Result<()> {
     init_version_state(&app);
     cleanup_stale_update_dirs();
     apply_theme(&app, "light");
+    set_stage(Stage::Data);
     prepare_app_data_dir()?;
     fs::create_dir_all(app_data_dir())?;
     let data_root_capability = Arc::new(NamespaceFs::open_data_root(&app_data_dir())?);
@@ -53,8 +58,10 @@ pub(super) fn run() -> Result<()> {
         load_device_settings()?.unwrap_or_default(),
         load_export_directory()?,
     );
+    set_stage(Stage::Tray);
     let tray = AppTray::new()?;
 
+    set_stage(Stage::Services);
     let mut context = AppContext {
         data_root_capability: Some(data_root_capability),
         backend: Some(Arc::new(BackendRuntime::new(&app_data_dir())?)),
@@ -67,6 +74,7 @@ pub(super) fn run() -> Result<()> {
     restore_update_installation_result(&app);
     begin_update_check(&app, false);
     initialize_auth(&app, context.clone());
+    set_stage(Stage::Tray);
     tray.show()?;
     let center_window = app.as_weak();
     slint::Timer::single_shot(Duration::from_millis(50), move || {
@@ -74,6 +82,8 @@ pub(super) fn run() -> Result<()> {
             center_main_window(&app);
         }
     });
+    slint::Timer::single_shot(Duration::from_millis(250), || set_stage(Stage::Running));
+    set_stage(Stage::EventLoop);
     let result = app.run();
     platform::uninstall_external_image_drop_target(app.window());
     drop(platform::take_external_image_drops());

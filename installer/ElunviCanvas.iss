@@ -45,6 +45,8 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 
 [Files]
 Source: "{#PackageDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PackageDir}\vcruntime140.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PackageDir}\vcruntime140_1.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PackageDir}\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourcePath}\installed.marker"; DestDir: "{app}"; DestName: "elunvi-installed.marker"; Flags: ignoreversion
 

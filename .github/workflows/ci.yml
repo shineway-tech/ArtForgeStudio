@@ -74,6 +74,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Test Windows runtime packaging
+        shell: pwsh
+        run: ./scripts/tests/windows-runtime.ps1
+
       - name: Configure Rust toolchain
         shell: pwsh
         run: |

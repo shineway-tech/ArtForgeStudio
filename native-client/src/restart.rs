@@ -31,6 +31,10 @@ pub(crate) fn wait_if_requested() -> io::Result<()> {
 }
 
 pub(crate) fn spawn_waiting_child() -> io::Result<std::process::Child> {
+    waiting_child_command()?.spawn()
+}
+
+pub(crate) fn waiting_child_command() -> io::Result<std::process::Command> {
     let executable = std::env::current_exe()?;
     let mut command = std::process::Command::new(&executable);
     command
@@ -39,7 +43,7 @@ pub(crate) fn spawn_waiting_child() -> io::Result<std::process::Child> {
     if let Some(parent) = executable.parent() {
         command.current_dir(parent);
     }
-    command.spawn()
+    Ok(command)
 }
 
 fn wait_for_parent_exit(pid: u32, timeout: Duration) -> io::Result<()> {
@@ -124,6 +128,25 @@ fn wait_for_process(_: u32, _: Duration) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacement_command_uses_the_same_executable_and_waits_for_this_process() {
+        let executable = std::env::current_exe().unwrap();
+        let mut command = waiting_child_command().unwrap();
+        assert_eq!(command.get_program(), executable.as_os_str());
+        assert_eq!(command.get_current_dir(), executable.parent());
+        assert_eq!(
+            command.get_args().map(OsString::from).collect::<Vec<_>>(),
+            vec![
+                OsString::from(RESTART_ARGUMENT),
+                OsString::from(std::process::id().to_string()),
+            ]
+        );
+        command.env("SLINT_BACKEND", "winit-software");
+        assert!(command.get_envs().any(|(name, value)| {
+            name == "SLINT_BACKEND" && value == Some(std::ffi::OsStr::new("winit-software"))
+        }));
+    }
 
     #[test]
     fn restart_arguments_require_one_valid_parent_and_leave_normal_launch_alone() {

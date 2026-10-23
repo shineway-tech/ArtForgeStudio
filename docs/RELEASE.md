@@ -71,7 +71,7 @@ Windows PowerShell：
 | macOS Intel | `ElunviCanvas_<version>_macos_x64.dmg` |
 | macOS Apple Silicon | `ElunviCanvas_<version>_macos_aarch64.dmg` |
 
-Windows portable ZIP 包含 `ElunviCanvas.exe`、随包素材和初始 `data` 目录；必须完整解压后运行。用户迁移 portable 目录时应保留相邻 `data`。
+Windows portable ZIP 包含 `ElunviCanvas.exe`、相邻的 `vcruntime140.dll`、`vcruntime140_1.dll`、随包素材和初始 `data` 目录；必须完整解压后运行，不能只复制 EXE。用户迁移 portable 目录时应保留相邻 `data`。
 
 上传 OSS 时，脚本为每个制品生成：
 
@@ -135,6 +135,14 @@ OSS 上传：
 ## Windows packaging
 
 Windows Runner 使用 MSVC 构建 release 二进制。`package-native-client.ps1` 组装 portable 目录、素材和数据目录，再创建 ZIP。Portable 版本继续把数据保存在程序旁的 `data`；安装版通过安装标记把可写数据保存在 `%LOCALAPPDATA%\ElunviCanvas\data`，首次启动时会在目标目录为空的情况下迁移旧版程序旁的数据。
+
+`scripts/windows-runtime.ps1` 从 Visual Studio C++ 工具链的官方 x64 Redist 目录选取两个 VC++ runtime DLL，随 portable 包和安装器安装到 EXE 旁，不要求用户另行安装 VC++ 运行库，也不复制 System32 中的系统 DLL。脚本优先读取 `VCToolsRedistDir`、`VCINSTALLDIR`，再通过 `vswhere -products '*'` 查找包含 C++ 工具链的 Visual Studio 或 Build Tools。缺失任一 DLL 时必须停止打包，且不能覆盖现有包。可独立运行回归测试：
+
+```powershell
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/tests/windows-runtime.ps1
+```
+
+Windows 发布验收必须包含未预装 VC++ Redistributable 的干净 Win10 x64 环境，分别验证完整解压 portable 包和安装版首次启动；确认两份 DLL 均与打包来源一致。Windows N 或精简系统还需具备系统媒体组件，不能用捆绑系统 DLL 的方式补装。
 
 Windows 自动更新必须通过更新辅助程序显式传入当前 EXE 目录作为安装器的 `/DIR`，不能依赖历史安装记录。辅助程序完成校验并通知就绪后，客户端才退出；辅助程序等待旧进程结束、检查安装退出码和目标 EXE 版本，然后确保同一路径的客户端重新打开。安装器日志保存在该次临时更新目录的 `install.log`，失败结果保存在当前数据目录的 `update-result.json`，重启后显示。现有 `data` 不属于安装覆盖范围。
 

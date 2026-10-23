@@ -10,7 +10,8 @@
 
 - `native-client/src/main.rs`：平台可执行入口。
 - `native-client/src/lib.rs`：库入口，连接 Slint 编译产物与运行时，也是单元测试入口。
-- `native-client/src/runtime/app.rs`：渲染器选择、窗口启动、初始数据加载和顶层 callback 接线。
+- `native-client/src/startup.rs`：平台默认渲染器、Windows 启动失败的软件渲染重试、原生错误提示和脱敏诊断日志。
+- `native-client/src/runtime/app.rs`：窗口启动、初始数据加载和顶层 callback 接线。
 - `native-client/src/runtime/callbacks/`：认证、账号绑定、会员积分、模型目录、参考图、生成、支付、通知和查看器的 UI 适配层。
 - `native-client/src/runtime/api/`：HTTP 客户端、安全会话、账号快照、会员、订单、通知、上传和生成任务契约。
 - `native-client/src/runtime/generation/`：任务准备、提交、轮询、取消、恢复和结果交付。
@@ -36,9 +37,9 @@
 
 ## Startup and account bootstrap
 
-启动顺序由 `runtime/app.rs` 组织：
+启动由 `startup.rs` 选择默认后端并处理重启交接，再交给 `runtime/app.rs` 组织：
 
-1. 在没有显式 `SLINT_BACKEND` 时选择平台默认渲染器。
+1. 获取单实例锁，防止同时访问共享本地数据。
 2. 创建 Slint 窗口并设置版本、主题和应用目录。
 3. 加载用户界面偏好、本地作品数据和内置灵感素材。
 4. 创建 `AppContext` 与 API 后端，向 Slint 推送本地展示状态。

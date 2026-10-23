@@ -10,7 +10,7 @@
 
 平台环境：
 
-- Windows：MSVC 工具链、Windows SDK 和 WebView2 Runtime。正式 Windows 验证必须在 Windows 主机或 Windows Runner 执行。
+- Windows：MSVC 工具链（含 x64 VC++ Redist）、Windows SDK 和 WebView2 Runtime。正式 Windows 验证必须在 Windows 主机或 Windows Runner 执行。
 - macOS：Xcode Command Line Tools。DMG 打包还需要系统自带的 `plutil`、`hdiutil`、`codesign`，以及脚本读取 Cargo metadata 所需的 Python 3。
 
 当前包使用 Rust edition 2021；具体依赖和版本以 `native-client/Cargo.toml` 与 `Cargo.lock` 为准。
@@ -79,6 +79,8 @@ cargo test -p artforge-studio-native --locked \
 - Windows：`winit-femtovg`，使用 GPU 渲染。
 - 非 Windows：`winit-software`。
 
+Windows 默认 GPU 后端在创建窗口或首次进入事件循环时返回 Slint 平台错误，会等待旧进程完全退出，再使用 `winit-software` 启动新进程重试一次。显式设置 `SLINT_BACKEND` 时不自动改写或重试。运行中错误不会触发自动重启。
+
 排查渲染问题时可临时显式设置：
 
 ```bash
@@ -104,7 +106,8 @@ macOS 需要分别验证 Intel 与 Apple Silicon 制品。跨架构构建仍依�
 
 - Cargo 长时间停在 `Compiling artforge-studio-native`：通常是最终链接或 Thin LTO；先检查 `rustc` 是否仍占用 CPU。
 - 本地 HTTP 单元测试报 `Operation not permitted`：执行环境禁止监听回环端口，应在允许本地端口的环境重跑。
-- 启动后无窗口：检查是否已有单实例进程，再查看终端中的 Slint 渲染后端错误。
+- 双击 EXE 无进程：先确认完整解压且 EXE 旁有 `vcruntime140.dll` 与 `vcruntime140_1.dll`，不要单独复制 EXE；Win10 N/精简版还需检查系统媒体组件。
+- 启动后无窗口：检查是否已有单实例进程。Windows 启动失败会显示原生错误提示，诊断日志默认在 `%LOCALAPPDATA%\ElunviCanvas\logs\startup.log`，不可写时回退到 `%TEMP%\ElunviCanvas\logs\startup.log`；仅记录阶段、版本与系统错误码，不记录错误正文或业务数据。进程加载前失败不会产生这份日志。
 - Windows 从任务栏恢复卡顿：确认未覆盖 `SLINT_BACKEND`，并检查当前是否使用 `winit-femtovg`。
 - API 请求全部失败：确认 debug 环境变量地址合法、后端可达，且没有把 release 包当作可覆盖 API 地址的开发包。
 - 登录反复失效：区分网络失败、Access Token 刷新、Refresh Token 撤销、设备会话撤销、协议升级和最低版本要求。
