@@ -338,9 +338,13 @@ jobs:
           $iscc = Find-InnoCompiler
           if (!$iscc) {
             $installCode = 1
+            $chocoCommand = Get-Command choco.exe -ErrorAction SilentlyContinue
+            if (!$chocoCommand -or !$chocoCommand.Source) {
+              throw "Chocolatey is not available on the Windows runner."
+            }
             for ($attempt = 1; $attempt -le 3 -and !$iscc; $attempt++) {
               Write-Host "Inno Setup compiler not found; installing with Chocolatey (attempt $attempt/3)."
-              & choco install innosetup --no-progress --yes --force
+              & $chocoCommand.Source install innosetup --no-progress --yes
               $installCode = $LASTEXITCODE
               # Chocolatey uses 3010 for a successful install that requests a
               # reboot. The runner must not treat that as a packaging failure.
