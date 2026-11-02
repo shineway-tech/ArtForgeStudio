@@ -16,9 +16,9 @@ pub(super) fn prepare_direct_video_navigation(state: &AppState) -> bool {
 
 pub(super) fn back_from_video_generation(state: &AppState) {
     if state.get_video_player_open() && state.get_video_player_return_page() == "video-generation" {
-        close_video_player();
         state.set_video_player_open(false);
         state.set_video_player_return_page("".into());
+        close_video_player();
     } else {
         state.invoke_close_video_generation();
     }
@@ -190,6 +190,7 @@ pub(super) fn apply_startup_device_state(
     // TEMP(team-accounts): private services start only after Task 10 publishes
     // a namespace lease. These presentation values confer no filesystem authority.
     apply_device_settings(app, settings);
+    initialize_contact_popup(app);
     let state = app.global::<AppState>();
     state.set_material_dir("".into());
     state.set_input_dir("".into());
@@ -596,6 +597,7 @@ pub(super) fn wire_callbacks(app: &AppWindow, context: AppContext) {
                 sync_deep_prompt_binding_for_category(&app, &store.borrow(), &category);
             }
             push_custom_prompts(&app, &store.borrow());
+            push_prompt_history(&app, &store.borrow());
             push_references(&app, &store.borrow());
             save_local_store(&app, &store.borrow());
             save_user_profile(&app, &context.store.borrow());

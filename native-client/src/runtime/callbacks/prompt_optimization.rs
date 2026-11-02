@@ -276,6 +276,16 @@ fn queue_deep_detail(
         && app.global::<AppState>().get_prompt().as_str() == visible_prompt
         && (matches!(effect, PromptRequestEffect::ApplyResult)
             || detail.original_prompt.as_deref().unwrap_or(app.global::<AppState>().get_deep_optimization_original_prompt().as_str()) == visible_prompt));
+    let binding_record = result.as_ref().map(|result| DeepPromptOptimizationRecord {
+        original_prompt: detail.original_prompt.as_deref().unwrap_or(&visible_prompt).to_string(),
+        chinese_prompt: result.chinese_prompt.clone(),
+        english_prompt: result.english_prompt.clone(),
+        baseline_score: detail.baseline_score.unwrap_or(0),
+        current_score: displayed_best_score(&detail),
+        completed_rounds: detail.completed_rounds,
+        consumed_credits: detail.pricing.consumed_credits.clone(),
+        change_summary: optimization_change_summary(&detail),
+    });
     let queued = context.apply_user_completion(&lease, || {
         if app.global::<AppState>().get_deep_optimization_job_id().as_str() != expected_visible { return None; }
         {
@@ -283,9 +293,15 @@ fn queue_deep_detail(
             // include it. Visible result/job success is withheld until the exact writer ack.
             let mut store = context.store.borrow_mut();
             store.deep_prompt_jobs_by_owner.insert(session.owner_user_id.clone(), detail.id.clone());
+            if let Some(version) = detail.final_result.as_ref().or(detail.result.as_ref()) {
+                archive_prompt_version(&mut store, &category, detail.original_prompt.as_deref().unwrap_or(&visible_prompt), "");
+                archive_prompt_version(&mut store, &category, &version.english_prompt, "");
+                archive_prompt_version(&mut store, &category, &version.chinese_prompt, &version.english_prompt);
+            }
             if let Some(result) = &result {
                 store.deep_prompt_bindings.insert(category.clone(), DeepPromptBinding {
                     chinese: result.chinese_prompt.clone(), english: result.english_prompt.clone(),
+                    record: binding_record.clone(),
                 });
                 set_prompt_draft_for_category(&mut store.prompt_drafts, &category, result.chinese_prompt.clone());
             }
@@ -330,6 +346,7 @@ fn poll_deep_detail_ack<E: std::fmt::Display + 'static>(
                 return;
             }
             apply_prompt_optimization_detail(&app, &detail);
+            push_prompt_history(&app, &context.store.borrow());
             if current_workspace_category(&app) == category && state.get_prompt().as_str() == visible_prompt {
                 if let Some(result) = result {
                     // The binding/draft were already included in the acknowledged projection.
@@ -490,12 +507,18 @@ fn poll_deep_dismiss_ack<E: std::fmt::Display + 'static>(
                 state.set_deep_optimization_error("本地关闭状态未能确认保存，原记录已保留".into());
                 return;
             }
-            clear_prompt_optimization_job(&app, &context);
+            if matches!(action, DeepDismissAction::Close) {
+                clear_prompt_optimization_job_preserving_result(&app, &context);
+            } else {
+                clear_prompt_optimization_job(&app, &context);
+            }
             match action {
                 DeepDismissAction::Close => state.set_deep_optimization_open(false),
                 DeepDismissAction::New => {
                     state.set_deep_optimization_stage("settings".into());
                     state.set_deep_optimization_original_prompt(state.get_prompt());
+                    state.set_deep_optimization_applied_chinese("".into());
+                    state.set_deep_optimization_applied_english("".into());
                     state.set_deep_optimization_feedback("".into());
                     state.set_deep_optimization_feedback_stable(false);
                     state.set_deep_optimization_stable_feedback_summary("".into());
@@ -783,7 +806,47 @@ pub(super) fn wire_prompt_optimization_callbacks(app: &AppWindow, context: AppCo
             let Some(session) = current_prompt_optimization_session_scope(&context) else { return; };
             let Ok(lease) = context.namespace_for(&session) else { return; };
             if context.apply_user_completion(&lease, || {
-                context.store.borrow_mut().deep_prompt_bindings.remove(&current_workspace_category(&app));
+                let mut store = context.store.borrow_mut();
+                let category = current_workspace_category(&app);
+                if let Some(binding) = store.deep_prompt_bindings.remove(&category) {
+                    archive_prompt_version(&mut store, &category, &binding.english, "");
+                    archive_prompt_version(&mut store, &category, &binding.chinese, &binding.english);
+                    push_prompt_history(&app, &store);
+                }
+            }).is_ok() { persist_deep_projection(&app, &context, &lease); }
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let context = context.clone();
+        state.on_restore_prompt_history(move |prompt| {
+            let Some(app) = app_weak.upgrade() else { return; };
+            if app.global::<AppState>().get_optimizing_prompt() || app.global::<AppState>().get_translating_prompt() { return; }
+            let Some(session) = current_prompt_optimization_session_scope(&context) else { return; };
+            let Ok(lease) = context.namespace_for(&session) else { return; };
+            let prompt = prompt.trim().to_string();
+            let category = current_workspace_category(&app);
+            if !visible_prompt_history(&context.store.borrow(), &category).contains(&prompt) { return; }
+            if context.apply_user_completion(&lease, || {
+                let mut store = context.store.borrow_mut();
+                let existing_record = store.deep_prompt_bindings.get(&category)
+                    .filter(|binding| binding.chinese.trim() == prompt)
+                    .and_then(|binding| binding.record.clone());
+                let english = store.saved_prompt_history.iter().find(|entry| entry.category == category && entry.prompt == prompt)
+                    .map(|entry| entry.english_prompt.clone()).filter(|value| !value.is_empty())
+                    .or_else(|| store.deep_prompt_bindings.get(&category).filter(|binding| binding.chinese.trim() == prompt)
+                        .map(|binding| binding.english.clone()));
+                if let Some(english) = english {
+                    store.deep_prompt_bindings.insert(category.clone(), DeepPromptBinding {
+                        chinese: prompt.clone(), english, record: existing_record,
+                    });
+                } else {
+                    store.deep_prompt_bindings.remove(&category);
+                }
+                set_prompt_draft_for_category(&mut store.prompt_drafts, &category, prompt.clone());
+                app.global::<AppState>().set_prompt(prompt.clone().into());
+                sync_deep_prompt_binding_for_category(&app, &store, &category);
             }).is_ok() { persist_deep_projection(&app, &context, &lease); }
         });
     }
@@ -846,6 +909,20 @@ fn wire_simple_prompt_action(app: &AppWindow, context: AppContext, action: &'sta
 }
 
 fn open_prompt_optimization(app: &AppWindow, context: AppContext) {
+    let state = app.global::<AppState>();
+    if !state.get_deep_optimization_applied_chinese().is_empty()
+        && state.get_prompt().as_str() == state.get_deep_optimization_applied_chinese().as_str()
+        && !state.get_deep_optimization_applied_english().is_empty()
+    {
+        // A completed local record can be opened without creating a new request or
+        // re-reading a dismissed server task.
+        state.set_deep_optimization_open(true);
+        state.set_deep_optimization_error("".into());
+        if state.get_deep_optimization_stage().as_str() == "settings" {
+            state.set_deep_optimization_stage("complete".into());
+        }
+        return;
+    }
     if !require_online_operation(app, "深度优化") { return; }
     let Some(session) = current_prompt_optimization_session_scope(&context) else { return; };
     if !deep_ui(&context, || {
@@ -886,6 +963,8 @@ fn start_prompt_optimization(app: &AppWindow, context: AppContext) {
     let visible = state.get_deep_optimization_job_id().to_string();
     if !deep_ui(&context, || {
         clear_prompt_optimization_result(&state);
+        state.set_deep_optimization_applied_chinese("".into());
+        state.set_deep_optimization_applied_english("".into());
         state.set_deep_optimization_original_prompt(prompt.into());
         state.set_deep_optimization_stage("running".into());
         state.set_deep_optimization_error("".into());
@@ -1116,10 +1195,20 @@ fn remove_prompt_optimization_job_for_owner_if_matches(
 }
 
 fn clear_prompt_optimization_job(app: &AppWindow, context: &AppContext) {
+    clear_prompt_optimization_job_with_result(app, context, false);
+}
+
+fn clear_prompt_optimization_job_preserving_result(app: &AppWindow, context: &AppContext) {
+    clear_prompt_optimization_job_with_result(app, context, true);
+}
+
+fn clear_prompt_optimization_job_with_result(app: &AppWindow, context: &AppContext, preserve_result: bool) {
     context.prompt_optimization_polling.borrow_mut().take();
     let state = app.global::<AppState>();
     state.set_deep_optimization_job_id("".into());
-    clear_prompt_optimization_result(&state);
+    if !preserve_result {
+        clear_prompt_optimization_result(&state);
+    }
     let owner_user_id = context
         .current_user_id
         .lock()
@@ -2373,6 +2462,49 @@ mod core_deep_caller_patch_tests {
         assert_eq!(load_pending_prompt_optimizations_for_namespace(&f.authority).unwrap()[0].server_job_id, NEW_JOB);
         assert_eq!(f.writer.load_client_state_for_namespace(f.authority.lease()).unwrap().unwrap().deep_prompt_jobs_by_owner.get(OWNER).map(String::as_str), Some(NEW_JOB), "visible success requires the real SQLite acknowledgement");
     }
+    #[test]
+    fn core_deep_prompt_history_survives_closing_and_preserves_both_languages() {
+        let (_listener, url) = listener();
+        let (f, app) = setup(&url);
+        // Local history restoration has no payer dependency or balance refresh transport.
+        f.context.billing_context.invalidate_current_billing();
+        let state = app.global::<AppState>();
+        let detail = PromptOptimizationDetail {
+            id: SOURCE.into(), billing_account_group_id: PAYER.into(), status: "completed".into(),
+            original_prompt: Some("durable original prompt".into()),
+            final_result: Some(PromptOptimizationResult {
+                chinese_prompt: "优化后的中文".into(), english_prompt: "Optimized English".into(),
+            }), ..Default::default()
+        };
+        queue_deep_detail(&app, f.context.clone(), f.authority.lease().clone(), f.scope.request.session.clone(),
+            PromptRequestEffect::Refresh, String::new(), detail, "history-test".into(),
+            current_workspace_category(&app), "durable original prompt".into());
+        pump(|| state.get_prompt() == "优化后的中文");
+        let saved = f.writer.load_client_state_for_namespace(f.authority.lease()).unwrap().unwrap();
+        let mut loaded = prepare_private_store(saved).store;
+        assert_eq!(visible_prompt_history(&loaded, "character"), ["优化后的中文", "Optimized English", "durable original prompt"]);
+        assert!(loaded.deep_prompt_bindings["character"].record.is_some());
+        clear_prompt_optimization_job(&app, &f.context);
+        assert!(state.get_deep_optimization_chinese_prompt().is_empty());
+        loaded.private_persistence = f.context.store.borrow().private_persistence.clone();
+        *f.context.store.borrow_mut() = loaded;
+        state.set_prompt("accidental translation".into());
+        state.invoke_restore_prompt_history("优化后的中文".into());
+        assert_eq!(state.get_prompt(), "优化后的中文");
+        assert_eq!(state.get_deep_optimization_applied_english(), "Optimized English");
+        assert_eq!(state.get_deep_optimization_stage(), "complete");
+        assert_eq!(state.get_deep_optimization_chinese_prompt(), "优化后的中文");
+        assert_eq!(state.get_deep_optimization_english_prompt(), "Optimized English");
+        state.invoke_restore_prompt_history("durable original prompt".into());
+        assert_eq!(state.get_prompt(), "durable original prompt");
+        assert!(state.get_deep_optimization_applied_english().is_empty());
+        pump(|| f.writer.load_client_state_for_namespace(f.authority.lease()).unwrap().unwrap()
+            .prompt_drafts.character == "durable original prompt");
+        // Release save-ack callbacks before Slint's thread-local timer teardown.
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(100));
+        slint::platform::update_timers_and_animations();
+    }
+
     #[test]
     fn core_deep_terminal_retry_records_new_payer_and_new_job_without_overwriting_source() {
         let (listener, url) = listener();

@@ -147,7 +147,7 @@ export component AppWindow inherits Window {
         }
     }
 
-    if AppState.contact-popup-open: ContactPopup {
+    if AppState.contact-popup-open && AppState.logged-in && !AppState.auth-open && !AppState.auth-busy: ContactPopup {
         width: min(400px, root.width - 40px);
         height: 392px;
         x: root.width - self.width - 22px;

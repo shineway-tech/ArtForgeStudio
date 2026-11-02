@@ -599,7 +599,9 @@ pub(super) fn poll_generation_stream(
                 );
                 sync_generation_state_for_current_category(&context, &app);
                 // open-viewer-after-finish
-                if destination == GenerationDestination::Gallery {
+                if destination == GenerationDestination::Gallery
+                    && can_open_generation_result_viewer(&app, &category, &conversation_id)
+                {
                     if let Some(viewer_id) = task.latest_success_id.clone() {
                         open_viewer(&app, &store.borrow(), &viewer_id, "generation");
                     }
@@ -658,7 +660,9 @@ pub(super) fn poll_generation_stream(
                 if task.success_count == 0 {
                     discard_canvas_generation_placeholder(&state, &task.destination);
                 }
-                let remaining = (task.total_count - task.completed_count).max(1);
+                // A worker may disconnect after the last result was committed.
+                // Only unfinished slots can become failure cards.
+                let remaining = (task.total_count - task.completed_count).max(0);
                 if destination == GenerationDestination::Gallery {
                     for _ in 0..remaining {
                         add_stream_failure_item(
@@ -701,7 +705,9 @@ pub(super) fn poll_generation_stream(
                     Some(&reason),
                 );
                 sync_generation_state_for_current_category(&context, &app);
-                if destination == GenerationDestination::Gallery {
+                if destination == GenerationDestination::Gallery
+                    && can_open_generation_result_viewer(&app, &category, &conversation_id)
+                {
                     if let Some(viewer_id) = task.latest_success_id.clone() {
                         open_viewer(&app, &store.borrow(), &viewer_id, "generation");
                     }

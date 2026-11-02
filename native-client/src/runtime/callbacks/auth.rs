@@ -147,11 +147,11 @@ pub(super) fn prepare_activation_backend_projection(
             .collect::<Vec<_>>(),
     )), |state, value| state.set_account_sessions(value));
 
-    let model_groups=prepare_activation_catalog_projection(&mut ui,projection.models.unwrap_or(&[]),preferred_image,preferred_prompt,preferred_video);
+    let model_groups=prepare_model_catalog_projection(&mut ui,projection.models.unwrap_or(&[]),preferred_image,preferred_prompt,preferred_video);
     PreparedBackendProjection { ui,model_groups,pagination,credit_version:projection.credits.map(|credit|credit.version.clone()) }
 }
 
-fn prepare_activation_catalog_projection(ui:&mut PreparedUiProjection,available_models:&[ModelCatalogItem],preferred_image:&str,preferred_prompt:&str,preferred_video:&str) -> Vec<ModelGroupData> {
+fn prepare_model_catalog_projection(ui:&mut PreparedUiProjection,available_models:&[ModelCatalogItem],preferred_image:&str,preferred_prompt:&str,preferred_video:&str) -> Vec<ModelGroupData> {
     let catalog_models = available_models
         .iter()
         .map(|model| CatalogModelView {
@@ -175,6 +175,10 @@ fn prepare_activation_catalog_projection(ui:&mut PreparedUiProjection,available_
                 .join(" · ")
                 .into(),
             price_1k: model_price(model, "1K"),
+            prices: ModelRc::new(VecModel::from(model.prices.iter().map(|price| CatalogPriceView {
+                quality: price.quality.clone().into(),
+                credit_cost: price.credit_cost.clone().into(),
+            }).collect::<Vec<_>>())),
             price_2k: model_price(model, "2K"),
             price_4k: model_price(model, "4K"),
             price_standard: model_credit_cost(model, "standard").into(),
@@ -220,7 +224,7 @@ fn prepare_activation_catalog_projection(ui:&mut PreparedUiProjection,available_
         .or_else(|| {
             available_models
                 .iter()
-                .find(|item| item.code == "openai_image")
+                .find(|item| item.purpose == "image_generation" && item.code == "openai_image")
         })
         .or_else(|| {
             available_models
@@ -234,7 +238,7 @@ fn prepare_activation_catalog_projection(ui:&mut PreparedUiProjection,available_
         .or_else(|| {
             available_models
                 .iter()
-                .find(|item| item.code == "gpt_5_6_sol")
+                .find(|item| item.purpose == "prompt_processing" && item.code == "gpt_5_6_sol")
         })
         .or_else(|| {
             available_models
@@ -2619,150 +2623,13 @@ pub(super) fn apply_model_catalog_projection(
     available_models: &[ModelCatalogItem],
 ) {
     let state = app.global::<AppState>();
-    let catalog_models = available_models
-        .iter()
-        .map(|model| CatalogModelView {
-            code: model.code.clone().into(),
-            name: model_display_name(model).into(),
-            purpose: model.purpose.clone().into(),
-            version: model.version.min(i32::MAX as u32) as i32,
-            capabilities: model_capabilities_text(model).into(),
-            capability_json: model.capabilities.to_string().into(),
-            pricing: model
-                .prices
-                .iter()
-                .map(|price| match price.max_long_edge {
-                    Some(edge) => format!(
-                        "{}：{} 积分（最长边 {}）",
-                        price.quality, price.credit_cost, edge
-                    ),
-                    None => format!("{}：{} 积分", price.quality, price.credit_cost),
-                })
-                .collect::<Vec<_>>()
-                .join(" · ")
-                .into(),
-            price_1k: model_price(model, "1K"),
-            price_2k: model_price(model, "2K"),
-            price_4k: model_price(model, "4K"),
-            price_standard: model_credit_cost(model, "standard").into(),
-            video_price_480: model_credit_cost(model, "480P").into(),
-            video_price_720: model_credit_cost(model, "720P").into(),
-            video_price_1080: model_credit_cost(model, "1080P").into(),
-            supports_image_edit: model_supports_task_type(model, "image_edit")
-                && model_capability_enabled(model, "supports_masks"),
-            supports_style_analysis: model_supports_task_type(model, "image_style_analysis")
-                && model_capability_enabled(model, "supports_references")
-                && model_supports_operation(model, "analyze_style"),
-        })
-        .collect::<Vec<_>>();
-    let video_model_options = catalog_models
-        .iter()
-        .filter(|model| model.purpose == "video_generation")
-        .cloned()
-        .collect::<Vec<_>>();
-    state.set_catalog_models(ModelRc::new(VecModel::from(catalog_models)));
-    state.set_video_model_options(ModelRc::new(VecModel::from(video_model_options)));
-
-    let image_models = available_models
-        .iter()
-        .filter(|item| item.purpose == "image_generation")
-        .map(|item| ModelOptionData {
-            code: item.code.clone(),
-            name: model_display_name(item),
-        })
-        .collect::<Vec<_>>();
-    let prompt_models = available_models
-        .iter()
-        .filter(|item| item.purpose == "prompt_processing")
-        .map(|item| ModelOptionData {
-            code: item.code.clone(),
-            name: item.name.clone(),
-        })
-        .collect::<Vec<_>>();
-    let selected_image_code = state.get_image_model().to_string();
-    let selected_image = available_models
-        .iter()
-        .find(|item| item.purpose == "image_generation" && item.code == selected_image_code)
-        .or_else(|| {
-            available_models
-                .iter()
-                .find(|item| item.code == "openai_image")
-        })
-        .or_else(|| {
-            available_models
-                .iter()
-                .find(|item| item.purpose == "image_generation")
-        });
-    let selected_prompt_code = state.get_reasoning_model().to_string();
-    let selected_prompt = available_models
-        .iter()
-        .find(|item| item.purpose == "prompt_processing" && item.code == selected_prompt_code)
-        .or_else(|| {
-            available_models
-                .iter()
-                .find(|item| item.code == "gpt_5_6_sol")
-        })
-        .or_else(|| {
-            available_models
-                .iter()
-                .find(|item| item.purpose == "prompt_processing")
-        });
-    let selected_video_code = state.get_video_model().to_string();
-    let selected_video = select_video_catalog_model(available_models, &selected_video_code);
-    let mut model_groups = Vec::new();
-    if !image_models.is_empty() {
-        model_groups.push(model_group(
-            "image",
-            "平台图像模型",
-            image_models.clone(),
-            selected_image
-                .map(|model| model.code.as_str())
-                .unwrap_or_default(),
-        ));
-    }
-    if !prompt_models.is_empty() {
-        model_groups.push(model_group(
-            "reasoning",
-            "平台提示词模型",
-            prompt_models.clone(),
-            selected_prompt
-                .map(|model| model.code.as_str())
-                .unwrap_or_default(),
-        ));
-    }
-    {
-        let mut store = context.store.borrow_mut();
-        store.model_groups = model_groups;
-        push_model_groups(app, &store);
-    }
-    if let Some(model) = selected_image {
-        apply_image_model(&state, model);
-    } else {
-        clear_image_model_authority(&state);
-    }
-    if let Some(model) = selected_prompt {
-        state.set_reasoning_model(model.code.clone().into());
-        state.set_reasoning_model_name(model.name.clone().into());
-    } else {
-        clear_reasoning_model_authority(&state);
-    }
-    if let Some(model) = selected_video {
-        state.set_video_model(model.code.clone().into());
-        state.set_video_model_name(model_display_name(model).into());
-        state.set_video_model_description(model_capabilities_text(model).into());
-        state.set_video_service_available(true);
-        sync_video_resolutions(&state);
-    } else {
-        state.set_video_model("".into());
-        state.set_video_model_name("".into());
-        state.set_video_model_description("".into());
-        state.set_video_service_available(false);
-        sync_video_resolutions(&state);
-    }
-    sync_style_analysis_selection(&state);
-    if available_models.is_empty() {
-        state.set_model_catalog_message("".into());
-    }
+    let mut ui = PreparedUiProjection::default();
+    let groups = prepare_model_catalog_projection(
+        &mut ui, available_models, state.get_image_model().as_str(),
+        state.get_reasoning_model().as_str(), state.get_video_model().as_str(),
+    );
+    context.store.borrow_mut().model_groups = groups;
+    ui.publish(&state);
 }
 
 fn model_group(
@@ -2852,14 +2719,6 @@ fn model_supports_operation(model: &ModelCatalogItem, operation: &str) -> bool {
                 .iter()
                 .any(|value| value.as_str() == Some(operation))
         })
-}
-
-fn apply_image_model(state: &AppState, model: &ModelCatalogItem) {
-    state.set_image_model(model.code.clone().into());
-    state.set_image_model_name(model_display_name(model).into());
-    state.set_image_price_1k(model_price(model, "1K"));
-    state.set_image_price_2k(model_price(model, "2K"));
-    state.set_image_price_4k(model_price(model, "4K"));
 }
 
 fn clear_image_model_authority(state: &AppState) {
@@ -3408,6 +3267,124 @@ mod tests {
     }
 
     #[test]
+    fn regeneration_credit_cost_tracks_original_model_quality_and_catalog_refresh() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let context = AppContext::default();
+        wire_model_catalog_callbacks(&app, context.store.clone());
+        let state = app.global::<AppState>();
+        let mut models = owner_catalog_models();
+        let mut original = models[0].clone();
+        original.code = "original-image".into();
+        original.prices[1].credit_cost = "9007199254740993".into();
+        models.push(original);
+        apply_model_catalog_projection(&app, &context, &models);
+        state.set_viewer_model("original-image".into());
+        state.set_viewer_quality("2K".into());
+        state.set_quality("4K".into());
+        state.set_count(4);
+        assert_eq!(state.get_viewer_regeneration_credit_cost(), "9007199254740993");
+        assert_eq!(state.get_image_model(), "openai_image");
+
+        state.set_viewer_quality("1K".into());
+        assert_eq!(state.get_viewer_regeneration_credit_cost(), "11");
+        state.set_viewer_model("openai_image".into());
+        state.set_viewer_quality("4K".into());
+        assert_eq!(state.get_viewer_regeneration_credit_cost(), "33");
+        models[0].prices[2].credit_cost = "57".into();
+        let mut snapshot = unavailable_finance_snapshot("owner", false);
+        snapshot.models = Some(models.clone());
+        prepare_activation_backend_projection(&snapshot, "original-image", "openai_prompt", "seedance", "")
+            .ui.publish(&state);
+        assert_eq!(state.get_viewer_regeneration_credit_cost(), "57");
+
+        state.set_viewer_quality("missing-quality".into());
+        assert!(state.get_viewer_regeneration_credit_cost().is_empty());
+        state.set_viewer_quality("2K".into());
+        state.set_viewer_model("removed-model".into());
+        assert!(state.get_viewer_regeneration_credit_cost().is_empty());
+        state.set_viewer_model("openai_prompt".into());
+        state.set_viewer_quality("standard".into());
+        assert!(state.get_viewer_regeneration_credit_cost().is_empty());
+        state.set_viewer_model("openai_image".into());
+        state.set_viewer_quality("1K".into());
+        models[0].prices[0].credit_cost = "0".into();
+        apply_model_catalog_projection(&app, &context, &models);
+        assert_eq!(state.get_viewer_regeneration_credit_cost(), "0");
+        apply_model_catalog_projection(&app, &context, &[]);
+        assert!(state.get_viewer_regeneration_credit_cost().is_empty());
+    }
+
+    #[test]
+    fn unified_catalog_refresh_preserves_all_selected_models_and_updates_prices() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let context = AppContext::default();
+        let state = app.global::<AppState>();
+        let mut models = owner_catalog_models();
+        let mut preferred = models[0].clone();
+        preferred.code = "preferred-image".into();
+        preferred.name = "Preferred Image".into();
+        preferred.prices[1].credit_cost = "47".into();
+        models.push(preferred);
+        let mut snapshot = unavailable_finance_snapshot("owner", false);
+        snapshot.models = Some(models.clone());
+        prepare_activation_backend_projection(&snapshot, "preferred-image", "openai_prompt", "seedance", "")
+            .ui.publish(&state);
+        assert_eq!(state.get_image_model(), "preferred-image");
+        assert_eq!(state.get_image_price_2k(), 47);
+
+        models.reverse();
+        models.iter_mut().find(|model| model.code == "preferred-image").unwrap().prices[1].credit_cost = "53".into();
+        for prepared in [false, true] {
+            if prepared {
+                snapshot.models = Some(models.clone());
+                prepare_activation_backend_projection(&snapshot, state.get_image_model().as_str(),
+                    state.get_reasoning_model().as_str(), state.get_video_model().as_str(), "").ui.publish(&state);
+            } else {
+                apply_model_catalog_projection(&app, &context, &models);
+            }
+            assert_eq!(state.get_image_model(), "preferred-image");
+            assert_eq!(state.get_image_model_name(), "Preferred Image");
+            assert_eq!(state.get_image_price_2k(), 53);
+            assert_eq!(state.get_reasoning_model(), "openai_prompt");
+            assert_eq!(state.get_video_model(), "seedance");
+            assert_eq!(state.get_catalog_models().row_count(), 4);
+            assert_eq!(state.get_video_model_options().row_count(), 1);
+        }
+    }
+
+    #[test]
+    fn unified_catalog_refresh_uses_matching_purpose_for_defaults_and_clears_unavailable_models() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        let context = AppContext::default();
+        let state = app.global::<AppState>();
+        let mut models = owner_catalog_models();
+        models[0].purpose = "prompt_processing".into();
+        let mut image = models[0].clone();
+        image.code = "available-image".into();
+        image.purpose = "image_generation".into();
+        models.push(image);
+        for prepared in [false, true] {
+            state.set_image_model("removed-image".into());
+            if prepared {
+                let mut ui = PreparedUiProjection::default();
+                prepare_model_catalog_projection(&mut ui, &models, "removed-image", "", "");
+                ui.publish(&state);
+            } else {
+                apply_model_catalog_projection(&app, &context, &models);
+            }
+            assert_eq!(state.get_image_model(), "available-image");
+        }
+        apply_model_catalog_projection(&app, &context, &[]);
+        assert!(state.get_image_model().is_empty());
+        assert_eq!(state.get_image_price_2k(), 0);
+        assert!(state.get_reasoning_model().is_empty());
+        assert!(state.get_video_model().is_empty());
+    }
+
+    #[test]
     fn core_prompt_catalog_projection_preserves_saved_gpt_5_6_first_fallback() {
         i_slint_backend_testing::init_no_event_loop();
         // Deliberately place the generic model before both preferred candidates.
@@ -3430,7 +3407,7 @@ mod tests {
             let state = app.global::<AppState>();
 
             let mut prepared = PreparedUiProjection::default();
-            prepare_activation_catalog_projection(&mut prepared, &models, "", saved, "");
+            prepare_model_catalog_projection(&mut prepared, &models, "", saved, "");
             state.set_reasoning_model("previous_projection".into());
             prepared.publish(&state);
             assert_eq!(state.get_reasoning_model().as_str(), expected, "prepared / {saved}");

@@ -1,17 +1,34 @@
 use super::*;
 
-fn dismiss_contact_popup(app: &AppWindow, store: &Rc<RefCell<Store>>) {
-    app.global::<AppState>().set_contact_popup_open(false);
-    let mut store_mut = store.borrow_mut();
-    if !store_mut.contact_popup_dismissed {
-        store_mut.contact_popup_dismissed = true;
-        save_local_store(app, &store_mut);
+pub(super) fn initialize_contact_popup(app: &AppWindow) {
+    let state = app.global::<AppState>();
+    state.set_contact_popup_open(state.get_contact_popup_last_shown_version() != env!("CARGO_PKG_VERSION"));
+}
+
+fn record_contact_popup_shown(app: &AppWindow) {
+    let state = app.global::<AppState>();
+    if state.get_contact_popup_last_shown_version() == env!("CARGO_PKG_VERSION") { return; }
+    state.set_contact_popup_last_shown_version(env!("CARGO_PKG_VERSION").into());
+    save_device_settings(app);
+}
+
+fn dismiss_contact_popup(app: &AppWindow) {
+    if app.global::<AppState>().get_contact_popup_open() {
+        record_contact_popup_shown(app);
+        app.global::<AppState>().set_contact_popup_open(false);
     }
 }
 
 pub(super) fn wire_contact_callbacks(app: &AppWindow, context: AppContext) {
     let state = app.global::<AppState>();
     let store = context.store.clone();
+
+    {
+        let app_weak = app.as_weak();
+        state.on_contact_popup_shown(move || {
+            if let Some(app) = app_weak.upgrade() { record_contact_popup_shown(&app); }
+        });
+    }
 
     {
         let app_weak = app.as_weak();
@@ -56,15 +73,11 @@ pub(super) fn wire_contact_callbacks(app: &AppWindow, context: AppContext) {
 
     {
         let app_weak = app.as_weak();
-        let store = store.clone();
-        let context = context.clone();
         state.on_dismiss_contact_popup(move || {
-            let Some(backend) = context.backend.as_ref() else { return; };
-            let Ok(_effect) = backend.api.upgrade_latch().begin_ordinary_blocking_effect() else { return; };
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            dismiss_contact_popup(&app, &store);
+            dismiss_contact_popup(&app);
         });
     }
 
@@ -76,7 +89,7 @@ pub(super) fn wire_contact_callbacks(app: &AppWindow, context: AppContext) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            dismiss_contact_popup(&app, &store);
+            dismiss_contact_popup(&app);
             let state = app.global::<AppState>();
             state.set_settings_section("contact".into());
             navigate_to_with_store(&app, &store.borrow(), "settings");
@@ -90,6 +103,38 @@ mod tests {
     use super::*;
     use i_slint_backend_testing::ElementHandle;
     use slint::platform::PointerEventButton;
+
+    #[test]
+    fn contact_popup_is_shown_once_per_version_even_without_dismissal() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        wire_contact_callbacks(&app, AppContext::default());
+        let state = app.global::<AppState>();
+        for last_version in ["", "0.0.0", env!("CARGO_PKG_VERSION")] {
+            crate::runtime::app::apply_startup_device_state(&app, DeviceSettings {
+                contact_popup_last_shown_version: last_version.into(), ..Default::default()
+            }, None);
+            assert_eq!(state.get_contact_popup_open(), last_version != env!("CARGO_PKG_VERSION"));
+            if state.get_contact_popup_open() {
+                state.invoke_contact_popup_shown();
+                assert_eq!(state.get_contact_popup_last_shown_version(), env!("CARGO_PKG_VERSION"));
+                assert!(state.get_contact_popup_open());
+                initialize_contact_popup(&app);
+                assert!(!state.get_contact_popup_open());
+            }
+        }
+    }
+
+    #[test]
+    fn contact_popup_can_be_dismissed_before_backend_is_available() {
+        i_slint_backend_testing::init_no_event_loop();
+        let app = AppWindow::new().unwrap();
+        wire_contact_callbacks(&app, AppContext::default());
+        initialize_contact_popup(&app);
+        app.global::<AppState>().invoke_dismiss_contact_popup();
+        assert!(!app.global::<AppState>().get_contact_popup_open());
+        assert_eq!(app.global::<AppState>().get_contact_popup_last_shown_version(), env!("CARGO_PKG_VERSION"));
+    }
 
     #[test]
     fn sidebar_contact_opens_contact_page_below_notifications_in_both_widths() {

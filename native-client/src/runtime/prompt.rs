@@ -321,9 +321,7 @@ pub(super) fn build_generation_prompt(
         }
     }
     final_prompt = append_negative_prompt_instruction(&final_prompt, negative_prompt, language);
-    final_prompt =
-        append_parameter_priority_instruction(&final_prompt, category, ratio, quality, language);
-    append_category_generation_instruction(&final_prompt, category, language)
+    append_parameter_priority_instruction(&final_prompt, category, ratio, quality, language)
 }
 
 pub(super) fn build_generation_prompt_for_destination(
@@ -934,6 +932,17 @@ pub(super) fn append_parameter_priority_instruction(
     quality: &str,
     language: PromptLanguage,
 ) -> String {
+    if category == "ui" {
+        return if language == PromptLanguage::Chinese {
+            format!(
+                "{prompt}\n\nUI 生成规则：画面内容、组件种类、组件数量和布局以用户输入为准；所选创作方式仅作为参考，不得覆盖用户明确描述。不要自动扩展为整套 UI、组件图集或完整界面，除非用户明确要求。最终宽高比：{ratio}。最终清晰度：{quality}。应用会按所选张数调用生图模型。"
+            )
+        } else {
+            format!(
+                "{prompt}\n\nUI generation rule: follow the user's description for content, component types, count, and layout. The selected creation mode is guidance only and must not override an explicit user request. Do not expand the request into a full UI set, component atlas, or complete screen unless the user asks for one. Final aspect ratio: {ratio}. Final quality: {quality}. The application requests the selected image count from the image model."
+            )
+        };
+    }
     if language == PromptLanguage::Chinese {
         format!(
             "{prompt}\n\n参数优先规则：左侧工作台分类和下方已选择的卡片为最终参数，并覆盖用户提示词中冲突的描述。最终分类：{category}。最终宽高比：{ratio}。最终清晰度：{quality}。应用会按所选张数调用生图模型。除非用户明确要求拼图、网格、分屏或多画面构图，否则不要在一张画布里生成多张图。"
@@ -945,28 +954,16 @@ pub(super) fn append_parameter_priority_instruction(
     }
 }
 
-pub(super) fn append_category_generation_instruction(
-    prompt: &str,
-    category: &str,
-    _language: PromptLanguage,
-) -> String {
-    if category != "ui" {
-        return prompt.to_string();
-    }
-
-    format!(
-        "{prompt}\n\nUI component atlas rule (mandatory): Create one clean 2D mobile RPG game UI sprite sheet on a flat warm-white background. Visual target: polished casual-game art, smooth solid color fills, crisp dark-navy outlines, simple two-step cel shading, small controlled highlights, rounded geometric shapes, consistent line weight, and clear colorful pictograms. Keep every surface visually smooth and every icon immediately readable at thumbnail size. Use the user's words only for theme, palette, and motif; keep this clean rendering unless the user explicitly names a different rendering method such as pixel art or flat vector art. Arrange about 40 isolated front-facing sprites in a balanced 6-column atlas with even white gutters. Include: four portrait frames; four health or energy bars; six inventory slots; six circular skill icons; four icon-only buttons; one virtual joystick; one minimap frame; four coins or gems; one settings gear; four treasure chests; and two blank dialog or inventory panels. Add a few matching keys, potions, status markers, or panel corners when space remains. Every element must be a separate reusable sprite with a complete silhouette and practical game function. Button faces stay blank and all communication is through icons. The canvas contains only isolated UI sprites and whitespace."
-    )
-}
-
 pub(super) fn display_generation_prompt(prompt: &str) -> String {
     let normalized = prompt.replace("\r\n", "\n");
     let hidden_prefixes = [
         "生成控制：",
         "参数优先规则：",
+        "UI 生成规则：",
         "UI 组件图集规则（必须遵守）：",
         "Generation controls:",
         "Parameter priority rule:",
+        "UI generation rule:",
         "UI component atlas rule (mandatory):",
     ];
     normalized

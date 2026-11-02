@@ -121,13 +121,15 @@ export global AppState {
     callback retry-payment-browser();
     callback sync-payment-qr(float, float, float, float);
     callback dismiss-contact-popup();
+    callback contact-popup-shown();
     callback open-contact-settings();
     callback copy-contact-detail(string);
     callback open-external-link(string);
     callback process-external-image-drops();
     in-out property <string> page: "welcome";
     in-out property <bool> sidebar-collapsed: false;
-    in-out property <bool> contact-popup-open: true;
+    in-out property <bool> contact-popup-open: false;
+    in-out property <string> contact-popup-last-shown-version: "";
     in-out property <bool> contact-copy-toast-visible: false;
     in-out property <int> contact-copy-sequence: 0;
     in-out property <string> language: "zh";
@@ -445,6 +447,10 @@ export global AppState {
     in-out property <bool> deep-optimization-can-apply: false;
     in-out property <bool> deep-optimization-can-clear-stable-feedback: false;
     out property <bool> deep-optimization-active: deep-optimization-job-id != "";
+    out property <bool> deep-optimization-record-available:
+        deep-optimization-applied-chinese != ""
+        && prompt == deep-optimization-applied-chinese
+        && deep-optimization-applied-english != "";
     in-out property <[ReferenceItem]> references: [];
     in-out property <string> quote-title: "";
     in-out property <string> quote-prompt: "";
@@ -690,6 +696,8 @@ export global AppState {
     in-out property <string> viewer-ratio: "";
     in-out property <string> viewer-quality: "";
     in-out property <string> viewer-model: "";
+    pure callback model-credit-cost([CatalogModelView], string, string) -> string;
+    out property <string> viewer-regeneration-credit-cost: model-credit-cost(catalog-models, viewer-model, viewer-quality);
     in-out property <bool> viewer-repeat-enabled: true;
     in-out property <int> viewer-width: 0;
     in-out property <int> viewer-height: 0;
@@ -914,6 +922,8 @@ export global AppState {
     callback cancel-update();
     callback remove-prompt-history(string);
     callback clear-prompt-history();
+    callback restore-prompt-history(string);
+    callback refresh-prompt-history();
     callback normalize-prompt-editor-text(string, string) -> string;
     callback toggle-custom-prompt-selection(string);
     callback prepare-custom-prompt-insertion(string, int) -> PromptTextEdit;

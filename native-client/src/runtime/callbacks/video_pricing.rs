@@ -90,7 +90,7 @@ pub(super) fn wire_video_price_refresh(app: &AppWindow, context: AppContext) {
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let _activity = activity;
-            let result = AccountApi::new(backend.api.clone()).video_model_catalog(&worker_scope);
+            let result = AccountApi::new(backend.api.clone()).model_catalog(&worker_scope);
             let _ = tx.send(result);
         });
         let weak = app.as_weak();
@@ -197,6 +197,7 @@ pub(super) fn wire_video_submission(
             };
             drop(key);
             let captured_epoch = epoch.fetch_add(1, Ordering::SeqCst) + 1;
+            state.set_video_progress(0);
             state.set_video_generating(true);
             state.set_video_quote_loading(true);
             state.set_video_status("正在准备图片并校验价格...".into());

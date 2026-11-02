@@ -471,6 +471,7 @@ struct Store {
     references: ReferenceGroups,
     prompt_drafts: PromptDrafts,
     dismissed_prompt_history: BTreeSet<String>,
+    saved_prompt_history: Vec<PromptHistoryEntry>,
     custom_prompts: Vec<String>,
     selected_custom_prompts: BTreeMap<String, BTreeSet<String>>,
     custom_prompt_times: BTreeMap<String, String>,
@@ -758,6 +759,8 @@ struct LocalStoreData {
     #[serde(default)]
     dismissed_prompt_history: BTreeSet<String>,
     #[serde(default)]
+    saved_prompt_history: Vec<PromptHistoryEntry>,
+    #[serde(default)]
     custom_prompts: Vec<String>,
     #[serde(default)]
     selected_custom_prompts: BTreeMap<String, BTreeSet<String>>,
@@ -786,9 +789,40 @@ struct LocalStoreData {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
+struct PromptHistoryEntry {
+    prompt: String,
+    #[serde(default)]
+    english_prompt: String,
+    #[serde(default)]
+    category: String,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct DeepPromptBinding {
     chinese: String,
     english: String,
+    #[serde(default)]
+    record: Option<DeepPromptOptimizationRecord>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct DeepPromptOptimizationRecord {
+    #[serde(default)]
+    original_prompt: String,
+    #[serde(default)]
+    chinese_prompt: String,
+    #[serde(default)]
+    english_prompt: String,
+    #[serde(default)]
+    baseline_score: i32,
+    #[serde(default)]
+    current_score: i32,
+    #[serde(default)]
+    completed_rounds: i32,
+    #[serde(default)]
+    consumed_credits: String,
+    #[serde(default)]
+    change_summary: String,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -912,6 +946,7 @@ impl LegacyUserProfileData {
             generation_gallery_layout: self.ui_preferences.generation_gallery_layout.clone(),
             asset_gallery_layout: self.ui_preferences.asset_gallery_layout.clone(),
             inspiration_gallery_layout: self.ui_preferences.inspiration_gallery_layout.clone(),
+            contact_popup_last_shown_version: String::new(),
         }
         .normalized()
     }
@@ -929,6 +964,7 @@ struct DeviceSettings {
     generation_gallery_layout: String,
     asset_gallery_layout: String,
     inspiration_gallery_layout: String,
+    contact_popup_last_shown_version: String,
 }
 
 impl Default for DeviceSettings {
@@ -943,6 +979,7 @@ impl Default for DeviceSettings {
             generation_gallery_layout: default_gallery_layout(),
             asset_gallery_layout: default_gallery_layout(),
             inspiration_gallery_layout: default_gallery_layout(),
+            contact_popup_last_shown_version: String::new(),
         }
     }
 }
@@ -973,6 +1010,7 @@ impl DeviceSettings {
             asset_gallery_layout: normalize_gallery_layout(&self.asset_gallery_layout).into(),
             inspiration_gallery_layout: normalize_gallery_layout(&self.inspiration_gallery_layout)
                 .into(),
+            contact_popup_last_shown_version: self.contact_popup_last_shown_version.trim().into(),
         }
     }
 }

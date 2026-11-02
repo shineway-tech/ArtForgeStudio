@@ -71,6 +71,7 @@ pub(super) fn wire_deferred_video_generation_callbacks(app: &AppWindow, context:
                 }
                 let state = app.global::<AppState>();
                 let page = state.get_video_return_page();
+                state.set_video_player_open(false);
                 state.set_page(if page.is_empty() {
                     "assets".into()
                 } else {
@@ -446,9 +447,9 @@ pub(super) fn wire_video_generation_callbacks(app: &AppWindow, context: AppConte
                 return;
             }
             quote_epoch.fetch_add(1, Ordering::SeqCst);
-            close_video_player();
             let state = app.global::<AppState>();
             state.set_video_player_open(false);
+            close_video_player();
             if state.get_video_quote_loading() {
                 state.set_video_generating(false);
             }
@@ -916,6 +917,7 @@ mod tests {
             capabilities: "支持图生视频".into(),
             capability_json: serde_json::json!({"aspect_ratios":["16:9","9:16"], "duration_secs":{"min":4,"max":15}}).to_string().into(),
             pricing: String::new().into(),
+            prices: ModelRc::default(),
             price_1k: 0,
             price_2k: 0,
             price_4k: 0,

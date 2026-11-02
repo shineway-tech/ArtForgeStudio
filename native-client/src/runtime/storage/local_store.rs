@@ -189,6 +189,7 @@ pub(super) fn prepare_private_store(data: LocalStoreData) -> PreparedPrivateStor
         store_mut.video_outputs = data.video_outputs;
         store_mut.prompt_drafts = data.prompt_drafts;
         store_mut.dismissed_prompt_history = data.dismissed_prompt_history;
+        store_mut.saved_prompt_history = data.saved_prompt_history;
         let migrated_prompt_drafts = normalize_reserved_prompt_drafts(&mut store_mut.prompt_drafts);
         store_mut.custom_prompts = normalize_custom_prompts(data.custom_prompts);
         store_mut.selected_custom_prompts = data.selected_custom_prompts;
@@ -253,6 +254,8 @@ pub(super) fn prepare_private_store(data: LocalStoreData) -> PreparedPrivateStor
             .collect();
         store_mut.legacy_deep_prompt_job_id = data.deep_prompt_job_id.trim().to_string();
         store_mut.deep_prompt_bindings = data.deep_prompt_bindings;
+        migrate_legacy_prompt_history(&mut store_mut);
+        archive_legacy_deep_bindings(&mut store_mut);
         store_mut.pending_credit_redemptions_by_owner = data.pending_credit_redemptions_by_owner;
         store_mut.contact_popup_dismissed = data.contact_popup_dismissed;
         let original_prompt_times = store_mut.custom_prompt_times.clone();
@@ -311,6 +314,7 @@ fn apply_local_store_data(
         store_mut.notifications = data.notifications;
         store_mut.prompt_drafts = data.prompt_drafts;
         store_mut.dismissed_prompt_history = data.dismissed_prompt_history;
+        store_mut.saved_prompt_history = data.saved_prompt_history;
         let migrated_prompt_drafts = normalize_reserved_prompt_drafts(&mut store_mut.prompt_drafts);
         store_mut.custom_prompts = normalize_custom_prompts(data.custom_prompts);
         store_mut.selected_custom_prompts = data.selected_custom_prompts;
@@ -375,6 +379,8 @@ fn apply_local_store_data(
             .collect();
         store_mut.legacy_deep_prompt_job_id = data.deep_prompt_job_id.trim().to_string();
         store_mut.deep_prompt_bindings = data.deep_prompt_bindings;
+        migrate_legacy_prompt_history(&mut store_mut);
+        archive_legacy_deep_bindings(&mut store_mut);
         store_mut.pending_credit_redemptions_by_owner = data.pending_credit_redemptions_by_owner;
         store_mut.contact_popup_dismissed = data.contact_popup_dismissed;
         let original_prompt_times = store_mut.custom_prompt_times.clone();
@@ -404,7 +410,6 @@ fn apply_local_store_data(
             || store_mut.custom_prompt_times != original_prompt_times
     };
     let state = app.global::<AppState>();
-    state.set_contact_popup_open(!store.borrow().contact_popup_dismissed);
     state.set_image_model(saved_image_model.into());
     state.set_reasoning_model(saved_reasoning_model.into());
     state.set_video_model(saved_video_model.into());
@@ -451,21 +456,90 @@ pub(super) fn dismiss_prompt_history_entry(store: &mut Store, prompt: &str) -> b
     !prompt.is_empty() && store.dismissed_prompt_history.insert(prompt.to_string())
 }
 
-pub(super) fn clear_prompt_history_entries(store: &mut Store) -> bool {
-    let prompts = store
-        .generations
-        .iter()
-        .map(|item| item.prompt.trim())
-        .filter(|prompt| !prompt.is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
+pub(super) fn prompt_history_key(category: &str, prompt: &str) -> String {
+    format!("{category}\u{1f}{}", prompt.trim())
+}
+
+pub(super) fn prompt_history_is_dismissed(store: &Store, category: &str, prompt: &str) -> bool {
+    store.dismissed_prompt_history.contains(prompt.trim())
+        || store.dismissed_prompt_history.contains(&prompt_history_key(category, prompt))
+}
+
+pub(super) fn dismiss_prompt_history_for_category(store: &mut Store, category: &str, prompt: &str) -> bool {
+    let prompt = prompt.trim();
+    !prompt.is_empty() && store.dismissed_prompt_history.insert(prompt_history_key(category, prompt))
+}
+
+pub(super) fn archive_prompt_version(store: &mut Store, category: &str, prompt: &str, english: &str) {
+    let prompt = prompt.trim();
+    if prompt.is_empty() { return; }
+    if let Some(entry) = store.saved_prompt_history.iter_mut().find(|entry| entry.category == category && entry.prompt == prompt) {
+        if entry.english_prompt.is_empty() && !english.trim().is_empty() {
+            entry.english_prompt = english.trim().to_string();
+        }
+        return;
+    }
+    store.saved_prompt_history.insert(0, PromptHistoryEntry {
+        prompt: prompt.to_string(), english_prompt: english.trim().to_string(), category: category.to_string(),
+    });
+}
+
+fn migrate_legacy_prompt_history(store: &mut Store) {
+    for _ in 0..store.saved_prompt_history.len() {
+        let mut changed = false;
+        for index in 0..store.saved_prompt_history.len() {
+            if !store.saved_prompt_history[index].category.is_empty() { continue; }
+            let prompt = store.saved_prompt_history[index].prompt.trim();
+            let categories = ["character", "scene", "ui", "effect"].into_iter()
+                .filter(|category| {
+                    prompt_draft_for_category(&store.prompt_drafts, category).trim() == prompt
+                        || store.generations.iter().any(|item| item.category == *category && item.prompt.trim() == prompt)
+                        || store.deep_prompt_bindings.get(*category).is_some_and(|binding|
+                            binding.chinese.trim() == prompt || binding.english.trim() == prompt)
+                        || store.saved_prompt_history.iter().any(|entry| entry.category == *category
+                            && entry.english_prompt.trim() == prompt)
+                })
+                .collect::<Vec<_>>();
+            if categories.len() == 1 {
+                store.saved_prompt_history[index].category = categories[0].to_string();
+                changed = true;
+            }
+        }
+        if !changed { break; }
+    }
+}
+
+fn archive_legacy_deep_bindings(store: &mut Store) {
+    for (category, binding) in store.deep_prompt_bindings.clone() {
+        archive_prompt_version(store, &category, &binding.english, "");
+        archive_prompt_version(store, &category, &binding.chinese, &binding.english);
+    }
+}
+
+pub(super) fn all_prompt_history(store: &Store, category: &str) -> Vec<String> {
+    recent_prompt_history(
+        store.saved_prompt_history.iter().filter(|entry| entry.category == category).map(|entry| entry.prompt.as_str())
+            // Include bindings saved by older clients before version history existed.
+            .chain(store.deep_prompt_bindings.get(category).into_iter().flat_map(|binding| [binding.chinese.as_str(), binding.english.as_str()]))
+            .chain(store.generations.iter().filter(|item| item.category == category).map(|item| item.prompt.as_str())),
+        usize::MAX,
+    )
+}
+
+pub(super) fn clear_prompt_history_entries(store: &mut Store, category: &str) -> bool {
+    let prompts = all_prompt_history(store, category);
     let previous_len = store.dismissed_prompt_history.len();
-    store.dismissed_prompt_history.extend(prompts);
+    store.dismissed_prompt_history.extend(prompts.iter().map(|prompt| prompt_history_key(category, prompt)));
     store.dismissed_prompt_history.len() != previous_len
 }
 
 pub(super) fn reveal_prompt_history_entry(store: &mut Store, prompt: &str) -> bool {
     store.dismissed_prompt_history.remove(prompt.trim())
+}
+
+pub(super) fn reveal_prompt_history_for_category(store: &mut Store, category: &str, prompt: &str) -> bool {
+    let scoped = store.dismissed_prompt_history.remove(&prompt_history_key(category, prompt));
+    reveal_prompt_history_entry(store, prompt) || scoped
 }
 
 pub(super) fn prompt_draft_for_category(drafts: &PromptDrafts, category: &str) -> String {
@@ -536,11 +610,35 @@ pub(super) fn sync_deep_prompt_binding_for_category(
         if !binding.english.trim().is_empty() && visible_prompt == binding.chinese.trim() {
             state.set_deep_optimization_applied_chinese(binding.chinese.clone().into());
             state.set_deep_optimization_applied_english(binding.english.clone().into());
+            if let Some(record) = &binding.record {
+                state.set_deep_optimization_original_prompt(record.original_prompt.clone().into());
+                state.set_deep_optimization_chinese_prompt(record.chinese_prompt.clone().into());
+                state.set_deep_optimization_english_prompt(record.english_prompt.clone().into());
+                state.set_deep_optimization_baseline_score(record.baseline_score);
+                state.set_deep_optimization_current_score(record.current_score);
+                state.set_deep_optimization_completed_rounds(record.completed_rounds);
+                state.set_deep_optimization_consumed_credits(record.consumed_credits.clone().into());
+                state.set_deep_optimization_change_summary(record.change_summary.clone().into());
+                state.set_deep_optimization_stage("complete".into());
+                state.set_deep_optimization_can_apply(false);
+            } else {
+                // Older stores only retained the bilingual binding. It is still a valid
+                // optimization record, so expose the two saved versions in the viewer.
+                state.set_deep_optimization_original_prompt("".into());
+                state.set_deep_optimization_chinese_prompt(binding.chinese.clone().into());
+                state.set_deep_optimization_english_prompt(binding.english.clone().into());
+                state.set_deep_optimization_change_summary("深度优化结果已保存，可查看中英文版本。".into());
+                state.set_deep_optimization_stage("complete".into());
+                state.set_deep_optimization_can_apply(false);
+            }
             return;
         }
     }
     state.set_deep_optimization_applied_chinese("".into());
     state.set_deep_optimization_applied_english("".into());
+    state.set_deep_optimization_chinese_prompt("".into());
+    state.set_deep_optimization_english_prompt("".into());
+    state.set_deep_optimization_change_summary("".into());
 }
 
 pub(super) const MAX_CUSTOM_PROMPTS: usize = 100;
@@ -941,6 +1039,7 @@ pub(super) fn local_store_data(app: &AppWindow, store: &Store) -> LocalStoreData
         video_model: state.get_video_model().to_string(),
         prompt_drafts: store.prompt_drafts.clone(),
         dismissed_prompt_history: store.dismissed_prompt_history.clone(),
+        saved_prompt_history: store.saved_prompt_history.clone(),
         custom_prompts: store.custom_prompts.clone(),
         selected_custom_prompts: store.selected_custom_prompts.clone(),
         custom_prompt_times: store.custom_prompt_times.clone(),
@@ -1010,6 +1109,7 @@ where
 {
     let item_id = item.id.clone();
     let notification_id = notification.id.clone();
+    let history_category = item.category.clone();
     let revealed_prompt = reveal_prompt
         .map(str::trim)
         .filter(|prompt| !prompt.is_empty())
@@ -1017,9 +1117,11 @@ where
     let restore_dismissed_prompt = revealed_prompt
         .as_ref()
         .is_some_and(|prompt| store.dismissed_prompt_history.contains(prompt));
+    let restore_scoped_dismissal = revealed_prompt.as_ref().is_some_and(|prompt|
+        store.dismissed_prompt_history.contains(&prompt_history_key(&history_category, prompt)));
 
     if let Some(prompt) = revealed_prompt.as_deref() {
-        reveal_prompt_history_entry(store, prompt);
+        reveal_prompt_history_for_category(store, &history_category, prompt);
     }
     store.assets.insert(0, item.clone());
     if include_in_generations {
@@ -1040,8 +1142,13 @@ where
             store.notifications.remove(0);
         }
         if restore_dismissed_prompt {
-            if let Some(prompt) = revealed_prompt {
-                store.dismissed_prompt_history.insert(prompt);
+            if let Some(prompt) = revealed_prompt.as_ref() {
+                store.dismissed_prompt_history.insert(prompt.clone());
+            }
+        }
+        if restore_scoped_dismissal {
+            if let Some(prompt) = revealed_prompt.as_ref() {
+                store.dismissed_prompt_history.insert(prompt_history_key(&history_category, prompt));
             }
         }
         return Err(error);
@@ -1499,6 +1606,7 @@ pub(super) fn apply_device_settings(app: &AppWindow, settings: DeviceSettings) {
     state.set_generation_gallery_layout(settings.generation_gallery_layout.into());
     state.set_asset_gallery_layout(settings.asset_gallery_layout.into());
     state.set_inspiration_gallery_layout(settings.inspiration_gallery_layout.into());
+    state.set_contact_popup_last_shown_version(settings.contact_popup_last_shown_version.into());
 }
 
 fn device_settings_data(app: &AppWindow) -> DeviceSettings {
@@ -1513,6 +1621,7 @@ fn device_settings_data(app: &AppWindow) -> DeviceSettings {
         generation_gallery_layout: state.get_generation_gallery_layout().to_string(),
         asset_gallery_layout: state.get_asset_gallery_layout().to_string(),
         inspiration_gallery_layout: state.get_inspiration_gallery_layout().to_string(),
+        contact_popup_last_shown_version: state.get_contact_popup_last_shown_version().to_string(),
     }
     .normalized()
 }
@@ -1543,6 +1652,7 @@ mod device_profile_isolation_tests {
             generation_gallery_layout: "waterfall".into(),
             asset_gallery_layout: "waterfall".into(),
             inspiration_gallery_layout: "grid".into(),
+            contact_popup_last_shown_version: "2.0.0".into(),
         };
         apply_device_settings(&app, settings.clone());
         for nickname in ["Alice", "Bob", "Alice"] {

@@ -501,7 +501,17 @@ fn clear_active_video_player(lease: Option<&NamespaceLease>) {
     if let Some(active) = removed {
         active.cancel.store(true, Ordering::SeqCst);
         #[cfg(any(target_os = "windows", target_os = "macos"))]
-        desktop_video_player::close_exact(&active.cancel);
+        {
+            // WebView2 can still be inside a navigation or media callback after the HTML shell
+            // has been created. Dropping it from Back, regardless of whether player_ready has
+            // arrived, can re-enter its message pump and freeze the window. Hide the child now
+            // so it cannot cover the destination page, then release it on a later UI turn.
+            desktop_video_player::hide_exact(&active.cancel);
+            let cancel = active.cancel.clone();
+            slint::Timer::single_shot(Duration::from_millis(100), move || {
+                desktop_video_player::close_exact(&cancel);
+            });
+        }
     }
 }
 pub(super) fn close_video_player_for_retirement(lease: &NamespaceLease) {
@@ -516,12 +526,17 @@ pub(super) fn close_video_player_for_required_upgrade() {
     if let Some(lease) = lease { close_video_player_for_retirement(&lease); }
 }
 pub(super) fn close_video_player() {
-    let captured = ACTIVE_VIDEO_SESSION.with(|slot| slot.borrow().as_ref().map(|active|
-        (active.context.clone(), active.persistence.clone(), active.output.clone())));
-    if let Some((context, persistence, output)) = captured {
-        let _ = apply_video_player(&context, &persistence, &output, || clear_active_video_player(Some(persistence.lease())));
-        schedule_video_worker_reap();
+    let lease = ACTIVE_VIDEO_SESSION.with(|slot| slot.borrow().as_ref().map(|active| active.persistence.lease().clone()));
+    if let Some(lease) = lease {
+        // Closing is local lifecycle cleanup. Do not pass through the user-completion gate:
+        // that gate can be waiting on the same activity while a video is still loading.
+        clear_active_video_player(Some(&lease));
     }
+    // The Slint page can be destroyed after the session has already been retired by a
+    // lifecycle timer. In that case the native child still needs an independent cleanup pass.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    desktop_video_player::defer_close_any();
+    schedule_video_worker_reap();
 }
 pub(super) fn set_video_player_visible(visible: bool) {
     let captured = ACTIVE_VIDEO_SESSION.with(|slot| slot.borrow().as_ref().map(|active|
@@ -534,6 +549,46 @@ pub(super) fn set_video_player_visible(visible: bool) {
             let _ = (cancel, visible);
         });
     }
+}
+fn video_player_target_matches(app: &AppWindow, output: &SavedVideoOutput, preview_mode: bool) -> bool {
+    let state = app.global::<AppState>();
+    state.get_page() == "video-generation"
+        && !state.get_video_prompt_expanded_open()
+        && !state.get_recovered_prompt_result_open()
+        && state.get_video_image_dialog().is_empty()
+        && if preview_mode {
+            !state.get_video_player_open() && state.get_video_hover_preview_id() == output.key()
+        } else {
+            state.get_video_player_open() && state.get_video_result_path() == output.source_path
+        }
+}
+fn reconcile_video_player_target(app: &AppWindow, cancel: &Arc<AtomicBool>) -> bool {
+    let captured = ACTIVE_VIDEO_SESSION.with(|slot| slot.borrow().as_ref()
+        .filter(|active| Arc::ptr_eq(&active.cancel, cancel))
+        .map(|active| (active.persistence.lease().clone(), active.output.clone(), active.preview_mode)));
+    let Some((lease, output, preview_mode)) = captured else { return false; };
+    if !cancel.load(Ordering::SeqCst) && video_player_target_matches(app, &output, preview_mode) {
+        return true;
+    }
+    // Native child windows outlive Slint page components; retire this exact session.
+    clear_active_video_player(Some(&lease));
+    let state = app.global::<AppState>();
+    if state.get_video_hover_preview_id() == output.key() {
+        state.set_video_hover_preview_id("".into());
+    }
+    if state.get_page() != "video-generation" {
+        state.set_video_player_open(false);
+    }
+    schedule_video_worker_reap();
+    false
+}
+fn poll_video_player_lifecycle(weak: Weak<AppWindow>, cancel: Arc<AtomicBool>) {
+    slint::Timer::single_shot(Duration::from_millis(80), move || {
+        let Some(app) = weak.upgrade() else { cancel.store(true, Ordering::SeqCst); return; };
+        if reconcile_video_player_target(&app, &cancel) {
+            poll_video_player_lifecycle(weak, cancel);
+        }
+    });
 }
 pub(super) fn sync_video_player_captured(
     app: &AppWindow, context: &AppContext, persistence: PrivatePersistence,
@@ -583,6 +638,7 @@ pub(super) fn sync_video_player_captured(
         clear_active_video_player(Some(persistence.lease()));
         return Err(error);
     }
+    poll_video_player_lifecycle(app.as_weak(), cancel.clone());
     poll_video_player_preparation(app.as_weak(), context.clone(), persistence, output.clone(), cancel, receiver);
     Ok(())
 }
@@ -592,6 +648,12 @@ fn poll_video_player_preparation(
 ) {
     slint::Timer::single_shot(Duration::from_millis(30), move || {
         let _ = reap_video_player_workers();
+        let Some(app) = weak.upgrade() else { cancel.store(true, Ordering::SeqCst); return; };
+        if !reconcile_video_player_target(&app, &cancel) {
+            cancel.store(true, Ordering::SeqCst);
+            schedule_video_worker_reap();
+            return;
+        }
         let result = match receiver.try_recv() {
             Ok(result) => result,
             Err(TryRecvError::Empty) => {
@@ -600,7 +662,6 @@ fn poll_video_player_preparation(
             }
             Err(TryRecvError::Disconnected) => Err("播放器准备未完成".into()),
         };
-        let Some(app) = weak.upgrade() else { cancel.store(true, Ordering::SeqCst); return; };
         let mut result = Some(result);
         let applied = apply_video_player(&context, &persistence, &output, || {
             let session = ACTIVE_VIDEO_SESSION.with(|slot| slot.borrow().as_ref()
@@ -1047,6 +1108,21 @@ mod desktop_video_player {
             if slot.as_ref().is_some_and(|active| Arc::ptr_eq(&active.cancel, cancel)) { slot.take(); }
         });
     }
+    pub(super) fn hide_exact(cancel: &Arc<AtomicBool>) {
+        VIDEO_WEBVIEW.with(|slot| {
+            if let Some(active) = slot.borrow().as_ref().filter(|active| Arc::ptr_eq(&active.cancel, cancel)) {
+                let _ = active.webview.set_visible(false);
+            }
+        });
+    }
+    pub(super) fn defer_close_any() {
+        let cancel = VIDEO_WEBVIEW.with(|slot| slot.borrow().as_ref().map(|active| active.cancel.clone()));
+        let Some(cancel) = cancel else { return; };
+        hide_exact(&cancel);
+        slint::Timer::single_shot(Duration::from_millis(100), move || {
+            close_exact(&cancel);
+        });
+    }
     pub(super) fn resize_exact(cancel: &Arc<AtomicBool>, bounds: VideoPlayerBounds) {
         VIDEO_WEBVIEW.with(|slot| {
             if let Some(active) = slot.borrow().as_ref().filter(|active| Arc::ptr_eq(&active.cancel, cancel)) {
@@ -1268,6 +1344,122 @@ mod core_player_tests {
     }
     const A: &str = "11111111-1111-4111-8111-111111111111";
     const B: &str = "22222222-2222-4222-8222-222222222222";
+
+    fn install_player_session(fixture: &Fixture, output: &SavedVideoOutput, preview_mode: bool, cancel: Arc<AtomicBool>) {
+        ACTIVE_VIDEO_SESSION.with(|slot| *slot.borrow_mut() = Some(ActiveVideoSession {
+            context: fixture.context.clone(), persistence: fixture.persistence.clone(),
+            output: output.clone(), cancel,
+            bounds: VideoPlayerBounds { x: 0, y: 0, width: 100, height: 100 },
+            preview_mode, playback: None,
+        }));
+    }
+
+    #[test]
+    fn closing_a_loading_player_cancels_without_requiring_the_saved_output() {
+        i_slint_backend_testing::init_no_event_loop();
+        let fixture = Fixture::new(A);
+        let output = fixture.output(b"video that is still loading");
+        let cancel = Arc::new(AtomicBool::new(false));
+        install_player_session(&fixture, &output, false, cancel.clone());
+
+        // A Back action may run after the result has already been removed from the current
+        // projection. Local player teardown must still retire the loading session.
+        fixture.context.store.borrow_mut().video_outputs.clear();
+        close_video_player();
+
+        assert!(cancel.load(Ordering::SeqCst));
+        assert!(ACTIVE_VIDEO_SESSION.with(|slot| slot.borrow().is_none()));
+        fixture.stop();
+    }
+
+    #[test]
+    fn video_player_lifecycle_retires_native_surface_after_navigation_or_overlay() {
+        i_slint_backend_testing::init_no_event_loop();
+        let fixture = Fixture::new(A);
+        let output = fixture.output(b"private video");
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_video_generating(true);
+        for preview_mode in [true, false] {
+            for destination in ["generation", "assets", "prompt", "reference", "recovered-prompt"] {
+                state.set_page("video-generation".into());
+                state.set_video_prompt_expanded_open(false);
+                state.set_video_image_dialog("".into());
+                state.set_recovered_prompt_result_open(false);
+                state.set_video_hover_preview_id(if preview_mode { output.key().into() } else { "".into() });
+                state.set_video_player_open(!preview_mode);
+                state.set_video_result_path(output.source_path.clone().into());
+                let cancel = Arc::new(AtomicBool::new(false));
+                install_player_session(&fixture, &output, preview_mode, cancel.clone());
+                assert!(video_player_target_matches(&app, &output, preview_mode));
+                poll_video_player_lifecycle(app.as_weak(), cancel.clone());
+                match destination {
+                    "prompt" => state.set_video_prompt_expanded_open(true),
+                    "reference" => state.set_video_image_dialog("assets".into()),
+                    "recovered-prompt" => state.set_recovered_prompt_result_open(true),
+                    page => state.set_page(page.into()),
+                }
+                i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(100));
+                slint::platform::update_timers_and_animations();
+                assert!(cancel.load(Ordering::SeqCst), "{destination}, preview={preview_mode}");
+                assert!(ACTIVE_VIDEO_SESSION.with(|slot| slot.borrow().is_none()));
+                assert!(state.get_video_hover_preview_id().is_empty());
+                if state.get_page() != "video-generation" { assert!(!state.get_video_player_open()); }
+                assert!(state.get_video_generating(), "closing preview must not stop generation");
+                assert!(fixture.context.store.borrow().video_outputs.contains_key(&output.key()));
+            }
+        }
+        fixture.stop();
+    }
+
+    #[test]
+    fn video_player_late_preparation_cannot_reopen_a_departed_page() {
+        i_slint_backend_testing::init_no_event_loop();
+        let fixture = Fixture::new(A);
+        let output = fixture.output(b"private video");
+        let playback = fixture.prepare(output.clone());
+        let cancel = playback.cancel.clone();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_page("video-generation".into());
+        state.set_video_hover_preview_id(output.key().into());
+        state.set_video_folder_status("retained status".into());
+        install_player_session(&fixture, &output, true, cancel.clone());
+        let (sender, receiver) = mpsc::channel();
+        sender.send(Ok(playback)).unwrap();
+        poll_video_player_preparation(app.as_weak(), fixture.context.clone(), fixture.persistence.clone(),
+            output, cancel.clone(), receiver);
+        state.set_page("generation".into());
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(100));
+        slint::platform::update_timers_and_animations();
+        assert!(cancel.load(Ordering::SeqCst));
+        assert!(ACTIVE_VIDEO_SESSION.with(|slot| slot.borrow().is_none()));
+        assert_eq!(state.get_video_folder_status(), "retained status");
+        assert!(state.get_video_hover_preview_id().is_empty());
+        fixture.stop();
+    }
+
+    #[test]
+    fn video_player_old_lifecycle_cannot_close_replacement_session() {
+        i_slint_backend_testing::init_no_event_loop();
+        let fixture = Fixture::new(A);
+        let output = fixture.output(b"private video");
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_page("video-generation".into());
+        state.set_video_hover_preview_id(output.key().into());
+        let old_cancel = Arc::new(AtomicBool::new(false));
+        install_player_session(&fixture, &output, true, old_cancel.clone());
+        poll_video_player_lifecycle(app.as_weak(), old_cancel);
+        let current_cancel = Arc::new(AtomicBool::new(false));
+        install_player_session(&fixture, &output, true, current_cancel.clone());
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(100));
+        slint::platform::update_timers_and_animations();
+        assert!(!current_cancel.load(Ordering::SeqCst));
+        assert!(ACTIVE_VIDEO_SESSION.with(|slot| slot.borrow().as_ref()
+            .is_some_and(|active| Arc::ptr_eq(&active.cancel, &current_cancel))));
+        fixture.stop();
+    }
 
     #[test]
     fn preview_open_enters_the_selected_video_details() {

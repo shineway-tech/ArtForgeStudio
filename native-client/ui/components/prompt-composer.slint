@@ -73,6 +73,7 @@ export component PromptComposer {
     property <int> custom-prompt-insert-offset: 0;
     property <bool> custom-prompt-selection-pending: false;
     property <string> observed-prompt: AppState.prompt;
+    property <string> observed-history-category: AppState.asset-type;
     property <bool> observed-optimizing-prompt: AppState.optimizing-prompt;
     property <int> observed-prompt-optimization-result-revision: AppState.prompt-optimization-result-revision;
     property <string> prompt-editor-text: AppState.prompt;
@@ -99,6 +100,12 @@ export component PromptComposer {
     changed geometry-sidebar-collapsed => { root.sync-reference-drop-bounds(); }
     changed geometry-logged-in => { root.sync-reference-drop-bounds(); }
     changed observed-prompt => { root.sync-prompt-editor-text(); }
+    changed observed-history-category => {
+        AppState.prompt-history-open = false;
+        history-popup.close();
+        root.close-history-preview();
+        AppState.refresh-prompt-history();
+    }
     changed observed-optimizing-prompt => {
         if root.observed-optimizing-prompt {
             root.custom-prompt-selection-pending = false;
@@ -132,7 +139,7 @@ export component PromptComposer {
     }
 
     function apply-selected-prompt(value: string) {
-        if AppState.optimizing-prompt {
+        if AppState.optimizing-prompt || AppState.translating-prompt {
             return;
         }
         AppState.prompt-history-open = false;
@@ -143,9 +150,7 @@ export component PromptComposer {
         prompt-input.focus();
         root.prompt-editor-text = value;
         AppState.normalize-prompt-editor-text(value, "");
-        AppState.deep-optimization-applied-chinese = "";
-        AppState.deep-optimization-applied-english = "";
-        AppState.invalidate-deep-prompt-binding();
+        AppState.restore-prompt-history(value);
         prompt-input.set-selection-offsets(2147483647, 2147483647);
     }
 
@@ -300,17 +305,19 @@ export component PromptComposer {
         PromptOptimizationAction {
             x: 212px;
             y: 14px;
-            width: AppState.deep-optimization-active ? 104px : 72px;
+            width: AppState.deep-optimization-record-available ? 120px : (AppState.deep-optimization-active ? 104px : 72px);
             height: 24px;
-            text: AppState.deep-optimization-active
-                ? (AppState.en ? "View Deep Optimize" : "查看深度优化")
-                : (AppState.en ? "Deep Optimize" : "深度优化");
-            active: AppState.deep-optimization-active;
+            text: AppState.deep-optimization-record-available
+                ? (AppState.en ? "View optimization" : "查看优化记录")
+                : (AppState.deep-optimization-active
+                    ? (AppState.en ? "View Deep Optimize" : "查看深度优化")
+                    : (AppState.en ? "Deep Optimize" : "深度优化"));
+            active: AppState.deep-optimization-active || AppState.deep-optimization-record-available;
             disabled: AppState.optimizing-prompt || AppState.translating-prompt;
             clicked => { AppState.open-deep-optimization(); }
         }
         if AppState.optimizing-prompt: PromptOptimizationAction {
-            x: root.action-status-wraps() ? min(220px, parent.width - 76px) : parent.width - 136px;
+            x: root.action-status-wraps() ? min(220px, parent.width - 76px) : parent.width - 196px;
             y: root.action-status-wraps() ? 46px : 14px;
             width: 52px;
             height: 24px;
@@ -318,6 +325,55 @@ export component PromptComposer {
             active: true;
             danger: true;
             clicked => { AppState.cancel-current-prompt(); }
+        }
+        prompt-history-button := Rectangle {
+            x: parent.width - 110px;
+            y: 12px;
+            width: 28px;
+            height: 28px;
+            background: prompt-history-touch.has-hover ? AppTheme.panel : transparent;
+            border-radius: 7px;
+            border-width: 1px;
+            border-color: prompt-history-touch.has-hover ? AppTheme.accent : AppTheme.border;
+            accessible-role: button;
+            accessible-label: AppState.en ? "Prompt history" : "提示词历史";
+            Image {
+                x: 6px; y: 6px; width: 16px; height: 16px;
+                source: @image-url("../../assets/icons/clock-3.svg");
+                colorize: AppTheme.muted;
+            }
+            prompt-history-touch := TouchArea {
+                width: parent.width;
+                height: parent.height;
+                enabled: !AppState.optimizing-prompt && !AppState.translating-prompt;
+                mouse-cursor: self.enabled ? pointer : default;
+                clicked => {
+                    AppState.refresh-prompt-history();
+                    AppState.custom-prompt-open = false;
+                    custom-prompt-popup.close();
+                    root.close-history-preview();
+                    root.prompt-history-selected-index = 0;
+                    root.prompt-history-scroll-y = 0px;
+                    AppState.prompt-history-open = true;
+                    history-popup.show();
+                }
+            }
+            if prompt-history-touch.has-hover: Rectangle {
+                x: parent.width - self.width;
+                y: 30px;
+                width: AppState.en ? 108px : 88px;
+                height: 24px;
+                background: AppTheme.panel;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: AppTheme.border;
+                Text {
+                    width: parent.width; height: parent.height;
+                    text: AppState.en ? "Prompt history" : "提示词历史";
+                    color: AppTheme.text; font-size: 12px;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+            }
         }
         PromptOptimizationAction {
             x: parent.width - 76px;
@@ -340,7 +396,7 @@ export component PromptComposer {
             y: root.action-status-wraps() ? 48px : 20px;
             width: root.action-status-wraps()
                 ? (AppState.optimizing-prompt ? min(184px, parent.width - 112px) : parent.width - 48px)
-                : parent.width - self.x - (AppState.optimizing-prompt ? 148px : 88px);
+                : parent.width - self.x - (AppState.optimizing-prompt ? 210px : 88px);
             height: 18px;
             text: AppState.optimizing-prompt ? (AppState.en ? "Optimizing prompt..." : "正在优化提示词...")
                 : (AppState.en ? "Translating prompt..." : "正在翻译提示词...");
@@ -644,11 +700,17 @@ export component PromptComposer {
         history-list := Rectangle {
             width: root.history-list-width();
             height: root.history-list-height();
-            visible: AppState.prompt-history-open && AppState.prompt-history.length > 0;
+            visible: AppState.prompt-history-open;
             background: AppTheme.panel;
             border-radius: 8px;
             border-width: 1px;
             border-color: AppTheme.border;
+            if AppState.prompt-history.length == 0: Text {
+                x: 12px; y: 0px; width: parent.width - 24px; height: 24px;
+                text: AppState.en ? "No prompt history" : "暂无提示词历史";
+                color: AppTheme.muted; font-size: 12px;
+                vertical-alignment: center;
+            }
             history-scroll := ScrollView {
                 viewport-y <=> root.prompt-history-scroll-y;
                 x: 8px;

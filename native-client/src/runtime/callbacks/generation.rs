@@ -132,6 +132,136 @@ mod core_generation_metadata_tests {
         }
     }
 
+    #[test]
+    fn thumbnail_menu_opens_on_first_click_while_dismissing_new_badge() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::{PointerEventButton, WindowEvent};
+
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true, renderer_name: Some("software".into()), ..Default::default()
+            },
+        ))).unwrap();
+        let (f, app) = active_metadata_fixture();
+        let state = app.global::<AppState>();
+        state.set_prompt_history_open(false);
+        state.set_contact_popup_open(false);
+        let actions = Rc::new(RefCell::new(Vec::new()));
+        let recorded = actions.clone();
+        state.on_use_thumbnail_as_reference(move |id, source| {
+            recorded.borrow_mut().push(format!("reference:{id}:{source}"));
+            true
+        });
+        let recorded = actions.clone();
+        state.on_request_delete_thumbnail(move |id, source| {
+            recorded.borrow_mut().push(format!("delete:{id}:{source}"));
+        });
+        let recorded = actions.clone();
+        state.on_open_viewer(move |id, source| {
+            recorded.borrow_mut().push(format!("viewer:{id}:{source}"));
+        });
+        let click = |position| {
+            app.window().dispatch_event(WindowEvent::PointerMoved { position });
+            app.window().dispatch_event(WindowEvent::PointerPressed { position, button: PointerEventButton::Left });
+            app.window().dispatch_event(WindowEvent::PointerReleased { position, button: PointerEventButton::Left });
+            slint::platform::update_timers_and_animations();
+        };
+        app.window().set_size(slint::LogicalSize::new(1440., 900.));
+        app.show().unwrap();
+
+        for (layout, masonry) in [("grid", false), ("waterfall", true)] {
+            actions.borrow_mut().clear();
+            state.set_generation_gallery_layout(layout.into());
+            {
+                let mut store = f.context.store.borrow_mut();
+                store.generations[0].source_path = "fixture-thumbnail.png".into();
+                store.generations[0].is_new = true;
+                store.assets = store.generations.clone();
+            }
+            let item = AssetItem {
+                id: "metadata-card".into(), category: "scene".into(),
+                source_path: "fixture-thumbnail.png".into(), is_new: true,
+                width: 100, height: 150, quality: "2K".into(), model: "fixture-model".into(),
+                ..Default::default()
+            };
+            let items = ModelRc::new(VecModel::from(vec![item]));
+            state.set_generations(items.clone());
+            state.set_generation_layout_items(ModelRc::new(VecModel::from(vec![GalleryPlacement {
+                item_index: 0, x: 0., y: 0., width: 160., gap: 18., masonry,
+            }])));
+            state.set_generation_layout_height(300.);
+            let card = ElementHandle::find_by_element_type_name(&app, "ThumbnailCard").next().unwrap();
+            let position = card.absolute_position();
+            let card_size = card.size();
+            let menu_position = slint::LogicalPosition::new(position.x + card.size().width - 22., position.y + 23.);
+            let reference_position = slint::LogicalPosition::new(
+                position.x + card_size.width + 84.,
+                position.y + 26.,
+            );
+            let delete_position = slint::LogicalPosition::new(
+                position.x + card_size.width + 84.,
+                position.y + 72.,
+            );
+            let outside = slint::LogicalPosition::new(position.x - 10., position.y - 10.);
+
+            click(menu_position);
+            assert!(ElementHandle::find_by_element_id(&app, "ThumbnailCard::reference-action-touch").next().is_some(),
+                "first click must open the NEW card menu in {layout}");
+            assert!(!f.context.store.borrow().generations[0].is_new);
+            assert!(!f.context.store.borrow().assets[0].is_new);
+            assert!(!state.get_generations().row_data(0).unwrap().is_new);
+            assert!(std::ptr::eq(items.as_any(), state.get_generations().as_any()));
+            assert!(actions.borrow().is_empty(), "opening the menu must not open the viewer");
+
+            click(outside);
+            assert!(ElementHandle::find_by_element_id(&app, "ThumbnailCard::reference-action-touch").next().is_none());
+            click(menu_position);
+            click(reference_position);
+            assert_eq!(actions.borrow().last().map(String::as_str), Some("reference:metadata-card:generation"));
+            click(menu_position);
+            click(delete_position);
+            click(slint::LogicalPosition::new(position.x + 80., position.y + 80.));
+            assert_eq!(actions.borrow().as_slice(), [
+                "reference:metadata-card:generation", "delete:metadata-card:generation", "viewer:metadata-card:generation",
+            ]);
+        }
+    }
+
+    #[test]
+    fn thumbnail_new_badge_updates_only_matching_rows_without_replacing_models() {
+        i_slint_backend_testing::init_no_event_loop();
+        let (f, app) = active_metadata_fixture();
+        let state = app.global::<AppState>();
+        let items = vec![
+            AssetItem { id: "metadata-card".into(), is_new: true, selected: true, quality: "2K".into(), ..Default::default() },
+            AssetItem { id: "second-card".into(), is_new: true, ..Default::default() },
+        ];
+        let generations = ModelRc::new(VecModel::from(items.clone()));
+        let assets = ModelRc::new(VecModel::from(items.clone()));
+        let grouped = ModelRc::new(VecModel::from(items));
+        state.set_generations(generations.clone());
+        state.set_assets(assets.clone());
+        state.set_generation_groups(ModelRc::new(VecModel::from(vec![AssetGroup { title: "fixture".into(), items: grouped.clone() }])));
+        state.set_asset_groups(state.get_generation_groups());
+        let placements = state.get_generation_layout_items();
+        let before = serde_json::to_value(durable_metadata(&f)).unwrap();
+
+        for _ in 0..2 {
+            state.invoke_dismiss_new_generation("metadata-card".into());
+            assert!(std::ptr::eq(generations.as_any(), state.get_generations().as_any()));
+            assert!(std::ptr::eq(assets.as_any(), state.get_assets().as_any()));
+            assert!(std::ptr::eq(placements.as_any(), state.get_generation_layout_items().as_any()));
+            for model in [&generations, &assets, &grouped] {
+                let row = model.row_data(0).unwrap();
+                assert!(!row.is_new);
+                assert!(row.selected);
+                assert_eq!(row.quality, "2K");
+                assert!(model.row_data(1).unwrap().is_new);
+            }
+        }
+        assert_eq!(serde_json::to_value(durable_metadata(&f)).unwrap(), before);
+    }
+
     // Catches disabling ordinary actions, losing quote fields or saving badges,
     // and history UI success without a real same-namespace SQLite write.
     #[test]
@@ -155,12 +285,12 @@ mod core_generation_metadata_tests {
         assert!(serialized["generations"][0].get("is_new").is_none());
         state.invoke_remove_prompt_history("Retained prompt".into());
         pump_metadata(||state.get_generation_status()=="提示词历史已保存");
-        assert!(durable_metadata(&f).dismissed_prompt_history.contains("Retained prompt"));
+        assert!(durable_metadata(&f).dismissed_prompt_history.contains(&prompt_history_key("scene", "Retained prompt")));
         assert_eq!(state.get_prompt_history().iter().map(|row|row.to_string()).collect::<Vec<_>>(),["Second prompt"]);
         state.set_generation_status("await clear".into());state.invoke_clear_prompt_history();
         pump_metadata(||state.get_generation_status()=="提示词历史已保存");
         let durable=durable_metadata(&f);
-        assert!(durable.dismissed_prompt_history.contains("Second prompt"));
+        assert!(durable.dismissed_prompt_history.contains(&prompt_history_key("scene", "Second prompt")));
         assert_eq!(durable.generations.len(),2);assert_eq!(state.get_prompt_history().row_count(),0);
         assert!(!state.get_prompt_history_open());
     }
@@ -168,13 +298,37 @@ mod core_generation_metadata_tests {
     // A same remove after a failed transaction must save CURRENT Store, even
     // though the set insertion is already staged and returns false.
     #[test]
+    fn core_generation_history_clear_includes_optimized_and_translated_versions() {
+        i_slint_backend_testing::init_no_event_loop();
+        let (f, app) = active_metadata_fixture();
+        {
+            let mut store = f.context.store.borrow_mut();
+            archive_prompt_version(&mut store, "scene", "Chinese version", "English version");
+            archive_prompt_version(&mut store, "scene", "English version", "");
+            store.deep_prompt_bindings.insert("scene".into(), DeepPromptBinding {
+                chinese: "Legacy Chinese".into(), english: "Legacy English".into(),
+                ..Default::default()
+            });
+        }
+        let state = app.global::<AppState>();
+        state.invoke_clear_prompt_history();
+        pump_metadata(|| state.get_generation_status() == "提示词历史已保存");
+        let durable = durable_metadata(&f);
+        for prompt in ["Chinese version", "English version", "Legacy Chinese", "Legacy English"] {
+            assert!(durable.dismissed_prompt_history.contains(&prompt_history_key("scene", prompt)));
+        }
+        assert!(visible_prompt_history(&prepare_private_store(durable).store, "scene").is_empty());
+        assert_eq!(state.get_prompt_history().row_count(), 0);
+    }
+
+    #[test]
     fn core_generation_history_failed_remove_retry_saves_current_store_and_later_editor() {
         i_slint_backend_testing::init_no_event_loop();
         let(f,app)=active_metadata_fixture();let state=app.global::<AppState>();
         f.writer.reject_custom_prompt_inserts_for_test(true);
         state.invoke_remove_prompt_history("Retained prompt".into());
         pump_metadata(||state.get_generation_status().contains("保存失败"));
-        assert!(f.context.store.borrow().dismissed_prompt_history.contains("Retained prompt"));
+        assert!(f.context.store.borrow().dismissed_prompt_history.contains(&prompt_history_key("scene", "Retained prompt")));
         assert!(durable_metadata(&f).dismissed_prompt_history.is_empty());
         state.set_prompt("later editor text".into());
         f.context.store.borrow_mut().custom_prompts.push("later private value".into());
@@ -182,7 +336,7 @@ mod core_generation_metadata_tests {
         state.invoke_remove_prompt_history("Retained prompt".into());
         pump_metadata(||state.get_generation_status()=="提示词历史已保存");
         let durable=durable_metadata(&f);
-        assert!(durable.dismissed_prompt_history.contains("Retained prompt"));
+        assert!(durable.dismissed_prompt_history.contains(&prompt_history_key("scene", "Retained prompt")));
         assert!(durable.custom_prompts.contains(&"later private value".into()));
         assert_eq!(state.get_prompt(),"later editor text");assert_eq!(durable.generations.len(),2);
     }
@@ -202,7 +356,7 @@ mod core_generation_metadata_tests {
         pump_metadata(||state.get_generation_status()=="提示词历史已保存");
         let durable=durable_metadata(&f);
         assert_eq!(durable.dismissed_prompt_history.len(),2);
-        assert!(!durable.dismissed_prompt_history.contains("later history"));
+        assert!(!durable.dismissed_prompt_history.contains(&prompt_history_key("scene", "later history")));
         assert_eq!(state.get_prompt_history().iter().map(|row|row.to_string()).collect::<Vec<_>>(),["later history"]);
         // This DIFFERENT action is made while a previous clear save has failed.
         f.writer.reject_custom_prompt_inserts_for_test(true);state.invoke_clear_prompt_history();
@@ -213,8 +367,8 @@ mod core_generation_metadata_tests {
         state.invoke_remove_prompt_history("newest history".into());
         pump_metadata(||state.get_generation_status()=="提示词历史已保存");
         let durable=durable_metadata(&f);
-        assert!(durable.dismissed_prompt_history.contains("later history"));
-        assert!(durable.dismissed_prompt_history.contains("newest history"));
+        assert!(durable.dismissed_prompt_history.contains(&prompt_history_key("scene", "later history")));
+        assert!(durable.dismissed_prompt_history.contains(&prompt_history_key("scene", "newest history")));
         assert_eq!(durable.generations.len(),4);
     }
 
@@ -253,7 +407,7 @@ mod core_generation_metadata_tests {
             assert_eq!(state.get_quote_title(),"replacement quote");assert_eq!(state.get_prompt(),"replacement editor");
             let durable=durable_metadata(&f);
             if case == 3 {
-                assert!(durable.dismissed_prompt_history.contains("Retained prompt"));
+                assert!(durable.dismissed_prompt_history.contains(&prompt_history_key("scene", "Retained prompt")));
                 // Successful debt must settle even when a later status owns UI:
                 // a same removal is now a no-op, not a hidden failed re-save.
                 f.writer.reject_custom_prompt_inserts_for_test(true);
@@ -375,11 +529,10 @@ fn mutate_generation_history(app: &AppWindow, context: &AppContext,
         .map(|debt|debt.prompts.clone());
     let prompts = retry_prompts.clone().unwrap_or_else(||match &action {
         GenerationHistoryAction::Remove(prompt) => vec![prompt.trim().to_string()],
-        GenerationHistoryAction::Clear => context.store.borrow().generations.iter()
-            .map(|item|item.prompt.trim().to_string()).filter(|prompt|!prompt.is_empty()).collect(),
+        GenerationHistoryAction::Clear => all_prompt_history(&context.store.borrow(), &capture.category),
     });
     if retry_prompts.is_none() && !prompts.iter().any(|prompt|
-        !prompt.is_empty() && !context.store.borrow().dismissed_prompt_history.contains(prompt)) {
+        !prompt.is_empty() && !prompt_history_is_dismissed(&context.store.borrow(), &capture.category, prompt)) {
         let _ = capture.apply(app,||push_prompt_history(app,&context.store.borrow()));
         return;
     }
@@ -393,7 +546,7 @@ fn mutate_generation_history(app: &AppWindow, context: &AppContext,
     let mut prepared = Some(prepared);
     let enqueued = capture.apply(app, || {
         let mut store = context.store.borrow_mut();
-        for prompt in &prompts { dismiss_prompt_history_entry(&mut store, prompt); }
+        for prompt in &prompts { dismiss_prompt_history_for_category(&mut store, &capture.category, prompt); }
         push_prompt_history(app, &store);
         let mut pending = writes.borrow_mut();
         pending.revision = revision;
@@ -505,6 +658,15 @@ pub(super) fn wire_generation_callbacks(app: &AppWindow, context: AppContext) {
                 return;
             };
             mutate_generation_history(&app,&context,writes.clone(),GenerationHistoryAction::Clear);
+        });
+    }
+
+    {
+        let app_weak = app.as_weak();
+        let context = context.clone();
+        state.on_refresh_prompt_history(move || {
+            let Some(app) = app_weak.upgrade() else { return; };
+            push_prompt_history(&app, &context.store.borrow());
         });
     }
 
@@ -649,7 +811,7 @@ pub(super) fn wire_generation_callbacks(app: &AppWindow, context: AppContext) {
             let id = id.to_string();
             let Some(capture) = GenerationMetadataCapture::capture(&app,&context) else { return; };
             let Ok(_activity) = capture.persistence.begin_activity() else { return; };
-            let effects = capture.apply(&app,|| {
+            let _ = capture.apply(&app,|| {
             let mut store_mut = context.store.borrow_mut();
             for item in store_mut.generations.iter_mut() {
                 if item.id == id {
@@ -661,9 +823,9 @@ pub(super) fn wire_generation_callbacks(app: &AppWindow, context: AppContext) {
                     item.is_new = false;
                 }
             }
-            prepare_delivery_visuals(&app,&store_mut).publish_metadata(&app,capture.persistence.clone())
+            drop(store_mut);
+            dismiss_gallery_new_badge(&app, &id);
             });
-            if let Some(effects) = effects { start_activation_visual_effects(&app,context.clone(),effects); }
         });
     }
 

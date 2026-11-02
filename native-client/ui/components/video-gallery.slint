@@ -1,6 +1,7 @@
 import { AppState } from "../app-state.slint";
 import { AppTheme } from "../theme.slint";
 import { VideoImageItem } from "../types.slint";
+import { GenerationLoadingCard } from "generation-loading-card.slint";
 
 component VideoCard inherits Rectangle {
     in property <VideoImageItem> video;
@@ -152,6 +153,8 @@ component VideoCard inherits Rectangle {
 
 export component VideoGallery inherits Rectangle {
     in property <bool> group-by-date: false;
+    in property <bool> show-generation: false;
+    property <int> loading-count: root.show-generation && !root.group-by-date && AppState.video-generating ? 1 : 0;
     property <length> preferred-card-width: 220px;
     property <length> gap: 18px;
     property <int> columns: max(1, floor((root.width + root.gap) / (root.preferred-card-width + root.gap)));
@@ -159,6 +162,10 @@ export component VideoGallery inherits Rectangle {
     property <length> row-height: root.card-width + root.gap;
     background: transparent;
     clip: true;
+
+    changed loading-count => {
+        if root.loading-count > 0 { gallery-scroll.viewport-y = 0px; }
+    }
 
     gallery-scroll := Flickable {
         width: parent.width;
@@ -168,7 +175,7 @@ export component VideoGallery inherits Rectangle {
             self.height,
             root.group-by-date
                 ? grouped-content.height
-                : ceil(AppState.saved-videos.length / root.columns) * root.row-height
+                : ceil((AppState.saved-videos.length + root.loading-count) / root.columns) * root.row-height
         );
         interactive: true;
 
@@ -206,15 +213,24 @@ export component VideoGallery inherits Rectangle {
             }
         }
 
+        if root.loading-count > 0: GenerationLoadingCard {
+            x: 0px;
+            y: 0px;
+            card-width: root.card-width;
+            card-gap: root.gap;
+            label: (AppState.en ? "Generating... " : "生成中... ") + AppState.video-progress + "%";
+            stop-enabled: false;
+        }
+
         for video[index] in AppState.saved-videos: VideoCard {
             visible: !root.group-by-date;
-            x: Math.mod(index, root.columns) * (root.card-width + root.gap);
-            y: floor(index / root.columns) * root.row-height;
+            x: Math.mod(index + root.loading-count, root.columns) * (root.card-width + root.gap);
+            y: floor((index + root.loading-count) / root.columns) * root.row-height;
             card-width: root.card-width;
             video: video;
         }
 
-        if AppState.saved-videos.length == 0: Text {
+        if AppState.saved-videos.length == 0 && root.loading-count == 0: Text {
             width: gallery-scroll.viewport-width;
             height: max(100px, gallery-scroll.height);
             text: AppState.en ? "No saved videos" : "暂无已保存视频";

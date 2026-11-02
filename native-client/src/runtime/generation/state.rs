@@ -11,6 +11,24 @@ pub(super) fn current_workspace_category(app: &AppWindow) -> String {
     resolve_category(&app.global::<AppState>().get_asset_type().to_string(), "")
 }
 
+pub(super) fn can_open_generation_result_viewer(
+    app: &AppWindow,
+    category: &str,
+    conversation_id: &str,
+) -> bool {
+    let state = app.global::<AppState>();
+    // Background completion must not replace a source being viewed or processed.
+    state.get_page() == "generation"
+        && state.get_asset_type() == category
+        && state.get_current_conversation_id() == conversation_id
+        && !state.get_viewer_open()
+        && !state.get_cutout_open()
+        && !state.get_cutout_processing()
+        && !state.get_upscale_open()
+        && !state.get_viewer_processing()
+        && !state.get_generation_selection_mode()
+}
+
 pub(super) fn category_is_generating(context: &AppContext, category: &str) -> bool {
     context.generations.active.borrow().contains_key(category)
 }

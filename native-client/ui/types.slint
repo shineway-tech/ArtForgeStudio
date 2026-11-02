@@ -126,6 +126,11 @@ export struct MembershipPlanView {
     tier-rank: int,
 }
 
+export struct CatalogPriceView {
+    quality: string,
+    credit-cost: string,
+}
+
 export struct CatalogModelView {
     code: string,
     name: string,
@@ -134,6 +139,7 @@ export struct CatalogModelView {
     capabilities: string,
     capability-json: string,
     pricing: string,
+    prices: [CatalogPriceView],
     price-1k: int,
     price-2k: int,
     price-4k: int,

@@ -1210,6 +1210,11 @@ fn begin_prompt_result_application(
             }
             _=>return None,
         });
+        if target.target_kind == "composer" {
+            archive_prompt_version(&mut store, &target.target_category, &record.target_input, "");
+            archive_prompt_version(&mut store, &target.target_category, &target.target_input, "");
+            archive_prompt_version(&mut store, &target.target_category, &target.result_prompt, "");
+        }
         let data=local_store_data(app,&store);
         // Return the WHOLE Result. Its error owns latch/activity guards.
         Some(prepared.take().unwrap().enqueue(data))
@@ -1236,6 +1241,7 @@ fn begin_prompt_result_application(
                 rollback_prompt_stage(context,capture,&target,&before);
                 report_prompt_recovery_error(app,context,capture,&error);return;
             }
+            capture.apply(context, || push_prompt_history(app, &context.store.borrow()));
             if !prompt_target_matches(app,context,&target) || !staged_prompt_is_current(&context.store.borrow(),&target){
                 // A newer edit/save won. Keep the paid recovery record.
                 present_next_recovered_prompt_result(app,context);return;
@@ -3386,7 +3392,39 @@ mod core_prompt_tests {
         assert_eq!(state.get_prompt(),"new user edit");
         let retained=rows(&f);assert_eq!(retained.len(),1,"a newer edit keeps the original paid result");assert!(!retained[0].result_committed);
         let durable=f.writer.load_client_state_for_namespace(f.persistence.lease()).unwrap().unwrap();
-        assert_eq!(prompt_draft_for_category(&durable.prompt_drafts,"character"),"new user edit");assert!(transport.finish().is_empty());
+        assert_eq!(prompt_draft_for_category(&durable.prompt_drafts,"character"),"new user edit");
+        assert!(durable.saved_prompt_history.iter().any(|entry| entry.prompt == "paid result"));
+        assert!(transport.finish().is_empty());
+    }
+
+    #[test]
+    fn core_prompt_translation_history_restores_chinese_after_restart_without_new_request() {
+        i_slint_backend_testing::init_no_event_loop();
+        let transport = Transport::new(0);
+        let f = fixture(&transport.url);
+        let app = app(&f);
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        wire_prompt_optimization_callbacks(&app, f.context.clone());
+        archive_prompt_version(&mut f.context.store.borrow_mut(), "character", "original input", "matching English");
+        seed(&f, confirmable_row(&f, "composer"));
+        present_next_recovered_prompt_result(&app, &f.context);
+        pump(|| state.get_recovered_prompt_result_open());
+        state.invoke_apply_recovered_prompt_result();
+        pump(|| state.get_prompt() == "paid result");
+        pump(|| rows(&f).is_empty());
+        join_prompt_workers().unwrap();
+        let durable = f.writer.load_client_state_for_namespace(f.persistence.lease()).unwrap().unwrap();
+        let mut loaded = prepare_private_store(durable).store;
+        loaded.private_persistence = Some(f.persistence.clone());
+        assert_eq!(visible_prompt_history(&loaded, "character"), ["paid result", "original input"]);
+        *f.context.store.borrow_mut() = loaded;
+        state.invoke_restore_prompt_history("original input".into());
+        assert_eq!(state.get_prompt(), "original input");
+        assert_eq!(state.get_deep_optimization_applied_english(), "matching English");
+        pump(|| f.writer.load_client_state_for_namespace(f.persistence.lease()).unwrap().unwrap()
+            .prompt_drafts.character == "original input");
+        assert!(transport.finish().is_empty(), "history restoration must not start a paid task");
     }
     #[test]
     fn core_prompt_failed_cleanup_retry_never_reapplies_over_a_new_editor_value() {

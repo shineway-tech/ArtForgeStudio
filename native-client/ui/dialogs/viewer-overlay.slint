@@ -70,6 +70,7 @@ component ViewerFooterActionButton inherits Rectangle {
 component ViewerToolActionButton inherits Rectangle {
     in property <image> icon;
     in property <string> label;
+    in property <string> credit-cost;
     in property <bool> disabled: false;
     in property <bool> generate-effect: false;
     callback clicked();
@@ -87,14 +88,37 @@ component ViewerToolActionButton inherits Rectangle {
         colorize: AppTheme.text;
         image-fit: contain;
     }
-    Text {
+    action-label := Text {
         x: 39px;
-        width: parent.width - 50px;
+        width: root.credit-cost == "" ? parent.width - 50px : max(0px, credit-icon.x - self.x - 8px);
         height: parent.height;
         text: root.label;
         color: AppTheme.text;
         font-size: 13px;
         font-weight: 400;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    credit-icon := Image {
+        visible: root.credit-cost != "";
+        x: credit-value.x - self.width - 4px;
+        y: (parent.height - self.height) / 2;
+        width: 14px;
+        height: 14px;
+        source: @image-url("../../assets/icons/credits.svg");
+        colorize: AppTheme.text;
+        image-fit: contain;
+    }
+    credit-value := Text {
+        visible: root.credit-cost != "";
+        x: parent.width - self.width - 10px;
+        width: min(self.preferred-width, parent.width * 0.45);
+        height: parent.height;
+        text: root.credit-cost;
+        accessible-role: text;
+        accessible-label: root.credit-cost + (AppState.en ? " credits" : " 积分");
+        color: AppTheme.text;
+        font-size: 12px;
         vertical-alignment: center;
         overflow: elide;
     }
@@ -671,6 +695,7 @@ export component ViewerOverlay {
                             horizontal-stretch: 1;
                             icon: @image-url("../../assets/icons/redo.svg");
                             label: AppState.en ? "Generate Again" : "再次生成";
+                            credit-cost: AppState.viewer-regeneration-credit-cost == "" ? "--" : AppState.viewer-regeneration-credit-cost;
                             generate-effect: true;
                             clicked => { AppState.viewer-regenerate(); }
                         }

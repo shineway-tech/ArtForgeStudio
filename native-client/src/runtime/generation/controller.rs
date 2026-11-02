@@ -660,7 +660,7 @@ fn stage_namespace_delivery(store:&mut Store, prepared:&PreparedNamespaceDeliver
             is_new:toolbox.is_none(),delivery_recoverable:false,delivery_downloading:false,
         };
         if toolbox.is_none() {
-            reveal_prompt_history_entry(store,&item.prompt);
+            reveal_prompt_history_for_category(store,&item.category,&item.prompt);
             store.generations.insert(0,item.clone());
         }
         store.assets.insert(0,item);
@@ -1850,7 +1850,7 @@ pub(super) fn add_stream_failure_item(
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let delivery_recoverable = failed_asset_id.is_some();
     let mut store_mut = store.borrow_mut();
-    reveal_prompt_history_entry(&mut store_mut, raw_prompt);
+    reveal_prompt_history_for_category(&mut store_mut, category, raw_prompt);
     upsert_stream_failure_card(
         &mut store_mut.generations,
         AssetData {

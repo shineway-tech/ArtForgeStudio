@@ -380,14 +380,7 @@ fn poll_activation_previews(weak:Weak<AppWindow>,context:AppContext,persistence:
 
 pub(super) fn prepare_startup_projection(store:&Store,category:&str,initial_prompt:&str) -> PreparedUiProjection {
     let mut ui=PreparedUiProjection::default();
-    let history = recent_prompt_history(
-        store
-            .generations
-            .iter()
-            .map(|item| item.prompt.as_str())
-            .filter(|prompt| !store.dismissed_prompt_history.contains(prompt.trim())),
-        20,
-    );
+    let history = visible_prompt_history(store, category);
     if history.is_empty() {
         ui.push(false, |state, value| state.set_prompt_history_open(value));
     }
@@ -1207,6 +1200,7 @@ mod deep_prompt_display_tests {
             DeepPromptBinding {
                 chinese: "月下的古风少女".to_string(),
                 english: "an ancient-style girl under moonlight".to_string(),
+                ..Default::default()
             },
         )]);
 
@@ -1793,14 +1787,7 @@ pub(super) fn recent_prompt_history<'a>(
 
 pub(super) fn push_prompt_history(app: &AppWindow, store: &Store) {
     let state = app.global::<AppState>();
-    let history = recent_prompt_history(
-        store
-            .generations
-            .iter()
-            .map(|item| item.prompt.as_str())
-            .filter(|prompt| !store.dismissed_prompt_history.contains(prompt.trim())),
-        20,
-    );
+    let history = visible_prompt_history(store, &current_workspace_category(app));
     if history.is_empty() {
         state.set_prompt_history_open(false);
     }
@@ -1816,6 +1803,12 @@ pub(super) fn push_prompt_history(app: &AppWindow, store: &Store) {
             .map(SharedString::from)
             .collect::<Vec<_>>(),
     )));
+}
+
+pub(super) fn visible_prompt_history(store: &Store, category: &str) -> Vec<String> {
+    all_prompt_history(store, category).into_iter()
+        .filter(|prompt| !prompt_history_is_dismissed(store, category, prompt))
+        .collect()
 }
 
 pub(super) fn push_custom_prompts(app: &AppWindow, store: &Store) {
@@ -3186,6 +3179,29 @@ pub(super) fn push_generations(app: &AppWindow, store: &Store) {
     state.set_generation_failed_count(failed_count.min(i32::MAX as usize) as i32);
     invalidate_virtual_gallery(PreviewCollection::Generations);
     refresh_virtual_gallery(app, store, PreviewCollection::Generations);
+}
+
+pub(super) fn dismiss_gallery_new_badge(app: &AppWindow, asset_id: &str) {
+    fn update_rows(items: &ModelRc<AssetItem>, asset_id: &str) {
+        for row in 0..items.row_count() {
+            let Some(mut item) = items.row_data(row) else { continue; };
+            if item.id.as_str() == asset_id && item.is_new {
+                item.is_new = false;
+                items.set_row_data(row, item);
+            }
+        }
+    }
+
+    // Replacing gallery models here destroys the card receiving the click and its popup.
+    let state = app.global::<AppState>();
+    for items in [state.get_generations(), state.get_assets()] {
+        update_rows(&items, asset_id);
+    }
+    for groups in [state.get_generation_groups(), state.get_asset_groups()] {
+        for group in groups.iter() {
+            update_rows(&group.items, asset_id);
+        }
+    }
 }
 
 pub(super) fn push_inspiration(app: &AppWindow, store: &Store) {

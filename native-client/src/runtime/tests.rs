@@ -3,6 +3,120 @@ mod tests {
     use super::*;
 
     #[test]
+    fn prompt_history_migrates_legacy_binding_without_resurrecting_deleted_entries() {
+        let data = LocalStoreData {
+            deep_prompt_bindings: BTreeMap::from([("character".into(), DeepPromptBinding {
+                chinese: "legacy Chinese".into(), english: "legacy English".into(),
+                ..Default::default()
+            })]),
+            dismissed_prompt_history: BTreeSet::from(["legacy English".into()]),
+            ..Default::default()
+        };
+        let mut store = prepare_private_store(data).store;
+        store.deep_prompt_bindings.clear();
+        assert_eq!(visible_prompt_history(&store, "character"), ["legacy Chinese"]);
+        assert_eq!(store.saved_prompt_history.iter().find(|entry| entry.prompt == "legacy Chinese")
+            .unwrap().english_prompt, "legacy English");
+    }
+
+    #[test]
+    fn prompt_history_is_scoped_to_the_current_workspace_and_migrates_known_legacy_entries() {
+        let data = LocalStoreData {
+            saved_prompt_history: vec![
+                PromptHistoryEntry { prompt: "旧场景版本".into(), english_prompt: String::new(), category: String::new() },
+                PromptHistoryEntry { prompt: "未分类旧记录".into(), english_prompt: String::new(), category: String::new() },
+            ],
+            prompt_drafts: PromptDrafts { scene: "旧场景版本".into(), ..Default::default() },
+            ..Default::default()
+        };
+        let mut store = prepare_private_store(data).store;
+        assert_eq!(visible_prompt_history(&store, "scene"), ["旧场景版本"]);
+        assert!(visible_prompt_history(&store, "character").is_empty());
+        assert!(store.saved_prompt_history.iter().any(|entry| entry.prompt == "未分类旧记录" && entry.category.is_empty()));
+
+        for category in ["character", "scene", "ui", "effect"] {
+            archive_prompt_version(&mut store, category, "共同原文", "");
+            archive_prompt_version(&mut store, category, &format!("{category}优化后"), "");
+        }
+        assert_eq!(visible_prompt_history(&store, "character"), ["character优化后", "共同原文"]);
+        assert_eq!(visible_prompt_history(&store, "ui"), ["ui优化后", "共同原文"]);
+        assert!(dismiss_prompt_history_for_category(&mut store, "character", "共同原文"));
+        assert!(!visible_prompt_history(&store, "character").contains(&"共同原文".to_string()));
+        assert!(visible_prompt_history(&store, "scene").contains(&"共同原文".to_string()));
+        assert!(clear_prompt_history_entries(&mut store, "scene"));
+        assert!(visible_prompt_history(&store, "scene").is_empty());
+        assert_eq!(visible_prompt_history(&store, "effect"), ["effect优化后", "共同原文"]);
+    }
+
+    #[test]
+    fn prompt_history_button_opens_with_existing_text_and_keeps_toolbar_separate() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::{PointerEventButton, WindowEvent};
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true, renderer_name: Some("software".into()), ..Default::default()
+            },
+        ))).unwrap();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_page("generation".into());
+        state.set_asset_type("character".into());
+        state.set_contact_popup_open(false);
+        state.set_prompt("A translated prompt".into());
+        let mut history = Store::default();
+        archive_prompt_version(&mut history, "character", "原始提示词", "");
+        archive_prompt_version(&mut history, "character", "Optimized English", "");
+        archive_prompt_version(&mut history, "character", "优化后的中文提示词", "Optimized English");
+        archive_prompt_version(&mut history, "scene", "场景优化前", "");
+        archive_prompt_version(&mut history, "scene", "场景优化后", "");
+        let store = Rc::new(RefCell::new(history));
+        let store_for_refresh = store.clone();
+        let app_weak = app.as_weak();
+        state.on_refresh_prompt_history(move || {
+            if let Some(app) = app_weak.upgrade() {
+                push_prompt_history(&app, &store_for_refresh.borrow());
+            }
+        });
+        push_prompt_history(&app, &store.borrow());
+        apply_theme(&app, "light");
+        app.show().unwrap();
+        for (width, height) in [(1180., 760.), (1600., 900.)] {
+            app.window().set_size(slint::LogicalSize::new(width, height));
+            let _ = app.window().take_snapshot().unwrap();
+            let button = ElementHandle::find_by_accessible_label(&app, "提示词历史").next().unwrap();
+            let clear = ElementHandle::find_by_accessible_label(&app, "清空").next().unwrap();
+            let position = button.absolute_position();
+            let clear_position = clear.absolute_position();
+            assert!((position.y - clear_position.y).abs() < 6.);
+            assert!(position.x + button.size().width + 4. <= clear_position.x);
+            let pointer = slint::LogicalPosition::new(position.x + 14., position.y + 14.);
+            app.window().dispatch_event(WindowEvent::PointerMoved { position: pointer });
+            app.window().dispatch_event(WindowEvent::PointerPressed { position: pointer, button: PointerEventButton::Left });
+            app.window().dispatch_event(WindowEvent::PointerReleased { position: pointer, button: PointerEventButton::Left });
+            assert!(state.get_prompt_history_open());
+            assert_eq!(state.get_prompt(), "A translated prompt");
+            let snapshot = app.window().take_snapshot().unwrap();
+            if let Some(directory) = std::env::var_os("ELUNVI_TEST_ARTIFACT_DIR") {
+                let directory = PathBuf::from(directory);
+                fs::create_dir_all(&directory).unwrap();
+                image::save_buffer(directory.join(format!("prompt-history-{}.png", width as u32)),
+                    snapshot.as_bytes(), snapshot.width(), snapshot.height(), image::ColorType::Rgba8).unwrap();
+            }
+            let outside = slint::LogicalPosition::new(width - 40., 100.);
+            app.window().dispatch_event(WindowEvent::PointerPressed { position: outside, button: PointerEventButton::Left });
+            app.window().dispatch_event(WindowEvent::PointerReleased { position: outside, button: PointerEventButton::Left });
+        }
+        state.set_asset_type("scene".into());
+        let _ = app.window().take_snapshot().unwrap();
+        assert_eq!(state.get_prompt_history().iter().map(|value| value.to_string()).collect::<Vec<_>>(),
+            ["场景优化后", "场景优化前"]);
+        state.set_asset_type("ui".into());
+        let _ = app.window().take_snapshot().unwrap();
+        assert_eq!(state.get_prompt_history().row_count(), 0);
+    }
+
+    #[test]
     fn quality_pixel_size_uses_standard_2k_and_4k_dimensions() {
         assert_eq!(pixel_dimensions_for("9:16", "1K"), (576, 1024));
         assert_eq!(pixel_dimensions_for("16:9", "1K"), (1024, 576));
@@ -295,15 +409,15 @@ mod tests {
     }
 
     #[test]
-    fn ui_generation_prompt_requires_an_isolated_component_atlas() {
+    fn ui_generation_prompt_follows_the_requested_scope() {
         let controls = PromptControls {
             category: "ui".to_string(),
-            creation: "ui-hud".to_string(),
-            style: "fantasy".to_string(),
-            view: "free".to_string(),
-            weather: "natural".to_string(),
-            time: "natural".to_string(),
-            light: "soft".to_string(),
+            creation: "none".to_string(),
+            style: "none".to_string(),
+            view: "none".to_string(),
+            weather: "none".to_string(),
+            time: "none".to_string(),
+            light: "none".to_string(),
         };
         let quote = QuoteContext {
             title: String::new(),
@@ -314,41 +428,26 @@ mod tests {
             height: 0,
         };
 
-        let prompt = build_generation_prompt(
-            "暗黑地牢风格的战斗界面",
-            "",
-            &controls,
-            &quote,
-            "ui",
-            "1:1",
-            "2K",
+        for request in ["只画一个技能按钮", "设计一整套战斗界面"] {
+            let prompt = build_generation_prompt(
+                request, "", &controls, &quote, "ui", "1:1", "2K",
+                PromptLanguage::Chinese,
+            );
+            assert!(prompt.starts_with(request));
+            assert!(!prompt.contains("生成控制："));
+            assert!(prompt.contains("画面内容、组件种类、组件数量和布局以用户输入为准"));
+            assert!(!prompt.contains("UI component atlas rule"));
+            assert!(!prompt.contains("40 isolated"));
+            assert!(!prompt.contains("portrait frames"));
+        }
+        let mut selected_controls = controls.clone();
+        selected_controls.creation = "ui-hud".into();
+        let single_button = build_generation_prompt(
+            "只画一个技能按钮", "", &selected_controls, &quote, "ui", "1:1", "2K",
             PromptLanguage::Chinese,
         );
-
-        assert!(prompt.contains("UI component atlas rule (mandatory)"));
-        assert!(prompt.contains("clean 2D mobile RPG game UI sprite sheet"));
-        assert!(prompt.contains("smooth solid color fills"));
-        assert!(prompt.contains("simple two-step cel shading"));
-        assert!(prompt.contains("about 40 isolated front-facing sprites"));
-        assert!(prompt.contains("balanced 6-column atlas"));
-        for required_component in [
-            "portrait frames",
-            "health or energy bars",
-            "inventory slots",
-            "skill icons",
-            "icon-only buttons",
-            "virtual joystick",
-            "minimap frame",
-            "coins or gems",
-            "settings gear",
-            "treasure chests",
-            "dialog or inventory panels",
-        ] {
-            assert!(prompt.contains(required_component));
-        }
-        assert!(prompt.contains("Button faces stay blank"));
-        assert!(prompt.contains("only isolated UI sprites and whitespace"));
-        assert!(prompt.contains("暗黑地牢风格的战斗界面"));
+        assert!(single_button.contains("所选创作方式仅作为参考，不得覆盖用户明确描述"));
+        assert!(single_button.contains("不要自动扩展为整套 UI"));
     }
 
     #[test]
@@ -422,29 +521,31 @@ mod tests {
     }
 
     #[test]
-    fn ui_component_atlas_instruction_is_hidden_from_display_prompt() {
-        let generated = append_category_generation_instruction(
-            "fantasy inventory icons",
-            "ui",
-            PromptLanguage::English,
-        );
-
-        assert!(generated.contains("UI component atlas rule (mandatory)"));
+    fn legacy_ui_component_atlas_instruction_is_hidden_from_display_prompt() {
+        let generated = "fantasy inventory icons\n\nUI component atlas rule (mandatory): old instruction";
         assert_eq!(
-            display_generation_prompt(&generated),
+            display_generation_prompt(generated),
             "fantasy inventory icons"
         );
     }
 
     #[test]
-    fn non_ui_generation_does_not_add_the_component_atlas_instruction() {
-        let prompt = append_category_generation_instruction(
-            "a misty mountain village",
-            "scene",
+    fn non_ui_generation_keeps_the_requested_scene() {
+        let controls = PromptControls {
+            category: "scene".into(), creation: "none".into(), style: "none".into(),
+            view: "none".into(), weather: "none".into(), time: "none".into(),
+            light: "none".into(),
+        };
+        let quote = QuoteContext {
+            title: String::new(), prompt: String::new(), ratio: String::new(),
+            quality: String::new(), width: 0, height: 0,
+        };
+        let prompt = build_generation_prompt(
+            "a misty mountain village", "", &controls, &quote, "scene", "16:9", "2K",
             PromptLanguage::English,
         );
-
-        assert_eq!(prompt, "a misty mountain village");
+        assert!(prompt.starts_with("a misty mountain village"));
+        assert!(!prompt.contains("UI component atlas"));
     }
 
     #[test]
@@ -505,7 +606,8 @@ mod tests {
         assert!(composer.contains("AppState.prompt-history-open = true"));
         assert!(composer.contains("root.apply-selected-prompt(AppState.prompt-history[index])"));
         assert!(sync.contains("recent_prompt_history"));
-        assert!(sync.contains("dismissed_prompt_history"));
+        assert!(sync.contains("visible_prompt_history(store, category)"));
+        assert!(local_store.contains("dismissed_prompt_history.contains(&prompt_history_key(category, prompt))"));
         assert!(sync.contains("20"));
         assert!(callbacks.contains("state.on_remove_prompt_history"));
         assert!(callbacks.contains("state.on_clear_prompt_history"));
@@ -2999,7 +3101,7 @@ mod tests {
             "game interface", "unrelated negative", &controls, &quote, "ui", "1:1", "2K",
             PromptLanguage::English, &GenerationDestination::Gallery,
         );
-        assert!(gallery.contains("UI component atlas"));
+        assert!(!gallery.contains("UI component atlas"));
         assert!(gallery.contains("unrelated negative"));
         assert!(gallery.contains("unrelated workbench reference"));
         assert!(!gallery.contains("final cutout-safe composition rules"));
@@ -4708,7 +4810,7 @@ mod tests {
         let metadata = core_toolbox_delivery_metadata();
         assert!(metadata.contains("\"image_watermark_removal\"=>Some((\"watermark_removal\",\"去水印\"))"));
         assert!(metadata.contains("category:iftoolbox.is_some(){\"other\".into()}"));
-        assert!(metadata.contains("iftoolbox.is_none(){reveal_prompt_history_entry(store,&item.prompt);store.generations.insert(0,item.clone());}"));
+        assert!(metadata.contains("iftoolbox.is_none(){reveal_prompt_history_for_category(store,&item.category,&item.prompt);store.generations.insert(0,item.clone());}"));
         assert!(metadata.contains("store.assets.insert(0,item)"));
         let delivery = core_toolbox_contract_block(callbacks, "fn enqueue_toolbox_remote_delivery(",
             "\n#[derive");
@@ -5052,6 +5154,9 @@ mod tests {
         assert!(composer.contains("AppState.cancel-current-prompt();"));
         assert!(composer.contains("font-size: 12px;"));
         assert!(composer.contains("font-weight: 400;"));
+        assert!(composer.contains("AppState.deep-optimization-record-available"));
+        assert!(composer.contains("查看优化记录"));
+        assert!(composer.contains("active: AppState.deep-optimization-active || AppState.deep-optimization-record-available;"));
         assert!(
             !composer.contains("primary: true;\n            disabled: AppState.reasoning-model")
         );
@@ -7540,7 +7645,8 @@ mod tests {
         assert!(page.contains("VideoGallery"));
         assert!(page.contains("preview-card := Rectangle"));
         assert!(page.contains("visible: AppState.video-player-open && AppState.video-result-path != \"\";"));
-        assert!(page.contains("video-generation-spinner := ProgressSpinner"));
+        assert!(page.contains("show-generation: true;"));
+        assert!(!page.contains("video-generation-spinner"));
         assert!(page.contains("video-prompt-toolbar := HorizontalLayout"));
         assert!(page.contains("x: 28px;"));
         assert!(page.contains("y: 28px;"));
@@ -7604,6 +7710,81 @@ mod tests {
             1,
             "the submit button is the only video-generation title"
         );
+    }
+
+    #[test]
+    fn video_generation_placeholder_keeps_saved_videos_clickable() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true,
+                renderer_name: Some("software".into()),
+                ..Default::default()
+            },
+        ))).unwrap();
+        let app = AppWindow::new().unwrap();
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_page("video-generation".into());
+        state.set_contact_popup_open(false);
+        apply_theme(&app, "ocean");
+        let opened = Rc::new(RefCell::new(String::new()));
+        let observed = opened.clone();
+        state.on_play_saved_video(move |id| *observed.borrow_mut() = id.to_string());
+        let saved: Vec<_> = (0..3).map(|index| {
+            let pixels = image::RgbaImage::from_fn(80, 80, |x, y| {
+                image::Rgba([40 + index * 55, (x * 2) as u8, (y * 2) as u8, 255])
+            });
+            VideoImageItem {
+                id: format!("saved-{index}").into(), title: format!("Saved video {index}").into(),
+                subtitle: "720P - 4s".into(), image: slint_image_from_rgba(&pixels, 80, 80),
+                has_preview: true, ..Default::default()
+            }
+        }).collect();
+        app.show().unwrap();
+        for width in [1050.0, 1600.0, 2560.0] {
+            app.window().set_size(slint::LogicalSize::new(width, 900.0));
+            state.set_saved_videos(ModelRc::new(VecModel::from(saved.clone())));
+            state.set_video_generating(false);
+            let _ = app.window().take_snapshot().unwrap();
+            let first_slot = ElementHandle::find_by_accessible_label(&app, "播放 Saved video 0")
+                .next().expect("saved video has an accessible play action").absolute_position();
+            state.set_video_progress(37);
+            state.set_video_generating(true);
+            let snapshot = app.window().take_snapshot().unwrap();
+            if let Some(directory) = std::env::var_os("ELUNVI_TEST_ARTIFACT_DIR") {
+                let directory = PathBuf::from(directory);
+                fs::create_dir_all(&directory).unwrap();
+                image::save_buffer(directory.join(format!("video-placeholder-{width}.png")),
+                    snapshot.as_bytes(), snapshot.width(), snapshot.height(), image::ColorType::Rgba8).unwrap();
+            }
+            let loader = ElementHandle::find_by_accessible_label(&app, "生成中... 37%")
+                .next().expect("video task has an inline progress label");
+            let card = ElementHandle::find_by_accessible_label(&app, "播放 Saved video 0")
+                .next().expect("saved videos remain visible");
+            let loader_position = loader.absolute_position();
+            let card_position = card.absolute_position();
+            assert!((loader.size().width - card.size().width).abs() < 1.0);
+            assert!((loader_position.x - first_slot.x).abs() < 1.0);
+            assert!(loader_position.y > first_slot.y
+                && loader_position.y + loader.size().height < first_slot.y + card.size().height);
+            assert!(card_position.x >= first_slot.x + card.size().width
+                || card_position.y >= first_slot.y + card.size().height,
+                "saved video cannot overlap its preceding placeholder at width {width}");
+            card.mock_single_click(PointerEventButton::Left);
+            assert_eq!(*opened.borrow(), "saved-0", "loading must not block saved video clicks");
+            opened.borrow_mut().clear();
+            state.set_video_generating(false);
+            let _ = app.window().take_snapshot().unwrap();
+            assert!(ElementHandle::find_by_accessible_label(&app, "生成中... 37%").next().is_none());
+            let card = ElementHandle::find_by_accessible_label(&app, "播放 Saved video 0").next().unwrap();
+            assert_eq!(card.absolute_position(), first_slot, "result takes the first slot");
+        }
+        state.set_saved_videos(ModelRc::new(VecModel::from(Vec::<VideoImageItem>::new())));
+        state.set_video_generating(true);
+        let _ = app.window().take_snapshot().unwrap();
+        assert_eq!(ElementHandle::find_by_accessible_label(&app, "生成中... 37%").count(), 1);
     }
 
     #[test]
@@ -8297,7 +8478,7 @@ mod tests {
         assert!(stage.contains("\"image_cutout\"=>Some((\"image_cutout\",\"智能抠图\"))"));
         assert!(stage.contains("cutout_done:cutout"));
         assert!(stage.contains("store.assets.insert(0,item)"));
-        assert!(stage.contains("if toolbox.is_none() {\n            reveal_prompt_history_entry(store,&item.prompt);\n            store.generations.insert(0,item.clone());"));
+        assert!(stage.contains("if toolbox.is_none() {\n            reveal_prompt_history_for_category(store,&item.category,&item.prompt);\n            store.generations.insert(0,item.clone());"));
         assert!(!callbacks.contains("store.generations.insert"));
         assert!(api.contains("/v1/toolbox/image-cutouts"));
         assert!(api.contains("pub(crate) subject_type: String"));
@@ -8572,10 +8753,12 @@ mod tests {
     #[test]
     fn prompt_model_fallback_uses_gpt_5_6_sol_as_the_default() {
         let auth = include_str!("callbacks/auth.rs");
-        // Both publication and refresh retain the same saved -> GPT-5.6 -> first order.
+        let refresh = auth.split_once("pub(super) fn apply_model_catalog_projection(").unwrap().1
+            .split_once("fn model_group(").unwrap().0;
+        assert!(refresh.contains("prepare_model_catalog_projection("));
+        // Startup and refresh share the saved -> GPT-5.6 -> first selection order.
         for (start, end) in [
-            ("fn prepare_activation_catalog_projection(", "fn prepare_activation_image_model("),
-            ("fn apply_model_catalog_projection(", "fn model_group("),
+            ("fn prepare_model_catalog_projection(", "fn prepare_activation_image_model("),
         ] {
             let producer = auth.split_once(start).unwrap().1.split_once(end).unwrap().0;
             let selection = producer.split_once("let selected_prompt = available_models").unwrap().1
@@ -8933,20 +9116,20 @@ mod tests {
         let sidebar = include_str!("../../ui/components/sidebar.slint");
         let callbacks = include_str!("callbacks/contact.rs");
 
-        assert!(state.contains("contact-popup-open: true"));
+        assert!(state.contains("contact-popup-open: false"));
         assert!(state.contains("callback dismiss-contact-popup();"));
         assert!(state.contains("callback open-contact-settings();"));
         assert!(state.contains("callback copy-contact-detail(string);"));
         assert!(state.contains("contact-copy-toast-visible"));
         assert!(state.contains("contact-copy-sequence"));
-        assert!(app.contains("if AppState.contact-popup-open: ContactPopup"));
+        assert!(app.contains("if AppState.contact-popup-open && AppState.logged-in && !AppState.auth-open && !AppState.auth-busy: ContactPopup"));
         for detail in ["1090665775", "dyx346", "business@honeykid.cn"] {
             assert!(popup.contains(detail));
             assert!(settings.contains(detail));
         }
         assert!(sidebar.contains("AppState.open-contact-settings()"));
         assert!(!settings.contains("AppState.settings-section = \"contact\""));
-        assert!(callbacks.contains("store_mut.contact_popup_dismissed = true"));
+        assert!(callbacks.contains("set_contact_popup_last_shown_version"));
         assert!(callbacks.contains("state.set_settings_section(\"contact\".into())"));
         assert!(callbacks.contains("state.on_copy_contact_detail"));
         assert!(callbacks.contains("clipboard.set_text(value.to_owned())"));
@@ -8965,7 +9148,7 @@ mod tests {
         assert!(app.contains("AppState.en ? \"Copied\" : \"已复制\""));
         assert!(!popup.contains("AppState.contact-copied-value"));
         assert!(!settings.contains("AppState.contact-copied-value"));
-        assert!(callbacks.contains("save_local_store(app, &store_mut)"));
+        assert!(callbacks.contains("save_device_settings(app)"));
     }
 
     #[test]

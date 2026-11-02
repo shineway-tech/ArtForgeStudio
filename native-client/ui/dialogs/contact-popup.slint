@@ -3,6 +3,7 @@ import { ContactItem } from "../components/contact-item.slint";
 import { AppTheme } from "../theme.slint";
 
 export component ContactPopup inherits Rectangle {
+    init => { AppState.contact-popup-shown(); }
     background: AppTheme.panel;
     border-radius: 18px;
     border-width: 1px;

@@ -82,6 +82,13 @@ pub(super) fn sync_style_analysis_selection(state: &AppState) -> StyleAnalysisSe
 
 pub(super) fn wire_model_catalog_callbacks(app: &AppWindow, store: Rc<RefCell<Store>>) {
     let state = app.global::<AppState>();
+    state.on_model_credit_cost(|models, code, quality| {
+        models.iter()
+            .find(|model| model.purpose == "image_generation" && model.code == code)
+            .and_then(|model| model.prices.iter().find(|price| price.quality == quality))
+            .map(|price| price.credit_cost)
+            .unwrap_or_default()
+    });
 
     {
         let app_weak = app.as_weak();
@@ -298,6 +305,74 @@ pub(super) fn reconcile_generation_selection(state: &AppState, store: &Store) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn regeneration_credit_cost_is_visible_beside_action_in_all_viewers() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::{PointerEventButton, WindowEvent};
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                mock_time: true, renderer_name: Some("software".into()), ..Default::default()
+            },
+        ))).unwrap();
+        let app = AppWindow::new().unwrap();
+        wire_model_catalog_callbacks(&app, Rc::new(RefCell::new(Store::default())));
+        let state = app.global::<AppState>();
+        state.set_logged_in(true);
+        state.set_page("generation".into());
+        state.set_contact_popup_open(false);
+        state.set_viewer_open(true);
+        state.set_viewer_repeat_enabled(true);
+        state.set_viewer_model("original-image".into());
+        state.set_viewer_quality("2K".into());
+        state.set_catalog_models(ModelRc::new(VecModel::from(vec![CatalogModelView {
+            code: "original-image".into(), purpose: "image_generation".into(),
+            prices: ModelRc::new(VecModel::from(vec![CatalogPriceView {
+                quality: "2K".into(), credit_cost: "125".into(),
+            }])), ..Default::default()
+        }])));
+        let clicks = Rc::new(Cell::new(0));
+        let observed = clicks.clone();
+        state.on_viewer_regenerate(move || observed.set(observed.get() + 1));
+        apply_theme(&app, "ocean");
+        app.show().unwrap();
+        for (width, height, language) in [(1180., 760., "zh"), (1600., 900., "en")] {
+            app.window().set_size(slint::LogicalSize::new(width, height));
+            state.set_language(language.into());
+            for source in ["generation", "asset", "canvas"] {
+                state.set_viewer_source(source.into());
+                let snapshot = app.window().take_snapshot().unwrap();
+                let credits = ElementHandle::find_by_accessible_label(&app,
+                    if language == "en" { "125 credits" } else { "125 积分" }).next().expect("visible regeneration cost");
+                let label = ElementHandle::find_by_element_id(&app, "ViewerToolActionButton::action-label").last().unwrap();
+                let button = ElementHandle::find_by_element_type_name(&app, "ViewerToolActionButton").last().unwrap();
+                let label_position = label.absolute_position();
+                let credit_position = credits.absolute_position();
+                let button_position = button.absolute_position();
+                assert!(label.size().width >= 80., "action label must retain readable space");
+                assert!(label_position.x + label.size().width < credit_position.x);
+                assert!(credit_position.x + credits.size().width <= button_position.x + button.size().width);
+                assert!((label_position.y - credit_position.y).abs() < 1.);
+                let position = slint::LogicalPosition::new(
+                    button_position.x + button.size().width / 2., button_position.y + button.size().height / 2.);
+                app.window().dispatch_event(WindowEvent::PointerMoved { position });
+                app.window().dispatch_event(WindowEvent::PointerPressed { position, button: PointerEventButton::Left });
+                app.window().dispatch_event(WindowEvent::PointerReleased { position, button: PointerEventButton::Left });
+                if source == "generation" {
+                    if let Some(directory) = std::env::var_os("ELUNVI_TEST_ARTIFACT_DIR") {
+                        let directory = PathBuf::from(directory);
+                        fs::create_dir_all(&directory).unwrap();
+                        image::save_buffer(directory.join(format!("regeneration-credits-{language}.png")),
+                            snapshot.as_bytes(), snapshot.width(), snapshot.height(), image::ColorType::Rgba8).unwrap();
+                    }
+                }
+            }
+        }
+        assert_eq!(clicks.get(), 6);
+        state.set_catalog_models(ModelRc::default());
+        let _ = app.window().take_snapshot().unwrap();
+        assert!(ElementHandle::find_by_accessible_label(&app, "-- credits").next().is_some());
+    }
+
     fn catalog_model(
         code: &str,
         purpose: &str,
@@ -312,6 +387,7 @@ mod tests {
             capabilities: String::new().into(),
             capability_json: String::new().into(),
             pricing: String::new().into(),
+            prices: ModelRc::default(),
             price_1k: 0,
             price_2k: 0,
             price_4k: 0,

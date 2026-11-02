@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 
 const CLIENT_STATE_FILE_NAME: &str = "client-state.sqlite3";
 const CLIENT_STATE_SCHEMA_VERSION: i32 = 3;
-pub(super) const KNOWN_DEVICE_SETTING_KEYS: [&str; 10] = [
+pub(super) const KNOWN_DEVICE_SETTING_KEYS: [&str; 11] = [
     "export_directory",
     "theme_id",
     "card_style",
@@ -18,6 +18,7 @@ pub(super) const KNOWN_DEVICE_SETTING_KEYS: [&str; 10] = [
     "generation_gallery_layout",
     "asset_gallery_layout",
     "inspiration_gallery_layout",
+    "contact_popup_last_shown_version",
 ];
 const V1_TABLES: [&str; 8] = [
     "assets",
@@ -1460,6 +1461,7 @@ fn write_local_store(
         "dismissed_prompt_history",
         &data.dismissed_prompt_history,
     )?;
+    write_setting_json(&transaction, user_public_id, "saved_prompt_history", &data.saved_prompt_history)?;
     write_setting_json(
         &transaction,
         user_public_id,
@@ -1834,6 +1836,7 @@ fn read_local_store_transaction(
             user_public_id,
             "dismissed_prompt_history",
         )?,
+        saved_prompt_history: read_setting_json_or_default(transaction, user_public_id, "saved_prompt_history")?,
         custom_prompts,
         selected_custom_prompts: read_setting_json_or_default(
             transaction,
@@ -4931,6 +4934,8 @@ fn core_cutout_atomic_settle_rejects_extra_out_of_count_delivery_after_real_remo
         store.prompt_drafts.scene = "owned draft".into();
         store.prompt_drafts.negative_scene = "owned negative draft".into();
         store.dismissed_prompt_history.insert("dismissed prompt".into());
+        archive_prompt_version(&mut store, "scene", "saved original", "");
+        archive_prompt_version(&mut store, "scene", "保存的中文", "Saved English");
         store.custom_prompts.push("owned custom prompt".into());
         store.selected_custom_prompts.insert(
             "scene".into(),
@@ -5004,6 +5009,7 @@ fn core_cutout_atomic_settle_rejects_extra_out_of_count_delivery_after_real_remo
             DeepPromptBinding {
                 chinese: "中文绑定".into(),
                 english: "English binding".into(),
+                ..Default::default()
             },
         );
         store.contact_popup_dismissed = true;
@@ -5034,6 +5040,9 @@ fn core_cutout_atomic_settle_rejects_extra_out_of_count_delivery_after_real_remo
         assert_eq!(saved.prompt_drafts.scene, "owned draft");
         assert_eq!(saved.prompt_drafts.negative_scene, "owned negative draft");
         assert!(saved.dismissed_prompt_history.contains("dismissed prompt"));
+        assert_eq!(saved.saved_prompt_history[0].prompt, "保存的中文");
+        assert_eq!(saved.saved_prompt_history[0].english_prompt, "Saved English");
+        assert_eq!(saved.saved_prompt_history[1].prompt, "saved original");
         assert_eq!(saved.custom_prompts, ["owned custom prompt"]);
         assert!(saved.selected_custom_prompts["scene"].contains("owned custom prompt"));
         assert_eq!(
@@ -5070,6 +5079,10 @@ fn core_cutout_atomic_settle_rejects_extra_out_of_count_delivery_after_real_remo
         );
         assert_eq!(saved.deep_prompt_bindings["scene"].english, "English binding");
         assert!(saved.contact_popup_dismissed);
+        let other = repo.lease(USER_B, 1, 20);
+        repo.activate(other.clone()).unwrap();
+        assert!(repo.load_client_state_for_namespace(&other).unwrap()
+            .is_none_or(|data| data.saved_prompt_history.is_empty()));
     }
     #[test]
     fn namespace_checked_generated_assets_preserve_user_partition_and_device_preferences() {
@@ -5523,6 +5536,26 @@ fn core_cutout_atomic_settle_rejects_extra_out_of_count_delivery_after_real_remo
             generation_gallery_layout: "waterfall".into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn contact_popup_version_survives_restart_and_private_account_switches() {
+        let repository = Fixture::new(false, false);
+        let old: DeviceSettings = serde_json::from_str(r#"{"theme_id":"dark"}"#).unwrap();
+        assert!(old.contact_popup_last_shown_version.is_empty());
+        let saved = DeviceSettings {
+            contact_popup_last_shown_version: env!("CARGO_PKG_VERSION").into(), ..old
+        };
+        repository.persist_device_settings_checked(saved.clone()).unwrap();
+        for owner in [USER_A, USER_B, USER_A] {
+            let lease = repository.lease(owner, 1, 1);
+            repository.activate(lease.clone()).unwrap();
+            repository.persist_client_state_checked_for_namespace(&lease, LocalStoreData::default()).unwrap();
+            assert_eq!(repository.load_device_settings().unwrap(), Some(saved.clone()));
+            repository.deactivate(&lease).unwrap();
+        }
+        let reloaded = read_device_settings(&open_client_state_connection(&repository.path).unwrap()).unwrap().unwrap();
+        assert_eq!(reloaded.contact_popup_last_shown_version, env!("CARGO_PKG_VERSION"));
     }
     fn seed_v1(
         profile: Option<&str>,

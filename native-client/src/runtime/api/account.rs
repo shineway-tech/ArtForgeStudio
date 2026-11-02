@@ -387,7 +387,7 @@ pub(crate) struct AccountApi {
 }
 
 impl AccountApi {
-    pub(crate) fn video_model_catalog(&self, scope: &BillingScope) -> Result<Vec<ModelCatalogItem>, ApiError> {
+    pub(crate) fn model_catalog(&self, scope: &BillingScope) -> Result<Vec<ModelCatalogItem>, ApiError> {
         self.client.billing_json_scoped::<ModelCatalog>(Method::GET, "/v1/models", None, None, scope).map(|response| response.data.items)
     }
 
@@ -586,15 +586,7 @@ impl AccountApi {
                 let client = self.client.clone();
                 let request_scope = scope.clone();
                 thread_scope.spawn(move || {
-                    client
-                        .billing_json_scoped::<ModelCatalog>(
-                            Method::GET,
-                            "/v1/models",
-                            None,
-                            None,
-                            &request_scope,
-                        )
-                        .map(|response| response.data.items)
+                    AccountApi::new(client).model_catalog(&request_scope)
                 })
             });
 

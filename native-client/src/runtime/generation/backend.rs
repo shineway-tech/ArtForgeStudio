@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(test)]
+#[path = "viewer_completion_tests.rs"]
+mod viewer_completion_tests;
+
 pub(super) struct CapturedImageEditBrushPoint {
     pub x:f32,pub y:f32,pub size:f32,pub shape:String,
 }
@@ -265,10 +269,12 @@ fn start_paid_viewer_record(
         state.set_image_editor_generating(false);
         state.set_page(if record.video_request.is_some() { "video-generation" } else { "generation" }.into());
         if record.video_request.is_some() { state.set_video_generating(true); state.set_video_status("正在提交视频任务…".into()); }
-        state.set_asset_type(record.category.clone().into());
-        state.set_current_conversation_id(record.conversation_id.clone().into());
-        state.set_ratio(record.ratio.clone().into());state.set_quality(record.quality.clone().into());state.set_mode(record.mode.clone().into());
-        state.set_image_model(record.model_code.clone().into());
+        if record.video_request.is_none() {
+            state.set_asset_type(record.category.clone().into());
+            state.set_current_conversation_id(record.conversation_id.clone().into());
+            state.set_ratio(record.ratio.clone().into());state.set_quality(record.quality.clone().into());state.set_mode(record.mode.clone().into());
+            state.set_image_model(record.model_code.clone().into());
+        }
         if record.task_type=="image_generation" {
             *references_for_category_mut(&mut context.store.borrow_mut().references,&record.category)=record.reference_paths.iter()
                 .map(|path|ReferenceData{id:Uuid::new_v4().to_string(),source_path:path.clone()}).collect();
@@ -413,7 +419,12 @@ fn finish_paid_viewer_results(
                     let state = app.global::<AppState>(); state.set_video_generating(false);
                     match result {
                         Ok((_, id, acknowledged)) => {
-                            if let Some(output) = context.store.borrow().video_outputs.get(&id) { state.set_video_result_path(output.source_path.clone().into()); }
+                            if !state.get_video_player_open() {
+                                if let Some(output) = context.store.borrow().video_outputs.get(&id) {
+                                    state.set_video_result_path(output.source_path.clone().into());
+                                    state.set_video_result_id(id.clone().into());
+                                }
+                            }
                             state.set_video_progress(100);
                             state.set_video_status(if acknowledged { "视频已生成并保存" } else { "视频已保存，交付确认待重试" }.into());
                             mark_active_generation_image_completed(&context, app, &record.category, &record.local_task_id, true, Some(id), None);
@@ -469,7 +480,9 @@ fn finish_paid_viewer_results(
                 if record.video_request.is_some() { let state=app.global::<AppState>(); state.set_video_generating(false); if state.get_video_result_path().is_empty() { state.set_video_status("服务端任务已结束；视频交付尚未完成时将保留恢复记录".into()); } }
                 let latest=context.generations.active.borrow().get(&record.category).and_then(|active|
                     (active.task_id==record.local_task_id).then(||active.latest_success_id.clone())).flatten();
-                let viewer=latest.as_ref().and_then(|id|prepare_viewer_projection(&app,&context.store.borrow(),id,"generation"));
+                let viewer=latest.as_ref()
+                    .filter(|_|can_open_generation_result_viewer(&app,&record.category,&record.conversation_id))
+                    .and_then(|id|prepare_viewer_projection(&app,&context.store.borrow(),id,"generation"));
                 let mut effects=None;
                 let _=context.apply_user_completion(persistence.lease(),||{
                     if !paid_viewer_binding_matches(&context,&persistence) || !paid_viewer_task_matches(&context,&record){return;}
@@ -490,6 +503,13 @@ fn stage_paid_viewer_failure(
     app:&AppWindow,context:AppContext,persistence:PrivatePersistence,record:PendingGenerationRecord,
     reason:String,time:String,failed_id:Option<String>,remaining:Vec<GenerationOutcome>,
 ){
+    let results_complete = context.generations.active.borrow().get(&record.category)
+        .is_some_and(|task| task.task_id == record.local_task_id
+            && task.completed_count >= task.total_count);
+    if results_complete {
+        finish_paid_viewer_results(app.as_weak(),context,persistence,record,remaining);
+        return;
+    }
     if record.video_request.is_some() {
         let _ = context.apply_user_completion(persistence.lease(), || {
             if !paid_viewer_binding_matches(&context, &persistence) { return; }
@@ -516,7 +536,7 @@ fn stage_paid_viewer_failure(
     let queued=context.apply_user_completion(persistence.lease(),||{
         if !paid_viewer_binding_matches(&context,&persistence) || !paid_viewer_task_matches(&context,&record){return None;}
         let mut store=context.store.borrow_mut();
-        reveal_prompt_history_entry(&mut store,&record.raw_prompt);
+        reveal_prompt_history_for_category(&mut store,&record.category,&record.raw_prompt);
         upsert_stream_failure_card(&mut store.generations,asset);store.notifications.insert(0,notification);
         Some(write.take().unwrap().enqueue(local_store_data(app,&store)))
     });
@@ -852,6 +872,45 @@ mod core_paid_viewer_caller_tests {
         });
     }
     fn finished(f:&Fixture)->bool{f.context.generations.active.borrow().is_empty()}
+    #[test]
+    fn unified_catalog_video_submission_preserves_saved_image_workspace_and_model(){
+        let mut server=Server::new();let(f,app)=setup(&server.url);
+        let path=source(&f);f.context.store.borrow_mut().generations.push(original(&path));
+        let state=app.global::<AppState>();
+        state.set_image_model_name("Selected Image".into());state.set_image_price_2k(47);
+        state.set_video_model("selected-video".into());state.set_current_conversation_id(OTHER.into());
+        let writer=(*f.writer).clone();let lease=f.persistence.lease().clone();
+        server.start(move|headers,body|{
+            let first=headers.lines().next().unwrap();
+            assert!(first.starts_with("POST /v1/generation/tasks "));
+            let request:Value=serde_json::from_slice(body).unwrap();
+            assert_eq!(request["model_code"],"selected-video");
+            assert_eq!(request["task_type"],"image_to_video");
+            let saved=writer.load_client_state_for_namespace(&lease).unwrap().unwrap();
+            assert_eq!(saved.image_model,"paid-test-model");
+            assert_eq!(saved.video_model,"selected-video");
+            (503,serde_json::to_vec(&serde_json::json!({"request_id":"fixture-video","data":null,
+                "error":{"code":"service_unavailable","message":"fixture failure","details":null},"meta":null})).unwrap())
+        });
+        let scope=f.context.billing_context.confirmed_scope().unwrap();
+        assert!(start_backend_video(&app,f.context.clone(),f.persistence.clone(),f.authority.clone(),&scope,
+            CreateVideoGenerationTask {
+                client_request_id:Uuid::new_v4().to_string(),task_type:"image_to_video".into(),
+                model_code:"selected-video".into(),prompt:"fixture motion".into(),source_file_id:SOURCE_FILE.into(),
+                reference_file_ids:vec![SOURCE_FILE.into()],aspect_ratio:"16:9".into(),resolution:"720P".into(),
+                duration_secs:4,quote_id:Uuid::new_v4().to_string(),
+            },String::new(),String::new()));
+        video_image_callbacks::tests::scoped_inputs::pump(||finished(&f));server.finish();
+        assert_eq!(state.get_image_model(),"paid-test-model");
+        assert_eq!(state.get_image_model_name(),"Selected Image");
+        assert_eq!(state.get_image_price_2k(),47);
+        assert_eq!(state.get_asset_type(),"character");
+        assert_eq!(state.get_current_conversation_id(),OTHER);
+        assert_eq!(state.get_ratio(),"1:1");assert_eq!(state.get_quality(),"1K");
+        assert_eq!(server.requests.lock().unwrap().len(),1);
+        assert_eq!(state.get_image_model(),"paid-test-model");
+        assert_eq!(state.get_video_model(),"selected-video");
+    }
     #[test]
     fn core_paid_image_edit_actual_entry_persists_original_pair_and_payer_before_transport(){
         let server=Server::new();let(f,app)=setup(&server.url);let path=source(&f);let item=original(&path);
