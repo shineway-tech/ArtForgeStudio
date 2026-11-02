@@ -306,7 +306,15 @@ jobs:
               "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
               "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
             ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
-            $searchRoots = @("${env:ProgramFiles(x86)}", "$env:ProgramFiles", "$env:ChocolateyToolsLocation", "$env:ChocolateyInstall\lib") |
+            $chocolateyRoot = $env:ChocolateyInstall
+            if (-not $chocolateyRoot) {
+              $chocoCommand = Get-Command choco.exe -ErrorAction SilentlyContinue
+              if ($chocoCommand -and $chocoCommand.Source) {
+                $chocolateyRoot = Split-Path -Parent (Split-Path -Parent $chocoCommand.Source)
+              }
+            }
+            $chocolateyLib = if ($chocolateyRoot) { Join-Path $chocolateyRoot "lib" } else { $null }
+            $searchRoots = @("${env:ProgramFiles(x86)}", "$env:ProgramFiles", "$env:ChocolateyToolsLocation", $chocolateyLib) |
               Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) }
             $discoveredPaths = foreach ($root in $searchRoots) {
               Get-ChildItem -LiteralPath $root -Directory -Filter "Inno Setup*" -ErrorAction SilentlyContinue |
@@ -315,8 +323,7 @@ jobs:
                 } |
                 Select-Object -ExpandProperty FullName
             }
-            $chocolateyLib = Join-Path $env:ChocolateyInstall "lib"
-            if (Test-Path -LiteralPath $chocolateyLib -PathType Container) {
+            if ($chocolateyLib -and (Test-Path -LiteralPath $chocolateyLib -PathType Container)) {
               # The Chocolatey package keeps the compiler under a lower-case
               # package directory, so it is not covered by the Program Files
               # "Inno Setup*" directory filter above.
@@ -371,6 +378,13 @@ jobs:
           if (!(Test-Path -LiteralPath $installer)) {
             throw "Missing Windows installer: $installer"
           }
+          } catch {
+            $failure = $_
+            Write-Error ("Windows packaging failed: " + $failure.Exception.Message)
+            if ($failure.InvocationInfo -and $failure.InvocationInfo.PositionMessage) {
+              Write-Error $failure.InvocationInfo.PositionMessage
+            }
+            throw
           } finally {
             Stop-Transcript | Out-Null
           }
