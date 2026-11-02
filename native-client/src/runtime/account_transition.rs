@@ -1617,7 +1617,7 @@ mod tests {
     fn assert_actual_activation_worker_panic(target:&'static str) {
         i_slint_backend_testing::init_no_event_loop();
         let (listener,url)=backend_generation::billing_capture_test_support::listener();
-        let (_fixture,core,_,_)=active_transition_fixture_at(false,&url);
+        let (fixture,core,_,_)=active_transition_fixture_at(false,&url);
         let app=AppWindow::new().unwrap();
         let context=AppContext {
             backend:Some(core.backend.clone()),billing_context:core.billing.clone(),
@@ -1673,6 +1673,19 @@ mod tests {
             assert!(core.active_namespace.lock().unwrap().is_none());
             assert!(core.backend.api.session().persisted_owner_user_id().is_none());
         }
+        let timer_deadline=Instant::now()+Duration::from_secs(3);
+        while let Some(delay)=slint::platform::duration_until_next_timer_update() {
+            i_slint_backend_testing::mock_elapsed_time(delay+Duration::from_millis(1));
+            slint::platform::update_timers_and_animations();
+            assert!(Instant::now()<timer_deadline,"activation test timers did not drain: {target}");
+        }
+        drop(drain);
+        drop(_hook);
+        drop(coordinator);
+        drop(context);
+        drop(app);
+        drop(core);
+        drop(fixture);
     }
     #[test]
     fn core_activation_actual_working_panic_closes_admission_and_shutdown_reports_failure(){
@@ -1715,6 +1728,10 @@ mod tests {
         }
         drain.release.take().unwrap().send(()).unwrap();
         coordinator.shutdown().unwrap();
+        while let Some(delay)=slint::platform::duration_until_next_timer_update() {
+            i_slint_backend_testing::mock_elapsed_time(delay+Duration::from_millis(1));
+            slint::platform::update_timers_and_animations();
+        }
         assert!(coordinator.retired_workers.borrow().is_empty());
         assert!(core.active_namespace.lock().unwrap().is_none());
         assert!(core.backend.api.session().persisted_owner_user_id().is_none());
