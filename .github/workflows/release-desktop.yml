@@ -149,6 +149,7 @@ jobs:
           DMG_PATH="dist/ElunviCanvas_${APP_VERSION}_macos_${{ matrix.artifact_arch }}.dmg"
           NOTARY_RESULT="$RUNNER_TEMP/notary-${{ matrix.artifact_arch }}.json"
           NOTARY_LOG="$RUNNER_TEMP/notary-${{ matrix.artifact_arch }}-log.json"
+          STAPLE_LOG="$RUNNER_TEMP/staple-${{ matrix.artifact_arch }}.log"
           set +e
           xcrun notarytool submit "$DMG_PATH" \
             --key "$APPLE_API_KEY_PATH" \
@@ -179,8 +180,32 @@ jobs:
             fi
             exit "$NOTARY_STATUS"
           fi
-          xcrun stapler staple -v "$DMG_PATH"
-          xcrun stapler validate -v "$DMG_PATH"
+          # Apple notarization can finish successfully while CloudKit ticket
+          # delivery temporarily fails on hosted runners (stapler reports
+          # exit code 68 in that case). Retry the ticket delivery without
+          # submitting the DMG again.
+          STAPLE_STATUS=1
+          for ATTEMPT in 1 2 3 4 5; do
+            echo "Stapling notarization ticket (attempt $ATTEMPT/5)..." | tee -a "$STAPLE_LOG"
+            if xcrun stapler staple -v "$DMG_PATH" >> "$STAPLE_LOG" 2>&1; then
+              STAPLE_STATUS=0
+            else
+              STAPLE_STATUS=$?
+            fi
+            if [ "$STAPLE_STATUS" -eq 0 ]; then
+              break
+            fi
+            if [ "$ATTEMPT" -lt 5 ]; then
+              sleep 20
+            fi
+          done
+          cat "$STAPLE_LOG"
+          if [ "$STAPLE_STATUS" -ne 0 ]; then
+            echo "Unable to staple the notarization ticket after five attempts."
+            exit "$STAPLE_STATUS"
+          fi
+          xcrun stapler validate -v "$DMG_PATH" >> "$STAPLE_LOG" 2>&1
+          cat "$STAPLE_LOG"
 
       - name: Upload macOS notarization diagnostics
         if: always() && startsWith(github.ref, 'refs/tags/v')
@@ -190,6 +215,7 @@ jobs:
           path: |
             ${{ runner.temp }}/notary-${{ matrix.artifact_arch }}.json
             ${{ runner.temp }}/notary-${{ matrix.artifact_arch }}-log.json
+            ${{ runner.temp }}/staple-${{ matrix.artifact_arch }}.log
           if-no-files-found: ignore
           retention-days: 7
 
@@ -270,18 +296,31 @@ jobs:
 
           function Find-InnoCompiler {
             $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
-            @(
+            $knownPaths = @(
               $command.Source,
               "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
               "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
               "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
               "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
-            ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+            ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
+            $searchRoots = @("${env:ProgramFiles(x86)}", "$env:ProgramFiles") |
+              Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) }
+            $discoveredPaths = foreach ($root in $searchRoots) {
+              Get-ChildItem -LiteralPath $root -Directory -Filter "Inno Setup*" -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                  Get-ChildItem -LiteralPath $_.FullName -Filter "ISCC.exe" -File -Recurse -ErrorAction SilentlyContinue
+                } |
+                Select-Object -ExpandProperty FullName
+            }
+            @($knownPaths + $discoveredPaths) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
           }
 
           $iscc = Find-InnoCompiler
           if (!$iscc) {
             choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) {
+              throw "Chocolatey failed to install Inno Setup with exit code $LASTEXITCODE."
+            }
             $iscc = Find-InnoCompiler
           }
           if (!(Test-Path -LiteralPath $iscc)) {

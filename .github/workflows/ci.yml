@@ -21,6 +21,10 @@ env:
   CARGO_NET_RETRY: 10
   CARGO_HTTP_TIMEOUT: 600
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  # UI tests use Slint's ElementHandle tree inspection. Keep compiler debug
+  # metadata enabled in CI so those tests exercise the rendered tree instead
+  # of failing before the callback is reached.
+  SLINT_EMIT_DEBUG_INFO: '1'
 
 jobs:
   verify-macos:
