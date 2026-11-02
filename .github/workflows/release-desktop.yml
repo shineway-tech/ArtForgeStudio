@@ -283,81 +283,95 @@ jobs:
           }
           "APP_VERSION=$($package.version)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Package Windows releases
+      - name: Package Windows portable release
         shell: pwsh
         run: |
           $packageLog = Join-Path $env:RUNNER_TEMP "windows-package.log"
           Start-Transcript -Path $packageLog -Force | Out-Null
           try {
-          & ./scripts/package-native-client.ps1 -Target windows
-          New-Item -ItemType Directory -Force -Path release-windows | Out-Null
-
-          $portable = "dist/ElunviCanvas_${env:APP_VERSION}_windows_x64_portable.zip"
-          if (!(Test-Path -LiteralPath $portable)) {
-            throw "Missing Windows portable package: $portable"
-          }
-
-          function Find-InnoCompiler {
-            $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
-            @(
-              $command.Source,
-              "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
-              "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
-              "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-              "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
-            ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
-          }
-
-          $iscc = Find-InnoCompiler
-          if (!$iscc) {
-            $installCode = 1
-            $chocoCommand = Get-Command choco.exe -ErrorAction SilentlyContinue
-            if (!$chocoCommand -or !$chocoCommand.Source) {
-              throw "Chocolatey is not available on the Windows runner."
+            & ./scripts/package-native-client.ps1 -Target windows
+            $portable = "dist/ElunviCanvas_${env:APP_VERSION}_windows_x64_portable.zip"
+            if (!(Test-Path -LiteralPath $portable)) {
+              throw "Missing Windows portable package: $portable"
             }
-            for ($attempt = 1; $attempt -le 3 -and !$iscc; $attempt++) {
-              Write-Host "Inno Setup compiler not found; installing with Chocolatey (attempt $attempt/3)."
-              & $chocoCommand.Source install innosetup --no-progress --yes
-              $installCode = $LASTEXITCODE
-              # Chocolatey uses 3010 for a successful install that requests a
-              # reboot. The runner must not treat that as a packaging failure.
-              if ($installCode -notin @(0, 3010)) {
-                Write-Warning "Chocolatey returned exit code $installCode."
-                if ($attempt -lt 3) { Start-Sleep -Seconds 10 }
-                continue
-              }
-              $iscc = Find-InnoCompiler
-            }
-            if (!$iscc -and $installCode -notin @(0, 3010)) {
-              throw "Chocolatey failed to install Inno Setup with exit code $installCode."
-            }
-          }
-          if (!(Test-Path -LiteralPath $iscc)) {
-            throw "Unable to find Inno Setup compiler."
-          }
-          Write-Host "Using Inno Setup compiler: $iscc"
-          if (!(Test-Path -LiteralPath "installer/languages/ChineseSimplified.isl")) {
-            throw "Missing vendored Inno Setup language file: installer/languages/ChineseSimplified.isl"
-          }
-          if (!(Test-Path -LiteralPath "installer/installed.marker")) {
-            throw "Missing installer marker: installer/installed.marker"
-          }
-
-          $env:ARTFORGE_APP_VERSION = $env:APP_VERSION
-          $env:ARTFORGE_PACKAGE_DIR = (Resolve-Path "dist/ElunviCanvas-windows-x64").Path
-          $env:ARTFORGE_RELEASE_DIR = (Resolve-Path "release-windows").Path
-          & $iscc (Resolve-Path "installer/ElunviCanvas.iss").Path
-          if ($LASTEXITCODE -ne 0) {
-            throw "Inno Setup failed with exit code $LASTEXITCODE."
-          }
-
-          $installer = "release-windows/ElunviCanvas_${env:APP_VERSION}_windows_x64_setup.exe"
-          if (!(Test-Path -LiteralPath $installer)) {
-            throw "Missing Windows installer: $installer"
-          }
           } catch {
             $failure = $_
-            Write-Error ("Windows packaging failed: " + $failure.Exception.Message)
+            Write-Error ("Windows portable packaging failed: " + $failure.Exception.Message)
+            if ($failure.InvocationInfo -and $failure.InvocationInfo.PositionMessage) {
+              Write-Error $failure.InvocationInfo.PositionMessage
+            }
+            throw
+          } finally {
+            Stop-Transcript | Out-Null
+          }
+
+      - name: Build Windows installer release
+        shell: pwsh
+        run: |
+          $installerLog = Join-Path $env:RUNNER_TEMP "windows-installer.log"
+          Start-Transcript -Path $installerLog -Force | Out-Null
+          try {
+            New-Item -ItemType Directory -Force -Path release-windows | Out-Null
+
+            function Find-InnoCompiler {
+              $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+              @(
+                $command.Source,
+                "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
+                "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
+                "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+                "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+              ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
+            }
+
+            $iscc = Find-InnoCompiler
+            if (!$iscc) {
+              $installCode = 1
+              $chocoCommand = Get-Command choco.exe -ErrorAction SilentlyContinue
+              if (!$chocoCommand -or !$chocoCommand.Source) {
+                throw "Chocolatey is not available on the Windows runner."
+              }
+              for ($attempt = 1; $attempt -le 3 -and !$iscc; $attempt++) {
+                Write-Host "Inno Setup compiler not found; installing with Chocolatey (attempt $attempt/3)."
+                & $chocoCommand.Source install innosetup --no-progress --yes
+                $installCode = $LASTEXITCODE
+                if ($installCode -notin @(0, 3010)) {
+                  Write-Warning "Chocolatey returned exit code $installCode."
+                  if ($attempt -lt 3) { Start-Sleep -Seconds 10 }
+                  continue
+                }
+                $iscc = Find-InnoCompiler
+              }
+              if (!$iscc -and $installCode -notin @(0, 3010)) {
+                throw "Chocolatey failed to install Inno Setup with exit code $installCode."
+              }
+            }
+            if (!(Test-Path -LiteralPath $iscc)) {
+              throw "Unable to find Inno Setup compiler."
+            }
+            Write-Host "Using Inno Setup compiler: $iscc"
+            if (!(Test-Path -LiteralPath "installer/languages/ChineseSimplified.isl")) {
+              throw "Missing vendored Inno Setup language file: installer/languages/ChineseSimplified.isl"
+            }
+            if (!(Test-Path -LiteralPath "installer/installed.marker")) {
+              throw "Missing installer marker: installer/installed.marker"
+            }
+
+            $env:ARTFORGE_APP_VERSION = $env:APP_VERSION
+            $env:ARTFORGE_PACKAGE_DIR = (Resolve-Path "dist/ElunviCanvas-windows-x64").Path
+            $env:ARTFORGE_RELEASE_DIR = (Resolve-Path "release-windows").Path
+            & $iscc (Resolve-Path "installer/ElunviCanvas.iss").Path
+            if ($LASTEXITCODE -ne 0) {
+              throw "Inno Setup failed with exit code $LASTEXITCODE."
+            }
+
+            $installer = "release-windows/ElunviCanvas_${env:APP_VERSION}_windows_x64_setup.exe"
+            if (!(Test-Path -LiteralPath $installer)) {
+              throw "Missing Windows installer: $installer"
+            }
+          } catch {
+            $failure = $_
+            Write-Error ("Windows installer packaging failed: " + $failure.Exception.Message)
             if ($failure.InvocationInfo -and $failure.InvocationInfo.PositionMessage) {
               Write-Error $failure.InvocationInfo.PositionMessage
             }
@@ -372,6 +386,15 @@ jobs:
         with:
           name: windows-packaging-diagnostics
           path: ${{ runner.temp }}/windows-package.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload Windows installer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer-diagnostics
+          path: ${{ runner.temp }}/windows-installer.log
           if-no-files-found: ignore
           retention-days: 7
 
