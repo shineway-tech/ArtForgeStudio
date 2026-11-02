@@ -315,6 +315,14 @@ jobs:
                 } |
                 Select-Object -ExpandProperty FullName
             }
+            $chocolateyLib = Join-Path $env:ChocolateyInstall "lib"
+            if (Test-Path -LiteralPath $chocolateyLib -PathType Container) {
+              # The Chocolatey package keeps the compiler under a lower-case
+              # package directory, so it is not covered by the Program Files
+              # "Inno Setup*" directory filter above.
+              $discoveredPaths += Get-ChildItem -LiteralPath $chocolateyLib -Filter "ISCC.exe" -File -Recurse -ErrorAction SilentlyContinue |
+                Select-Object -ExpandProperty FullName
+            }
             @($knownPaths + $discoveredPaths) |
               Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
               Select-Object -Unique -First 1
