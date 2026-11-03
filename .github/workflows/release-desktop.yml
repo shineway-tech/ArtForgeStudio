@@ -150,15 +150,26 @@ jobs:
           NOTARY_RESULT="$RUNNER_TEMP/notary-${{ matrix.artifact_arch }}.json"
           NOTARY_LOG="$RUNNER_TEMP/notary-${{ matrix.artifact_arch }}-log.json"
           STAPLE_LOG="$RUNNER_TEMP/staple-${{ matrix.artifact_arch }}.log"
-          set +e
-          xcrun notarytool submit "$DMG_PATH" \
-            --key "$APPLE_API_KEY_PATH" \
-            --key-id "$APPLE_API_KEY" \
-            --issuer "$APPLE_API_ISSUER" \
-            --wait \
-            --output-format json > "$NOTARY_RESULT"
-          NOTARY_STATUS=$?
-          set -e
+          NOTARY_STATUS=1
+          for ATTEMPT in 1 2 3; do
+            echo "Submitting DMG for notarization (attempt $ATTEMPT/3)..."
+            set +e
+            xcrun notarytool submit "$DMG_PATH" \
+              --key "$APPLE_API_KEY_PATH" \
+              --key-id "$APPLE_API_KEY" \
+              --issuer "$APPLE_API_ISSUER" \
+              --wait \
+              --output-format json > "$NOTARY_RESULT" 2>&1
+            NOTARY_STATUS=$?
+            set -e
+            cat "$NOTARY_RESULT"
+            if [ "$NOTARY_STATUS" -eq 0 ]; then
+              break
+            fi
+            if [ "$ATTEMPT" -lt 3 ]; then
+              sleep 20
+            fi
+          done
           cat "$NOTARY_RESULT"
           if [ "$NOTARY_STATUS" -ne 0 ]; then
             SUBMISSION_ID="$(python3 - "$NOTARY_RESULT" <<'PY'
