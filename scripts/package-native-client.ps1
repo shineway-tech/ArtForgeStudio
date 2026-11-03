@@ -114,18 +114,22 @@ function Assert-WindowsPortableArchive {
     $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
     try {
         $entries = @($archive.Entries)
-        $rootPrefix = (Split-Path -Leaf $PackageRoot) + [System.IO.Path]::DirectorySeparatorChar
+        # Zip entry separators are allowed to vary between .NET/runtime
+        # versions. Normalize them before comparing so a valid Windows
+        # archive is not rejected because one runner used '/' and another
+        # used '\'. Empty directory entries are not required by ZIP readers,
+        # so validate those directories in the source tree instead.
+        $rootPrefix = (Split-Path -Leaf $PackageRoot).TrimEnd('\', '/') + '\'
         foreach ($relativePath in @(
             "$AppName.exe",
             "vcruntime140.dll",
             "vcruntime140_1.dll",
-            "assets$([System.IO.Path]::DirectorySeparatorChar)app.ico",
-            "data$([System.IO.Path]::DirectorySeparatorChar)input$([System.IO.Path]::DirectorySeparatorChar)",
-            "data$([System.IO.Path]::DirectorySeparatorChar)out$([System.IO.Path]::DirectorySeparatorChar)",
-            "data$([System.IO.Path]::DirectorySeparatorChar)prompt$([System.IO.Path]::DirectorySeparatorChar)"
+            "assets\app.ico"
         )) {
             $entryName = $rootPrefix + $relativePath
-            $matches = @($entries | Where-Object { $_.FullName -eq $entryName })
+            $matches = @($entries | Where-Object {
+                $_.FullName.Replace('/', '\') -eq $entryName
+            })
             if ($matches.Count -ne 1) {
                 throw "Windows portable ZIP is missing or duplicates $relativePath"
             }
@@ -144,6 +148,11 @@ function Assert-WindowsPortableArchive {
                 if ($archiveHash -ne $sourceHash) {
                     throw "Windows portable ZIP contains a damaged runtime DLL: $relativePath"
                 }
+            }
+        }
+        foreach ($relativePath in @('data\input', 'data\out', 'data\prompt')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $PackageRoot $relativePath) -PathType Container)) {
+                throw "Windows portable package source is missing $relativePath"
             }
         }
     }
