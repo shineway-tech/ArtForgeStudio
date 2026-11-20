@@ -2260,6 +2260,10 @@ pub(super) mod tests {
             serde_json::to_value(load_pending_generations_for_namespace(&self.authority).unwrap())
                 .unwrap()
         }
+        fn cutout_mask_path(&self) -> PathBuf {
+            self.authority.lease().namespace.path(ManagedUserArea::DeliveryStaging)
+                .join(format!("{DELIVERY_FILE}.png"))
+        }
         fn output(&self) -> PathBuf {
             self.authority
                 .lease()
@@ -2459,7 +2463,7 @@ fn core_cutout_derived_pixels_and_store_ack_keep_original_remote_confirmation(){
     let server=DeliveryServer::start_controlled(listener,&url,&f,cutout_detail(&mask),mask.clone(),true,1,None);
     let _drain=DeliveryFamilyDrain;
     let prepared=prepare_cutout_fixture(&f).unwrap();let path=prepared.source_path().to_owned();
-    assert_ne!(path,f.output().to_string_lossy());assert!(path.ends_with("-cutout-v1.png"));
+    assert!(!f.output().exists());assert!(path.ends_with("-cutout-v1.png"));
     assert_eq!(prepared.confirmation().sha256,original_hash);assert_eq!(prepared.confirmation().size_bytes,mask.len() as u64);
     let derived=std::fs::read(&path).unwrap();assert_ne!(format!("{:x}",sha2::Sha256::digest(&derived)),original_hash);
     let pixels=image::load_from_memory(&derived).unwrap().to_rgba8();assert_eq!(pixels.get_pixel(1,1).0,[17,41,89,127]);
@@ -2472,7 +2476,7 @@ fn core_cutout_derived_pixels_and_store_ack_keep_original_remote_confirmation(){
     let saved=f.repo.load_client_state_for_namespace(f.authority.lease()).unwrap().unwrap();
     assert_eq!(saved.assets.len(),1);assert_eq!(saved.assets[0].source_path,path);assert!(saved.assets[0].cutout_done);
     assert_eq!(saved.assets[0].origin,"image_cutout");assert_eq!(f.recovery(),serde_json::json!([]));
-    assert_eq!(std::fs::read(f.output()).unwrap(),mask);assert!(Path::new(&f.record.reference_paths[0]).exists());
+    assert_eq!(std::fs::read(f.cutout_mask_path()).unwrap(),mask);assert!(Path::new(&f.record.reference_paths[0]).exists());
     let requests=server.finish();let acknowledgments=requests.iter().filter(|request|request.0.starts_with("POST ")).collect::<Vec<_>>();
     assert_eq!(acknowledgments.len(),1);assert!(acknowledgments[0].1,"real SQLite state must precede remote ack");
     let body:serde_json::Value=serde_json::from_str(acknowledgments[0].0.split("\r\n\r\n").nth(1).unwrap()).unwrap();
@@ -2487,10 +2491,10 @@ fn core_cutout_derived_index_crash_window_reuses_verified_files_without_redownlo
     index.execute_batch("CREATE TRIGGER fail_cutout_index BEFORE INSERT ON managed_files WHEN NEW.path LIKE '%-cutout-v1.png' BEGIN SELECT RAISE(FAIL,'controlled derived index failure'); END;").unwrap();
     let before=f.recovery();assert!(prepare_cutout_fixture(&f).is_err());assert_eq!(f.recovery(),before);
     let derived=f.authority.lease().namespace.path(ManagedUserArea::Output).join(format!("{DELIVERY_FILE}-cutout-v1.png"));
-    let bytes=std::fs::read(&derived).unwrap();let mask_bytes=std::fs::read(f.output()).unwrap();
+    let bytes=std::fs::read(&derived).unwrap();let mask_bytes=std::fs::read(f.cutout_mask_path()).unwrap();
     index.execute_batch("DROP TRIGGER fail_cutout_index").unwrap();
     let prepared=prepare_cutout_fixture(&f).unwrap();assert_eq!(prepared.source_path(),derived.to_str().unwrap());
-    assert_eq!(std::fs::read(&derived).unwrap(),bytes);assert_eq!(std::fs::read(f.output()).unwrap(),mask_bytes);
+    assert_eq!(std::fs::read(&derived).unwrap(),bytes);assert_eq!(std::fs::read(f.cutout_mask_path()).unwrap(),mask_bytes);
     let requests=server.finish();assert_eq!(requests.iter().filter(|r|r.0.starts_with("GET /blob ")).count(),1);
     assert!(!requests.iter().any(|r|r.0.starts_with("POST ")));assert_eq!(f.recovery(),before);
 }
@@ -2556,7 +2560,7 @@ fn assert_cutout_atomic_settle_rejection(case:&'static str){
     pump_delivery_fixture(||done.get());
     let expected=expected.lock().unwrap().clone().expect("real remote ack hook must execute");
     assert_eq!(std::fs::read(&recovery_path).unwrap(),expected,"failed atomic settle changed retained bytes");
-    assert!(Path::new(&f.record.reference_paths[0]).exists());assert!(Path::new(&output).exists());assert!(f.output().exists());
+    assert!(Path::new(&f.record.reference_paths[0]).exists());assert!(Path::new(&output).exists());assert!(f.cutout_mask_path().exists());
     assert_eq!(context.store.borrow().assets.len(),1);assert!(context.store.borrow().generations.is_empty());
     drop(permissions);
     if case=="write-failure" {

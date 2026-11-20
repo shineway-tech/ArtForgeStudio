@@ -257,7 +257,11 @@ fn prepare_namespace_delivery_proof(
         (true,"video/mp4")=>"mp4",(true,"video/webm")=>"webm",(true,"video/quicktime")=>"mov",
         _=>return Err(anyhow!("unsupported output MIME for retained task type").into()),
     };
-    let area=if video {ManagedUserArea::Videos}else{ManagedUserArea::Output};
+    let area = match kind {
+        NamespaceDeliveryKind::Cutout => ManagedUserArea::DeliveryStaging,
+        NamespaceDeliveryKind::Video => ManagedUserArea::Videos,
+        NamespaceDeliveryKind::Image => ManagedUserArea::Output,
+    };
     let destination = ManagedFileKey::new(
         area,
         &format!("{}.{extension}", remote.id),
